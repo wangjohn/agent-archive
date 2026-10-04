@@ -13,6 +13,11 @@ Include Claude Code? [y/N] n
 
 Include Cursor? [y/N] n
 
+Codex capture scope
+  1) Included projects only (Codex)
+  2) All current and future projects (Codex only)
+Enter 1-2 [1]: included-projects
+
 Projects to archive (✓ included):
   1) ✓ ~/src/web-app  this folder
 a includes all listed projects. Or enter 1 to include or leave it out, or a path to add a project.
@@ -47,6 +52,15 @@ Step 3 of 3 · Ready to start
 
   Apps       Codex (version not detected)
   Projects   ~/src/web-app
+  Codex capture Automatic discovery plus hooks when approved
+  Codex scope Included projects only
+  Exceptions None configured  Nearest explicit project rule wins
+  Codex sources /Users/alex/.codex
+  Destination s3://team-archive/agent-archive/
+  Starts     After local consent, outside pause or exclusion
+  History    Old sessions require deliberate backfill
+  Copies     Qualifying recent native copies may be captured
+  Hooks      Optional for discovery; approval and observation are separate
   Skills     metadata  User skill roots outside selected projects may be scanned; change with Edit a setting
   Storage    s3://team-archive/agent-archive/  us-east-1 · profile work
   Keep for   90 days
@@ -55,7 +69,7 @@ Step 3 of 3 · Ready to start
   ! Bucket privacy unknown  public-access settings could not be read
     Make sure public access is off: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
   ✓ Hook file is valid      ~/.codex/hooks.json
-  ! Codex needs one step    approve the hooks with /hooks after setup
+  ✓ Codex discovery         supported new tasks do not require hook approval
 
   Filtering is best effort; sensitive text may remain in archived sessions.
   What leaves your machine: https://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md

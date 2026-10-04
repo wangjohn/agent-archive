@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
@@ -72,11 +73,12 @@ func TestStatusChecksHooksAgainstTheInstalledExecutable(t *testing.T) {
 func TestStatusExplainsWhyHookTrustIsUnknown(t *testing.T) {
 	t.Parallel()
 	_, _, env := installedFixture(t, newFakeKeychain(), s3SetupInput("test-bucket", "us-east-1", "test-profile", true, false, false, t.TempDir()))
+	setupYes(t, env, "", 0, "--yes", "--codex-discovery", "off")
 	var stdout, stderr bytes.Buffer
 	if code := runStatusCommand(nil, &stdout, &stderr, env); code != 0 {
 		t.Fatalf("code=%d stderr=%s", code, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "  ! Codex   hooks installed   no sessions yet\n    Approve the archive hooks with /hooks in Codex.\n") {
+	if !strings.Contains(stdout.String(), "  ! Codex   discovery off; included projects   no sessions yet\n    Approve the archive hooks with /hooks in Codex.\n") {
 		t.Fatalf("status does not say how to approve the hooks:\n%s", stdout.String())
 	}
 	stdout.Reset()
@@ -112,4 +114,60 @@ func TestStatusDetectsPartialHooks(t *testing.T) {
 	if err != nil || view.State != "Needs attention" || view.Apps[0].Hooks == "installed" {
 		t.Fatalf("view=%+v err=%v", view, err)
 	}
+}
+
+func TestDiscoveryStatusRepairsPartialOwnHooksAlongsideForeignOwner(t *testing.T) {
+	t.Parallel()
+	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
+	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
+	setupRun(t, env, s3SetupInput("bucket", "us-east-1", "profile", true, false, false, project), 0)
+	cfg := mustLoadConfig(t, home)
+	files := env.installedHookFiles(userHome, cfg)
+	foreignHome := t.TempDir()
+	foreign := env.installation(foreignHome, userHome).hook(cfg.InstalledExecutable)
+	changes, err := hooks.Plan(files, foreign, []string{"codex"})
+	must(t, err)
+	must(t, hooks.Apply(changes))
+	check := func(needsRepair bool) {
+		t.Helper()
+		view, err := readStatus(env)
+		must(t, err)
+		if (view.State == "Needs attention") != needsRepair {
+			t.Fatalf("repair=%v state=%q: %+v", needsRepair, view.State, view.Apps)
+		}
+		if len(view.Apps) != 1 || len(view.Apps[0].OtherInstallations) != 1 || len(view.Warnings) == 0 {
+			t.Fatalf("foreign owner warning lost: %+v", view)
+		}
+	}
+	check(false) // Healthy own hooks plus foreign ownership remains usable.
+	var settings map[string]any
+	must(t, local.Read(files["codex"], &settings))
+	own := env.installation(home, userHome).hook(cfg.InstalledExecutable)
+	command, err := own.Command("codex")
+	must(t, err)
+	removed := 0
+	for _, value := range settings["hooks"].(map[string]any)["SessionStart"].([]any) {
+		group := value.(map[string]any)
+		kept := []any{}
+		for _, handler := range group["hooks"].([]any) {
+			if handler.(map[string]any)["command"] == command {
+				removed++
+				continue
+			}
+			kept = append(kept, handler)
+		}
+		group["hooks"] = kept
+	}
+	if removed != 1 {
+		t.Fatalf("removed %d own start handlers", removed)
+	}
+	must(t, local.Write(files["codex"], settings))
+	check(true) // Only our first-start handler is missing; the foreign one remains.
+	removal, found, err := hooks.PlanRemovalOf(files, env.installation(home, userHome).owner(), "codex")
+	must(t, err)
+	if !found {
+		t.Fatal("partial own hooks not found")
+	}
+	must(t, hooks.Apply([]hooks.Change{removal}))
+	check(false) // A genuinely absent own hook remains optional under discovery.
 }

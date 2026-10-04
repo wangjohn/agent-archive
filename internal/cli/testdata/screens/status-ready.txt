@@ -2,7 +2,10 @@ $ agent-archive status
 Agent Archive  ● Ready
 
 Capture
-  ✓ Codex   hooks on   1 session
+  ✓ Codex   discovery: no supported task observed in last scan; included projects   1 session
+    · Last discovery attempt just now; 1 registered → 0 queued → 1 published → 1 read-back verified
+    · Optional hooks: hooks on; actual hook observation is separate evidence.
+  · Identity recovery: complete
 
 Storage
   ✓ s3://team-archive/agent-archive/   reachable · uploaded just now

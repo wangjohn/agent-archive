@@ -145,7 +145,7 @@ func TestSetupRollbackPreservesPausedGenerationFloorAndWriterFence(t *testing.T)
 		} `json:"schema_version"`
 	}
 	must(t, json.Unmarshal(raw, &document))
-	if document.SchemaVersion.Version != 2 || document.SchemaVersion.Writer != "discovery-floor-v2" {
+	if document.SchemaVersion.Version != 3 || document.SchemaVersion.Writer != "codex-scope-floor-v3" {
 		t.Fatal("rollback weakened floor writer fence")
 	}
 	if _, err := config.SetPaused(home, false, at.Add(-time.Nanosecond)); err == nil {

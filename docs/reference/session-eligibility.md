@@ -46,3 +46,20 @@ backfill does not import it again unless you pass `--include-removed`.
 
 How admission is implemented, check by check, and the guard tests that keep
 it so, are in [session admission](../../dev/contributing/session-admission.md).
+
+## Automatically discovered Codex tasks
+
+Discovery considers supported regular rollouts confined to approved local Codex
+homes. Original native session creation must fall within the current Codex scope,
+source and destination authorization and an unpaused interval. Included-project
+scope requires an included project; all-projects scope permits unlisted current
+and future Codex projects subject to explicit exceptions. Other apps retain their
+included-project permissions. Unsupported producer
+versions, recognizable imports, forks, children and referenced histories do not
+qualify. Partial first-task metadata is retried rather than guessed.
+
+A native task can wait before its first prompt; that does not reset its original
+creation time. Moving a known session to archived history or copying the same
+native identity does not create another archive. An otherwise qualifying recent
+copy with indistinguishable metadata can be admitted. File presence and rebuilt
+Codex database rows are source facts, not proof of originating local execution.

@@ -376,7 +376,7 @@ func TestStatusAppArgument(t *testing.T) {
 		out   string
 		error string
 	}{
-		{[]string{"CODEX"}, 0, "\nCapture\n  ! Codex   hooks installed   no sessions yet\n", ""},
+		{[]string{"CODEX"}, 0, "\nCapture\n  ! Codex   discovery off; included projects   no sessions yet\n", ""},
 		{[]string{"codex", "--verbose"}, 0, "\nDetails\n  Codex: waiting for first session", ""},
 		{[]string{"gemini"}, 2, "", "agent-archive: status: unknown app \"gemini\"; choose one of codex, claude, cursor; run agent-archive status --help\n"},
 		{[]string{"codex", "--json"}, 2, "", "agent-archive: status: an app and --json can't be combined; status --json lists every app under applications; run agent-archive status --help\n"},
@@ -476,7 +476,7 @@ func TestStatusCountsEachAppsSessions(t *testing.T) {
 	if pair := app.Projects[0]; pair.sessions != 4 || pair.imported != 1 || pair.uploading != 3 {
 		t.Errorf("project counts sessions=%d imported=%d uploading=%d", pair.sessions, pair.imported, pair.uploading)
 	}
-	if text := statusOutput(t, env); !strings.Contains(text, "hooks on   4 sessions (+1 subagent) · 1 imported · 3 uploading\n") {
+	if text := statusOutput(t, env); !strings.Contains(text, "discovery off; included projects   4 sessions (+1 subagent) · 1 imported · 3 uploading\n") {
 		t.Errorf("status:\n%s", text)
 	}
 	if full := statusOutput(t, env, "codex"); !strings.Contains(full, "\nProjects\n  Project") || !strings.Contains(full, "   4          1          3           verified\n") {

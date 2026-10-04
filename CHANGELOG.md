@@ -6,6 +6,15 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Codex setup offers included-project or all-current-and-future-project scope,
+  independent of supported-source discovery. Fresh scripts explicitly choose
+  both source and scope; omitted reconfiguration preserves consent. Codex-only
+  all-mode permits zero explicitly included projects. Discovery does not require hooks;
+  existing installations opt in explicitly. Original creation-time consent, pause
+  intervals and project/destination scope apply. Indistinguishable recent native
+  copies may qualify. Status schema 4 separates discovery health and actual hook
+  observation from publication/read-back verification.
+
 Planned for v0.2.0. This release has not been tagged or published.
 
 ### Fixed
@@ -17,6 +26,9 @@ Planned for v0.2.0. This release has not been tagged or published.
   concurrent cleanup discoverable. Existing v2 entries remain readable;
   `list --rebuild-index` reclaims legacy pointerless hints with bounded cleanup.
   Malformed legacy pointers cannot claim or delete v3 hints.
+- Status recognizes valid packed identity-recovery scheduling evidence and
+  distinguishes shard application and fallback work without scanning the index.
+  Damaged or stale scheduling evidence reports unknown status.
 
 - Existing project-scoped hook sessions decline continuation updates when the
   incoming checkout or a saved scope rule has unknown filesystem identity,

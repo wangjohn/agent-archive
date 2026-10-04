@@ -121,6 +121,10 @@ func setupPairing(opts setupOptions, stdin io.Reader, out, errOut io.Writer, env
 	if err != nil {
 		return err
 	}
+	if err := configurePairedDiscovery(p, &cfg, opts, existing, found); err != nil {
+		return err
+	}
+	prepareDiscoveryHomes(&cfg, env, userHome)
 	cfg, err = reviewPairingSettings(p, payload, cfg, existing, found, userHome, opts, env)
 	if err != nil {
 		return err
@@ -266,9 +270,6 @@ func pairingCaptureSettings(p *prompter, payload pairing.Payload, cfg, existing 
 	if err != nil {
 		return cfg, err
 	}
-	if problems := setupProjects(&cfg, opts.projects, userHome); len(problems) > 0 {
-		return cfg, answersError(problems)
-	}
 	detected := env.detectHarnesses(userHome)
 	var apps []string
 	for _, app := range payload.Apps {
@@ -287,6 +288,19 @@ func pairingCaptureSettings(p *prompter, payload pairing.Payload, cfg, existing 
 		return cfg, fmt.Errorf("none of the source apps is installed; install an app and retry")
 	}
 	cfg.Harnesses = apps
+	// Pairing transfers settings and project suggestions, never live permission
+	// from the other machine. Existing local consent remains the default.
+	if err := configureCodexCaptureScope(&cfg, opts.codexCaptureScope); err != nil {
+		return cfg, err
+	}
+	if !opts.yes && opts.codexCaptureScope == "" {
+		if err := promptCodexCaptureScope(p, &cfg); err != nil {
+			return cfg, err
+		}
+	}
+	if problems := setupProjects(&cfg, opts.projects, userHome); len(problems) > 0 {
+		return cfg, answersError(problems)
+	}
 	return cfg, nil
 }
 
@@ -304,6 +318,10 @@ func reviewPairingSettings(p *prompter, payload pairing.Payload, cfg, existing c
 				return cfg, fmt.Errorf("pairing cancelled; nothing was changed")
 			}
 			if choice == "save" {
+				if setupNeedsProject(cfg) {
+					p.warn("Include a project with Edit settings → Projects before saving these capture settings.")
+					continue
+				}
 				break
 			}
 			draft := setupDraft{Version: draftFormat, Config: cfg, Step: 2}

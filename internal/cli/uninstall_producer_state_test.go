@@ -22,7 +22,7 @@ func createDiscoveryCleanupState(t *testing.T) (string, Env) {
 	now := time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), now)
 	env.AWSProfiles = func() ([]AWSProfile, error) { return []AWSProfile{{Name: "fixture", Region: "us-east-1"}}, nil }
-	setupYes(t, env, "", 0, "--yes", "--provider", "s3", "--bucket", "fixture-bucket", "--aws-profile", "fixture", "--project", project, "--apps", "codex")
+	setupYes(t, env, "", 0, "--yes", "--provider", "s3", "--bucket", "fixture-bucket", "--aws-profile", "fixture", "--project", project, "--apps", "codex", "--codex-discovery", "off", "--codex-capture-scope", "included-projects")
 	cfg := mustLoadConfig(t, home)
 	previous := cfg
 	cfg.CodexCapture = &config.CodexCaptureConfig{Scope: config.CodexAllProjects}

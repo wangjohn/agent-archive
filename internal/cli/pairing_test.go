@@ -135,7 +135,7 @@ func TestPairingTwoHomesS3CommitIdentityAndSecretFreeState(t *testing.T) {
 	existing := config.Config{MachineID: strings.Repeat("b", 32), Storage: credentials.Config{Provider: "s3", Bucket: "synthetic", AWSProfile: "archive", Region: "us-east-1"}}
 	must(t, config.Save(home, existing))
 	var out bytes.Buffer
-	if exit := Run([]string{"setup", "--pair-file", "-", "--yes", "--project", project}, strings.NewReader(bundle), &out, &out, env); exit != 0 {
+	if exit := Run([]string{"setup", "--pair-file", "-", "--yes", "--codex-discovery", "on", "--codex-capture-scope", "included-projects", "--project", project}, strings.NewReader(bundle), &out, &out, env); exit != 0 {
 		t.Fatalf("receiver %d %s", exit, &out)
 	}
 	cfg, found, err := config.Load(home)
@@ -270,7 +270,7 @@ func TestPairingR2StageFailureRetryReusesCredentialAndKeepsPriorConfig(t *testin
 	env.LookupEnv = func(k string) (string, bool) { return code, k == "AGENT_ARCHIVE_PAIRING_CODE" }
 	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return nil, errors.New("failure") }
 	var out bytes.Buffer
-	args := []string{"setup", "--pair-file", "-", "--yes", "--project", project}
+	args := []string{"setup", "--pair-file", "-", "--yes", "--codex-discovery", "on", "--codex-capture-scope", "included-projects", "--project", project}
 	if Run(args, strings.NewReader(bundle), &out, &out, env) != 1 {
 		t.Fatal("storage failure committed")
 	}
@@ -422,7 +422,7 @@ func TestPairingRedirectedBundleUsesPrivateTerminalForReview(t *testing.T) {
 	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return store, nil }
 	env.DetectHarnesses = func(string) []string { return []string{"codex"} }
 	env.AWSProfiles = func() ([]AWSProfile, error) { return []AWSProfile{{Name: "archive", Region: "us-east-1"}}, nil }
-	tty := &pairingTestTerminal{Reader: strings.NewReader("save\n")}
+	tty := &pairingTestTerminal{Reader: strings.NewReader("included-projects\nsave\n")}
 	env.PairingTerminal = func() (io.ReadWriteCloser, error) { return tty, nil }
 	env.IsTerminal = func(stream any) bool { return stream == tty }
 	env.PairingCode = func() (string, error) { return code, nil }

@@ -1,8 +1,17 @@
-$ agent-archive setup --yes --apps codex --provider s3 --bucket team-archive --aws-profile work --region us-east-1 --project ~/src/web-app
+$ agent-archive setup --yes --apps codex --codex-discovery on --codex-capture-scope included-projects --provider s3 --bucket team-archive --aws-profile work --region us-east-1 --project ~/src/web-app
   ✓ Codex hooks: ~/.codex/hooks.json
   ✓ Background job: launchctl responds
 Checking your storage connection…
 ✓ Connected to your storage.
+  · Codex capture: Automatic discovery plus hooks when approved.
+  · Codex scope: Included projects only.
+  · Exceptions: None configured.
+  · Codex sources: /Users/alex/.codex.
+  · Destination: s3://team-archive/agent-archive/.
+  · Starts: After local consent, outside pause or exclusion.
+  · History: Old sessions require deliberate backfill.
+  · Copies: Qualifying recent native copies may be captured.
+  · Hooks: Optional for discovery; approval and observation are separate.
 Apps: Codex. Projects: 1. Storage: Amazon S3 bucket team-archive.
 Skill evidence: metadata. User-level skill roots outside selected projects may be scanned.
   ! Bucket privacy not verified: public-access settings could not be read.
@@ -14,11 +23,12 @@ Installed the agent-archive skill, which lets your agents look up and pull in pa
 To remove the agent skills and keep them off, run agent-archive setup --no-skills.
 
 Next, in each app:
-  Codex: run /hooks and approve the archive hooks, then start a new session (or /clear).
+  Codex: start a supported new task in an included project; automatic discovery does not require hook approval.
+  Optional hook capture: Codex: run /hooks and approve the archive hooks, then start a new session (or /clear).
 Sessions already open are not captured. Start a new one in an included project.
 Import sessions from before setup with agent-archive backfill.
 Check progress with agent-archive status.
 
 To set up another machine with this storage, run there:
-  agent-archive setup --yes --provider s3 --bucket team-archive --aws-profile work --region us-east-1 --apps codex --prefix agent-archive/ --retention-days 90 --no-require-skill-use --skill-evidence metadata --skills --project ~/src/web-app
+  agent-archive setup --yes --provider s3 --bucket team-archive --aws-profile work --region us-east-1 --apps codex --codex-discovery on --codex-capture-scope included-projects --prefix agent-archive/ --retention-days 90 --no-require-skill-use --skill-evidence metadata --skills --project ~/src/web-app
 [exit 0]
