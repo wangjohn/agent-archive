@@ -10,6 +10,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/local"
 	"io/fs"
 )
 
@@ -203,7 +204,7 @@ func (p *projectFiles) ReadDir(path string) ([]fs.DirEntry, error) {
 	depth := -1
 	for _, base := range p.bases {
 		rel, err := filepath.Rel(base, path)
-		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		if err != nil || !local.PathWithin(path, base) {
 			continue
 		}
 		n := len(strings.Split(rel, string(filepath.Separator)))
