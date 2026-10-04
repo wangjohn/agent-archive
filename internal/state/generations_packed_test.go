@@ -106,6 +106,7 @@ func TestPackedGenerationRecoveryReplayAndCensus(t *testing.T) {
 	if err := os.Remove(qualifiedSessionIndexPath(s.home, key)); err != nil {
 		t.Fatal(err)
 	}
+	completePackedGenerationCensus(t, s)
 	if active, found, err := s.ArchiveSessionID(key); err != nil || !found || active != next {
 		t.Fatalf("packed active route: %s %v %v", active, found, err)
 	}
@@ -137,13 +138,21 @@ func TestPackedGenerationRecoveryReplayAndCensus(t *testing.T) {
 
 func TestPackedCandidateRetainsFrozenGenerationParent(t *testing.T) {
 	s, old, at := packedGenerationFixture(t)
+	childKey := agentmeta.SessionKey{Agent: agentmeta.Codex, NativeID: "queued-child"}
+	candidate := SubagentCandidate{ArchiveSessionID: "queued-child-owner", NativeSessionID: childKey.NativeID, ParentArchiveSessionID: old.ArchiveSessionID, ParentNativeSessionID: old.NativeSessionID, Harness: old.Harness, ProjectID: old.ProjectID, ProjectRoot: old.ProjectRoot, AgentID: "queued", TranscriptPath: old.TranscriptPath, ObservedAt: at}
+	if err := local.Write(s.subagentCandidatePath(candidate.ArchiveSessionID), candidate); err != nil {
+		t.Fatal(err)
+	}
+	// The queued child exists in packed authority before its parent freezes.
+	completePackedGenerationCensus(t, s)
+	if id, created, err := s.EnsureArchiveSessionID(childKey); err != nil || created || id != candidate.ArchiveSessionID {
+		t.Fatalf("pre-recovery packed reservation: %s %v %v", id, created, err)
+	}
 	if _, err := s.BeginGenerationRecovery(old.ArchiveSessionID, at, generationBuilder(at)); err != nil {
 		t.Fatal(err)
 	}
-	childKey := agentmeta.SessionKey{Agent: agentmeta.Codex, NativeID: "queued-child"}
-	candidate := SubagentCandidate{ArchiveSessionID: "queued-child-owner", NativeSessionID: childKey.NativeID, ParentArchiveSessionID: old.ArchiveSessionID, ParentNativeSessionID: old.NativeSessionID, Harness: old.Harness}
-	if err := local.Write(s.subagentCandidatePath(candidate.ArchiveSessionID), candidate); err != nil {
-		t.Fatal(err)
+	if id, created, err := s.EnsureArchiveSessionID(childKey); err != nil || created || id != candidate.ArchiveSessionID {
+		t.Fatalf("frozen parent's packed reservation: %s %v %v", id, created, err)
 	}
 	completePackedGenerationCensus(t, s)
 	entry, found, err := s.readQualifiedIndex(childKey)
@@ -155,6 +164,25 @@ func TestPackedCandidateRetainsFrozenGenerationParent(t *testing.T) {
 	}
 	if _, found, err := s.readQualifiedIndex(childKey); found || !errors.Is(err, ErrSessionIndexRecoveryRequired) {
 		t.Fatalf("missing parent admitted candidate: %v %v", found, err)
+	}
+	old.CaptureFrozen = true
+	if err := local.Write(s.registrationPath(old.ArchiveSessionID), old); err != nil {
+		t.Fatal(err)
+	}
+	child := old
+	child.ArchiveSessionID, child.NativeSessionID = candidate.ArchiveSessionID, childKey.NativeID
+	child.CaptureFrozen = false
+	child.ParentSessionID, child.ParentNativeSessionID, child.SubagentID = old.ArchiveSessionID, old.NativeSessionID, candidate.AgentID
+	if err := s.SaveRegistration(child); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RemoveSubagentCandidate(child.ArchiveSessionID); err != nil {
+		t.Fatal(err)
+	}
+	completePackedGenerationCensus(t, s)
+	registered, found, err := s.LoadRegistration(child.ArchiveSessionID)
+	if err != nil || !found || registered.ParentSessionID != old.ArchiveSessionID {
+		t.Fatalf("late materialization changed parent: %#v %v", registered, err)
 	}
 }
 

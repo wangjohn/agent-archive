@@ -1,6 +1,7 @@
 package capture
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -81,7 +82,23 @@ func TestGenerationChildrenKeepRecordedParent(t *testing.T) {
 		b.ArchiveSessionID = id
 		b.PreviousGenerationID = parentID
 		b.Capture.CapturedAt = recoveredAt
-		return reg, state.PendingPublication{Bundle: b, ReadyAt: recoveredAt, SourceKey: "source", MetadataKey: "metadata", SourceSHA256: "sha", SourceBytes: []byte("synthetic"), MetadataBytes: []byte(`{}`)}, nil
+		b.Capture.AdapterName = "test"
+		source, err := archive.BuildCompressedSource(b)
+		if err != nil {
+			return reg, state.PendingPublication{}, err
+		}
+		sourceKey, err := archive.SourceObjectKey(b, source.SHA256)
+		if err != nil {
+			return reg, state.PendingPublication{}, err
+		}
+		metadataKey, err := archive.MetadataObjectKey(reg.Harness.Name, id)
+		if err != nil {
+			return reg, state.PendingPublication{}, err
+		}
+		pending := state.PendingPublication{Bundle: b, ReadyAt: recoveredAt, SourceKey: sourceKey, MetadataKey: metadataKey, SourceSHA256: source.SHA256, SourceBytes: source.Bytes}
+		metadata := archive.Metadata{SchemaVersion: archive.MetadataSchemaVersion, SessionID: id, PreviousGenerationID: parentID, NativeSessionID: reg.NativeSessionID, ProjectID: reg.ProjectID, Harness: reg.Harness, CapturedAt: recoveredAt, SourceBundle: pending.SourceReference()}
+		pending.MetadataBytes, err = json.Marshal(metadata)
+		return reg, pending, err
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"reflect"
@@ -44,8 +45,23 @@ func generationBuilder(at time.Time) func(archive.SessionRegistration, string) (
 		prev := reg.ArchiveSessionID
 		reg.ArchiveSessionID = id
 		reg.PreviousGenerationID = prev
-		bundle := archive.SourceBundle{SchemaVersion: archive.SourceSchemaVersion, ArchiveSessionID: id, NativeSessionID: reg.NativeSessionID, ProjectID: reg.ProjectID, PreviousGenerationID: prev, Capture: archive.SourceCapture{Harness: reg.Harness, CapturedAt: at}}
-		return reg, PendingPublication{Bundle: bundle, ReadyAt: at, SourceKey: "source", MetadataKey: "metadata", SourceSHA256: "sha", SourceBytes: []byte("synthetic"), MetadataBytes: []byte(`{}`)}, nil
+		bundle := archive.SourceBundle{SchemaVersion: archive.SourceSchemaVersion, ArchiveSessionID: id, NativeSessionID: reg.NativeSessionID, ProjectID: reg.ProjectID, PreviousGenerationID: prev, Capture: archive.SourceCapture{Harness: reg.Harness, AdapterName: "test", CapturedAt: at}}
+		source, err := archive.BuildCompressedSource(bundle)
+		if err != nil {
+			return reg, PendingPublication{}, err
+		}
+		sourceKey, err := archive.SourceObjectKey(bundle, source.SHA256)
+		if err != nil {
+			return reg, PendingPublication{}, err
+		}
+		metadataKey, err := archive.MetadataObjectKey(reg.Harness.Name, id)
+		if err != nil {
+			return reg, PendingPublication{}, err
+		}
+		pending := PendingPublication{Bundle: bundle, ReadyAt: at, SourceKey: sourceKey, MetadataKey: metadataKey, SourceSHA256: source.SHA256, SourceBytes: source.Bytes}
+		metadata := archive.Metadata{SchemaVersion: archive.MetadataSchemaVersion, SessionID: id, PreviousGenerationID: prev, NativeSessionID: reg.NativeSessionID, ProjectID: reg.ProjectID, Harness: reg.Harness, CapturedAt: at, SourceBundle: pending.SourceReference()}
+		pending.MetadataBytes, err = json.Marshal(metadata)
+		return reg, pending, err
 	}
 }
 
@@ -200,6 +216,51 @@ func TestGenerationRecoveryReplayRefusesChangedAdmission(t *testing.T) {
 	}
 	if _, found, err := s.LoadRegistration(journal.Next); err != nil || found {
 		t.Fatalf("corrupt replay registered successor: %v", err)
+	}
+}
+
+func TestGenerationRecoveryReplayRefusesChangedPublication(t *testing.T) {
+	t.Parallel()
+	for name, mutate := range map[string]func(*PendingPublication){
+		"metadata key":    func(p *PendingPublication) { p.MetadataKey = "sessions/codex/previous/metadata.json" },
+		"source key":      func(p *PendingPublication) { p.SourceKey = "sessions/codex/previous/source.jsonl.gz" },
+		"source bytes":    func(p *PendingPublication) { p.SourceBytes = []byte("corrupt") },
+		"metadata bytes":  func(p *PendingPublication) { p.MetadataBytes = []byte(`{}`) },
+		"bundle evidence": func(p *PendingPublication) { p.Bundle.NativeRecords = []map[string]any{{"changed": true}} },
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			s, original, at := generationFixture(t)
+			interrupted := errors.New("before freeze")
+			s.onIndexStep = func(step string) error {
+				if step == "generation-journal" {
+					return interrupted
+				}
+				return nil
+			}
+			if _, err := s.BeginGenerationRecovery(original.ArchiveSessionID, at, generationBuilder(at)); !errors.Is(err, interrupted) {
+				t.Fatal(err)
+			}
+			s.onIndexStep = nil
+			journal, _, err := readJSON[generationRecovery](s.generationRecoveryPath(original.ArchiveSessionID))
+			if err != nil {
+				t.Fatal(err)
+			}
+			mutate(journal.Pending)
+			if err := local.Write(s.generationRecoveryPath(original.ArchiveSessionID), journal); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.ResumeGenerationRecoveries(t.Context()); !errors.Is(err, ErrSessionIndexRecoveryRequired) {
+				t.Fatalf("changed publication replayed: %v", err)
+			}
+			old, _, err := s.LoadRegistration(original.ArchiveSessionID)
+			if err != nil || old.CaptureFrozen {
+				t.Fatalf("invalid publication froze predecessor: %v", err)
+			}
+			if _, found, err := s.LoadRegistration(journal.Next); err != nil || found {
+				t.Fatalf("invalid publication registered successor: %v", err)
+			}
+		})
 	}
 }
 
