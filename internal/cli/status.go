@@ -1356,6 +1356,7 @@ func statusCode(label string) string {
 		"Not installed": "not_installed", "Setup needs recovery": "recovery_required",
 		"waiting for first session":          "awaiting_session",
 		"hook observed; waiting for capture": "hook_observed",
+		"task found; waiting for capture":    "awaiting_capture",
 		"published; read-back pending":       "published",
 		"captured locally":                   "captured_local", "published; source verified": "published_source_verified",
 	}
@@ -1783,7 +1784,7 @@ func appProgress(now time.Time, app appStatus) string {
 		return "uploaded, read-back pending"
 	case "captured locally":
 		return "captured, not uploaded yet"
-	case "hook observed; waiting for capture":
+	case "hook observed; waiting for capture", "task found; waiting for capture":
 		return "session seen, not captured yet"
 	}
 	return "waiting for first session"
