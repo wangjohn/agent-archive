@@ -35,37 +35,40 @@ const (
 
 // setupOptions are setup's answers given as flags, for setup --yes.
 type setupOptions struct {
-	codexDiscovery         string
-	codexCaptureScope      string
-	pair                   bool
-	pairFile               string
-	prefix                 string
-	prefixSupplied         bool
-	retentionDays          int
-	retentionSupplied      bool
-	requireSkillUse        bool
-	noRequireSkillUse      bool
-	requireSkillSupplied   bool
-	noRequireSkillSupplied bool
-	provider               string
-	bucket                 string
-	r2Account              string
-	r2KeyID                string
-	awsProfile             string
-	region                 string
-	apps                   string
-	projects               []string
-	projectRepos           []string
-	projectScope           string
-	projectScopeFile       string
-	projectMatches         *projectMatchResult
-	yes                    bool
-	verbose                bool
-	skillEvidence          string
-	noSkills               bool
-	skills                 bool
-	allowNetworkHome       bool
-	storageFlagsSupplied   bool
+	codexDiscovery           string
+	codexCaptureScope        string
+	pair                     bool
+	pairFile                 string
+	prefix                   string
+	prefixSupplied           bool
+	retentionDays            int
+	retentionSupplied        bool
+	requireSkillUse          bool
+	noRequireSkillUse        bool
+	requireSkillSupplied     bool
+	noRequireSkillSupplied   bool
+	provider                 string
+	bucket                   string
+	r2Account                string
+	r2KeyID                  string
+	awsProfile               string
+	region                   string
+	apps                     string
+	projects                 []string
+	projectRepos             []string
+	projectScope             string
+	projectScopeFile         string
+	projectScopeSupplied     bool
+	projectScopeFileSupplied bool
+	projectScopeInputRead    bool
+	projectMatches           *projectMatchResult
+	yes                      bool
+	verbose                  bool
+	skillEvidence            string
+	noSkills                 bool
+	skills                   bool
+	allowNetworkHome         bool
+	storageFlagsSupplied     bool
 }
 
 // skillsChoice is what the person asked of the agent skills on this run:
@@ -172,6 +175,10 @@ func setupFlags(fs *commandFlags, args []string) (setupOptions, bool) {
 	fs.Visit(func(f *flag.Flag) {
 		//lint:ignore LV1001 flag names are the ones defined just above
 		switch f.Name {
+		case "project-scope":
+			opts.projectScopeSupplied = true
+		case "project-scope-file":
+			opts.projectScopeFileSupplied = true
 		case "prefix":
 			opts.prefixSupplied = true
 		case "retention-days":
@@ -184,12 +191,16 @@ func setupFlags(fs *commandFlags, args []string) (setupOptions, bool) {
 			opts.storageFlagsSupplied = true
 		}
 	})
+	if err := validateProjectScopeOptions(opts); err != nil {
+		fs.usageError("%s", err)
+		return opts, false
+	}
 	return opts, true
 }
 
 // given reports whether any answer flag was passed.
 func (o setupOptions) given() bool {
-	return o.codexCaptureScope != "" || o.codexDiscovery != "" || o.prefixSupplied || o.retentionSupplied || o.requireSkillSupplied || o.noRequireSkillSupplied || o.storageFlagsSupplied || o.apps != "" || len(o.projects) > 0 || len(o.projectRepos) > 0 || o.projectScope != "" || o.projectScopeFile != "" || o.skillEvidence != ""
+	return o.codexCaptureScope != "" || o.codexDiscovery != "" || o.prefixSupplied || o.retentionSupplied || o.requireSkillSupplied || o.noRequireSkillSupplied || o.storageFlagsSupplied || o.apps != "" || len(o.projects) > 0 || len(o.projectRepos) > 0 || o.hasProjectScope() || o.skillEvidence != ""
 }
 
 // setupWithoutQuestions is setup --yes: the answers come from opts, the
@@ -357,6 +368,9 @@ func reviewWithoutQuestions(home string, existing, cfg config.Config, p *prompte
 // check out. Every missing or wrong answer is reported together.
 func setupAnswers(existing config.Config, opts setupOptions, home, userHome string, installed bool, env Env) (config.Config, credentials.R2Credentials, error) {
 	cfg := existing
+	if err := validateProjectScopeOptions(opts); err != nil {
+		return cfg, credentials.R2Credentials{}, err
+	}
 	if opts.retentionSupplied {
 		if opts.retentionDays < 1 || opts.retentionDays > 36500 {
 			return cfg, credentials.R2Credentials{}, errors.New("--retention-days must be between 1 and 36500")

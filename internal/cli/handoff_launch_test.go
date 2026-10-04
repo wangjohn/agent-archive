@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -16,6 +17,43 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/termlaunch"
 )
+
+func TestFileHandoffRetrievalCommandPreservesLiteralPath(t *testing.T) {
+	t.Parallel()
+	for _, path := range []string{
+		"/tmp/plain.jsonl",
+		"/tmp/spaces and 'single' and \"double\" quotes.jsonl",
+		"/tmp/$HOME-$(printf expanded)-`printf expanded`.jsonl",
+		"/tmp/back\\slash\nand newline.jsonl",
+	} {
+		t.Run(path, func(t *testing.T) {
+			t.Parallel()
+			h := archive.Handoff{Session: archive.HandoffSession{Harness: "claude"}}
+			prompt := launchHandoffPrompt("Synthetic historical record.", h, handoffTarget{filePath: path}, "/opt/agent-archive")
+			const prefix = "For the complete filtered local record, run "
+			_, rest, ok := strings.Cut(prompt, prefix)
+			if !ok {
+				t.Fatal("missing retrieval command")
+			}
+			command, _, ok := strings.Cut(rest, ".\n\n")
+			if !ok {
+				t.Fatal("missing retrieval command terminator")
+			}
+			// Parse the actual generated command without launching an app.
+			// NUL delimiters preserve whitespace and newlines in each argument.
+			cmd := exec.CommandContext(t.Context(), "sh", "-c", "set -- "+command+"; printf '%s\\0' \"$@\"")
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("parse retrieval command: %v: %s", err, out)
+			}
+			got := strings.Split(strings.TrimSuffix(string(out), "\x00"), "\x00")
+			want := []string{"agent-archive", "handoff", "--file", path, "--harness", "claude", "--max-bytes", "0"}
+			if !slices.Equal(got, want) {
+				t.Fatalf("retrieval arguments = %q, want %q", got, want)
+			}
+		})
+	}
+}
 
 // handoffPathFromPrompt reads the handoff document's path out of the
 // prompt, the last argument.

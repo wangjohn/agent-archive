@@ -247,3 +247,65 @@ func TestBoundedProjectsEntryCapKeepsEarlierRoot(t *testing.T) {
 		t.Fatalf("entry cap discarded usable prefix: %+v", got)
 	}
 }
+
+func TestBoundedProjectsIgnoreUnrelatedDeepNativeRoots(t *testing.T) {
+	t.Parallel()
+	for _, reverse := range []bool{false, true} {
+		t.Run(strconv.FormatBool(reverse), func(t *testing.T) {
+			t.Parallel()
+			tr := newTree(t)
+			root := tr.repo("home/repo")
+			raw, _ := json.Marshal(map[string]string{"cwd": root})
+			tr.write("home/.claude/projects/0.jsonl", string(raw)+"\n")
+			deep := filepath.Join(tr.root, "unrelated", strings.Repeat("nested/", 40))
+			env := tr.env()
+			bases := []string{filepath.Join(env.Home, ".claude"), deep}
+			if reverse {
+				bases[0], bases[1] = bases[1], bases[0]
+			}
+			env.NativeDirectories = map[string][]string{"claude": bases}
+			got := KnownProjectsBounded(t.Context(), env, config.Config{}, 128)
+			if got.Incomplete() || len(got.Projects) != 1 || got.Projects[0].Root != root {
+				t.Fatalf("unrelated native root hid readable history: %+v", got)
+			}
+		})
+	}
+}
+
+func TestBoundedProjectDirectoryDepthUsesClosestContainingRoot(t *testing.T) {
+	t.Parallel()
+	base := filepath.Join(string(filepath.Separator), "synthetic", "native")
+	nested := filepath.Join(base, strings.Repeat("nested/", 40))
+	for _, tc := range []struct {
+		name   string
+		bases  []string
+		path   string
+		capped bool
+	}{
+		{name: "depth33", bases: []string{base}, path: filepath.Join(base, strings.Repeat("child/", 33))},
+		{name: "depth34", bases: []string{base}, path: filepath.Join(base, strings.Repeat("child/", 34)), capped: true},
+		{name: "nested_root_last", bases: []string{base, nested}, path: filepath.Join(nested, "projects")},
+		{name: "nested_root_first", bases: []string{nested, base}, path: filepath.Join(nested, "projects")},
+		{name: "sibling_prefix", bases: []string{base}, path: filepath.Join(base+"-other", strings.Repeat("child/", 34))},
+		{name: "parent", bases: []string{nested}, path: base},
+		{name: "rel_error", bases: []string{"relative"}, path: base},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			reads := 0
+			d := projectDiscovery{ctx: t.Context(), env: Environment{ReadDir: func(string) ([]fs.DirEntry, error) { reads++; return nil, nil }}}
+			files := projectFiles{d: &d, bases: tc.bases}
+			_, err := files.ReadDir(tc.path)
+			if d.result.Capped != tc.capped || errors.Is(err, errProjectLimit) != tc.capped || reads != boolReadCount(tc.capped) {
+				t.Fatalf("depth boundary: capped=%v reads=%d err=%v", d.result.Capped, reads, err)
+			}
+		})
+	}
+}
+
+func boolReadCount(capped bool) int {
+	if capped {
+		return 0
+	}
+	return 1
+}

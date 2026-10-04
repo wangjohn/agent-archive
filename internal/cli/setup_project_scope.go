@@ -24,6 +24,14 @@ type portableProjectRule struct {
 	Included bool   `json:"included"`
 }
 
+const maxProjectScopeRules = 4096
+
+type projectScopeInputRule struct {
+	RepoKey  string `json:"repo_key,omitempty"`
+	Path     string `json:"path"`
+	Included *bool  `json:"included"`
+}
+
 func hasProjectExclusions(projects []archive.ProjectActivation) bool {
 	for _, project := range projects {
 		if !project.Included {
@@ -34,6 +42,12 @@ func hasProjectExclusions(projects []archive.ProjectActivation) bool {
 }
 
 func portableProjectScope(projects []archive.ProjectActivation, home string, env Env, ctx context.Context) string {
+	return portableProjectScopeWithKeys(projects, home, env, ctx, nil)
+}
+
+// portableProjectScopeWithKeys reuses only identities validated at their full
+// canonical checkout root before switching the command's transport.
+func portableProjectScopeWithKeys(projects []archive.ProjectActivation, home string, env Env, ctx context.Context, knownKeys map[string]string) string {
 	// Capture compares resolved locations, so aliases must share an anchor.
 	canonical := make([]archive.ProjectActivation, 0, len(projects))
 	seen := map[string]bool{}
@@ -49,25 +63,26 @@ func portableProjectScope(projects []archive.ProjectActivation, home string, env
 	}
 	projects = canonical
 	home = local.CanonicalPath(home)
+	// Only an outermost configured root may relocate. Walk each path's
+	// parents against the rule index rather than comparing every pair of
+	// paths: large scopes otherwise spend quadratic work on long siblings.
+	outermost, absolute := outermostProjectRoots(seen)
 	anchors := map[string]string{}
 	for _, project := range projects {
 		// A checkout inside a path-based rule must move with that rule.
 		// Relocating it alone would detach exclusions from their included
 		// ancestor (or reinclusions from their excluded ancestor).
-		hasAncestor := false
-		for _, other := range projects {
-			if other.Root != project.Root && local.PathWithin(project.Root, other.Root) {
-				hasAncestor = true
-				break
-			}
+		if absolute && outermost[project.Root] != project.Root || !absolute && configuredProjectAncestor(project.Root, projects) {
+			continue
 		}
-		if hasAncestor {
+		if key := knownKeys[project.Root]; archive.IsRepoKey(key) {
+			anchors[project.Root] = key
 			continue
 		}
 		if info, err := os.Stat(filepath.Join(project.Root, ".git")); err == nil && (info.IsDir() || info.Mode().IsRegular()) {
 			child, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
 			key, top, known := env.projectRepository(child, project.Root)
-			if known && archive.IsRepoKey(key) && local.CanonicalPath(top) == local.CanonicalPath(project.Root) {
+			if known && archive.IsRepoKey(key) && local.CanonicalPath(top) == project.Root {
 				anchors[project.Root] = key
 			}
 			cancel()
@@ -89,15 +104,13 @@ func portableProjectScope(projects []archive.ProjectActivation, home string, env
 		path, repoKey := homeRelative(project.Root, home), ""
 		// Keep nested checkouts under the outer scope: relocating an excluded
 		// nested repo independently would leave its old subtree included.
-		anchor := ""
-		for root := range anchors {
-			if local.PathWithin(project.Root, root) && (anchor == "" || len(root) < len(anchor)) {
-				anchor = root
-			}
+		anchor := outermost[project.Root]
+		if !absolute {
+			anchor = projectScopeAnchor(project.Root, anchors)
 		}
-		if anchor != "" {
+		if key := anchors[anchor]; key != "" {
 			if rel, err := filepath.Rel(anchor, project.Root); err == nil {
-				repoKey, path = anchors[anchor], filepath.ToSlash(rel)
+				repoKey, path = key, filepath.ToSlash(rel)
 			}
 		}
 		rules = append(rules, portableProjectRule{RepoKey: repoKey, Path: path, Included: project.Included})
@@ -106,13 +119,82 @@ func portableProjectScope(projects []archive.ProjectActivation, home string, env
 	return string(encoded)
 }
 
+// outermostProjectRoots preserves the parent walk for canonical absolute paths.
+// Relative canonicalization failures require PathWithin's original semantics.
+func outermostProjectRoots(roots map[string]bool) (map[string]string, bool) {
+	for root := range roots {
+		if !filepath.IsAbs(root) {
+			return nil, false
+		}
+	}
+	outermost := make(map[string]string, len(roots))
+	for root := range roots {
+		outer := root
+		for parent := filepath.Dir(root); parent != root; parent = filepath.Dir(parent) {
+			if _, exists := roots[parent]; exists {
+				outer = parent
+			}
+			if next := filepath.Dir(parent); next == parent {
+				break
+			}
+		}
+		outermost[root] = outer
+	}
+	return outermost, true
+}
+
+func configuredProjectAncestor(root string, projects []archive.ProjectActivation) bool {
+	for _, other := range projects {
+		if other.Root != root && local.PathWithin(root, other.Root) {
+			return true
+		}
+	}
+	return false
+}
+
+func projectScopeAnchor(root string, anchors map[string]string) string {
+	anchor := ""
+	for candidate := range anchors {
+		if local.PathWithin(root, candidate) && (anchor == "" || len(candidate) < len(anchor)) {
+			anchor = candidate
+		}
+	}
+	return anchor
+}
+
+// hasProjectScope distinguishes an explicit empty flag from an absent flag.
+func (o setupOptions) hasProjectScope() bool {
+	return o.projectScopeSupplied || o.projectScopeFileSupplied || o.projectScope != "" || o.projectScopeFile != ""
+}
+
+// validateProjectScopeOptions refuses ambiguous scope before reading inputs or
+// applying companion inclusions that could override transferred exclusions.
+func validateProjectScopeOptions(o setupOptions) error {
+	if o.projectScopeSupplied && strings.TrimSpace(o.projectScope) == "" {
+		return errors.New("--project-scope must contain capture rules")
+	}
+	if o.projectScopeFileSupplied && strings.TrimSpace(o.projectScopeFile) == "" {
+		return errors.New("--project-scope-file must name a file or - for stdin")
+	}
+	if (o.projectScopeSupplied || o.projectScope != "") && (o.projectScopeFileSupplied || o.projectScopeFile != "") && !o.projectScopeInputRead {
+		return errors.New("give only one of --project-scope and --project-scope-file")
+	}
+	if o.hasProjectScope() && (len(o.projects) > 0 || len(o.projectRepos) > 0) {
+		return errors.New("--project-scope and --project-scope-file cannot be combined with --project or --project-repo; include every capture rule in the scope")
+	}
+	return nil
+}
+
 // readProjectScopeInput reads only an explicitly selected file or stdin stream.
 func readProjectScopeInput(opts setupOptions, stdin io.Reader) (setupOptions, error) {
+	if err := validateProjectScopeOptions(opts); err != nil {
+		return opts, err
+	}
 	if opts.projectScopeFile == "" {
 		return opts, nil
 	}
-	if opts.projectScope != "" {
-		return opts, errors.New("give only one of --project-scope and --project-scope-file")
+	if opts.projectScopeInputRead {
+		return opts, nil
 	}
 	reader := stdin
 	var file *os.File
@@ -140,27 +222,53 @@ func readProjectScopeInput(opts setupOptions, stdin io.Reader) (setupOptions, er
 		return opts, errors.New("--project-scope-file must contain capture rules")
 	}
 	opts.projectScope = string(data)
+	opts.projectScopeInputRead = true
 	return opts, nil
+}
+
+// decodeProjectScope bounds rule allocation before filesystem or Git discovery.
+func decodeProjectScope(encoded string) ([]projectScopeInputRule, error) {
+	decoder := json.NewDecoder(strings.NewReader(encoded))
+	decoder.DisallowUnknownFields()
+	token, err := decoder.Token()
+	if err != nil {
+		return nil, fmt.Errorf("--project-scope: %w", err)
+	}
+	if token != json.Delim('[') {
+		return nil, errors.New("--project-scope must contain a nonempty JSON array")
+	}
+	var rules []projectScopeInputRule
+	for decoder.More() {
+		if len(rules) == maxProjectScopeRules {
+			return nil, errors.New("--project-scope accepts at most 4096 rules")
+		}
+		var rule projectScopeInputRule
+		if err := decoder.Decode(&rule); err != nil {
+			return nil, fmt.Errorf("--project-scope: %w", err)
+		}
+		rules = append(rules, rule)
+	}
+	if _, err := decoder.Token(); err != nil {
+		return nil, fmt.Errorf("--project-scope: %w", err)
+	}
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
+		return nil, errors.New("--project-scope must contain one JSON array")
+	}
+	if len(rules) == 0 {
+		return nil, errors.New("--project-scope must contain a nonempty JSON array")
+	}
+	return rules, nil
 }
 
 // setupProjectScope resolves every rule before changing the candidate config.
 // A failed exclusion must never leave its ancestor newly included.
 func setupProjectScope(cfg *config.Config, encoded, home string, env Env) []error {
-	var rules []struct {
-		RepoKey  string `json:"repo_key,omitempty"`
-		Path     string `json:"path"`
-		Included *bool  `json:"included"`
+	rules, err := decodeProjectScope(encoded)
+	if err != nil {
+		return []error{err}
 	}
-	decoder := json.NewDecoder(strings.NewReader(encoded))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&rules); err != nil {
-		return []error{fmt.Errorf("--project-scope: %w", err)}
-	}
-	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
-		return []error{errors.New("--project-scope must contain one JSON array")}
-	}
-	if len(rules) == 0 {
-		return []error{errors.New("--project-scope must contain a nonempty JSON array")}
+	if len(cfg.Archive.Projects) > maxProjectScopeRules {
+		return []error{errors.New("--project-scope cannot transfer into a saved scope with more than 4096 rules; review the saved capture scope first")}
 	}
 	requests := []projectMatchRequest{}
 	indices := map[string]int{}
@@ -227,15 +335,31 @@ func setupProjectScope(cfg *config.Config, encoded, home string, env Env) []erro
 
 // applyProjectScope checks destination consent before updating any capture rule.
 func applyProjectScope(cfg *config.Config, resolved []archive.ProjectActivation) []error {
+	if len(cfg.Archive.Projects) > maxProjectScopeRules {
+		return []error{errors.New("--project-scope cannot transfer into a saved scope with more than 4096 rules; review the saved capture scope first")}
+	}
 	saved := make([]archive.ProjectActivation, len(cfg.Archive.Projects))
 	copy(saved, cfg.Archive.Projects)
 	decisions := map[string]bool{}
 	for i := range saved {
-		saved[i].Root = local.CanonicalPath(saved[i].Root)
+		root, err := resolveProjectScopePath(saved[i].Root)
+		if err != nil {
+			return []error{fmt.Errorf("--project-scope cannot resolve saved path safely: %w", err)}
+		}
+		saved[i].Root = root
 		if included, exists := decisions[saved[i].Root]; exists && included != saved[i].Included {
 			return []error{errors.New("--project-scope saved aliases have conflicting capture decisions; review the saved capture scope first")}
 		}
 		decisions[saved[i].Root] = saved[i].Included
+	}
+	combinedCount := len(saved)
+	for _, project := range resolved {
+		if _, exists := decisions[project.Root]; !exists {
+			combinedCount++
+		}
+	}
+	if combinedCount > maxProjectScopeRules {
+		return []error{errors.New("--project-scope would create more than 4096 rules; review the saved capture scope first")}
 	}
 	// Saved reinclusions must not defeat a transferred exclusion. Refuse
 	// before writing anything, while keeping explicitly transferred reinclusions.

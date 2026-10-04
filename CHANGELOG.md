@@ -166,7 +166,14 @@ Planned for v0.2.0. This release has not been tagged or published.
   scopes, unresolved symlinks are refused, and pairing rejects ordinary
   scope-transfer flags. Compatible keyed scopes can be reapplied; equal
   alias decisions coalesce and conflicting aliases are refused. Printed
-  scope transfers use stdin to avoid operating-system argument limits.
+  scope transfers use stdin to avoid operating-system argument limits, retain
+  established repository identities when switching transport, and reject empty
+  inputs or companion project flags that could defeat transferred exclusions.
+  Saved dangling symlinks now refuse transfer before they can defeat future
+  exclusions. Scope input, saved destination scopes, and resulting scopes are
+  limited to 4,096 rules during transfer; oversized source rules are never truncated.
+- File handoff retrieval commands preserve transcript paths containing shell
+  metacharacters, quotes, backslashes, and newlines without expanding them.
 
 - Draft machine revocation rejects forged self labels, leaves registry commands
   usable after progress publication, and preserves unverified request targets.

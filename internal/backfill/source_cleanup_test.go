@@ -65,6 +65,7 @@ func TestRegistrationSourceObservationCannotHideCleanupFailure(t *testing.T) {
 	t.Parallel()
 	for name, signatureErr := range map[string]error{"observed": nil, "missing": os.ErrNotExist} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			fault := errors.New("synthetic observation owner cleanup fault")
 			sources := observationCleanupSources{fault: fault, signatureErr: signatureErr}
 			candidate := Candidate{Harness: "cursor", NativeSessionID: "synthetic", SourceKind: archive.SourceKindCursorSQLite, SourceKey: "synthetic"}
@@ -79,12 +80,13 @@ func TestRegistrationSourceObservationCannotHideCleanupFailure(t *testing.T) {
 
 func TestUndoSourceObservationCannotHideCleanupFailure(t *testing.T) {
 	t.Parallel()
-	store, err := state.Open(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
 	for name, signatureErr := range map[string]error{"observed": nil, "missing": os.ErrNotExist} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			store, err := state.Open(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
 			fault := errors.New("synthetic observation owner cleanup fault")
 			sources := observationCleanupSources{fault: fault, signatureErr: signatureErr}
 			reg := archive.SessionRegistration{ArchiveSessionID: "synthetic", Harness: archive.Harness{Name: "cursor"}, NativeSessionID: "synthetic", SourceKind: archive.SourceKindCursorSQLite, SourceKey: "synthetic", AdmittedAt: fixedNow}
