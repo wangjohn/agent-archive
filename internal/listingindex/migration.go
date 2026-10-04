@@ -103,8 +103,9 @@ func retireCandidate(ctx context.Context, store storage.ObjectStore, metadataKey
 	}
 	r, parseErr := ParseRevision(string(data))
 	// A corrupt pointer never authorizes deleting its claimed target. Its own
-	// session-qualified auxiliary object can still be removed safely.
-	if parseErr == nil && r.MetadataKey == metadataKey && revisionPointer(r) == obj.Key {
+	// session-qualified auxiliary object can still be removed safely. Legacy
+	// pointers can own only v2 hints; v3 hints have no pointer counterpart.
+	if parseErr == nil && strings.HasPrefix(r.Key, V2Prefix) && r.MetadataKey == metadataKey && revisionPointer(r) == obj.Key {
 		return DeleteRevision(ctx, store, r)
 	}
 	return store.Delete(ctx, obj.Key)

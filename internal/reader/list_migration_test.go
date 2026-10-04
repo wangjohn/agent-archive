@@ -255,6 +255,41 @@ func TestLegacyPartialPointerNeverDeletesUnrelatedClaim(t *testing.T) {
 	}
 }
 
+func TestLegacyPointerCannotClaimSessionAddressedHint(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := storagetest.NewMemoryStore()
+	key := putSession(t, s, "codex", "target", baseTime)
+	data, validator, err := s.GetVersioned(ctx, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := listingindex.NewRevision(key, data, validator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := listingindex.PutRevision(ctx, s, r); err != nil {
+		t.Fatal(err)
+	}
+	pointer := legacyPointer(r)
+	if err := s.Put(ctx, pointer, []byte(r.Key)); err != nil {
+		t.Fatal(err)
+	}
+	if err := listingindex.RetireSnapshot(ctx, s, key, []storage.Object{{Key: pointer}}); err != nil {
+		t.Fatal(err)
+	}
+	remaining, err := s.List(ctx, "listing/by-session-v2/")
+	if err != nil || len(remaining) != 0 {
+		t.Fatalf("legacy pointer survived successful cleanup: %v %v", remaining, err)
+	}
+	if _, err := s.Get(ctx, r.Key); err != nil {
+		t.Fatalf("legacy pointer authorized deletion of v3 hint: %v", err)
+	}
+	if got, err := s.Get(ctx, key); err != nil || string(got) != string(data) {
+		t.Fatal("auxiliary cleanup changed canonical metadata")
+	}
+}
+
 func TestMixedNamespacesShareOpaqueCoverageAndLegacyReaderFallsBack(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
