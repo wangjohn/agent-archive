@@ -44,11 +44,6 @@ type packedSessionIndex struct {
 
 func recoveryMarkerVersion(version int) bool { return version == 1 || version == 2 }
 
-// validPackedEvidence checks the shared packed marker format without scanning shards.
-func (marker sessionIndexMarker) validPackedEvidence() bool {
-	return marker.Version == 2 && safeFileComponent(marker.PackedEpoch) && marker.PackedRevision != "" && marker.PackedInventory != ""
-}
-
 func packedIndexHash(key agentmeta.SessionKey) string {
 	sum := sha256.Sum256(key.Encoding())
 	return hex.EncodeToString(sum[:])
@@ -70,7 +65,7 @@ func (s *Store) packedSessionIndexEntry(key agentmeta.SessionKey) (qualifiedSess
 	if marker.Version == 1 {
 		return qualifiedSessionIndexEntry{}, false, nil
 	}
-	if !marker.validPackedEvidence() {
+	if marker.Version != 2 || !safeFileComponent(marker.PackedEpoch) || marker.PackedRevision == "" || marker.PackedInventory == "" {
 		return qualifiedSessionIndexEntry{}, false, ErrSessionIndexRecoveryRequired
 	}
 	hash := packedIndexHash(key)
@@ -677,10 +672,6 @@ func (s *Store) packedAnchorHealthy(hash string) bool {
 	if local.Read(filepath.Join(s.home, "sessions-v1", hash+".json"), &entry) != nil {
 		return false
 	}
-	return packedAnchorEntryHealthy(entry, hash)
-}
-
-func packedAnchorEntryHealthy(entry qualifiedSessionIndexEntry, hash string) bool {
 	key := agentmeta.SessionKey{Agent: entry.Agent, NativeID: entry.NativeID}
 	if key.Validate() != nil || packedIndexHash(key) != hash {
 		return false

@@ -351,7 +351,7 @@ func TestCodexStatusSeparatesActualRecoveryEvidence(t *testing.T) {
 		t.Fatal("deleted fence remained complete")
 	}
 	screen := statusScreen{now: at, style: styleFor(&bytes.Buffer{})}
-	for _, phase := range []string{"registrations", "candidates", "shards", "fallback-owners-and-candidates", "requested-misses"} {
+	for _, phase := range []string{"registrations", "candidates", "packed-shards", "packed-fallback", "requested-misses"} {
 		rows := screen.captureRows(statusView{Apps: []appStatus{{Name: "codex", Hooks: "installed"}}, IdentityRecovery: &state.SessionIndexRecoveryStatus{Pending: true, Phase: phase}})
 		row := rows[1]
 		if row.mark != screen.info() || !strings.Contains(strings.Join(row.cells, " "), "Identity recovery: pending") {
@@ -468,7 +468,7 @@ func TestCodexStatusShowsScheduledPackedRecoveryCompletion(t *testing.T) {
 	}
 	view, err := readStatus(env)
 	must(t, err)
-	if view.IdentityRecovery == nil || !view.IdentityRecovery.Pending || view.IdentityRecovery.Phase != "shards" {
+	if view.IdentityRecovery == nil || !view.IdentityRecovery.Pending || view.IdentityRecovery.Phase != "packed-shards" {
 		t.Fatalf("packed pending status: %+v", view.IdentityRecovery)
 	}
 	for range 20 {

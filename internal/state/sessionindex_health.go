@@ -1,8 +1,7 @@
 package state
 
 import (
-	"io"
-	"os"
+	"encoding/hex"
 	"path/filepath"
 )
 
@@ -16,23 +15,18 @@ type SessionIndexRecoveryStatus struct {
 
 // SessionIndexRecoveryStatus reads the recovery marker, cursor and membership fence. It
 // never enumerates registrations or reads a transcript, Git metadata or storage.
-// It reads at most 4224 bytes of state, excluding one bounded oversize byte per file.
+// It reads at most 2560 bytes of state, excluding one bounded oversize byte per file.
 func (s *Store) SessionIndexRecoveryStatus() (SessionIndexRecoveryStatus, error) {
 	var marker sessionIndexMarker
 	if err := readRecoveryJSONLimit(filepath.Join(s.home, sessionIndexMarkerFile), &marker, 512); err != nil {
 		return SessionIndexRecoveryStatus{Phase: "unknown"}, err
 	}
-	if !recoveryMarkerVersion(marker.Version) || (marker.Version == 2 && !marker.validPackedEvidence()) {
+	if !recoveryMarkerVersion(marker.Version) || (marker.Version == 2 && !validPackedHealthMarker(marker)) {
 		return SessionIndexRecoveryStatus{Phase: "unknown"}, ErrSessionIndexRecoveryRequired
 	}
 	if marker.Complete {
 		if marker.MembershipFenced || marker.Version == 2 {
 			if err := s.validateRecoveryHealthFence(marker.PackedRevision); err != nil {
-				return SessionIndexRecoveryStatus{Phase: "unknown"}, err
-			}
-		}
-		if marker.Version == 2 {
-			if err := s.validatePackedRecoveryHealthAnchor(marker); err != nil {
 				return SessionIndexRecoveryStatus{Phase: "unknown"}, err
 			}
 		}
@@ -58,51 +52,36 @@ func (s *Store) pendingRecoveryHealth(marker sessionIndexMarker) (SessionIndexRe
 	if err := readRecoveryJSONLimit(filepath.Join(s.home, sessionRecoveryCursorFile), &cursor, 1536); err != nil {
 		return unknown, err
 	}
-	if !recoveryMarkerVersion(cursor.Version) || cursor.Version != marker.Version || cursor.Generation == "" || cursor.Generation != marker.Generation || !cursor.validChecksum() || cursor.Offset < 0 || cursor.Phase < 0 || cursor.Phase > 2 {
+	if !recoveryMarkerVersion(cursor.Version) || cursor.Generation == "" || cursor.Generation != marker.Generation || !cursor.validChecksum() || cursor.Offset < 0 || cursor.Phase < 0 || cursor.Phase > 2 {
 		return unknown, ErrSessionIndexRecoveryRequired
 	}
-	if marker.Version == 2 && (cursor.Revision != marker.PackedRevision || cursor.Inventory == "" || (cursor.Phase == 0 && cursor.Offset > packedSessionIndexShards)) {
+	if marker.Version == 2 && (cursor.Version != 2 || cursor.Revision != marker.PackedRevision || !healthFingerprint(cursor.Inventory) || (cursor.Phase == 0 && cursor.Offset > packedSessionIndexShards)) {
 		return unknown, ErrSessionIndexRecoveryRequired
 	}
-	if marker.MembershipFenced || cursor.Revision != "" || marker.Version == 2 {
+	if cursor.Version == 2 && marker.Version != 2 {
+		return unknown, ErrSessionIndexRecoveryRequired
+	}
+	if marker.MembershipFenced || cursor.Revision != "" {
 		if err := s.validateRecoveryHealthFence(cursor.Revision); err != nil {
 			return unknown, err
 		}
 	}
 	phases := []string{"registrations", "candidates", "requested-misses"}
-	if marker.Version == 2 {
-		phases = []string{"shards", "fallback-owners-and-candidates", "requested-misses"}
+	if cursor.Version == 2 {
+		phases = []string{"packed-shards", "packed-fallback", "requested-misses"}
 	}
 	return SessionIndexRecoveryStatus{Pending: true, Phase: phases[cursor.Phase]}, nil
 }
 
-// Check only the bounded overlay sentinel and its one named anchor. Completion
-// reports the scheduler's certificate, not an independently scanned shard census.
-func (s *Store) validatePackedRecoveryHealthAnchor(marker sessionIndexMarker) error {
-	file, err := os.Open(filepath.Join(s.home, "sessions-v1", packedOverlaySentinel))
-	if err != nil {
-		return err
+// Packed health certifies only bounded scheduling fields, not shard contents.
+func validPackedHealthMarker(marker sessionIndexMarker) bool {
+	return safeFileComponent(marker.Generation) && safeFileComponent(marker.PackedEpoch) && safeFileComponent(marker.PackedRevision) && healthFingerprint(marker.PackedInventory)
+}
+
+func healthFingerprint(value string) bool {
+	if len(value) != 64 {
+		return false
 	}
-	defer func() { _ = file.Close() }()
-	data, err := io.ReadAll(io.LimitReader(file, 129))
-	if err != nil {
-		return err
-	}
-	if len(data) > 128 {
-		return ErrSessionIndexRecoveryRequired
-	}
-	hash, valid := packedOverlayAnchor(string(data), marker)
-	if !valid {
-		return ErrSessionIndexRecoveryRequired
-	}
-	if hash != "" {
-		var entry qualifiedSessionIndexEntry
-		if err := readRecoveryJSONLimit(filepath.Join(s.home, "sessions-v1", hash+".json"), &entry, 1536); err != nil {
-			return err
-		}
-		if !packedAnchorEntryHealthy(entry, hash) {
-			return ErrSessionIndexRecoveryRequired
-		}
-	}
-	return nil
+	_, err := hex.DecodeString(value)
+	return err == nil
 }

@@ -6,9 +6,6 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-- Identity recovery status recognizes packed recovery checkpoints and completion
-  certificates, with unknown status for damaged or stale scheduling evidence.
-
 - Codex setup offers included-project or all-current-and-future-project scope,
   independent of supported-source discovery. Fresh scripts explicitly choose
   both source and scope; omitted reconfiguration preserves consent. Codex-only
@@ -21,6 +18,10 @@ follow [Semantic Versioning](https://semver.org/).
 Planned for v0.2.0. This release has not been tagged or published.
 
 ### Fixed
+
+- Status recognizes valid packed identity-recovery scheduling evidence and
+  distinguishes shard application and fallback work without scanning the index.
+  Damaged or stale scheduling evidence reports unknown status.
 
 - The bucket cleanup recipe works after local integrations or configuration
   have been removed. An explicit ordinary uninstall check stops local uploads

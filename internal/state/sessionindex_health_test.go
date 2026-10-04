@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -152,8 +153,6 @@ const (
 	certificateDamageMissingMembership certificateHealthDamage = "missing-membership"
 	certificateDamageCorruptMembership certificateHealthDamage = "corrupt-membership"
 	certificateDamageFutureMembership  certificateHealthDamage = "future-membership"
-	certificateDamageMissingAnchor     certificateHealthDamage = "missing-anchor"
-	certificateDamageCorruptAnchor     certificateHealthDamage = "corrupt-anchor"
 )
 
 func TestPackedRecoveryStatusScheduledEvidence(t *testing.T) {
@@ -175,7 +174,7 @@ func TestPackedRecoveryStatusScheduledEvidence(t *testing.T) {
 		t.Fatalf("pending: %v %v", complete, err)
 	}
 	health, err := OpenReadOnly(s.home).SessionIndexRecoveryStatus()
-	if err != nil || !health.Pending || health.Complete || health.Phase != "shards" {
+	if err != nil || !health.Pending || health.Complete || health.Phase != "packed-shards" {
 		t.Fatalf("packed pending: %#v %v", health, err)
 	}
 	var cursor sessionRecoveryCursor
@@ -221,7 +220,7 @@ func TestPackedRecoveryStatusScheduledEvidence(t *testing.T) {
 			}
 		})
 	}
-	for phase, name := range []string{"shards", "fallback-owners-and-candidates", "requested-misses"} {
+	for phase, name := range []string{"packed-shards", "packed-fallback", "requested-misses"} {
 		cursor.Phase = phase
 		if err := s.saveRecoveryCursor(&cursor); err != nil {
 			t.Fatal(err)
@@ -263,13 +262,8 @@ func TestPackedRecoveryStatusScheduledEvidence(t *testing.T) {
 	if err := local.Read(filepath.Join(s.home, sessionIndexMarkerFile), &marker); err != nil || marker.Version != 2 || !marker.Complete || !marker.MembershipFenced {
 		t.Fatalf("packed certificate: %#v %v", marker, err)
 	}
-	anchorPath := filepath.Join(s.home, "sessions-v1", packedOverlaySentinel)
-	anchor, err := os.ReadFile(anchorPath)
-	if err != nil {
-		t.Fatal(err)
-	}
 	markerPath := filepath.Join(s.home, sessionIndexMarkerFile)
-	for _, damage := range []certificateHealthDamage{certificateDamageMissing, certificateDamageCorrupt, certificateDamageFuture, certificateDamageEpoch, certificateDamageRevision, certificateDamageInventory, certificateDamageMembership, certificateDamageMissingMembership, certificateDamageCorruptMembership, certificateDamageFutureMembership, certificateDamageMissingAnchor, certificateDamageCorruptAnchor} {
+	for _, damage := range []certificateHealthDamage{certificateDamageMissing, certificateDamageCorrupt, certificateDamageFuture, certificateDamageEpoch, certificateDamageRevision, certificateDamageInventory, certificateDamageMembership, certificateDamageMissingMembership, certificateDamageCorruptMembership, certificateDamageFutureMembership} {
 		t.Run(string(damage), func(t *testing.T) {
 			damaged := marker
 			switch damage {
@@ -295,10 +289,6 @@ func TestPackedRecoveryStatusScheduledEvidence(t *testing.T) {
 				err = os.WriteFile(filepath.Join(s.home, sessionMembershipFile), []byte("{"), 0600)
 			case certificateDamageFutureMembership:
 				err = local.Write(filepath.Join(s.home, sessionMembershipFile), sessionMembershipRevision{Version: 2, Revision: revision})
-			case certificateDamageMissingAnchor:
-				err = os.Remove(anchorPath)
-			case certificateDamageCorruptAnchor:
-				err = os.WriteFile(anchorPath, []byte("changed"), 0600)
 			case certificateDamageMembership:
 				err = local.Write(filepath.Join(s.home, sessionMembershipFile), sessionMembershipRevision{Version: 1, Revision: "changed"})
 			}
@@ -308,9 +298,6 @@ func TestPackedRecoveryStatusScheduledEvidence(t *testing.T) {
 			if health, err := s.SessionIndexRecoveryStatus(); err == nil || health.Complete || health.Phase != "unknown" {
 				t.Fatalf("damaged certificate: %#v %v", health, err)
 			}
-			if err := os.WriteFile(anchorPath, anchor, 0600); err != nil {
-				t.Fatal(err)
-			}
 			if err := local.Write(markerPath, marker); err != nil {
 				t.Fatal(err)
 			}
@@ -318,5 +305,178 @@ func TestPackedRecoveryStatusScheduledEvidence(t *testing.T) {
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+type packedHealthFieldDamage string
+
+const (
+	packedFieldMarkerVersion    packedHealthFieldDamage = "marker-version"
+	packedFieldCursorVersion    packedHealthFieldDamage = "cursor-version"
+	packedFieldEpoch            packedHealthFieldDamage = "epoch"
+	packedFieldGeneration       packedHealthFieldDamage = "generation"
+	packedFieldInventory        packedHealthFieldDamage = "inventory"
+	packedFieldPackedRevision   packedHealthFieldDamage = "packed-revision"
+	packedFieldCursorRevision   packedHealthFieldDamage = "cursor-revision"
+	packedFieldCursorInventory  packedHealthFieldDamage = "cursor-inventory"
+	packedFieldCursorGeneration packedHealthFieldDamage = "cursor-generation"
+	packedFieldOffset           packedHealthFieldDamage = "offset"
+	packedFieldPhase            packedHealthFieldDamage = "phase"
+)
+
+type packedHealthFileDamage string
+
+const (
+	packedFileChecksum       packedHealthFileDamage = "checksum"
+	packedFileFence          packedHealthFileDamage = "fence"
+	packedFileMissingFence   packedHealthFileDamage = "missing-fence"
+	packedFileOversizeMarker packedHealthFileDamage = "oversize-marker"
+	packedFileOversizeCursor packedHealthFileDamage = "oversize-cursor"
+)
+
+type packedHealthCompleteDamage string
+
+const (
+	packedCompleteMarkerVersion packedHealthCompleteDamage = "marker-version"
+	packedCompleteEpoch         packedHealthCompleteDamage = "epoch"
+	packedCompleteInventory     packedHealthCompleteDamage = "inventory"
+)
+
+// Small durable fixtures exercise scheduling evidence without building a packed
+// inventory. Corrupt shard/registration paths must never be read by status.
+func TestPackedRecoveryHealthBoundedEvidence(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		complete bool
+		phase    int
+		want     string
+	}{
+		{"complete", true, 0, "complete"},
+		{"shards", false, 0, "packed-shards"},
+		{"fallback", false, 1, "packed-fallback"},
+		{"misses", false, 2, "requested-misses"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newTestStore(t)
+			marker, cursor := packedHealthFixture(tc.complete, tc.phase)
+			writePackedHealthFixture(t, s, marker, cursor)
+			for _, name := range []string{packedSessionIndexDir, "registrations", "sessions-v1"} {
+				if err := os.RemoveAll(filepath.Join(s.home, name)); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(s.home, name), []byte("not a directory"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			health, err := OpenReadOnly(s.home).SessionIndexRecoveryStatus()
+			if err != nil || health.Complete != tc.complete || health.Pending == tc.complete || health.Phase != tc.want {
+				t.Fatalf("bounded packed evidence: %#v %v", health, err)
+			}
+		})
+	}
+}
+
+func TestPackedRecoveryHealthRejectsInvalidEvidence(t *testing.T) {
+	for _, damage := range []string{"marker-version", "cursor-version", "epoch", "generation", "inventory", "packed-revision", "cursor-revision", "cursor-inventory", "cursor-generation", "checksum", "offset", "phase", "fence", "missing-fence", "oversize-marker", "oversize-cursor"} {
+		t.Run(damage, func(t *testing.T) {
+			s := newTestStore(t)
+			marker, cursor := packedHealthFixture(false, 0)
+			switch packedHealthFieldDamage(damage) {
+			case packedFieldMarkerVersion:
+				marker.Version = 3
+			case packedFieldCursorVersion:
+				cursor.Version = 3
+			case packedFieldEpoch:
+				marker.PackedEpoch = "../invalid"
+			case packedFieldGeneration:
+				marker.Generation = ""
+			case packedFieldInventory:
+				marker.PackedInventory = strings.Repeat("z", 64)
+			case packedFieldPackedRevision:
+				marker.PackedRevision = ""
+			case packedFieldCursorRevision:
+				cursor.Revision = "different"
+			case packedFieldCursorInventory:
+				cursor.Inventory = "not a hash"
+			case packedFieldCursorGeneration:
+				cursor.Generation = "different"
+			case packedFieldOffset:
+				cursor.Offset = packedSessionIndexShards + 1
+			case packedFieldPhase:
+				cursor.Phase = 3
+			}
+			writePackedHealthFixture(t, s, marker, cursor)
+			switch packedHealthFileDamage(damage) {
+			case packedFileChecksum:
+				cursor.Checksum = "wrong"
+				writeHealthJSON(t, filepath.Join(s.home, sessionRecoveryCursorFile), cursor)
+			case packedFileFence:
+				writeHealthJSON(t, filepath.Join(s.home, sessionMembershipFile), sessionMembershipRevision{Version: 1, Revision: "different"})
+			case packedFileMissingFence:
+				if err := os.Remove(filepath.Join(s.home, sessionMembershipFile)); err != nil {
+					t.Fatal(err)
+				}
+			case packedFileOversizeMarker:
+				if err := os.WriteFile(filepath.Join(s.home, sessionIndexMarkerFile), make([]byte, 513), 0600); err != nil {
+					t.Fatal(err)
+				}
+			case packedFileOversizeCursor:
+				if err := os.WriteFile(filepath.Join(s.home, sessionRecoveryCursorFile), make([]byte, 1537), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			health, err := s.SessionIndexRecoveryStatus()
+			if err == nil || health.Complete || health.Phase != "unknown" {
+				t.Fatalf("invalid packed evidence trusted: %#v %v", health, err)
+			}
+		})
+	}
+	for _, damage := range []string{"marker-version", "epoch", "inventory", "missing-fence"} {
+		t.Run("complete-"+damage, func(t *testing.T) {
+			s := newTestStore(t)
+			marker, cursor := packedHealthFixture(true, 0)
+			switch packedHealthCompleteDamage(damage) {
+			case packedCompleteMarkerVersion:
+				marker.Version = 3
+			case packedCompleteEpoch:
+				marker.PackedEpoch = "../invalid"
+			case packedCompleteInventory:
+				marker.PackedInventory = ""
+			}
+			writePackedHealthFixture(t, s, marker, cursor)
+			if damage == "missing-fence" {
+				if err := os.Remove(filepath.Join(s.home, sessionMembershipFile)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			health, err := s.SessionIndexRecoveryStatus()
+			if err == nil || health.Complete || health.Phase != "unknown" {
+				t.Fatalf("invalid completion trusted: %#v %v", health, err)
+			}
+		})
+	}
+}
+
+func packedHealthFixture(complete bool, phase int) (sessionIndexMarker, sessionRecoveryCursor) {
+	return sessionIndexMarker{Version: 2, Complete: complete, Generation: "generation", MembershipFenced: true, PackedEpoch: "epoch", PackedRevision: "revision", PackedInventory: strings.Repeat("a", 64)}, sessionRecoveryCursor{Version: 2, Generation: "generation", Revision: "revision", Inventory: strings.Repeat("b", 64), Phase: phase}
+}
+
+func writePackedHealthFixture(t *testing.T, s *Store, marker sessionIndexMarker, cursor sessionRecoveryCursor) {
+	t.Helper()
+	cursor.Checksum = ""
+	cursor.Checksum = phaseFingerprint(cursor)
+	writeHealthJSON(t, filepath.Join(s.home, sessionIndexMarkerFile), marker)
+	writeHealthJSON(t, filepath.Join(s.home, sessionRecoveryCursorFile), cursor)
+	writeHealthJSON(t, filepath.Join(s.home, sessionMembershipFile), sessionMembershipRevision{Version: 1, Revision: "revision"})
+}
+
+func writeHealthJSON(t *testing.T, path string, value any) {
+	t.Helper()
+	data, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
 	}
 }
