@@ -16,12 +16,19 @@ type indexedCountingStore struct {
 	pages int
 }
 
+func (s *indexedCountingStore) GetVersioned(ctx context.Context, key string) ([]byte, string, error) {
+	s.mu.Lock()
+	s.gets = append(s.gets, key)
+	s.mu.Unlock()
+	return s.MemoryStore.GetVersioned(ctx, key)
+}
+
 func (s *indexedCountingStore) ListPage(ctx context.Context, prefix, continuation string, limit int32) (storage.ObjectPage, error) {
 	s.pages++
 	return s.MemoryStore.ListPage(ctx, prefix, continuation, limit)
 }
 
-func TestListRecentStopsAfterVerifiedLimitAndKeepsHonestCount(t *testing.T) {
+func TestListRecentSelectsBeforeBodiesAndKeepsExactHeaderCount(t *testing.T) {
 	ctx := context.Background()
 	store := &indexedCountingStore{countingStore: newCountingStore()}
 	for i := range 300 {
@@ -35,11 +42,11 @@ func TestListRecentStopsAfterVerifiedLimitAndKeepsHonestCount(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Complete || len(got.Sessions) != 50 || !got.Sessions[0].CapturedAt.Equal(baseTime.Add(299*time.Minute)) {
+	if !got.Complete || got.TotalMatched != 300 || len(got.Sessions) != 50 || !got.Sessions[0].CapturedAt.Equal(baseTime.Add(299*time.Minute)) {
 		t.Fatalf("recent=%+v", got)
 	}
 	_, gets := store.counts()
-	if store.pages != 1 || len(gets) != 51 {
+	if store.pages != 0 || len(gets) != 50 {
 		t.Fatalf("remote work: pages=%d gets=%d", store.pages, len(gets))
 	}
 	all, err := ListRecent(ctx, store, "sessions", Filter{}, 0, ListOptions{})
@@ -77,9 +84,7 @@ func TestListRecentIgnoresStaleIndexAndDeletedMetadata(t *testing.T) {
 	if err != nil || len(got.Sessions) != 1 {
 		t.Fatalf("deleted result=%d,%v", len(got.Sessions), err)
 	}
-	if ready, err := listingindex.Ready(ctx, store); err != nil || !ready {
-		t.Fatalf("ready=%v,%v", ready, err)
-	}
+
 }
 
 func TestListRecentFallsBackForDamagedIndexKey(t *testing.T) {
@@ -89,7 +94,7 @@ func TestListRecentFallsBackForDamagedIndexKey(t *testing.T) {
 	if _, err := RebuildIndex(ctx, store, "sessions"); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Put(ctx, listingindex.Prefix+"bad-key", []byte("damaged")); err != nil {
+	if err := store.Put(ctx, listingindex.V2Prefix+"bad-key", []byte("damaged")); err != nil {
 		t.Fatal(err)
 	}
 	got, err := ListRecent(ctx, store, "sessions", Filter{}, 50, ListOptions{})
@@ -99,13 +104,13 @@ func TestListRecentFallsBackForDamagedIndexKey(t *testing.T) {
 	if _, err := RebuildIndex(ctx, store, "sessions"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Get(ctx, listingindex.Prefix+"bad-key"); !errors.Is(err, storage.ErrNotFound) {
+	if _, err := store.Get(ctx, listingindex.V2Prefix+"bad-key"); !errors.Is(err, storage.ErrNotFound) {
 		t.Fatalf("malformed hint survived rebuild: %v", err)
 	}
 	store.reset()
 	store.pages = 0
 	got, err = ListRecent(ctx, store, "sessions", Filter{}, 50, ListOptions{})
-	if err != nil || !got.Complete || got.TotalMatched != 1 || store.pages != 1 {
+	if err != nil || !got.Complete || got.TotalMatched != 1 || store.pages != 0 {
 		t.Fatalf("repaired index=%+v pages=%d err=%v", got, store.pages, err)
 	}
 }

@@ -2,11 +2,14 @@ $ agent-archive status
 \e[1mAgent Archive\e[0m  \e[33m● Waiting for capture\e[0m
 
   \e[33m!\e[0m Waiting for the first Codex session
-    Review hook approval in Codex, then start a new session in ~/src/web-app.
+    Start a supported new Codex task in ~/src/web-app, then run \e[36magent-archive sync\e[0m. Hook approval is optional for discovery.
 
 \e[1mCapture\e[0m
-  \e[33m!\e[0m Codex   hooks installed   \e[2mno sessions yet\e[0m
-    Approve the archive hooks with \e[36m/hooks\e[0m in Codex.
+  \e[33m!\e[0m Codex   discovery unknown or source unavailable; included projects   \e[2mno sessions yet\e[0m
+    \e[2m·\e[0m 0 registered → 0 queued → 0 published → 0 read-back verified
+    \e[2m·\e[0m Optional hooks: hooks on; actual hook observation is separate evidence.
+    \e[33m!\e[0m Discovery health is unknown or a source is unavailable. Restore source access if needed, then run agent-archive sync for a current bounded scan.
+  \e[33m!\e[0m Identity recovery: unknown; run agent-archive sync for current bounded local evidence.
 
 \e[1mStorage\e[0m
   \e[32m✓\e[0m s3://team-archive/agent-archive/   \e[2mreachable, checked by setup just now\e[0m

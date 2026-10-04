@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wangjohn/agent-archive/internal/listingindex"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
@@ -118,7 +117,7 @@ func TestClockThatAgreesWithStorageExpiresAsBefore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(objects) != 1 || objects[0].Key != listingindex.ReadyKey {
+	if len(objects) != 0 {
 		t.Fatalf("unexpected objects after expiry: %+v", objects)
 	}
 }

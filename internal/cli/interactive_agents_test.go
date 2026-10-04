@@ -122,7 +122,7 @@ func TestSetupYesStillReadsTheR2SecretWhereItMay(t *testing.T) {
 			stdin := strings.NewReader("private-secret\n")
 			env.IsTerminal = func(stream any) bool { return tc.terminal && stream == any(stdin) }
 			var out, errOut bytes.Buffer
-			code := Run([]string{"setup", "--yes", "--provider", "r2", "--r2-account", testR2Account, "--r2-access-key-id", "KEY", "--bucket", "b", "--project", project, "--apps", "codex"}, stdin, &out, &errOut, env)
+			code := Run([]string{"setup", "--yes", "--provider", "r2", "--r2-account", testR2Account, "--r2-access-key-id", "KEY", "--bucket", "b", "--project", project, "--apps", "codex", "--codex-discovery", "on", "--codex-capture-scope", "included-projects"}, stdin, &out, &errOut, env)
 			if code != 0 || stdin.Len() != 0 {
 				t.Fatalf("code=%d unread=%d\n%s\n%s", code, stdin.Len(), &out, &errOut)
 			}

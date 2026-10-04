@@ -752,7 +752,7 @@ func TestRefreshTakesNoOtherFlagThanVerbose(t *testing.T) {
 		{"--skills"},
 		{"--abandon-recovery"},
 		{"--provider", "s3"},
-		{"--apps", "codex"},
+		{"--apps", "codex", "--codex-discovery", "on", "--codex-capture-scope", "included-projects"},
 		{"--project", "/tmp"},
 		{"--skill-evidence", "none"},
 		{"--yes", "--verbose"},
@@ -797,6 +797,8 @@ func TestRefreshVerboseListsTheFiles(t *testing.T) {
 func TestRefreshKeepsAPausedInstallationPaused(t *testing.T) {
 	t.Parallel()
 	f := newRefreshFixture(t, "loaded")
+	pauseAt := f.env.Now().Add(time.Minute)
+	f.env.Now = func() time.Time { return pauseAt }
 	var out, errOut bytes.Buffer
 	if code := Run([]string{"pause"}, nil, &out, &errOut, f.env); code != 0 {
 		t.Fatalf("pause: %s %s", &out, &errOut)

@@ -6,11 +6,13 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/listingindex"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/state/statetest"
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -18,13 +20,13 @@ import (
 )
 
 type countedPublications struct {
-	storage.ObjectStore
+	*storagetest.MemoryStore
 	keys []string
 }
 
 func (s *countedPublications) Put(ctx context.Context, key string, data []byte) error {
 	s.keys = append(s.keys, key)
-	return s.ObjectStore.Put(ctx, key, data)
+	return s.MemoryStore.Put(ctx, key, data)
 }
 
 func TestParserUpgradeReusesSourceAfterNativeLogDisappears(t *testing.T) {
@@ -35,7 +37,7 @@ func TestParserUpgradeReusesSourceAfterNativeLogDisappears(t *testing.T) {
 	if err := local.SaveRegistration(reg); err != nil {
 		t.Fatal(err)
 	}
-	remote := &countedPublications{ObjectStore: storagetest.NewMemoryStore()}
+	remote := &countedPublications{MemoryStore: storagetest.NewMemoryStore()}
 	now := reg.RegisteredAt.Add(time.Hour)
 	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "machine", ParserVersion: "one", Now: func() time.Time { return now }}
 	result, err := Run(context.Background(), local, remote, opts)
@@ -59,7 +61,7 @@ func TestParserUpgradeReusesSourceAfterNativeLogDisappears(t *testing.T) {
 		t.Fatalf("changed durable source or wrong summary: %+v", next)
 	}
 	key, _ := archive.MetadataObjectKey("codex", reg.ArchiveSessionID)
-	if len(remote.keys) != 3 || remote.keys[2] != key {
+	if len(remote.keys) != 2 || remote.keys[0] != key {
 		t.Fatalf("metadata-only upgrade wrote %v", remote.keys)
 	}
 	after, _ := remote.Get(context.Background(), old.SourceBundle.Key)
@@ -168,13 +170,19 @@ func TestMetadataUpgradePreservesNewerDeclinedCandidate(t *testing.T) {
 }
 
 type countedGets struct {
-	storage.ObjectStore
+	*storagetest.MemoryStore
 	gets int
 }
 
 func (s *countedGets) Get(ctx context.Context, key string) ([]byte, error) {
 	s.gets++
-	return s.ObjectStore.Get(ctx, key)
+	return s.MemoryStore.Get(ctx, key)
+}
+
+// GetVersioned counts the response-bound metadata confirmation too.
+func (s *countedGets) GetVersioned(ctx context.Context, key string) ([]byte, string, error) {
+	s.gets++
+	return s.MemoryStore.GetVersioned(ctx, key)
 }
 
 const grownCodexTranscript = codexTranscript + "\n" + `{"type":"response_item","id":"m2","payload":{"type":"message","role":"assistant","content":"more"}}`
@@ -267,7 +275,7 @@ func TestLegacyFailedParseMigratesOnceWithoutRebuilding(t *testing.T) {
 	t.Parallel()
 	local := newTestStore(t)
 	reg := registration(t, writeTranscript(t, t.TempDir(), "s.jsonl", codexTranscript))
-	remote := &countedGets{ObjectStore: storagetest.NewMemoryStore()}
+	remote := &countedGets{MemoryStore: storagetest.NewMemoryStore()}
 	now := reg.RegisteredAt.Add(time.Hour)
 	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "machine", ParserVersion: "one", Now: func() time.Time { return now }}
 	published := publishOnce(t, local, remote, reg, &opts)
@@ -309,7 +317,7 @@ func TestParserUpgradeWithNewContentPublishesOnce(t *testing.T) {
 	local := newTestStore(t)
 	dir := t.TempDir()
 	reg := registration(t, writeTranscript(t, dir, "s.jsonl", codexTranscript))
-	remote := &countedPublications{ObjectStore: storagetest.NewMemoryStore()}
+	remote := &countedPublications{MemoryStore: storagetest.NewMemoryStore()}
 	now := reg.RegisteredAt.Add(time.Hour)
 	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "machine", ParserVersion: "one", MinUploadInterval: 3 * time.Minute, Now: func() time.Time { return now }}
 	before := publishOnce(t, local, remote, reg, &opts)
@@ -329,10 +337,24 @@ func TestParserUpgradeWithNewContentPublishesOnce(t *testing.T) {
 			metadataWrites++
 		}
 	}
-	if metadataWrites != 1 || len(remote.keys) != 4 {
-		t.Fatalf("parser upgrade with new content wrote %v, want source, listing hints, and metadata", remote.keys)
+	if metadataWrites != 1 || len(remote.keys) != 3 {
+		t.Fatalf("parser upgrade with new content wrote %v, want one source, canonical metadata, and v3 hint", remote.keys)
 	}
 	after := fetchMetadata(t, remote, "codex", reg.ArchiveSessionID)
+	if remote.keys[0] != after.SourceBundle.Key || remote.keys[1] != metadataKey || !strings.HasPrefix(remote.keys[2], listingindex.V3Prefix) {
+		t.Fatalf("publication order = %v, want source, canonical metadata, then v3 hint", remote.keys)
+	}
+	revision, err := listingindex.ParseRevision(remote.keys[2])
+	if err != nil || revision.MetadataKey != metadataKey {
+		t.Fatalf("listing revision = %+v, err = %v", revision, err)
+	}
+	raw, err := remote.Get(context.Background(), metadataKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := revision.ValidateMetadata(raw); err != nil {
+		t.Fatalf("listing hint does not match published metadata: %v", err)
+	}
 	if after.SourceBundle.SHA256 == before.SourceBundle.SHA256 || after.Parser.Version != "two" {
 		t.Fatalf("content publication missing or stale parser: %+v", after)
 	}
@@ -405,7 +427,7 @@ func TestBlockedSessionRegeneratesFromLastPublicationOnly(t *testing.T) {
 	local := newTestStore(t)
 	dir := t.TempDir()
 	reg := registration(t, writeTranscript(t, dir, "s.jsonl", codexTranscript))
-	remote := &countedPublications{ObjectStore: storagetest.NewMemoryStore()}
+	remote := &countedPublications{MemoryStore: storagetest.NewMemoryStore()}
 	now := reg.RegisteredAt.Add(time.Hour)
 	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "machine", ParserVersion: "one", Now: func() time.Time { return now }}
 	before := publishOnce(t, local, remote, reg, &opts)
@@ -434,7 +456,7 @@ func TestBlockedSessionRegeneratesFromLastPublicationOnly(t *testing.T) {
 		t.Fatalf("%#v %v", result, err)
 	}
 	metadataKey, _ := archive.MetadataObjectKey("codex", reg.ArchiveSessionID)
-	if len(remote.keys) != 3 || remote.keys[2] != metadataKey {
+	if len(remote.keys) != 2 || remote.keys[0] != metadataKey {
 		t.Fatalf("blocked session upgrade wrote %v", remote.keys)
 	}
 	after := fetchMetadata(t, remote, "codex", reg.ArchiveSessionID)
@@ -461,7 +483,7 @@ func TestBlockedSessionWithoutPublicationSkipsRegeneration(t *testing.T) {
 	if err := local.SaveRegistration(reg); err != nil {
 		t.Fatal(err)
 	}
-	remote := &countedGets{ObjectStore: storagetest.NewMemoryStore()}
+	remote := &countedGets{MemoryStore: storagetest.NewMemoryStore()}
 	now := reg.RegisteredAt.Add(time.Hour)
 	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "machine", ParserVersion: "one", MaxTranscriptBytes: 8, Now: func() time.Time { return now }}
 	result, err := Run(context.Background(), local, remote, opts)

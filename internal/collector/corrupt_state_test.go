@@ -126,8 +126,8 @@ func TestUnreadableLedgerDoesNotReuploadEveryPass(t *testing.T) {
 	if len(r.Published) != 1 || r.Errors["session-1"] == nil {
 		t.Fatalf("want a publication reported with the ledger failure: %#v", r)
 	}
-	if puts := remote.takePuts(); puts != 4 {
-		t.Fatalf("puts = %d, want source, listing hints, and metadata once", puts)
+	if puts := remote.takePuts(); puts != 3 {
+		t.Fatalf("puts = %d, want one source, canonical metadata, and v3 hint", puts)
 	}
 	for i := range 2 {
 		at = at.Add(10 * time.Minute)

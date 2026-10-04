@@ -126,7 +126,7 @@ func fourthNormalRegistryFlow(t *testing.T, failPublication bool) {
 	if failPublication {
 		failures = 1
 	}
-	remote := &fourthPublicationStore{ObjectStore: storagetest.NewMemoryStore(), failures: failures}
+	remote := &fourthPublicationStore{MemoryStore: storagetest.NewMemoryStore(), failures: failures}
 	opts := collector.Options{Sources: registry, Parsers: registry, Retry: storage.RetryPolicy{MaxAttempts: 1}, MachineID: "fourth-machine", Now: func() time.Time { return now.Add(time.Hour) }}
 	ports.TransientReads = 1
 	if _, err := collector.Run(ctx, local, remote, opts); err != nil {
@@ -310,7 +310,7 @@ func TestFourthSetupJournalSkillsAndRemoval(t *testing.T) {
 	must(t, os.MkdirAll(filepath.Dir(location), 0700))
 	foreign := []byte(`{"color":"ultraviolet","orbits":{"/other/owner":{"birth":"foreign"}}}`)
 	must(t, os.WriteFile(location, foreign, 0600))
-	next := config.Config{MachineID: "fourth", Harnesses: []string{string(orbifold.ID)}, Storage: credentials.Config{Provider: credentials.ProviderS3, Bucket: "test-bucket", Region: "us-east-1", AWSProfile: "test"}, Archive: archive.Config{SchemaVersion: 1, MachineID: "fourth", Enabled: true}}
+	next := config.Config{MachineID: "fourth", Harnesses: []string{string(orbifold.ID)}, Storage: credentials.Config{Provider: credentials.ProviderS3, Bucket: "test-bucket", Region: "us-east-1", AWSProfile: "test"}, Archive: archive.Config{SchemaVersion: 1, MachineID: "fourth", Enabled: true, Projects: []archive.ProjectActivation{{Root: t.TempDir(), Included: true}}}}
 	must(t, applySetup(home, userHome, executable, config.Config{}, &next, nil, env))
 	if next.HookFiles[string(orbifold.ID)] != location {
 		t.Fatalf("native setup path: %v", next.HookFiles)
@@ -443,7 +443,7 @@ func (fourthVersionHost) ProbeVersion(agentapi.VersionProbe) (string, bool) { re
 // must publish the frozen key and bytes without another native read.
 
 type fourthPublicationStore struct {
-	storage.ObjectStore
+	*storagetest.MemoryStore
 	failures int
 }
 
@@ -452,7 +452,7 @@ func (s *fourthPublicationStore) Put(ctx context.Context, key string, data []byt
 		s.failures--
 		return io.ErrUnexpectedEOF
 	}
-	return s.ObjectStore.Put(ctx, key, data)
+	return s.MemoryStore.Put(ctx, key, data)
 }
 
 const fourthDestination handoffDestination = handoffDestination(orbifold.ID)

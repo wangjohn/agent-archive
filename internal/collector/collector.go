@@ -24,6 +24,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/listingindex"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
@@ -244,6 +245,7 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	if err := p.loadWork(); err != nil {
 		return Result{}, err
 	}
+	p.repairListingIndex()
 	orderOldestRequestsFirst(p.registrations, p.requests)
 	closeCursorPass := openCursorPass(p.registrations, &p.opts)
 	defer func() {
@@ -587,4 +589,50 @@ func (p *pass) countRefreshSkips() int {
 		}
 	}
 	return n
+}
+
+// repairListingIndex gives auxiliary work a bounded slice without blocking capture.
+func (p *pass) repairListingIndex() {
+	// Auxiliary maintenance has its own bounded slice and never prevents capture.
+	repairs, repairErr := p.local.ListingRepairs(32)
+	if repairErr != nil {
+		p.result.Errors["listing-maintenance"] = repairErr
+	}
+	for id, repair := range repairs {
+		reg, found, err := p.local.LoadRegistration(id)
+		if err != nil {
+			p.result.Errors["listing-maintenance"] = err
+			continue
+		}
+		if !found || reg.DestinationID != repair.DestinationID {
+			_ = p.local.RemoveListingRepair(id)
+			continue
+		}
+		expected, keyErr := archive.MetadataObjectKey(reg.Harness.Name, id)
+		if keyErr != nil || repair.MetadataKey != expected {
+			p.result.Errors["listing-maintenance"] = errors.New("invalid listing repair identity")
+			continue
+		}
+		if p.opts.AcceptSession != nil && !p.opts.AcceptSession(reg) {
+			continue
+		}
+		getter, ok := p.remote.(storage.VersionedGetter)
+		if !ok {
+			continue
+		}
+		data, _, err := getter.GetVersioned(p.ctx, repair.MetadataKey)
+		if errors.Is(err, storage.ErrNotFound) {
+			_ = p.local.RemoveListingRepair(id)
+			continue
+		}
+		if err == nil {
+			err = listingindex.PublishRevision(p.ctx, p.remote, repair.MetadataKey, data)
+		}
+		if err == nil {
+			err = p.local.RemoveListingRepair(id)
+		}
+		if err != nil {
+			p.result.Errors["listing-maintenance"] = err
+		}
+	}
 }

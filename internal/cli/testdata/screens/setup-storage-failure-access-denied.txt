@@ -13,6 +13,11 @@ Include Claude Code? [y/N] n
 
 Include Cursor? [y/N] n
 
+Codex capture scope
+  1) Included projects only (Codex)
+  2) All current and future projects (Codex only)
+Enter 1-2 [1]: included-projects
+
 Projects to archive (✓ included):
   1) ✓ ~/src/web-app  this folder
 a includes all listed projects. Or enter 1 to include or leave it out, or a path to add a project.

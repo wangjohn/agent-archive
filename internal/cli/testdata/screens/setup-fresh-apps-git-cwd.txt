@@ -12,6 +12,11 @@ Archive Codex, Claude Code, and Cursor sessions in ~/src/web-app? [Y/n]
 
 Looking for your other projects...
 On the review screen: Edit a setting adds projects, drops apps, and changes how long sessions are kept.
+Codex capture scope
+  1) Included projects only (Codex)
+  2) All current and future projects (Codex only)
+Enter 1-2 [1]: included-projects
+
 
 Step 2 of 3 · Connect storage
 
@@ -37,6 +42,15 @@ Step 3 of 3 · Ready to start
 
   Apps       Codex 0.121.0 · Claude Code 2.1.90 · Cursor 3.21.13
   Projects   ~/src/web-app
+  Codex capture Automatic discovery plus hooks when approved
+  Codex scope Included projects only
+  Exceptions None configured  Nearest explicit project rule wins
+  Codex sources /Users/alex/.codex
+  Destination s3://team-archive/agent-archive/
+  Starts     After local consent, outside pause or exclusion
+  History    Old sessions require deliberate backfill
+  Copies     Qualifying recent native copies may be captured
+  Hooks      Optional for discovery; approval and observation are separate
   Skills     metadata  User skill roots outside selected projects may be scanned; change with Edit a setting
   Storage    s3://team-archive/agent-archive/  us-east-1 · profile work
   Keep for   90 days
@@ -45,7 +59,7 @@ Step 3 of 3 · Ready to start
   ! Bucket privacy unknown  public-access settings could not be read
     Make sure public access is off: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
   ✓ Hook files are valid    ~/.codex/hooks.json, ~/.claude/settings.json, ~/.cursor/hooks.json
-  ! Codex needs one step    approve the hooks with /hooks after setup
+  ✓ Codex discovery         supported new tasks do not require hook approval
 
   Edit a setting adds projects, drops apps, and changes how long sessions are kept.
   Filtering is best effort; sensitive text may remain in archived sessions.
@@ -66,7 +80,8 @@ Installed the agent-archive skill, which lets your agents look up and pull in pa
 To remove the agent skills and keep them off, run agent-archive setup --no-skills.
 
 Next, in each app:
-  Codex: run /hooks and approve the archive hooks, then start a new session (or /clear).
+  Codex: start a supported new task in an included project; automatic discovery does not require hook approval.
+  Optional hook capture: Codex: run /hooks and approve the archive hooks, then start a new session (or /clear).
   Claude Code: nothing to approve; start a new session (or /clear).
   Cursor: nothing to approve; start a new Agent chat.
 Sessions already open are not captured. Start a new one in an included project.
@@ -75,5 +90,5 @@ Check progress with agent-archive status.
 Looking for past sessions in these projects… none to import.
 
 To set up another machine with this storage, run there:
-  agent-archive setup --yes --provider s3 --bucket team-archive --aws-profile work --region us-east-1 --apps codex,claude,cursor --prefix agent-archive/ --retention-days 90 --no-require-skill-use --skill-evidence metadata --skills --project ~/src/web-app
+  agent-archive setup --yes --provider s3 --bucket team-archive --aws-profile work --region us-east-1 --apps codex,claude,cursor --codex-discovery on --codex-capture-scope included-projects --prefix agent-archive/ --retention-days 90 --no-require-skill-use --skill-evidence metadata --skills --project ~/src/web-app
 [exit 0]

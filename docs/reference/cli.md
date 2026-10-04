@@ -79,6 +79,8 @@ Guide: [Set up capture](../getting-started/setup.md).
 Usage: agent-archive setup [--abandon-recovery] [--verbose]
                [--no-skills | --skills] [--allow-network-home]
        agent-archive setup --yes [--provider r2|s3 ...] [--project DIR ...]
+               [--codex-discovery on|off]
+               [--codex-capture-scope included-projects|all-projects]
                [--prefix PREFIX] [--retention-days DAYS]
                [--require-skill-use | --no-require-skill-use]
                [--skill-evidence none|metadata|body] [--no-skills | --skills]
@@ -159,6 +161,13 @@ An interrupted setup is recovered on the next run.
                         share one identity, cannot rely on file locks, and
                         each run the background job. Only for a home that one
                         machine ever mounts; recorded while it is needed
+  --codex-discovery MODE on or off; fresh scripted Codex setup must choose.
+                        Reconfiguration keeps an omitted choice. Discovery
+                        finds supported sources; recent native copies may count
+  --codex-capture-scope MODE included-projects or all-projects (Codex only).
+                        Fresh scripts must choose; default: included projects.
+                        Omitted reconfiguration never expands recorded scope.
+                        all-projects with discovery off uses approved hooks only
   --skill-evidence MODE none: no filesystem skill evidence; metadata: names
                         and filtered hashes; body: filtered SKILL.md text.
                         Fresh setup defaults to metadata; earlier configs
@@ -178,6 +187,8 @@ Example: printf '%s\n' "$SECRET" | agent-archive setup --yes --provider r2 \
 | `--apps` | a value | — |
 | `--aws-profile` | a value | — |
 | `--bucket` | a value | — |
+| `--codex-capture-scope` | a value | — |
+| `--codex-discovery` | a value | — |
 | `--no-require-skill-use` | no value | — |
 | `--no-skills` | no value | — |
 | `--pair` | no value | — |
@@ -533,9 +544,9 @@ paged through $PAGER unless --no-pager.
   --verbose                      Full SESSION_IDs, absolute times, origin,
                                  parser status, all models/skills, and title
   --no-pager                     Print directly; do not page through $PAGER
-  --no-cache                     Bypass the local metadata cache during full
-                                 scans; indexed listing always verifies live
-                                 sidecars (never conversation content)
+  --no-cache                     Bypass the local metadata cache; indexed
+                                 listing verifies current revision headers
+                                 (never conversation content)
   --json                         Print {"schema_version": 4, "sessions": [...],
                                  "limit", "returned", "total_matched_known"}:
                                  "total_matched" is present only when exact;

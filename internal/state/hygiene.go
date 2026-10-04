@@ -77,6 +77,7 @@ var corruptionPolicies = map[string]corruption{
 	"superseded":              quarantineInPass,
 	"scan-signatures":         readAsAbsent,
 	refreshSkipDir:            readAsAbsent,
+	listingRepairDir:          quarantineInPass,
 	"pending-scans":           readAsPending,
 	"sessions":                rebuiltFromRegistrations,
 	"sessions-v1":             rebuiltFromRegistrations,

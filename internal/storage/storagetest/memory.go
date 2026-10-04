@@ -92,7 +92,7 @@ func (s *MemoryStore) Stat(ctx context.Context, key string) (storage.ObjectInfo,
 	if !ok {
 		return storage.ObjectInfo{}, storage.ErrNotFound
 	}
-	return storage.ObjectInfo{Size: int64(len(obj.data)), SHA256: storage.SHA256Hex(obj.data)}, nil
+	return storage.ObjectInfo{ETag: obj.etag, Size: int64(len(obj.data)), SHA256: storage.SHA256Hex(obj.data)}, nil
 }
 
 // List returns the objects under prefix, sorted by key, without their
@@ -219,4 +219,18 @@ var (
 func md5Hex(data []byte) string {
 	sum := md5.Sum(data) //nolint:gosec
 	return hex.EncodeToString(sum[:])
+}
+
+// GetVersioned reads bytes and validator under the same lock.
+func (s *MemoryStore) GetVersioned(ctx context.Context, key string) ([]byte, string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, "", err
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	obj, ok := s.objects[key]
+	if !ok {
+		return nil, "", storage.ErrNotFound
+	}
+	return append([]byte(nil), obj.data...), obj.etag, nil
 }

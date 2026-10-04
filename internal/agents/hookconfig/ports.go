@@ -92,7 +92,7 @@ func (c Configurator) Inspect(r agentapi.HookInspectionRequest) (agentapi.HookIn
 		state = agentapi.HookForeign
 		reason = "foreign_installation"
 	}
-	return agentapi.HookInspection{State: state, Installed: healthy, Reason: reason, Others: others, OwnershipLocations: locations}, nil
+	return agentapi.HookInspection{Owned: owned, State: state, Installed: healthy, Reason: reason, Others: others, OwnershipLocations: locations}, nil
 }
 
 // Command builds the owned command with the integration's declared native name.

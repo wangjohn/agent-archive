@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path"
 	"sync"
 	"testing"
 
@@ -13,25 +14,16 @@ import (
 	_ "github.com/wangjohn/agent-archive/internal/testutil/golden" // registers -update for go test ./... -update
 )
 
-func TestSeedIfEmptyAndLegacyRebuildMarker(t *testing.T) {
-	ctx := context.Background()
-	empty := storagetest.NewMemoryStore()
-	if err := listingindex.SeedIfEmpty(ctx, empty); err != nil {
-		t.Fatal(err)
+// putLegacyHint models a v1 writer so cleanup remains backwards compatible.
+func putLegacyHint(ctx context.Context, store storage.ObjectStore, entry listingindex.Entry) error {
+	prefix, err := listingindex.SessionPrefix(path.Base(path.Dir(path.Dir(entry.MetadataKey))), path.Base(path.Dir(entry.MetadataKey)))
+	if err != nil {
+		return err
 	}
-	if ready, err := listingindex.Ready(ctx, empty); err != nil || !ready {
-		t.Fatalf("new bucket ready=%v,%v", ready, err)
+	if err := store.Put(ctx, prefix+entry.Hash, []byte(entry.Key)); err != nil {
+		return err
 	}
-	legacy := storagetest.NewMemoryStore()
-	if err := legacy.Put(ctx, "sessions/codex/old/metadata.json", []byte("{}")); err != nil {
-		t.Fatal(err)
-	}
-	if err := listingindex.SeedIfEmpty(ctx, legacy); err != nil {
-		t.Fatal(err)
-	}
-	if ready, err := listingindex.Ready(ctx, legacy); err != nil || ready {
-		t.Fatalf("legacy ready=%v,%v", ready, err)
-	}
+	return store.Put(ctx, entry.Key, []byte(entry.MetadataKey))
 }
 
 func TestConcurrentHintsAndSessionCleanup(t *testing.T) {
@@ -44,7 +36,7 @@ func TestConcurrentHintsAndSessionCleanup(t *testing.T) {
 			defer wg.Done()
 			hash := fmt.Sprintf("%064x", i+1)
 			entry := listingindex.Entry{Key: fmt.Sprintf("%s%019d/codex/session/%s.json", listingindex.Prefix, uint64(7000000000000000000)+uint64(i), hash), MetadataKey: "sessions/codex/session/metadata.json", Hash: hash}
-			if err := listingindex.Put(ctx, store, entry); err != nil {
+			if err := putLegacyHint(ctx, store, entry); err != nil {
 				t.Error(err)
 			}
 		}(i)
@@ -61,7 +53,7 @@ func TestConcurrentHintsAndSessionCleanup(t *testing.T) {
 	if err != nil || len(after) != 0 {
 		t.Fatalf("remaining hints=%d,%v", len(after), err)
 	}
-	if _, err := store.Get(ctx, listingindex.ReadyKey); !errors.Is(err, storage.ErrNotFound) {
+	if _, err := store.Get(ctx, "listing/v1-ready"); !errors.Is(err, storage.ErrNotFound) {
 		t.Fatalf("unexpected ready object: %v", err)
 	}
 }
@@ -72,7 +64,7 @@ func TestDeleteSessionDoesNotFollowCorruptPointerToAnotherSession(t *testing.T) 
 	otherHash := fmt.Sprintf("%064x", 1)
 	otherKey := fmt.Sprintf("%s%019d/codex/other/%s.json", listingindex.Prefix, uint64(7000000000000000000), otherHash)
 	other := listingindex.Entry{Key: otherKey, MetadataKey: "sessions/codex/other/metadata.json", Hash: otherHash}
-	if err := listingindex.Put(ctx, store, other); err != nil {
+	if err := putLegacyHint(ctx, store, other); err != nil {
 		t.Fatal(err)
 	}
 	corruptPointer := "listing/by-session/codex/target/" + otherHash

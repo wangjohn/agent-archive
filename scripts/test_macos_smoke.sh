@@ -17,7 +17,9 @@ go test -race -count=1 -timeout 10m \
   ./internal/scheduler/launchd \
   ./internal/scheduler/host \
   ./internal/terminal \
-  ./internal/termlaunch
+  ./internal/termlaunch \
+  ./internal/sourcefacts \
+  ./internal/discovery
 
 cli_tests=(
   TestScreens
@@ -25,6 +27,7 @@ cli_tests=(
   TestSetupAndUninstallNeedATerminal
   TestBrowserKeysRestoreTheTerminal
   TestStatsScreenOnARealTerminal
+  TestSupportedDiscoveryPublishesWithoutHooksAndAcceptsRecentCopy
 )
 
 # -run silently passes when a name disappears. Require every selected test to

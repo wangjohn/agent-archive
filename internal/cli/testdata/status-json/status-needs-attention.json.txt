@@ -1,5 +1,10 @@
 $ agent-archive status --json
 {
+  "identity_recovery": {
+    "complete": true,
+    "pending": false,
+    "phase": "complete"
+  },
   "privacy_evidence": {
     "state": "not_verified",
     "reason": "inspection_unavailable",
@@ -16,7 +21,7 @@ $ agent-archive status --json
     "context": "manual_sync"
   },
   "code": "needs_attention",
-  "schema_version": 3,
+  "schema_version": 4,
   "state": "Needs attention",
   "storage": "s3 / team-archive / agent-archive/",
   "storage_verified_at": "2026-09-25T12:00:00Z",
@@ -31,6 +36,24 @@ $ agent-archive status --json
   ],
   "applications": [
     {
+      "codex_capture_scope": "included-projects",
+      "discovery": {
+        "enabled": true,
+        "supported": false,
+        "last_attempt": "2026-09-25T12:00:00Z",
+        "last_reconciled": "2026-09-25T12:00:00Z",
+        "pending": false,
+        "project_metadata_operations": 0,
+        "git_metadata_bytes": 0,
+        "header_probes": 0,
+        "directory_entries": 0,
+        "bytes_read": 0,
+        "registered": 0,
+        "outcomes": {
+          "index_hints_missing": 1,
+          "index_locator_rejected": 0
+        }
+      },
       "published_sessions": 1,
       "verified_sessions": 1,
       "configured": true,
