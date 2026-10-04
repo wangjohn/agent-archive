@@ -196,7 +196,8 @@ func (s *Store) sessionRegistrationInventory(ctx context.Context) (map[agentmeta
 	// across the census, clearing every field so omitted fields never inherit
 	// authority from a previously validated registration.
 	var reg archive.SessionRegistration
-	for _, file := range entries {
+	for i, file := range entries {
+		entries[i] = nil
 		if filepath.Ext(file.Name()) == quarantineSuffix {
 			return nil, ErrSessionIndexRecoveryRequired
 		}
