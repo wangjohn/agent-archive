@@ -106,3 +106,23 @@ func TestDeleteWholeSession(t *testing.T) {
 		}
 	})
 }
+
+// Auxiliary cleanup must never keep expired transcripts alive.
+func TestListingDeletionFailureStillDeletesSources(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	const pointer = "listing/by-session/claude/session-1/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	store := &deleteRecordingStore{MemoryStore: storagetest.NewMemoryStore(), failKey: pointer}
+	for _, key := range []string{"sessions/claude/session-1/metadata.json", "sessions/claude/session-1/source.json", pointer} {
+		if err := store.Put(ctx, key, []byte("damaged pointer")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := DeleteWholeSession(ctx, store, "claude", "session-1"); err == nil {
+		t.Fatal("auxiliary failure not reported")
+	}
+	objects, err := store.List(ctx, "sessions/claude/session-1/")
+	if err != nil || len(objects) != 0 {
+		t.Fatalf("auxiliary failure retained sources: %v %v", objects, err)
+	}
+}

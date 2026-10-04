@@ -138,6 +138,18 @@ const listConcurrency = 8
 // ListOptions tunes ListMetadataWithOptions. The zero value reads every
 // matching sidecar from the store.
 type ListOptions struct {
+	// ScopeMatch tests only identity summaries before body selection.
+	ScopeMatch func(archive.Metadata) bool
+
+	// ActivityOrder selects the text listing's activity ordering.
+	ActivityOrder bool
+	// TopLevelOnly excludes subagents before the limit and returns their counts.
+	TopLevelOnly bool
+	// CompatibilityScan explains why the exhaustive reader was required.
+	CompatibilityScan func(string)
+	// BodyRead observes successful selected metadata or cache body reads.
+	BodyRead func(key string, cached bool)
+
 	// Cache, when set, serves a sidecar whose listed ETag is unchanged from
 	// local disk instead of downloading it, and forgets sidecars which are
 	// no longer listed. It holds metadata only.
@@ -206,7 +218,16 @@ func ListMetadataWithOptions(ctx context.Context, store storage.ObjectStore, pre
 			results = append(results, metadata)
 		}
 	}
-	sort.SliceStable(results, func(i, j int) bool { return results[i].CapturedAt.After(results[j].CapturedAt) })
+	sort.Slice(results, func(i, j int) bool {
+		a, b := results[i], results[j]
+		if !a.CapturedAt.Equal(b.CapturedAt) {
+			return a.CapturedAt.After(b.CapturedAt)
+		}
+		if a.Harness.Name != b.Harness.Name {
+			return a.Harness.Name < b.Harness.Name
+		}
+		return a.SessionID < b.SessionID
+	})
 	return results, nil
 }
 

@@ -19,17 +19,45 @@ import (
 )
 
 // countingStore counts the bytes a pass moves to and from storage: egress
-// (Get) is what a republish of a large bundle pays for.
+// includes both Get and response-bound GetVersioned reads.
 type countingStore struct {
 	*storagetest.MemoryStore
-	getBytes atomic.Int64
-	putBytes atomic.Int64
+	getBytes       atomic.Int64
+	putBytes       atomic.Int64
+	metadataReads  atomic.Int64
+	auxiliaryReads atomic.Int64
+	sourceReads    atomic.Int64
+	metadataBytes  atomic.Int64
+	auxiliaryBytes atomic.Int64
+	sourceBytes    atomic.Int64
 }
 
 func (s *countingStore) Get(ctx context.Context, key string) ([]byte, error) {
 	b, err := s.MemoryStore.Get(ctx, key)
-	s.getBytes.Add(int64(len(b)))
+	s.recordRead(key, b)
 	return b, err
+}
+
+func (s *countingStore) GetVersioned(ctx context.Context, key string) ([]byte, string, error) {
+	data, validator, err := s.MemoryStore.GetVersioned(ctx, key)
+	s.recordRead(key, data)
+	return data, validator, err
+}
+
+func (s *countingStore) recordRead(key string, data []byte) {
+	size := int64(len(data))
+	s.getBytes.Add(size)
+	switch {
+	case strings.HasPrefix(key, "listing/"):
+		s.auxiliaryReads.Add(1)
+		s.auxiliaryBytes.Add(size)
+	case strings.HasSuffix(key, "/metadata.json"):
+		s.metadataReads.Add(1)
+		s.metadataBytes.Add(size)
+	default:
+		s.sourceReads.Add(1)
+		s.sourceBytes.Add(size)
+	}
 }
 
 func (s *countingStore) Put(ctx context.Context, key string, data []byte) error {
@@ -40,15 +68,27 @@ func (s *countingStore) Put(ctx context.Context, key string, data []byte) error 
 func (s *countingStore) reset() {
 	s.getBytes.Store(0)
 	s.putBytes.Store(0)
+	s.metadataReads.Store(0)
+	s.auxiliaryReads.Store(0)
+	s.sourceReads.Store(0)
+	s.metadataBytes.Store(0)
+	s.auxiliaryBytes.Store(0)
+	s.sourceBytes.Store(0)
 }
 
 // largePassCost is what one pass over one large session cost.
 type largePassCost struct {
-	elapsed    time.Duration
-	allocated  uint64 // bytes allocated during the pass
-	peakHeap   uint64 // highest live heap seen during the pass
-	downloaded int64  // bytes read from storage
-	uploaded   int64  // bytes written to storage
+	elapsed        time.Duration
+	allocated      uint64 // bytes allocated during the pass
+	peakHeap       uint64 // highest live heap seen during the pass
+	downloaded     int64  // bytes read from storage
+	uploaded       int64  // bytes written to storage
+	metadataReads  int64
+	auxiliaryReads int64
+	sourceReads    int64
+	metadataBytes  int64
+	auxiliaryBytes int64
+	sourceBytes    int64
 }
 
 func (c largePassCost) String() string {
@@ -96,6 +136,8 @@ func measureLargePass(t *testing.T, local *state.Store, remote *countingStore, o
 	return result, largePassCost{
 		elapsed: elapsed, allocated: after.TotalAlloc - before.TotalAlloc, peakHeap: peak.Load(),
 		downloaded: remote.getBytes.Load(), uploaded: remote.putBytes.Load(),
+		metadataReads: remote.metadataReads.Load(), auxiliaryReads: remote.auxiliaryReads.Load(), sourceReads: remote.sourceReads.Load(),
+		metadataBytes: remote.metadataBytes.Load(), auxiliaryBytes: remote.auxiliaryBytes.Load(), sourceBytes: remote.sourceBytes.Load(),
 	}
 }
 
@@ -108,8 +150,9 @@ func measureLargePass(t *testing.T, local *state.Store, remote *countingStore, o
 // and a download of the whole compressed source (9 MB here) for each of the
 // three passes, and a 32 MB published state file. Now a publication takes
 // about 4 s and 0.6 to 0.8 GB, the refresh about 1.2 s without reading the
-// transcript, and none of them downloads anything. The limits below leave
-// room for a slower machine.
+// transcript, and none of them downloads a source body. Listing maintenance
+// reads one canonical metadata confirmation and no cleanup bodies; it
+// retires up to 32 entries discovered from session headers. The limits below leave room for a slower machine.
 //
 // Not parallel: it measures the process's allocation and reads a
 // package-wide counter.
@@ -171,11 +214,16 @@ func TestLargeGrowingSessionPassesStayFast(t *testing.T) {
 		t.Errorf("the metadata refresh read the unchanged transcript %d times", filters)
 	}
 
-	// A store that reports each object's checksum verifies a publication
-	// without downloading it.
+	// Source checksum verification must not download transcripts. Index
+	// publication separately confirms one metadata response. Header-only
+	// cleanup downloads no auxiliary bodies or unrelated sessions.
 	for name, cost := range map[string]largePassCost{"first publication": first, "republication": grown, "metadata refresh": refreshed} {
-		if cost.downloaded != 0 {
-			t.Errorf("%s downloaded %d bytes", name, cost.downloaded)
+		wantAux := int64(0)
+		if cost.sourceReads != 0 || cost.sourceBytes != 0 || cost.metadataReads != 1 || cost.auxiliaryReads != wantAux {
+			t.Errorf("%s: source reads/bytes=%d/%d metadata reads=%d auxiliary reads=%d; want 0/0, 1, %d", name, cost.sourceReads, cost.sourceBytes, cost.metadataReads, cost.auxiliaryReads, wantAux)
+		}
+		if cost.auxiliaryBytes > wantAux*1024 || cost.metadataBytes <= 0 || cost.downloaded != cost.metadataBytes+cost.auxiliaryBytes+cost.sourceBytes {
+			t.Errorf("%s: unaccounted/unbounded bytes: total=%d metadata=%d auxiliary=%d source=%d", name, cost.downloaded, cost.metadataBytes, cost.auxiliaryBytes, cost.sourceBytes)
 		}
 	}
 	if !timed {

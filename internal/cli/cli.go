@@ -109,6 +109,8 @@ type Env struct {
 	// observeFlags, set only by tests, sees every command flag set as it is
 	// made, so a test can check each flag against the help text.
 	observeFlags func(*commandFlags)
+	// observeListBody, set only by tests, counts selected metadata/cache bodies.
+	observeListBody func(string, bool)
 	// exitProcess, set only by tests, replaces os.Exit where the session
 	// browser exits on a signal.
 	exitProcess func(int)
@@ -673,3 +675,5 @@ func defaultStreams(stdin io.Reader, stdout, stderr io.Writer) (in io.Reader, ou
 	}
 	return in, out, errOut
 }
+
+func (e Env) listBodyObserver() func(string, bool) { return e.observeListBody }
