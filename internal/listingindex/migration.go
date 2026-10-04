@@ -23,7 +23,7 @@ func LegacyEntries(ctx context.Context, store storage.ObjectStore) (map[string][
 	}
 	bySession := make(map[string][]storage.Object)
 	for _, obj := range append(hints, pointers...) {
-		key := ""
+		var key string
 		if strings.HasPrefix(obj.Key, V2Prefix) {
 			r, err := ParseRevision(obj.Key)
 			if err != nil {

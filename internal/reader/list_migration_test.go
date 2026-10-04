@@ -188,6 +188,7 @@ func (s *singleHintInterleaveStore) Put(ctx context.Context, key string, data []
 	}
 	return s.MemoryStore.Put(ctx, key, data)
 }
+
 func (s *singleHintInterleaveStore) List(ctx context.Context, prefix string) ([]storage.Object, error) {
 	s.prefixes = append(s.prefixes, prefix)
 	return s.MemoryStore.List(ctx, prefix)
