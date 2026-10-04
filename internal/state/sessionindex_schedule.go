@@ -499,7 +499,7 @@ func (s *Store) applyPackedShardPhase(ctx context.Context, cursor *sessionRecove
 			return false, errors.Join(publicationErr, prepareErr)
 		}
 		if slicePending {
-			return false, s.saveRecoveryCursor(cursor)
+			return false, errors.Join(ctx.Err(), s.saveRecoveryCursor(cursor))
 		}
 		if prepareErr != nil {
 			if errors.Is(prepareErr, context.Canceled) || errors.Is(prepareErr, context.DeadlineExceeded) {

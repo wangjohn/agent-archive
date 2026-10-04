@@ -295,3 +295,80 @@ func TestPackedInterruptionRetainsJoinedPreparationFailure(t *testing.T) {
 		t.Fatalf("joined preparation failure lost: complete=%v err=%v", complete, err)
 	}
 }
+
+func TestPackedPendingPrefixRetainsCancellationAndCheckpointFailure(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("requires ordinary filesystem permissions")
+	}
+	for _, writable := range []bool{true, false} {
+		t.Run(strconv.FormatBool(writable), func(t *testing.T) {
+			s, _, marker := packedOwnerFixture(t)
+			key := packedFreshKeyInShard("01", "pending-prefix")
+			reg := migrationRegistration(key, "pending-prefix-owner")
+			if err := local.Write(s.registrationPath(reg.ArchiveSessionID), reg); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(qualifiedSessionIndexPath(s.home, key), []byte("{"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			cursor := sessionRecoveryCursor{Version: 2, Generation: marker.Generation, Revision: marker.PackedRevision, Inventory: marker.PackedInventory}
+			if err := s.saveRecoveryCursor(&cursor); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			defer func() { _ = os.Chmod(s.home, 0700) }()
+			// The second shard exhausts preparation's allowance. Publication
+			// still drains the first shard through real file/directory sync.
+			s.onIndexStep = func(step string) error {
+				if step == "recovery-entry" {
+					return errPackedSlicePending
+				}
+				return nil
+			}
+			syncs := 0
+			s.onWriteSync = func() {
+				syncs++
+				if syncs == 2 {
+					cancel()
+					if !writable {
+						if err := os.Chmod(s.home, 0500); err != nil {
+							t.Fatal(err)
+						}
+					}
+				}
+			}
+			var owners [packedSessionIndexShards]map[agentmeta.SessionKey][]string
+			var children [packedSessionIndexShards][]SubagentCandidate
+			owners[1] = map[agentmeta.SessionKey][]string{key: {reg.ArchiveSessionID}}
+			complete, err := s.applyPackedShardPhase(ctx, &cursor, time.Now().Add(5*time.Second), marker, owners, children)
+			if restoreErr := os.Chmod(s.home, 0700); restoreErr != nil {
+				t.Fatal(restoreErr)
+			}
+			if complete || cursor.Offset != 1 || !errors.Is(err, context.Canceled) || errors.Is(err, errPackedSlicePending) {
+				t.Fatalf("complete=%v offset=%d err=%v", complete, cursor.Offset, err)
+			}
+			if SessionIndexRecoveryInterrupted(err) != writable || errors.Is(err, os.ErrPermission) == writable {
+				t.Fatalf("checkpoint classification writable=%v: %v", writable, err)
+			}
+			var persisted sessionRecoveryCursor
+			if err := local.Read(filepath.Join(s.home, sessionRecoveryCursorFile), &persisted); err != nil || !persisted.validChecksum() {
+				t.Fatalf("persisted checkpoint: %#v %v", persisted, err)
+			}
+			want := 0
+			if writable {
+				want = 1
+			}
+			if persisted.Offset != want {
+				t.Fatalf("persisted prefix=%d want=%d", persisted.Offset, want)
+			}
+			if _, err := s.readPackedSessionIndex("00", marker); err != nil {
+				t.Fatal(err)
+			}
+			temps, err := filepath.Glob(filepath.Join(s.home, packedSessionIndexDir, ".pending-*"))
+			if err != nil || len(temps) != 0 {
+				t.Fatalf("staging not joined: %v %v", temps, err)
+			}
+		})
+	}
+}
