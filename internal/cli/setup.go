@@ -117,6 +117,9 @@ func runSetupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 	if !parsed {
 		return 2
 	}
+	if err := validateProjectScopeOptions(opts); err != nil {
+		return fs.usageError("%s", err)
+	}
 	var questionErr error
 	opts, stdin, questionErr = initialSetupPairingQuestion(*refresh || *abandon, opts, stdin, stdout, env)
 	if questionErr != nil {
@@ -1084,6 +1087,7 @@ func anotherMachineCommand(cfg config.Config, userHome string, environments ...E
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	keys := map[string]string{}
+	validatedKeys := map[string]string{}
 	args := []string{"agent-archive", "setup", "--yes", "--provider", cfg.Storage.Provider, "--bucket", cfg.Storage.Bucket}
 	if cfg.Storage.Provider == credentials.ProviderR2 {
 		args = append(args, "--r2-account", firstNonEmpty(cfg.Storage.R2AccountID, cfg.Storage.R2Endpoint))
@@ -1126,7 +1130,12 @@ func anotherMachineCommand(cfg config.Config, userHome string, environments ...E
 				// must keep its path to avoid widening capture on another machine.
 				if child.Err() == nil {
 					if info, err := os.Stat(filepath.Join(project.Root, ".git")); err == nil && (info.IsDir() || info.Mode().IsRegular()) {
-						key = env.projectRepoKey(child, project.Root)
+						root := local.CanonicalPath(project.Root)
+						candidate, top, known := env.projectRepository(child, project.Root)
+						if known && archive.IsRepoKey(candidate) && local.CanonicalPath(top) == root {
+							key = candidate
+							validatedKeys[root] = key
+						}
 					}
 				}
 				done()
@@ -1140,7 +1149,7 @@ func anotherMachineCommand(cfg config.Config, userHome string, environments ...E
 		}
 	}
 	if scope == "" && scopeArgumentsNeedStream(args) {
-		scope = portableProjectScope(cfg.Archive.Projects, userHome, env, ctx)
+		scope = portableProjectScopeWithKeys(cfg.Archive.Projects, userHome, env, ctx, validatedKeys)
 		args = append(args[:projectStart], "--project-scope-file", "-")
 	}
 	for i, arg := range args {
@@ -2144,7 +2153,7 @@ func isGoBuildDir(name string) bool {
 }
 
 func runPairingSetupCommand(opts setupOptions, refresh, abandon bool, fs *commandFlags, stdin io.Reader, stdout, stderr io.Writer, env Env) int {
-	if refresh || abandon || opts.storageFlagsSupplied || opts.prefixSupplied || opts.retentionSupplied || opts.requireSkillSupplied || opts.noRequireSkillSupplied || opts.apps != "" || opts.skillEvidence != "" || opts.noSkills || opts.skills || len(opts.projectRepos) > 0 || opts.projectScope != "" || opts.projectScopeFile != "" {
+	if refresh || abandon || opts.storageFlagsSupplied || opts.prefixSupplied || opts.retentionSupplied || opts.requireSkillSupplied || opts.noRequireSkillSupplied || opts.apps != "" || opts.skillEvidence != "" || opts.noSkills || opts.skills || len(opts.projectRepos) > 0 || opts.hasProjectScope() {
 		return fs.usageError("pairing accepts --yes, --verbose, --project and one bundle input; other settings are reviewed interactively")
 	}
 	if err := setupPairing(opts, stdin, stdout, stderr, env.choosingBackend()); err != nil {

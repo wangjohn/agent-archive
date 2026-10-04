@@ -208,6 +208,8 @@ Symlink aliases share the same capture decision and repository anchor.
 No inclusion is applied without its associated exclusions. Inspect these
 rules before running the command; update non-home absolute paths for the
 new machine if necessary.
+Scope flags require a nonempty value and cannot be combined with `--project`
+or `--project-repo`; put every inclusion and exclusion in the scope instead.
 Pairing receives scope from its encrypted bundle and refuses both scope flags.
 A scope on stdin owns that stream; provide an R2 secret in
 `AGENT_ARCHIVE_R2_SECRET_ACCESS_KEY` or read the scope from a file.

@@ -34,6 +34,12 @@ func hasProjectExclusions(projects []archive.ProjectActivation) bool {
 }
 
 func portableProjectScope(projects []archive.ProjectActivation, home string, env Env, ctx context.Context) string {
+	return portableProjectScopeWithKeys(projects, home, env, ctx, nil)
+}
+
+// portableProjectScopeWithKeys reuses only identities validated at their full
+// canonical checkout root before switching the command's transport.
+func portableProjectScopeWithKeys(projects []archive.ProjectActivation, home string, env Env, ctx context.Context, knownKeys map[string]string) string {
 	// Capture compares resolved locations, so aliases must share an anchor.
 	canonical := make([]archive.ProjectActivation, 0, len(projects))
 	seen := map[string]bool{}
@@ -55,19 +61,28 @@ func portableProjectScope(projects []archive.ProjectActivation, home string, env
 		// Relocating it alone would detach exclusions from their included
 		// ancestor (or reinclusions from their excluded ancestor).
 		hasAncestor := false
-		for _, other := range projects {
-			if other.Root != project.Root && local.PathWithin(project.Root, other.Root) {
+		// Roots have already been resolved once. Walk lexical parents instead
+		// of comparing every long path with every other configured root.
+		for parent := filepath.Dir(project.Root); parent != project.Root; parent = filepath.Dir(parent) {
+			if _, configured := seen[parent]; configured {
 				hasAncestor = true
+				break
+			}
+			if filepath.Dir(parent) == parent {
 				break
 			}
 		}
 		if hasAncestor {
 			continue
 		}
+		if key := knownKeys[project.Root]; archive.IsRepoKey(key) {
+			anchors[project.Root] = key
+			continue
+		}
 		if info, err := os.Stat(filepath.Join(project.Root, ".git")); err == nil && (info.IsDir() || info.Mode().IsRegular()) {
 			child, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
 			key, top, known := env.projectRepository(child, project.Root)
-			if known && archive.IsRepoKey(key) && local.CanonicalPath(top) == local.CanonicalPath(project.Root) {
+			if known && archive.IsRepoKey(key) && local.CanonicalPath(top) == project.Root {
 				anchors[project.Root] = key
 			}
 			cancel()
@@ -90,9 +105,15 @@ func portableProjectScope(projects []archive.ProjectActivation, home string, env
 		// Keep nested checkouts under the outer scope: relocating an excluded
 		// nested repo independently would leave its old subtree included.
 		anchor := ""
-		for root := range anchors {
-			if local.PathWithin(project.Root, root) && (anchor == "" || len(root) < len(anchor)) {
+		// Anchors are outermost configured roots, so at most one can own
+		// this rule. Parent membership keeps work bounded by path depth.
+		for root := project.Root; ; root = filepath.Dir(root) {
+			if _, found := anchors[root]; found {
 				anchor = root
+				break
+			}
+			if filepath.Dir(root) == root {
+				break
 			}
 		}
 		if anchor != "" {
@@ -106,13 +127,39 @@ func portableProjectScope(projects []archive.ProjectActivation, home string, env
 	return string(encoded)
 }
 
+// hasProjectScope distinguishes an explicit empty flag from an absent flag.
+func (o setupOptions) hasProjectScope() bool {
+	return o.projectScopeSupplied || o.projectScopeFileSupplied || o.projectScope != "" || o.projectScopeFile != ""
+}
+
+// validateProjectScopeOptions refuses ambiguous scope before reading inputs or
+// applying companion inclusions that could override transferred exclusions.
+func validateProjectScopeOptions(o setupOptions) error {
+	if o.projectScopeSupplied && strings.TrimSpace(o.projectScope) == "" {
+		return errors.New("--project-scope must contain capture rules")
+	}
+	if o.projectScopeFileSupplied && o.projectScopeFile == "" {
+		return errors.New("--project-scope-file must name a file or - for stdin")
+	}
+	if (o.projectScopeSupplied || o.projectScope != "") && (o.projectScopeFileSupplied || o.projectScopeFile != "") && !o.projectScopeInputRead {
+		return errors.New("give only one of --project-scope and --project-scope-file")
+	}
+	if o.hasProjectScope() && (len(o.projects) > 0 || len(o.projectRepos) > 0) {
+		return errors.New("--project-scope and --project-scope-file cannot be combined with --project or --project-repo; include every capture rule in the scope")
+	}
+	return nil
+}
+
 // readProjectScopeInput reads only an explicitly selected file or stdin stream.
 func readProjectScopeInput(opts setupOptions, stdin io.Reader) (setupOptions, error) {
+	if err := validateProjectScopeOptions(opts); err != nil {
+		return opts, err
+	}
 	if opts.projectScopeFile == "" {
 		return opts, nil
 	}
-	if opts.projectScope != "" {
-		return opts, errors.New("give only one of --project-scope and --project-scope-file")
+	if opts.projectScopeInputRead {
+		return opts, nil
 	}
 	reader := stdin
 	var file *os.File
@@ -140,6 +187,7 @@ func readProjectScopeInput(opts setupOptions, stdin io.Reader) (setupOptions, er
 		return opts, errors.New("--project-scope-file must contain capture rules")
 	}
 	opts.projectScope = string(data)
+	opts.projectScopeInputRead = true
 	return opts, nil
 }
 

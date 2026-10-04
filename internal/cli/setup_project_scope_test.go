@@ -12,11 +12,13 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -408,6 +410,25 @@ func TestPrintedScopeRequiresActualRepositoryTopLevel(t *testing.T) {
 	if rules[0].Path != "~/repo/pkg" || rules[1].Path != "~/repo/pkg/private" {
 		t.Fatalf("changed subtree scope: %+v", rules)
 	}
+	// The identity cache used when included-only arguments become a stream
+	// must never cache the inherited origin as a whole-root identity.
+	included := []archive.ProjectActivation{{Root: child, Included: true}}
+	if command := anotherMachineCommand(config.Config{Archive: archive.Config{Projects: included}}, home, env); strings.Contains(command, "--project-repo") {
+		t.Fatalf("small command widened synthetic child .git: %s", command)
+	}
+	for i := range 600 {
+		included = append(included, archive.ProjectActivation{Root: filepath.Join(home, strings.Repeat("x", 180), fmt.Sprintf("path-%04d", i)), Included: true})
+	}
+	command := anotherMachineCommand(config.Config{Archive: archive.Config{Projects: included}}, home, env)
+	lines := strings.Split(command, "\n")
+	if len(lines) != 3 {
+		t.Fatal("large synthetic-child scope did not stream")
+	}
+	must(t, json.Unmarshal([]byte(lines[1]), &rules))
+	if rules[0].RepoKey != "" || rules[0].Path != "~/repo/pkg" {
+		t.Fatalf("cached inherited origin widened subtree: %+v", rules[0])
+	}
+
 }
 
 func TestPairingRefusesProjectScopeBeforeReadingBundle(t *testing.T) {
@@ -532,6 +553,12 @@ func TestPrintedScopeTransportsAll4096RulesOutsideExecArguments(t *testing.T) {
 	must(t, json.Unmarshal(data, &rules))
 	if len(data) < 2<<20 || len(rules) != 4096 {
 		t.Fatalf("large transfer lost scope: %d bytes, %d rules", len(data), len(rules))
+	}
+	for i, rule := range rules {
+		want := "~/" + filepath.ToSlash(filepath.Join(long, fmt.Sprintf("rule-%04d", i)))
+		if rule.Path != want || rule.RepoKey != "" || rule.Included != projects[i].Included {
+			t.Fatalf("large transfer changed rule %d: %+v", i, rule)
+		}
 	}
 	args, err := os.ReadFile(argsPath)
 	must(t, err)
@@ -677,5 +704,153 @@ func TestPrintedLargeIncludedScopeAvoidsAggregateArgumentLimit(t *testing.T) {
 	must(t, err)
 	if len(args) > 4096 || !strings.Contains(string(args), "--project-scope-file\n-\n") {
 		t.Fatal("large included scope remained on argv")
+	}
+}
+
+func TestScopeFlagsRefuseEmptyAndProjectCompanionsBeforeEffects(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	private := filepath.Join(root, "private")
+	must(t, os.MkdirAll(filepath.Join(private, "child"), 0700))
+	encoded, err := json.Marshal([]portableProjectRule{{Path: root, Included: true}, {Path: private, Included: false}})
+	must(t, err)
+	for _, flags := range [][]string{
+		{"--project-scope", ""}, {"--project-scope-file", ""},
+		{"--project-scope", "", "--pair-file", "-"},
+		{"--project-scope-file", "", "--pair-file", "-"},
+		{"--project-scope", string(encoded), "--project", private},
+		{"--project-scope", string(encoded), "--project", filepath.Join(private, "child")},
+		{"--project-scope-file", "-", "--project", private},
+		{"--project-scope", string(encoded), "--project-repo", archive.RepoKey("https://example.test/repo.git")},
+		{"--project-scope", "", "--project-scope-file", "-"},
+	} {
+		t.Run(strings.Join(flags, " "), func(t *testing.T) {
+			var out bytes.Buffer
+			env := Env{LookupEnv: noEnv, Home: func() (string, error) { t.Fatal("invalid scope flags reached home"); return "", nil }, PairingCode: func() (string, error) { t.Fatal("invalid scope flags reached pairing"); return "", nil }}
+			args := append([]string{"setup", "--yes"}, flags...)
+			if code := Run(args, strings.NewReader(string(encoded)), &out, &out, env); code != 2 || !strings.Contains(out.String(), "--project-scope") {
+				t.Fatalf("invalid transfer was accepted: %d %s", code, &out)
+			}
+		})
+	}
+}
+
+func TestLargeIncludedScopeRetainsKnownIdentityAfterLookupBudget(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		home := t.TempDir()
+		first := filepath.Join(home, "first")
+		projects := []archive.ProjectActivation{}
+		for i := range 22 {
+			root := filepath.Join(home, fmt.Sprintf("checkout-%02d", i))
+			if i == 0 {
+				root = first
+			}
+			must(t, os.MkdirAll(filepath.Join(root, ".git"), 0700))
+			projects = append(projects, archive.ProjectActivation{Root: root, Included: true})
+		}
+		for i := range 600 {
+			projects = append(projects, archive.ProjectActivation{Root: filepath.Join(home, strings.Repeat("x", 180), fmt.Sprintf("path-%04d", i)), Included: true})
+		}
+		key := archive.RepoKey("https://example.test/team/first.git")
+		firstCalls := 0
+		env := Env{repoKeyContext: func(ctx context.Context, root string) string {
+			if root == first {
+				firstCalls++
+				return key
+			}
+			<-ctx.Done()
+			return ""
+		}}
+		command := anotherMachineCommand(config.Config{Archive: archive.Config{Projects: projects}}, home, env)
+		lines := strings.Split(command, "\n")
+		if len(lines) != 3 {
+			t.Fatalf("large scope did not stream: %s", command)
+		}
+		var rules []portableProjectRule
+		must(t, json.Unmarshal([]byte(lines[1]), &rules))
+		if len(rules) != len(projects) || rules[0].RepoKey != key || rules[0].Path != "." || firstCalls != 1 {
+			t.Fatalf("transport discarded known whole-root identity: first=%+v rules=%d lookups=%d", rules[0], len(rules), firstCalls)
+		}
+	})
+}
+
+func TestScopeAnswersRefuseExcludedProjectCompanionAtomically(t *testing.T) {
+	t.Parallel()
+	home, userHome := t.TempDir(), t.TempDir()
+	root := filepath.Join(userHome, "repo")
+	private := filepath.Join(root, "private")
+	must(t, os.MkdirAll(filepath.Join(private, "child"), 0700))
+	encoded, err := json.Marshal([]portableProjectRule{{Path: root, Included: true}, {Path: private, Included: false}})
+	must(t, err)
+	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
+	for _, companion := range []string{private, filepath.Join(private, "child")} {
+		existing := config.Config{Archive: archive.Config{Projects: []archive.ProjectActivation{{Root: root, Included: true}}}}
+		before := append([]archive.ProjectActivation(nil), existing.Archive.Projects...)
+		cfg, _, err := setupAnswers(existing, setupOptions{projectScope: string(encoded), projects: []string{companion}, apps: "codex", provider: "s3", bucket: "synthetic", awsProfile: "test", region: "us-east-1", storageFlagsSupplied: true}, home, userHome, false, env)
+		if err == nil || !strings.Contains(err.Error(), "--project-scope") || !reflect.DeepEqual(cfg.Archive.Projects, before) || !reflect.DeepEqual(existing.Archive.Projects, before) {
+			t.Errorf("companion defeated transferred exclusion or mutated candidate: err=%v projects=%+v", err, cfg.Archive.Projects)
+		}
+	}
+}
+
+// This oracle uses pairwise resolved containment rather than parent membership,
+// so boundary and ordering regressions in the bounded exporter are observable.
+func TestPortableScopeParentLookupMatchesResolvedContainment(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	names := []string{"repo", "repo/private", "repo/private/public", "repo-other", "path-parent", "path-parent/nested", "unrelated/nested", "unrelated/nested/private", "future"}
+	projects := make([]archive.ProjectActivation, 0, len(names))
+	keys := map[string]string{}
+	for i, name := range names {
+		root := filepath.Join(home, filepath.FromSlash(name))
+		must(t, os.MkdirAll(root, 0700))
+		if i%2 == 0 {
+			must(t, os.Mkdir(filepath.Join(root, ".git"), 0700))
+			keys[local.CanonicalPath(root)] = archive.RepoKey("https://example.test/" + name + ".git")
+		}
+		projects = append(projects, archive.ProjectActivation{Root: root, Included: i%3 != 0})
+	}
+	env := Env{repoKeyContext: func(_ context.Context, root string) string { return keys[local.CanonicalPath(root)] }}
+	for _, reversed := range []bool{false, true} {
+		if reversed {
+			for i, j := 0, len(projects)-1; i < j; i, j = i+1, j-1 {
+				projects[i], projects[j] = projects[j], projects[i]
+			}
+		}
+		// Compare both a fresh export and reuse of established identities.
+		for _, cache := range []map[string]string{nil, keys} {
+			var rules []portableProjectRule
+			must(t, json.Unmarshal([]byte(portableProjectScopeWithKeys(projects, home, env, t.Context(), cache)), &rules))
+			for i, project := range projects {
+				root := local.CanonicalPath(project.Root)
+				anchor := ""
+				for candidate, key := range keys {
+					if key == "" || !local.PathWithin(root, candidate) {
+						continue
+					}
+					outermost := true
+					for _, other := range projects {
+						otherRoot := local.CanonicalPath(other.Root)
+						if candidate != otherRoot && local.PathWithin(candidate, otherRoot) {
+							outermost = false
+							break
+						}
+					}
+					if outermost {
+						anchor = candidate
+					}
+				}
+				want := portableProjectRule{Path: homeRelative(root, home), Included: project.Included}
+				if anchor != "" {
+					rel, err := filepath.Rel(anchor, root)
+					must(t, err)
+					want.Path = filepath.ToSlash(rel)
+					want.RepoKey = keys[anchor]
+				}
+				if rules[i] != want {
+					t.Fatalf("containment changed at %s (reversed=%t cached=%t): got %+v want %+v", root, reversed, cache != nil, rules[i], want)
+				}
+			}
+		}
 	}
 }
