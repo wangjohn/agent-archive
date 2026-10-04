@@ -289,7 +289,9 @@ Pause every machine that uploads to the bucket first, so no publication is in
 flight: a new source is uploaded before the metadata that points at it.
 This needs the [AWS CLI](https://aws.amazon.com/cli/) and `jq`, and
 credentials that can list, read, and delete under the prefix. Keep **every**
-uploading machine paused until the plan has been applied. Run the following blocks
+uploading machine paused until the plan has been applied. Every uploading
+installation must report a successful pause; this local recipe cannot establish
+that remote writers have stopped. Run the following blocks
 in the **same bash or zsh shell**; a plan expires after five minutes and can
 only be applied once. Keep the printed plan directory for recovery with
 `purge_resume` if an attempt fails or expires. External
@@ -300,7 +302,13 @@ First, list what would be deleted:
 
 <!-- purge-recipe:list (scripts/test_purge_recipe.py runs the three blocks below) -->
 ```sh
-agent-archive pause            # on every machine that uploads to this bucket
+purge_dir=                    # clear any previous valid plan before attempting pause
+purge_pause_ok=
+if agent-archive pause; then   # must succeed on every uploading installation
+  purge_pause_ok=yes
+else
+  echo "Pause failed; no cleanup plan is available. Inspect the lock holder and retry pause." >&2
+fi
 
 bucket=my-archive-bucket       # your bucket
 prefix=agent-archive/          # your prefix with its trailing slash, or empty
@@ -393,6 +401,7 @@ purge_check_manifest() {
 purge_dir=                         # never inherit a previous plan
 purge_prepare() {
   mode=$1; selector=${2:-}
+  [ "${purge_pause_ok:-}" = yes ] || { echo "Pause must succeed before preparing a plan." >&2; return 1; }
   purge_dir=                       # a failed new attempt cannot expose an old plan
   case "$prefix" in ''|*/) ;; *) echo "Prefix must be empty or end in /." >&2; return 1 ;; esac
   case "$mode" in
@@ -426,11 +435,15 @@ purge_prepare() {
   fi
   LC_ALL=C sort -u "$purge_dir/unsorted" > "$purge_dir/keys" || return 1
   : > "$purge_dir/metas" || return 1
+  : > "$purge_dir/metadata.keys" || return 1
   while IFS= read -r key; do
     case "$key" in "${prefix}sessions/"*/metadata.json)
-      printf '%s\n' "$key" >> "$purge_dir/metas" || return 1 ;;
+      printf '%s\n' "$key" >> "$purge_dir/metadata.keys" || return 1 ;;
     esac
   done < "$purge_dir/keys"
+  # Full-prefix mode deliberately removes every scoped key, even damaged metadata.
+  # Only selective modes read metadata to establish source ownership.
+  [ "$mode" = all ] || cp "$purge_dir/metadata.keys" "$purge_dir/metas" || return 1
   : > "$purge_dir/current" || return 1
   : > "$purge_dir/selected" || return 1
   : > "$purge_dir/snapshots" || return 1
@@ -470,9 +483,9 @@ purge_prepare() {
   LC_ALL=C sort -u "$purge_dir/current" -o "$purge_dir/current" || return 1
   : > "$purge_dir/targets" || return 1
   if [ "$mode" = all ]; then
-    cat "$purge_dir/metas" > "$purge_dir/targets" || return 1
+    cat "$purge_dir/metadata.keys" > "$purge_dir/targets" || return 1
     while IFS= read -r key; do
-      if ! grep -Fxq -- "$key" "$purge_dir/metas"; then
+      if ! grep -Fxq -- "$key" "$purge_dir/metadata.keys"; then
         printf '%s\n' "$key" >> "$purge_dir/targets" || return 1
       fi
     done < "$purge_dir/keys"
@@ -503,6 +516,7 @@ purge_prepare() {
   cat "$purge_dir/targets"
 }
 purge_apply() {
+  [ "${purge_pause_ok:-}" = yes ] || { echo "Pause must succeed before deleting." >&2; return 1; }
   if [ -z "${purge_dir:-}" ] || [ ! -f "$purge_dir/VALID" ]; then
     echo "No valid plan; nothing deleted." >&2; return 1
   fi
@@ -576,6 +590,7 @@ purge_apply() {
 }
 purge_resume() {
   original=$1
+  [ "${purge_pause_ok:-}" = yes ] || { echo "Pause must succeed before recovery." >&2; return 1; }
   purge_dir=
   purge_check_manifest "$original" || { echo "Unreadable or corrupt manifest; nothing deleted." >&2; return 1; }
   [ "$(jq -r .bucket "$original/manifest.json")" = "$bucket" ] &&
@@ -640,6 +655,19 @@ purge_resume() {
       printf '%s\n' "$meta" >> "$purge_dir/tombstones" || return 1
     fi
   done < "$purge_dir/original.metas"
+  # Full-prefix plans do not snapshot metadata bodies, but retain deletion history.
+  if [ "$mode" = all ]; then
+    while IFS= read -r key; do
+      case "$key" in "${prefix}sessions/"*/metadata.json)
+        if grep -Fxq -- "$key" "$purge_dir/tombstones" &&
+           grep -Fxq -- "$key" "$purge_dir/keys"; then
+          echo "Metadata reappeared or has an interrupted delete: $key; nothing deleted." >&2; return 1
+        elif ! grep -Fxq -- "$key" "$purge_dir/keys"; then
+          printf '%s\n' "$key" >> "$purge_dir/tombstones" || return 1
+        fi ;;
+      esac
+    done < "$purge_dir/original.keys"
+  fi
   # Preserve original metadata-first order; never discover new ownership.
   jq -r '.targets[]' "$purge_dir/manifest.json" > "$purge_dir/original.targets" || return 1
   while IFS= read -r key; do
