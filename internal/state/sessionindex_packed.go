@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -23,9 +24,13 @@ import (
 const packedOverlaySentinel = ".packed-epoch"
 
 const packedSessionIndexDir = "sessions-packed-v1"
+
 const packedSessionIndexThreshold = 4096
+
 const packedSessionIndexShards = 256
+
 const packedSessionIndexMaxBytes = 2 * 1024 * 1024
+
 const packedSessionIndexMaxEntries = 1024
 
 type packedSessionIndex struct {
@@ -38,10 +43,12 @@ type packedSessionIndex struct {
 }
 
 func recoveryMarkerVersion(version int) bool { return version == 1 || version == 2 }
+
 func packedIndexHash(key agentmeta.SessionKey) string {
 	sum := sha256.Sum256(key.Encoding())
 	return hex.EncodeToString(sum[:])
 }
+
 func packedIndexPath(home, shard string) string {
 	return filepath.Join(home, packedSessionIndexDir, shard+".idx")
 }
@@ -111,6 +118,7 @@ func (s *Store) packedSessionIndexEntry(key agentmeta.SessionKey) (qualifiedSess
 }
 
 const packedRecordIndexBytes = 76
+
 const packedIndexMagic = "AASIDX01"
 
 type packedIndexHeader struct {
@@ -130,14 +138,20 @@ func (header packedIndexHeader) checksum() string {
 	return phaseFingerprint(header)
 }
 
+func (header packedIndexHeader) valid(marker sessionIndexMarker) bool {
+	return header.Version == 1 && header.Epoch == marker.PackedEpoch && header.Revision == marker.PackedRevision && header.Inventory == marker.PackedInventory && header.Count >= 0 && header.Count <= packedSessionIndexMaxEntries && header.Bytes >= 0 && header.Bytes <= packedSessionIndexMaxBytes && header.Checksum != "" && header.Checksum == header.checksum()
+}
+
 type packedIndexReader struct {
-	file                       *os.File
-	table                      []byte
-	dataStart                  int64
-	dataBytes                  int
-	data                       []byte
-	fallback                   bool
-	epoch, revision, inventory string
+	file      *os.File
+	table     []byte
+	dataStart int64
+	dataBytes int
+	data      []byte
+	fallback  bool
+	epoch     string
+	revision  string
+	inventory string
 }
 
 func (s *Store) openPackedIndex(shard string, marker sessionIndexMarker) (*packedIndexReader, error) {
@@ -164,7 +178,7 @@ func (s *Store) openPackedIndex(shard string, marker sessionIndexMarker) (*packe
 		return nil, ErrSessionIndexRecoveryRequired
 	}
 	var header packedIndexHeader
-	if json.Unmarshal(data, &header) != nil || header.Version != 1 || header.Epoch != marker.PackedEpoch || header.Revision != marker.PackedRevision || header.Inventory != marker.PackedInventory || header.Count < 0 || header.Count > packedSessionIndexMaxEntries || header.Bytes < 0 || header.Bytes > packedSessionIndexMaxBytes || header.Checksum == "" || header.Checksum != header.checksum() {
+	if json.Unmarshal(data, &header) != nil || !header.valid(marker) {
 		return nil, ErrSessionIndexRecoveryRequired
 	}
 	table := make([]byte, header.Count*packedRecordIndexBytes)
@@ -180,40 +194,55 @@ func (s *Store) openPackedIndex(shard string, marker sessionIndexMarker) (*packe
 	if err != nil || info.Size() != start+int64(header.Bytes) || info.Size() > packedSessionIndexMaxBytes {
 		return nil, ErrSessionIndexRecoveryRequired
 	}
-	shardBytes, decodeErr := hex.DecodeString(shard)
-	if decodeErr != nil || len(shardBytes) != 1 {
-		return nil, ErrSessionIndexRecoveryRequired
-	}
-	var offset uint64
-	for i := range header.Count {
-		row := table[i*packedRecordIndexBytes : (i+1)*packedRecordIndexBytes]
-		if row[0] != shardBytes[0] || binary.BigEndian.Uint64(row[32:40]) != offset {
-			return nil, ErrSessionIndexRecoveryRequired
-		}
-		if i > 0 && bytes.Compare(table[(i-1)*packedRecordIndexBytes:(i-1)*packedRecordIndexBytes+32], row[:32]) >= 0 {
-			return nil, ErrSessionIndexRecoveryRequired
-		}
-		size := uint64(binary.BigEndian.Uint32(row[40:44]))
-		if size == 0 || size > uint64(header.Bytes) || offset+size > uint64(header.Bytes) {
-			return nil, ErrSessionIndexRecoveryRequired
-		}
-		offset += size
-	}
-	if offset != uint64(header.Bytes) {
-		return nil, ErrSessionIndexRecoveryRequired
+	if err := validatePackedTable(table, shard, header.Count, header.Bytes); err != nil {
+		return nil, err
 	}
 	good = true
 	return &packedIndexReader{file: file, table: table, dataStart: start, dataBytes: header.Bytes, fallback: header.Fallback, epoch: header.Epoch, revision: header.Revision, inventory: header.Inventory}, nil
 }
+
+func validatePackedTable(table []byte, shard string, count, dataBytes int) error {
+	if dataBytes < 0 || dataBytes > math.MaxInt32 {
+		return ErrSessionIndexRecoveryRequired
+	}
+	shardBytes, decodeErr := hex.DecodeString(shard)
+	if decodeErr != nil || len(shardBytes) != 1 {
+		return ErrSessionIndexRecoveryRequired
+	}
+	var offset uint64
+	for i := range count {
+		row := table[i*packedRecordIndexBytes : (i+1)*packedRecordIndexBytes]
+		if row[0] != shardBytes[0] || binary.BigEndian.Uint64(row[32:40]) != offset {
+			return ErrSessionIndexRecoveryRequired
+		}
+		if i > 0 && bytes.Compare(table[(i-1)*packedRecordIndexBytes:(i-1)*packedRecordIndexBytes+32], row[:32]) >= 0 {
+			return ErrSessionIndexRecoveryRequired
+		}
+		size := uint64(binary.BigEndian.Uint32(row[40:44]))
+		if size == 0 || size > uint64(dataBytes) || offset+size > uint64(dataBytes) {
+			return ErrSessionIndexRecoveryRequired
+		}
+		offset += size
+	}
+	if offset != uint64(dataBytes) {
+		return ErrSessionIndexRecoveryRequired
+	}
+	return nil
+}
+
 func (reader *packedIndexReader) entry(index int) (qualifiedSessionIndexEntry, error) {
 	row := reader.table[index*packedRecordIndexBytes : (index+1)*packedRecordIndexBytes]
 	length := int(binary.BigEndian.Uint32(row[40:44]))
 	data := make([]byte, length)
 
+	rawOffset := binary.BigEndian.Uint64(row[32:40])
+	if rawOffset > math.MaxInt32 {
+		return qualifiedSessionIndexEntry{}, ErrSessionIndexRecoveryRequired
+	}
 	if reader.data != nil {
-		offset := int(binary.BigEndian.Uint64(row[32:40]))
+		offset := int(rawOffset)
 		copy(data, reader.data[offset:offset+length])
-	} else if _, err := reader.file.ReadAt(data, reader.dataStart+int64(binary.BigEndian.Uint64(row[32:40]))); err != nil {
+	} else if _, err := reader.file.ReadAt(data, reader.dataStart+int64(rawOffset)); err != nil {
 		return qualifiedSessionIndexEntry{}, ErrSessionIndexRecoveryRequired
 	}
 
@@ -234,6 +263,7 @@ func (reader *packedIndexReader) entry(index int) (qualifiedSessionIndexEntry, e
 	}
 	return entry, nil
 }
+
 func (s *Store) readPackedEntry(hash string, marker sessionIndexMarker) (qualifiedSessionIndexEntry, bool, error) {
 	reader, err := s.openPackedIndex(hash[:2], marker)
 	if err != nil {
@@ -254,6 +284,7 @@ func (s *Store) readPackedEntry(hash string, marker sessionIndexMarker) (qualifi
 	entry, err := reader.entry(index)
 	return entry, err == nil, err
 }
+
 func (s *Store) readPackedSessionIndex(shard string, marker sessionIndexMarker) (packedSessionIndex, error) {
 	index := packedSessionIndex{Entries: make(map[string]qualifiedSessionIndexEntry)}
 	reader, err := s.openPackedIndex(shard, marker)
@@ -276,6 +307,7 @@ func (s *Store) readPackedSessionIndex(shard string, marker sessionIndexMarker) 
 	}
 	return index, nil
 }
+
 func encodePackedIndex(index packedSessionIndex) ([]byte, error) {
 	keys := make([]string, 0, len(index.Entries))
 	for key := range index.Entries {
@@ -293,10 +325,14 @@ func encodePackedIndex(index packedSessionIndex) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
+		offset, length := data.Len(), len(record)
+		if offset < 0 || offset > math.MaxInt32 || length < 0 || length > math.MaxInt32 {
+			return nil, ErrSessionIndexRecoveryRequired
+		}
 		row := table[i*packedRecordIndexBytes : (i+1)*packedRecordIndexBytes]
 		copy(row[:32], hash)
-		binary.BigEndian.PutUint64(row[32:40], uint64(data.Len()))
-		binary.BigEndian.PutUint32(row[40:44], uint32(len(record)))
+		binary.BigEndian.PutUint64(row[32:40], uint64(offset))
+		binary.BigEndian.PutUint32(row[40:44], uint32(length))
 		sum := sha256.Sum256(record)
 		copy(row[44:76], sum[:])
 		_, _ = data.Write(record)
@@ -308,9 +344,13 @@ func encodePackedIndex(index packedSessionIndex) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	metadataLength := len(metadata)
+	if metadataLength < 0 || metadataLength > math.MaxInt32 || metadataLength > 4096 {
+		return nil, ErrSessionIndexRecoveryRequired
+	}
 	result := make([]byte, 12+len(metadata)+len(table)+data.Len())
 	copy(result, packedIndexMagic)
-	binary.BigEndian.PutUint32(result[8:12], uint32(len(metadata)))
+	binary.BigEndian.PutUint32(result[8:12], uint32(metadataLength))
 	offset := 12
 	copy(result[offset:], metadata)
 	offset += len(metadata)
@@ -402,43 +442,11 @@ var errPackedSlicePending = errors.New("packed application slice pending")
 
 func (s *Store) recoverPackedShardSlice(ctx context.Context, shard string, marker sessionIndexMarker, owners map[agentmeta.SessionKey][]string, candidates []SubagentCandidate, deadline time.Time) error {
 
-	// Decide fallback before any per-key native repairs. Its ordinary writes
-	// are applied independently in the cursor's next phase.
-	sizing := packedSessionIndex{Epoch: marker.PackedEpoch, Revision: marker.PackedRevision, Inventory: marker.PackedInventory, Entries: map[string]qualifiedSessionIndexEntry{}}
-	oversized := len(owners)+len(candidates) > packedSessionIndexMaxEntries
-	bytes := 4096 + (len(owners)+len(candidates))*packedRecordIndexBytes
-	measure := func(entry qualifiedSessionIndexEntry) error {
-		if oversized {
-			return nil
-		}
-		if len(entry.NativeID)+len(entry.ArchiveSessionID)+len(entry.Reservation) > packedSessionIndexMaxBytes {
-			oversized = true
-			return nil
-		}
-		data, err := json.Marshal(entry)
-		if err != nil {
-			return err
-		}
-		bytes += len(data)
-		oversized = bytes > packedSessionIndexMaxBytes
-		return nil
+	sizing, oversized, err := packedShardSizing(marker, owners, candidates)
+	if err != nil {
+		return err
 	}
-	for key, ids := range owners {
-		if err := measure(indexEntry(key, ids[0])); err != nil {
-			return err
-		}
-	}
-	for _, candidate := range candidates {
-		key, err := agentmeta.NewSessionKey(candidate.Harness.Name, candidate.NativeSessionID)
-		if err != nil {
-			return err
-		}
-		entry := indexEntry(key, candidate.ArchiveSessionID)
-		entry.Reservation = marker.PackedEpoch
-		if err := measure(entry); err != nil {
-			return err
-		}
-	}
+
 	if oversized {
 		sizing.Fallback = true
 		empty, err := encodePackedIndex(sizing)
@@ -448,6 +456,43 @@ func (s *Store) recoverPackedShardSlice(ctx context.Context, shard string, marke
 		return s.publishPackedIndex(ctx, shard, marker, empty, true)
 	}
 	entries := make(map[string]qualifiedSessionIndexEntry, len(owners)+len(candidates))
+	if err := s.packedShardOwners(ctx, owners, entries, deadline); err != nil {
+		return err
+	}
+	if err := s.packedShardCandidates(ctx, candidates, entries, marker, deadline); err != nil {
+		return err
+	}
+	index := packedSessionIndex{Version: 1, Epoch: marker.PackedEpoch, Revision: marker.PackedRevision, Inventory: marker.PackedInventory, Entries: entries}
+	data, err := encodePackedIndex(index)
+	if err != nil {
+		return err
+	}
+	if len(entries) > packedSessionIndexMaxEntries || len(data) > packedSessionIndexMaxBytes {
+		// Large/skewed existing identities remain supported by the ordinary durable
+		// namespace. Bounds select storage, never reject otherwise valid input.
+
+		// The marker is incomplete. Publish an empty current-epoch shard first so
+		// ordinary locked repairs see logical absence, not an obsolete aggregate.
+		// Failure leaves the certificate incomplete and the cursor on this shard.
+		index.Entries = map[string]qualifiedSessionIndexEntry{}
+		index.Fallback = true
+		empty, err := encodePackedIndex(index)
+		if err != nil {
+			return err
+		}
+		if err := s.publishPackedIndex(ctx, shard, marker, empty, true); err != nil {
+			return err
+		}
+
+		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return s.publishPackedIndex(ctx, shard, marker, data, true)
+}
+
+func (s *Store) packedShardOwners(ctx context.Context, owners map[agentmeta.SessionKey][]string, entries map[string]qualifiedSessionIndexEntry, deadline time.Time) error {
 	ownerKeys, _ := inventoryFingerprint(owners)
 	for _, key := range ownerKeys {
 		if !deadline.IsZero() && !time.Now().Before(deadline) {
@@ -479,6 +524,11 @@ func (s *Store) recoverPackedShardSlice(ctx context.Context, shard string, marke
 		}
 		entries[hash] = entry
 	}
+	return nil
+}
+
+func (s *Store) packedShardCandidates(ctx context.Context, candidates []SubagentCandidate, entries map[string]qualifiedSessionIndexEntry, marker sessionIndexMarker, deadline time.Time) error {
+
 	for _, candidate := range candidates {
 		if !deadline.IsZero() && !time.Now().Before(deadline) {
 			return errPackedSlicePending
@@ -526,34 +576,48 @@ func (s *Store) recoverPackedShardSlice(ctx context.Context, shard string, marke
 		entry.Reservation = marker.PackedEpoch
 		entries[hash] = entry
 	}
-	index := packedSessionIndex{Version: 1, Epoch: marker.PackedEpoch, Revision: marker.PackedRevision, Inventory: marker.PackedInventory, Entries: entries}
-	data, err := encodePackedIndex(index)
-	if err != nil {
-		return err
-	}
-	if len(entries) > packedSessionIndexMaxEntries || len(data) > packedSessionIndexMaxBytes {
-		// Large/skewed existing identities remain supported by the ordinary durable
-		// namespace. Bounds select storage, never reject otherwise valid input.
+	return nil
+}
 
-		// The marker is incomplete. Publish an empty current-epoch shard first so
-		// ordinary locked repairs see logical absence, not an obsolete aggregate.
-		// Failure leaves the certificate incomplete and the cursor on this shard.
-		index.Entries = map[string]qualifiedSessionIndexEntry{}
-		index.Fallback = true
-		empty, err := encodePackedIndex(index)
+func packedShardSizing(marker sessionIndexMarker, owners map[agentmeta.SessionKey][]string, candidates []SubagentCandidate) (packedSessionIndex, bool, error) {
+	// Decide fallback before any per-key native repairs. Its ordinary writes
+	// are applied independently in the cursor's next phase.
+	sizing := packedSessionIndex{Epoch: marker.PackedEpoch, Revision: marker.PackedRevision, Inventory: marker.PackedInventory, Entries: map[string]qualifiedSessionIndexEntry{}}
+	oversized := len(owners)+len(candidates) > packedSessionIndexMaxEntries
+	bytes := 4096 + (len(owners)+len(candidates))*packedRecordIndexBytes
+	measure := func(entry qualifiedSessionIndexEntry) error {
+		if oversized {
+			return nil
+		}
+		if len(entry.NativeID)+len(entry.ArchiveSessionID)+len(entry.Reservation) > packedSessionIndexMaxBytes {
+			oversized = true
+			return nil
+		}
+		data, err := json.Marshal(entry)
 		if err != nil {
 			return err
 		}
-		if err := s.publishPackedIndex(ctx, shard, marker, empty, true); err != nil {
-			return err
-		}
-
+		bytes += len(data)
+		oversized = bytes > packedSessionIndexMaxBytes
 		return nil
 	}
-	if err := ctx.Err(); err != nil {
-		return err
+	for key, ids := range owners {
+		if err := measure(indexEntry(key, ids[0])); err != nil {
+			return sizing, false, err
+		}
 	}
-	return s.publishPackedIndex(ctx, shard, marker, data, true)
+	for _, candidate := range candidates {
+		key, err := agentmeta.NewSessionKey(candidate.Harness.Name, candidate.NativeSessionID)
+		if err != nil {
+			return sizing, false, err
+		}
+		entry := indexEntry(key, candidate.ArchiveSessionID)
+		entry.Reservation = marker.PackedEpoch
+		if err := measure(entry); err != nil {
+			return sizing, false, err
+		}
+	}
+	return sizing, oversized, nil
 }
 
 func packedRecoverySources(inventory map[agentmeta.SessionKey][]string, candidates []SubagentCandidate) ([packedSessionIndexShards]map[agentmeta.SessionKey][]string, [packedSessionIndexShards][]SubagentCandidate, error) {
@@ -596,6 +660,7 @@ func (s *Store) packedOverlayDirectoryPresent(marker sessionIndexMarker) bool {
 	data, err := os.ReadFile(filepath.Join(s.home, "sessions-v1", packedOverlaySentinel))
 	return err == nil && (string(data) == marker.PackedEpoch+":empty" || string(data) == marker.PackedEpoch+":overrides")
 }
+
 func (s *Store) ensurePackedOverlayDirectory(marker sessionIndexMarker) error {
 	if !s.packedOverlayDirectoryPresent(marker) {
 		if err := local.WriteBytes(filepath.Join(s.home, "sessions-v1", packedOverlaySentinel), []byte(marker.PackedEpoch+":empty")); err != nil {
@@ -618,14 +683,27 @@ func (s *Store) publishPackedIndex(ctx context.Context, shard string, marker ses
 	}
 	return s.commitPackedIndex(ctx, path, marker, before, data, census)
 }
+
 func (s *Store) commitPackedIndex(ctx context.Context, path string, marker sessionIndexMarker, before fileSnapshot, data []byte, census bool) error {
+	return s.commitPackedIndexGuarded(ctx, path, marker, before, data, census, nil)
+}
+
+func (s *Store) commitPackedIndexGuarded(ctx context.Context, path string, marker sessionIndexMarker, before fileSnapshot, data []byte, census bool, guard func() (func() error, error)) error {
 	staged, err := local.StageBytes(path, data)
 	if err != nil {
 		return err
 	}
 	defer staged.Discard()
 	s.writeSynced()
-	err = func() error {
+	committed := false
+	err = func() (err error) {
+		if guard != nil {
+			unlock, err := guard()
+			if err != nil {
+				return err
+			}
+			defer func() { err = errors.Join(err, unlock()) }()
+		}
 		unlock, err := local.NamedLockWait(s.home, sessionMembershipLock, time.Second)
 		if err != nil {
 			return err
@@ -651,20 +729,28 @@ func (s *Store) commitPackedIndex(ctx context.Context, path string, marker sessi
 		if !snapshot.equal(before) {
 			return errIndexMoved
 		}
-		return staged.Commit()
+		err = staged.Commit()
+		committed = err == nil
+		return err
 	}()
-	if err != nil {
+	if !committed {
 		return err
 	}
 	s.writeSynced()
-	return staged.SyncDir()
+	return errors.Join(err, staged.SyncDir())
 }
 
 // Capture linked archive IDs before candidate deletion; cleanup does not need
 // to enumerate registrations or retain the whole packed inventory.
 func (s *Store) packedRemovalIDs(id string) (map[string]bool, error) {
 	var marker sessionIndexMarker
-	if readRecoveryJSON(filepath.Join(s.home, sessionIndexMarkerFile), &marker) != nil || marker.Version != 2 {
+	if err := readRecoveryJSON(filepath.Join(s.home, sessionIndexMarkerFile), &marker); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if marker.Version != 2 {
 		return nil, nil
 	}
 	ids, err := s.subagentCandidatesForSession(id)
@@ -677,19 +763,34 @@ func (s *Store) packedRemovalIDs(id string) (map[string]bool, error) {
 	}
 	return removed, nil
 }
-func (s *Store) removePackedIdentities(ids map[string]bool) error {
+
+func (s *Store) removePackedIdentities(ids map[string]bool) (err error) {
 	if len(ids) == 0 {
 		return nil
 	}
+	defer func() {
+		if err != nil {
+			err = errors.Join(err, s.MarkSessionIndexRecoveryNeeded())
+		}
+	}()
+	var inventory map[agentmeta.SessionKey][]string
+	var inventoryRevision string
 	for i := range packedSessionIndexShards {
 		shard := packedShardName(i)
-		for attempt := 0; attempt < unlockedWriteAttempts; attempt++ {
+	attemptLoop:
+		for attempt := range unlockedWriteAttempts {
 			var marker sessionIndexMarker
 			if err := readRecoveryJSON(filepath.Join(s.home, sessionIndexMarkerFile), &marker); err != nil {
 				return err
 			}
 			if marker.Version != 2 {
 				return nil
+			}
+			// Capture before reading authority: a registration added during
+			// staging must prevent pruning even if the shard itself is unchanged.
+			revision, err := s.sessionMembershipRevision()
+			if err != nil {
+				return err
 			}
 			path := packedIndexPath(s.home, shard)
 			before, err := readSnapshot(path)
@@ -704,8 +805,35 @@ func (s *Store) removePackedIdentities(ids map[string]bool) error {
 				return err
 			}
 			changed := false
+			var candidateIDs []string
 			for hash, entry := range index.Entries {
-				if ids[entry.ArchiveSessionID] && !exists(s.registrationPath(entry.ArchiveSessionID)) && !exists(s.subagentCandidatePath(entry.ArchiveSessionID)) {
+				remove := ids[entry.ArchiveSessionID] && !exists(s.registrationPath(entry.ArchiveSessionID)) && !exists(s.subagentCandidatePath(entry.ArchiveSessionID))
+				if entry.Conflict {
+					// Conflicts intentionally name no single archive owner. Only
+					// a complete validated census can prove all owners expired.
+					// It runs outside locks and its revision is fenced at commit.
+					if inventory == nil || inventoryRevision != revision {
+						inventory, err = s.sessionRegistrationInventory(context.Background())
+						if err != nil {
+							return err
+						}
+						inventoryRevision = revision
+					}
+					key := agentmeta.SessionKey{Agent: entry.Agent, NativeID: entry.NativeID}
+					remove = len(inventory[key]) == 0
+				}
+				if remove {
+					if entry.Conflict {
+						if err := s.removePackedConflictOverride(entry, revision); err != nil {
+							if errors.Is(err, errIndexMoved) && attempt+1 < unlockedWriteAttempts {
+								continue attemptLoop
+							}
+							return err
+						}
+					}
+					if !entry.Conflict {
+						candidateIDs = append(candidateIDs, entry.ArchiveSessionID)
+					}
 					delete(index.Entries, hash)
 					changed = true
 				}
@@ -718,7 +846,13 @@ func (s *Store) removePackedIdentities(ids map[string]bool) error {
 			if err != nil {
 				return err
 			}
-			err = s.commitPackedIndex(context.Background(), path, marker, before, data, false)
+			// The bytes retain the packed provenance; only the commit fence
+			// uses the current membership snapshot that authorized deletion.
+			fence := marker
+			fence.PackedRevision = revision
+			err = s.commitPackedIndexGuarded(context.Background(), path, fence, before, data, true, func() (func() error, error) {
+				return s.lockPackedRemovedCandidates(candidateIDs)
+			})
 			if errors.Is(err, errIndexMoved) {
 				if attempt+1 == unlockedWriteAttempts {
 					return err
@@ -734,6 +868,90 @@ func (s *Store) removePackedIdentities(ids map[string]bool) error {
 	return nil
 }
 
+// Only the mixed packed/physical conflict case reaches this helper. The full
+// census proved no registrations remain; a newer physical owner or reservation
+// must still win. Rename/delete checks hold hooks then membership, with the
+// native directory sync after both release.
+func (s *Store) removePackedConflictOverride(entry qualifiedSessionIndexEntry, revision string) error {
+	key := agentmeta.SessionKey{Agent: entry.Agent, NativeID: entry.NativeID}
+	path := qualifiedSessionIndexPath(s.home, key)
+	before, err := readSnapshot(path)
+	if err != nil || !before.found {
+		return err
+	}
+	var physical qualifiedSessionIndexEntry
+	if json.Unmarshal(before.data, &physical) != nil || physical.Version != 1 || physical.Agent != key.Agent || physical.NativeID != key.NativeID || !physical.Conflict || physical.Recovery || physical.Absent || physical.ArchiveSessionID != "" || physical.Reservation != "" {
+		return nil
+	}
+	removed, err := func() (bool, error) {
+		hooks, err := s.namedLockWait("hooks.lock", time.Second)
+		if err != nil {
+			return false, err
+		}
+		defer hooks()
+		membership, err := local.NamedLockWait(s.home, sessionMembershipLock, time.Second)
+		if err != nil {
+			return false, err
+		}
+		defer membership()
+		currentRevision, err := s.sessionMembershipRevision()
+		if err != nil || currentRevision != revision {
+			return false, ErrSessionIndexRecoveryRequired
+		}
+		current, err := readSnapshot(path)
+		if err != nil {
+			return false, err
+		}
+		if !current.equal(before) {
+			return false, errIndexMoved
+		}
+		err = os.Remove(path)
+		return err == nil, err
+	}()
+	if err != nil || !removed {
+		return err
+	}
+	dir, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = dir.Close() }()
+	return dir.Sync()
+}
+
+// Candidate recreation does not change registration membership. Serialize the
+// final absence checks with candidate writers, before taking membership.lock.
+// Native file and directory sync remain outside both sets of locks.
+func (s *Store) lockPackedRemovedCandidates(ids []string) (func() error, error) {
+	sort.Strings(ids)
+	var unlocks []func()
+	unlockAll := func() error {
+		var err error
+		for i := len(unlocks) - 1; i >= 0; i-- {
+			id := ids[i]
+			if !exists(s.subagentCandidatePath(id)) && !exists(s.registrationPath(id)) {
+				removeErr := os.Remove(filepath.Join(s.home, subagentLockName(id)))
+				if !errors.Is(removeErr, os.ErrNotExist) {
+					err = errors.Join(err, removeErr)
+				}
+			}
+			unlocks[i]()
+		}
+		return err
+	}
+	for _, id := range ids {
+		unlock, err := s.lockSubagentCandidate(id)
+		if err != nil {
+			return nil, errors.Join(err, unlockAll())
+		}
+		unlocks = append(unlocks, unlock)
+		if exists(s.registrationPath(id)) || exists(s.subagentCandidatePath(id)) {
+			return nil, errors.Join(errIndexMoved, unlockAll())
+		}
+	}
+	return unlockAll, nil
+}
+
 type packedExpiryProof struct {
 	Epoch    string `json:"epoch"`
 	Revision string `json:"revision"`
@@ -742,6 +960,7 @@ type packedExpiryProof struct {
 func packedExpiryProofPath(home string, key agentmeta.SessionKey) string {
 	return filepath.Join(home, "sessions-v1", packedIndexHash(key)+".removed")
 }
+
 func (s *Store) packedMissAllowed(key agentmeta.SessionKey, marker sessionIndexMarker) error {
 	if !s.packedOverlayDirectoryPresent(marker) {
 		return ErrSessionIndexRecoveryRequired
@@ -768,7 +987,13 @@ func (s *Store) recordPackedExpiry(key agentmeta.SessionKey, id string) error {
 		return nil
 	}
 	var marker sessionIndexMarker
-	if readRecoveryJSON(filepath.Join(s.home, sessionIndexMarkerFile), &marker) != nil || marker.Version != 2 {
+	if err := readRecoveryJSON(filepath.Join(s.home, sessionIndexMarkerFile), &marker); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	if marker.Version != 2 {
 		return nil
 	}
 	revision, err := s.sessionMembershipRevision()
@@ -807,6 +1032,7 @@ func (s *Store) recordPackedExpiry(key agentmeta.SessionKey, id string) error {
 		},
 	})
 }
+
 func removePackedExpiryFile(path string) error {
 	proof := strings.TrimSuffix(path, ".json") + ".removed"
 	if err := os.Remove(proof); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -814,6 +1040,7 @@ func removePackedExpiryFile(path string) error {
 	}
 	return nil
 }
+
 func (s *Store) clearPackedExpiryProofs() error {
 	entries, err := os.ReadDir(filepath.Join(s.home, "sessions-v1"))
 	if err != nil {
@@ -835,7 +1062,7 @@ func (s *Store) clearPackedExpiryProofs() error {
 	if err != nil {
 		return err
 	}
-	defer dir.Close()
+	defer func() { _ = dir.Close() }()
 	return dir.Sync()
 }
 
@@ -843,12 +1070,13 @@ func (s *Store) packedOverridesExpected(marker sessionIndexMarker) bool {
 	data, err := os.ReadFile(filepath.Join(s.home, "sessions-v1", packedOverlaySentinel))
 	return err == nil && string(data) == marker.PackedEpoch+":overrides"
 }
+
 func (s *Store) packedPhysicalOverridesPresent() bool {
 	dir, err := os.Open(filepath.Join(s.home, "sessions-v1"))
 	if err != nil {
 		return false
 	}
-	defer dir.Close()
+	defer func() { _ = dir.Close() }()
 	for {
 		names, err := dir.Readdirnames(64)
 		for _, name := range names {
@@ -861,6 +1089,7 @@ func (s *Store) packedPhysicalOverridesPresent() bool {
 		}
 	}
 }
+
 func (s *Store) stagePackedExpectation(path string) (*local.Staged, string, error) {
 	if !s.indexSnapshots || filepath.Dir(path) != filepath.Join(s.home, "sessions-v1") {
 		return nil, "", nil
@@ -880,6 +1109,7 @@ func (s *Store) stagePackedExpectation(path string) (*local.Staged, string, erro
 	staged, err := local.StageBytes(filepath.Join(s.home, "sessions-v1", packedOverlaySentinel), []byte(marker.PackedEpoch+":overrides"))
 	return staged, marker.PackedEpoch, err
 }
+
 func (w lockedWrite) packedEpochValid() error {
 	if w.packedEpoch == "" {
 		return nil
@@ -890,6 +1120,7 @@ func (w lockedWrite) packedEpochValid() error {
 	}
 	return nil
 }
+
 func (s *Store) packedOverlaysHealthy(marker sessionIndexMarker) bool {
 	return s.packedOverlayDirectoryPresent(marker) && (!s.packedOverridesExpected(marker) || s.packedPhysicalOverridesPresent())
 }
@@ -903,7 +1134,7 @@ func (s *Store) reconcilePackedExpiryProofs(marker sessionIndexMarker) error {
 	if err != nil {
 		return err
 	}
-	defer dir.Close()
+	defer func() { _ = dir.Close() }()
 	changed := false
 	for {
 		names, readErr := dir.Readdirnames(64)

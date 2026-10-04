@@ -16,6 +16,7 @@ import (
 // use the existing serial reader, preserving support without multiplying their
 // unbounded size by worker count. Results are consumed in directory order.
 const recoveryReadAheadBytes = 64 * 1024
+
 const recoveryReadAheadWorkers = 8
 
 var errRecoveryReadAheadLarge = errors.New("registration exceeds bounded read-ahead")

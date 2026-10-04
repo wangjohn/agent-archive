@@ -478,15 +478,12 @@ func (s *Store) newSessionIndexMarker(generation string) sessionIndexMarker {
 	if _, err := os.Stat(filepath.Join(s.home, sessionMembershipFile)); err == nil {
 		fenced = true
 	}
-	next := sessionIndexMarker{Version: 1, Generation: generation, MembershipFenced: fenced}
 	if prior.Version == 2 {
-		next.Version = 2
-		next.PackedEpoch = prior.PackedEpoch
-		next.PackedRevision = prior.PackedRevision
-		next.PackedInventory = prior.PackedInventory
+		inventory := prior.PackedInventory
 		if prior.Complete && !s.packedOverlaysHealthy(prior) {
-			next.PackedInventory = ""
+			inventory = ""
 		}
+		return sessionIndexMarker{Version: 2, Generation: generation, MembershipFenced: fenced, PackedEpoch: prior.PackedEpoch, PackedRevision: prior.PackedRevision, PackedInventory: inventory}
 	}
-	return next
+	return sessionIndexMarker{Version: 1, Generation: generation, MembershipFenced: fenced}
 }

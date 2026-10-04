@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -16,41 +17,41 @@ import (
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
-func packedOwnerFixture(t testing.TB) (*Store, agentmeta.SessionKey, sessionIndexMarker) {
-	t.Helper()
-	s, err := Open(t.TempDir())
+func packedOwnerFixture(tb testing.TB) (*Store, agentmeta.SessionKey, sessionIndexMarker) {
+	tb.Helper()
+	s, err := Open(tb.TempDir())
 	if err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	key := agentmeta.SessionKey{Agent: agentmeta.Codex, NativeID: "packed-native"}
 	reg := migrationRegistration(key, "packed-owner")
 	data, err := json.Marshal(reg)
 	if err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	if err := os.WriteFile(s.registrationPath(reg.ArchiveSessionID), data, 0600); err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	if err := s.MarkSessionIndexRecoveryNeeded(); err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	revision, err := s.ensureSessionMembershipRevision()
 	if err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	marker, err := s.preparePackedSessionIndex(context.Background(), revision, "test-inventory")
 	if err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	if err := s.recoverPackedShard(context.Background(), packedIndexHash(key)[:2], marker, map[agentmeta.SessionKey][]string{key: {reg.ArchiveSessionID}}, nil); err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	if err := s.ensurePackedOverlayDirectory(marker); err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	marker.Complete = true
 	if err := local.Write(filepath.Join(s.home, sessionIndexMarkerFile), marker); err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	return s, key, marker
 }
@@ -92,7 +93,7 @@ func TestPackedOwnerLookupOverlayAndForget(t *testing.T) {
 
 func TestPackedLossCorruptionAndPredecessorFence(t *testing.T) {
 	for _, corrupt := range []bool{false, true} {
-		t.Run(fmt.Sprint(corrupt), func(t *testing.T) {
+		t.Run(strconv.FormatBool(corrupt), func(t *testing.T) {
 			s, key, marker := packedOwnerFixture(t)
 			// The predecessor only permits misses under a complete Version1 marker.
 			if marker.Version == 1 || !marker.Complete {
@@ -123,7 +124,7 @@ func TestPackedLossCorruptionAndPredecessorFence(t *testing.T) {
 
 func TestPackedCandidateAdmissionAndParentRemoval(t *testing.T) {
 	for _, admit := range []bool{false, true} {
-		t.Run(fmt.Sprint(admit), func(t *testing.T) {
+		t.Run(strconv.FormatBool(admit), func(t *testing.T) {
 			s, parent, marker := packedOwnerFixture(t)
 			child := agentmeta.SessionKey{Agent: agentmeta.Codex, NativeID: "packed-child"}
 			candidate := SubagentCandidate{ArchiveSessionID: "packed-child-owner", NativeSessionID: child.NativeID, ParentArchiveSessionID: "packed-owner", ParentNativeSessionID: parent.NativeID, Harness: archive.Harness{Name: "codex"}}
@@ -182,7 +183,7 @@ func TestPackedOversizedIdentityFallsBack(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Scheduled fallback applies ordinary owners in individually checkpointed units.
-	for attempt := 0; attempt < 20; attempt++ {
+	for attempt := range 20 {
 		complete, err := s.RecoverSessionIndexScheduled(context.Background(), SessionIndexRecoverySlice)
 		if err != nil {
 			t.Fatal(err)
@@ -207,11 +208,12 @@ func TestPackedScheduledResumeRepairAndCertification(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := range packedSessionIndexThreshold {
-		key := agentmeta.SessionKey{Agent: agentmeta.Codex, NativeID: fmt.Sprintf("large-native-%06d", i)}
+		nativeID := fmt.Sprintf("large-native-%06d", i)
 		id := fmt.Sprintf("large-owner-%06d", i)
 		if i == 0 {
-			key.NativeID = strings.Repeat("large-read-ahead-", 8192)
+			nativeID = strings.Repeat("large-read-ahead-", 8192)
 		}
+		key := agentmeta.SessionKey{Agent: agentmeta.Codex, NativeID: nativeID}
 		data, err := json.Marshal(migrationRegistration(key, id))
 		if err != nil {
 			t.Fatal(err)
