@@ -3,6 +3,7 @@ package collector
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -46,6 +47,86 @@ func settledGenerationFixture(t *testing.T) (*state.Store, *storagetest.MemorySt
 		t.Fatal(err)
 	}
 	return s, cloud, reg, opts, at
+}
+
+func TestFrozenUnsupportedNodeBlocksParserMaintenance(t *testing.T) {
+	s, cloud, reg, opts, _ := settledGenerationFixture(t)
+	nodePath := filepath.Join(s.Home(), "generation-nodes", reg.ArchiveSessionID+".json")
+	raw, err := os.ReadFile(nodePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var node map[string]any
+	if err := json.Unmarshal(raw, &node); err != nil {
+		t.Fatal(err)
+	}
+	node["version"] = 99
+	raw, err = json.Marshal(node)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(nodePath, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	opts.AcceptSession = func(candidate archive.SessionRegistration) bool {
+		return candidate.ArchiveSessionID == reg.ArchiveSessionID
+	}
+	opts.ParserVersion = "unsupported-node-parser-upgrade"
+	result, cost := measurePass(t, s, cloud, opts)
+	if result.Errors[reg.ArchiveSessionID] == nil || len(result.Published) != 0 || cost.loads != 0 || cost.writes != 0 {
+		t.Fatalf("unsupported node allowed retained maintenance: %#v %+v", result, cost)
+	}
+}
+
+type frozenWork string
+
+const frozenWorkRequest frozenWork = "request"
+
+const frozenWorkUpload frozenWork = "upload"
+
+const frozenWorkRateLimited frozenWork = "rate-limited"
+
+const frozenWorkScanOnly frozenWork = "scan-only"
+
+func TestFrozenSignatureWaitsForOutstandingWork(t *testing.T) {
+	for _, kind := range []frozenWork{frozenWorkRequest, frozenWorkUpload, frozenWorkRateLimited, frozenWorkScanOnly} {
+		t.Run(string(kind), func(t *testing.T) {
+			s, cloud, reg, opts, at := settledGenerationFixture(t)
+			if err := s.RemoveScanSignature(reg.ArchiveSessionID); err != nil {
+				t.Fatal(err)
+			}
+			published, err := s.LoadPublishedState(reg.ArchiveSessionID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			switch kind {
+			case frozenWorkRequest:
+				err = s.SaveRequest(reg.ArchiveSessionID, "feedback", at)
+			case frozenWorkUpload:
+				err = s.SavePending(reg.ArchiveSessionID, state.PendingPublication{ReadyAt: at, SourceKey: "source", MetadataKey: "metadata", SourceSHA256: "sha", SourceBytes: []byte("source"), MetadataBytes: []byte(`{}`)})
+			case frozenWorkRateLimited:
+				bundle, _, _ := published.LastPublished()
+				err = published.Save(bundle, at, state.CacheStatusRateLimited)
+			case frozenWorkScanOnly:
+				err = s.SetScanPending(reg.ArchiveSessionID, true)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			scan := newSessionScan(t.Context(), s, cloud, reg, state.Request{}, published, at, opts)
+			before := state.PublishedStateLoads()
+			if err := scan.recordFrozenSignature(); err != nil {
+				t.Fatal(err)
+			}
+			if state.PublishedStateLoads() != before {
+				t.Fatal("frozen signature check decoded retained source")
+			}
+			_, found, err := s.LoadScanSignature(reg.ArchiveSessionID)
+			if err != nil || found != (kind == frozenWorkScanOnly) {
+				t.Fatalf("frozen signature with %s work: %v %v", kind, found, err)
+			}
+		})
+	}
 }
 
 // Whole-source decode counts are process-wide, so these cost tests are serial.

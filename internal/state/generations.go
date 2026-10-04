@@ -628,7 +628,7 @@ func (s *Store) FrozenGeneration(reg archive.SessionRegistration) error {
 		return ErrSessionIndexRecoveryRequired
 	}
 	n, found, err := readJSON[generationNode](s.generationNodePath(reg.ArchiveSessionID))
-	if err != nil || !found || n.Key != key || n.ID != reg.ArchiveSessionID || n.Previous != reg.PreviousGenerationID {
+	if err != nil || !found || n.Version != 1 || n.Key != key || n.ID != reg.ArchiveSessionID || n.Previous != reg.PreviousGenerationID {
 		return fmt.Errorf("frozen generation has no lineage authority: %w", ErrSessionIdentityConflict)
 	}
 	return nil
