@@ -136,7 +136,7 @@ func checkOldSidecarGainsRepoKey(t *testing.T, oldVersion string) {
 	t.Helper()
 	local := newTestStore(t)
 	reg := registration(t, writeTranscript(t, t.TempDir(), "s.jsonl", codexTranscript))
-	remote := &countedPublications{ObjectStore: storagetest.NewMemoryStore()}
+	remote := &countedPublications{MemoryStore: storagetest.NewMemoryStore()}
 	git := &countingLookup{keys: map[string]string{"/p": widgetKey}}
 	now := reg.RegisteredAt.Add(time.Hour)
 	// The sidecar as an earlier parser wrote it: no repo_key.

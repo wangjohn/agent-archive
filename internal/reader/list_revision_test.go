@@ -424,8 +424,18 @@ func TestListingRepeatedPublicationAndBoundedCleanup(t *testing.T) {
 	if _, err := ListRecent(ctx, store, "sessions", Filter{}, 1, ListOptions{CompatibilityScan: func(string) { scanned = true }}); err != nil || scanned {
 		t.Fatalf("equal summaries conflict: scanned=%v err=%v", scanned, err)
 	}
+	store.reset()
 	if err := listingindex.PublishRevision(ctx, store, key, data); err == nil || !strings.Contains(err.Error(), "cleanup remains pending") {
 		t.Fatalf("unbounded cleanup: %v", err)
+	}
+	_, cleanupGets := store.counts()
+	if len(cleanupGets) != 33 || cleanupGets[0] != key {
+		t.Fatalf("cleanup reads=%v, want one metadata response plus exactly 32 pointers", cleanupGets)
+	}
+	for _, pointer := range cleanupGets[1:] {
+		if !strings.HasPrefix(pointer, "listing/by-session-v2/codex/repeated/") {
+			t.Fatalf("cleanup downloaded non-pointer body: %s", pointer)
+		}
 	}
 	hints, err := store.List(ctx, listingindex.V2Prefix)
 	if err != nil || len(hints) != 9 {
