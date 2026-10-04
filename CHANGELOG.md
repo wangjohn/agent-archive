@@ -23,6 +23,10 @@ Planned for v0.2.0. This release has not been tagged or published.
   distinguishes shard application and fallback work without scanning the index.
   Damaged or stale scheduling evidence reports unknown status.
 
+- Existing project-scoped hook sessions decline continuation updates when the
+  incoming checkout or a saved scope rule has unknown filesystem identity,
+  preserving their transcript locator and lifecycle timestamps.
+
 - The bucket cleanup recipe works after local integrations or configuration
   have been removed. An explicit ordinary uninstall check stops local uploads
   before planning full-prefix deletion; failed stop checks invalidate prior plans.
@@ -39,6 +43,12 @@ Planned for v0.2.0. This release has not been tagged or published.
   seven-day cleanup check ownership as well as permissions and reject symlinks.
 
 ### Added
+
+- `agent-archive recover SESSION_ID` previews a linked generation for a
+  rewritten transcript; `--confirm` preserves the earlier archive and queues
+  current activity under a new ID. Each generation keeps its own retention
+  age. Recovery permanently requires a generation-aware writer. See the
+  [guide](docs/guides/transcript-recovery.md).
 
 - **`agent-archive eval export`** prints archived sessions for an evaluation
   tool: one JSON line per session, in a versioned format

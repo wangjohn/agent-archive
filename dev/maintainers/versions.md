@@ -82,3 +82,19 @@ the new release. Ordinary typed readers accept older records and optional
 new provenance; the source line format remains 2 and metadata remains 1.
 Optional metadata fields do not bump those schema versions; parser version
 20 records the changed derivation.
+
+Explicit transcript recovery installs the incompatible
+`{version: 4, writer: archive-generations-v4}` configuration writer fence.
+Its underlying discovery and Codex policies retain their independent v2/v3
+floors and consent semantics. Every save and setup rollback keeps generation
+protection after it is enabled, including after content expires. Earlier
+writers refuse this fence rather than ignore frozen historical generations.
+
+Recovery adds optional `previous_generation_id` provenance to source headers
+and metadata and a persistent `recovered_generation` coverage gap to successor
+bundles. This relation is copied from registration by
+`ApplyRegistrationProvenance`; it is not computed by native parsing or metadata
+analysis. Filtering, adapter output and parser algorithms are unchanged, so
+filter, adapter and parser versions remain unchanged. Source schema 2 and
+metadata schema 1 remain compatible: earlier readers ignore these optional
+fields. The explicit relation is independent of subagent `parent_session_id`.

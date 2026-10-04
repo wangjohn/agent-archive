@@ -272,6 +272,9 @@ func readRecoveryRegistration(path string, data *bytes.Buffer, reg *archive.Sess
 }
 
 func (s *Store) recoverRegistrationOwners(key agentmeta.SessionKey, owners []string) error {
+	if protected, err := s.recoverGenerationOwners(key, owners); protected || err != nil {
+		return err
+	}
 	var failures []error
 	if len(owners) > 1 {
 		entry := qualifiedSessionIndexEntry{Version: 1, Agent: key.Agent, NativeID: key.NativeID, Conflict: true}

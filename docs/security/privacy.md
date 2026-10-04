@@ -43,6 +43,11 @@ of the filter is in the [filter changelog](../../dev/specs/privacy-filter-change
   distinct directories on sensitive volumes keep separate scope decisions.
   Conflicting inclusion decisions for equivalent nearest roots also decline
   capture; correct the saved scope rules before starting a fresh session.
+  Existing project-scoped hook sessions also decline incoming continuation
+  updates with unknown scope identity, preserving their transcript locator and
+  lifecycle timestamps. A resolved continuation location without a matching
+  scope rule retains the existing session's admission. This incoming-event guard
+  does not revoke immutable admission already recorded for queued capture.
 - **Who can change the archive.** Anyone who can write to your prefix
   controls what `list`, `show`, and `handoff` return. A handoff is a prompt
   for a coding agent, so a planted or altered session is text another agent

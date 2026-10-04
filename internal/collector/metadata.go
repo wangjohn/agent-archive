@@ -251,6 +251,9 @@ func chooseRefreshSource(bundle archive.SourceBundle, uploaded archive.SourceRef
 // (rotated, oversize, unsafe) reports no change: regeneration is then the
 // only way the summary can move.
 func (s *sessionScan) liveTranscriptChanged(lastPublished archive.SourceBundle) bool {
+	if s.reg.CaptureFrozen {
+		return false
+	}
 	source, ok := newSourceReader(s.reg, s.opts)
 	if !ok {
 		return false

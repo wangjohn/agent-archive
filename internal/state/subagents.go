@@ -97,6 +97,15 @@ func (s *Store) SaveSubagentCandidate(candidate SubagentCandidate) error {
 	})
 }
 
+// LoadSubagentCandidate reads one established child owner without enumerating
+// candidates on the hook path.
+func (s *Store) LoadSubagentCandidate(id string) (SubagentCandidate, bool, error) {
+	if !safeFileComponent(id) {
+		return SubagentCandidate{}, false, ErrSubagentCandidateIncomplete
+	}
+	return readJSON[SubagentCandidate](s.subagentCandidatePath(id))
+}
+
 // LoadSubagentCandidates returns every subagent candidate hooks and backfill
 // have left, sorted by archive session ID. Unlike ScanSubagentCandidates it
 // fails on the first one it cannot read, and never moves a file aside.

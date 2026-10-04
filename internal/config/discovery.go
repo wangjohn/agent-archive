@@ -73,7 +73,7 @@ func underlyingSkillEvidence(mode SkillEvidence) SkillEvidence {
 }
 
 func prepareDiscoveryConfig(c *Config) error {
-	if c.SchemaVersion > 3 || (c.SchemaVersion > 2 && c.CodexCapture == nil) {
+	if c.SchemaVersion > 4 || (c.SchemaVersion == 4 && !c.GenerationProtection) || (c.SchemaVersion == 3 && c.CodexCapture == nil) {
 		return errors.New("configuration requires a newer agent-archive writer")
 	}
 	if c.Discovery != nil {
@@ -99,10 +99,29 @@ func prepareDiscoveryConfig(c *Config) error {
 		c.SkillEvidence = SkillEvidence(string(c.EffectiveSkillEvidence()) + codexWriterMarker)
 		c.SchemaVersion = 3
 	}
+	if c.GenerationProtection {
+		c.SchemaVersion = 4
+	}
 	return validateDiscoveryConfig(*c)
 }
 
 func validateDiscoveryConfig(c Config) error {
+	if c.GenerationProtection {
+		if c.SchemaVersion != 4 {
+			return errors.New("generation protection requires schema 4")
+		}
+		// The outer writer fence protects generations; underlying policies retain
+		// their independently validated v1/v2/v3 consent semantics.
+		c.GenerationProtection = false
+		c.SchemaVersion = 1
+		if c.Discovery != nil {
+			c.SchemaVersion = 2
+		}
+		if c.CodexCapture != nil {
+			c.SchemaVersion = 3
+		}
+	}
+
 	if c.CodexCapture != nil {
 		return validateCodexConfig(c)
 	}
