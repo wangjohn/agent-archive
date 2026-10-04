@@ -130,12 +130,13 @@ func (s *Store) RequestSessionIndexRecovery(key agentmeta.SessionKey) error {
 	if err := key.Validate(); err != nil {
 		return err
 	}
-	// The same retained request is already covered by the incomplete census.
-	// Repeated discovery observations must not invalidate its application cursor.
+	// The same retained request is already covered by the incomplete census,
+	// including an absence applied before its final certificate. Retaining that
+	// request does not authorize the miss: readers still require Complete.
 	var prior qualifiedSessionIndexEntry
 	readErr := readRecoveryJSON(qualifiedSessionIndexPath(s.home, key), &prior)
 	var marker sessionIndexMarker
-	if readErr == nil && prior.Version == 1 && prior.Agent == key.Agent && prior.NativeID == key.NativeID && prior.Recovery && prior.ArchiveSessionID == "" && prior.Reservation == "" && !prior.Absent && !prior.Conflict && readRecoveryJSON(filepath.Join(s.home, sessionIndexMarkerFile), &marker) == nil && marker.Version == 1 && !marker.Complete && marker.Generation != "" {
+	if readErr == nil && prior.Version == 1 && prior.Agent == key.Agent && prior.NativeID == key.NativeID && (prior.Recovery != prior.Absent) && prior.ArchiveSessionID == "" && prior.Reservation == "" && !prior.Conflict && readRecoveryJSON(filepath.Join(s.home, sessionIndexMarkerFile), &marker) == nil && marker.Version == 1 && !marker.Complete && marker.Generation != "" {
 		return nil
 	}
 	if err := s.MarkSessionIndexRecoveryNeeded(); err != nil {
