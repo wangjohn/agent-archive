@@ -1340,7 +1340,7 @@ func (s *Store) publishPackedBatch(ctx context.Context, marker sessionIndexMarke
 		defer results[i].staged.Discard()
 	}
 	errs := make([]error, len(batch))
-	syncs := make([]chan error, len(batch))
+	committedStages := make([]*local.Staged, len(batch))
 	for i, publication := range batch {
 		result := results[i]
 		if result.err != nil {
@@ -1354,13 +1354,48 @@ func (s *Store) publishPackedBatch(ctx context.Context, marker sessionIndexMarke
 			continue
 		}
 		s.writeSynced()
-		syncs[i] = make(chan error, 1)
-		go func() { syncs[i] <- result.staged.SyncDir() }()
+		committedStages[i] = result.staged
 	}
-	for i := range batch {
-		if syncs[i] != nil {
-			errs[i] = errors.Join(errs[i], <-syncs[i])
+	syncPackedParents(batch, committedStages, errs, (*local.Staged).SyncDir)
+	return errs
+}
+
+// syncPackedParents runs native directory durability after every guarded rename.
+// One sync covers all committed members of the same parent; its error belongs
+// to every such member, so none can advance the durable checkpoint prefix.
+// Mixed parents remain independent and every started sync is joined.
+func syncPackedParents(batch []packedPublication, committed []*local.Staged, errs []error, syncDir func(*local.Staged) error) {
+	type parentSync struct {
+		parent  string
+		members []int
+		result  chan error
+	}
+	groups := make([]parentSync, 0, len(batch))
+	for i, staged := range committed {
+		if staged == nil {
+			continue
+		}
+		parent := filepath.Dir(batch[i].path)
+		group := -1
+		for j := range groups {
+			if groups[j].parent == parent {
+				group = j
+				break
+			}
+		}
+		if group < 0 {
+			groups = append(groups, parentSync{parent: parent, result: make(chan error, 1)})
+			group = len(groups) - 1
+		}
+		groups[group].members = append(groups[group].members, i)
+	}
+	for _, group := range groups {
+		go func() { group.result <- syncDir(committed[group.members[0]]) }()
+	}
+	for _, group := range groups {
+		err := <-group.result
+		for _, i := range group.members {
+			errs[i] = errors.Join(errs[i], err)
 		}
 	}
-	return errs
 }
