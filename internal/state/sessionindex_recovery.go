@@ -202,10 +202,15 @@ func (s *Store) sessionRegistrationInventory(ctx context.Context) (map[agentmeta
 	var reg archive.SessionRegistration
 	var data bytes.Buffer
 	var reads []recoveryRegistrationRead
+	var reader *recoveryRegistrationReader
+	if len(entries) >= packedSessionIndexThreshold {
+		reader = s.newRecoveryRegistrationReader()
+		defer reader.close()
+	}
 	for i, file := range entries {
-		if len(entries) >= packedSessionIndexThreshold && i%recoveryReadAheadWorkers == 0 {
+		if reader != nil && i%recoveryReadAheadWorkers == 0 {
 			end := min(i+recoveryReadAheadWorkers, len(entries))
-			reads = s.readRegistrationChunk(entries[i:end])
+			reads = reader.readChunk(entries[i:end])
 		}
 		entries[i] = nil
 		if filepath.Ext(file.Name()) == quarantineSuffix {

@@ -17,7 +17,7 @@ import (
 // unbounded size by worker count. Results are consumed in directory order.
 const recoveryReadAheadBytes = 64 * 1024
 
-const recoveryReadAheadWorkers = 8
+const recoveryReadAheadWorkers = 32
 
 var errRecoveryReadAheadLarge = errors.New("registration exceeds bounded read-ahead")
 
@@ -26,35 +26,67 @@ type recoveryRegistrationRead struct {
 	err error
 }
 
-func (s *Store) readRegistrationChunk(entries []os.DirEntry) []recoveryRegistrationRead {
-	results := make([]recoveryRegistrationRead, len(entries))
-	var workers sync.WaitGroup
+// A reader belongs to one census only. Workers keep their bounded buffers, but
+// decoded registrations and errors are cleared before each ordered chunk.
+// close joins every worker, including on an early census error or cancellation.
+type recoveryRegistrationReader struct {
+	jobs    chan recoveryRegistrationReadJob
+	pending sync.WaitGroup
+	workers sync.WaitGroup
+	results [recoveryReadAheadWorkers]recoveryRegistrationRead
+}
+
+type recoveryRegistrationReadJob struct {
+	entry  os.DirEntry
+	result *recoveryRegistrationRead
+}
+
+func (s *Store) newRecoveryRegistrationReader() *recoveryRegistrationReader {
+	r := &recoveryRegistrationReader{jobs: make(chan recoveryRegistrationReadJob, recoveryReadAheadWorkers)}
+	r.workers.Add(recoveryReadAheadWorkers)
+	for range recoveryReadAheadWorkers {
+		go func() {
+			defer r.workers.Done()
+			var data bytes.Buffer
+			for job := range r.jobs {
+				data.Reset()
+				if data.Cap() > recoveryReadAheadBytes {
+					data = bytes.Buffer{}
+				}
+				file, err := os.Open(s.registrationPath(strings.TrimSuffix(job.entry.Name(), ".json")))
+				if err == nil {
+					_, err = data.ReadFrom(io.LimitReader(file, recoveryReadAheadBytes+1))
+					_ = file.Close()
+					if err == nil {
+						if data.Len() > recoveryReadAheadBytes {
+							err = errRecoveryReadAheadLarge
+						} else {
+							err = json.Unmarshal(data.Bytes(), &job.result.reg)
+						}
+					}
+				}
+				job.result.err = err
+				r.pending.Done()
+			}
+		}()
+	}
+	return r
+}
+
+func (r *recoveryRegistrationReader) readChunk(entries []os.DirEntry) []recoveryRegistrationRead {
+	clear(r.results[:])
 	for i, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
 			continue
 		}
-		workers.Add(1)
-		go func(i int, entry os.DirEntry) {
-			defer workers.Done()
-			file, err := os.Open(s.registrationPath(strings.TrimSuffix(entry.Name(), ".json")))
-			if err != nil {
-				results[i].err = err
-				return
-			}
-			var data bytes.Buffer
-			_, err = data.ReadFrom(io.LimitReader(file, recoveryReadAheadBytes+1))
-			_ = file.Close()
-			if err != nil {
-				results[i].err = err
-				return
-			}
-			if data.Len() > recoveryReadAheadBytes {
-				results[i].err = errRecoveryReadAheadLarge
-				return
-			}
-			results[i].err = json.Unmarshal(data.Bytes(), &results[i].reg)
-		}(i, entry)
+		r.pending.Add(1)
+		r.jobs <- recoveryRegistrationReadJob{entry: entry, result: &r.results[i]}
 	}
-	workers.Wait()
-	return results
+	r.pending.Wait()
+	return r.results[:len(entries)]
+}
+
+func (r *recoveryRegistrationReader) close() {
+	close(r.jobs)
+	r.workers.Wait()
 }

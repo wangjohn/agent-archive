@@ -348,3 +348,7 @@ func TestPackedCandidateParentRemovalAndSnapshotRace(t *testing.T) {
 		t.Fatalf("removed parent revived: %v", err)
 	}
 }
+
+func (s *Store) recoverPackedShard(ctx context.Context, shard string, marker sessionIndexMarker, owners map[agentmeta.SessionKey][]string, candidates []SubagentCandidate) error {
+	return s.recoverPackedShardSlice(ctx, shard, marker, owners, candidates, time.Time{})
+}

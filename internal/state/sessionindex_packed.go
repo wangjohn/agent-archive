@@ -434,10 +434,6 @@ func (s *Store) preparePackedSessionIndex(ctx context.Context, revision, invento
 	return marker, err
 }
 
-func (s *Store) recoverPackedShard(ctx context.Context, shard string, marker sessionIndexMarker, owners map[agentmeta.SessionKey][]string, candidates []SubagentCandidate) error {
-	return s.recoverPackedShardSlice(ctx, shard, marker, owners, candidates, time.Time{})
-}
-
 var errPackedSlicePending = errors.New("packed application slice pending")
 
 func (s *Store) recoverPackedShardSlice(ctx context.Context, shard string, marker sessionIndexMarker, owners map[agentmeta.SessionKey][]string, candidates []SubagentCandidate, deadline time.Time) error {
