@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
-
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
@@ -191,6 +191,10 @@ func (s *Store) sessionRegistrationInventory(ctx context.Context) (map[agentmeta
 		return nil, fmt.Errorf("recover session identities: %w", err)
 	}
 	inventory := make(map[agentmeta.SessionKey][]string, len(entries))
+	// JSON decoding needs an addressable registration. Reuse that allocation
+	// across the census, clearing every field so omitted fields never inherit
+	// authority from a previously validated registration.
+	var reg archive.SessionRegistration
 	for _, file := range entries {
 		if filepath.Ext(file.Name()) == quarantineSuffix {
 			return nil, ErrSessionIndexRecoveryRequired
@@ -202,12 +206,12 @@ func (s *Store) sessionRegistrationInventory(ctx context.Context) (map[agentmeta
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		reg, found, err := s.LoadRegistration(id)
-		if err != nil {
-			return nil, err
-		}
-		if !found {
-			return nil, ErrSessionIndexRecoveryRequired
+		reg = archive.SessionRegistration{}
+		if err := local.Read(s.registrationPath(id), &reg); err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return nil, ErrSessionIndexRecoveryRequired
+			}
+			return nil, fmt.Errorf("read registration %q: %w", id, err)
 		}
 		key, err := registrationKey(reg)
 		if err != nil || reg.Validate() != nil || reg.ArchiveSessionID != id || !safeFileComponent(id) {
