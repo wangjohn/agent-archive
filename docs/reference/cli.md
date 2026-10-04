@@ -509,9 +509,9 @@ paged through $PAGER unless --no-pager.
   --verbose                      Full SESSION_IDs, absolute times, origin,
                                  parser status, all models/skills, and title
   --no-pager                     Print directly; do not page through $PAGER
-  --no-cache                     Bypass the local metadata cache during full
-                                 scans; indexed listing always verifies live
-                                 sidecars (never conversation content)
+  --no-cache                     Bypass the local metadata cache; indexed
+                                 listing verifies current revision headers
+                                 (never conversation content)
   --json                         Print {"schema_version": 4, "sessions": [...],
                                  "limit", "returned", "total_matched_known"}:
                                  "total_matched" is present only when exact;

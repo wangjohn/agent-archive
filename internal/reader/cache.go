@@ -135,11 +135,16 @@ func (c *MetadataCache) get(key, etag string) ([]byte, bool) {
 // rewritten after the listing and are not cached. It is best effort: a cache
 // that cannot be written only costs a download next time.
 func (c *MetadataCache) put(key, etag string, data []byte) {
-	path, ok := c.path(key)
-	if !ok || etag == "" || !json.Valid(data) {
+	if verifiable, matches := etagMatchesBytes(etag, data); verifiable && !matches {
 		return
 	}
-	if verifiable, matches := etagMatchesBytes(etag, data); verifiable && !matches {
+	c.putVerified(key, etag, data)
+}
+
+// putVerified caches response-validated bytes without interpreting the validator.
+func (c *MetadataCache) putVerified(key, etag string, data []byte) {
+	path, ok := c.path(key)
+	if !ok || etag == "" || !json.Valid(data) {
 		return
 	}
 	encoded, err := json.Marshal(metadataCacheEntry{Key: key, ETag: etag, SHA256: sha256Hex(data), Metadata: data})

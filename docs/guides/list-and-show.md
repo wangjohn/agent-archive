@@ -36,12 +36,12 @@ agent-archive list --complete          # complete parser coverage, no capture ga
 
 # For scripts: {"schema_version": 4, "sessions": [...], "limit", "returned",
 # "total_matched_known"}, and "scope" inside a project. "total_matched" is
-# omitted when the indexed listing stops after the limit. Never paged or
+# exact when fresh headers prove index coverage. Never paged or
 # interactive. Run inside a project it lists that repository's sessions, so a
 # script that wants everything adds --all-projects.
 agent-archive list --json
 agent-archive list --json --limit 0
-agent-archive list --rebuild-index  # one-time full scan for older archives
+agent-archive list --rebuild-index  # scan live metadata and repair auxiliary entries
 
 # One session's summary: title, when, app, models, activity, skills,
 # subagents, and capture gaps. With no SESSION_ID on a terminal, the same

@@ -323,11 +323,19 @@ func PutMetadataForSourceIndexed(ctx context.Context, store ObjectStore, sourceK
 
 // ObjectInfo describes a stored object without its content.
 type ObjectInfo struct {
+	// ETag is the provider's opaque revision validator, without quotes.
+	ETag string
 	Size int64
 	// SHA256 is the object's whole-content SHA-256 in lower-case hex as the
 	// store records it, or "" when it records none for this object (one
 	// uploaded without a checksum, or a multipart upload's composite one).
 	SHA256 string
+}
+
+// VersionedGetter returns the provider validator from the same response as
+// the bytes. An empty validator cannot establish indexed freshness.
+type VersionedGetter interface {
+	GetVersioned(context.Context, string) ([]byte, string, error)
 }
 
 // ObjectStatter is implemented by stores that can describe an object without
