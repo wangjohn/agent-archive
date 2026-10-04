@@ -65,7 +65,16 @@ case "$1 $2" in
   *) echo "unexpected aws call: $*" >&2; exit 2 ;;
 esac
 '''
-FAKE_AGENT_ARCHIVE = '#!/bin/sh\necho "$1" >> "$FAKE_AGENT_ARCHIVE_LOG"\n'
+FAKE_AGENT_ARCHIVE = r'''#!/bin/sh
+echo "$1" >> "$FAKE_AGENT_ARCHIVE_LOG"
+if [ "$(wc -l < "$FAKE_AGENT_ARCHIVE_LOG" | tr -d ' ')" = "${FAKE_PAUSE_FAIL_AT:-0}" ]; then
+  if [ -n "${FAKE_WRITER_KEY:-}" ]; then
+    printf 'in-flight source\n' > "$FAKE_S3/my-archive-bucket/$FAKE_WRITER_KEY"
+  fi
+  echo 'fake lock holder still uploading' >&2
+  exit 1
+fi
+'''
 
 
 def recipe_blocks():
@@ -132,6 +141,10 @@ class PurgeRecipeTest(unittest.TestCase):
         if work.exists():
             shutil.rmtree(work)
         work.mkdir()
+        isolated_home = self.root / 'home'
+        isolated_home.mkdir(exist_ok=True)
+        isolated_tmp = self.root / 'tmp'
+        isolated_tmp.mkdir(exist_ok=True)
         script = '\n'.join(self.blocks[name] for name in names)
         if tail:
             script += '\n' + tail
@@ -143,6 +156,7 @@ class PurgeRecipeTest(unittest.TestCase):
         helper.write_text(self.blocks['list'].rsplit('purge_prepare unreferenced', 1)[0])
         env = dict(os.environ,
                    PATH=f'{bin_dir}{os.pathsep}{os.environ["PATH"]}',
+                   HOME=str(isolated_home), TMPDIR=str(isolated_tmp),
                    FAKE_HELPERS=str(helper), FAKE_SHELL=shutil.which(shell),
                    AWS_CONFIG_FILE=str(self.root / 'aws-config'),
                    AWS_SHARED_CREDENTIALS_FILE=str(self.root / 'no-credentials'),
@@ -195,7 +209,7 @@ class PurgeRecipeTest(unittest.TestCase):
     def test_preflight_failures_delete_nothing(self):
         for shell in self.shells:
             for mode, names in [('source', ['list', 'delete']), ('old', ['list', 'old-sessions', 'delete']),
-                                ('machine', ['list', 'machine', 'delete']), ('all', ['list', 'all', 'delete'])]:
+                                ('machine', ['list', 'machine', 'delete'])]:
                 for failure in ('listing', 'bad-listing', 'unreadable', 'malformed',
                                 'empty-metadata', 'multi-metadata', 'missing-source'):
                     with self.subTest(shell=shell, mode=mode, failure=failure):
@@ -223,6 +237,132 @@ class PurgeRecipeTest(unittest.TestCase):
                         self.assertNotEqual(result.returncode, 0, result.stderr)
                         self.assertEqual(self.keys(bucket), before)
                         self.assertEqual(self.attempts(), [], result.stderr)
+
+    def test_failed_pause_invalidates_previous_plan_and_blocks_every_mode(self):
+        for shell in self.shells:
+            for writer in (False, True):
+                for mode in ('unreferenced', 'all', 'old 10', 'machine m-retired'):
+                    with self.subTest(shell=shell, writer=writer, mode=mode):
+                        bucket = self.build()
+                        before = self.keys(bucket)
+                        env = {'FAKE_PAUSE_FAIL_AT': '2'}
+                        writer_key = 'agent-archive/sessions/codex/bbbb/source.' + 'e' * 64 + '.jsonl.gz'
+                        if writer:
+                            env['FAKE_WRITER_KEY'] = writer_key
+                        # Reexecute preparation after an earlier successful plan in the same shell.
+                        tail = 'purge_prepare ' + mode + '\npurge_apply'
+                        result = self.run_recipe(shell, 'agent-archive/', ['list', 'list'],
+                                                 env_extra=env, tail=tail)
+                        self.assertNotEqual(result.returncode, 0, result.stderr)
+                        self.assertEqual(self.attempts(), [])
+                        self.assertEqual(self.keys(bucket), sorted(before + ([writer_key] if writer else [])))
+                        self.assertIn('lock holder', result.stderr)
+                        self.assertEqual(len(re.findall(r'Plan .*?: [0-9]+ exact keys', result.stdout)), 1)
+
+    def test_damaged_archive_selective_refuses_full_prefix_deletes_metadata_first(self):
+        for shell in self.shells:
+            for prefix in ('agent-archive/', ''):
+                for damage in ('unreadable', 'malformed', 'missing-reference', 'absent-source'):
+                    with self.subTest(shell=shell, prefix=prefix, damage=damage):
+                        bucket = self.build(prefix, extra=[prefix + 'unrelated', 'outside/keep'])
+                        meta = bucket / (prefix + 'sessions/cursor/dddd/metadata.json')
+                        data = json.loads(meta.read_text())
+                        if damage == 'unreadable':
+                            Path(str(meta) + '.unreadable').write_text('')
+                        elif damage == 'malformed':
+                            meta.write_text('{broken')
+                        elif damage == 'missing-reference':
+                            del data['source_bundle']['key']
+                            meta.write_text(json.dumps(data))
+                        else:
+                            (bucket / (prefix + data['source_bundle']['key'])).unlink()
+                        before = self.keys(bucket)
+                        for selective in ('delete', 'old-sessions', 'machine'):
+                            names = ['list', 'delete'] if selective == 'delete' else ['list', selective, 'delete']
+                            refused = self.run_recipe(shell, prefix, names)
+                            self.assertNotEqual(refused.returncode, 0, refused.stderr)
+                            self.assertEqual(self.attempts(), [])
+                            self.assertEqual(self.keys(bucket), before)
+                        erased = self.run_recipe(shell, prefix, ['list', 'all', 'delete'])
+                        self.assertEqual(erased.returncode, 0, erased.stderr)
+                        expected = [k for k in before if not k.startswith(prefix)]
+                        self.assertEqual(self.keys(bucket), expected)
+                        targets = [k.removeprefix('my-archive-bucket/') for k in self.attempts()]
+                        metadata = [k for k in before if k.startswith(prefix + 'sessions/') and k.endswith('/metadata.json')]
+                        self.assertEqual(targets[:len(metadata)], sorted(metadata))
+                        self.assertEqual(sorted(targets), sorted(k for k in before if k.startswith(prefix)))
+
+
+    def test_full_prefix_removes_sources_without_metadata(self):
+        for shell in self.shells:
+            with self.subTest(shell=shell):
+                bucket = self.build()
+                for meta in bucket.rglob('metadata.json'):
+                    meta.unlink()
+                result = self.run_recipe(shell, 'agent-archive/', ['list', 'all', 'delete'])
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(self.keys(bucket), [])
+
+    def test_full_prefix_recovery_preserves_metadata_deletion_history(self):
+        for shell in self.shells:
+            for observed_absence in (False, True):
+                with self.subTest(shell=shell, observed_absence=observed_absence):
+                    self.build()
+                    tail = r'''
+original=$purge_dir
+saved_meta="$FAKE_S3/my-archive-bucket/agent-archive/sessions/claude/aaaa/metadata.json"
+cp "$saved_meta" "$TMPDIR/saved-meta"
+'''
+                    if observed_absence:
+                        tail += 'rm "$saved_meta"\n'
+                    else:
+                        tail += 'export FAKE_RM_FAIL_AT=2\n'
+                    tail += r'''
+purge_apply && exit 91
+unset FAKE_RM_FAIL_AT
+purge_resume "$original" || exit 92
+recovery=$purge_dir
+cp "$TMPDIR/saved-meta" "$saved_meta"
+purge_resume "$recovery" && purge_apply && exit 93
+exit 0
+'''
+                    result = self.run_recipe(shell, 'agent-archive/', ['list', 'all'], tail=tail)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(len(self.attempts()), 0 if observed_absence else 2)
+                    self.assertIn('Metadata reappeared', result.stderr)
+
+    def test_full_prefix_never_reads_metadata_and_stops_at_each_object_class(self):
+        for shell in self.shells:
+            for failure in (1, 4, 5):
+                with self.subTest(shell=shell, failure=failure):
+                    bucket = self.build(extra=['agent-archive/.setup-test/x', 'outside/keep'])
+                    before = self.keys(bucket)
+                    result = self.run_recipe(shell, 'agent-archive/', ['list', 'all', 'delete'],
+                                             env_extra={'FAKE_CP_FAIL_AT': '1', 'FAKE_RM_FAIL_AT': str(failure)})
+                    self.assertNotEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(len(self.attempts()), failure)
+                    self.assertEqual(len(self.removed()), failure - 1)
+                    self.assertIn('Already removed:', result.stderr)
+                    self.assertIn('Not confirmed removed', result.stderr)
+                    self.assertIn('outside/keep', self.keys(bucket))
+                    self.assertEqual((self.root / 'state.json.cp').read_text().strip(), '1')
+                    self.assertEqual(len(before) - len(self.keys(bucket)), failure - 1)
+
+    def test_full_prefix_listing_failures_and_scope_changes_delete_nothing(self):
+        for shell in self.shells:
+            for intervention, env in (
+                ('', {'FAKE_LIST_FAIL_AT': '2'}), ('', {'FAKE_LIST_BAD_AT': '2'}),
+                ('', {'FAKE_LIST_FAIL_AT': '3'}), ('', {'FAKE_LIST_BAD_AT': '3'}),
+                ('touch "$FAKE_S3/my-archive-bucket/agent-archive/new"', {}),
+                ('prefix=', {}), ('bucket=other-bucket', {}),
+                ('echo 1 > "$purge_dir/created"', {}), ('rm "$purge_dir/VALID"', {}),
+                ('echo outside/keep >> "$purge_dir/targets"', {})):
+                with self.subTest(shell=shell, intervention=intervention, env=env):
+                    self.build(extra=['outside/keep'])
+                    result = self.run_recipe(shell, 'agent-archive/', ['list', 'all', 'delete'],
+                                             between=intervention, env_extra=env)
+                    self.assertNotEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(self.attempts(), [])
 
     def test_stale_and_changed_plans_delete_nothing(self):
         for shell in self.shells:
