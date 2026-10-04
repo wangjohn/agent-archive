@@ -1303,7 +1303,7 @@ the answer goes into the guide.
 ## Revision index update
 
 The revision index now supplies activity dates and per-parent counts from
-freshly covered canonical headers. Unscoped noninteractive tables can select
+freshly covered canonical headers. Noninteractive tables, including implicit repository scopes, can select
 their top-level limit before metadata bodies are read. Interactive browsing,
-project scopes and search retain exhaustive reads. See
+named explicit project scopes and search retain exhaustive reads. See
 [listing performance and revision protocol](../maintainers/list-performance.md).

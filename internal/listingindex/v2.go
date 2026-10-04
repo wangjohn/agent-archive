@@ -27,6 +27,8 @@ type Revision struct {
 	Activity    time.Time `json:"a"`
 	Parent      string    `json:"p,omitempty"`
 	Replay      bool      `json:"r,omitempty"`
+	ProjectID   string    `json:"j"`
+	RepoKey     string    `json:"k,omitempty"`
 }
 
 // ActivityTime matches the listing's activity-date policy.
@@ -53,7 +55,7 @@ func NewRevision(key string, data []byte, etag string) (Revision, error) {
 	if err := json.Unmarshal(data, &m); err != nil {
 		return Revision{}, err
 	}
-	r := Revision{MetadataKey: key, CapturedAt: m.CapturedAt, ETag: etag, Hash: legacy.Hash, Activity: ActivityTime(m), Parent: m.ParentSessionID, Replay: m.Replay != nil}
+	r := Revision{MetadataKey: key, CapturedAt: m.CapturedAt, ETag: etag, Hash: legacy.Hash, Activity: ActivityTime(m), Parent: m.ParentSessionID, Replay: m.Replay != nil, ProjectID: m.ProjectID, RepoKey: m.RepoKey}
 	encoded, err := json.Marshal(r)
 	if err != nil {
 		return Revision{}, err

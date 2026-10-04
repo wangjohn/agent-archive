@@ -132,11 +132,10 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		return 1
 	}
 	browsing := !opts.jsonOut && browseInteractive(env, stdin, stdout)
-	// The index lists the newest sessions of every project. A scope is
-	// applied before --limit, so it reads them all; so does a search, and
-	// every table and browser, which leave subagents out before --limit
-	// counts (a browser may also switch to the scope).
-	full := opts.limit == 0 || opts.imported || opts.hookCaptured || scope.narrowed() || !q.empty() || browsing
+	// Revision summaries support the implicit repository scope before limit.
+	// Explicit project names, searches and interactive scope switching still
+	// need exhaustive metadata. Text activity and child counts use summaries.
+	full := opts.limit == 0 || opts.imported || opts.hookCaptured || (*project != "" && scope.narrowed()) || !q.empty() || browsing
 	var stopList func()
 	if !opts.jsonOut {
 		stopList = startActivity(stdout, "Listing sessions…")
@@ -146,6 +145,12 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	listOpts := reader.ListOptions{Cache: listCache(env, opts.noCache), Skipped: warnSkippedSidecar(stderr, "list"),
 		ActivityOrder: !opts.jsonOut && !full, TopLevelOnly: !opts.jsonOut && !full,
 		CompatibilityScan: func(reason string) { terminal.Printf(stderr, "agent-archive: list: %s.\n", reason) },
+	}
+	if observer, ok := env.(interface{ listBodyObserver() func(string, bool) }); ok {
+		listOpts.BodyRead = observer.listBodyObserver()
+	}
+	if scope.narrowed() && !full {
+		listOpts.ScopeMatch = func(m archive.Metadata) bool { return scope.contains(m, nil) }
 	}
 	listLimit := opts.limit
 	if full {
@@ -259,6 +264,13 @@ type listViews struct {
 // with none of them is empty and the caller moves to all projects. Without
 // one, a table lists top-level sessions only, and --json every session.
 func (v listViews) view(s sessionScope) listView {
+	if !v.full {
+		if s.narrowed() && v.listed.ScopeEmpty {
+			return listView{}
+		}
+		return listView{shown: v.sessions, total: v.listed.TotalMatched, truncated: v.listed.TotalMatched > len(v.sessions), hidden: v.listed.Hidden, outside: v.listed.Outside}
+	}
+
 	switch {
 	case !v.query.empty():
 		res := searchSessions(v.sessions, v.query, s, v.fields)
@@ -268,8 +280,6 @@ func (v listViews) view(s sessionScope) listView {
 		}
 		shown, total, truncated := applyListLimit(matches, v.limit)
 		return listView{shown: shown, total: total, truncated: truncated, outside: res.outside, note: res.outsideNote(s)}
-	case !v.jsonOut && !v.full:
-		return listView{shown: v.sessions, total: v.listed.TotalMatched, truncated: v.listed.TotalMatched > len(v.sessions), hidden: v.listed.Hidden}
 	case !v.jsonOut:
 		return topLevelView(v.sessions, s, v.limit)
 	case v.full:

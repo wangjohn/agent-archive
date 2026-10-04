@@ -19,6 +19,8 @@ type RecentResult struct {
 	Sessions     []archive.Metadata
 	Hidden       int
 	Children     map[string]int
+	ScopeEmpty   bool
+	Outside      int
 	TotalMatched int
 	Complete     bool
 }
@@ -59,8 +61,10 @@ func ListRecent(ctx context.Context, store storage.ObjectStore, prefix string, f
 		}
 		revisions[key] = r
 	}
-	var selected []listingindex.Revision
-	result := RecentResult{Complete: true, Children: make(map[string]int)}
+	var selected, all []listingindex.Revision
+	allChildren := make(map[string]int)
+	scopedHidden, allHidden := 0, 0
+	result := RecentResult{Complete: true}
 	for _, obj := range objects {
 		if !isMetadataKey(obj.Key) {
 			continue
@@ -78,15 +82,31 @@ func ListRecent(ctx context.Context, store storage.ObjectStore, prefix string, f
 		if filter.Replays == ReplaysHidden && r.Replay || filter.Replays == ReplaysOnly && !r.Replay {
 			continue
 		}
+		parts := strings.Split(r.MetadataKey, "/")
+		inScope := opts.ScopeMatch == nil || opts.ScopeMatch(archive.Metadata{ProjectID: r.ProjectID, RepoKey: r.RepoKey})
 		if r.Parent != "" {
-			parts := strings.Split(r.MetadataKey, "/")
-			result.Children[parts[1]+"/"+r.Parent]++
+			allChildren[parts[1]+"/"+r.Parent]++
 			if opts.TopLevelOnly {
-				result.Hidden++
+				allHidden++
+				if inScope {
+					scopedHidden++
+				}
 				continue
 			}
 		}
-		selected = append(selected, r)
+		all = append(all, r)
+		if inScope {
+			selected = append(selected, r)
+		}
+	}
+	result.Children = allChildren
+	result.Hidden = scopedHidden
+	result.Outside = len(all) - len(selected)
+	if opts.ScopeMatch != nil && len(selected) == 0 {
+		result.ScopeEmpty = true
+		selected = all
+		result.Children = allChildren
+		result.Hidden = allHidden
 	}
 	sort.Slice(selected, func(i, j int) bool {
 		a, b := selected[i], selected[j]
@@ -141,10 +161,41 @@ func listRecentFull(ctx context.Context, store storage.ObjectStore, prefix strin
 	if err != nil {
 		return RecentResult{}, err
 	}
-	result := RecentResult{Complete: true, Children: make(map[string]int)}
+	allChildren := make(map[string]int)
 	for _, m := range all {
 		if m.ParentSessionID != "" {
-			result.Children[m.Harness.Name+"/"+m.ParentSessionID]++
+			allChildren[m.Harness.Name+"/"+m.ParentSessionID]++
+		}
+	}
+	scopeEmpty, outside := false, 0
+	if opts.ScopeMatch != nil {
+		scoped := make([]archive.Metadata, 0, len(all))
+		for _, m := range all {
+			if opts.ScopeMatch(m) {
+				scoped = append(scoped, m)
+			}
+		}
+		countScoped := len(scoped)
+		if opts.TopLevelOnly {
+			countScoped = 0
+			for _, m := range scoped {
+				if m.ParentSessionID == "" {
+					countScoped++
+				}
+			}
+		}
+		outside = len(all) - len(scoped)
+		if countScoped == 0 {
+			scopeEmpty = true
+		} else {
+			all = scoped
+		}
+	}
+	result := RecentResult{Complete: true, Children: allChildren}
+	result.ScopeEmpty = scopeEmpty
+	result.Outside = outside
+	for _, m := range all {
+		if m.ParentSessionID != "" {
 			if opts.TopLevelOnly {
 				result.Hidden++
 			}

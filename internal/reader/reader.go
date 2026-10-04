@@ -138,6 +138,9 @@ const listConcurrency = 8
 // ListOptions tunes ListMetadataWithOptions. The zero value reads every
 // matching sidecar from the store.
 type ListOptions struct {
+	// ScopeMatch tests only identity summaries before body selection.
+	ScopeMatch func(archive.Metadata) bool
+
 	// ActivityOrder selects the text listing's activity ordering.
 	ActivityOrder bool
 	// TopLevelOnly excludes subagents before the limit and returns their counts.

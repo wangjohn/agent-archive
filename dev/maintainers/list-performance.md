@@ -1,6 +1,6 @@
 # Listing performance target
 
-Ordinary unscoped, noninteractive `list --limit N` and `list --json --limit N`
+Ordinary noninteractive `list --limit N` and `list --json --limit N`
 use revision-qualified `listing/v2/` entries. A complete healthy archive reads
 at most N canonical metadata bodies on a cold run, or N selected cache files
 on a warm run, and no transcript bodies. Both the 10,000 and 20,000 session
@@ -11,9 +11,11 @@ The budget covers bodies, not discovery: fresh canonical and index LIST
 headers are enumerated on every query, proportional to archive size. Text
 uses activity time, excludes subagents before limiting, and obtains child
 counts from covered summaries. JSON preserves capture-time order. Equal
-capture times use harness and session identity as deterministic tie breakers.
+capture times use harness and session identity as deterministic tie breakers. Implicit repository scope matches RepoKey
+across clones and falls back to local ProjectIDs for legacy sidecars. Empty
+scopes choose the existing all-project fallback before reading bodies.
 
-Project scope, interactive browsing, search, origin, model, skill and
+Named explicit project scope, interactive browsing, search, origin, model, skill and
 completeness queries remain exhaustive, as does `--limit 0`. A missing,
 stale, unsupported or damaged index produces an explicit compatibility-scan
 diagnostic and complete legacy results. A selected object deleted or changed
@@ -27,7 +29,7 @@ Canonical metadata is authoritative. Keys are
 `listing/v2/<19-digit reverse Unix nanoseconds>/<harness>/<id>/<summary>`.
 The summary is canonical JSON encoded as unpadded base64url, containing the
 opaque provider ETag (`v`), SHA-256 of canonical bytes (`h`), activity timestamp
-(`a`), optional parent ID (`p`) and replay marker (`r`). No source or skill
+(`a`), optional parent ID (`p`), replay marker (`r`), ProjectID (`j`) and RepoKey (`k`). No source or skill
 content is included. Unsupported/noncanonical summaries and keys exceeding
 S3's 1,024-byte key bound are refused. Activity is EndedAt when present,
 otherwise StartedAt for imports, otherwise CapturedAt.
