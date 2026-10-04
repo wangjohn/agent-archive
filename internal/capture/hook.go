@@ -14,6 +14,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/state"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -670,12 +671,60 @@ func ConfiguredProjectActivationFor(cfg config.Config, root string) (archive.Pro
 		if configured == "" {
 			return archive.ProjectActivation{}, false
 		}
-		if !local.PathWithin(candidate, configured) || len(configured) <= bestLen {
+		within, certain := pathWithinResolvedLocations(candidate, configured)
+		if !certain {
+			return archive.ProjectActivation{}, false
+		}
+		if !within || len(configured) <= bestLen {
 			continue
 		}
 		best, bestLen, found = project, len(configured), true
 	}
 	return best, found
+}
+
+// pathWithinResolvedLocations compares paths after strict symlink resolution.
+// Differently spelled existing components may be the same directory on a
+// case-insensitive volume. Stat only those differing prefixes; enumerating each
+// ancestor directory to canonicalize every hook would make large homes costly.
+// Differently cased absent components have an uncertain identity: callers must
+// decline capture rather than bypass a possibly equivalent exclusion.
+func pathWithinResolvedLocations(path, root string) (within, certain bool) {
+	if local.PathWithin(path, root) {
+		return true, true
+	}
+	if !filepath.IsAbs(path) || !filepath.IsAbs(root) || filepath.VolumeName(path) != filepath.VolumeName(root) {
+		return false, true
+	}
+	volume := filepath.VolumeName(root)
+	pathParts := strings.Split(strings.TrimPrefix(path[len(volume):], string(filepath.Separator)), string(filepath.Separator))
+	rootParts := strings.Split(strings.TrimPrefix(root[len(volume):], string(filepath.Separator)), string(filepath.Separator))
+	if len(pathParts) < len(rootParts) {
+		return false, true
+	}
+	pathPrefix, rootPrefix := volume+string(filepath.Separator), volume+string(filepath.Separator)
+	for i, part := range rootParts {
+		pathPrefix = filepath.Join(pathPrefix, pathParts[i])
+		rootPrefix = filepath.Join(rootPrefix, part)
+		if pathParts[i] == part {
+			continue
+		}
+		pathInfo, pathErr := os.Stat(pathPrefix)
+		rootInfo, rootErr := os.Stat(rootPrefix)
+		if pathErr != nil || rootErr != nil {
+			if errors.Is(pathErr, os.ErrNotExist) && errors.Is(rootErr, os.ErrNotExist) && strings.EqualFold(pathParts[i], part) {
+				return false, false
+			}
+			if pathErr != nil && !errors.Is(pathErr, os.ErrNotExist) || rootErr != nil && !errors.Is(rootErr, os.ErrNotExist) {
+				return false, false
+			}
+			return false, true
+		}
+		if !pathInfo.IsDir() || !rootInfo.IsDir() || !os.SameFile(pathInfo, rootInfo) {
+			return false, true
+		}
+	}
+	return true, true
 }
 
 // configuredProjectFor returns the owning project's configured root spelling,

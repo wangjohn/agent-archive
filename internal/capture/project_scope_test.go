@@ -114,3 +114,197 @@ func TestConfiguredScopeRefusesUnresolvedSymlinkIdentity(t *testing.T) {
 		t.Fatal("admission intent retained with unresolved scope identity")
 	}
 }
+
+// Native cwd casing is not an identity boundary on a case-insensitive volume.
+// In particular, missing descendants must still inherit a saved exclusion.
+func TestHookScopePreservesRulesAcrossCaseInsensitiveSpellings(t *testing.T) {
+	t.Parallel()
+	project := local.CanonicalPath(t.TempDir())
+	private := filepath.Join(project, "Private")
+	public := filepath.Join(private, "Public")
+	if err := os.MkdirAll(public, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(project, "private", "public")); err != nil {
+		t.Skip("requires a case-insensitive volume")
+	}
+	alias := filepath.Join(t.TempDir(), "alias")
+	if err := os.Symlink(project, alias); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, cwd, owner string
+		included         bool
+	}{
+		{"excluded existing", filepath.Join(project, "private"), private, false},
+		{"excluded absent", filepath.Join(alias, "private", "absent"), private, false},
+		{"reincluded existing", filepath.Join(project, "private", "public"), public, true},
+		{"reincluded absent", filepath.Join(alias, "private", "public", "absent"), public, true},
+		{"absent excluded rule", filepath.Join(alias, "private", "public", "absentexcluded", "chat"), filepath.Join(public, "AbsentExcluded"), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			home := t.TempDir()
+			at := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+			setUpTestConfig(t, home, project, at.Add(-time.Hour))
+			cfg, _, err := config.Load(home)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cfg.Archive.Projects = append(cfg.Archive.Projects,
+				archive.ProjectActivation{Root: private, ProjectID: archive.ProjectID(private), Included: false},
+				archive.ProjectActivation{Root: public, ProjectID: archive.ProjectID(public), Included: true, ActivatedAt: at.Add(-time.Hour)},
+				archive.ProjectActivation{Root: filepath.Join(public, "AbsentExcluded"), Included: false},
+			)
+			if err := config.Save(home, cfg); err != nil {
+				t.Fatal(err)
+			}
+			if err := HandleEvent(home, "claude", claudeStart(tc.cwd, "native-1", "startup", ""), at, WithDecoders(testDecoders)); err != nil {
+				t.Fatal(err)
+			}
+			regs, err := state.OpenReadOnly(home).LoadRegistrations()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !tc.included {
+				if len(regs) != 0 {
+					t.Fatalf("case alias bypassed saved exclusion: %+v", regs)
+				}
+			} else if len(regs) != 1 || regs[0].ProjectRoot != tc.owner || regs[0].ProjectID != archive.ProjectID(tc.owner) {
+				t.Fatalf("case alias lost saved reinclusion identity: %+v", regs)
+			}
+		})
+	}
+	t.Run("prunes ambiguous parent retry", func(t *testing.T) {
+		t.Parallel()
+		home := t.TempDir()
+		at := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+		setUpTestConfig(t, home, private, at.Add(-time.Hour))
+		cfg, _, err := config.Load(home)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg.Archive.Projects = append(cfg.Archive.Projects, archive.ProjectActivation{Root: filepath.Join(alias, "private", "public", "absent"), Included: false})
+		if err := os.MkdirAll(admissionIntentDir(home), 0700); err != nil {
+			t.Fatal(err)
+		}
+		intentPath := filepath.Join(admissionIntentDir(home), "retry.json")
+		if err := local.Write(intentPath, admissionIntent{ProjectRoot: private, DestinationID: cfg.DestinationID(), ObservedAt: at}); err != nil {
+			t.Fatal(err)
+		}
+		if err := PruneAdmissionIntents(home, cfg); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(intentPath); !os.IsNotExist(err) {
+			t.Fatalf("ambiguous parent intent survived a differently cased nested exclusion: %v", err)
+		}
+	})
+}
+
+// Existing directories with different case remain distinct on a sensitive
+// volume; conservative absent-path ambiguity must not merge these identities.
+func TestHookScopeKeepsExistingCaseSensitivePathsDistinct(t *testing.T) {
+	t.Parallel()
+	project := local.CanonicalPath(t.TempDir())
+	private, other := filepath.Join(project, "Private"), filepath.Join(project, "private")
+	if err := os.Mkdir(private, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(other, 0700); os.IsExist(err) {
+		t.Skip("requires a case-sensitive volume")
+	} else if err != nil {
+		t.Fatal(err)
+	}
+	home := t.TempDir()
+	at := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	setUpTestConfig(t, home, project, at.Add(-time.Hour))
+	cfg, _, err := config.Load(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Archive.Projects = append(cfg.Archive.Projects, archive.ProjectActivation{Root: private, Included: false})
+	if err := config.Save(home, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := HandleEvent(home, "claude", claudeStart(filepath.Join(other, "absent"), "native-1", "startup", ""), at, WithDecoders(testDecoders)); err != nil {
+		t.Fatal(err)
+	}
+	regs, err := state.OpenReadOnly(home).LoadRegistrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(regs) != 1 || regs[0].ProjectRoot != project {
+		t.Fatalf("distinct existing path inherited another directory's exclusion: %+v", regs)
+	}
+}
+
+// No filesystem can prove two absent case variants distinct by file identity.
+// This portable check pins the conservative decline, including queue pruning.
+func TestHookScopeDeclinesAmbiguousAbsentCaseVariants(t *testing.T) {
+	t.Parallel()
+	home, project := t.TempDir(), local.CanonicalPath(t.TempDir())
+	at := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	setUpTestConfig(t, home, project, at.Add(-time.Hour))
+	cfg, _, err := config.Load(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Archive.Projects = append(cfg.Archive.Projects, archive.ProjectActivation{Root: filepath.Join(project, "AbsentPrivate"), Included: false})
+	if err := config.Save(home, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := HandleEvent(home, "claude", claudeStart(filepath.Join(project, "absentprivate", "chat"), "native-1", "startup", ""), at, WithDecoders(testDecoders)); err != nil {
+		t.Fatal(err)
+	}
+	regs, err := state.OpenReadOnly(home).LoadRegistrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(regs) != 0 {
+		t.Fatalf("ambiguous absent variant bypassed exclusion: %+v", regs)
+	}
+	// Pruning cannot retain an included absent owner when a differently cased
+	// absent rule might revoke its ownership.
+	cfg.Archive.Projects = []archive.ProjectActivation{{Root: filepath.Join(project, "AbsentOwner"), Included: true, ActivatedAt: at.Add(-time.Hour)}}
+	if err := config.Save(home, cfg); err != nil {
+		t.Fatal(err)
+	}
+	queued, err := queueAdmissionIntent(home, "claude", hookEventStart, claudeStart(cfg.Archive.Projects[0].Root, "retry-native", "startup", ""), at)
+	if err != nil || !queued {
+		t.Fatalf("queue original proven start: queued=%t err=%v", queued, err)
+	}
+	cfg.Archive.Projects = append(cfg.Archive.Projects, archive.ProjectActivation{Root: filepath.Join(project, "absentowner", "private"), Included: false})
+	if err := config.Save(home, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := ReplayAdmissionIntents(home, at.Add(time.Second), testDecoders); err != nil {
+		t.Fatal(err)
+	}
+	regs, err = state.OpenReadOnly(home).LoadRegistrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(regs) != 0 {
+		t.Fatalf("ambiguous absent owner replayed a revoked start: %+v", regs)
+	}
+	entries, err := os.ReadDir(admissionIntentDir(home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("revoked intent was retained for later publication: %v", entries)
+	}
+	if err := os.MkdirAll(admissionIntentDir(home), 0700); err != nil {
+		t.Fatal(err)
+	}
+	intentPath := filepath.Join(admissionIntentDir(home), "retry.json")
+	if err := local.Write(intentPath, admissionIntent{ProjectRoot: cfg.Archive.Projects[0].Root, DestinationID: cfg.DestinationID(), ObservedAt: at}); err != nil {
+		t.Fatal(err)
+	}
+	if err := PruneAdmissionIntents(home, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(intentPath); !os.IsNotExist(err) {
+		t.Fatalf("ambiguous absent owner retained retry intent: %v", err)
+	}
+}

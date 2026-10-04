@@ -122,7 +122,8 @@ func intentProjectStillOwned(root string, projects []archive.ProjectActivation) 
 			included = project.Included
 			continue
 		}
-		if local.PathWithin(resolvedProject, resolvedRoot) {
+		within, certain := pathWithinResolvedLocations(resolvedProject, resolvedRoot)
+		if !certain || within {
 			return false
 		}
 	}
