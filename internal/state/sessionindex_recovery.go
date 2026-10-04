@@ -1,6 +1,7 @@
 package state
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -196,6 +197,7 @@ func (s *Store) sessionRegistrationInventory(ctx context.Context) (map[agentmeta
 	// across the census, clearing every field so omitted fields never inherit
 	// authority from a previously validated registration.
 	var reg archive.SessionRegistration
+	var data bytes.Buffer
 	for i, file := range entries {
 		entries[i] = nil
 		if filepath.Ext(file.Name()) == quarantineSuffix {
@@ -209,7 +211,7 @@ func (s *Store) sessionRegistrationInventory(ctx context.Context) (map[agentmeta
 			return nil, err
 		}
 		reg = archive.SessionRegistration{}
-		if err := local.Read(s.registrationPath(id), &reg); err != nil {
+		if err := readRecoveryRegistration(s.registrationPath(id), &data, &reg); err != nil {
 			if errors.Is(err, os.ErrNotExist) {
 				return nil, ErrSessionIndexRecoveryRequired
 			}
@@ -222,6 +224,26 @@ func (s *Store) sessionRegistrationInventory(ctx context.Context) (map[agentmeta
 		inventory[key] = append(inventory[key], id)
 	}
 	return inventory, nil
+}
+
+// readRecoveryRegistration retains only a bounded input buffer between census
+// files. Unmarshal still validates the entire JSON document, including trailing
+// input, and the caller clears the decoded registration before every read.
+func readRecoveryRegistration(path string, data *bytes.Buffer, reg *archive.SessionRegistration) error {
+	data.Reset()
+	if data.Cap() > 64*1024 {
+		*data = bytes.Buffer{}
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	_, err = data.ReadFrom(file)
+	_ = file.Close()
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(data.Bytes(), reg)
 }
 
 func (s *Store) recoverRegistrationOwners(key agentmeta.SessionKey, owners []string) error {

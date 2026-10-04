@@ -88,6 +88,10 @@ func phaseFingerprint(value any) string {
 		for _, candidate := range values {
 			_ = encoder.Encode(candidate)
 		}
+	case []os.DirEntry:
+		for _, entry := range values {
+			_ = encoder.Encode(entry.Name())
+		}
 	case []string:
 		for _, name := range values {
 			_ = encoder.Encode(name)
@@ -164,16 +168,19 @@ func (s *Store) recoverSessionIndexSlice(ctx context.Context, allowance time.Dur
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return false, err
 	}
-	names := make([]string, len(entries))
-	for i, entry := range entries {
-		names[i] = entry.Name()
-	}
-	fingerprint = phaseFingerprint(names)
+	fingerprint = phaseFingerprint(entries)
 	if cursor.PhaseInventory != fingerprint || cursor.Offset > len(entries) {
 		cursor.Offset = 0
 	}
 	cursor.PhaseInventory = fingerprint
-	complete, err = s.applyRecoveryPhase(ctx, &cursor, deadline, len(entries), func(i int) error { return s.recoverRequestedMiss(ctx, entries[i], inventory) })
+	// The fingerprint covers the full sorted listing before consumed directory
+	// entries are released. Only unapplied entries are needed by this slice.
+	clear(entries[:cursor.Offset])
+	complete, err = s.applyRecoveryPhase(ctx, &cursor, deadline, len(entries), func(i int) error {
+		entry := entries[i]
+		entries[i] = nil
+		return s.recoverRequestedMiss(ctx, entry, inventory)
+	})
 	if err != nil || !complete {
 		return false, err
 	}
