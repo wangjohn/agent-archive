@@ -50,18 +50,17 @@ func portableProjectScope(projects []archive.ProjectActivation, home string, env
 	projects = canonical
 	home = local.CanonicalPath(home)
 	anchors := map[string]string{}
+	roots := make(map[string]bool, len(projects))
+	absolute := true
+	for _, project := range projects {
+		roots[project.Root] = true
+		absolute = absolute && filepath.IsAbs(project.Root)
+	}
 	for _, project := range projects {
 		// A checkout inside a path-based rule must move with that rule.
 		// Relocating it alone would detach exclusions from their included
 		// ancestor (or reinclusions from their excluded ancestor).
-		hasAncestor := false
-		for _, other := range projects {
-			if other.Root != project.Root && local.PathWithin(project.Root, other.Root) {
-				hasAncestor = true
-				break
-			}
-		}
-		if hasAncestor {
+		if configuredProjectAncestor(project.Root, projects, roots, absolute) {
 			continue
 		}
 		if info, err := os.Stat(filepath.Join(project.Root, ".git")); err == nil && (info.IsDir() || info.Mode().IsRegular()) {
@@ -104,6 +103,30 @@ func portableProjectScope(projects []archive.ProjectActivation, home string, env
 	}
 	encoded, _ := json.Marshal(rules)
 	return string(encoded)
+}
+
+// configuredProjectAncestor tests strict ancestors of already canonical roots.
+func configuredProjectAncestor(root string, projects []archive.ProjectActivation, roots map[string]bool, absolute bool) bool {
+	if absolute {
+		// For absolute roots, membership of a strict parent replaces pairwise
+		// path cleaning and relative-path calculation between every sibling.
+		for parent := filepath.Dir(root); parent != root; parent = filepath.Dir(parent) {
+			if roots[parent] {
+				return true
+			}
+			if filepath.Dir(parent) == parent {
+				break
+			}
+		}
+		return false
+	}
+	// Preserve PathWithin's behavior for unresolved relative roots.
+	for _, other := range projects {
+		if other.Root != root && local.PathWithin(root, other.Root) {
+			return true
+		}
+	}
+	return false
 }
 
 // readProjectScopeInput reads only an explicitly selected file or stdin stream.
