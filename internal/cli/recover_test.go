@@ -270,6 +270,71 @@ func TestRecoverFrozenFeedbackRetainsIdentityAgeAndRetry(t *testing.T) {
 	}
 }
 
+func TestRecoverReplayRefusesPredecessorPublicationKey(t *testing.T) {
+	t.Parallel()
+	env, home, _, id, bucket := recoverFixtureWithStorage(t)
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"recover", id, "--confirm"}, nil, &out, &errOut, env); code != 0 {
+		t.Fatalf("recover: %d %s", code, errOut.String())
+	}
+	store, err := state.Open(home)
+	must(t, err)
+	next, _, err := store.GenerationSuccessor(id)
+	must(t, err)
+	reg, _, err := store.LoadRegistration(next)
+	must(t, err)
+	pending, _, err := store.LoadPending(next)
+	must(t, err)
+	request, _, err := store.LoadRequest(next)
+	must(t, err)
+	key, err := archive.MetadataObjectKey(reg.Harness.Name, id)
+	must(t, err)
+	before, err := bucket.Get(t.Context(), key)
+	must(t, err)
+	pending.MetadataKey = key
+	var corruptMetadata archive.Metadata
+	must(t, json.Unmarshal(pending.MetadataBytes, &corruptMetadata))
+	corruptMetadata.SessionID = id
+	pending.MetadataBytes, err = json.Marshal(corruptMetadata)
+	must(t, err)
+	journalPath := filepath.Join(home, "generation-recovery", id+".json")
+	raw, err := os.ReadFile(journalPath)
+	must(t, err)
+	var journal map[string]any
+	must(t, json.Unmarshal(raw, &journal))
+	delete(journal, "complete")
+	journal["registration"], journal["pending"], journal["request"] = reg, pending, request
+	must(t, local.Write(journalPath, journal))
+	err = store.ResumeGenerationRecoveries(t.Context())
+	if errors.Is(err, state.ErrSessionIndexRecoveryRequired) {
+		after, err := bucket.Get(t.Context(), key)
+		must(t, err)
+		if !bytes.Equal(before, after) {
+			t.Fatal("rejected journal altered predecessor metadata")
+		}
+		return
+	}
+	must(t, err)
+	// Demonstrate the consequence through the ordinary publication path when
+	// replay accepts the corrupt fixed transaction, rather than only its cache.
+	cfg, _, err := config.Load(home)
+	must(t, err)
+	opts := collector.Options{Sources: registryFor(env), Parsers: parsersFor(env), MachineID: cfg.MachineID, Now: env.Now, RepoKey: env.repoKey, SkillEvidence: cfg.EffectiveSkillEvidence(), RequireSkillUse: cfg.RequireSkillUse, AcceptSession: func(reg archive.SessionRegistration) bool { return reg.ArchiveSessionID == next }}
+	result, err := collector.Run(t.Context(), store, bucket, opts)
+	must(t, err)
+	if len(result.Errors) != 0 {
+		t.Fatalf("publish accepted journal: %#v", result.Errors)
+	}
+	after, err := bucket.Get(t.Context(), key)
+	must(t, err)
+	var metadata archive.Metadata
+	must(t, json.Unmarshal(after, &metadata))
+	if bytes.Equal(before, after) {
+		t.Fatal("corrupt journal accepted without fail-closed validation")
+	}
+	t.Fatalf("corrupt journal replaced predecessor metadata with successor source %s", metadata.SourceBundle.Key)
+}
+
 func TestRecoverPreviewConfirmAndHookRouting(t *testing.T) {
 	t.Parallel()
 	env, home, path, id := recoverFixture(t)

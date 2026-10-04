@@ -1,6 +1,7 @@
 package state
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -158,6 +159,33 @@ func validateGenerationSuccessor(old, reg archive.SessionRegistration, pending P
 	preserved.PreviousGenerationID = old.PreviousGenerationID
 	if !reflect.DeepEqual(preserved, old) {
 		return errors.New("recovery cannot alter original admission or provenance")
+	}
+	return validateGenerationPublication(reg, pending)
+}
+
+// Validate the fixed rendered snapshot before committing any routing change.
+// A decodable journal must not redirect preserved metadata or carry bytes
+// belonging to another generation, even when its registration is intact.
+func validateGenerationPublication(reg archive.SessionRegistration, pending PendingPublication) error {
+	bundle := pending.Bundle
+	if pending.MetadataOnly || bundle.NativeSessionID != reg.NativeSessionID || bundle.ProjectID != reg.ProjectID || bundle.Capture.Harness.Name != reg.Harness.Name {
+		return errors.New("recovery publication identity differs from registration")
+	}
+	source, err := archive.BuildCompressedSource(bundle)
+	if err != nil || source.SHA256 != pending.SourceSHA256 || !bytes.Equal(source.Bytes, pending.SourceBytes) {
+		return errors.New("recovery publication source differs from its fixed bundle")
+	}
+	sourceKey, err := archive.SourceObjectKey(bundle, source.SHA256)
+	if err != nil || sourceKey != pending.SourceKey {
+		return errors.New("recovery publication source key differs from its fixed bundle")
+	}
+	metadataKey, err := archive.MetadataObjectKey(reg.Harness.Name, reg.ArchiveSessionID)
+	if err != nil || metadataKey != pending.MetadataKey {
+		return errors.New("recovery publication metadata key differs from registration")
+	}
+	var metadata archive.Metadata
+	if json.Unmarshal(pending.MetadataBytes, &metadata) != nil || metadata.SchemaVersion != archive.MetadataSchemaVersion || metadata.SessionID != reg.ArchiveSessionID || metadata.PreviousGenerationID != reg.PreviousGenerationID || metadata.NativeSessionID != reg.NativeSessionID || metadata.ProjectID != reg.ProjectID || metadata.Harness.Name != reg.Harness.Name || !metadata.CapturedAt.Equal(bundle.Capture.CapturedAt) || metadata.SourceBundle != pending.SourceReference() {
+		return errors.New("recovery publication metadata differs from its fixed source")
 	}
 	return nil
 }
