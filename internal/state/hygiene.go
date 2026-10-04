@@ -78,6 +78,7 @@ var corruptionPolicies = map[string]corruption{
 	"pending-scans":           readAsPending,
 	"sessions":                rebuiltFromRegistrations,
 	"sessions-v1":             rebuiltFromRegistrations,
+	packedSessionIndexDir:     rebuiltFromRegistrations,
 	sessionIndexMarkerFile:    rebuiltFromRegistrations,
 	sessionRecoveryCursorFile: rebuiltFromRegistrations,
 	sessionMembershipFile:     readAsRecoveryRequired,

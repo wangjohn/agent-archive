@@ -108,13 +108,23 @@ func PruneAdmissionIntents(home string, cfg config.Config) error {
 // project. Drop those ambiguous intents rather than admitting them under the
 // parent after setup changes ownership.
 func intentProjectStillOwned(root string, projects []archive.ProjectActivation) bool {
+	resolvedRoot := resolvedPath(root)
+	if resolvedRoot == "" {
+		return false
+	}
 	included := false
+	var locations resolvedLocationMatcher
 	for _, project := range projects {
+		resolvedProject := resolvedPath(project.Root)
+		if resolvedProject == "" {
+			return false
+		}
 		if project.Root == root {
 			included = project.Included
 			continue
 		}
-		if local.PathWithin(resolvedPath(project.Root), resolvedPath(root)) {
+		within, certain := locations.within(resolvedProject, resolvedRoot)
+		if !certain || within {
 			return false
 		}
 	}

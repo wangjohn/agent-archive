@@ -147,8 +147,12 @@ func (s *Store) RemoveSubagentCandidate(id string) error {
 	if err != nil {
 		return err
 	}
-	defer unlock()
-	return s.removeSubagentCandidate(id)
+	err = s.removeSubagentCandidate(id)
+	unlock()
+	if err != nil {
+		return err
+	}
+	return s.pruneAcknowledgedPackedCandidate(id)
 }
 
 // AcknowledgeSubagentCandidate marks a candidate handled. A later stop may
@@ -156,22 +160,45 @@ func (s *Store) RemoveSubagentCandidate(id string) error {
 // acknowledges only the exact observed generation, under the writer's short
 // lock.
 func (s *Store) AcknowledgeSubagentCandidate(expected SubagentCandidate) error {
-	unlock, err := s.lockSubagentCandidate(expected.ArchiveSessionID)
+	removed, err := func() (bool, error) {
+		unlock, err := s.lockSubagentCandidate(expected.ArchiveSessionID)
+		if err != nil {
+			return false, err
+		}
+		defer unlock()
+		var current SubagentCandidate
+		if err := local.Read(s.subagentCandidatePath(expected.ArchiveSessionID), &current); err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return true, nil // Also finish a prior interrupted acknowledgement.
+			}
+			return false, err
+		}
+		if !current.ObservedAt.Equal(expected.ObservedAt) || current.TranscriptPath != expected.TranscriptPath || current.NativeSessionID != expected.NativeSessionID || current.ParentArchiveSessionID != expected.ParentArchiveSessionID {
+			return false, nil
+		}
+		return true, s.removeSubagentCandidate(expected.ArchiveSessionID)
+	}()
+	if err != nil || !removed {
+		return err
+	}
+	// Collector acknowledgement owns no hooks/request lock. Native packed
+	// staging and directory sync happen only after the candidate lock releases.
+	return s.pruneAcknowledgedPackedCandidate(expected.ArchiveSessionID)
+}
+
+func (s *Store) pruneAcknowledgedPackedCandidate(id string) error {
+	var marker sessionIndexMarker
+	err := readRecoveryJSON(filepath.Join(s.home, sessionIndexMarkerFile), &marker)
+	if errors.Is(err, os.ErrNotExist) || (err == nil && marker.Version != 2) {
+		return nil
+	}
 	if err != nil {
 		return err
 	}
-	defer unlock()
-	var current SubagentCandidate
-	if err := local.Read(s.subagentCandidatePath(expected.ArchiveSessionID), &current); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil
-		}
-		return err
+	if exists(s.registrationPath(id)) {
+		return nil // Admitted children retain their exact packed ownership.
 	}
-	if !current.ObservedAt.Equal(expected.ObservedAt) || current.TranscriptPath != expected.TranscriptPath || current.NativeSessionID != expected.NativeSessionID || current.ParentArchiveSessionID != expected.ParentArchiveSessionID {
-		return nil
-	}
-	return s.removeSubagentCandidate(expected.ArchiveSessionID)
+	return s.removePackedIdentities(map[string]bool{id: true})
 }
 
 // removeSubagentCandidate removes a candidate and then its lock file, under
@@ -199,7 +226,15 @@ func (s *Store) removeSubagentCandidatesForSession(id string) error {
 		return err
 	}
 	for _, candidateID := range ids {
-		if err := s.RemoveSubagentCandidate(candidateID); err != nil {
+		// The retention caller may hold an outer request lock. Its outer
+		// Forget operation prunes packed records after that lock releases.
+		unlock, err := s.lockSubagentCandidate(candidateID)
+		if err != nil {
+			return err
+		}
+		err = s.removeSubagentCandidate(candidateID)
+		unlock()
+		if err != nil {
 			return err
 		}
 	}

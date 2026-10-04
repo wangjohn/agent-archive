@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -235,8 +236,17 @@ func TestListPagerFailureFallsBack(t *testing.T) {
 
 func TestListPagerSubprocess(t *testing.T) {
 	t.Parallel()
-	for _, exitCode := range []int{0, 127} {
-		t.Run(fmt.Sprintf("exit=%d", exitCode), func(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		command string
+		clean   bool
+	}{
+		{"successful quit", "cat > /dev/null; exit 0", true},
+		{"consumed all", "cat > /dev/null; exit 127", false},
+		{"consumed prefix", "dd bs=1 count=7 of=/dev/null 2>/dev/null; exit 127", false},
+		{"missing command", shellQuote(filepath.Join(t.TempDir(), "missing-pager")), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			env, _, _ := publishedFixture(t)
 			var want, out, errOut bytes.Buffer
@@ -251,16 +261,17 @@ func TestListPagerSubprocess(t *testing.T) {
 					return false
 				}
 			}
-			// The real child consumes all input before exiting.
+			// Use the real shell and child, including startup failure after
+			// partial consumption and an actual nonexistent executable.
 			env.LookupEnv = func(key string) (string, bool) {
-				return fmt.Sprintf("cat > /dev/null; exit %d", exitCode), key == "AGENT_ARCHIVE_PAGER"
+				return tc.command, key == "AGENT_ARCHIVE_PAGER"
 			}
 			env.RunPager = nil
 			errOut.Reset()
 			if code := Run([]string{"list"}, nil, &out, &errOut, env); code != 0 {
 				t.Fatalf("code=%d stderr=%s", code, errOut.String())
 			}
-			if exitCode == 0 {
+			if tc.clean {
 				if out.Len() != 0 || errOut.Len() != 0 {
 					t.Fatalf("successful pager triggered fallback: stdout=%q stderr=%q", out.String(), errOut.String())
 				}
