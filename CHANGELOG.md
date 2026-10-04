@@ -13,6 +13,7 @@ Planned for v0.2.0. This release has not been tagged or published.
 - Default listing uses session-addressed immutable revision hints to keep
   concurrent cleanup discoverable. Existing v2 entries remain readable;
   `list --rebuild-index` reclaims legacy pointerless hints with bounded cleanup.
+  Malformed legacy pointers cannot claim or delete v3 hints.
 
 - Project capture scope resolves symlinked checkout paths even when a nested
   directory is absent, preserving nested exclusions and reinclusions. Existing
