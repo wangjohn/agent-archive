@@ -78,7 +78,7 @@ func (s *Store) readQualifiedIndex(key agentmeta.SessionKey) (qualifiedSessionIn
 	var entry qualifiedSessionIndexEntry
 	err := local.Read(qualifiedSessionIndexPath(s.home, key), &entry)
 	if errors.Is(err, os.ErrNotExist) {
-		return entry, false, nil
+		return s.packedSessionIndexEntry(key)
 	}
 	if IsUndecodable(err) {
 		return entry, false, ErrSessionIndexRecoveryRequired
@@ -379,6 +379,7 @@ func (s *Store) indexStep(step string) error {
 func (s *Store) writeIndexUnderRequestLock(id, path string, check func() error, change func(fileSnapshot) (any, bool, error)) error {
 	indexStore := *s
 	indexStore.onWriteSync = s.onIndexSync
+	indexStore.indexSnapshots = true
 	return indexStore.writeUnderRequestLock(id, path, check, change)
 }
 
