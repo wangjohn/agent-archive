@@ -10,6 +10,10 @@ Planned for v0.2.0. This release has not been tagged or published.
 
 ### Fixed
 
+- Existing project-scoped hook sessions decline continuation updates when the
+  incoming checkout or a saved scope rule has unknown filesystem identity,
+  preserving their transcript locator and lifecycle timestamps.
+
 - The bucket cleanup recipe works after local integrations or configuration
   have been removed. An explicit ordinary uninstall check stops local uploads
   before planning full-prefix deletion; failed stop checks invalidate prior plans.
