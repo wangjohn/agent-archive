@@ -10,6 +10,9 @@ Planned for v0.2.0. This release has not been tagged or published.
 
 ### Fixed
 
+- Listing cache lookup selects the current opaque metadata revision before
+  opening a body, preserving the combined read limit after normal refreshes.
+
 - Default listing uses session-addressed immutable revision hints to keep
   concurrent cleanup discoverable. Existing v2 entries remain readable;
   `list --rebuild-index` reclaims legacy pointerless hints with bounded cleanup.

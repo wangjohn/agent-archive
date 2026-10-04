@@ -23,14 +23,18 @@ import (
 // policy. It holds metadata sidecars only — put refuses any other key — and is
 // never authoritative: every failure to read or write it is a miss.
 //
-// Layout: AGENT_ARCHIVE_HOME/cache/metadata/<hex(object key)>.json, with both
+// Layout: AGENT_ARCHIVE_HOME/cache/metadata/<hex(object key)>/<SHA256(ETag)>.json, with both
 // directories 0700 and every file 0600. Files are written atomically (temp
 // file, then rename) but without fsync: the cache is rebuilt from the store
 // on any miss, so a copy lost to a crash costs one download, and each entry
 // carries a SHA-256 of its bytes so a torn or damaged file is a miss rather
 // than a wrong answer.
 //
-// Staleness: the bytes come from a Get that runs after the listing, so an
+// Version lookup: the opaque ETag is hashed into the filename before any
+// cache body opens. Changed versions and flat legacy entries are cold misses;
+// canonical headers prune stale versions without reading them.
+//
+// Exhaustive-path staleness: the bytes come from a Get after the listing, so an
 // object rewritten in between would be stored under the old ETag. S3, R2 and
 // MinIO report the MD5 of a single-part object as its ETag (the collector
 // publishes sidecars with a single PutObject), so when the listed ETag is a
@@ -43,10 +47,12 @@ import (
 // always available.
 type MetadataCache struct {
 	dir string
+	// readFile, when set by tests, observes physical cache-body reads.
+	readFile func(string) ([]byte, error)
 }
 
 // maxCacheKeyBytes keeps hex(key) comfortably inside a file name limit. A
-// longer key is simply not cached.
+// longer key is simply not cached. Validator hashes use a separate filename.
 const maxCacheKeyBytes = 120
 
 // OpenMetadataCache creates (or reuses) the metadata cache under home.
@@ -68,6 +74,12 @@ func OpenMetadataCache(home string) (*MetadataCache, error) {
 	// leaves the file behind; nothing else would ever remove it. Best
 	// effort, like every other write to this cache.
 	_ = local.RemoveStaleTemps(dir, staleCacheTempAge)
+	entries, _ := os.ReadDir(dir)
+	for _, entry := range entries {
+		if entry.IsDir() && cacheKey(entry.Name()) != "" {
+			_ = local.RemoveStaleTemps(filepath.Join(dir, entry.Name()), staleCacheTempAge)
+		}
+	}
 	return &MetadataCache{dir: dir}, nil
 }
 
@@ -84,11 +96,33 @@ type metadataCacheEntry struct {
 
 func isMetadataKey(key string) bool { return strings.HasSuffix(key, "/metadata.json") }
 
-func (c *MetadataCache) path(key string) (string, bool) {
+func (c *MetadataCache) keyDir(key string) (string, bool) {
 	if c == nil || !isMetadataKey(key) || len(key) > maxCacheKeyBytes {
 		return "", false
 	}
-	return filepath.Join(c.dir, hex.EncodeToString([]byte(key))+".json"), true
+	return filepath.Join(c.dir, hex.EncodeToString([]byte(key))), true
+}
+
+func (c *MetadataCache) path(key, etag string) (string, bool) {
+	dir, ok := c.keyDir(key)
+	if !ok || etag == "" {
+		return "", false
+	}
+	info, err := os.Lstat(dir)
+	if err != nil || !info.IsDir() || info.Mode().Perm() != 0o700 {
+		return "", false
+	}
+	return filepath.Join(dir, sha256Hex([]byte(etag))+".json"), true
+}
+
+// cacheKey validates directory names without opening any metadata bodies.
+func cacheKey(name string) string {
+	raw, err := hex.DecodeString(name)
+	key := string(raw)
+	if err != nil || len(key) > maxCacheKeyBytes || !isMetadataKey(key) || hex.EncodeToString(raw) != name {
+		return ""
+	}
+	return key
 }
 
 func sha256Hex(data []byte) string {
@@ -116,12 +150,21 @@ func etagMatchesBytes(etag string, data []byte) (verifiable, matches bool) {
 // exactly this ETag and still hash to the digest recorded with them. An empty
 // ETag never matches: without one nothing proves the cached copy is current.
 func (c *MetadataCache) get(key, etag string) ([]byte, bool) {
-	path, ok := c.path(key)
-	if !ok || etag == "" {
+	path, ok := c.path(key, etag)
+	if !ok {
 		return nil, false
 	}
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return nil, false
+	}
+	readFile := os.ReadFile
+	if c.readFile != nil {
+		readFile = c.readFile
+	}
+	data, err := readFile(path)
 	var entry metadataCacheEntry
-	if err := local.Read(path, &entry); err != nil {
+	if err != nil || json.Unmarshal(data, &entry) != nil {
 		return nil, false
 	}
 	if entry.Key != key || entry.ETag != etag || len(entry.Metadata) == 0 || entry.SHA256 != sha256Hex(entry.Metadata) {
@@ -143,8 +186,15 @@ func (c *MetadataCache) put(key, etag string, data []byte) {
 
 // putVerified caches response-validated bytes without interpreting the validator.
 func (c *MetadataCache) putVerified(key, etag string, data []byte) {
-	path, ok := c.path(key)
+	dir, ok := c.keyDir(key)
 	if !ok || etag == "" || !json.Valid(data) {
+		return
+	}
+	if err := os.Mkdir(dir, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
+		return
+	}
+	path, ok := c.path(key, etag)
+	if !ok {
 		return
 	}
 	encoded, err := json.Marshal(metadataCacheEntry{Key: key, ETag: etag, SHA256: sha256Hex(data), Metadata: data})
@@ -184,23 +234,37 @@ func (c *MetadataCache) evictUnlisted(known []string, listed []storage.Object) {
 	if c == nil {
 		return
 	}
-	present := make(map[string]bool, len(listed))
+	present := make(map[string]string, len(listed))
 	for _, object := range listed {
-		present[object.Key] = true
+		present[object.Key] = object.ETag
 	}
 	for _, key := range known {
-		if !present[key] {
-			_ = os.Remove(filepath.Join(c.dir, hex.EncodeToString([]byte(key))+".json"))
+		dir, ok := c.keyDir(key)
+		if !ok {
+			continue
+		}
+		info, err := os.Lstat(dir)
+		if err != nil || !info.IsDir() || info.Mode().Perm() != 0o700 {
+			continue
+		}
+		etag, exists := present[key]
+		if !exists {
+			_ = os.RemoveAll(dir)
+			continue
+		}
+		// A changed validator is a header-only miss, never a stale body read.
+		entries, _ := os.ReadDir(dir)
+		current := sha256Hex([]byte(etag)) + ".json"
+		for _, entry := range entries {
+			if strings.HasSuffix(entry.Name(), ".json") && (etag == "" || entry.Name() != current) {
+				_ = os.Remove(filepath.Join(dir, entry.Name()))
+			}
 		}
 	}
 }
 
-// keys returns the object keys cached under listPrefix, in no particular
-// order: what one listing plans its ranges from (planRanges) and later
-// evicts from (evictUnlisted), so the directory is read once per listing.
-// A file whose name this cache never writes is removed on the way. Like
-// everything else about the cache, a missing or unreadable directory is
-// just no keys.
+// keys inventories private key directories without opening cached bodies.
+// Disposable flat legacy entries are discarded, so migration is a cold miss.
 func (c *MetadataCache) keys(listPrefix string) []string {
 	if c == nil {
 		return nil
@@ -212,16 +276,14 @@ func (c *MetadataCache) keys(listPrefix string) []string {
 	var keys []string
 	for _, entry := range entries {
 		name := entry.Name()
-		if entry.IsDir() || !strings.HasSuffix(name, ".json") {
+		key := cacheKey(name)
+		if key == "" || !entry.IsDir() {
+			if strings.HasSuffix(name, ".json") || key != "" {
+				_ = os.Remove(filepath.Join(c.dir, name))
+			}
 			continue
 		}
-		raw, err := hex.DecodeString(strings.TrimSuffix(name, ".json"))
-		if err != nil {
-			// Not a name this cache writes; it cannot be one of ours to keep.
-			_ = os.Remove(filepath.Join(c.dir, name))
-			continue
-		}
-		if key := string(raw); strings.HasPrefix(key, listPrefix) {
+		if strings.HasPrefix(key, listPrefix) {
 			keys = append(keys, key)
 		}
 	}
