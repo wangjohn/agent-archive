@@ -658,10 +658,18 @@ func ConfiguredProjectActivationFor(cfg config.Config, root string) (archive.Pro
 		return archive.ProjectActivation{}, false
 	}
 	candidate := resolvedPath(root)
+	if candidate == "" {
+		return archive.ProjectActivation{}, false
+	}
 	var best archive.ProjectActivation
 	bestLen, found := -1, false
 	for _, project := range cfg.Archive.Projects {
 		configured := resolvedPath(project.Root)
+		// An unresolved rule may be an exclusion; never fall through to an
+		// included ancestor when its filesystem identity is unknown.
+		if configured == "" {
+			return archive.ProjectActivation{}, false
+		}
 		if !local.PathWithin(candidate, configured) || len(configured) <= bestLen {
 			continue
 		}
@@ -677,12 +685,40 @@ func configuredProjectFor(cfg config.Config, root string) (string, bool) {
 	return project.Root, found
 }
 
+// resolvedPath resolves existing ancestors even when a descendant is absent.
+// Lstat stops at a dangling symlink so it cannot become a lexical inclusion.
+// An empty result means the filesystem identity could not be resolved safely.
 func resolvedPath(path string) string {
-	path = filepath.Clean(path)
-	if resolved, err := filepath.EvalSymlinks(path); err == nil {
-		return resolved
+	if path == "" {
+		return ""
 	}
-	return path
+	path, err := filepath.Abs(path)
+	if err != nil {
+		return ""
+	}
+	ancestor := path
+	for {
+		if _, err = os.Lstat(ancestor); err == nil {
+			break
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return ""
+		}
+		next := filepath.Dir(ancestor)
+		if next == ancestor {
+			return ""
+		}
+		ancestor = next
+	}
+	resolved, err := filepath.EvalSymlinks(ancestor)
+	if err != nil {
+		return ""
+	}
+	rel, err := filepath.Rel(ancestor, path)
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(resolved, rel)
 }
 
 // hookProjectActivation consumes facts resolved before hooks.lock for all mode.

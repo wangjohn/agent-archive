@@ -28,6 +28,12 @@ of the filter is in the [filter changelog](../../dev/specs/privacy-filter-change
   sent anywhere but your bucket: there is no hosted service and no
   telemetry. The one thing uploaded from outside your projects is the
   [skill evidence](#what-is-uploaded) from your user-level skill folders.
+  Project scope compares resolved checkout locations, including absent
+  descendants beneath existing directories. The nearest configured rule
+  controls capture, so nested exclusions and explicit reinclusions also apply
+  through symlink aliases. If a checkout or a saved scope rule has an unresolved
+  symlink identity, capture declines the session until that identity can be
+  resolved.
 - **Who can change the archive.** Anyone who can write to your prefix
   controls what `list`, `show`, and `handoff` return. A handoff is a prompt
   for a coding agent, so a planted or altered session is text another agent
