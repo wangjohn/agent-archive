@@ -3,6 +3,7 @@ import copy
 import hashlib
 import json
 import os
+import re
 import sys
 from pathlib import Path
 import subprocess
@@ -260,6 +261,32 @@ class CandidateTest(unittest.TestCase):
                 with self.assertRaises((RuntimeError, ValueError)):
                     self.promote()
         self.assertEqual(self.mutations(), [])
+
+    def test_acceptance_requires_every_supported_app_and_no_unsupported_app(self):
+        # The product catalog and published acceptance sheet support three
+        # apps. An unsupported fourth row made honest acceptance impossible.
+        root = Path(__file__).resolve().parent.parent
+        catalog = (root / 'internal/agentmeta/catalog.go').read_text()
+        identities = set(re.findall(r'(?m)^\s*\w+\s+ID\s*=\s*"([a-z-]+)"$', catalog))
+        self.assertEqual(identities, {'claude', 'codex', 'cursor'})
+        app_rows = {'claude-code' if name == 'claude' else name for name in identities}
+        template = json.loads((root / 'dev/maintainers/release-evidence/example.json').read_text())
+        self.assertEqual(set(template['checks']), set(rc.ROWS))
+        self.assertTrue(app_rows <= set(rc.ROWS))
+        self.ready()
+        self.acceptance['checks'] = {name: row for name, row in self.acceptance['checks'].items()
+                                     if name != 'gemini'}
+        self.promote()
+        self.assertEqual(len(self.mutations()), 1)
+        for name in sorted(app_rows):
+            with self.subTest(missing_app=name):
+                row = self.acceptance['checks'].pop(name)
+                self.ready()
+                before = len(self.mutations())
+                with self.assertRaisesRegex(RuntimeError, 'missing or pending'):
+                    self.promote()
+                self.assertEqual(len(self.mutations()), before)
+                self.acceptance['checks'][name] = row
 
     def test_acceptance_must_bind_all_six_digests(self):
         self.ready()
