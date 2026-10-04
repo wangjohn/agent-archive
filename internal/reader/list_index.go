@@ -258,13 +258,14 @@ func selectListingRevisions(objects []storage.Object, revisions map[string]listi
 			selected = append(selected, r)
 		}
 	}
-	result := RecentResult{Complete: true, Children: allChildren, Hidden: scopedHidden, Outside: len(all) - len(selected)}
-	if opts.ScopeMatch != nil && len(selected) == 0 {
-		result.ScopeEmpty = true
+	scopeEmpty := opts.ScopeMatch != nil && len(selected) == 0
+	hidden := scopedHidden
+	outside := len(all) - len(selected)
+	if scopeEmpty {
 		selected = all
-		result.Children = allChildren
-		result.Hidden = allHidden
+		hidden = allHidden
 	}
+	result := RecentResult{Complete: true, Children: allChildren, Hidden: hidden, Outside: outside, ScopeEmpty: scopeEmpty, TotalMatched: len(selected)}
 	sort.Slice(selected, func(i, j int) bool {
 		a, b := selected[i], selected[j]
 		if opts.ActivityOrder && !a.Activity.Equal(b.Activity) {
@@ -275,7 +276,6 @@ func selectListingRevisions(objects []storage.Object, revisions map[string]listi
 		}
 		return a.MetadataKey < b.MetadataKey
 	})
-	result.TotalMatched = len(selected)
 	if len(selected) > limit {
 		selected = selected[:limit]
 	}
