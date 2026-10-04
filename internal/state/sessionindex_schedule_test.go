@@ -936,7 +936,7 @@ func TestNewRecoveryRequestRepairsPreviouslyAppliedOwner(t *testing.T) {
 			}
 			// A new Store must recover from durable evidence, retaining the owner ID.
 			resumed := OpenReadOnly(s.home)
-			for attempt := 0; attempt < 2; attempt++ {
+			for attempt := range 2 {
 				complete, err := resumed.RecoverSessionIndexScheduled(t.Context(), time.Second)
 				if err != nil || !complete {
 					t.Fatalf("requested owner recovery attempt %d: %v %v", attempt, complete, err)
