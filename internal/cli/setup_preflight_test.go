@@ -222,8 +222,8 @@ func TestPreflightApps(t *testing.T) {
 		{},
 	}
 	for _, c := range cases {
-		if got := preflightApps(c.detected, c.saved, c.declined, c.draft); !slices.Equal(got, c.want) {
-			t.Errorf("preflightApps(%v, %v, %v, %v) = %v, want %v", c.detected, c.saved, c.declined, c.draft, got, c.want)
+		if got := preflightApps(allHarnesses, c.detected, c.saved, c.declined, c.draft); !slices.Equal(got, c.want) {
+			t.Errorf("preflightApps(allHarnesses, %v, %v, %v, %v) = %v, want %v", c.detected, c.saved, c.declined, c.draft, got, c.want)
 		}
 	}
 }

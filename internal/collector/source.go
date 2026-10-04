@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"sync/atomic"
 	"time"
 
@@ -335,17 +334,8 @@ func (r *composerRecords) Next(ctx context.Context) (agentapi.NativeRecord, bool
 	return agentapi.NativeRecord{Kind: agentapi.BubbleRecord, Key: b.ID, Raw: b.Value, Missing: b.Value == nil}, true, nil
 }
 
-// cursorDatabase is Cursor's state.vscdb for this user.
-func (o Options) cursorDatabase() string {
-	if o.CursorDatabase != "" {
-		return o.CursorDatabase
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	return cursorstore.StateDatabase(home)
-}
+// cursorDatabase supplies an explicit caller override; native providers own defaults.
+func (o Options) cursorDatabase() string { return o.CursorDatabase }
 
 // openCursorPass gives the pass one Reader for Cursor's database when any
 // session is read from it (Run has already swept snapshots a killed pass

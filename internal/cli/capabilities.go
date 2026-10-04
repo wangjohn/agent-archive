@@ -8,55 +8,27 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
-	"sort"
-	"strconv"
 	"strings"
 	"time"
 
-	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/platform"
+	"github.com/wangjohn/agent-archive/internal/versioninfo"
 )
 
-// capabilityState is how well a capture capability is established.
-type capabilityState string
+type capabilityEvidence = agentapi.CapabilityEvidence
+
+type captureCapabilities = agentapi.CaptureCapabilities
 
 const (
-	capabilityDocumented       capabilityState = "documented"
-	capabilityFixtureValidated capabilityState = "fixture_validated"
-	capabilityUnavailable      capabilityState = "unavailable"
-	capabilityUnknown          capabilityState = "unknown"
+	capabilityDocumented       = agentapi.CapabilityDocumented
+	capabilityFixtureValidated = agentapi.CapabilityFixtureValidated
+	capabilityUnavailable      = agentapi.CapabilityUnavailable
+	capabilityUnknown          = agentapi.CapabilityUnknown
 )
 
-type capabilityEvidence struct {
-	State      capabilityState `json:"state"`
-	Evidence   string          `json:"evidence"`
-	NextAction string          `json:"next_action,omitempty"`
-}
-
-type captureCapabilities struct {
-	FreshStart      capabilityEvidence `json:"fresh_start"`
-	Transcript      capabilityEvidence `json:"transcript"`
-	Lifecycle       capabilityEvidence `json:"lifecycle"`
-	SkillEvidence   capabilityEvidence `json:"skill_evidence"`
-	SubagentLinkage capabilityEvidence `json:"subagent_linkage"`
-	AdapterFixtures capabilityEvidence `json:"adapter_fixtures"`
-}
-
-type applicationDiscovery struct {
-	Installed     bool   `json:"installed"`
-	Version       string `json:"version,omitempty"`
-	VersionSource string `json:"version_source,omitempty"`
-	// VersionKind names the numbering scheme the discovered version belongs
-	// to: versionKindCLI for a `--version` answer, versionKindAppBundle for a
-	// macOS bundle's CFBundleShortVersionString. Captures report the harness's
-	// own version (Codex cli_version, Claude Code record version, Cursor hook
-	// cursor_version), which may be numbered differently from an app bundle.
-	VersionKind  string    `json:"version_kind,omitempty"`
-	VersionState string    `json:"version_state"`
-	ObservedAt   time.Time `json:"observed_at"`
-}
+type applicationDiscovery = agentapi.ApplicationDiscovery
 
 const (
 	versionKindCLI       = "cli"
@@ -97,221 +69,56 @@ func readApplicationDiscoveries(home string) (map[string]applicationDiscovery, e
 	return result, nil
 }
 
-func captureCapabilityProfile(name string) captureCapabilities {
-	documented := func(evidence string) capabilityEvidence {
-		return capabilityEvidence{State: capabilityDocumented, Evidence: evidence}
+func captureCapabilityProfile(ports agentapi.CapabilityEvidenceLookup, name string) captureCapabilities {
+	if p, ok := ports.LookupCapabilityEvidence(name); ok {
+		return p.CaptureEvidence()
 	}
-	unavailable := func(evidence, next string) capabilityEvidence {
-		return capabilityEvidence{State: capabilityUnavailable, Evidence: evidence, NextAction: next}
-	}
-	profile := captureCapabilities{
-		SkillEvidence:   unavailable("No supported native eligibility/use contract has been verified.", "Treat eligibility comparisons as unavailable."),
-		SubagentLinkage: unavailable("A lifecycle event alone does not provide a verified child transcript and parent link.", "Validate child identity, parent identity, and transcript path for the installed version."),
-		AdapterFixtures: documented("Synthetic fixtures exercise the bounded adapter; they do not prove an installed version."),
-	}
-	switch archive.CanonicalHarness(name) {
-	case "codex":
-		profile.FreshStart = documented("SessionStart.source distinguishes startup/clear from resume/compact.")
-		profile.Transcript = documented("Hooks provide transcript_path; official documentation says its format is not stable.")
-		profile.Lifecycle = documented("SessionStart, Stop, Interrupt, SessionEnd, SubagentStart, and SubagentStop are documented.")
-	case "claude":
-		profile.SubagentLinkage = capabilityEvidence{State: capabilityFixtureValidated, Evidence: "Documented SubagentStop identity/path plus synthetic JSONL ownership and native timestamp fixtures. Actual installed-version capture is unverified.", NextAction: "Run a synthetic parent/child capture and read-back for the installed version."}
-		profile.FreshStart = documented("SessionStart.source distinguishes startup/clear from resume/compact.")
-		profile.Transcript = documented("Hooks provide transcript_path to the native JSONL transcript.")
-		profile.Lifecycle = documented("SessionStart, Stop, SessionEnd, and SubagentStop are documented.")
-	case "cursor":
-		// Observed on the desktop app 3.21.13: a new chat fires no
-		// sessionStart; its first hook is beforeSubmitPrompt with
-		// transcript_path null, and afterAgentResponse and stop then name the
-		// transcript. A resumed chat's first prompt already names its
-		// non-empty transcript. cursor_version is not evidence either way.
-		profile.FreshStart = documented("A never-seen chat is registered at its first beforeSubmitPrompt (or sessionStart) when transcript_path is null, absent, or names a missing or empty file; a transcript that already has bytes is a resume and is declined. Observed on Cursor 3.21.13.")
-		profile.Transcript = documented("A new chat's first prompt carries transcript_path null; afterAgentResponse and stop name ~/.cursor/projects/<workspace>/agent-transcripts/<id>/<id>.jsonl, which is recorded only when it matches the conversation id. Observed on Cursor 3.21.13.")
-		profile.Lifecycle = documented("beforeSubmitPrompt, afterAgentResponse, stop, and sessionEnd fire for a desktop chat (sessionEnd can fire mid-turn); sessionStart, subagentStart, and subagentStop are documented.")
-	default:
-		unknown := capabilityEvidence{State: capabilityUnknown, Evidence: "No capability contract is registered."}
-		return captureCapabilities{unknown, unknown, unknown, unknown, unknown, unknown}
-	}
-	return profile
+	unknown := capabilityEvidence{State: capabilityUnknown, Evidence: "No capability contract is registered."}
+	return captureCapabilities{FreshStart: unknown, Transcript: unknown, Lifecycle: unknown, SkillEvidence: unknown, SubagentLinkage: unknown, AdapterFixtures: unknown}
 }
 
-func discoverApplications(userHome string) map[string]applicationDiscovery {
-	return discoverApplicationsFor(userHome, platform.Current())
+func discoverApplicationsWith(ports agentapi.VersionsLookup, userHome string, system platform.OS) map[string]applicationDiscovery {
+	result := map[string]applicationDiscovery{}
+	e := agentapi.VersionEnvironment{UserHome: userHome, MacOS: system == platform.Darwin, Host: versionHost{}}
+	for _, name := range ports.VersionAgents() {
+		p, _ := ports.LookupVersionInspector(name)
+		result[name] = p.ObserveVersion(e)
+	}
+	return result
 }
 
-// discoverApplicationsFor is discoverApplications for system, which only
-// tests pass anything but the real one for. The app bundles under
-// /Applications and ~/Applications, and the Claude desktop app's folder, are
-// macOS locations: elsewhere they are not looked at, and Cursor, which is
-// found only through its macOS bundle, is reported neither installed nor
-// absent. An Unknown system is treated as "not macOS": it is searched only
-// through PATH, which is not a Linux layout but the one lookup every system
-// has, so nothing is probed that cannot be there.
-func discoverApplicationsFor(userHome string, system platform.OS) map[string]applicationDiscovery {
-	return map[string]applicationDiscovery{
-		"codex":  discoverCommandVersion("codex", codexVersionCandidates(userHome, system)),
-		"claude": discoverCommandVersion("claude", claudeVersionCandidates(userHome, system)),
-		"cursor": discoverCursorVersion(userHome, system),
-	}
+type versionHost struct{}
+
+func (versionHost) Exists(path string) (bool, bool) {
+	info, err := os.Stat(path)
+	return err == nil, err == nil && info.IsDir()
 }
 
-// codexVersionCandidates lists where a Codex CLI may be, standalone installs
-// first. On macOS the ChatGPT desktop app bundles its own copy, which may be
-// the only one on a machine that never installed the CLI. Elsewhere only
-// PATH is searched.
-func codexVersionCandidates(userHome string, system platform.OS) [][]string {
-	paths := []string{"codex"}
-	if system == platform.Darwin {
-		paths = []string{
-			"/Applications/Codex.app/Contents/Resources/codex",
-			filepath.Join(userHome, "Applications", "Codex.app", "Contents", "Resources", "codex"),
-			"codex",
-			"/Applications/ChatGPT.app/Contents/Resources/codex",
-			filepath.Join(userHome, "Applications", "ChatGPT.app", "Contents", "Resources", "codex"),
-		}
-	}
-	var candidates [][]string
-	for _, path := range paths {
-		candidates = append(candidates, []string{path, "--version"})
-	}
-	return candidates
+func (versionHost) ResolveExecutable(name string) (string, bool) {
+	path, err := exec.LookPath(name)
+	return path, err == nil
 }
 
-// claudeVersionCandidates lists where a Claude Code CLI may be: PATH, the
-// native and legacy local install locations (setup may run with a minimal
-// PATH), then the copies the Claude desktop app keeps, newest first.
-//
-// A bundled copy is only a fallback: the version recorded from it may belong
-// to an older bundle (when the newest one does not answer) or differ from a
-// CLI installed off PATH that the hooks actually run. That affects only
-// whether status labels the installed version verified or unverified. The
-// same holds for the Codex copy inside ChatGPT.app. The desktop app's
-// copies exist only on macOS.
-func claudeVersionCandidates(userHome string, system platform.OS) [][]string {
-	paths := []string{
-		"claude",
-		filepath.Join(userHome, ".local", "bin", "claude"),
-		filepath.Join(userHome, ".claude", "local", "claude"),
-	}
-	if system == platform.Darwin {
-		paths = append(paths, claudeDesktopBundledCLIs(userHome)...)
-	}
-	candidates := make([][]string, len(paths))
-	for i, path := range paths {
-		candidates[i] = []string{path, "--version"}
-	}
-	return candidates
-}
-
-// versionDirPattern matches a directory named exactly for a version, such as
-// "2.1.280"; unlike versionPattern it does not find one inside other text,
-// so "backup-2.1.300" is not a version directory.
-var versionDirPattern = regexp.MustCompile(`^[0-9]+(?:\.[0-9]+)+(?:[-+][0-9A-Za-z.-]+)?$`)
-
-// claudeDesktopBundledCLIs returns the Claude Code executables the Claude
-// desktop app keeps under one directory per version, newest version first.
-// Versions compare numerically, so 2.1.100 sorts above 2.1.99.
-func claudeDesktopBundledCLIs(userHome string) []string {
-	root := filepath.Join(userHome, "Library", "Application Support", "Claude", "claude-code")
-	entries, err := os.ReadDir(root)
+func (versionHost) Directories(path string) []agentapi.VersionDirectory {
+	entries, err := os.ReadDir(path)
 	if err != nil {
 		return nil
 	}
-	var versions []string
+	var out []agentapi.VersionDirectory
 	for _, entry := range entries {
-		if entry.IsDir() && versionDirPattern.MatchString(entry.Name()) {
-			versions = append(versions, entry.Name())
-		}
+		out = append(out, agentapi.VersionDirectory{Name: entry.Name(), Directory: entry.IsDir()})
 	}
-	sort.SliceStable(versions, func(i, j int) bool { return compareDottedVersions(versions[i], versions[j]) > 0 })
-	paths := make([]string, len(versions))
-	for i, version := range versions {
-		paths[i] = filepath.Join(root, version, "claude.app", "Contents", "MacOS", "claude")
-	}
-	return paths
+	return out
 }
 
-// compareDottedVersions orders two versions by their numeric components,
-// returning -1, 0, or 1. A missing component counts as zero, and any
-// pre-release or build suffix is ignored.
-func compareDottedVersions(a, b string) int {
-	parts := func(value string) []string {
-		value = normalizedVersion(value)
-		if i := strings.IndexAny(value, "-+"); i >= 0 {
-			value = value[:i]
-		}
-		return strings.Split(value, ".")
+func (versionHost) ProbeVersion(p agentapi.VersionProbe) (string, bool) {
+	switch p.Kind {
+	case agentapi.VersionCLI:
+		return boundedVersionCommand(p.Path, "--version")
+	case agentapi.VersionBundle:
+		return boundedVersionCommand("/usr/bin/plutil", "-extract", "CFBundleShortVersionString", "raw", "-o", "-", p.Path)
 	}
-	left, right := parts(a), parts(b)
-	for i := 0; i < len(left) || i < len(right); i++ {
-		var l, r int
-		if i < len(left) {
-			l, _ = strconv.Atoi(left[i])
-		}
-		if i < len(right) {
-			r, _ = strconv.Atoi(right[i])
-		}
-		if l != r {
-			if l < r {
-				return -1
-			}
-			return 1
-		}
-	}
-	return 0
-}
-
-// discoverCommandVersion tries each candidate in order. A candidate that is
-// present but fails to answer does not stop discovery; only when every present
-// candidate fails is the version unknown, and only when none is present is the
-// application absent.
-func discoverCommandVersion(name string, candidates [][]string) applicationDiscovery {
-	present := false
-	for _, original := range candidates {
-		candidate := append([]string(nil), original...)
-		path := candidate[0]
-		if filepath.IsAbs(path) {
-			if info, err := os.Stat(path); err != nil || info.IsDir() {
-				continue
-			}
-		} else if resolved, err := exec.LookPath(path); err == nil {
-			candidate[0] = resolved
-		} else {
-			continue
-		}
-		present = true
-		if version, ok := boundedVersionCommand(candidate...); ok {
-			return applicationDiscovery{Installed: true, Version: version, VersionSource: candidate[0] + " --version", VersionKind: versionKindCLI, VersionState: "observed"}
-		}
-	}
-	if present {
-		return applicationDiscovery{Installed: true, VersionSource: name + " --version", VersionKind: versionKindCLI, VersionState: "unknown"}
-	}
-	return applicationDiscovery{VersionState: "absent"}
-}
-
-// discoverCursorVersion reads Cursor's version from its macOS app bundle.
-// Off macOS there is no bundle to read, and this release has no other way to
-// tell whether Cursor is installed or which version it is, so it claims
-// neither: the discovery is not installed but its state is "unknown", not
-// "absent" (installedVersionSupportDetail then reports "unknown", and setup's
-// review says "version not detected" rather than "not found").
-func discoverCursorVersion(userHome string, system platform.OS) applicationDiscovery {
-	if system != platform.Darwin {
-		return applicationDiscovery{VersionState: "unknown"}
-	}
-	for _, bundle := range []string{"/Applications/Cursor.app", filepath.Join(userHome, "Applications", "Cursor.app")} {
-		if info, err := os.Stat(bundle); err != nil || !info.IsDir() {
-			continue
-		}
-		plist := filepath.Join(bundle, "Contents", "Info.plist")
-		version, ok := boundedVersionCommand("/usr/bin/plutil", "-extract", "CFBundleShortVersionString", "raw", "-o", "-", plist)
-		if ok {
-			return applicationDiscovery{Installed: true, Version: version, VersionSource: plist + ":CFBundleShortVersionString", VersionKind: versionKindAppBundle, VersionState: "observed"}
-		}
-		return applicationDiscovery{Installed: true, VersionSource: plist, VersionKind: versionKindAppBundle, VersionState: "unknown"}
-	}
-	return applicationDiscovery{VersionState: "absent"}
+	return "", false
 }
 
 func boundedVersionCommand(argv ...string) (string, bool) {
@@ -368,32 +175,9 @@ func installedVersionSupportDetail(discovery applicationDiscovery, verifiedVersi
 	return "unverified", supportReasonNoMatchingVersion
 }
 
-// versionPattern finds a dotted numeric version with an optional pre-release
-// or build suffix anywhere in a tool's `--version` answer, such as
-// "codex-cli 1.2.3", "v1.2.3", or "1.2.3.4".
-var versionPattern = regexp.MustCompile(`(?:^|[^0-9])([0-9]+(?:\.[0-9]+)+(?:[-+][0-9A-Za-z.-]+)?)(?:$|[^0-9A-Za-z.+-])`)
+func normalizedVersion(value string) string { return versioninfo.Normalize(value) }
 
-// normalizedVersion extracts the version number from a version answer. When
-// no dotted numeric version is present, the trimmed answer itself is the
-// version so opaque schemes still compare by exact text.
-func normalizedVersion(value string) string {
-	value = strings.TrimSpace(value)
-	match := versionPattern.FindStringSubmatch(value)
-	if len(match) == 2 {
-		return match[1]
-	}
-	return value
-}
-
-// versionShape classifies a version as a dotted numeric string or an opaque
-// label. Two versions of different shapes come from different numbering
-// schemes and cannot be compared.
-func versionShape(value string) string {
-	if versionPattern.MatchString(value) {
-		return "dotted"
-	}
-	return "opaque"
-}
+func versionShape(value string) string { return versioninfo.Shape(value) }
 
 type cappedBuffer struct{ bytes.Buffer }
 

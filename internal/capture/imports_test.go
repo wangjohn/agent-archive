@@ -39,6 +39,9 @@ func TestCaptureImportBoundary(t *testing.T) {
 	t.Parallel()
 	direct, all := importgraph.Imports(t, captureImportPath)
 	importgraph.Forbid(t, "internal/capture (transitively)", all,
+		"os/exec", "net", "net/http",
+		"github.com/wangjohn/agent-archive/internal/credentials",
+		"github.com/wangjohn/agent-archive/internal/storage",
 		"github.com/wangjohn/agent-archive/internal/cli",
 		"github.com/wangjohn/agent-archive/internal/agents/hookconfig",
 		"github.com/wangjohn/agent-archive/internal/agents/builtin",

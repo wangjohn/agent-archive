@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
+	"github.com/wangjohn/agent-archive/internal/agents/builtin"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -137,7 +138,7 @@ func TestPlanUndoRefusesABatchIDSharedWithAnEarlierImport(t *testing.T) {
 	f.register("earlier", "/p", "2026-09-23-1", fixedNow.UTC())
 	later := f.batch("2026-09-23-1", fixedNow.Add(time.Hour).UTC())
 	f.register("later", "/p", later.ID, later.StartedAt)
-	_, err := PlanUndo(Environment{Sources: testSources, Home: f.home}, f.store, f.cfg, []Batch{later}, later, "")
+	_, err := PlanUndo(Environment{Sources: testSources, Discovery: builtin.NewBuiltins(), DatabaseCatalogs: builtin.NewBuiltins(), NativePaths: builtin.NewBuiltins(), Worktrees: builtin.NewBuiltins(), Workspaces: builtin.NewBuiltins(), Children: builtin.NewBuiltins(), Imports: builtin.NewBuiltins(), Home: f.home}, f.store, f.cfg, []Batch{later}, later, "")
 	var shared *SharedBatchIDError
 	if !errors.As(err, &shared) || shared.Sessions != 1 || !strings.Contains(err.Error(), "Nothing was changed") {
 		t.Fatalf("err %v", err)
@@ -149,7 +150,7 @@ func TestPlanUndoRefusesABatchIDSharedWithAnEarlierImport(t *testing.T) {
 	own := f2.batch("2026-09-23-1", fixedNow.UTC())
 	f2.register("a", "/p", own.ID, own.StartedAt)
 	f2.register("b", "/p", own.ID, own.StartedAt.Add(30*time.Second))
-	if p, err := PlanUndo(Environment{Sources: testSources, Home: f2.home}, f2.store, f2.cfg, []Batch{own}, own, ""); err != nil || len(p.Sessions) != 2 {
+	if p, err := PlanUndo(Environment{Sources: testSources, Discovery: builtin.NewBuiltins(), DatabaseCatalogs: builtin.NewBuiltins(), NativePaths: builtin.NewBuiltins(), Worktrees: builtin.NewBuiltins(), Workspaces: builtin.NewBuiltins(), Children: builtin.NewBuiltins(), Imports: builtin.NewBuiltins(), Home: f2.home}, f2.store, f2.cfg, []Batch{own}, own, ""); err != nil || len(p.Sessions) != 2 {
 		t.Fatalf("own sessions: %d, %v", len(p.Sessions), err)
 	}
 }
@@ -168,7 +169,7 @@ func TestUndoKeepsAProjectAnotherImportStillNeeds(t *testing.T) {
 	f.register("b1", "/work/p", b.ID, b.StartedAt)
 	f.register("b2", "/work/p", b.ID, b.StartedAt)
 
-	env := Environment{Sources: testSources, Home: f.home, Now: func() time.Time { return fixedNow }}
+	env := Environment{Sources: testSources, Discovery: builtin.NewBuiltins(), DatabaseCatalogs: builtin.NewBuiltins(), NativePaths: builtin.NewBuiltins(), Worktrees: builtin.NewBuiltins(), Workspaces: builtin.NewBuiltins(), Children: builtin.NewBuiltins(), Imports: builtin.NewBuiltins(), Home: f.home, Now: func() time.Time { return fixedNow }}
 	plan, err := PlanUndo(env, f.store, f.cfg, []Batch{a, b}, a, "")
 	if err != nil {
 		t.Fatal(err)
@@ -221,7 +222,7 @@ func TestUndoDoesNotTakeOverAKeptProjectItHasNoSessionsIn(t *testing.T) {
 	f.register("b1", "/work/p", b.ID, b.StartedAt)
 	c := f.batch("2026-09-23-3", fixedNow.Add(2*time.Hour).UTC())
 	f.register("c1", "/elsewhere", c.ID, c.StartedAt)
-	plan, err := PlanUndo(Environment{Sources: testSources, Home: f.home}, f.store, f.cfg, []Batch{a, b, c}, c, "")
+	plan, err := PlanUndo(Environment{Sources: testSources, Discovery: builtin.NewBuiltins(), DatabaseCatalogs: builtin.NewBuiltins(), NativePaths: builtin.NewBuiltins(), Worktrees: builtin.NewBuiltins(), Workspaces: builtin.NewBuiltins(), Children: builtin.NewBuiltins(), Imports: builtin.NewBuiltins(), Home: f.home}, f.store, f.cfg, []Batch{a, b, c}, c, "")
 	if err != nil || len(plan.ExcludeProjects) != 0 || len(plan.KeepProjects) != 0 {
 		t.Fatalf("C's undo touched p: %+v %+v %v", plan.ExcludeProjects, plan.KeepProjects, err)
 	}
@@ -250,7 +251,7 @@ func TestResumedByEvidenceDoesNotDecodeRecords(t *testing.T) {
 	runtime.GC()
 	var before, after runtime.MemStats
 	runtime.ReadMemStats(&before)
-	resumed, err := resumedByEvidence(Environment{Sources: testSources}, f.store, reg, state.Request{})
+	resumed, err := resumedByEvidence(Environment{Discovery: builtin.NewBuiltins()}, f.store, reg, state.Request{})
 	runtime.ReadMemStats(&after)
 	if err != nil || !resumed {
 		t.Fatalf("resumed %v, %v", resumed, err)
@@ -259,26 +260,5 @@ func TestResumedByEvidenceDoesNotDecodeRecords(t *testing.T) {
 	// record as well cost 2.8x.
 	if allocated := after.TotalAlloc - before.TotalAlloc; allocated > 3*uint64(info.Size())/2 {
 		t.Fatalf("allocated %d bytes for a %d byte published state", allocated, info.Size())
-	}
-}
-
-// A chat's messages are counted as the collector's reader counts them: from
-// its headers when it has them, even an empty list, and from its inline
-// conversation only when it has none.
-func TestComposerMessagesCountedAsTheReaderCountsThem(t *testing.T) {
-	t.Parallel()
-	cases := []struct {
-		value   string
-		counted bool
-	}{
-		{`{"_v":18,"composerId":"a","fullConversationHeadersOnly":[{"bubbleId":"m"}]}`, true},
-		{`{"_v":18,"composerId":"a","fullConversationHeadersOnly":[],"conversation":[{"bubbleId":"m"}]}`, false},
-		{`{"_v":3,"composerId":"a","conversation":[{"bubbleId":"m"}]}`, true},
-	}
-	for _, tc := range cases {
-		c, ok := decodeComposerData("composerData:a", []byte(tc.value))
-		if !ok || c.counted != tc.counted {
-			t.Errorf("%s: ok %v counted %v, want %v", tc.value, ok, c.counted, tc.counted)
-		}
 	}
 }

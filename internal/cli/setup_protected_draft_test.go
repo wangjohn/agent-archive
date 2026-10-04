@@ -36,7 +36,7 @@ func TestProtectedSetupDraftPersistsChangedSkillEvidence(t *testing.T) {
 				if interactive {
 					var out bytes.Buffer
 					p := newPrompter(strings.NewReader("skills\nnone\n"), &out)
-					must(t, editSetupReview(p, &draft, t.TempDir(), nil, nil))
+					must(t, editSetupReview(allHarnesses, p, &draft, t.TempDir(), nil, nil))
 				}
 				before := draft.Config
 				save := func() error { return local.Write(draftPath(home), draft) }

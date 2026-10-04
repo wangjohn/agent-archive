@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/wangjohn/agent-archive/internal/agentmeta"
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"io"
 	"os"
 	"path/filepath"
@@ -34,8 +34,6 @@ import (
 const defaultPrefix = "agent-archive/"
 
 const defaultRetentionDays = 90
-
-var allHarnesses = agentmeta.SetupNames(productionAgents.Catalog())
 
 type setupDraft struct {
 	GuidedSlotID  string        `json:"guided_slot_id,omitempty"`
@@ -266,7 +264,7 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env, verbose bool, skills
 	known := knownProjectsOnce(env, userHome)
 	// Said before any question: setup will refuse to install an app's hooks
 	// beside another installation's (see applySetup).
-	for _, problem := range env.installation(home, userHome).otherInstallationProblems(env.hookFiles(userHome), allHarnesses) {
+	for _, problem := range env.installation(home, userHome).otherInstallationProblems(env.hookFiles(userHome), env.setupNames()) {
 		p.warn(problem)
 	}
 	// What applying the setup needs is checked before any question, so a
@@ -278,7 +276,7 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env, verbose bool, skills
 	// draft is saved, setup --yes refuses to run, so no fix may send the
 	// user there; nor may one for an installed app, which --yes keeps.
 	unfinished, draftSaved, _, _ := readDraft(home)
-	scope := setupPreflightScope(detected, existing, unfinished, draftSaved, installed)
+	scope := setupPreflightScope(env.setupNames(), detected, existing, unfinished, draftSaved, installed)
 	checks := preflight(env, home, userHome, scope)
 	checks.print(p)
 	if checks.blocked() {
@@ -370,9 +368,9 @@ func reviewedSetupConfig(existing config.Config, draft setupDraft) config.Config
 	return cfg
 }
 
-func setupPreflightScope(detected []string, existing config.Config, unfinished setupDraft, draftSaved, installed bool) preflightScope {
+func setupPreflightScope(available []string, detected []string, existing config.Config, unfinished setupDraft, draftSaved, installed bool) preflightScope {
 	scope := preflightScope{
-		apps:          preflightApps(detected, existing.Harnesses, slices.Concat(existing.DeclinedHarnesses, unfinished.Config.DeclinedHarnesses), unfinished.Config.Harnesses),
+		apps:          preflightApps(available, detected, existing.Harnesses, slices.Concat(existing.DeclinedHarnesses, unfinished.Config.DeclinedHarnesses), unfinished.Config.Harnesses),
 		r2:            existing.Storage.Provider == credentials.ProviderR2 || unfinished.Config.Storage.Provider == credentials.ProviderR2,
 		credentialRef: firstNonEmpty(existing.Storage.R2CredentialRef, unfinished.Config.Storage.R2CredentialRef),
 	}
@@ -666,7 +664,7 @@ func recoverSetupStorageFailure(p *prompter, draft *setupDraft, save func() erro
 		*draft = reopenStorage(*draft, d)
 	}
 	if choice == "edit" {
-		if err := editSetupReview(p, draft, userHome, backfilledProjects(env), known); err != nil {
+		if err := editSetupReview(env.setupNames(), p, draft, userHome, backfilledProjects(env), known); err != nil {
 			return false, err
 		}
 	}
@@ -691,7 +689,7 @@ func reviewAndCommitSetup(p *prompter, draft *setupDraft, save func() error, hom
 	if existing.Paused {
 		p.note("Capture stays paused until you run agent-archive resume.")
 	}
-	reviewHookFiles(p, draft.Config.Harnesses, hookFiles, installedHookFiles, existing.Harnesses, len(existing.HookFiles) > 0, userHome)
+	reviewHookFiles(env.agentRegistry(), p, draft.Config.Harnesses, hookFiles, installedHookFiles, existing.Harnesses, len(existing.HookFiles) > 0, userHome)
 	warnCollectorEnvironment(p, draft.Config.Storage, userHome, env)
 	printReviewNotes(p)
 	if existing.MachineID == "" {
@@ -719,7 +717,7 @@ func reviewAndCommitSetup(p *prompter, draft *setupDraft, save func() error, hom
 		return true, nil
 	}
 	if action == "edit" {
-		if err = editSetupReview(p, draft, userHome, backfilledProjects(env), known); err != nil {
+		if err = editSetupReview(env.setupNames(), p, draft, userHome, backfilledProjects(env), known); err != nil {
 			return false, err
 		}
 		if err = save(); err != nil {
@@ -774,7 +772,7 @@ func finishSetup(p *prompter, errOut io.Writer, home string, cfg config.Config, 
 	if err := publishMachineAfterSetup(home, finish.env); err != nil {
 		p.warn("Machine registration pending; capture is configured and the collector will retry.")
 	}
-	printAgentSkills(p, cfg, finish.userHome, claudeConfigDir(finish.env.installedHookFiles(finish.userHome, cfg)), finish.env.installation(home, finish.userHome).commandDataHome(), finish.skills)
+	printAgentSkills(p, cfg, finish.userHome, claudeConfigDir(finish.env.installedHookFiles(finish.userHome, cfg)), finish.env.installation(home, finish.userHome).commandDataHome(), finish.skills, finish.env.agentRegistry())
 	printNextSteps(p, cfg, paused, !finish.offerImport)
 	// The import is offered last, once the person knows how to see capture
 	// working, so it is a choice about history and not a step of setup. A
@@ -791,12 +789,16 @@ func finishSetup(p *prompter, errOut io.Writer, home string, cfg config.Config, 
 // left alone because it is not setup's; then one line on how to opt out of
 // them. With the skills turned off (opt-out) it says instead what it
 // removed and left alone, and how to turn them on.
-func printAgentSkills(p *prompter, cfg config.Config, userHome, claudeDir, dataHome string, optOut skillOptOut) {
+func printAgentSkills(p *prompter, cfg config.Config, userHome, claudeDir, dataHome string, optOut skillOptOut, sources ...agentapi.SkillsLookup) {
 	if cfg.NoSkills {
 		printSkillOptOut(p, agentskills.Registry, optOut, userHome)
 		return
 	}
-	files := agentskills.Files(userHome, claudeDir, cfg.Harnesses, cfg.InstalledExecutable, dataHome)
+	ports := agentapi.SkillsLookup(productionAgents)
+	if len(sources) > 0 {
+		ports = sources[0]
+	}
+	files := agentskills.Files(ports, userHome, claudeDir, cfg.Harnesses, cfg.InstalledExecutable, dataHome)
 	if printSkillFiles(p, agentskills.Registry, files, userHome) {
 		terminal.Println(p.out, "To remove the agent skills and keep them off, run "+p.style.cmd("agent-archive setup --no-skills")+".")
 	}
@@ -820,7 +822,7 @@ func planSkillOptOut(env Env, home, userHome, executable string, old, cfg config
 		return skillOptOut{}
 	}
 	files, previousFiles := env.hookFiles(userHome), env.installedHookFiles(userHome, old)
-	changes, kept, err := planAgentSkills(userHome, claudeConfigDir(files), claudeConfigDir(previousFiles), cfg, executable, env.installation(home, userHome).commandDataHome())
+	changes, kept, err := planAgentSkills(userHome, claudeConfigDir(files), claudeConfigDir(previousFiles), cfg, executable, env.installation(home, userHome).commandDataHome(), env.agentRegistry())
 	if err != nil {
 		return skillOptOut{}
 	}
@@ -1216,10 +1218,10 @@ func chooseCapture(p *prompter, cfg *config.Config, userHome string, env Env, kn
 			terminal.Println(p.out, p.style.dim(refused))
 		}
 	}
-	if done, e := offerFirstCapture(p, cfg, detected, current, userHome, known); e != nil || done {
+	if done, e := offerFirstCapture(env.setupNames(), p, cfg, detected, current, userHome, known); e != nil || done {
 		return e
 	}
-	err := chooseHarnesses(p, detected, cfg)
+	err := chooseHarnesses(env.setupNames(), p, detected, cfg)
 	if err != nil {
 		return err
 	}
@@ -1257,13 +1259,13 @@ func chooseCapture(p *prompter, cfg *config.Config, userHome string, env Env, kn
 // repository setup was run from, or "" (see currentProject). known lists the
 // projects the apps' history mentions, so the answer can say how many others
 // there are.
-func offerFirstCapture(p *prompter, cfg *config.Config, detected []string, current, userHome string, known func(config.Config) []backfill.KnownProject) (bool, error) {
+func offerFirstCapture(available []string, p *prompter, cfg *config.Config, detected []string, current, userHome string, known func(config.Config) []backfill.KnownProject) (bool, error) {
 	first := len(cfg.Harnesses) == 0 && len(cfg.DeclinedHarnesses) == 0
 	if !first || current == "" {
 		return false, nil
 	}
 	var apps []string
-	for _, app := range allHarnesses {
+	for _, app := range available {
 		if containsString(detected, app) {
 			apps = append(apps, app)
 		}
@@ -1445,7 +1447,7 @@ func promptR2Location(p *prompter, cfg *credentials.Config) (fromURL bool, err e
 // later runs do not offer it again (detection only sees a config directory,
 // which stays after an app is excluded on purpose). An app that ends up
 // included is no longer declined.
-func chooseHarnesses(p *prompter, detected []string, cfg *config.Config) error {
+func chooseHarnesses(available []string, p *prompter, detected []string, cfg *config.Config) error {
 	previous := cfg.Harnesses
 	var offered, found []string
 	for _, app := range detected {
@@ -1457,12 +1459,12 @@ func chooseHarnesses(p *prompter, detected []string, cfg *config.Config) error {
 			found = append(found, app)
 		}
 	}
-	harnesses, err := promptHarnesses(p, offered, cfg.Harnesses)
+	harnesses, err := promptHarnesses(available, p, offered, cfg.Harnesses)
 	if err != nil {
 		return err
 	}
 	var declined []string
-	for _, app := range allHarnesses {
+	for _, app := range available {
 		if !containsString(harnesses, app) && (containsString(cfg.DeclinedHarnesses, app) || containsString(found, app) || containsString(previous, app)) {
 			declined = append(declined, app)
 		}
@@ -1471,7 +1473,7 @@ func chooseHarnesses(p *prompter, detected []string, cfg *config.Config) error {
 	return nil
 }
 
-func promptHarnesses(p *prompter, detected, existing []string) ([]string, error) {
+func promptHarnesses(available []string, p *prompter, detected, existing []string) ([]string, error) {
 	// Preserve an existing selection on reconfiguration. Detection supplies
 	// defaults for first-time setup and, on reconfiguration, offers apps the
 	// selection leaves out; it never proves capture is working.
@@ -1480,7 +1482,7 @@ func promptHarnesses(p *prompter, detected, existing []string) ([]string, error)
 		defaults = existing
 	}
 	var suggested, others, found []string
-	for _, app := range allHarnesses {
+	for _, app := range available {
 		switch {
 		case containsString(defaults, app):
 			suggested = append(suggested, app)
@@ -1507,7 +1509,7 @@ func promptHarnesses(p *prompter, detected, existing []string) ([]string, error)
 			}
 			if add {
 				var result []string
-				for _, app := range allHarnesses {
+				for _, app := range available {
 					if containsString(suggested, app) || containsString(found, app) {
 						result = append(result, app)
 					}
@@ -1542,7 +1544,7 @@ func promptHarnesses(p *prompter, detected, existing []string) ([]string, error)
 	terminal.Println(p.out, "Choose which apps to include:")
 	for {
 		var result []string
-		for _, app := range allHarnesses {
+		for _, app := range available {
 			yes, err := p.yesNo("Include "+appName(app)+"?", containsString(suggested, app))
 			if err != nil {
 				return nil, err

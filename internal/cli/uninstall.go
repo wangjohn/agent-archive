@@ -129,7 +129,7 @@ func uninstall(purge, yes, skipScheduler bool, stdin io.Reader, out io.Writer, e
 	}
 	in := env.installation(home, userHome)
 	hookFiles := env.installedHookFiles(userHome, cfg)
-	changes, skipped, err := planUninstallFiles(userHome, hookFiles, in, installedApps(cfg, found, in.owner().Ports))
+	changes, skipped, err := planUninstallFiles(userHome, hookFiles, in, installedApps(cfg, found, in.owner().Ports), env.agentRegistry())
 	if err != nil {
 		return err
 	}
@@ -156,7 +156,7 @@ func uninstall(purge, yes, skipScheduler bool, stdin io.Reader, out io.Writer, e
 		}
 		return err
 	}
-	agentskills.RemoveEmptyDirs(userHome, claudeConfigDir(hookFiles))
+	agentskills.RemoveEmptyDirs(env.agentRegistry(), userHome, claudeConfigDir(hookFiles))
 	for _, path := range remove {
 		if err = os.Remove(path); err != nil && !os.IsNotExist(err) {
 			return err
@@ -518,7 +518,7 @@ func installedApps(cfg config.Config, found bool, lookups ...agentapi.HooksLooku
 		if len(lookups) > 0 {
 			return uninstallHookApps(lookups[0], hooks.Files(cfg.HookFiles), nil, nil)
 		}
-		return allHarnesses
+		return uninstallHookApps(productionAgents, hooks.Files(cfg.HookFiles), nil, nil)
 	}
 	return cfg.Harnesses
 }
@@ -609,11 +609,15 @@ func planUninstallHooks(files, legacy hooks.Files, owner hooks.Hook, installed [
 // installed into (files) and their legacy paths, followed by removing the
 // agent skill files setup wrote (/handoff). A file at one of their paths that is
 // not setup's stays, with a line in skipped.
-func planUninstallFiles(userHome string, files hooks.Files, in installation, installed []string) (changes []hooks.Change, skipped []string, err error) {
+func planUninstallFiles(userHome string, files hooks.Files, in installation, installed []string, lookups ...agentapi.SkillsLookup) (changes []hooks.Change, skipped []string, err error) {
 	if changes, skipped, err = planUninstallHooks(files, legacyHookFiles(userHome, in.owner().Ports), in.owner(), installed); err != nil {
 		return nil, nil, err
 	}
-	removals, kept, err := agentskills.PlanRemoval(userHome, claudeConfigDir(files), in.commandDataHome())
+	var sources agentapi.SkillsLookup = productionAgents
+	if len(lookups) > 0 {
+		sources = lookups[0]
+	}
+	removals, kept, err := agentskills.PlanRemoval(sources, userHome, claudeConfigDir(files), in.commandDataHome())
 	if err != nil {
 		return nil, nil, err
 	}

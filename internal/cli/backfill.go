@@ -233,7 +233,8 @@ func parseBackfillOptions(args []string, stderr io.Writer, env Env) (backfillCom
 		SinceArg: relativeTimeArg(*since), UntilArg: relativeTimeArg(*until),
 		IncludeHome: *includeHome, IncludeTemp: *includeTemp, IncludeRemoved: *includeRemoved,
 	}
-	if err := filters.Validate(); err != nil {
+	filters, err = filters.Canonicalize(env.agentRegistry())
+	if err != nil {
 		return usageError(err.Error())
 	}
 	if *jsonOut && !*dryRun {
@@ -251,7 +252,7 @@ func parseBackfillOptions(args []string, stderr io.Writer, env Env) (backfillCom
 func planBackfill(env Env, stdout, stderr io.Writer, home, userHome string, cfg config.Config, opts backfillCommandOptions, style textStyle) (backfill.Plan, bool) {
 	var stopLooking func()
 	if !opts.jsonOut {
-		label := backfill.SearchLine(opts.filters)
+		label := backfill.SearchLine(opts.filters, env.agentRegistry().DiscoveryAgents())
 		if style.live {
 			stopLooking = style.spin(stdout, label).stop
 		} else {
@@ -272,7 +273,7 @@ func planBackfill(env Env, stdout, stderr io.Writer, home, userHome string, cfg 
 	stopLooking()
 	if err != nil {
 		if !opts.jsonOut {
-			label := backfill.SearchLine(opts.filters)
+			label := backfill.SearchLine(opts.filters, env.agentRegistry().DiscoveryAgents())
 			switch {
 			case interrupted && style.live:
 				terminal.Println(stdout, label+" stopped.")
@@ -306,7 +307,7 @@ func reportBackfillPlan(env Env, stdout, stderr io.Writer, home string, cfg conf
 		return true, 0
 	}
 	if style.live {
-		terminal.Printf(stdout, "%s %d found.\n", backfill.SearchLine(opts.filters), plan.Found())
+		terminal.Printf(stdout, "%s %d found.\n", backfill.SearchLine(opts.filters, env.agentRegistry().DiscoveryAgents()), plan.Found())
 	} else {
 		terminal.Printf(stdout, "%d found.\n", plan.Found())
 	}
@@ -685,9 +686,9 @@ func (e Env) backfillTempDirs() []string {
 // system, and Cursor's database is opened read-only to count the chats only
 // it holds.
 func (e Env) backfillEnvironment(userHome string, cfg config.Config) backfill.Environment {
-	claude, codex := e.appSessionDirs(userHome, cfg)
-	env := backfill.Environment{Sources: e.agentRegistry(),
-		Home: userHome, ClaudeDirs: claude, CodexDirs: codex,
+	dirs := e.nativeSessionDirectories(userHome, cfg)
+	env := backfill.Environment{
+		Home: userHome, NativeDirectories: dirs, Sources: e.agentRegistry(), Discovery: e.agentRegistry(), DatabaseCatalogs: e.agentRegistry(), NativePaths: e.agentRegistry(), Worktrees: e.agentRegistry(), Workspaces: e.agentRegistry(), Children: e.agentRegistry(), Imports: e.agentRegistry(),
 		TempDirs: e.backfillTempDirs(), Now: e.now, OS: e.OS,
 		// XDG_CONFIG_HOME places Cursor's data folder off macOS.
 		Getenv: e.getenv,
@@ -696,30 +697,35 @@ func (e Env) backfillEnvironment(userHome string, cfg config.Config) backfill.En
 	return env
 }
 
-// appSessionDirs are the folders Claude Code and Codex keep their sessions
+// nativeSessionDirectories are the declared configuration locations for discovery
 // in, resolved as setup resolves their hook files (hooks.ResolveFiles): the
 // default ~/.claude and ~/.codex, the folders CLAUDE_CONFIG_DIR and
 // CODEX_HOME name in this command's environment, and those setup recorded
 // installing hooks into (config.HookFiles), which a shell without the
 // variables still finds. A session found in two of them is imported once.
-func (e Env) appSessionDirs(userHome string, cfg config.Config) (claude, codex []string) {
+func (e Env) nativeSessionDirectories(userHome string, cfg config.Config) map[string][]string {
+	out := map[string][]string{}
 	add := func(dirs []string, dir string) []string {
 		if dir == "" || !filepath.IsAbs(dir) || slices.Contains(dirs, filepath.Clean(dir)) {
 			return dirs
 		}
 		return append(dirs, filepath.Clean(dir))
 	}
-	claude = add(claude, filepath.Join(userHome, ".claude"))
-	codex = add(codex, filepath.Join(userHome, ".codex"))
-	for _, files := range []hooks.Files{e.hookFiles(userHome), cfg.HookFiles} {
-		if path := files["claude"]; path != "" {
-			claude = add(claude, filepath.Dir(path))
+	observed := e.hookFiles(userHome)
+	for _, name := range e.agentRegistry().DiscoveryAgents() {
+		p, _ := e.agentRegistry().LookupDiscovery(name)
+		var dirs []string
+		for _, dir := range p.DefaultDirectories(userHome) {
+			dirs = add(dirs, dir)
 		}
-		if path := files["codex"]; path != "" {
-			codex = add(codex, filepath.Dir(path))
+		for _, files := range []hooks.Files{observed, cfg.HookFiles} {
+			if path := files[name]; path != "" {
+				dirs = add(dirs, filepath.Dir(path))
+			}
 		}
+		out[name] = dirs
 	}
-	return claude, codex
+	return out
 }
 
 // archiveState answers backfill.ArchiveState from this machine's local store

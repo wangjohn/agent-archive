@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/evidence"
@@ -39,7 +40,7 @@ func TestSkillPolicyLimitsPendingAndUploadedBytes(t *testing.T) {
 			now := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 			options := Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return now }, SkillEvidence: mode,
 				SupplementalEvidence: func(_ archive.SessionRegistration, at time.Time) ([]archive.SupplementalEvidence, error) {
-					return evidence.ObserveSkills(evidence.SkillOptions{Harness: "codex", ProjectRoot: project, ObservedAt: at, Mode: mode})
+					return evidence.ObserveSkills(evidence.SkillOptions{Locations: skillPolicyRoots(project), Harness: "codex", ProjectRoot: project, ObservedAt: at, Mode: mode})
 				},
 			}
 			_, _ = Run(context.Background(), local, remote, options)
@@ -97,7 +98,7 @@ func TestStricterPolicyRebuildsFrozenPendingSource(t *testing.T) {
 	mode := config.SkillEvidenceBody
 	options := Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC) }, SkillEvidence: mode,
 		SupplementalEvidence: func(_ archive.SessionRegistration, at time.Time) ([]archive.SupplementalEvidence, error) {
-			return evidence.ObserveSkills(evidence.SkillOptions{Harness: "codex", ProjectRoot: project, ObservedAt: at, Mode: mode})
+			return evidence.ObserveSkills(evidence.SkillOptions{Locations: skillPolicyRoots(project), Harness: "codex", ProjectRoot: project, ObservedAt: at, Mode: mode})
 		},
 	}
 	_, _ = Run(context.Background(), local, remote, options)
@@ -154,7 +155,7 @@ func TestStricterPolicyReplacesPublishedSourceWithoutTranscriptChange(t *testing
 	mode := config.SkillEvidenceBody
 	options := Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return now }, SkillEvidence: mode,
 		SupplementalEvidence: func(_ archive.SessionRegistration, at time.Time) ([]archive.SupplementalEvidence, error) {
-			return evidence.ObserveSkills(evidence.SkillOptions{Harness: "codex", ProjectRoot: project, ObservedAt: at, Mode: mode})
+			return evidence.ObserveSkills(evidence.SkillOptions{Locations: skillPolicyRoots(project), Harness: "codex", ProjectRoot: project, ObservedAt: at, Mode: mode})
 		},
 	}
 	if _, err := Run(context.Background(), local, remote, options); err != nil {
@@ -184,4 +185,9 @@ func TestStricterPolicyReplacesPublishedSourceWithoutTranscriptChange(t *testing
 			t.Fatalf("downgraded source carried %s", item.Kind)
 		}
 	}
+}
+
+func skillPolicyRoots(project string) []agentapi.SkillRoot {
+	provider, _ := testSources.LookupSkills("codex")
+	return provider.EvidenceRoots(agentapi.SkillLocations{ProjectRoot: project})
 }

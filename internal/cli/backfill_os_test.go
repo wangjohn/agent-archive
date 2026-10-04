@@ -7,14 +7,14 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/config"
-	"github.com/wangjohn/agent-archive/internal/cursorstore"
+
 	"github.com/wangjohn/agent-archive/internal/platform"
 )
 
 // macCursorDatabase is where a Mac keeps Cursor's database under home,
 // whatever system the test runs on.
 func macCursorDatabase(home string) string {
-	return platform.NewLocations(platform.Darwin, home, nil, platform.LocationDeps{}).CursorStateDB
+	return (Env{OS: platform.Darwin, UserHomeDir: func() (string, error) { return home, nil }}).cursorDatabase()
 }
 
 // Env.OS decides where backfill, and the collector, look for Cursor's data,
@@ -111,7 +111,7 @@ func TestBackfillEnvironmentDefaultsToTheRealSystem(t *testing.T) {
 	if got := env.operatingSystem(); got != want {
 		t.Errorf("operatingSystem() = %q, want %q", got, want)
 	}
-	if got, want := env.cursorDatabase(), cursorstore.StateDatabase(userHome); got != want {
+	if got, want := env.cursorDatabase(), (Env{UserHomeDir: func() (string, error) { return userHome, nil }}).cursorDatabase(); got != want {
 		t.Errorf("cursorDatabase() = %q, want %q", got, want)
 	}
 	if runtime.GOOS == "darwin" {
