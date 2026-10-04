@@ -39,6 +39,8 @@ pending predecessor publication; settle that work with `sync` first. It also
 refuses an excluded session, a changed storage destination, or a new recovery
 while collection is paused. Restore the appropriate capture permission or
 destination before previewing again.
+If the current file identifies a different native session, recovery refuses it;
+restore the registered session's transcript or begin a fresh native session.
 
 Direct subagent recovery is not supported in this first version. Start a
 fresh parent session to capture new subagent activity. Existing subagents and

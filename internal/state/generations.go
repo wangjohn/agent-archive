@@ -243,6 +243,18 @@ func (s *Store) resumeGenerationRecovery(id string) error {
 	if r.Registration == nil || r.Pending == nil || r.Request == nil || r.Registration.ArchiveSessionID != r.Next || r.Registration.PreviousGenerationID != id || r.Pending.Bundle.ArchiveSessionID != r.Next || r.Request.ArchiveSessionID != r.Next || r.Request.Token != r.Pending.RequestToken {
 		return ErrSessionIndexRecoveryRequired
 	}
+	// A journal is durable intent, not permission to alter admission. Validate
+	// it against the predecessor before even fencing native routing. A retry
+	// after freezing differs only in that locally committed capture flag.
+	old, present, err := s.LoadRegistration(id)
+	if err != nil || !present {
+		return ErrSessionIndexRecoveryRequired
+	}
+	old.CaptureFrozen = false
+	key, err := registrationKey(old)
+	if err != nil || key != r.Key || validateGenerationSuccessor(old, *r.Registration, *r.Pending, r.Next, r.Request.RequestedAt) != nil {
+		return ErrSessionIndexRecoveryRequired
+	}
 	if err := s.freezeGenerationRecovery(r); err != nil {
 		return fmt.Errorf("freeze recovery predecessor: %w", err)
 	}

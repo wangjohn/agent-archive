@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
@@ -36,6 +37,13 @@ func PrepareGenerationRecovery(ctx context.Context, reg archive.SessionRegistrat
 	filtered, _, err := reader.Filter(ctx, adapter, opts.maxTranscriptBytes())
 	if err != nil {
 		return nil, fmt.Errorf("filter current native transcript: %w", err)
+	}
+	// Recovery may replace a compacted transcript, but cannot reassign evidence
+	// from another native session. An authoritative retained metadata identity
+	// wins; copied/resumed records may contain several ownership IDs provided the
+	// admitted session is among them. Missing identity facts retain hook authority.
+	if filtered.LocalIdentity.ID != "" && filtered.LocalIdentity.ID != reg.NativeSessionID || len(filtered.SessionIDs) > 0 && !slices.Contains(filtered.SessionIDs, reg.NativeSessionID) {
+		return nil, errors.New("current transcript identity differs from the registered session; recovery cannot attach another native session")
 	}
 	// Verify the candidate before presenting confirmation; no journal or archive ID
 	// is allocated for empty/unsafe input or a publication excluded by skill policy.
