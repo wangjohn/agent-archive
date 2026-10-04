@@ -375,7 +375,7 @@ func (s *Store) recoverCandidateIndex(ctx context.Context, candidate SubagentCan
 	return nil
 }
 
-func (s *Store) recoverRequestedMiss(ctx context.Context, file os.DirEntry, inventory map[agentmeta.SessionKey][]string) error {
+func (s *Store) recoverRequestedMiss(ctx context.Context, file os.DirEntry, inventory map[agentmeta.SessionKey][]string, candidates map[agentmeta.SessionKey][]SubagentCandidate) error {
 
 	if err := ctx.Err(); err != nil {
 		return err
@@ -398,8 +398,28 @@ func (s *Store) recoverRequestedMiss(ctx context.Context, file os.DirEntry, inve
 	if path != qualifiedSessionIndexPath(s.home, key) || entry.Version != 1 {
 		return ErrSessionIndexRecoveryRequired
 	}
-	if len(inventory[key]) != 0 {
-		return ErrSessionIndexRecoveryRequired
+	registrationOwners := inventory[key]
+	if len(registrationOwners) != 0 {
+		// A new request can replace an already-applied owner's damaged index
+		// while an equivalent registration census retains its owner offset.
+		// Repair from that complete authority instead of stranding the request
+		// or treating the owned key as an absent identity.
+		if err := s.recoverRegistrationOwners(key, registrationOwners); err != nil {
+			return err
+		}
+	}
+	if owners := candidates[key]; len(owners) != 0 {
+		// Candidate progress can also precede a new exact-key request. A
+		// retained candidate is reservation evidence, never an absent key.
+		for _, candidate := range owners {
+			if err := s.recoverCandidateIndex(ctx, candidate); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if len(registrationOwners) != 0 {
+		return nil
 	}
 	// Capture/import registration is serialized by hooks.lock. This narrow
 	// application lock never covers the inventory enumeration or disk sync.
