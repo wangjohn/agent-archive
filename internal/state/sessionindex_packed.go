@@ -656,21 +656,170 @@ func (s *Store) validatePackedPrefix(marker sessionIndexMarker, count int) (int,
 	return count, nil
 }
 
-func (s *Store) packedOverlayDirectoryPresent(marker sessionIndexMarker) bool {
-	data, err := os.ReadFile(filepath.Join(s.home, "sessions-v1", packedOverlaySentinel))
-	return err == nil && (string(data) == marker.PackedEpoch+":empty" || string(data) == marker.PackedEpoch+":overrides")
+// The sentinel names a single physical index, never a cached registration.
+// Hook health checks use direct reads and never enumerate the namespace.
+func packedOverlayAnchor(value string, marker sessionIndexMarker) (string, bool) {
+	if value == marker.PackedEpoch+":empty" {
+		return "", true
+	}
+	prefix := marker.PackedEpoch + ":overrides:"
+	if !strings.HasPrefix(value, prefix) {
+		return "", false
+	}
+	hash := strings.TrimPrefix(value, prefix)
+	decoded, err := hex.DecodeString(hash)
+	return hash, err == nil && len(decoded) == sha256.Size && hash == strings.ToLower(hash)
+}
+
+func (s *Store) packedAnchorHealthy(hash string) bool {
+	var entry qualifiedSessionIndexEntry
+	if local.Read(filepath.Join(s.home, "sessions-v1", hash+".json"), &entry) != nil {
+		return false
+	}
+	key := agentmeta.SessionKey{Agent: entry.Agent, NativeID: entry.NativeID}
+	if key.Validate() != nil || packedIndexHash(key) != hash {
+		return false
+	}
+	err := entry.validate(key)
+	return err == nil || errors.Is(err, ErrSessionIdentityConflict)
 }
 
 func (s *Store) ensurePackedOverlayDirectory(marker sessionIndexMarker) error {
-	if !s.packedOverlayDirectoryPresent(marker) {
-		if err := local.WriteBytes(filepath.Join(s.home, "sessions-v1", packedOverlaySentinel), []byte(marker.PackedEpoch+":empty")); err != nil {
-			return err
+	before, err := readSnapshot(filepath.Join(s.home, "sessions-v1", packedOverlaySentinel))
+	if err != nil {
+		return err
+	}
+	revision, err := s.sessionMembershipRevision()
+	if err != nil {
+		return err
+	}
+	anchor, err := s.selectPackedOverlayAnchor()
+	if err != nil {
+		return err
+	}
+	value := marker.PackedEpoch + ":empty"
+	if anchor != "" {
+		value = marker.PackedEpoch + ":overrides:" + anchor
+	}
+	if before.found && string(before.data) == value {
+		return nil
+	}
+	return s.writePackedOverlayState(marker, value, before, revision)
+}
+
+// An intentional removal can retire exactly its own missing anchor. Unrelated
+// missing/corrupt anchors continue to fail closed until a complete census.
+func (s *Store) retirePackedOverlayAnchor(marker sessionIndexMarker, key agentmeta.SessionKey) error {
+	before, err := readSnapshot(filepath.Join(s.home, "sessions-v1", packedOverlaySentinel))
+	if err != nil {
+		return err
+	}
+	anchor, valid := packedOverlayAnchor(string(before.data), marker)
+	if !valid {
+		return ErrSessionIndexRecoveryRequired
+	}
+	if anchor == "" || anchor != packedIndexHash(key) {
+		return nil
+	}
+	if exists(qualifiedSessionIndexPath(s.home, key)) {
+		return nil
+	}
+	revision, err := s.sessionMembershipRevision()
+	if err != nil {
+		return err
+	}
+	next, err := s.selectPackedOverlayAnchor()
+	if err != nil {
+		return err
+	}
+	value := marker.PackedEpoch + ":empty"
+	if next != "" {
+		value = marker.PackedEpoch + ":overrides:" + next
+	}
+	return s.writePackedOverlayState(marker, value, before, revision)
+}
+
+// Collector/retention only. Results are fenced against hooks and membership
+// changes before publication, with native staging and sync outside both locks.
+func (s *Store) selectPackedOverlayAnchor() (string, error) {
+	if s.onPackedEnumeration != nil {
+		s.onPackedEnumeration()
+	}
+	dir, err := os.Open(filepath.Join(s.home, "sessions-v1"))
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = dir.Close() }()
+	for {
+		names, readErr := dir.Readdirnames(64)
+		for _, name := range names {
+			if !strings.HasSuffix(name, ".json") {
+				continue
+			}
+			hash := strings.TrimSuffix(name, ".json")
+			decoded, err := hex.DecodeString(hash)
+			if err != nil || len(decoded) != sha256.Size || hash != strings.ToLower(hash) {
+				return "", ErrSessionIndexRecoveryRequired
+			}
+			return hash, nil
+		}
+		if errors.Is(readErr, io.EOF) {
+			return "", nil
+		}
+		if readErr != nil {
+			return "", readErr
 		}
 	}
-	if s.packedPhysicalOverridesPresent() && !s.packedOverridesExpected(marker) {
-		return local.WriteBytes(filepath.Join(s.home, "sessions-v1", packedOverlaySentinel), []byte(marker.PackedEpoch+":overrides"))
+}
+
+func (s *Store) writePackedOverlayState(marker sessionIndexMarker, value string, before fileSnapshot, revision string) error {
+	path := filepath.Join(s.home, "sessions-v1", packedOverlaySentinel)
+	staged, err := local.StageBytes(path, []byte(value))
+	if err != nil {
+		return err
 	}
-	return nil
+	defer staged.Discard()
+	s.writeSynced()
+	committed := false
+	err = func() error {
+		hooks, err := s.namedLockWait("hooks.lock", time.Second)
+		if err != nil {
+			return err
+		}
+		defer hooks()
+		membership, err := local.NamedLockWait(s.home, sessionMembershipLock, time.Second)
+		if err != nil {
+			return err
+		}
+		defer membership()
+		current, err := s.sessionMembershipRevision()
+		if err != nil || current != revision {
+			return ErrSessionIndexRecoveryRequired
+		}
+		var now sessionIndexMarker
+		if readRecoveryJSON(filepath.Join(s.home, sessionIndexMarkerFile), &now) != nil || now.Version != 2 || now.PackedEpoch != marker.PackedEpoch {
+			return ErrSessionIndexRecoveryRequired
+		}
+		snapshot, err := readSnapshot(path)
+		if err != nil {
+			return err
+		}
+		if !snapshot.equal(before) {
+			return errIndexMoved
+		}
+		anchor, valid := packedOverlayAnchor(value, marker)
+		if !valid || (anchor != "" && !exists(filepath.Join(s.home, "sessions-v1", anchor+".json"))) {
+			return ErrSessionIndexRecoveryRequired
+		}
+		err = staged.Commit()
+		committed = err == nil
+		return err
+	}()
+	if !committed {
+		return err
+	}
+	s.writeSynced()
+	return errors.Join(err, staged.SyncDir())
 }
 
 // Stage and directory durability happen outside all locks. The membership
@@ -961,22 +1110,11 @@ func packedExpiryProofPath(home string, key agentmeta.SessionKey) string {
 	return filepath.Join(home, "sessions-v1", packedIndexHash(key)+".removed")
 }
 
-func (s *Store) packedMissAllowed(key agentmeta.SessionKey, marker sessionIndexMarker) error {
-	if !s.packedOverlayDirectoryPresent(marker) {
+func (s *Store) packedMissAllowed(_ agentmeta.SessionKey, marker sessionIndexMarker) error {
+	if !s.packedOverlaysHealthy(marker) {
 		return ErrSessionIndexRecoveryRequired
 	}
-	if !s.packedOverridesExpected(marker) || s.packedPhysicalOverridesPresent() {
-		return nil
-	}
-	revision, err := s.sessionMembershipRevision()
-	if err != nil {
-		return err
-	}
-	var proof packedExpiryProof
-	if readRecoveryJSON(packedExpiryProofPath(s.home, key), &proof) == nil && proof.Epoch == marker.PackedEpoch && proof.Revision == revision {
-		return nil
-	}
-	return ErrSessionIndexRecoveryRequired
+	return nil
 }
 
 // A content-free hashed proof permits explicit fresh reuse after expiry until
@@ -995,6 +1133,9 @@ func (s *Store) recordPackedExpiry(key agentmeta.SessionKey, id string) error {
 	}
 	if marker.Version != 2 {
 		return nil
+	}
+	if err := s.retirePackedOverlayAnchor(marker, key); err != nil {
+		return errors.Join(err, s.MarkSessionIndexRecoveryNeeded())
 	}
 	revision, err := s.sessionMembershipRevision()
 	if err != nil {
@@ -1068,26 +1209,11 @@ func (s *Store) clearPackedExpiryProofs() error {
 
 func (s *Store) packedOverridesExpected(marker sessionIndexMarker) bool {
 	data, err := os.ReadFile(filepath.Join(s.home, "sessions-v1", packedOverlaySentinel))
-	return err == nil && string(data) == marker.PackedEpoch+":overrides"
-}
-
-func (s *Store) packedPhysicalOverridesPresent() bool {
-	dir, err := os.Open(filepath.Join(s.home, "sessions-v1"))
 	if err != nil {
 		return false
 	}
-	defer func() { _ = dir.Close() }()
-	for {
-		names, err := dir.Readdirnames(64)
-		for _, name := range names {
-			if strings.HasSuffix(name, ".json") {
-				return true
-			}
-		}
-		if err != nil {
-			return false
-		}
-	}
+	anchor, valid := packedOverlayAnchor(string(data), marker)
+	return valid && anchor != ""
 }
 
 func (s *Store) stagePackedExpectation(path string) (*local.Staged, string, error) {
@@ -1103,10 +1229,10 @@ func (s *Store) stagePackedExpectation(path string) (*local.Staged, string, erro
 	if marker.Version != 2 {
 		return nil, "", nil
 	}
-	if s.packedOverridesExpected(marker) {
+	if s.packedOverridesExpected(marker) && exists(path) {
 		return nil, marker.PackedEpoch, nil
 	}
-	staged, err := local.StageBytes(filepath.Join(s.home, "sessions-v1", packedOverlaySentinel), []byte(marker.PackedEpoch+":overrides"))
+	staged, err := local.StageBytes(filepath.Join(s.home, "sessions-v1", packedOverlaySentinel), []byte(marker.PackedEpoch+":overrides:"+strings.TrimSuffix(filepath.Base(path), ".json")))
 	return staged, marker.PackedEpoch, err
 }
 
@@ -1122,7 +1248,12 @@ func (w lockedWrite) packedEpochValid() error {
 }
 
 func (s *Store) packedOverlaysHealthy(marker sessionIndexMarker) bool {
-	return s.packedOverlayDirectoryPresent(marker) && (!s.packedOverridesExpected(marker) || s.packedPhysicalOverridesPresent())
+	data, err := os.ReadFile(filepath.Join(s.home, "sessions-v1", packedOverlaySentinel))
+	if err != nil {
+		return false
+	}
+	anchor, valid := packedOverlayAnchor(string(data), marker)
+	return valid && (anchor == "" || s.packedAnchorHealthy(anchor))
 }
 
 func (s *Store) reconcilePackedExpiryProofs(marker sessionIndexMarker) error {

@@ -50,6 +50,8 @@ import (
 type Store struct {
 	// indexSnapshots uses logical packed authority for qualified-index writes.
 	indexSnapshots bool
+	// onPackedEnumeration observes collector-only physical-index directory probes.
+	onPackedEnumeration func()
 
 	home string
 	// hook marks a Store from ForHook.
