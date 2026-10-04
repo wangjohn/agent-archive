@@ -480,6 +480,11 @@ func (s *Store) applyPackedShardPhase(ctx context.Context, cursor *sessionRecove
 		}
 		publicationErr := errors.Join(errs...)
 		if publicationErr != nil {
+			// A canceled later commit must retain the already durable prefix,
+			// including any checkpoint failure, after every worker is joined.
+			if errors.Is(publicationErr, context.Canceled) || errors.Is(publicationErr, context.DeadlineExceeded) {
+				return false, errors.Join(publicationErr, prepareErr, s.saveRecoveryCursor(cursor))
+			}
 			return false, errors.Join(publicationErr, prepareErr)
 		}
 		if prepareErr != nil {
