@@ -176,7 +176,7 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	}
 	format := listFormatOptions{
 		Now: env.now(), Verbose: opts.verbose, Projects: labels, Style: styleFor(stdout),
-		GroupByProject: true, Numbered: browsing, Children: listingChildren(listed, sessions),
+		GroupByProject: true, Numbered: browsing, Children: listingChildren(listed, sessions, full),
 	}
 	words := strings.Join(strings.Fields(query), " ")
 	choices := listChoices(scope, format, browsing, sessions, opts.limit, view, words)
@@ -954,8 +954,8 @@ func listOrDash(names []string) string {
 	return strings.Join(display, ",")
 }
 
-func listingChildren(listed reader.RecentResult, sessions []archive.Metadata) map[string]int {
-	if listed.Children != nil {
+func listingChildren(listed reader.RecentResult, sessions []archive.Metadata, full bool) map[string]int {
+	if !full && listed.Children != nil {
 		return listed.Children
 	}
 	return childCounts(sessions)

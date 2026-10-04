@@ -133,7 +133,7 @@ func TestDefaultRepositoryScopeBodyBudgetAndEmptyFallback(t *testing.T) {
 					if warm {
 						wantGets, wantCached = 0, 50
 					}
-					if bodies != 50 || cached != wantCached || store.gets.Load() != wantGets || store.sourceGets.Load() != 0 {
+					if bodies != 50 || cached != wantCached || store.gets.Load() != int64(wantGets) || store.sourceGets.Load() != 0 {
 						t.Fatalf("JSON=%v warm=%v bodies=%d cached=%d gets=%d source=%d stderr=%s", jsonOut, warm, bodies, cached, store.gets.Load(), store.sourceGets.Load(), stderr)
 					}
 					if jsonOut {
