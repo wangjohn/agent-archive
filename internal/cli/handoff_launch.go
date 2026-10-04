@@ -181,7 +181,7 @@ func launchHandoffPrompt(record string, h archive.Handoff, target handoffTarget,
 		c := target.native
 		fmt.Fprintf(&b, "For the complete filtered local record, run agent-archive handoff %s --harness %s --source local --max-bytes 0 --project %s. Native discovery requires access to the original app stores.\n\n", shellQuote(c.NativeID), shellQuote(c.Ref.Harness), shellQuote(c.Directory))
 	case target.filePath != "":
-		fmt.Fprintf(&b, "For the complete filtered local record, run agent-archive handoff --file %q --harness %s --max-bytes 0.\n\n", target.filePath, h.Session.Harness)
+		fmt.Fprintf(&b, "For the complete filtered local record, run agent-archive handoff --file %s --harness %s --max-bytes 0.\n\n", shellQuote(target.filePath), h.Session.Harness)
 	case target.source == "archive":
 		fmt.Fprintf(&b, "If you need more context, run agent-archive show %s --harness %s --transcript for the archived conversation, or agent-archive handoff %s --source archive --harness %s --max-bytes 0 for the complete filtered record.\n\n", h.Session.ArchiveSessionID, h.Session.Harness, h.Session.ArchiveSessionID, h.Session.Harness)
 	default:
