@@ -322,13 +322,23 @@ First, list what would be deleted:
 
 <!-- purge-recipe:list (scripts/test_purge_recipe.py runs the three blocks below) -->
 ```sh
-purge_dir=                    # clear any previous valid plan before attempting pause
-purge_pause_ok=
-if agent-archive pause; then   # must succeed on every uploading installation
-  purge_pause_ok=yes
-else
-  echo "Pause failed; no cleanup plan is available. Inspect the lock holder and retry pause." >&2
-fi
+purge_stop_uploads() {
+  purge_dir=                  # invalidate every previous plan before attempting stop
+  purge_pause_ok=
+  case "${1:-pause}" in
+    pause)
+      if agent-archive pause; then purge_pause_ok=yes; fi ;;
+    uninstall)
+      # Explicit opt-in only. Never use --skip-scheduler for this check.
+      if agent-archive uninstall --yes; then purge_pause_ok=yes; fi ;;
+    *) echo "Choose pause or uninstall; no cleanup plan is available." >&2; return 1 ;;
+  esac
+  [ "$purge_pause_ok" = yes ] || {
+    echo "Stopping uploads failed; no cleanup plan is available. Resolve the lock or scheduler error and retry." >&2
+    return 1
+  }
+}
+purge_stop_uploads pause       # must succeed on every uploading installation
 
 bucket=my-archive-bucket       # your bucket
 prefix=agent-archive/          # your prefix with its trailing slash, or empty
@@ -729,10 +739,14 @@ within five minutes in that shell.
 purge_prepare old 10
 ```
 
-After a failed, interrupted, or expired attempt, keep every writer paused.
+After a failed, interrupted, or expired attempt, keep every writer stopped.
 In a fresh bash or zsh shell, load the helper definitions above (omit the final
 `purge_prepare unreferenced` line), restore the same bucket, prefix, endpoint,
-profile and region (and unchanged AWS configuration), then run `purge_resume /absolute/path/to/retained-plan`.
+profile and region (and unchanged AWS configuration). For still-installed
+installations, run `purge_stop_uploads pause`; after uninstall, explicitly run
+`purge_stop_uploads uninstall`. The latter reruns ordinary uninstall without
+prompting; never use `--skip-scheduler` to establish that uploads stopped.
+Only after that stop command succeeds, run `purge_resume /absolute/path/to/retained-plan`.
 Review its printed remaining original keys and run `purge_apply` again within
 five minutes. Use the newest printed recovery directory for each subsequent retry, keeping
 its earlier directories until cleanup succeeds. Recovery uses the immutable
