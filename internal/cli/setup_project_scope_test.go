@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -160,7 +161,7 @@ func TestScopeKeepsNestedCheckoutAttachedToPathBasedAncestor(t *testing.T) {
 		key := archive.RepoKey("https://example.test/team/private.git")
 		env := Env{repoKeyContext: func(context.Context, string) string { return key }, WorkingDir: func() (string, error) { return relocatedRepo, nil }}
 		rules := []archive.ProjectActivation{{Root: sourceParent, Included: ancestorIncluded}, {Root: sourceRepo, Included: !ancestorIncluded}}
-		encoded := portableProjectScope(rules, sourceHome, env, context.Background())
+		encoded := portableProjectScope(rules, sourceHome, env, context.Background(), nil)
 		if strings.Contains(encoded, "repo_key") {
 			t.Fatalf("detached checkout from path-based ancestor: %s", encoded)
 		}
@@ -244,7 +245,7 @@ func TestPortableScopeKeepsCanonicalAliasSubtreeAttached(t *testing.T) {
 	must(t, os.Symlink(root, alias))
 	key := archive.RepoKey("https://example.test/team/repo.git")
 	env := Env{repoKeyContext: func(context.Context, string) string { return key }}
-	encoded := portableProjectScope([]archive.ProjectActivation{{Root: alias, Included: true}, {Root: private, Included: false}}, home, env, context.Background())
+	encoded := portableProjectScope([]archive.ProjectActivation{{Root: alias, Included: true}, {Root: private, Included: false}}, home, env, context.Background(), nil)
 	var rules []portableProjectRule
 	must(t, json.Unmarshal([]byte(encoded), &rules))
 	if len(rules) != 2 || rules[0].RepoKey != key || rules[1].RepoKey != key || rules[1].Path != "private" {
@@ -399,7 +400,7 @@ func TestPrintedScopeRequiresActualRepositoryTopLevel(t *testing.T) {
 	}
 	env := Env{projectGitRunner: runGit}
 	projects := []archive.ProjectActivation{{Root: child, Included: true}, {Root: filepath.Join(child, "private"), Included: false}}
-	encoded := portableProjectScope(projects, home, env, t.Context())
+	encoded := portableProjectScope(projects, home, env, t.Context(), nil)
 	if strings.Contains(encoded, "repo_key") {
 		t.Fatalf("inherited origin widened subtree to full repository: %s", encoded)
 	}
@@ -432,7 +433,7 @@ func TestPrintedScopeKeepsDistinctClonesWithDifferentExclusions(t *testing.T) {
 	}
 	key := archive.RepoKey("https://example.test/team/repo.git")
 	env := Env{LookupEnv: noEnv, repoKeyContext: func(context.Context, string) string { return key }}
-	encoded := portableProjectScope(projects, sourceHome, env, t.Context())
+	encoded := portableProjectScope(projects, sourceHome, env, t.Context(), nil)
 	if strings.Contains(encoded, "repo_key") {
 		t.Fatalf("collapsed distinct clone scopes onto one identity: %s", encoded)
 	}
@@ -492,7 +493,7 @@ func TestPrintedScopeCoalescesEqualAliasesAndRefusesConflicts(t *testing.T) {
 	must(t, os.Symlink(root, alias))
 	for _, decisions := range [][2]bool{{true, true}, {false, false}, {true, false}, {false, true}} {
 		projects := []archive.ProjectActivation{{Root: root, Included: decisions[0]}, {Root: alias, Included: decisions[1]}}
-		encoded := portableProjectScope(projects, home, Env{}, t.Context())
+		encoded := portableProjectScope(projects, home, Env{}, t.Context(), nil)
 		cfg := config.Config{}
 		problems := setupProjectScope(&cfg, encoded, home, Env{})
 		if decisions[0] == decisions[1] {
@@ -677,5 +678,79 @@ func TestPrintedLargeIncludedScopeAvoidsAggregateArgumentLimit(t *testing.T) {
 	must(t, err)
 	if len(args) > 4096 || !strings.Contains(string(args), "--project-scope-file\n-\n") {
 		t.Fatal("large included scope remained on argv")
+	}
+}
+
+func TestExplicitProjectsCannotDefeatTransferredExclusions(t *testing.T) {
+	t.Parallel()
+	for _, suffix := range []string{"private", "private/child"} {
+		t.Run(suffix, func(t *testing.T) {
+			t.Parallel()
+			home, userHome := t.TempDir(), t.TempDir()
+			root := filepath.Join(userHome, "repo")
+			must(t, os.MkdirAll(filepath.Join(root, "private", "child"), 0700))
+			env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
+			encoded, err := json.Marshal([]portableProjectRule{{Path: root, Included: true}, {Path: filepath.Join(root, "private"), Included: false}})
+			must(t, err)
+			output := setupYes(t, env, "", 1, "--yes", "--provider", "s3", "--bucket", "synthetic", "--aws-profile", "test", "--region", "us-east-1", "--apps", "codex", "--project-scope", string(encoded), "--project", filepath.Join(root, suffix))
+			if !strings.Contains(output, "conflicts with transferred capture scope") {
+				t.Fatal(output)
+			}
+			if _, found, err := config.Load(home); err != nil || found {
+				t.Fatalf("refusal saved configuration: %t %v", found, err)
+			}
+		})
+	}
+}
+
+func TestExplicitEmptyScopeFlagsRefuseBeforeSetup(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"--project-scope", "--project-scope-file"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			home, userHome := t.TempDir(), t.TempDir()
+			env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
+			output := setupYes(t, env, "", 1, "--yes", "--provider", "s3", "--bucket", "synthetic", "--aws-profile", "test", "--region", "us-east-1", "--apps", "codex", "--project", userHome, name, "")
+			if !strings.Contains(output, name+" must") {
+				t.Fatal(output)
+			}
+			if _, found, err := config.Load(home); err != nil || found {
+				t.Fatalf("empty input saved configuration: %t %v", found, err)
+			}
+			opts, ok := setupFlags(env.newCommandFlags("setup", io.Discard), []string{name, ""})
+			if !ok || !opts.given() {
+				t.Fatal("empty answer disappeared")
+			}
+		})
+	}
+}
+
+func TestStreamFallbackKeepsResolvedRepositoryKeys(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	root := filepath.Join(home, "repo")
+	must(t, os.MkdirAll(filepath.Join(root, ".git"), 0700))
+	key := archive.RepoKey("https://example.test/team/repo.git")
+	projects := []archive.ProjectActivation{{Root: root, Included: true}}
+	for i := range 400 {
+		projects = append(projects, archive.ProjectActivation{Root: filepath.Join(home, strings.Repeat("x", 200), strconv.Itoa(i)), Included: true})
+	}
+	calls := 0
+	env := Env{repoKeyContext: func(_ context.Context, path string) string {
+		calls++
+		if calls == 1 && path == root {
+			return key
+		}
+		return ""
+	}}
+	command := anotherMachineCommand(config.Config{Archive: archive.Config{Projects: projects}}, home, env)
+	parts := strings.Split(command, "\n")
+	if len(parts) != 3 {
+		t.Fatalf("expected streamed transfer: %s", command)
+	}
+	var rules []portableProjectRule
+	must(t, json.Unmarshal([]byte(parts[1]), &rules))
+	if rules[0].RepoKey != key || rules[0].Path != "." || calls != 1 {
+		t.Fatalf("resolved identity lost or queried again: %+v, %d lookups", rules[0], calls)
 	}
 }

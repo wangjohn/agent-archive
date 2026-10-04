@@ -1112,25 +1112,29 @@ func anotherMachineCommand(cfg config.Config, userHome string, environments ...E
 	projectStart := len(args)
 	scope := ""
 	if hasProjectExclusions(cfg.Archive.Projects) {
-		scope = portableProjectScope(cfg.Archive.Projects, userHome, env, ctx)
+		scope = portableProjectScope(cfg.Archive.Projects, userHome, env, ctx, nil)
 		args = append(args, "--project-scope-file", "-")
 	} else {
 		for _, project := range cfg.Archive.Projects {
 			if !project.Included {
 				continue
 			}
-			key, checked := keys[project.Root]
+			canonicalRoot := local.CanonicalPath(project.Root)
+			key, checked := keys[canonicalRoot]
 			if !checked {
 				child, done := context.WithTimeout(ctx, 250*time.Millisecond)
 				// A key describes the whole repository. A configured subdirectory
 				// must keep its path to avoid widening capture on another machine.
 				if child.Err() == nil {
 					if info, err := os.Stat(filepath.Join(project.Root, ".git")); err == nil && (info.IsDir() || info.Mode().IsRegular()) {
-						key = env.projectRepoKey(child, project.Root)
+						candidate, top, known := env.projectRepository(child, project.Root)
+						if known && local.CanonicalPath(top) == local.CanonicalPath(project.Root) {
+							key = candidate
+						}
 					}
 				}
 				done()
-				keys[project.Root] = key
+				keys[canonicalRoot] = key
 			}
 			if key != "" {
 				args = append(args, "--project-repo", key)
@@ -1140,7 +1144,7 @@ func anotherMachineCommand(cfg config.Config, userHome string, environments ...E
 		}
 	}
 	if scope == "" && scopeArgumentsNeedStream(args) {
-		scope = portableProjectScope(cfg.Archive.Projects, userHome, env, ctx)
+		scope = portableProjectScope(cfg.Archive.Projects, userHome, env, ctx, keys)
 		args = append(args[:projectStart], "--project-scope-file", "-")
 	}
 	for i, arg := range args {
@@ -2144,7 +2148,7 @@ func isGoBuildDir(name string) bool {
 }
 
 func runPairingSetupCommand(opts setupOptions, refresh, abandon bool, fs *commandFlags, stdin io.Reader, stdout, stderr io.Writer, env Env) int {
-	if refresh || abandon || opts.storageFlagsSupplied || opts.prefixSupplied || opts.retentionSupplied || opts.requireSkillSupplied || opts.noRequireSkillSupplied || opts.apps != "" || opts.skillEvidence != "" || opts.noSkills || opts.skills || len(opts.projectRepos) > 0 || opts.projectScope != "" || opts.projectScopeFile != "" {
+	if refresh || abandon || opts.storageFlagsSupplied || opts.prefixSupplied || opts.retentionSupplied || opts.requireSkillSupplied || opts.noRequireSkillSupplied || opts.apps != "" || opts.skillEvidence != "" || opts.noSkills || opts.skills || len(opts.projectRepos) > 0 || opts.projectScopeSupplied || opts.projectScopeFileSupplied || opts.projectScope != "" || opts.projectScopeFile != "" {
 		return fs.usageError("pairing accepts --yes, --verbose, --project and one bundle input; other settings are reviewed interactively")
 	}
 	if err := setupPairing(opts, stdin, stdout, stderr, env.choosingBackend()); err != nil {

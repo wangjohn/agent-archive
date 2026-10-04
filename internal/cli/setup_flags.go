@@ -28,35 +28,37 @@ const (
 
 // setupOptions are setup's answers given as flags, for setup --yes.
 type setupOptions struct {
-	pair                   bool
-	pairFile               string
-	prefix                 string
-	prefixSupplied         bool
-	retentionDays          int
-	retentionSupplied      bool
-	requireSkillUse        bool
-	noRequireSkillUse      bool
-	requireSkillSupplied   bool
-	noRequireSkillSupplied bool
-	provider               string
-	bucket                 string
-	r2Account              string
-	r2KeyID                string
-	awsProfile             string
-	region                 string
-	apps                   string
-	projects               []string
-	projectRepos           []string
-	projectScope           string
-	projectScopeFile       string
-	projectMatches         *projectMatchResult
-	yes                    bool
-	verbose                bool
-	skillEvidence          string
-	noSkills               bool
-	skills                 bool
-	allowNetworkHome       bool
-	storageFlagsSupplied   bool
+	pair                     bool
+	pairFile                 string
+	prefix                   string
+	prefixSupplied           bool
+	retentionDays            int
+	retentionSupplied        bool
+	requireSkillUse          bool
+	noRequireSkillUse        bool
+	requireSkillSupplied     bool
+	noRequireSkillSupplied   bool
+	provider                 string
+	bucket                   string
+	r2Account                string
+	r2KeyID                  string
+	awsProfile               string
+	region                   string
+	apps                     string
+	projects                 []string
+	projectRepos             []string
+	projectScope             string
+	projectScopeFile         string
+	projectScopeSupplied     bool
+	projectScopeFileSupplied bool
+	projectMatches           *projectMatchResult
+	yes                      bool
+	verbose                  bool
+	skillEvidence            string
+	noSkills                 bool
+	skills                   bool
+	allowNetworkHome         bool
+	storageFlagsSupplied     bool
 }
 
 // skillsChoice is what the person asked of the agent skills on this run:
@@ -148,6 +150,10 @@ func setupFlags(fs *commandFlags, args []string) (setupOptions, bool) {
 	fs.Visit(func(f *flag.Flag) {
 		//lint:ignore LV1001 flag names are the ones defined just above
 		switch f.Name {
+		case "project-scope":
+			opts.projectScopeSupplied = true
+		case "project-scope-file":
+			opts.projectScopeFileSupplied = true
 		case "prefix":
 			opts.prefixSupplied = true
 		case "retention-days":
@@ -165,7 +171,7 @@ func setupFlags(fs *commandFlags, args []string) (setupOptions, bool) {
 
 // given reports whether any answer flag was passed.
 func (o setupOptions) given() bool {
-	return o.prefixSupplied || o.retentionSupplied || o.requireSkillSupplied || o.noRequireSkillSupplied || o.storageFlagsSupplied || o.apps != "" || len(o.projects) > 0 || len(o.projectRepos) > 0 || o.projectScope != "" || o.projectScopeFile != "" || o.skillEvidence != ""
+	return o.prefixSupplied || o.retentionSupplied || o.requireSkillSupplied || o.noRequireSkillSupplied || o.storageFlagsSupplied || o.apps != "" || len(o.projects) > 0 || len(o.projectRepos) > 0 || o.projectScopeSupplied || o.projectScopeFileSupplied || o.projectScope != "" || o.projectScopeFile != "" || o.skillEvidence != ""
 }
 
 // setupWithoutQuestions is setup --yes: the answers come from opts, the
@@ -394,7 +400,27 @@ func setupAnswers(existing config.Config, opts setupOptions, home, userHome stri
 	if opts.projectScope != "" {
 		problems = append(problems, setupProjectScope(&cfg, opts.projectScope, userHome, env)...)
 	}
-	problems = append(problems, setupProjects(&cfg, opts.projects, userHome)...)
+	paths := opts.projects
+	if opts.projectScope != "" {
+		paths = nil
+		scopeRules := slices.Clone(cfg.Archive.Projects)
+		for i := range scopeRules {
+			scopeRules[i].Root = local.CanonicalPath(scopeRules[i].Root)
+		}
+		for _, path := range opts.projects {
+			root, err := projectDir(path, userHome)
+			if err != nil {
+				problems = append(problems, fmt.Errorf("--project %w", err))
+				continue
+			}
+			if owner, found := nearestScopeRule(scopeRules, root); found && !owner.Included {
+				problems = append(problems, fmt.Errorf("--project %s conflicts with transferred capture scope; express reinclusions in --project-scope", root))
+				continue
+			}
+			paths = append(paths, path)
+		}
+	}
+	problems = append(problems, setupProjects(&cfg, paths, userHome)...)
 	secret, storageProblems := setupStorageFromFlags(&cfg, opts, env)
 	problems = append(problems, storageProblems...)
 	if cfg.RetentionDays <= 0 {

@@ -15,8 +15,9 @@ import (
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
-// referencePortableProjectScope retains the original algorithm as an output and Git-call oracle.
-func referencePortableProjectScope(projects []archive.ProjectActivation, home string, env Env, ctx context.Context) string {
+// referencePortableProjectScope retains the original ancestor algorithm and current
+// cached repository-key contract as an output and Git-call oracle.
+func referencePortableProjectScope(projects []archive.ProjectActivation, home string, env Env, ctx context.Context, cachedKeys map[string]string) string {
 	// Capture compares resolved locations, so aliases must share an anchor.
 	canonical := make([]archive.ProjectActivation, 0, len(projects))
 	seen := map[string]bool{}
@@ -49,7 +50,11 @@ func referencePortableProjectScope(projects []archive.ProjectActivation, home st
 		}
 		if info, err := os.Stat(filepath.Join(project.Root, ".git")); err == nil && (info.IsDir() || info.Mode().IsRegular()) {
 			child, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
-			key, top, known := env.projectRepository(child, project.Root)
+			key, checked := cachedKeys[project.Root]
+			top, known := project.Root, checked
+			if !checked {
+				key, top, known = env.projectRepository(child, project.Root)
+			}
 			if known && archive.IsRepoKey(key) && local.CanonicalPath(top) == local.CanonicalPath(project.Root) {
 				anchors[project.Root] = key
 			}
@@ -125,20 +130,27 @@ func TestPortableScopeAncestorLookupPreservesOutput(t *testing.T) {
 	}
 	for i, projects := range cases {
 		for _, sharedKey := range []bool{false, true} {
-			var calls []string
-			env := Env{repoKeyContext: func(_ context.Context, root string) string {
-				calls = append(calls, root)
-				if sharedKey {
-					return archive.RepoKey("https://example.test/shared.git")
+			for cacheCase, cachedKeys := range []map[string]string{
+				nil,
+				{outer: archive.RepoKey("https://example.test/cached.git")},
+				{outer: "", sibling: "invalid-key"},
+				{outer: archive.RepoKey("https://example.test/shared.git"), sibling: archive.RepoKey("https://example.test/shared.git")},
+			} {
+				var calls []string
+				env := Env{repoKeyContext: func(_ context.Context, root string) string {
+					calls = append(calls, root)
+					if sharedKey {
+						return archive.RepoKey("https://example.test/shared.git")
+					}
+					return archive.RepoKey("https://example.test/" + filepath.Base(root) + ".git")
+				}}
+				want := referencePortableProjectScope(projects, home, env, t.Context(), cachedKeys)
+				wantCalls := append([]string(nil), calls...)
+				calls = nil
+				got := portableProjectScope(projects, home, env, t.Context(), cachedKeys)
+				if got != want || !reflect.DeepEqual(calls, wantCalls) {
+					t.Fatalf("case %d shared=%v cache=%d output or repository calls changed: got %s calls %v want %s calls %v", i, sharedKey, cacheCase, got, calls, want, wantCalls)
 				}
-				return archive.RepoKey("https://example.test/" + filepath.Base(root) + ".git")
-			}}
-			want := referencePortableProjectScope(projects, home, env, t.Context())
-			wantCalls := append([]string(nil), calls...)
-			calls = nil
-			got := portableProjectScope(projects, home, env, t.Context())
-			if got != want || !reflect.DeepEqual(calls, wantCalls) {
-				t.Fatalf("case %d shared=%v output or repository calls changed: got %s calls %v want %s calls %v", i, sharedKey, got, calls, want, wantCalls)
 			}
 		}
 	}
@@ -161,7 +173,7 @@ func TestPortableScopeLargeSiblingOutputKeepsEveryRuleInOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := portableProjectScope(projects, home, Env{}, t.Context()); got != string(encoded) {
+	if got := portableProjectScope(projects, home, Env{}, t.Context(), nil); got != string(encoded) {
 		t.Fatal("large sibling scope changed paths, decisions, order, or serialization")
 	}
 }

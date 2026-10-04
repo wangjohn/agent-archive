@@ -33,7 +33,7 @@ func hasProjectExclusions(projects []archive.ProjectActivation) bool {
 	return false
 }
 
-func portableProjectScope(projects []archive.ProjectActivation, home string, env Env, ctx context.Context) string {
+func portableProjectScope(projects []archive.ProjectActivation, home string, env Env, ctx context.Context, cachedKeys map[string]string) string {
 	// Capture compares resolved locations, so aliases must share an anchor.
 	canonical := make([]archive.ProjectActivation, 0, len(projects))
 	seen := map[string]bool{}
@@ -64,8 +64,12 @@ func portableProjectScope(projects []archive.ProjectActivation, home string, env
 			continue
 		}
 		if info, err := os.Stat(filepath.Join(project.Root, ".git")); err == nil && (info.IsDir() || info.Mode().IsRegular()) {
+			key, checked := cachedKeys[project.Root]
 			child, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
-			key, top, known := env.projectRepository(child, project.Root)
+			top, known := project.Root, checked
+			if !checked {
+				key, top, known = env.projectRepository(child, project.Root)
+			}
 			if known && archive.IsRepoKey(key) && local.CanonicalPath(top) == local.CanonicalPath(project.Root) {
 				anchors[project.Root] = key
 			}
@@ -131,6 +135,15 @@ func configuredProjectAncestor(root string, projects []archive.ProjectActivation
 
 // readProjectScopeInput reads only an explicitly selected file or stdin stream.
 func readProjectScopeInput(opts setupOptions, stdin io.Reader) (setupOptions, error) {
+	if opts.projectScopeSupplied && opts.projectScopeFileSupplied {
+		return opts, errors.New("give only one of --project-scope and --project-scope-file")
+	}
+	if opts.projectScopeSupplied && strings.TrimSpace(opts.projectScope) == "" {
+		return opts, errors.New("--project-scope must contain capture rules")
+	}
+	if opts.projectScopeFileSupplied && strings.TrimSpace(opts.projectScopeFile) == "" {
+		return opts, errors.New("--project-scope-file must name a file or -")
+	}
 	if opts.projectScopeFile == "" {
 		return opts, nil
 	}
