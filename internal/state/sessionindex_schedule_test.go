@@ -899,6 +899,116 @@ func TestNewRecoveryRequestRetainsValidatedOwnerProgress(t *testing.T) {
 	}
 }
 
+func TestNewRecoveryRequestRepairsPreviouslyAppliedOwner(t *testing.T) {
+	for _, phase := range []int{0, 2} {
+		t.Run(strconv.Itoa(phase), func(t *testing.T) {
+			s := newTestStore(t)
+			seedRecoveryInventory(t, s, 3)
+			key := agentmeta.SessionKey{Agent: agentmeta.Codex, NativeID: "native-0000"}
+			ctx, cancel := context.WithCancel(t.Context())
+			applied, stopAfter := 0, 1
+			if phase == 2 {
+				stopAfter = 3
+			}
+			s.onIndexStep = func(step string) error {
+				if step == "recovery-entry" {
+					applied++
+					if applied == stopAfter {
+						cancel()
+					}
+				}
+				return nil
+			}
+			if complete, err := s.RecoverSessionIndexScheduled(ctx, time.Second); complete || !errors.Is(err, context.Canceled) {
+				t.Fatalf("owner checkpoint: %v %v", complete, err)
+			}
+			cancel()
+			s.onIndexStep = nil
+			var cursor sessionRecoveryCursor
+			if err := readRecoveryJSON(filepath.Join(s.home, sessionRecoveryCursorFile), &cursor); err != nil || cursor.Phase != phase || applied != stopAfter {
+				t.Fatalf("actual phase checkpoint: %#v applied=%d err=%v", cursor, applied, err)
+			}
+			if err := os.WriteFile(qualifiedSessionIndexPath(s.home, key), []byte("{"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.RequestSessionIndexRecovery(key); err != nil {
+				t.Fatal(err)
+			}
+			// A new Store must recover from durable evidence, retaining the owner ID.
+			resumed := OpenReadOnly(s.home)
+			for attempt := range 2 {
+				complete, err := resumed.RecoverSessionIndexScheduled(t.Context(), time.Second)
+				if err != nil || !complete {
+					t.Fatalf("requested owner recovery attempt %d: %v %v", attempt, complete, err)
+				}
+			}
+			id, found, err := resumed.ArchiveSessionID(key)
+			if err != nil || !found || id != "owner-0000" {
+				t.Fatalf("owner identity: %q %v %v", id, found, err)
+			}
+			if absent, err := resumed.SessionIndexAbsent(key); absent || err != nil {
+				t.Fatalf("owned key certified absent: %v %v", absent, err)
+			}
+		})
+	}
+}
+
+func TestNewRecoveryRequestRepairsPreviouslyAppliedCandidate(t *testing.T) {
+	for _, phase := range []int{1, 2} {
+		t.Run(strconv.Itoa(phase), func(t *testing.T) {
+			s := newTestStore(t)
+			parent := agentmeta.SessionKey{Agent: agentmeta.Codex, NativeID: "parent"}
+			if err := s.SaveRegistration(migrationRegistration(parent, "parent-owner")); err != nil {
+				t.Fatal(err)
+			}
+			for i := range 2 {
+				candidate := SubagentCandidate{ArchiveSessionID: fmt.Sprintf("child-owner-%d", i), NativeSessionID: fmt.Sprintf("child-native-%d", i), ParentArchiveSessionID: "parent-owner", ParentNativeSessionID: "parent", ProjectID: "p", ProjectRoot: "/synthetic", Harness: archive.Harness{Name: "codex"}, AgentID: fmt.Sprintf("child-%d", i), TranscriptPath: "/synthetic/child.jsonl", ObservedAt: time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)}
+				if err := s.SaveSubagentCandidate(candidate); err != nil {
+					t.Fatal(err)
+				}
+			}
+			key := agentmeta.SessionKey{Agent: agentmeta.Codex, NativeID: "child-native-0"}
+			cancelKey := key
+			if phase == 2 {
+				cancelKey.NativeID = "child-native-1"
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			s.onIndexSync = func() {
+				entry, found, err := s.readQualifiedIndex(cancelKey)
+				if err == nil && found && entry.Reservation != "" {
+					cancel()
+				}
+			}
+			if complete, err := s.RecoverSessionIndexScheduled(ctx, time.Second); complete || !errors.Is(err, context.Canceled) {
+				t.Fatalf("candidate checkpoint: %v %v", complete, err)
+			}
+			cancel()
+			s.onIndexSync = nil
+			var cursor sessionRecoveryCursor
+			if err := readRecoveryJSON(filepath.Join(s.home, sessionRecoveryCursorFile), &cursor); err != nil || cursor.Phase != phase || phase == 1 && cursor.Offset != 1 {
+				t.Fatalf("actual candidate checkpoint: %#v %v", cursor, err)
+			}
+			if err := os.WriteFile(qualifiedSessionIndexPath(s.home, key), []byte("{"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.RequestSessionIndexRecovery(key); err != nil {
+				t.Fatal(err)
+			}
+			resumed := OpenReadOnly(s.home)
+			if complete, err := resumed.RecoverSessionIndexScheduled(t.Context(), time.Second); !complete || err != nil {
+				t.Fatalf("candidate recovery: %v %v", complete, err)
+			}
+			entry, found, err := resumed.readQualifiedIndex(key)
+			if err != nil || !found || entry.ArchiveSessionID != "child-owner-0" || entry.Reservation == "" || entry.Absent {
+				t.Fatalf("candidate identity lost: %#v %v %v", entry, found, err)
+			}
+			if absent, err := resumed.SessionIndexAbsent(key); absent || err != nil {
+				t.Fatalf("candidate certified absent: %v %v", absent, err)
+			}
+		})
+	}
+}
+
 func TestNewRecoveryRequestRetainsOnlyMatchingCandidateProgress(t *testing.T) {
 	for _, mutate := range []bool{false, true} {
 		t.Run(strconv.FormatBool(mutate), func(t *testing.T) {
