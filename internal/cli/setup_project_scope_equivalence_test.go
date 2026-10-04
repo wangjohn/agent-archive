@@ -15,8 +15,9 @@ import (
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
-// referencePortableProjectScope retains the original algorithm as an output and Git-call oracle.
-func referencePortableProjectScope(projects []archive.ProjectActivation, home string, env Env, ctx context.Context) string {
+// referencePortableProjectScope retains pairwise containment as an output and
+// Git-call oracle, with the validated positive-key cache contract.
+func referencePortableProjectScope(projects []archive.ProjectActivation, home string, env Env, ctx context.Context, knownKeys map[string]string) string {
 	// Capture compares resolved locations, so aliases must share an anchor.
 	canonical := make([]archive.ProjectActivation, 0, len(projects))
 	seen := map[string]bool{}
@@ -45,6 +46,10 @@ func referencePortableProjectScope(projects []archive.ProjectActivation, home st
 			}
 		}
 		if hasAncestor {
+			continue
+		}
+		if key := knownKeys[project.Root]; archive.IsRepoKey(key) {
+			anchors[project.Root] = key
 			continue
 		}
 		if info, err := os.Stat(filepath.Join(project.Root, ".git")); err == nil && (info.IsDir() || info.Mode().IsRegular()) {
@@ -133,12 +138,28 @@ func TestPortableScopeAncestorLookupPreservesOutput(t *testing.T) {
 				}
 				return archive.RepoKey("https://example.test/" + filepath.Base(root) + ".git")
 			}}
-			want := referencePortableProjectScope(projects, home, env, t.Context())
-			wantCalls := append([]string(nil), calls...)
-			calls = nil
-			got := portableProjectScope(projects, home, env, t.Context())
-			if got != want || !reflect.DeepEqual(calls, wantCalls) {
-				t.Fatalf("case %d shared=%v output or repository calls changed: got %s calls %v want %s calls %v", i, sharedKey, got, calls, want, wantCalls)
+			outerKey := archive.RepoKey("https://example.test/outer.git")
+			if sharedKey {
+				outerKey = archive.RepoKey("https://example.test/shared.git")
+			}
+			for _, cache := range []map[string]string{nil, {
+				local.CanonicalPath(outer):   outerKey,
+				local.CanonicalPath(nested):  archive.RepoKey("https://example.test/nested.git"),
+				local.CanonicalPath(sibling): "invalid-key",
+			}} {
+				calls = nil
+				want := referencePortableProjectScope(projects, home, env, t.Context(), cache)
+				wantCalls := append([]string(nil), calls...)
+				calls = nil
+				var got string
+				if cache == nil {
+					got = portableProjectScope(projects, home, env, t.Context())
+				} else {
+					got = portableProjectScopeWithKeys(projects, home, env, t.Context(), cache)
+				}
+				if got != want || !reflect.DeepEqual(calls, wantCalls) {
+					t.Fatalf("case %d shared=%v cached=%v output or repository calls changed: got %s calls %v want %s calls %v", i, sharedKey, cache != nil, got, calls, want, wantCalls)
+				}
 			}
 		}
 	}

@@ -229,6 +229,8 @@ An interrupted setup is recovered on the next run.
   --project-scope JSON  Transfer include/exclude rules together; repository
                         subtrees follow the unique local checkout
   --project-scope-file PATH  Read those rules from a file, or - for stdin
+                        Scope flags need a nonempty value and cannot mix
+                        with --project or --project-repo
   --apps LIST           Apps to capture: codex,claude,cursor (default: the
                         saved apps, else those found on this machine). It must
                         name every app set up now: --yes never removes one
