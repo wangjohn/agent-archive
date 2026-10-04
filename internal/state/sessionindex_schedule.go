@@ -471,6 +471,16 @@ func (s *Store) applyPackedShardPhase(ctx context.Context, cursor *sessionRecove
 			}
 			batch = append(batch, packedPublication{path: path, before: before, data: data})
 		}
+		// An exhausted allowance is control flow, not a preparation failure.
+		// Unwrap only single-cause wrappers: joined real failures must survive.
+		pendingCause := prepareErr
+		for errors.Unwrap(pendingCause) != nil {
+			pendingCause = errors.Unwrap(pendingCause)
+		}
+		slicePending := pendingCause == errPackedSlicePending
+		if slicePending {
+			prepareErr = nil
+		}
 		errs := s.publishPackedBatch(ctx, marker, batch)
 		for _, err := range errs {
 			if err != nil {
@@ -487,10 +497,10 @@ func (s *Store) applyPackedShardPhase(ctx context.Context, cursor *sessionRecove
 			}
 			return false, errors.Join(publicationErr, prepareErr)
 		}
+		if slicePending {
+			return false, s.saveRecoveryCursor(cursor)
+		}
 		if prepareErr != nil {
-			if errors.Is(prepareErr, errPackedSlicePending) {
-				return false, s.saveRecoveryCursor(cursor)
-			}
 			if errors.Is(prepareErr, context.Canceled) || errors.Is(prepareErr, context.DeadlineExceeded) {
 				return false, errors.Join(prepareErr, s.saveRecoveryCursor(cursor))
 			}

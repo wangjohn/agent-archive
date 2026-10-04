@@ -206,3 +206,92 @@ func TestPackedBatchJoinsSecondStagingFailure(t *testing.T) {
 		t.Fatalf("staging not joined/cleaned: %v %v", temps, err)
 	}
 }
+
+func TestPackedAllowancePendingKeepsOrdinaryInterruptionAndCheckpointFailure(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("requires ordinary filesystem permissions")
+	}
+	for _, deadline := range []bool{false, true} {
+		for _, writable := range []bool{true, false} {
+			t.Run(strconv.FormatBool(deadline)+"/"+strconv.FormatBool(writable), func(t *testing.T) {
+				s, _, marker := packedOwnerFixture(t)
+				key := packedFreshKeyInShard("00", "pending-interruption")
+				reg := migrationRegistration(key, "pending-interruption-owner")
+				if err := local.Write(s.registrationPath(reg.ArchiveSessionID), reg); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(qualifiedSessionIndexPath(s.home, key), []byte("{"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				ctx, cancel := context.WithCancel(t.Context())
+				interruption := context.Canceled
+				if deadline {
+					cancel()
+					ctx, cancel = context.WithTimeout(t.Context(), 5*time.Second)
+					interruption = context.DeadlineExceeded
+				}
+				defer cancel()
+				defer func() { _ = os.Chmod(s.home, 0700) }()
+				// Native owner repair consumes the allowance before the next shard.
+				// The seam delays real syncs without replacing their durability.
+				s.onIndexSync = func() { time.Sleep(400 * time.Millisecond) }
+				s.onWriteSync = func() {
+					if deadline {
+						<-ctx.Done()
+					} else {
+						cancel()
+					}
+					if !writable {
+						if err := os.Chmod(s.home, 0500); err != nil {
+							t.Fatal(err)
+						}
+					}
+				}
+				cursor := sessionRecoveryCursor{Version: 2, Generation: marker.Generation, Revision: marker.PackedRevision, Inventory: marker.PackedInventory}
+				var owners [packedSessionIndexShards]map[agentmeta.SessionKey][]string
+				var children [packedSessionIndexShards][]SubagentCandidate
+				owners[0] = map[agentmeta.SessionKey][]string{key: {reg.ArchiveSessionID}}
+				complete, err := s.applyPackedShardPhase(ctx, &cursor, time.Now().Add(200*time.Millisecond), marker, owners, children)
+				if restoreErr := os.Chmod(s.home, 0700); restoreErr != nil {
+					t.Fatal(restoreErr)
+				}
+				if complete || cursor.Offset != 0 || !errors.Is(err, interruption) || errors.Is(err, errPackedSlicePending) {
+					t.Fatalf("complete=%v offset=%d err=%v", complete, cursor.Offset, err)
+				}
+				if SessionIndexRecoveryInterrupted(err) != writable || errors.Is(err, os.ErrPermission) == writable {
+					t.Fatalf("checkpoint classification writable=%v: %v", writable, err)
+				}
+			})
+		}
+	}
+}
+
+func TestPackedInterruptionRetainsJoinedPreparationFailure(t *testing.T) {
+	s, _, marker := packedOwnerFixture(t)
+	key := packedFreshKeyInShard("01", "joined-preparation")
+	reg := migrationRegistration(key, "joined-preparation-owner")
+	if err := local.Write(s.registrationPath(reg.ArchiveSessionID), reg); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(qualifiedSessionIndexPath(s.home, key), []byte("{"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	failure := errors.New("owner preparation failed")
+	s.onIndexStep = func(step string) error {
+		if step == "recovery-entry" {
+			return errors.Join(errPackedSlicePending, failure)
+		}
+		return nil
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	s.onWriteSync = cancel
+	cursor := sessionRecoveryCursor{Version: 2}
+	var owners [packedSessionIndexShards]map[agentmeta.SessionKey][]string
+	var children [packedSessionIndexShards][]SubagentCandidate
+	owners[1] = map[agentmeta.SessionKey][]string{key: {reg.ArchiveSessionID}}
+	complete, err := s.applyPackedShardPhase(ctx, &cursor, time.Now().Add(5*time.Second), marker, owners, children)
+	if complete || !errors.Is(err, context.Canceled) || !errors.Is(err, failure) || !errors.Is(err, errPackedSlicePending) || SessionIndexRecoveryInterrupted(err) {
+		t.Fatalf("joined preparation failure lost: complete=%v err=%v", complete, err)
+	}
+}
