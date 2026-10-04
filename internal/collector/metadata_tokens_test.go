@@ -28,7 +28,7 @@ func TestParserBumpRepublishesModelTokensFromRetainedSource(t *testing.T) {
 	if err := local.SaveRegistration(reg); err != nil {
 		t.Fatal(err)
 	}
-	remote := &countedPublications{ObjectStore: storagetest.NewMemoryStore()}
+	remote := &countedPublications{MemoryStore: storagetest.NewMemoryStore()}
 	now := reg.RegisteredAt.Add(time.Hour)
 	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "machine", ParserVersion: "0.13.0", Now: func() time.Time { return now }}
 	if result, err := Run(context.Background(), local, remote, opts); err != nil || len(result.Errors) != 0 {
@@ -54,7 +54,7 @@ func TestParserBumpRepublishesModelTokensFromRetainedSource(t *testing.T) {
 	}
 	metadataKey, _ := archive.MetadataObjectKey("codex", reg.ArchiveSessionID)
 	// The metadata and its listing entries, never the source object.
-	if len(remote.keys) != 3 || remote.keys[2] != metadataKey || slices.Contains(remote.keys, old.SourceBundle.Key) {
+	if len(remote.keys) != 2 || remote.keys[0] != metadataKey || slices.Contains(remote.keys, old.SourceBundle.Key) {
 		t.Fatalf("a parser bump wrote %v, want only the metadata and its listing", remote.keys)
 	}
 	var models []string
@@ -84,7 +84,7 @@ func TestParserUpgradeFrom019RefreshesRetainedImportMetadata(t *testing.T) {
 	if err := local.SaveRegistration(reg); err != nil {
 		t.Fatal(err)
 	}
-	remote := &countedPublications{ObjectStore: storagetest.NewMemoryStore()}
+	remote := &countedPublications{MemoryStore: storagetest.NewMemoryStore()}
 	now := reg.RegisteredAt.Add(time.Hour)
 	opts := Options{Sources: testSources, MachineID: "machine", ParserVersion: "0.19.0", Now: func() time.Time { return now }}
 	if result, err := Run(context.Background(), local, remote, opts); err != nil || len(result.Errors) != 0 {
@@ -104,7 +104,7 @@ func TestParserUpgradeFrom019RefreshesRetainedImportMetadata(t *testing.T) {
 	if next.Parser.Version == old.Parser.Version || next.SourceBundle != old.SourceBundle || next.Origin != archive.SessionOriginImport {
 		t.Fatalf("retained metadata did not refresh with provenance: %#v", next)
 	}
-	if len(remote.keys) != 3 || slices.Contains(remote.keys, old.SourceBundle.Key) {
+	if len(remote.keys) != 2 || slices.Contains(remote.keys, old.SourceBundle.Key) {
 		t.Fatalf("parser upgrade wrote %v, want metadata and listing only", remote.keys)
 	}
 }

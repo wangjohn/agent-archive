@@ -175,37 +175,48 @@ func (s *S3Store) Put(ctx context.Context, relative string, data []byte) error {
 // ErrObjectTooLarge. A 403 is ErrNotFound only when a listing confirms the
 // key is absent (see confirmedAbsent); otherwise it is returned as is.
 func (s *S3Store) Get(ctx context.Context, relative string) ([]byte, error) {
-	return s.GetLimited(ctx, relative, s.maxGetBytes)
+	data, _, err := s.GetVersioned(ctx, relative)
+	return data, err
 }
 
 // GetLimited reads an object with a caller's allocation limit, also honoring
 // the store's own maximum. It never reads more than limit plus one bytes.
 func (s *S3Store) GetLimited(ctx context.Context, relative string, limit int64) ([]byte, error) {
+	data, _, err := s.getVersioned(ctx, relative, limit)
+	return data, err
+}
+
+// GetVersioned reads bytes and their opaque ETag from one response.
+func (s *S3Store) GetVersioned(ctx context.Context, relative string) ([]byte, string, error) {
+	return s.getVersioned(ctx, relative, s.maxGetBytes)
+}
+
+func (s *S3Store) getVersioned(ctx context.Context, relative string, limit int64) ([]byte, string, error) {
 	if limit < 1 {
-		return nil, errors.New("object read limit must be positive")
+		return nil, "", errors.New("object read limit must be positive")
 	}
 	limit = min(limit, s.maxGetBytes)
 	key, err := s.key(relative)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	output, err := s.client.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(key)})
 	if err != nil {
 		if isNotFound(err) || s.confirmedAbsent(ctx, key, err) {
-			return nil, ErrNotFound
+			return nil, "", ErrNotFound
 		}
-		return nil, err
+		return nil, "", err
 	}
 	defer func() { _ = output.Body.Close() }()
 	limited := io.LimitReader(output.Body, limit+1)
 	data, err := io.ReadAll(limited)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if int64(len(data)) > limit {
-		return nil, fmt.Errorf("%w: %q exceeds %d bytes", ErrObjectTooLarge, relative, limit)
+		return nil, "", fmt.Errorf("%w: %q exceeds %d bytes", ErrObjectTooLarge, relative, limit)
 	}
-	return data, nil
+	return data, strings.Trim(aws.ToString(output.ETag), "\""), nil
 }
 
 // Stat describes an object with a HEAD request in checksum mode. Put stores
@@ -244,6 +255,7 @@ func (s *S3Store) Stat(ctx context.Context, relative string) (ObjectInfo, error)
 		}
 	}
 	return ObjectInfo{
+		ETag:   strings.Trim(aws.ToString(output.ETag), "\""),
 		Size:   size,
 		SHA256: sum,
 	}, nil
