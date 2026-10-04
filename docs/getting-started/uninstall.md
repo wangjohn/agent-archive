@@ -102,16 +102,24 @@ that uploads there. Use the [cleanup preparation block](../security/privacy.md#a
 first in a bash or zsh shell. It defines `purge_prepare` and `purge_apply`,
 attempts a strict unreferenced-source plan without deleting it. If that initial
 plan refuses damaged metadata, the full-prefix plan below can still be prepared
-after pause succeeds. The AWS CLI and `jq` must be installed, and your
+after the explicit local stop command below succeeds. The AWS CLI and `jq`
+must be installed, and your
 credentials need list and delete access for full-prefix mode (selective modes
 also need read access). In that same shell, set your
-bucket and prefix and make a fresh full-prefix plan:
+bucket and prefix and make a fresh full-prefix plan. This block explicitly
+reruns ordinary uninstall for the local installation without prompting, even
+when its integrations or local configuration are already removed. It refuses
+active-lock or unknown-scheduler errors. Keep the binary available until cleanup
+is done, stop every other uploader separately, and never use `--skip-scheduler`
+to establish that uploads have stopped:
 
 <!-- purge-recipe:all -->
 ```sh
 bucket=my-archive-bucket
 prefix=agent-archive/          # your prefix with its trailing slash, or empty for the whole bucket
-purge_prepare all
+if purge_stop_uploads uninstall; then
+  purge_prepare all
+fi
 ```
 
 Review **every printed key**. An empty prefix plans the entire bucket. If the

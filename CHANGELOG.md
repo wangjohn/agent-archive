@@ -15,6 +15,10 @@ Planned for v0.2.0. This release has not been tagged or published.
   `list --rebuild-index` reclaims legacy pointerless hints with bounded cleanup.
   Malformed legacy pointers cannot claim or delete v3 hints.
 
+- The bucket cleanup recipe works after local integrations or configuration
+  have been removed. An explicit ordinary uninstall check stops local uploads
+  before planning full-prefix deletion; failed stop checks invalidate prior plans.
+
 - Project capture scope resolves symlinked checkout paths even when a nested
   directory is absent, preserving nested exclusions and reinclusions. Existing
   components with another casing or canonically equivalent Unicode spelling
