@@ -323,7 +323,9 @@ func blockedReasonDetail(reason state.BlockedReason) string {
 		return "The application has deleted its own transcript, as each one does on its own schedule. The last published snapshot stays retained and readable, and capture resumes by itself if the file returns."
 	case state.BlockedReasonRecordTooLarge:
 		return fmt.Sprintf("One record in the transcript (or a plain-text transcript as a whole) is larger than the %d MiB record size limit, so the transcript cannot be read. The last published snapshot, if any, stays retained, and capture resumes when the transcript changes.", archive.MaxRecordBytes>>20)
-	case state.BlockedReasonTranscriptRewritten, state.BlockedReasonTranscriptTooLarge:
+	case state.BlockedReasonTranscriptRewritten:
+		return "The current transcript cannot prove extension of retained history. Automatic capture resumes only if extension can be proved. To preserve this history and capture current activity under a new linked ID, preview agent-archive recover SESSION_ID, then explicitly confirm it."
+	case state.BlockedReasonTranscriptTooLarge:
 		// Permanent for the current transcript: the general wording below.
 	}
 	return "The current transcript can no longer be captured; the last published snapshot, if any, stays retained."

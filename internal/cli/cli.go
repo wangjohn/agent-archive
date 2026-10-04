@@ -545,6 +545,7 @@ Manage capture
   agent-archive sync        Collect and upload pending changes now
   agent-archive pause       Pause collection, uploads, and cleanup
   agent-archive resume      Resume automatic capture
+  agent-archive recover     Start a linked generation for a blocked transcript
 
 Inspect history
   agent-archive list        Find archived sessions
@@ -622,6 +623,8 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 		return runMachinesWithInput(args[1:], stdin, stdout, stderr, env)
 	case "status":
 		return runStatusCommand(args[1:], stdout, stderr, env)
+	case "recover":
+		return runRecoverCommand(args[1:], stdout, stderr, env)
 	case "sync":
 		return runSyncCommand(args[1:], stdout, stderr, env)
 	case "pause", "resume":

@@ -88,6 +88,11 @@
               "minimum": 0
             }
           }
+        },
+        "previous_generation_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Previous archive generation, independent of parent_session_id subagent lineage."
         }
       }
     },

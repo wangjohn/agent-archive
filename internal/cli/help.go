@@ -13,6 +13,19 @@ import (
 )
 
 var commandHelp = map[string]string{
+	"recover": `Usage: agent-archive recover SESSION_ID [--confirm]
+
+Preview recovery of a local top-level append-only transcript blocked by a
+rewrite. Keep its history, feedback and handoffs; freeze its future native
+capture, and queue one new archive generation from the current transcript.
+Normal sync publishes it. Each generation expires under normal retention.
+Repeated confirmation of the old SESSION_ID returns the same successor. Imports
+remain in their original undo batch. Existing subagents keep their parent;
+new subagents use the active generation. Direct subagent recovery is not
+supported: start a fresh parent session instead. No storage is accessed.
+Recovery permanently fences older binaries out of this data directory.
+  --confirm    Start or resume the previewed generation without prompting
+`,
 	"eval": `Usage: agent-archive eval export SESSION_ID... | --ids-from - | --scan
        | --file PATH --harness NAME [--detail metadata|full] [--max-bytes N]
 

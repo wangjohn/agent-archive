@@ -47,15 +47,16 @@ type SourceCounts struct {
 
 // SourceHeader is the first line of a source bundle.
 type SourceHeader struct {
-	Kind             SourceLineKind           `json:"kind"`
-	SchemaVersion    int                      `json:"schema_version"`
-	ArchiveSessionID string                   `json:"archive_session_id"`
-	NativeSessionID  string                   `json:"native_session_id"`
-	ProjectID        string                   `json:"project_id"`
-	Capture          SourceCapture            `json:"capture"`
-	ParentSessionID  string                   `json:"parent_session_id,omitempty"`
-	LinkedSessions   []LinkedSessionReference `json:"linked_sessions,omitempty"`
-	Counts           SourceCounts             `json:"counts"`
+	Kind                 SourceLineKind           `json:"kind"`
+	SchemaVersion        int                      `json:"schema_version"`
+	ArchiveSessionID     string                   `json:"archive_session_id"`
+	NativeSessionID      string                   `json:"native_session_id"`
+	ProjectID            string                   `json:"project_id"`
+	Capture              SourceCapture            `json:"capture"`
+	PreviousGenerationID string                   `json:"previous_generation_id,omitempty"`
+	ParentSessionID      string                   `json:"parent_session_id,omitempty"`
+	LinkedSessions       []LinkedSessionReference `json:"linked_sessions,omitempty"`
+	Counts               SourceCounts             `json:"counts"`
 }
 
 // SourceLine is one decoded line. Kind names which one field is set.
@@ -95,7 +96,7 @@ func EncodeSource(w io.Writer, bundle SourceBundle) error {
 	header := SourceHeader{
 		Kind: SourceLineHeader, SchemaVersion: bundle.SchemaVersion,
 		ArchiveSessionID: bundle.ArchiveSessionID, NativeSessionID: bundle.NativeSessionID, ProjectID: bundle.ProjectID,
-		Capture: bundle.Capture, ParentSessionID: bundle.ParentSessionID, LinkedSessions: bundle.LinkedSessions,
+		Capture: bundle.Capture, PreviousGenerationID: bundle.PreviousGenerationID, ParentSessionID: bundle.ParentSessionID, LinkedSessions: bundle.LinkedSessions,
 		Counts: SourceCounts{NativeRecords: len(bundle.NativeRecords), NativeText: len(bundle.NativeText), SupplementalEvidence: len(bundle.SupplementalEvidence)},
 	}
 	write := func(value any) error {
@@ -402,7 +403,7 @@ func ReadSourceBundle(compressed io.Reader, options DecodeOptions) (SourceBundle
 			h := line.Header
 			bundle = SourceBundle{
 				SchemaVersion: h.SchemaVersion, ArchiveSessionID: h.ArchiveSessionID, NativeSessionID: h.NativeSessionID,
-				ProjectID: h.ProjectID, Capture: h.Capture, ParentSessionID: h.ParentSessionID, LinkedSessions: h.LinkedSessions,
+				ProjectID: h.ProjectID, Capture: h.Capture, PreviousGenerationID: h.PreviousGenerationID, ParentSessionID: h.ParentSessionID, LinkedSessions: h.LinkedSessions,
 				NativeRecords: make([]map[string]any, 0, min(h.Counts.NativeRecords, 1<<16)),
 			}
 		case SourceLineNativeRecord:

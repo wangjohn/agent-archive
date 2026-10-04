@@ -113,6 +113,9 @@ func (s *Store) RecoverSessionIndexScheduled(ctx context.Context, allowance time
 }
 
 func (s *Store) recoverSessionIndexSlice(ctx context.Context, allowance time.Duration) (bool, error) {
+	if err := s.ResumeGenerationRecoveries(ctx); err != nil {
+		return false, err
+	}
 	cursor, complete, err := s.prepareRecoveryCursor(ctx)
 	if err != nil || complete {
 		return complete, err
