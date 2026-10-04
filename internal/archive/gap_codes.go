@@ -9,6 +9,7 @@ package archive
 // dev/specs/privacy-filter.md for what each one means.
 var CaptureGapCodes = []string{
 	CaptureGapDiscoveredWithoutHookEvidence,
+	"recovered_generation",
 	// Source filter (every format).
 	"binary_content_omitted",
 	"content_truncated",

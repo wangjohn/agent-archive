@@ -38,6 +38,7 @@ func generationFixture(t *testing.T) (*Store, archive.SessionRegistration, time.
 	}
 	return s, reg, at
 }
+
 func generationBuilder(at time.Time) func(archive.SessionRegistration, string) (archive.SessionRegistration, PendingPublication, error) {
 	return func(reg archive.SessionRegistration, id string) (archive.SessionRegistration, PendingPublication, error) {
 		prev := reg.ArchiveSessionID
@@ -67,6 +68,29 @@ func TestGenerationRecoveryCrashMatrix(t *testing.T) {
 			next, found, err := s.GenerationSuccessor(reg.ArchiveSessionID)
 			if err != nil || !found {
 				t.Fatalf("receipt missing: %s %v", next, err)
+			}
+			// A hook can arrive after the interrupted process releases hooks.lock,
+			// before a collector resumes. Neither old nor new routing is safe
+			// until the fixed registration/request journal is complete.
+			key := agentmeta.SessionKey{Agent: agentmeta.Codex, NativeID: reg.NativeSessionID}
+			if step != "generation-complete" {
+				if active, found, err := s.ArchiveSessionID(key); !errors.Is(err, ErrSessionIndexRecoveryRequired) || found {
+					t.Fatalf("interrupted transition allowed hook lookup: %s %v %v", active, found, err)
+				}
+				if active, _, err := s.EnsureArchiveSessionID(key); !errors.Is(err, ErrSessionIndexRecoveryRequired) {
+					t.Fatalf("interrupted transition allowed start reservation: %s %v", active, err)
+				}
+			}
+			if step == "generation-journal" {
+				if err := local.Write(nativeSessionIndexPath(s.home, key.NativeID), sessionIndexEntry{ArchiveSessionID: reg.ArchiveSessionID}); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Remove(qualifiedSessionIndexPath(s.home, key)); err != nil {
+					t.Fatal(err)
+				}
+				if _, found, err := s.ArchiveSessionID(key); !errors.Is(err, ErrSessionIndexRecoveryRequired) || found {
+					t.Fatalf("legacy index bypassed recovery journal: %v", err)
+				}
 			}
 			s.onIndexStep = nil
 			if err := s.ResumeGenerationRecoveries(context.Background()); err != nil {
@@ -120,7 +144,7 @@ func TestGenerationIndexLossKeepsUniqueActiveTip(t *testing.T) {
 	if err := s.MarkSessionIndexRecoveryNeeded(); err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		complete, err := s.RecoverSessionIndexScheduled(context.Background(), SessionIndexRecoverySlice)
 		if err != nil {
 			t.Fatal(err)

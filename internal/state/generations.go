@@ -17,7 +17,9 @@ import (
 )
 
 const generationHeadsDir = "generation-heads"
+
 const generationNodesDir = "generation-nodes"
+
 const generationRecoveryDir = "generation-recovery"
 
 // A head is deliberately small: hooks never decode retained source or the
@@ -29,6 +31,7 @@ type generationHead struct {
 	Retired    bool                 `json:"retired,omitempty"`
 	Transition string               `json:"transition,omitempty"`
 }
+
 type generationNode struct {
 	Version      int                  `json:"version"`
 	Key          agentmeta.SessionKey `json:"key"`
@@ -36,6 +39,7 @@ type generationNode struct {
 	Previous     string               `json:"previous,omitempty"`
 	PreviousRoot string               `json:"previous_root,omitempty"`
 }
+
 type generationRecovery struct {
 	Version      int                          `json:"version"`
 	Key          agentmeta.SessionKey         `json:"key"`
@@ -50,9 +54,11 @@ type generationRecovery struct {
 func (s *Store) generationHeadPath(key agentmeta.SessionKey) string {
 	return filepath.Join(s.home, generationHeadsDir, filepath.Base(qualifiedSessionIndexPath(s.home, key)))
 }
+
 func (s *Store) generationNodePath(id string) string {
 	return filepath.Join(s.home, generationNodesDir, id+".json")
 }
+
 func (s *Store) generationRecoveryPath(id string) string {
 	return filepath.Join(s.home, generationRecoveryDir, id+".json")
 }
@@ -238,12 +244,15 @@ func (s *Store) resumeGenerationRecovery(id string) error {
 		return ErrSessionIndexRecoveryRequired
 	}
 	if err := s.freezeGenerationRecovery(r); err != nil {
-		return err
+		return fmt.Errorf("freeze recovery predecessor: %w", err)
 	}
 	if err := s.registerGenerationRecovery(r); err != nil {
-		return err
+		return fmt.Errorf("register recovery successor: %w", err)
 	}
-	return s.activateGenerationRecovery(r)
+	if err := s.activateGenerationRecovery(r); err != nil {
+		return fmt.Errorf("activate recovery successor: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) freezeGenerationRecovery(r generationRecovery) error {
@@ -319,7 +328,15 @@ func (s *Store) registerGenerationRecovery(r generationRecovery) error {
 	if err := s.indexStep("generation-pending"); err != nil {
 		return err
 	}
-	if err := s.writeUnderRequestLock(r.Next, s.requestPath(r.Next), nil, func(current fileSnapshot) (any, bool, error) { return *r.Request, true, nil }); err != nil {
+	if err := s.writeUnderRequestLock(r.Next, s.requestPath(r.Next), nil, func(current fileSnapshot) (any, bool, error) {
+		if !current.found {
+			return *r.Request, true, nil
+		}
+		// User feedback names an archive ID directly and can arrive while an
+		// interrupted transition gates native hooks. Preserve that newer token
+		// and evidence rather than overwriting it with the journal's request.
+		return mergeRequest(r.Next, current, "generation-recovery", r.Request.RequestedAt, false, nil)
+	}); err != nil {
 		return err
 	}
 	if err := s.indexStep("generation-request"); err != nil {
@@ -332,7 +349,14 @@ func (s *Store) activateGenerationRecovery(r generationRecovery) error {
 	if err := s.writeIndexUnderRequestLock(r.Next, qualifiedSessionIndexPath(s.home, r.Key), nil, func(current fileSnapshot) (any, bool, error) {
 		if current.found {
 			var prior qualifiedSessionIndexEntry
-			if json.Unmarshal(current.data, &prior) != nil || prior.Agent != r.Key.Agent || prior.NativeID != r.Key.NativeID || prior.ArchiveSessionID != r.Previous && prior.ArchiveSessionID != r.Next {
+			if json.Unmarshal(current.data, &prior) != nil || prior.Version != 1 || prior.Agent != r.Key.Agent || prior.NativeID != r.Key.NativeID {
+				return nil, false, ErrSessionIdentityConflict
+			}
+			// A gated hook requests derived-index recovery before queuing its
+			// admission intent. The journal remains authoritative over this
+			// exact content-free marker; arbitrary owners still fail closed.
+			requested := prior == (qualifiedSessionIndexEntry{Version: 1, Agent: r.Key.Agent, NativeID: r.Key.NativeID, Recovery: true})
+			if !requested && (prior.Conflict || prior.Absent || prior.Recovery || prior.Reservation != "" || prior.ArchiveSessionID != r.Previous && prior.ArchiveSessionID != r.Next) {
 				return nil, false, ErrSessionIdentityConflict
 			}
 		}
@@ -392,6 +416,34 @@ func (s *Store) generationLookup(key agentmeta.SessionKey, id string) error {
 	}
 	if h.Retired || h.Active != id {
 		return ErrSessionIndexRecoveryRequired
+	}
+	return nil
+}
+
+// generationRegistrationAllowed closes both journal/head commit windows for
+// bounded hook lookup. Completed receipts are tiny; an unfinished journal may
+// contain publication bytes, so read only a fixed prefix and fail closed.
+func (s *Store) generationRegistrationAllowed(key agentmeta.SessionKey, reg archive.SessionRegistration) error {
+	for _, previous := range []string{reg.ArchiveSessionID, reg.PreviousGenerationID} {
+		if previous == "" {
+			continue
+		}
+		file, err := os.Open(s.generationRecoveryPath(previous))
+		if errors.Is(err, os.ErrNotExist) && previous == reg.ArchiveSessionID {
+			continue
+		}
+		if err != nil {
+			return ErrSessionIndexRecoveryRequired
+		}
+		data, readErr := io.ReadAll(io.LimitReader(file, 4097))
+		_ = file.Close()
+		var receipt generationRecovery
+		if readErr != nil || len(data) > 4096 || json.Unmarshal(data, &receipt) != nil || receipt.Version != 1 || !receipt.Complete || receipt.Key != key || receipt.Previous != previous || !safeFileComponent(receipt.Next) || receipt.Next == previous {
+			return ErrSessionIndexRecoveryRequired
+		}
+		if previous == reg.PreviousGenerationID && receipt.Next != reg.ArchiveSessionID {
+			return ErrSessionIdentityConflict
+		}
 	}
 	return nil
 }

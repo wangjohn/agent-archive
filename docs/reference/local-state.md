@@ -141,7 +141,9 @@ list in step with `state.OwnedEntries()`.
 `generation-heads/` holds one small qualified-native-identity head, naming its
 unique active archive ID, a retirement marker, or an interrupted transition.
 Hooks read this bounded head and the selected registration, never enumerate
-or decode the complete chain. `generation-nodes/` retains immutable identity
+or decode the complete chain. They also read at most 4097 bytes from each of
+the selected generation's own and predecessor receipts; unfinished journals
+fail closed before their publication body is decoded. `generation-nodes/` retains immutable identity
 nodes, and `generation-recovery/` retains transition journals which become
 small immutable successor receipts after completion. These identity records
 contain no conversation content after a transition completes. They survive
