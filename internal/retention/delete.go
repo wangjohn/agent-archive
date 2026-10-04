@@ -2,6 +2,7 @@ package retention
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -22,18 +23,19 @@ func DeleteWholeSession(ctx context.Context, store storage.ObjectStore, harness,
 	if err := store.Delete(ctx, metadataKey); err != nil {
 		return fmt.Errorf("delete metadata: %w", err)
 	}
-	if err := listingindex.DeleteSession(ctx, store, harness, archiveSessionID); err != nil {
-		return fmt.Errorf("delete listing index: %w", err)
-	}
+	indexErr := listingindex.DeleteSession(ctx, store, harness, archiveSessionID)
 	prefix := fmt.Sprintf("sessions/%s/%s/", harness, archiveSessionID)
 	objects, err := store.List(ctx, prefix)
 	if err != nil {
-		return fmt.Errorf("list %q: %w", prefix, err)
+		return errors.Join(indexErr, fmt.Errorf("list %q: %w", prefix, err))
 	}
 	for _, obj := range objects {
 		if err := store.Delete(ctx, obj.Key); err != nil {
-			return fmt.Errorf("delete %q: %w", obj.Key, err)
+			return errors.Join(indexErr, fmt.Errorf("delete %q: %w", obj.Key, err))
 		}
+	}
+	if indexErr != nil {
+		return fmt.Errorf("delete listing index: %w", indexErr)
 	}
 	return nil
 }

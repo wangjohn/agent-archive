@@ -24,6 +24,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/listingindex"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
@@ -240,6 +241,48 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	// is informational, and each parent's capture gap is already saved.
 	if err := p.loadWork(); err != nil {
 		return Result{}, err
+	}
+	// Auxiliary maintenance has its own bounded slice and never prevents capture.
+	repairs, repairErr := local.ListingRepairs(32)
+	if repairErr != nil {
+		p.result.Errors["listing-maintenance"] = repairErr
+	}
+	for id, repair := range repairs {
+		reg, found, err := local.LoadRegistration(id)
+		if err != nil {
+			p.result.Errors["listing-maintenance"] = err
+			continue
+		}
+		if !found || reg.DestinationID != repair.DestinationID {
+			_ = local.RemoveListingRepair(id)
+			continue
+		}
+		expected, keyErr := archive.MetadataObjectKey(reg.Harness.Name, id)
+		if keyErr != nil || repair.MetadataKey != expected {
+			p.result.Errors["listing-maintenance"] = errors.New("invalid listing repair identity")
+			continue
+		}
+		if opts.AcceptSession != nil && !opts.AcceptSession(reg) {
+			continue
+		}
+		getter, ok := store.(storage.VersionedGetter)
+		if !ok {
+			continue
+		}
+		data, _, err := getter.GetVersioned(ctx, repair.MetadataKey)
+		if errors.Is(err, storage.ErrNotFound) {
+			_ = local.RemoveListingRepair(id)
+			continue
+		}
+		if err == nil {
+			err = listingindex.PublishRevision(ctx, store, repair.MetadataKey, data)
+		}
+		if err == nil {
+			err = local.RemoveListingRepair(id)
+		}
+		if err != nil {
+			p.result.Errors["listing-maintenance"] = err
+		}
 	}
 	orderOldestRequestsFirst(p.registrations, p.requests)
 	closeCursorPass := openCursorPass(p.registrations, &p.opts)

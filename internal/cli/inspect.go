@@ -118,9 +118,12 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		return 1
 	}
 	if *rebuildIndex {
-		if _, err := reader.RebuildIndex(context.Background(), store, archiveSessionsPrefix); err != nil {
-			terminal.Printf(stderr, "agent-archive: list: rebuild index: %v\n", err)
+		terminal.Println(stderr, "agent-archive: list: rebuilding listing entries from live metadata…")
+		if count, err := reader.RebuildIndex(context.Background(), store, archiveSessionsPrefix); err != nil {
+			terminal.Printf(stderr, "agent-archive: list: rebuild index stopped after %d metadata entries: %v; rerun to resume\n", count, err)
 			return 1
+		} else {
+			terminal.Printf(stderr, "agent-archive: list: rebuilt %d metadata entries.\n", count)
 		}
 	}
 	scope, err := scopeFor(env, *project, *allProjects)
@@ -133,14 +136,17 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	// applied before --limit, so it reads them all; so does a search, and
 	// every table and browser, which leave subagents out before --limit
 	// counts (a browser may also switch to the scope).
-	full := opts.limit == 0 || opts.imported || opts.hookCaptured || scope.narrowed() || !q.empty() || !opts.jsonOut
+	full := opts.limit == 0 || opts.imported || opts.hookCaptured || scope.narrowed() || !q.empty() || browsing
 	var stopList func()
 	if !opts.jsonOut {
 		stopList = startActivity(stdout, "Listing sessions…")
 	} else {
 		stopList = func() {}
 	}
-	listOpts := reader.ListOptions{Cache: listCache(env, opts.noCache), Skipped: warnSkippedSidecar(stderr, "list")}
+	listOpts := reader.ListOptions{Cache: listCache(env, opts.noCache), Skipped: warnSkippedSidecar(stderr, "list"),
+		ActivityOrder: !opts.jsonOut && !full, TopLevelOnly: !opts.jsonOut && !full,
+		CompatibilityScan: func(reason string) { terminal.Printf(stderr, "agent-archive: list: %s.\n", reason) },
+	}
 	listLimit := opts.limit
 	if full {
 		listLimit = 0
@@ -165,7 +171,7 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	}
 	format := listFormatOptions{
 		Now: env.now(), Verbose: opts.verbose, Projects: labels, Style: styleFor(stdout),
-		GroupByProject: true, Numbered: browsing, Children: childCounts(sessions),
+		GroupByProject: true, Numbered: browsing, Children: listingChildren(listed, sessions),
 	}
 	words := strings.Join(strings.Fields(query), " ")
 	choices := listChoices(scope, format, browsing, sessions, opts.limit, view, words)
@@ -262,6 +268,8 @@ func (v listViews) view(s sessionScope) listView {
 		}
 		shown, total, truncated := applyListLimit(matches, v.limit)
 		return listView{shown: shown, total: total, truncated: truncated, outside: res.outside, note: res.outsideNote(s)}
+	case !v.jsonOut && !v.full:
+		return listView{shown: v.sessions, total: v.listed.TotalMatched, truncated: v.listed.TotalMatched > len(v.sessions), hidden: v.listed.Hidden}
 	case !v.jsonOut:
 		return topLevelView(v.sessions, s, v.limit)
 	case v.full:
@@ -934,4 +942,11 @@ func listOrDash(names []string) string {
 		display[i] = archive.DisplayLine(name)
 	}
 	return strings.Join(display, ",")
+}
+
+func listingChildren(listed reader.RecentResult, sessions []archive.Metadata) map[string]int {
+	if listed.Children != nil {
+		return listed.Children
+	}
+	return childCounts(sessions)
 }

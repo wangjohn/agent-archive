@@ -1299,3 +1299,11 @@ the answer goes into the guide.
   cannot run anything. It expects the session to be found without a
   which-one question; the `agent-archive` skill never adds `--to`, which
   belongs to `/handoff`.
+
+## Revision index update
+
+The revision index now supplies activity dates and per-parent counts from
+freshly covered canonical headers. Unscoped noninteractive tables can select
+their top-level limit before metadata bodies are read. Interactive browsing,
+project scopes and search retain exhaustive reads. See
+[listing performance and revision protocol](../maintainers/list-performance.md).

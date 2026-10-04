@@ -185,5 +185,5 @@ func DeleteSession(ctx context.Context, store storage.ObjectStore, harness, id s
 			return err
 		}
 	}
-	return nil
+	return deleteRevisions(ctx, store, harness, id)
 }

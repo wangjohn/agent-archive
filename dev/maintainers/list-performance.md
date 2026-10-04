@@ -1,49 +1,67 @@
 # Listing performance target
 
-The baseline implementation lists every object below `sessions/` and reads
-every metadata sidecar before applying the default `--limit 50`. A fixture
-with 10,000 sessions and three source snapshots per session therefore
-requires 40,000 listed keys and 10,000 sidecar reads on a cold cache. A warm
-cache avoids downloads but still lists all 40,000 keys and reads 10,000 local
-sidecars.
+Ordinary unscoped, noninteractive `list --limit N` and `list --json --limit N`
+use revision-qualified `listing/v2/` entries. A complete healthy archive reads
+at most N canonical metadata bodies on a cold run, or N selected cache files
+on a warm run, and no transcript bodies. Both the 10,000 and 20,000 session
+fixtures assert the default 50-body budget against the exhaustive reader.
+Warm unchanged selections perform no remote metadata GETs.
 
-For an indexed archive with 10,000 sessions, the target for an unfiltered
-default list is at most **two listing pages** and **60 metadata reads** on
-both cold and warm runs, with no source downloads. A full scan remains
-available with `--limit 0`, and an older archive without an index uses that
-scan until `list --rebuild-index` completes. The index is a hint: every
-displayed session must pass a live sidecar read and validation.
+The budget covers bodies, not discovery: fresh canonical and index LIST
+headers are enumerated on every query, proportional to archive size. Text
+uses activity time, excludes subagents before limiting, and obtains child
+counts from covered summaries. JSON preserves capture-time order. Equal
+capture times use harness and session identity as deterministic tie breakers.
 
-The target covers `list --json` without search words, outside any project
-or with `--all-projects`. Every other listing reads the whole listing,
-through the local metadata cache, as the handoff picker and bare `show` do
-(see [session finding](../specs/session-finding.md#deviations)):
+Project scope, interactive browsing, search, origin, model, skill and
+completeness queries remain exhaustive, as does `--limit 0`. A missing,
+stale, unsupported or damaged index produces an explicit compatibility-scan
+diagnostic and complete legacy results. A selected object deleted or changed
+during a bounded query fails explicitly, suggesting retry or `--limit 0`;
+it never refills indefinitely. Exact counts describe discovered matching
+identities, not validation of every unselected sidecar.
 
-- Inside a project, `list` and `list --json` apply the repository's scope
-  before `--limit`.
-- `list`'s table and browser, wherever they run (outside any project and
-  with `--all-projects` too), leave subagent sessions out before `--limit`
-  counts, and count them for the footer and each parent's `· N subagents`
-  hint. The index's newest page cannot do either: a top-level filter on it
-  would still read several subagent sidecars for each session shown, and the
-  counts need every one.
-- `list "<words>"` searches every session.
+## Revision protocol
 
-The index's repository-scoped window and its per-parent subagent counts are
-to bring those back under the target.
+Canonical metadata is authoritative. Keys are
+`listing/v2/<19-digit reverse Unix nanoseconds>/<harness>/<id>/<summary>`.
+The summary is canonical JSON encoded as unpadded base64url, containing the
+opaque provider ETag (`v`), SHA-256 of canonical bytes (`h`), activity timestamp
+(`a`), optional parent ID (`p`) and replay marker (`r`). No source or skill
+content is included. Unsupported/noncanonical summaries and keys exceeding
+S3's 1,024-byte key bound are refused. Activity is EndedAt when present,
+otherwise StartedAt for imports, otherwise CapturedAt.
 
-The benchmark in `internal/reader/list_index_bench_test.go` reports elapsed
-time and allocations for the cold full-scan baseline, indexed cold listing,
-and indexed warm listing. Memory-store listing is an in-process stand-in for
-remote pages; the request-count target above is the release gate.
+Each live canonical header must have an entry matching exact key and opaque
+ETag before any body is selected. No ready marker can establish coverage.
+The selected response returns bytes and ETag together; its ETag, SHA-256,
+canonical identity, schema and summary must match. Cache bytes are checked
+against the same entry digest. ETags are never decoded as content hashes on
+this path. Stores without response-bound validators use the exhaustive path.
+S3 and R2 use their GetObject ETag; fake HTTP and opaque-validator tests cover
+the protocol. Real provider acceptance remains a release acceptance task.
 
-On an Intel macOS development machine, a one-iteration run on 2026-09-28
-measured 97.7 ms and 98.6 MB allocated for the cold full scan; indexed cold
-and warm runs measured 6.5 ms / 214 KB and 6.7 ms / 214 KB respectively.
-These are local measurements, not a network latency guarantee. The indexed
-test asserts one listing page and 51 live sidecar reads
-for 300 sessions; the same early-stop rule applies to the 10,000-session
-benchmark fixture.
+Publication journals a destination-bound per-session repair intent before
+canonical commit. Successful capture survives an auxiliary failure; its
+warning and repair intent remain visible. Collector passes retry at most 32
+intents, rotating the cursor so a failing group cannot starve later intents.
+Entries are empty immutable objects; per-session pointers are written first
+so interrupted writes stay discoverable by cleanup. A successful repair
+retires at most 32 obsolete entries and leaves its intent until cleanup is
+finished. Retention and undo delete canonical discovery first, then index
+pointers and sources; an auxiliary failure does not postpone source deletion.
+
+`list --rebuild-index` scans and validates canonical metadata using
+response-bound validators, writes only auxiliary entries, and cleans invalid
+v2 keys after successful validation. Writes are idempotent; rerunning resumes
+a partial rebuild. A failure reports how many metadata entries completed.
+Rebuild and publication never rewrite transcripts for index maintenance.
+Concurrent writers require no global lock. A concurrent rewrite invalidates
+fresh coverage and produces compatibility scanning or a bounded-query error.
+
+The benchmark in `internal/reader/list_index_bench_test.go` compares the cold
+full scan, indexed cold selection and a real selected metadata cache. Timing
+is supplementary; deterministic operation counts are the regression gate.
 
 ## Full scans
 
