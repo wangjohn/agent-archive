@@ -151,6 +151,7 @@ func runSetupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 	if opts.given() && !opts.yes {
 		return fs.usageError("answers given as flags need --yes (or run agent-archive setup alone to be asked)")
 	}
+
 	// Every step asks something, so without a terminal setup would stop at
 	// its first question with nothing but an end-of-input error.
 	if !opts.yes && !env.interactive(stdin) {
@@ -1108,33 +1109,54 @@ func anotherMachineCommand(cfg config.Config, userHome string, environments ...E
 		args = append(args, "--skills")
 	}
 
-	for _, project := range cfg.Archive.Projects {
-		if !project.Included {
-			continue
-		}
-		key, checked := keys[project.Root]
-		if !checked {
-			child, done := context.WithTimeout(ctx, 250*time.Millisecond)
-			// A key describes the whole repository. A configured subdirectory
-			// must keep its path to avoid widening capture on another machine.
-			if child.Err() == nil {
-				if info, err := os.Stat(filepath.Join(project.Root, ".git")); err == nil && (info.IsDir() || info.Mode().IsRegular()) {
-					key = env.projectRepoKey(child, project.Root)
-				}
+	projectStart := len(args)
+	scope := ""
+	if hasProjectExclusions(cfg.Archive.Projects) {
+		scope = portableProjectScope(cfg.Archive.Projects, userHome, env, ctx, nil)
+		args = append(args, "--project-scope-file", "-")
+	} else {
+		for _, project := range cfg.Archive.Projects {
+			if !project.Included {
+				continue
 			}
-			done()
-			keys[project.Root] = key
+			canonicalRoot := local.CanonicalPath(project.Root)
+			key, checked := keys[canonicalRoot]
+			if !checked {
+				child, done := context.WithTimeout(ctx, 250*time.Millisecond)
+				// A key describes the whole repository. A configured subdirectory
+				// must keep its path to avoid widening capture on another machine.
+				if child.Err() == nil {
+					if info, err := os.Stat(filepath.Join(project.Root, ".git")); err == nil && (info.IsDir() || info.Mode().IsRegular()) {
+						candidate, top, known := env.projectRepository(child, project.Root)
+						if known && local.CanonicalPath(top) == local.CanonicalPath(project.Root) {
+							key = candidate
+						}
+					}
+				}
+				done()
+				keys[canonicalRoot] = key
+			}
+			if key != "" {
+				args = append(args, "--project-repo", key)
+			} else {
+				args = append(args, "--project", homeRelative(project.Root, userHome))
+			}
 		}
-		if key != "" {
-			args = append(args, "--project-repo", key)
-		} else {
-			args = append(args, "--project", homeRelative(project.Root, userHome))
-		}
+	}
+	if scope == "" && scopeArgumentsNeedStream(args) {
+		scope = portableProjectScope(cfg.Archive.Projects, userHome, env, ctx, keys)
+		args = append(args[:projectStart], "--project-scope-file", "-")
 	}
 	for i, arg := range args {
 		args[i] = shellWord(arg)
 	}
-	return strings.Join(args, " ")
+	command := strings.Join(args, " ")
+	if scope != "" {
+		// JSON is a single line beginning with [, so it cannot terminate this
+		// quoted heredoc. Its paths never become shell expansions or argv.
+		command += " <<'AGENT_ARCHIVE_PROJECT_SCOPE'\n" + scope + "\nAGENT_ARCHIVE_PROJECT_SCOPE"
+	}
+	return command
 }
 
 // homeRelative writes path from ~ when it is in the home folder. Project
@@ -2126,7 +2148,7 @@ func isGoBuildDir(name string) bool {
 }
 
 func runPairingSetupCommand(opts setupOptions, refresh, abandon bool, fs *commandFlags, stdin io.Reader, stdout, stderr io.Writer, env Env) int {
-	if refresh || abandon || opts.storageFlagsSupplied || opts.prefixSupplied || opts.retentionSupplied || opts.requireSkillSupplied || opts.noRequireSkillSupplied || opts.apps != "" || opts.skillEvidence != "" || opts.noSkills || opts.skills || len(opts.projectRepos) > 0 {
+	if refresh || abandon || opts.storageFlagsSupplied || opts.prefixSupplied || opts.retentionSupplied || opts.requireSkillSupplied || opts.noRequireSkillSupplied || opts.apps != "" || opts.skillEvidence != "" || opts.noSkills || opts.skills || len(opts.projectRepos) > 0 || opts.projectScopeSupplied || opts.projectScopeFileSupplied || opts.projectScope != "" || opts.projectScopeFile != "" {
 		return fs.usageError("pairing accepts --yes, --verbose, --project and one bundle input; other settings are reviewed interactively")
 	}
 	if err := setupPairing(opts, stdin, stdout, stderr, env.choosingBackend()); err != nil {

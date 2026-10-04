@@ -28,33 +28,37 @@ const (
 
 // setupOptions are setup's answers given as flags, for setup --yes.
 type setupOptions struct {
-	pair                   bool
-	pairFile               string
-	prefix                 string
-	prefixSupplied         bool
-	retentionDays          int
-	retentionSupplied      bool
-	requireSkillUse        bool
-	noRequireSkillUse      bool
-	requireSkillSupplied   bool
-	noRequireSkillSupplied bool
-	provider               string
-	bucket                 string
-	r2Account              string
-	r2KeyID                string
-	awsProfile             string
-	region                 string
-	apps                   string
-	projects               []string
-	projectRepos           []string
-	projectMatches         *projectMatchResult
-	yes                    bool
-	verbose                bool
-	skillEvidence          string
-	noSkills               bool
-	skills                 bool
-	allowNetworkHome       bool
-	storageFlagsSupplied   bool
+	pair                     bool
+	pairFile                 string
+	prefix                   string
+	prefixSupplied           bool
+	retentionDays            int
+	retentionSupplied        bool
+	requireSkillUse          bool
+	noRequireSkillUse        bool
+	requireSkillSupplied     bool
+	noRequireSkillSupplied   bool
+	provider                 string
+	bucket                   string
+	r2Account                string
+	r2KeyID                  string
+	awsProfile               string
+	region                   string
+	apps                     string
+	projects                 []string
+	projectRepos             []string
+	projectScope             string
+	projectScopeFile         string
+	projectScopeSupplied     bool
+	projectScopeFileSupplied bool
+	projectMatches           *projectMatchResult
+	yes                      bool
+	verbose                  bool
+	skillEvidence            string
+	noSkills                 bool
+	skills                   bool
+	allowNetworkHome         bool
+	storageFlagsSupplied     bool
 }
 
 // skillsChoice is what the person asked of the agent skills on this run:
@@ -133,6 +137,8 @@ func setupFlags(fs *commandFlags, args []string) (setupOptions, bool) {
 	fs.BoolVar(&opts.skills, "skills", false, "install the agent skills again after --no-skills")
 	fs.BoolVar(&opts.allowNetworkHome, "allow-network-home", false, "allow a data directory or systemd unit directory on a network filesystem (Linux), when only one machine uses this home")
 	fs.Var(&projectRepos, "project-repo", "repository key to capture (repeatable; unresolved or ambiguous keys are skipped)")
+	fs.StringVar(&opts.projectScope, "project-scope", "", "portable JSON capture rules, including exclusions")
+	fs.StringVar(&opts.projectScopeFile, "project-scope-file", "", "read portable capture rules from PATH, or - for stdin")
 	fs.Var(&projects, "project", "project directory to capture (repeatable)")
 	fs.BoolVar(&opts.yes, "yes", false, "apply without questions")
 	fs.BoolVar(&opts.verbose, "verbose", false, "show a failed storage check's full error")
@@ -144,6 +150,10 @@ func setupFlags(fs *commandFlags, args []string) (setupOptions, bool) {
 	fs.Visit(func(f *flag.Flag) {
 		//lint:ignore LV1001 flag names are the ones defined just above
 		switch f.Name {
+		case "project-scope":
+			opts.projectScopeSupplied = true
+		case "project-scope-file":
+			opts.projectScopeFileSupplied = true
 		case "prefix":
 			opts.prefixSupplied = true
 		case "retention-days":
@@ -161,7 +171,7 @@ func setupFlags(fs *commandFlags, args []string) (setupOptions, bool) {
 
 // given reports whether any answer flag was passed.
 func (o setupOptions) given() bool {
-	return o.prefixSupplied || o.retentionSupplied || o.requireSkillSupplied || o.noRequireSkillSupplied || o.storageFlagsSupplied || o.apps != "" || len(o.projects) > 0 || len(o.projectRepos) > 0 || o.skillEvidence != ""
+	return o.prefixSupplied || o.retentionSupplied || o.requireSkillSupplied || o.noRequireSkillSupplied || o.storageFlagsSupplied || o.apps != "" || len(o.projects) > 0 || len(o.projectRepos) > 0 || o.projectScopeSupplied || o.projectScopeFileSupplied || o.projectScope != "" || o.projectScopeFile != "" || o.skillEvidence != ""
 }
 
 // setupWithoutQuestions is setup --yes: the answers come from opts, the
@@ -169,6 +179,15 @@ func (o setupOptions) given() bool {
 // check and the same transaction as interactive setup, and refuses before
 // changing anything when an answer is missing.
 func setupWithoutQuestions(opts setupOptions, stdin io.Reader, out, errOut io.Writer, env Env) error {
+	opts, err := readProjectScopeInput(opts, stdin)
+	if err != nil {
+		return err
+	}
+	return applySetupWithoutQuestions(opts, stdin, out, errOut, env)
+}
+
+// applySetupWithoutQuestions applies answers after explicit scope input is read.
+func applySetupWithoutQuestions(opts setupOptions, stdin io.Reader, out, errOut io.Writer, env Env) error {
 	home, err := env.home()
 	if err != nil {
 		return err
@@ -213,7 +232,7 @@ func setupWithoutQuestions(opts setupOptions, stdin io.Reader, out, errOut io.Wr
 	if err != nil {
 		return err
 	}
-	if secret.SecretAccessKey, err = scriptR2Secret(secret, p, stdin, env); err != nil {
+	if secret.SecretAccessKey, err = scopeR2Secret(secret, p, stdin, env, opts); err != nil {
 		return err
 	}
 	// The checks interactive setup makes before its first question, for the
@@ -378,7 +397,30 @@ func setupAnswers(existing config.Config, opts setupOptions, home, userHome stri
 			}
 		}
 	}
-	problems = append(problems, setupProjects(&cfg, opts.projects, userHome)...)
+	if opts.projectScope != "" {
+		problems = append(problems, setupProjectScope(&cfg, opts.projectScope, userHome, env)...)
+	}
+	paths := opts.projects
+	if opts.projectScope != "" {
+		paths = nil
+		scopeRules := slices.Clone(cfg.Archive.Projects)
+		for i := range scopeRules {
+			scopeRules[i].Root = local.CanonicalPath(scopeRules[i].Root)
+		}
+		for _, path := range opts.projects {
+			root, err := projectDir(path, userHome)
+			if err != nil {
+				problems = append(problems, fmt.Errorf("--project %w", err))
+				continue
+			}
+			if owner, found := nearestScopeRule(scopeRules, root); found && !owner.Included {
+				problems = append(problems, fmt.Errorf("--project %s conflicts with transferred capture scope; express reinclusions in --project-scope", root))
+				continue
+			}
+			paths = append(paths, path)
+		}
+	}
+	problems = append(problems, setupProjects(&cfg, paths, userHome)...)
 	secret, storageProblems := setupStorageFromFlags(&cfg, opts, env)
 	problems = append(problems, storageProblems...)
 	if cfg.RetentionDays <= 0 {
@@ -387,12 +429,19 @@ func setupAnswers(existing config.Config, opts setupOptions, home, userHome stri
 	return cfg, secret, answersError(problems)
 }
 
-// scriptR2Secret reads a script's R2 secret for the new key in secret, set
+// scopeR2Secret reads a script's R2 secret for the new key in secret, set
 // in the environment or piped in. setup --yes calls it once every other
 // answer checks out, so nothing is read from standard input for a run that
 // is refused, and a missing secret is reported before launchctl or the
 // Keychain is asked. A terminal is asked for it only after the preflight
 // checks, so it returns nothing then.
+func scopeR2Secret(secret credentials.R2Credentials, p *prompter, stdin io.Reader, env Env, opts setupOptions) (string, error) {
+	if opts.projectScopeFile == "-" && secret.AccessKeyID != "" && lookupEnvTrimmed(env, envR2SecretAccessKey) == "" {
+		return "", errors.New("--project-scope-file - owns stdin; set AGENT_ARCHIVE_R2_SECRET_ACCESS_KEY for the R2 secret, or read scope from a file")
+	}
+	return scriptR2Secret(secret, p, stdin, env)
+}
+
 func scriptR2Secret(secret credentials.R2Credentials, p *prompter, stdin io.Reader, env Env) (string, error) {
 	if secret.AccessKeyID == "" || (env.interactive(stdin) && lookupEnvTrimmed(env, envR2SecretAccessKey) == "") {
 		return "", nil

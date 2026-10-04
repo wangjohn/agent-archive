@@ -148,6 +148,15 @@ Planned for v0.2.0. This release has not been tagged or published.
 
 ### Fixed
 
+- Second-machine setup commands preserve excluded folders and reincluded
+  subtrees, including when a repository checkout moves to another path.
+  Scope transfer resolves all rules before applying any inclusion, treats
+  symlink aliases as the same scope, and refuses conflicts with saved
+  destination exclusions or reinclusions. Distinct clones retain separate
+  scopes, unresolved symlinks are refused, and pairing rejects ordinary
+  scope-transfer flags. Compatible keyed scopes can be reapplied; equal
+  alias decisions coalesce and conflicting aliases are refused. Printed
+  scope transfers use stdin to avoid operating-system argument limits.
 - File handoff retrieval commands preserve transcript paths containing shell
   metacharacters, quotes, backslashes, and newlines without expanding them.
 

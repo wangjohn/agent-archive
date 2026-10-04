@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-archive.dev/schemas/project-scope.schema.json",
+  "description": "Atomic local capture-scope input to setup --project-scope or --project-scope-file. Repository-relative paths must remain within the uniquely matched checkout after resolving symlinks. Other paths are absolute or start with ~/ (or equal ~). Excluded paths need not exist. Duplicate resolved paths are refused. Saved destination exclusions remain in force; conflicting saved reinclusions or transferred inclusions refuse the whole transfer.",
+  "type": "array",
+  "minItems": 1,
+  "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["path", "included"],
+    "properties": {
+      "repo_key": {
+        "type": "string",
+        "pattern": "^repo-[0-9a-f]{16}$"
+      },
+      "path": {
+        "type": "string",
+        "minLength": 1
+      },
+      "included": {
+        "type": "boolean"
+      }
+    }
+  }
+}
