@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -113,6 +114,9 @@ func (s *Store) RecoverSessionIndexScheduled(ctx context.Context, allowance time
 }
 
 func (s *Store) recoverSessionIndexSlice(ctx context.Context, allowance time.Duration) (bool, error) {
+	if err := s.ResumeGenerationRecoveries(ctx); err != nil {
+		return false, err
+	}
 	cursor, complete, err := s.prepareRecoveryCursor(ctx)
 	if err != nil || complete {
 		return complete, err
@@ -456,7 +460,7 @@ func (s *Store) applyPackedShardPhase(ctx context.Context, cursor *sessionRecove
 			shard := packedShardName(i)
 			data, err := s.preparePackedShardSlice(ctx, marker, owners[i], children[i], deadline)
 			if err != nil {
-				prepareErr = err
+				prepareErr = fmt.Errorf("packed shard %s: %w", shard, err)
 				break
 			}
 			path := packedIndexPath(s.home, shard)

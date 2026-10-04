@@ -10,11 +10,32 @@ Planned for v0.2.0. This release has not been tagged or published.
 
 ### Fixed
 
+- Existing project-scoped hook sessions decline continuation updates when the
+  incoming checkout or a saved scope rule has unknown filesystem identity,
+  preserving their transcript locator and lifecycle timestamps.
+
+- The bucket cleanup recipe works after local integrations or configuration
+  have been removed. An explicit ordinary uninstall check stops local uploads
+  before planning full-prefix deletion; failed stop checks invalidate prior plans.
+
+- Project capture scope resolves symlinked checkout paths even when a nested
+  directory is absent, preserving nested exclusions and reinclusions. Existing
+  components with another casing or canonically equivalent Unicode spelling
+  retain those rules on volumes that treat them as one location. Capture refuses
+  unresolved symlink identities and ambiguous absent case or Unicode normalization
+  variants instead of falling through to an included ancestor.
+
 - Before-setup handoff launch files use a private temporary namespace per user,
   so users sharing a temporary directory do not block one another. Reuse and
   seven-day cleanup check ownership as well as permissions and reject symlinks.
 
 ### Added
+
+- `agent-archive recover SESSION_ID` previews a linked generation for a
+  rewritten transcript; `--confirm` preserves the earlier archive and queues
+  current activity under a new ID. Each generation keeps its own retention
+  age. Recovery permanently requires a generation-aware writer. See the
+  [guide](docs/guides/transcript-recovery.md).
 
 - **`agent-archive eval export`** prints archived sessions for an evaluation
   tool: one JSON line per session, in a versioned format

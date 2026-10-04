@@ -135,3 +135,51 @@ list in step with `state.OwnedEntries()`.
   backup tools to skip it; never `/tmp` and never the data directory, which
   may be backed up or synced. The copy is removed when the read ends, and an
   abandoned one is swept by the next read.
+
+## Archive generations
+
+`generation-heads/` holds one small qualified-native-identity head, naming its
+unique active archive ID, a retirement marker, or an interrupted transition.
+Hooks read this bounded head and the selected registration, never enumerate
+or decode the complete chain. They also read at most 4097 bytes from each of
+the selected generation's own and predecessor receipts; unfinished journals
+fail closed before their publication body is decoded. `generation-nodes/` retains immutable identity
+nodes, and `generation-recovery/` retains transition journals which become
+small immutable successor receipts after completion. These identity records
+contain no conversation content after a transition completes. They survive
+content retention so index reconstruction cannot route to a frozen ancestor.
+Unknown or damaged lineage fails closed.
+
+Settled frozen generations use a retained-maintenance scan signature, separate
+from native file stats. A pass checks bounded lineage authority, derivation and
+privacy versions, recorded HEAD and outstanding work before skipping them.
+Unchanged frozen history costs no source decode or per-session scan journal;
+feedback, policy or version changes and interrupted publications still trigger
+maintenance from retained evidence.
+
+Recovery holds `collector.lock`, then `hooks.lock`. Registration, request and
+index commits use the existing staging helpers: disk syncs occur outside
+request locks, and membership commits retain request-before-membership order.
+The journal precedes the routing fence, immutable nodes, old capture freeze,
+successor registration, fixed pending publication, fixed request token, index
+redirect, active head and completed receipt. A collector resumes interrupted
+transitions before its qualified index census and native scans. Every retry
+uses the same successor ID, capture time and frozen publication bytes.
+
+Retention stages active-tip retirement before its request lock, commits that
+head before removing registration/index, and syncs after releasing the lock.
+Earlier frozen generations expire independently. A genuine fresh start can
+create an unrelated root after tip retirement; immutable prior-root membership
+lets the collector validate remaining historical registrations while keeping
+that separate from published transcript continuity. Imports keep their original
+batch, admission and destination, so batch undo continues to select all of its
+generations.
+
+The packed native-identity census validates generation lineage before selecting
+the active tip; linked generations are not unrelated duplicate owners. Queued
+children may still name a retained frozen parent. A journal or validated lineage
+census can replace an obsolete packed predecessor through a fenced per-key
+override, while ordinary hook lookups retain their fail-closed checks. Active-tip
+expiry retires generation routing before removing content, then prunes packed
+identities after request locks release. Retired generations use an explicit
+absence override rather than redirecting native hooks to a retained ancestor.
