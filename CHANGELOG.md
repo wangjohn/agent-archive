@@ -6,6 +6,9 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Identity recovery status recognizes packed recovery checkpoints and completion
+  certificates, with unknown status for damaged or stale scheduling evidence.
+
 - Codex setup offers included-project or all-current-and-future-project scope,
   independent of supported-source discovery. Fresh scripts explicitly choose
   both source and scope; omitted reconfiguration preserves consent. Codex-only

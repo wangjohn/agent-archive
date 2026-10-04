@@ -2,6 +2,8 @@ package state
 
 import (
 	"context"
+	"encoding/json"
+	"github.com/wangjohn/agent-archive/internal/local"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -121,5 +123,170 @@ func TestBoundedRecoveryReaderAccessProbe(t *testing.T) {
 	health, err := OpenReadOnly(home).SessionIndexRecoveryStatus()
 	if err != nil || !health.Pending || health.Phase != "registrations" {
 		t.Fatalf("bounded recovery probe: %#v %v", health, err)
+	}
+}
+
+func TestPackedRecoveryStatusScheduledEvidence(t *testing.T) {
+	s := newTestStore(t)
+	seedRecoveryInventory(t, s, 2)
+	if err := s.MarkSessionIndexRecoveryNeeded(); err != nil {
+		t.Fatal(err)
+	}
+	revision, err := s.ensureSessionMembershipRevision()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// An existing supported packed marker selects the production packed scheduler
+	// without changing its owner threshold or its slice allowance.
+	if _, err := s.preparePackedSessionIndex(context.Background(), revision, "fixture-inventory"); err != nil {
+		t.Fatal(err)
+	}
+	if complete, err := s.RecoverSessionIndexScheduled(context.Background(), time.Nanosecond); err != nil || complete {
+		t.Fatalf("pending: %v %v", complete, err)
+	}
+	health, err := OpenReadOnly(s.home).SessionIndexRecoveryStatus()
+	if err != nil || !health.Pending || health.Complete || health.Phase != "shards" {
+		t.Fatalf("packed pending: %#v %v", health, err)
+	}
+	var cursor sessionRecoveryCursor
+	if err := local.Read(filepath.Join(s.home, sessionRecoveryCursorFile), &cursor); err != nil || cursor.Version != 2 || !cursor.validChecksum() {
+		t.Fatalf("persisted packed cursor: %#v %v", cursor, err)
+	}
+	for _, damage := range []string{"missing", "corrupt", "future", "checksum", "generation", "revision", "phase", "offset"} {
+		t.Run("pending-"+damage, func(t *testing.T) {
+			damaged := cursor
+			path := filepath.Join(s.home, sessionRecoveryCursorFile)
+			switch damage {
+			case "missing":
+				err = os.Remove(path)
+			case "corrupt":
+				err = os.WriteFile(path, []byte("{"), 0600)
+			case "future":
+				damaged.Version = 3
+				err = s.saveRecoveryCursor(&damaged)
+			case "checksum":
+				damaged.Checksum = "invalid"
+				err = local.Write(path, damaged)
+			case "generation":
+				damaged.Generation = "changed"
+				err = s.saveRecoveryCursor(&damaged)
+			case "revision":
+				damaged.Revision = "changed"
+				err = s.saveRecoveryCursor(&damaged)
+			case "phase":
+				damaged.Phase = 3
+				err = s.saveRecoveryCursor(&damaged)
+			case "offset":
+				damaged.Offset = packedSessionIndexShards + 1
+				err = s.saveRecoveryCursor(&damaged)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if health, err := s.SessionIndexRecoveryStatus(); err == nil || health.Complete || health.Phase != "unknown" {
+				t.Fatalf("damaged cursor: %#v %v", health, err)
+			}
+			if err := s.saveRecoveryCursor(&cursor); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+	for phase, name := range []string{"shards", "fallback-owners-and-candidates", "requested-misses"} {
+		cursor.Phase = phase
+		if err := s.saveRecoveryCursor(&cursor); err != nil {
+			t.Fatal(err)
+		}
+		if health, err := s.SessionIndexRecoveryStatus(); err != nil || health.Phase != name || !health.Pending {
+			t.Fatalf("phase %d: %#v %v", phase, health, err)
+		}
+	}
+	cursor.Phase = 0
+	if err := s.saveRecoveryCursor(&cursor); err != nil {
+		t.Fatal(err)
+	}
+	complete := false
+	for range 20 {
+		complete, err = s.RecoverSessionIndexScheduled(context.Background(), SessionIndexRecoverySlice)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if complete {
+			break
+		}
+	}
+	if !complete {
+		t.Fatal("packed recovery did not complete")
+	}
+	reopened, err := Open(s.home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	health, err = reopened.SessionIndexRecoveryStatus()
+	if err != nil || !health.Complete || health.Pending || health.Phase != "complete" {
+		t.Fatalf("packed completion: %#v %v", health, err)
+	}
+	data, err := json.Marshal(health)
+	if err != nil || string(data) != `{"complete":true,"pending":false,"phase":"complete"}` {
+		t.Fatalf("content-free JSON: %s %v", data, err)
+	}
+	var marker sessionIndexMarker
+	if err := local.Read(filepath.Join(s.home, sessionIndexMarkerFile), &marker); err != nil || marker.Version != 2 || !marker.Complete || !marker.MembershipFenced {
+		t.Fatalf("packed certificate: %#v %v", marker, err)
+	}
+	anchorPath := filepath.Join(s.home, "sessions-v1", packedOverlaySentinel)
+	anchor, err := os.ReadFile(anchorPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	markerPath := filepath.Join(s.home, sessionIndexMarkerFile)
+	for _, damage := range []string{"missing", "corrupt", "future", "epoch", "revision", "inventory", "membership", "missing-membership", "corrupt-membership", "future-membership", "missing-anchor", "corrupt-anchor"} {
+		t.Run(damage, func(t *testing.T) {
+			damaged := marker
+			switch damage {
+			case "missing":
+				err = os.Remove(markerPath)
+			case "corrupt":
+				err = os.WriteFile(markerPath, []byte("{"), 0600)
+			case "future":
+				damaged.Version = 3
+				err = local.Write(markerPath, damaged)
+			case "epoch":
+				damaged.PackedEpoch = ""
+				err = local.Write(markerPath, damaged)
+			case "revision":
+				damaged.PackedRevision = "changed"
+				err = local.Write(markerPath, damaged)
+			case "inventory":
+				damaged.PackedInventory = ""
+				err = local.Write(markerPath, damaged)
+			case "missing-membership":
+				err = os.Remove(filepath.Join(s.home, sessionMembershipFile))
+			case "corrupt-membership":
+				err = os.WriteFile(filepath.Join(s.home, sessionMembershipFile), []byte("{"), 0600)
+			case "future-membership":
+				err = local.Write(filepath.Join(s.home, sessionMembershipFile), sessionMembershipRevision{Version: 2, Revision: revision})
+			case "missing-anchor":
+				err = os.Remove(anchorPath)
+			case "corrupt-anchor":
+				err = os.WriteFile(anchorPath, []byte("changed"), 0600)
+			case "membership":
+				err = local.Write(filepath.Join(s.home, sessionMembershipFile), sessionMembershipRevision{Version: 1, Revision: "changed"})
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if health, err := s.SessionIndexRecoveryStatus(); err == nil || health.Complete || health.Phase != "unknown" {
+				t.Fatalf("damaged certificate: %#v %v", health, err)
+			}
+			if err := os.WriteFile(anchorPath, anchor, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := local.Write(markerPath, marker); err != nil {
+				t.Fatal(err)
+			}
+			if err := local.Write(filepath.Join(s.home, sessionMembershipFile), sessionMembershipRevision{Version: 1, Revision: revision}); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }

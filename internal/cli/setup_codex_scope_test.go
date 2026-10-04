@@ -351,7 +351,7 @@ func TestCodexStatusSeparatesActualRecoveryEvidence(t *testing.T) {
 		t.Fatal("deleted fence remained complete")
 	}
 	screen := statusScreen{now: at, style: styleFor(&bytes.Buffer{})}
-	for _, phase := range []string{"registrations", "candidates", "requested-misses"} {
+	for _, phase := range []string{"registrations", "candidates", "shards", "fallback-owners-and-candidates", "requested-misses"} {
 		rows := screen.captureRows(statusView{Apps: []appStatus{{Name: "codex", Hooks: "installed"}}, IdentityRecovery: &state.SessionIndexRecoveryStatus{Pending: true, Phase: phase}})
 		row := rows[1]
 		if row.mark != screen.info() || !strings.Contains(strings.Join(row.cells, " "), "Identity recovery: pending") {
@@ -440,5 +440,64 @@ func TestScriptedPausedAllCodexSetupKeepsLocalFloorThroughResume(t *testing.T) {
 				t.Fatal("equality resume lost eligible local start")
 			}
 		})
+	}
+}
+
+func TestCodexStatusShowsScheduledPackedRecoveryCompletion(t *testing.T) {
+	at := time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
+	home, userHome := t.TempDir(), t.TempDir()
+	env := setupTestEnv(t, home, userHome, newFakeKeychain(), at)
+	setupYes(t, env, "", 0, "--yes", "--provider", "s3", "--bucket", "synthetic", "--aws-profile", "profile", "--region", "us-east-1", "--apps", "codex", "--codex-discovery", "on", "--codex-capture-scope", "all-projects")
+	store, err := state.Open(home)
+	must(t, err)
+	must(t, store.MarkSessionIndexRecoveryNeeded())
+	// Existing packed evidence selects the actual packed writer on this small
+	// synthetic inventory. The scheduler supplies current revision and inventory.
+	var marker map[string]any
+	path := filepath.Join(home, "session-index.json")
+	must(t, local.Read(path, &marker))
+	marker["version"] = 2
+	marker["packed_epoch"] = "fixture-epoch"
+	marker["packed_revision"] = "fixture-revision"
+	marker["packed_inventory"] = "fixture-inventory"
+	must(t, local.Write(path, marker))
+	complete, err := store.RecoverSessionIndexScheduled(context.Background(), time.Nanosecond)
+	must(t, err)
+	if complete {
+		t.Fatal("tiny packed slice unexpectedly completed")
+	}
+	view, err := readStatus(env)
+	must(t, err)
+	if view.IdentityRecovery == nil || !view.IdentityRecovery.Pending || view.IdentityRecovery.Phase != "shards" {
+		t.Fatalf("packed pending status: %+v", view.IdentityRecovery)
+	}
+	for range 20 {
+		complete, err = store.RecoverSessionIndexScheduled(context.Background(), state.SessionIndexRecoverySlice)
+		must(t, err)
+		if complete {
+			break
+		}
+	}
+	if !complete {
+		t.Fatal("packed recovery did not complete")
+	}
+	view, err = readStatus(env)
+	must(t, err)
+	if view.IdentityRecovery == nil || !view.IdentityRecovery.Complete || view.IdentityRecovery.Pending {
+		t.Fatalf("packed completion status: %+v", view.IdentityRecovery)
+	}
+	data, err := json.Marshal(view)
+	must(t, err)
+	if !strings.Contains(string(data), `"identity_recovery":{"complete":true,"pending":false,"phase":"complete"}`) {
+		t.Fatalf("packed status JSON: %s", data)
+	}
+	screen := statusScreen{now: at, style: styleFor(&bytes.Buffer{})}
+	for _, row := range screen.captureRows(view) {
+		if strings.Contains(strings.Join(row.cells, " "), "Identity recovery:") {
+			t.Fatalf("completed recovery retained warning: %+v", row)
+		}
+	}
+	if view.Apps[0].Discovery.Supported || view.Apps[0].PublishedSessions > 0 || view.Apps[0].ReadBackVerified {
+		t.Fatal("local packed recovery invented source/publication proof")
 	}
 }
