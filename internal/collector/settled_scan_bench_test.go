@@ -74,9 +74,11 @@ func BenchmarkScanSettledRegistrations(b *testing.B) {
 // settledReadStore counts remote reads without changing the fake store semantics.
 type settledReadStore struct {
 	*storagetest.MemoryStore
-	reads                                      int
-	metadataReads, auxiliaryReads, sourceReads int
-	readKeys                                   []string
+	reads          int
+	metadataReads  int
+	auxiliaryReads int
+	sourceReads    int
+	readKeys       []string
 }
 
 func (s *settledReadStore) Get(ctx context.Context, key string) ([]byte, error) {
@@ -146,13 +148,13 @@ func TestOneChangedFileAmidSettledSessionsFiltersOnce(t *testing.T) {
 		t.Fatalf("filters=%d, want 1", got)
 	}
 	for _, key := range remote.readKeys[reads:] {
-		if key != "sessions/codex/session-0/metadata.json" && !strings.HasPrefix(key, "listing/by-session-v2/codex/session-0/") {
+		if key != "sessions/codex/session-0/metadata.json" {
 			t.Fatalf("changed session read a settled neighbour: %s", key)
 		}
 	}
-	// Only the changed session's canonical confirmation and predecessor
-	// pointer are read. No settled neighbour or source body is fetched.
-	if remote.reads-reads != 2 || remote.metadataReads-metadataReads != 1 || remote.auxiliaryReads-auxiliaryReads != 1 || remote.sourceReads-sourceReads != 0 {
-		t.Fatalf("remote reads=%d metadata=%d auxiliary=%d source=%d; want 2/1/1/0", remote.reads-reads, remote.metadataReads-metadataReads, remote.auxiliaryReads-auxiliaryReads, remote.sourceReads-sourceReads)
+	// Only the changed session's canonical confirmation is read. Cleanup uses
+	// headers, so no auxiliary, settled-neighbour or source body is fetched.
+	if remote.reads-reads != 1 || remote.metadataReads-metadataReads != 1 || remote.auxiliaryReads-auxiliaryReads != 0 || remote.sourceReads-sourceReads != 0 {
+		t.Fatalf("remote reads=%d metadata=%d auxiliary=%d source=%d; want 1/1/0/0", remote.reads-reads, remote.metadataReads-metadataReads, remote.auxiliaryReads-auxiliaryReads, remote.sourceReads-sourceReads)
 	}
 }

@@ -1,13 +1,14 @@
 # Listing performance target
 
 Ordinary noninteractive `list --limit N` and `list --json --limit N`
-use revision-qualified `listing/v2/` entries. A complete healthy archive reads
+use session-addressed revision-qualified `listing/v3/` entries; existing
+`listing/v2/` summaries remain readable. A complete healthy archive reads
 at most N canonical metadata bodies on a cold run, or N selected cache files
 on a warm run, and no transcript bodies. Both the 10,000 and 20,000 session
 fixtures assert the default 50-body budget against the exhaustive reader.
 Warm unchanged selections perform no remote metadata GETs.
 
-The budget covers bodies, not discovery: fresh canonical and index LIST
+The budget covers bodies, not discovery: fresh canonical and both v2/v3 index LIST
 headers are enumerated on every query, proportional to archive size. Text
 uses activity time, excludes subagents before limiting, and obtains child
 counts from covered summaries. JSON preserves capture-time order. Equal
@@ -26,7 +27,9 @@ identities, not validation of every unselected sidecar.
 ## Revision protocol
 
 Canonical metadata is authoritative. Keys are
-`listing/v2/<19-digit reverse Unix nanoseconds>/<harness>/<id>/<summary>`.
+`listing/v3/<harness>/<id>/<19-digit reverse Unix nanoseconds>/<summary>`.
+Legacy v2 keys put the reverse timestamp before harness/id. Both forms
+encode the same validated summaries; v3 needs no separate cleanup pointer.
 The summary is canonical JSON encoded as unpadded base64url, containing the
 fresh publication nonce (`n`), opaque provider ETag (`v`), SHA-256 of canonical bytes (`h`), activity timestamp
 (`a`), optional parent ID (`p`), replay marker (`r`), ProjectID (`j`) and RepoKey (`k`). No source or skill
@@ -47,26 +50,39 @@ Publication journals a destination-bound per-session repair intent before
 canonical commit. Successful capture survives an auxiliary failure; its
 warning and repair intent remain visible. Collector passes retry at most 32
 intents, rotating the cursor so a failing group cannot starve later intents.
-Entries are empty immutable objects; per-session pointers are written first
-so interrupted writes stay discoverable by cleanup. A successful repair
-retires at most 32 obsolete entries and leaves its intent until cleanup is
-finished. Retention and undo delete canonical discovery first, then index
-pointers and sources; an auxiliary failure does not postpone source deletion.
+Entries are empty immutable objects addressed directly under each session.
+A v3 repair snapshots only that session's hint headers before publishing its
+fresh identity, confirms the canonical validator, then retires at most 32
+snapshot candidates. It leaves its intent until cleanup completes. One
+normal publication reads one response-bound canonical metadata body and no
+auxiliary bodies; it writes one hint rather than a pointer/hint pair. Delayed
+writes and crash retries remain discoverable directly from session headers.
+Concurrent snapshots cannot each include the other's later fresh identity,
+so one current survivor remains even for equivalent writers or reused
+validators. No logical counter or clock is needed.
 
-`list --rebuild-index` scans and validates canonical metadata using
-response-bound validators, writes only auxiliary entries, and cleans invalid
-v2 keys after successful validation. Rerunning safely resumes
-a partial rebuild. A failure reports how many metadata entries completed.
-Rebuild and publication never rewrite transcripts for index maintenance.
-Replays of rebuild/repair converge to one current entry through bounded
-cleanup. Each attempt uses a fresh immutable publication identity, including
-when identical canonical bytes restore the same provider validator. Cleanup
-snapshots candidate pointers before publishing its own fresh identity and
-then confirms the canonical validator before retiring at most32 candidates.
-Concurrent snapshots cannot each include the other's later fresh entry;
-therefore one current entry survives. Equivalent current summaries may coexist
-temporarily and are deduplicated, while conflicting claims for one validator
-require compatibility scanning. No logical counter or clock is needed.
+`list --rebuild-index` snapshots legacy v2 headers and pointers before fresh
+v3 publication and retires a combined maximum of 32 v2/v3 candidates per
+session repair. Each v3 candidate needs one DELETE; legacy pairs need up to
+two DELETEs (at most 64 calls for 32 candidates). Legacy partial pointers
+can require at most one body GET per candidate; known hint keys require none. It reclaims legacy pointerless hints while canonical metadata
+remains live. Repeating a partial rebuild resumes cleanup, including malformed
+or canonical-absent hints (up to 32 per cleanup slice). It validates canonical
+response bytes and writes/deletes only auxiliary objects; transcripts and
+canonical metadata are unchanged. Failure reports completed metadata entries.
+Legacy partial pointers are inspected only within that same candidate budget;
+a corrupt pointer never authorizes deleting another session's claimed hint.
+
+Retention and undo delete canonical discovery first, then the session's v3
+entries and sources. They also enumerate legacy v2 hint headers to reclaim
+pointerless artifacts, with a combined 32-candidate v2/v3 cleanup slice that
+can be retried. Auxiliary failure never postpones source deletion. Archive-wide
+legacy header enumeration is confined to explicit rebuild and deletion; normal
+v3 publication never scans the full hint archive. Delayed old v2 writers may
+recreate legacy artifacts, which remain discoverable by later explicit sweeps.
+Equivalent current summaries are deduplicated across v2 and v3; conflicting
+claims for one validator require compatibility scanning. A v2-only reader
+cannot prove coverage for v3-only sessions and uses its exhaustive fallback.
 Concurrent writers require no global lock. A concurrent rewrite invalidates
 fresh coverage and produces compatibility scanning or a bounded-query error.
 

@@ -78,13 +78,17 @@ func (s *countingStore) reset() {
 
 // largePassCost is what one pass over one large session cost.
 type largePassCost struct {
-	elapsed                                    time.Duration
-	allocated                                  uint64 // bytes allocated during the pass
-	peakHeap                                   uint64 // highest live heap seen during the pass
-	downloaded                                 int64  // bytes read from storage
-	uploaded                                   int64  // bytes written to storage
-	metadataReads, auxiliaryReads, sourceReads int64
-	metadataBytes, auxiliaryBytes, sourceBytes int64
+	elapsed        time.Duration
+	allocated      uint64 // bytes allocated during the pass
+	peakHeap       uint64 // highest live heap seen during the pass
+	downloaded     int64  // bytes read from storage
+	uploaded       int64  // bytes written to storage
+	metadataReads  int64
+	auxiliaryReads int64
+	sourceReads    int64
+	metadataBytes  int64
+	auxiliaryBytes int64
+	sourceBytes    int64
 }
 
 func (c largePassCost) String() string {
@@ -147,8 +151,8 @@ func measureLargePass(t *testing.T, local *state.Store, remote *countingStore, o
 // three passes, and a 32 MB published state file. Now a publication takes
 // about 4 s and 0.6 to 0.8 GB, the refresh about 1.2 s without reading the
 // transcript, and none of them downloads a source body. Listing maintenance
-// reads one canonical metadata confirmation and up to 32 compact cleanup
-// pointers. The limits below leave room for a slower machine.
+// reads one canonical metadata confirmation and no cleanup bodies; it
+// retires up to 32 entries discovered from session headers. The limits below leave room for a slower machine.
 //
 // Not parallel: it measures the process's allocation and reads a
 // package-wide counter.
@@ -211,13 +215,10 @@ func TestLargeGrowingSessionPassesStayFast(t *testing.T) {
 	}
 
 	// Source checksum verification must not download transcripts. Index
-	// publication separately confirms one metadata response and retires the
-	// single predecessor in this fixture; unrelated sessions are never read.
+	// publication separately confirms one metadata response. Header-only
+	// cleanup downloads no auxiliary bodies or unrelated sessions.
 	for name, cost := range map[string]largePassCost{"first publication": first, "republication": grown, "metadata refresh": refreshed} {
-		wantAux := int64(1)
-		if name == "first publication" {
-			wantAux = 0
-		}
+		wantAux := int64(0)
 		if cost.sourceReads != 0 || cost.sourceBytes != 0 || cost.metadataReads != 1 || cost.auxiliaryReads != wantAux {
 			t.Errorf("%s: source reads/bytes=%d/%d metadata reads=%d auxiliary reads=%d; want 0/0, 1, %d", name, cost.sourceReads, cost.sourceBytes, cost.metadataReads, cost.auxiliaryReads, wantAux)
 		}

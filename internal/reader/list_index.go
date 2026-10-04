@@ -45,7 +45,7 @@ func ListRecent(ctx context.Context, store storage.ObjectStore, prefix string, f
 	if opts.Cache != nil {
 		opts.Cache.evictUnlisted(opts.Cache.keys(listPrefixFor(prefix, filter.Harness)), objects)
 	}
-	hints, err := store.List(ctx, listingindex.V2Prefix)
+	hints, err := listRevisionHeaders(ctx, store)
 	if err != nil {
 		return RecentResult{}, err
 	}
@@ -168,6 +168,10 @@ func RebuildIndex(ctx context.Context, store storage.ObjectStore, prefix string)
 	if !ok {
 		return 0, errors.New("store cannot return metadata revision validators")
 	}
+	legacy, err := listingindex.LegacyEntries(ctx, store)
+	if err != nil {
+		return 0, err
+	}
 	objects, err := store.List(ctx, prefix)
 	if err != nil {
 		return 0, err
@@ -188,35 +192,67 @@ func RebuildIndex(ctx context.Context, store storage.ObjectStore, prefix string)
 		if err != nil {
 			return count, fmt.Errorf("rebuild index %q: %w", obj.Key, err)
 		}
-		if err = listingindex.RepairRevision(ctx, store, r); err != nil {
+		if err = listingindex.RebuildRevision(ctx, store, r, legacy[r.MetadataKey]); err != nil {
 			return count, err
 		}
 		count++
 	}
-	// Remove malformed v2 entries only after successful canonical validation.
-	hints, err := store.List(ctx, listingindex.V2Prefix)
-	if err != nil {
+	if err := cleanupRevisionHeaders(ctx, store, legacy); err != nil {
 		return count, err
 	}
+	return count, nil
+}
+
+// cleanupRevisionHeaders bounds explicit orphan/malformed cleanup. Repeating a
+// partial rebuild resumes from the remaining immutable headers.
+func cleanupRevisionHeaders(ctx context.Context, store storage.ObjectStore, legacy map[string][]storage.Object) error {
+	hints, err := listRevisionHeaders(ctx, store)
+	if err != nil {
+		return err
+	}
+	bySession := make(map[string][]storage.Object)
+	cleaned := 0
 	for _, hint := range hints {
 		r, parseErr := listingindex.ParseRevision(hint.Key)
-		if parseErr != nil {
-			if err = store.Delete(ctx, hint.Key); err != nil {
-				return count, err
-			}
+		if parseErr == nil {
+			bySession[r.MetadataKey] = append(bySession[r.MetadataKey], hint)
 			continue
 		}
-		if statter, ok := store.(storage.ObjectStatter); ok {
-			if _, err = statter.Stat(ctx, r.MetadataKey); errors.Is(err, storage.ErrNotFound) {
-				if err = listingindex.DeleteRevision(ctx, store, r); err != nil {
-					return count, err
-				}
-			} else if err != nil {
-				return count, err
+		if cleaned == 32 {
+			return errors.New("listing cleanup remains pending; rerun rebuild")
+		}
+		if err := store.Delete(ctx, hint.Key); err != nil {
+			return err
+		}
+		cleaned++
+	}
+	for key, objects := range legacy {
+		for _, obj := range objects {
+			if strings.HasPrefix(obj.Key, "listing/by-session-v2/") {
+				bySession[key] = append(bySession[key], obj)
 			}
 		}
 	}
-	return count, nil
+	statter, ok := store.(storage.ObjectStatter)
+	if !ok {
+		return nil
+	}
+	keys := make([]string, 0, len(bySession))
+	for key := range bySession {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		_, err := statter.Stat(ctx, key)
+		if errors.Is(err, storage.ErrNotFound) {
+			if err := listingindex.RetireSnapshot(ctx, store, key, bySession[key]); err != nil {
+				return err
+			}
+		} else if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // selectListingRevisions proves canonical coverage and applies summary predicates before body reads.
@@ -280,4 +316,17 @@ func selectListingRevisions(objects []storage.Object, revisions map[string]listi
 		selected = selected[:limit]
 	}
 	return selected, result, nil
+}
+
+// listRevisionHeaders reads discovery summaries without downloading hint bodies.
+func listRevisionHeaders(ctx context.Context, store storage.ObjectStore) ([]storage.Object, error) {
+	v2, err := store.List(ctx, listingindex.V2Prefix)
+	if err != nil {
+		return nil, err
+	}
+	v3, err := store.List(ctx, listingindex.V3Prefix)
+	if err != nil {
+		return nil, err
+	}
+	return append(v2, v3...), nil
 }

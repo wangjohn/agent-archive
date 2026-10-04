@@ -429,22 +429,17 @@ func TestListingRepeatedPublicationAndBoundedCleanup(t *testing.T) {
 		t.Fatalf("unbounded cleanup: %v", err)
 	}
 	_, cleanupGets := store.counts()
-	if len(cleanupGets) != 33 || cleanupGets[0] != key {
-		t.Fatalf("cleanup reads=%v, want one metadata response plus exactly 32 pointers", cleanupGets)
+	if len(cleanupGets) != 1 || cleanupGets[0] != key {
+		t.Fatalf("cleanup reads=%v, want exactly one metadata response and no auxiliary bodies", cleanupGets)
 	}
-	for _, pointer := range cleanupGets[1:] {
-		if !strings.HasPrefix(pointer, "listing/by-session-v2/codex/repeated/") {
-			t.Fatalf("cleanup downloaded non-pointer body: %s", pointer)
-		}
-	}
-	hints, err := store.List(ctx, listingindex.V2Prefix)
+	hints, err := store.List(ctx, listingindex.V3Prefix)
 	if err != nil || len(hints) != 9 {
 		t.Fatalf("cleanup did not stop after 32: hints=%d err=%v", len(hints), err)
 	}
 	if err := listingindex.PublishRevision(ctx, store, key, data); err != nil {
 		t.Fatal(err)
 	}
-	hints, err = store.List(ctx, listingindex.V2Prefix)
+	hints, err = store.List(ctx, listingindex.V3Prefix)
 	if err != nil || len(hints) != 1 {
 		t.Fatalf("cleanup did not converge: hints=%d err=%v", len(hints), err)
 	}
@@ -480,7 +475,7 @@ type sameRevisionCleanupStore struct {
 }
 
 func (s *sameRevisionCleanupStore) List(ctx context.Context, prefix string) ([]storage.Object, error) {
-	if strings.HasPrefix(prefix, "listing/by-session-v2/") {
+	if strings.HasPrefix(prefix, listingindex.V3Prefix) {
 		if s.lists.Add(1) == 2 {
 			close(s.listReady)
 		}
@@ -538,7 +533,7 @@ func TestListingRepairReusesSummaryWithFreshIdentity(t *testing.T) {
 		if err := listingindex.RepairRevision(ctx, store, r); err != nil {
 			t.Fatal(err)
 		}
-		hints, err := store.List(ctx, listingindex.V2Prefix)
+		hints, err := store.List(ctx, listingindex.V3Prefix)
 		if err != nil || len(hints) != 1 || hints[0].Key == r.Key {
 			t.Fatalf("repair reused stale identity: hints=%v err=%v", hints, err)
 		}

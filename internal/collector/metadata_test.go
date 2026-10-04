@@ -59,7 +59,7 @@ func TestParserUpgradeReusesSourceAfterNativeLogDisappears(t *testing.T) {
 		t.Fatalf("changed durable source or wrong summary: %+v", next)
 	}
 	key, _ := archive.MetadataObjectKey("codex", reg.ArchiveSessionID)
-	if len(remote.keys) != 3 || remote.keys[0] != key {
+	if len(remote.keys) != 2 || remote.keys[0] != key {
 		t.Fatalf("metadata-only upgrade wrote %v", remote.keys)
 	}
 	after, _ := remote.Get(context.Background(), old.SourceBundle.Key)
@@ -440,7 +440,7 @@ func TestBlockedSessionRegeneratesFromLastPublicationOnly(t *testing.T) {
 		t.Fatalf("%#v %v", result, err)
 	}
 	metadataKey, _ := archive.MetadataObjectKey("codex", reg.ArchiveSessionID)
-	if len(remote.keys) != 3 || remote.keys[0] != metadataKey {
+	if len(remote.keys) != 2 || remote.keys[0] != metadataKey {
 		t.Fatalf("blocked session upgrade wrote %v", remote.keys)
 	}
 	after := fetchMetadata(t, remote, "codex", reg.ArchiveSessionID)

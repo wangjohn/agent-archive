@@ -41,7 +41,7 @@ agent-archive list --complete          # complete parser coverage, no capture ga
 # script that wants everything adds --all-projects.
 agent-archive list --json
 agent-archive list --json --limit 0
-agent-archive list --rebuild-index  # scan live metadata and repair auxiliary entries
+agent-archive list --rebuild-index  # migrate legacy entries and repair auxiliary hints
 
 # One session's summary: title, when, app, models, activity, skills,
 # subagents, and capture gaps. With no SESSION_ID on a terminal, the same

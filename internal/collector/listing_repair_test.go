@@ -20,7 +20,7 @@ type failingListingStore struct {
 }
 
 func (s *failingListingStore) Put(ctx context.Context, key string, data []byte) error {
-	if s.fail && strings.HasPrefix(key, listingindex.V2Prefix) {
+	if s.fail && strings.HasPrefix(key, listingindex.V3Prefix) {
 		return s.fault
 	}
 	return s.MemoryStore.Put(ctx, key, data)

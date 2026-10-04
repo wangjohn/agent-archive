@@ -17,6 +17,9 @@ import (
 // V2Prefix contains revision-qualified entries; coverage is checked every read.
 const V2Prefix = "listing/v2/"
 
+// V3Prefix stores each immutable revision under its own session for cleanup.
+const V3Prefix = "listing/v3/"
+
 const v2Pointers = "listing/by-session-v2/"
 
 // Revision contains only discovery summaries, never transcript or skill content.
@@ -70,7 +73,7 @@ func newRevision(key string, data []byte, etag, nonce string) (Revision, error) 
 		return Revision{}, err
 	}
 	components := strings.Split(strings.TrimPrefix(legacy.Key, Prefix), "/")
-	r.Key = V2Prefix + strings.Join(components[:3], "/") + "/" + base64.RawURLEncoding.EncodeToString(encoded)
+	r.Key = V3Prefix + components[1] + "/" + components[2] + "/" + components[0] + "/" + base64.RawURLEncoding.EncodeToString(encoded)
 	if len(r.Key) > 1024 {
 		return Revision{}, errors.New("listing entry exceeds object key limit")
 	}
@@ -79,11 +82,14 @@ func newRevision(key string, data []byte, etag, nonce string) (Revision, error) 
 
 // ParseRevision rejects unsupported and noncanonical encodings.
 func ParseRevision(key string) (Revision, error) {
-	if !strings.HasPrefix(key, V2Prefix) || len(key) > 1024 {
+	if (!strings.HasPrefix(key, V2Prefix) && !strings.HasPrefix(key, V3Prefix)) || len(key) > 1024 {
 		return Revision{}, errors.New("unsupported listing entry")
 	}
-	parts := strings.Split(strings.TrimPrefix(key, V2Prefix), "/")
-	if len(parts) != 4 {
+	parts := strings.Split(strings.TrimPrefix(strings.TrimPrefix(key, V2Prefix), V3Prefix), "/")
+	if strings.HasPrefix(key, V3Prefix) && len(parts) == 4 {
+		parts[0], parts[1], parts[2] = parts[2], parts[0], parts[1]
+	}
+	if len(parts) != 4 || len(parts[0]) != 19 {
 		return Revision{}, errors.New("invalid listing entry")
 	}
 	encoded, err := base64.RawURLEncoding.DecodeString(parts[3])
@@ -118,7 +124,7 @@ func (r Revision) ValidateMetadata(data []byte) error {
 	if err != nil {
 		return err
 	}
-	if check.Key != r.Key {
+	if !check.SameSummary(r) {
 		return errors.New("metadata does not match listing revision")
 	}
 	return nil
@@ -145,13 +151,15 @@ func revisionPointer(r Revision) string {
 	return revisionPointerPrefix(r) + storage.SHA256Hex([]byte(r.Key))
 }
 
-// PutRevision writes the cleanup pointer first, then its empty immutable hint.
+// PutRevision writes one immutable session-addressed v3 hint.
 func PutRevision(ctx context.Context, store storage.ObjectStore, r Revision) error {
-	if _, err := ParseRevision(r.Key); err != nil {
+	parsed, err := ParseRevision(r.Key)
+	if err != nil {
 		return err
 	}
-	if err := store.Put(ctx, revisionPointer(r), []byte(r.Key)); err != nil {
-		return err
+	r = parsed
+	if !strings.HasPrefix(r.Key, V3Prefix) {
+		return errors.New("legacy listing revisions are read-only")
 	}
 	return store.Put(ctx, r.Key, nil)
 }
@@ -177,114 +185,65 @@ func PublishRevision(ctx context.Context, store storage.ObjectStore, key string,
 	return RepairRevision(ctx, store, r)
 }
 
-// retireRevisions bounds cleanup writes per attempt. Remaining pointers make
-// maintenance retryable; no source object is touched.
-func retireRevisions(ctx context.Context, store storage.ObjectStore, current Revision, pointers []storage.Object) error {
-	statter, ok := store.(storage.ObjectStatter)
-	if !ok {
-		return nil
-	}
-	// The candidates precede this fresh publication, so no concurrent writer
-	// can retire it through an older snapshot, even after validator reuse.
-	info, err := statter.Stat(ctx, current.MetadataKey)
-	if err != nil {
-		return err
-	}
-	if info.ETag != current.ETag {
-		return errors.New("metadata changed before listing maintenance")
-	}
-	for i, p := range pointers {
-		if i == 32 {
-			return errors.New("listing cleanup remains pending")
-		}
-		data, err := store.Get(ctx, p.Key)
-		if errors.Is(err, storage.ErrNotFound) {
-			continue
-		}
-		if err != nil {
-			return err
-		}
-		r, parseErr := ParseRevision(string(data))
-		if parseErr == nil && r.MetadataKey == current.MetadataKey && revisionPointer(r) == p.Key {
-			if err := store.Delete(ctx, r.Key); err != nil {
-				return err
-			}
-		}
-		if err := store.Delete(ctx, p.Key); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func deleteRevisions(ctx context.Context, store storage.ObjectStore, harness, id string) error {
-	pointers, err := store.List(ctx, v2Pointers+harness+"/"+id+"/")
-	if err != nil {
-		return err
-	}
-	key, err := archive.MetadataObjectKey(harness, id)
-	if err != nil {
-		return err
-	}
-	for _, p := range pointers {
-		data, err := store.Get(ctx, p.Key)
-		if errors.Is(err, storage.ErrNotFound) {
-			continue
-		}
-		if err != nil {
-			return err
-		}
-		r, err := ParseRevision(string(data))
-		if err == nil && r.MetadataKey == key && revisionPointer(r) == p.Key {
-			if err = store.Delete(ctx, r.Key); err != nil {
-				return fmt.Errorf("delete listing revision: %w", err)
-			}
-		}
-		if err = store.Delete(ctx, p.Key); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// RepairRevision publishes a hint and retires at most 32 obsolete revisions.
+// RepairRevision publishes a fresh session-addressed hint and retires at most
+// 32 earlier entries. Its snapshot cannot include a later writer's identity.
 func RepairRevision(ctx context.Context, store storage.ObjectStore, r Revision) error {
+	return repairRevision(ctx, store, r, nil)
+}
+
+func repairRevision(ctx context.Context, store storage.ObjectStore, r Revision, legacy []storage.Object) error {
 	parsed, err := ParseRevision(r.Key)
 	if err != nil {
 		return err
 	}
 	r = parsed
-	// Reusing a caller's revision after interruption is still a new repair
-	// attempt. Only its summary is reused; its object identity must be fresh.
 	r.Nonce = rand.Text()
 	encoded, err := json.Marshal(r)
 	if err != nil {
 		return err
 	}
-	parts := strings.Split(r.Key, "/")
-	parts[len(parts)-1] = base64.RawURLEncoding.EncodeToString(encoded)
-	r.Key = strings.Join(parts, "/")
-	// Freeze retirement candidates before publishing this fresh identity.
-	// Two concurrent snapshots cannot each contain the other's later entry:
-	// one must precede it. The latest successful publication therefore survives
-	// without a shared manifest, logical counter, clock or self-retirement.
-	pointers, err := store.List(ctx, revisionPointerPrefix(r))
+	parts := strings.Split(strings.TrimPrefix(r.MetadataKey, "sessions/"), "/")
+	reverse := fmt.Sprintf("%019d", maxTime-uint64(r.CapturedAt.UnixNano()))
+	r.Key = V3Prefix + parts[0] + "/" + parts[1] + "/" + reverse + "/" + base64.RawURLEncoding.EncodeToString(encoded)
+	candidates, err := store.List(ctx, revisionSessionPrefix(r.MetadataKey))
 	if err != nil {
 		return err
 	}
+	candidates = append(candidates, legacy...)
 	if err := PutRevision(ctx, store, r); err != nil {
 		return err
 	}
-	return retireRevisions(ctx, store, r, pointers)
+	if statter, ok := store.(storage.ObjectStatter); ok {
+		info, err := statter.Stat(ctx, r.MetadataKey)
+		if err != nil {
+			return err
+		}
+		if info.ETag != r.ETag {
+			return errors.New("metadata changed before listing maintenance")
+		}
+	} else if len(candidates) != 0 {
+		return errors.New("store cannot confirm listing maintenance validator")
+	}
+	return retireCandidates(ctx, store, r.MetadataKey, candidates)
+}
+
+func revisionSessionPrefix(metadataKey string) string {
+	parts := strings.Split(metadataKey, "/")
+	return V3Prefix + parts[1] + "/" + parts[2] + "/"
 }
 
 // DeleteRevision removes one validated auxiliary revision and its exact pointer.
 func DeleteRevision(ctx context.Context, store storage.ObjectStore, r Revision) error {
-	if _, err := ParseRevision(r.Key); err != nil {
+	parsed, err := ParseRevision(r.Key)
+	if err != nil {
 		return err
 	}
+	r = parsed
 	if err := store.Delete(ctx, r.Key); err != nil {
 		return err
+	}
+	if strings.HasPrefix(r.Key, V3Prefix) {
+		return nil
 	}
 	return store.Delete(ctx, revisionPointer(r))
 }
