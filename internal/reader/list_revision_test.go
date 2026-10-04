@@ -444,27 +444,18 @@ func TestListingRepeatedPublicationAndBoundedCleanup(t *testing.T) {
 
 type sameRevisionCleanupStore struct {
 	*storagetest.MemoryStore
-	lists        atomic.Int32
-	stats        atomic.Int32
-	listReady    chan struct{}
-	statReady    chan struct{}
-	cleanupReady chan struct{}
+	lists     atomic.Int32
+	stats     atomic.Int32
+	listReady chan struct{}
+	statReady chan struct{}
 }
 
 func (s *sameRevisionCleanupStore) List(ctx context.Context, prefix string) ([]storage.Object, error) {
 	if strings.HasPrefix(prefix, "listing/by-session-v2/") {
-		call := s.lists.Add(1)
-		if call <= 2 {
-			if call == 2 {
-				close(s.listReady)
-			}
-			<-s.listReady
-		} else {
-			if call == 4 {
-				close(s.cleanupReady)
-			}
-			<-s.cleanupReady
+		if s.lists.Add(1) == 2 {
+			close(s.listReady)
 		}
+		<-s.listReady
 	}
 	return s.MemoryStore.List(ctx, prefix)
 }
@@ -478,7 +469,7 @@ func (s *sameRevisionCleanupStore) Stat(ctx context.Context, key string) (storag
 }
 func TestListingConcurrentEquivalentCleanupKeepsCoverage(t *testing.T) {
 	ctx := context.Background()
-	store := &sameRevisionCleanupStore{MemoryStore: storagetest.NewMemoryStore(), listReady: make(chan struct{}), statReady: make(chan struct{}), cleanupReady: make(chan struct{})}
+	store := &sameRevisionCleanupStore{MemoryStore: storagetest.NewMemoryStore(), listReady: make(chan struct{}), statReady: make(chan struct{})}
 	key := putSession(t, store, "codex", "equivalent", baseTime)
 	data, _, err := store.GetVersioned(ctx, key)
 	if err != nil {
@@ -497,5 +488,32 @@ func TestListingConcurrentEquivalentCleanupKeepsCoverage(t *testing.T) {
 	result, err := ListRecent(ctx, store, "sessions", Filter{}, 1, ListOptions{CompatibilityScan: func(string) { scanned = true }})
 	if err != nil || scanned || len(result.Sessions) != 1 {
 		t.Fatalf("equivalent cleanups removed all coverage: scanned=%v err=%v", scanned, err)
+	}
+}
+
+func TestListingRepairReusesSummaryWithFreshIdentity(t *testing.T) {
+	ctx := context.Background()
+	store := newOpaqueListingStore()
+	key := putSession(t, store, "codex", "retry", baseTime)
+	data, validator, err := store.GetVersioned(ctx, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := listingindex.NewRevision(key, data, validator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := listingindex.RepairRevision(ctx, store, r); err != nil {
+			t.Fatal(err)
+		}
+		hints, err := store.List(ctx, listingindex.V2Prefix)
+		if err != nil || len(hints) != 1 || hints[0].Key == r.Key {
+			t.Fatalf("repair reused stale identity: hints=%v err=%v", hints, err)
+		}
+	}
+	scanned := false
+	if _, err := ListRecent(ctx, store, "sessions", Filter{}, 1, ListOptions{CompatibilityScan: func(string) { scanned = true }}); err != nil || scanned {
+		t.Fatalf("retried repair lost coverage: scanned=%v err=%v", scanned, err)
 	}
 }

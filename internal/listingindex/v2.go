@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -25,7 +24,6 @@ type Revision struct {
 	MetadataKey string    `json:"-"`
 	CapturedAt  time.Time `json:"-"`
 	Nonce       string    `json:"n,omitempty"`
-	Generation  uint64    `json:"g,omitempty"`
 	ETag        string    `json:"v"`
 	Hash        string    `json:"h"`
 	Activity    time.Time `json:"a"`
@@ -50,10 +48,10 @@ func ActivityTime(m archive.Metadata) time.Time {
 // A fresh nonce prevents restoring identical bytes from reactivating a key
 // which an older cleanup snapshot may already be deleting.
 func NewRevision(key string, data []byte, etag string) (Revision, error) {
-	return newRevision(key, data, etag, rand.Text(), 0)
+	return newRevision(key, data, etag, rand.Text())
 }
 
-func newRevision(key string, data []byte, etag, nonce string, generation uint64) (Revision, error) {
+func newRevision(key string, data []byte, etag, nonce string) (Revision, error) {
 	legacy, err := New(key, data)
 	if err != nil {
 		return Revision{}, err
@@ -65,7 +63,7 @@ func newRevision(key string, data []byte, etag, nonce string, generation uint64)
 	if err := json.Unmarshal(data, &m); err != nil {
 		return Revision{}, err
 	}
-	r := Revision{Nonce: nonce, Generation: generation, MetadataKey: key, CapturedAt: m.CapturedAt, ETag: etag, Hash: legacy.Hash, Activity: ActivityTime(m), Parent: m.ParentSessionID, Replay: m.Replay != nil, ProjectID: m.ProjectID, RepoKey: m.RepoKey}
+	r := Revision{Nonce: nonce, MetadataKey: key, CapturedAt: m.CapturedAt, ETag: etag, Hash: legacy.Hash, Activity: ActivityTime(m), Parent: m.ParentSessionID, Replay: m.Replay != nil, ProjectID: m.ProjectID, RepoKey: m.RepoKey}
 	encoded, err := json.Marshal(r)
 	if err != nil {
 		return Revision{}, err
@@ -115,7 +113,7 @@ func ParseRevision(key string) (Revision, error) {
 // ValidateMetadata checks identity, schema, digest and every discovery field
 // against canonical bytes, preserving this immutable publication identity.
 func (r Revision) ValidateMetadata(data []byte) error {
-	check, err := newRevision(r.MetadataKey, data, r.ETag, r.Nonce, r.Generation)
+	check, err := newRevision(r.MetadataKey, data, r.ETag, r.Nonce)
 	if err != nil {
 		return err
 	}
@@ -132,7 +130,6 @@ func (r Revision) SameSummary(other Revision) bool {
 		return false
 	}
 	r.Nonce, other.Nonce = "", ""
-	r.Generation, other.Generation = 0, 0
 	a, _ := json.Marshal(r)
 	b, _ := json.Marshal(other)
 	return string(a) == string(b)
@@ -144,46 +141,7 @@ func revisionPointerPrefix(r Revision) string {
 }
 
 func revisionPointer(r Revision) string {
-	hash := storage.SHA256Hex([]byte(r.Key))
-	if r.Generation == 0 {
-		return revisionPointerPrefix(r) + hash
-	}
-	return revisionPointerPrefix(r) + fmt.Sprintf("%020d-%s", r.Generation, hash)
-}
-
-// NewPublicationRevision advances a per-session logical generation using
-// immutable pointer headers. No mutable counter or clock is authoritative.
-// Concurrent writers may share a generation; their fresh nonces break ties.
-func NewPublicationRevision(ctx context.Context, store storage.ObjectStore, key string, data []byte, etag string) (Revision, error) {
-	r, err := NewRevision(key, data, etag)
-	if err != nil {
-		return Revision{}, err
-	}
-	prefix := revisionPointerPrefix(r)
-	pointers, err := store.List(ctx, prefix)
-	if err != nil {
-		return Revision{}, err
-	}
-	var latest uint64
-	for _, p := range pointers {
-		name := strings.TrimPrefix(p.Key, prefix)
-		if len(name) != 85 || name[20] != '-' || strings.Trim(name[21:], "0123456789abcdef") != "" {
-			continue
-		}
-		generation, err := strconv.ParseUint(name[:20], 10, 64)
-		if err != nil || fmt.Sprintf("%020d", generation) != name[:20] {
-			continue
-		}
-		latest = max(latest, generation)
-	}
-	if latest == ^uint64(0) {
-		return Revision{}, errors.New("listing publication generation exhausted")
-	}
-	return newRevision(key, data, etag, r.Nonce, latest+1)
-}
-
-func laterPublication(a, b Revision) bool {
-	return a.Generation > b.Generation || a.Generation == b.Generation && a.Key > b.Key
+	return revisionPointerPrefix(r) + storage.SHA256Hex([]byte(r.Key))
 }
 
 // PutRevision writes the cleanup pointer first, then its empty immutable hint.
@@ -211,7 +169,7 @@ func PublishRevision(ctx context.Context, store storage.ObjectStore, key string,
 	if storage.SHA256Hex(stored) != storage.SHA256Hex(data) {
 		return errors.New("canonical metadata changed during index publication")
 	}
-	r, err := NewPublicationRevision(ctx, store, key, stored, etag)
+	r, err := NewRevision(key, stored, etag)
 	if err != nil {
 		return err
 	}
@@ -220,21 +178,13 @@ func PublishRevision(ctx context.Context, store storage.ObjectStore, key string,
 
 // retireRevisions bounds cleanup writes per attempt. Remaining pointers make
 // maintenance retryable; no source object is touched.
-func retireRevisions(ctx context.Context, store storage.ObjectStore, current Revision) error {
+func retireRevisions(ctx context.Context, store storage.ObjectStore, current Revision, pointers []storage.Object) error {
 	statter, ok := store.(storage.ObjectStatter)
 	if !ok {
 		return nil
 	}
-	pointer := revisionPointer(current)
-	prefix := revisionPointerPrefix(current)
-	pointers, err := store.List(ctx, prefix)
-	if err != nil {
-		return err
-	}
-	// Freeze cleanup candidates before confirming the canonical revision.
-	// Changed canonical revisions invalidate this check. Fresh publication
-	// identities created after the snapshot are outside its delete set, even
-	// when identical canonical bytes restore a previously used validator.
+	// The candidates precede this fresh publication, so no concurrent writer
+	// can retire it through an older snapshot, even after validator reuse.
 	info, err := statter.Stat(ctx, current.MetadataKey)
 	if err != nil {
 		return err
@@ -242,29 +192,10 @@ func retireRevisions(ctx context.Context, store storage.ObjectStore, current Rev
 	if info.ETag != current.ETag {
 		return errors.New("metadata changed before listing maintenance")
 	}
-	// Resolve a bounded candidate slice before deleting any entry. Every
-	// equal-content writer retains the latest publication identity it sees;
-	// a writer whose own entry loses can retire itself without removing the
-	// selected survivor. Any concurrent retirement of that survivor must in
-	// turn retain an even later equivalent entry.
-	type candidate struct {
-		pointer  string
-		revision Revision
-		valid    bool
-	}
-	var candidates []candidate
-	winner := current
-	pending := false
-	attempts := 0
-	for _, p := range pointers {
-		if p.Key == pointer {
-			continue
+	for i, p := range pointers {
+		if i == 32 {
+			return errors.New("listing cleanup remains pending")
 		}
-		if attempts == 32 {
-			pending = true
-			break
-		}
-		attempts++
 		data, err := store.Get(ctx, p.Key)
 		if errors.Is(err, storage.ErrNotFound) {
 			continue
@@ -273,32 +204,14 @@ func retireRevisions(ctx context.Context, store storage.ObjectStore, current Rev
 			return err
 		}
 		r, parseErr := ParseRevision(string(data))
-		valid := parseErr == nil && r.MetadataKey == current.MetadataKey && revisionPointer(r) == p.Key
-		candidates = append(candidates, candidate{p.Key, r, valid})
-		if valid && r.SameSummary(current) && laterPublication(r, winner) {
-			winner = r
-		}
-	}
-	for _, c := range candidates {
-		if c.valid && c.revision.Key == winner.Key {
-			continue
-		}
-		if c.valid {
-			if err := store.Delete(ctx, c.revision.Key); err != nil {
+		if parseErr == nil && r.MetadataKey == current.MetadataKey && revisionPointer(r) == p.Key {
+			if err := store.Delete(ctx, r.Key); err != nil {
 				return err
 			}
 		}
-		if err := store.Delete(ctx, c.pointer); err != nil {
+		if err := store.Delete(ctx, p.Key); err != nil {
 			return err
 		}
-	}
-	if winner.Key != current.Key {
-		if err := DeleteRevision(ctx, store, current); err != nil {
-			return err
-		}
-	}
-	if pending {
-		return errors.New("listing cleanup remains pending")
 	}
 	return nil
 }
@@ -335,10 +248,33 @@ func deleteRevisions(ctx context.Context, store storage.ObjectStore, harness, id
 
 // RepairRevision publishes a hint and retires at most 32 obsolete revisions.
 func RepairRevision(ctx context.Context, store storage.ObjectStore, r Revision) error {
+	parsed, err := ParseRevision(r.Key)
+	if err != nil {
+		return err
+	}
+	r = parsed
+	// Reusing a caller's revision after interruption is still a new repair
+	// attempt. Only its summary is reused; its object identity must be fresh.
+	r.Nonce = rand.Text()
+	encoded, err := json.Marshal(r)
+	if err != nil {
+		return err
+	}
+	parts := strings.Split(r.Key, "/")
+	parts[len(parts)-1] = base64.RawURLEncoding.EncodeToString(encoded)
+	r.Key = strings.Join(parts, "/")
+	// Freeze retirement candidates before publishing this fresh identity.
+	// Two concurrent snapshots cannot each contain the other's later entry:
+	// one must precede it. The latest successful publication therefore survives
+	// without a shared manifest, logical counter, clock or self-retirement.
+	pointers, err := store.List(ctx, revisionPointerPrefix(r))
+	if err != nil {
+		return err
+	}
 	if err := PutRevision(ctx, store, r); err != nil {
 		return err
 	}
-	return retireRevisions(ctx, store, r)
+	return retireRevisions(ctx, store, r, pointers)
 }
 
 // DeleteRevision removes one validated auxiliary revision and its exact pointer.

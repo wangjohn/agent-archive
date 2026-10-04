@@ -28,7 +28,7 @@ identities, not validation of every unselected sidecar.
 Canonical metadata is authoritative. Keys are
 `listing/v2/<19-digit reverse Unix nanoseconds>/<harness>/<id>/<summary>`.
 The summary is canonical JSON encoded as unpadded base64url, containing the
-fresh publication nonce (`n`), logical generation (`g`), opaque provider ETag (`v`), SHA-256 of canonical bytes (`h`), activity timestamp
+fresh publication nonce (`n`), opaque provider ETag (`v`), SHA-256 of canonical bytes (`h`), activity timestamp
 (`a`), optional parent ID (`p`), replay marker (`r`), ProjectID (`j`) and RepoKey (`k`). No source or skill
 content is included. Unsupported/noncanonical summaries and keys exceeding
 S3's 1,024-byte key bound are refused. Activity is EndedAt when present,
@@ -59,15 +59,14 @@ v2 keys after successful validation. Rerunning safely resumes
 a partial rebuild. A failure reports how many metadata entries completed.
 Rebuild and publication never rewrite transcripts for index maintenance.
 Replays of rebuild/repair converge to one current entry through bounded
-cleanup. Each attempt first lists its session's pointer headers to advance a logical
-generation, then uses a fresh immutable publication identity, including
+cleanup. Each attempt uses a fresh immutable publication identity, including
 when identical canonical bytes restore the same provider validator. Cleanup
-snapshots candidate pointers before confirming the canonical validator; it
-cannot delete entries newly published after that snapshot. Equivalent current
-summaries retain the latest logical generation, with a deterministic nonce
-tie breaker, during cleanup
-and may coexist temporarily; readers deduplicate them, while conflicting
-claims for one validator require compatibility scanning.
+snapshots candidate pointers before publishing its own fresh identity and
+then confirms the canonical validator before retiring at most32 candidates.
+Concurrent snapshots cannot each include the other's later fresh entry;
+therefore one current entry survives. Equivalent current summaries may coexist
+temporarily and are deduplicated, while conflicting claims for one validator
+require compatibility scanning. No logical counter or clock is needed.
 Concurrent writers require no global lock. A concurrent rewrite invalidates
 fresh coverage and produces compatibility scanning or a bounded-query error.
 

@@ -243,7 +243,7 @@ func RebuildIndex(ctx context.Context, store storage.ObjectStore, prefix string)
 		if err != nil {
 			return count, err
 		}
-		r, err := listingindex.NewPublicationRevision(ctx, store, obj.Key, data, etag)
+		r, err := listingindex.NewRevision(obj.Key, data, etag)
 		if err != nil {
 			return count, fmt.Errorf("rebuild index %q: %w", obj.Key, err)
 		}
