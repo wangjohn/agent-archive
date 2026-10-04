@@ -1065,6 +1065,9 @@ func printNextSteps(p *prompter, cfg config.Config, paused, unattended bool) {
 // printAnotherMachine ends a committed setup with the command that sets up
 // another machine with the same storage.
 func printAnotherMachine(p *prompter, cfg config.Config, userHome string, environments ...Env) {
+	if len(cfg.Archive.Projects) > maxProjectScopeRules {
+		p.warn("Scope transfer accepts at most 4096 rules and refuses larger saved or resulting destination scopes. Review a larger scope before transferring; equal source aliases may coalesce.")
+	}
 	if cfg.Storage.Provider == credentials.ProviderR2 {
 		terminal.Printf(p.out, "\nTo set up another machine with this storage, set %s and\n%s there, then run:\n", envR2AccessKeyID, envR2SecretAccessKey)
 	} else {
@@ -1086,6 +1089,7 @@ func anotherMachineCommand(cfg config.Config, userHome string, environments ...E
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	keys := map[string]string{}
+	validatedKeys := map[string]string{}
 	args := []string{"agent-archive", "setup", "--yes", "--provider", cfg.Storage.Provider, "--bucket", cfg.Storage.Bucket}
 	if cfg.Storage.Provider == credentials.ProviderR2 {
 		args = append(args, "--r2-account", firstNonEmpty(cfg.Storage.R2AccountID, cfg.Storage.R2Endpoint))
@@ -1128,7 +1132,12 @@ func anotherMachineCommand(cfg config.Config, userHome string, environments ...E
 				// must keep its path to avoid widening capture on another machine.
 				if child.Err() == nil {
 					if info, err := os.Stat(filepath.Join(project.Root, ".git")); err == nil && (info.IsDir() || info.Mode().IsRegular()) {
-						key = env.projectRepoKey(child, project.Root)
+						root := local.CanonicalPath(project.Root)
+						candidate, top, known := env.projectRepository(child, project.Root)
+						if known && archive.IsRepoKey(candidate) && local.CanonicalPath(top) == root {
+							key = candidate
+							validatedKeys[root] = key
+						}
 					}
 				}
 				done()
@@ -1142,7 +1151,7 @@ func anotherMachineCommand(cfg config.Config, userHome string, environments ...E
 		}
 	}
 	if scope == "" && scopeArgumentsNeedStream(args) {
-		scope = portableProjectScope(cfg.Archive.Projects, userHome, env, ctx)
+		scope = portableProjectScopeWithKeys(cfg.Archive.Projects, userHome, env, ctx, validatedKeys)
 		args = append(args[:projectStart], "--project-scope-file", "-")
 	}
 	for i, arg := range args {
@@ -2146,7 +2155,7 @@ func isGoBuildDir(name string) bool {
 }
 
 func runPairingSetupCommand(opts setupOptions, refresh, abandon bool, fs *commandFlags, stdin io.Reader, stdout, stderr io.Writer, env Env) int {
-	if refresh || abandon || opts.storageFlagsSupplied || opts.prefixSupplied || opts.retentionSupplied || opts.requireSkillSupplied || opts.noRequireSkillSupplied || opts.apps != "" || opts.skillEvidence != "" || opts.noSkills || opts.skills || len(opts.projectRepos) > 0 || opts.projectScope != "" || opts.projectScopeFile != "" {
+	if refresh || abandon || opts.storageFlagsSupplied || opts.prefixSupplied || opts.retentionSupplied || opts.requireSkillSupplied || opts.noRequireSkillSupplied || opts.apps != "" || opts.skillEvidence != "" || opts.noSkills || opts.skills || len(opts.projectRepos) > 0 || opts.hasProjectScope() {
 		return fs.usageError("pairing accepts --yes, --verbose, --project and one bundle input; other settings are reviewed interactively")
 	}
 	if err := setupPairing(opts, stdin, stdout, stderr, env.choosingBackend()); err != nil {

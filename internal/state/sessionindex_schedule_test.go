@@ -742,3 +742,21 @@ func TestRecoveryInterruptionKeepsJoinedFilesystemFailure(t *testing.T) {
 		t.Fatal("nil error classified as interruption")
 	}
 }
+
+func TestRecoveryCensusDoesNotInheritOmittedRegistrationFields(t *testing.T) {
+	s := newTestStore(t)
+	first := migrationRegistration(agentmeta.SessionKey{Agent: agentmeta.Codex, NativeID: "first"}, "a")
+	if err := local.Write(s.registrationPath("a"), first); err != nil {
+		t.Fatal(err)
+	}
+	// This later registration omits the start time. Reusing a decode target
+	// must not borrow the earlier owner's validated start time.
+	data := []byte(`{"archive_session_id":"b","native_session_id":"second","project_id":"p","project_root":"/synthetic","harness":{"name":"codex"},"transcript_path":"/synthetic/source.jsonl"}`)
+	if err := os.WriteFile(s.registrationPath("b"), data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	inventory, err := s.sessionRegistrationInventory(t.Context())
+	if !errors.Is(err, ErrSessionIndexRecoveryRequired) || inventory != nil {
+		t.Fatalf("incomplete registration inherited authority: inventory=%v err=%v", inventory, err)
+	}
+}

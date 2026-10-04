@@ -208,10 +208,20 @@ Symlink aliases share the same capture decision and repository anchor.
 No inclusion is applied without its associated exclusions. Inspect these
 rules before running the command; update non-home absolute paths for the
 new machine if necessary.
+Scope flags require a nonempty value and cannot be combined with `--project`
+or `--project-repo`; put every inclusion and exclusion in the scope instead.
 Pairing receives scope from its encrypted bundle and refuses both scope flags.
 A scope on stdin owns that stream; provide an R2 secret in
 `AGENT_ARCHIVE_R2_SECRET_ACCESS_KEY` or read the scope from a file.
-File/stdin scope input is bounded to 128 MiB. Equal-decision aliases coalesce;
+File/stdin scope input is bounded to 128 MiB.
+Scope arrays contain at most 4,096 rules. Scope transfer also refuses a saved
+destination scope or resulting combined scope larger than 4,096 rules, before
+applying any rule. This limit applies to scope transfer, including legacy
+configurations without a Codex scope policy; larger source scopes are preserved
+in the printed input and refused rather than truncated. Review those scopes
+before transferring. Saved dangling or looping symlinks also refuse the transfer;
+ordinary missing excluded directories remain supported.
+Equal-decision aliases coalesce;
 conflicting alias decisions are refused atomically, so review those source
 rules before transferring. Reapplying a compatible keyed scope is supported;
 saved destination conflicts still refuse the entire transfer.
