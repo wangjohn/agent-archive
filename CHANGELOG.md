@@ -31,6 +31,12 @@ Planned for v0.2.0. This release has not been tagged or published.
 
 ### Added
 
+- `agent-archive recover SESSION_ID` previews a linked generation for a
+  rewritten transcript; `--confirm` preserves the earlier archive and queues
+  current activity under a new ID. Each generation keeps its own retention
+  age. Recovery permanently requires a generation-aware writer. See the
+  [guide](docs/guides/transcript-recovery.md).
+
 - **`agent-archive eval export`** prints archived sessions for an evaluation
   tool: one JSON line per session, in a versioned format
   ([`schemas/eval-export.schema.json`](schemas/eval-export.schema.json)).

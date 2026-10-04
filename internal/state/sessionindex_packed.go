@@ -110,7 +110,7 @@ func (s *Store) packedSessionIndexEntry(key agentmeta.SessionKey) (qualifiedSess
 	if err != nil {
 		return entry, false, ErrSessionIndexRecoveryRequired
 	}
-	valid, err = s.matchingRegistration(parentKey, candidate.ParentArchiveSessionID)
+	valid, err = s.matchingCandidateParent(parentKey, candidate.ParentArchiveSessionID)
 	if err != nil || !valid {
 		return entry, false, ErrSessionIndexRecoveryRequired
 	}
@@ -363,6 +363,10 @@ func encodePackedIndex(index packedSessionIndex) ([]byte, error) {
 // Physical per-key files dominate packed authority, including damage. The same
 // logical snapshot is compared before staging and again under the request lock.
 func (s *Store) readIndexSnapshot(path string) (fileSnapshot, error) {
+	return s.readQualifiedIndexSnapshot(path, true)
+}
+
+func (s *Store) readQualifiedIndexSnapshot(path string, validateOwner bool) (fileSnapshot, error) {
 	before, err := readSnapshot(path)
 	if err != nil || before.found {
 		return before, err
@@ -384,6 +388,12 @@ func (s *Store) readIndexSnapshot(path string) (fileSnapshot, error) {
 	}
 	entry, found, err := s.readPackedEntry(name[:64], marker)
 	if err != nil {
+		if !validateOwner && !marker.Complete {
+			// A new census epoch invalidates old aggregate bytes. Generation
+			// callers already prove routing from their journal or complete
+			// lineage census; an invalid derived shard is not another owner.
+			return before, nil
+		}
 		if !marker.Complete {
 			if _, statErr := os.Stat(packedIndexPath(s.home, name[:2])); errors.Is(statErr, os.ErrNotExist) {
 				return before, nil
@@ -394,10 +404,12 @@ func (s *Store) readIndexSnapshot(path string) (fileSnapshot, error) {
 	if !found {
 		return before, nil
 	}
-	key := agentmeta.SessionKey{Agent: entry.Agent, NativeID: entry.NativeID}
-	entry, found, err = s.packedSessionIndexEntry(key)
-	if err != nil || !found {
-		return fileSnapshot{}, err
+	if validateOwner {
+		key := agentmeta.SessionKey{Agent: entry.Agent, NativeID: entry.NativeID}
+		entry, found, err = s.packedSessionIndexEntry(key)
+		if err != nil || !found {
+			return fileSnapshot{}, err
+		}
 	}
 	data, err := json.Marshal(entry)
 	return fileSnapshot{data: data, found: true}, err
@@ -453,7 +465,7 @@ func (s *Store) recoverPackedShardSlice(ctx context.Context, shard string, marke
 	}
 	entries := make(map[string]qualifiedSessionIndexEntry, len(owners)+len(candidates))
 	if err := s.packedShardOwners(ctx, owners, entries, deadline); err != nil {
-		return err
+		return fmt.Errorf("packed shard %s owners: %w", shard, err)
 	}
 	if err := s.packedShardCandidates(ctx, candidates, entries, marker, deadline); err != nil {
 		return err
@@ -500,7 +512,21 @@ func (s *Store) packedShardOwners(ctx context.Context, owners map[agentmeta.Sess
 		}
 		hash := packedIndexHash(key)
 		entry := indexEntry(key, ids[0])
-		if len(ids) > 1 {
+		active, protected, err := s.generationOwner(key, ids)
+		if err != nil {
+			return err
+		}
+		if protected {
+			if active == "" {
+				// Packed files encode owners, not absence certificates. Preserve
+				// the explicit retired-head absence as a fenced per-key overlay.
+				if _, err := s.recoverGenerationOwners(key, ids); err != nil {
+					return err
+				}
+				continue
+			}
+			entry.ArchiveSessionID = active
+		} else if len(ids) > 1 {
 			entry.ArchiveSessionID = ""
 			entry.Conflict = true
 		}
@@ -512,7 +538,7 @@ func (s *Store) packedShardOwners(ctx context.Context, owners map[agentmeta.Sess
 		}
 		if physical.found {
 			var prior qualifiedSessionIndexEntry
-			if json.Unmarshal(physical.data, &prior) != nil || prior.validate(key) != nil || prior.Reservation != "" || prior.ArchiveSessionID != ids[0] || len(ids) > 1 {
+			if json.Unmarshal(physical.data, &prior) != nil || prior.validate(key) != nil || prior.Reservation != "" || prior != entry {
 				if err := s.recoverRegistrationOwners(key, ids); err != nil {
 					return err
 				}
@@ -547,7 +573,7 @@ func (s *Store) packedShardCandidates(ctx context.Context, candidates []Subagent
 		if err != nil {
 			return err
 		}
-		valid, err := s.matchingRegistration(parentKey, candidate.ParentArchiveSessionID)
+		valid, err := s.matchingCandidateParent(parentKey, candidate.ParentArchiveSessionID)
 		if err != nil {
 			return err
 		}
