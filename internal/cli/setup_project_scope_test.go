@@ -86,7 +86,7 @@ func TestPrintedScopePreservesExclusionsAcrossFreshMachines(t *testing.T) {
 				rel, err := filepath.Rel(sourceRoot, rule.Root)
 				must(t, err)
 				got := cfg.Archive.Projects[i]
-				if got.Root != filepath.Join(destinationRoot, rel) || got.Included != rule.Included {
+				if got.Root != local.CanonicalPath(filepath.Join(destinationRoot, rel)) || got.Included != rule.Included {
 					t.Fatalf("rule %d: %+v", i, got)
 				}
 			}

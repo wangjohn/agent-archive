@@ -12,8 +12,10 @@ import (
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 	"github.com/wangjohn/agent-archive/internal/state"
+	"golang.org/x/text/unicode/norm"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -658,16 +660,111 @@ func ConfiguredProjectActivationFor(cfg config.Config, root string) (archive.Pro
 		return archive.ProjectActivation{}, false
 	}
 	candidate := resolvedPath(root)
+	if candidate == "" {
+		return archive.ProjectActivation{}, false
+	}
 	var best archive.ProjectActivation
-	bestLen, found := -1, false
+	var locations resolvedLocationMatcher
+	bestDepth, found, conflicting := -1, false, false
 	for _, project := range cfg.Archive.Projects {
 		configured := resolvedPath(project.Root)
-		if !local.PathWithin(candidate, configured) || len(configured) <= bestLen {
+		// An unresolved rule may be an exclusion; never fall through to an
+		// included ancestor when its filesystem identity is unknown.
+		if configured == "" {
+			return archive.ProjectActivation{}, false
+		}
+		within, certain := locations.within(candidate, configured)
+		if !certain {
+			return archive.ProjectActivation{}, false
+		}
+		if !within {
 			continue
 		}
-		best, bestLen, found = project, len(configured), true
+		// Equivalent Unicode spellings can differ in byte length. Resolved
+		// directory depth, rather than spelling length, determines ownership.
+		depth := strings.Count(strings.TrimRight(configured, string(filepath.Separator)), string(filepath.Separator))
+		if depth < bestDepth {
+			continue
+		}
+		if depth == bestDepth {
+			conflicting = conflicting || project.Included != best.Included
+			continue
+		}
+		best, bestDepth, found, conflicting = project, depth, true, false
+	}
+	if conflicting {
+		return archive.ProjectActivation{}, false
 	}
 	return best, found
+}
+
+// resolvedLocationMatcher keeps prefix observations within one scope lookup.
+// Shared ancestors need one stat each even when thousands of rules alias them.
+// No observation survives this activation or intent ownership check.
+type resolvedLocationMatcher struct {
+	prefixes map[string]resolvedLocationPrefix
+}
+
+type resolvedLocationPrefix struct {
+	info os.FileInfo
+	err  error
+}
+
+func (m *resolvedLocationMatcher) statPrefix(path string) (os.FileInfo, error) {
+	if prefix, exists := m.prefixes[path]; exists {
+		return prefix.info, prefix.err
+	}
+	info, err := os.Stat(path)
+	if m.prefixes == nil {
+		m.prefixes = make(map[string]resolvedLocationPrefix)
+	}
+	m.prefixes[path] = resolvedLocationPrefix{info: info, err: err}
+	return info, err
+}
+
+// within compares paths after strict symlink resolution.
+// Differently spelled existing components may be the same directory on a
+// case-insensitive volume. Stat only those differing prefixes; enumerating each
+// ancestor directory to canonicalize every hook would make large homes costly.
+// Case or Unicode-normalization variants of absent components have uncertain
+// identity: callers must decline capture rather than bypass a possibly equivalent
+// exclusion.
+func (m *resolvedLocationMatcher) within(path, root string) (within, certain bool) {
+	if local.PathWithin(path, root) {
+		return true, true
+	}
+	if !filepath.IsAbs(path) || !filepath.IsAbs(root) || filepath.VolumeName(path) != filepath.VolumeName(root) {
+		return false, true
+	}
+	volume := filepath.VolumeName(root)
+	pathParts := strings.Split(strings.TrimPrefix(path[len(volume):], string(filepath.Separator)), string(filepath.Separator))
+	rootParts := strings.Split(strings.TrimPrefix(root[len(volume):], string(filepath.Separator)), string(filepath.Separator))
+	if len(pathParts) < len(rootParts) {
+		return false, true
+	}
+	pathPrefix, rootPrefix := volume+string(filepath.Separator), volume+string(filepath.Separator)
+	for i, part := range rootParts {
+		pathPrefix = filepath.Join(pathPrefix, pathParts[i])
+		rootPrefix = filepath.Join(rootPrefix, part)
+		if pathParts[i] == part {
+			continue
+		}
+		pathInfo, pathErr := m.statPrefix(pathPrefix)
+		rootInfo, rootErr := m.statPrefix(rootPrefix)
+		if pathErr != nil || rootErr != nil {
+			if errors.Is(pathErr, os.ErrNotExist) && errors.Is(rootErr, os.ErrNotExist) && strings.EqualFold(norm.NFD.String(pathParts[i]), norm.NFD.String(part)) {
+				return false, false
+			}
+			if pathErr != nil && !errors.Is(pathErr, os.ErrNotExist) || rootErr != nil && !errors.Is(rootErr, os.ErrNotExist) {
+				return false, false
+			}
+			return false, true
+		}
+		if !pathInfo.IsDir() || !rootInfo.IsDir() || !os.SameFile(pathInfo, rootInfo) {
+			return false, true
+		}
+	}
+	return true, true
 }
 
 // configuredProjectFor returns the owning project's configured root spelling,
@@ -677,12 +774,40 @@ func configuredProjectFor(cfg config.Config, root string) (string, bool) {
 	return project.Root, found
 }
 
+// resolvedPath resolves existing ancestors even when a descendant is absent.
+// Lstat stops at a dangling symlink so it cannot become a lexical inclusion.
+// An empty result means the filesystem identity could not be resolved safely.
 func resolvedPath(path string) string {
-	path = filepath.Clean(path)
-	if resolved, err := filepath.EvalSymlinks(path); err == nil {
-		return resolved
+	if path == "" {
+		return ""
 	}
-	return path
+	path, err := filepath.Abs(path)
+	if err != nil {
+		return ""
+	}
+	ancestor := path
+	for {
+		if _, err = os.Lstat(ancestor); err == nil {
+			break
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return ""
+		}
+		next := filepath.Dir(ancestor)
+		if next == ancestor {
+			return ""
+		}
+		ancestor = next
+	}
+	resolved, err := filepath.EvalSymlinks(ancestor)
+	if err != nil {
+		return ""
+	}
+	rel, err := filepath.Rel(ancestor, path)
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(resolved, rel)
 }
 
 // hookProjectActivation consumes facts resolved before hooks.lock for all mode.

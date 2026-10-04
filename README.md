@@ -37,7 +37,7 @@ OpenAI and Anthropic are constantly one-upping each other or the best model, but
 
 3. **Create a private bucket** and an access key for it ([R2 and S3 steps](docs/getting-started/bucket.md)).
 
-4. **Review [what is uploaded](docs/security/privacy.md#what-is-uploaded)** before enabling capture. Redaction is best effort and there is no client-side encryption. **Run setup** inside a project you want to include, or choose projects when prompted ([setup guide](docs/getting-started/setup.md)):
+4. **Review [what is uploaded](docs/security/privacy.md#what-is-uploaded)** before enabling capture. Capture can include visible user-level skill instructions as well as your conversation. Redaction is best effort and there is no client-side encryption. **Run setup** inside a project you want to include, or choose projects when prompted ([setup guide](docs/getting-started/setup.md)):
 
    ```sh
    agent-archive setup
@@ -81,6 +81,8 @@ Setup edits each included app's hook settings, adds one background job (a Launch
 | `handoff` | Continue a session in another agent; inside Claude Code, `/handoff codex`. | `agent-archive handoff` |
 
 Setup also gives Claude Code, Codex, and Cursor an `agent-archive` skill, so you can ask an agent to "pull in the auth session from Codex" and it runs the read-only commands for you; Claude Code asks before it first uses the skill and before it runs its commands ([agent skills](docs/guides/agent-skills.md#permissions)). After upgrading, `install.sh` runs `agent-archive setup --refresh` to keep the skills current.
+
+Listings return at most 50 matching sessions by default: text shows top-level sessions by last activity; JSON includes subagents and sorts by capture time. For analytics over every match, use `agent-archive list --json --limit 0`; add `--all-projects` to include every project when running inside a repository, and `--replays include` if your analysis should include replay sessions (hidden by default). Unreadable metadata is skipped with a warning on stderr ([list guide](docs/guides/list-and-show.md), [JSON contract](docs/reference/json-output.md)).
 
 Use a session ID from `list` with `show`. For every command and option, see the **[full CLI reference](docs/reference/cli.md)** or run `agent-archive help COMMAND`.
 
