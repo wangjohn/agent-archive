@@ -3,13 +3,15 @@ package backfill
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"path/filepath"
 	"strings"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/local"
+	"io/fs"
 )
 
 // KnownProjectsResult preserves usable roots when discovery cannot finish.
@@ -25,8 +27,8 @@ type KnownProjectsResult struct {
 // Incomplete reports whether unseen roots could change repository selection.
 func (r KnownProjectsResult) Incomplete() bool { return r.TimedOut || r.Capped || r.Unreadable > 0 }
 
-// KnownProjectsBounded reads only the first record of Claude and Codex
-// transcripts, never searches their bodies, and returns partial results. maxRoots
+// KnownProjectsBounded asks native integrations for first-record project
+// evidence, never searches transcript bodies, and returns partial results. maxRoots
 // caps distinct roots; maxFiles bounds enumeration even in duplicate histories.
 // The full backfill discovery API keeps its existing behavior.
 func KnownProjectsBounded(ctx context.Context, env Environment, cfg config.Config, maxRoots int) KnownProjectsResult {
@@ -46,13 +48,56 @@ func KnownProjectsBounded(ctx context.Context, env Environment, cfg config.Confi
 		maxRoots = 128
 	}
 	d := projectDiscovery{ctx: ctx, env: env, resolver: newResolver(env, cfg, Filters{}), maxRoots: maxRoots, seen: map[string]bool{}}
-	for _, dir := range env.claudeDirs() {
-		d.walk(filepath.Join(dir, "projects"), false, 0)
+	if env.Discovery == nil {
+		d.result.Unreadable++
+		return d.result
 	}
-	for _, dir := range env.codexDirs() {
-		d.walk(filepath.Join(dir, "sessions"), true, 0)
-		d.walk(filepath.Join(dir, "archived_sessions"), true, 0)
+	for _, name := range env.Discovery.DiscoveryAgents() {
+		if d.stopped() {
+			break
+		}
+		provider, ok := env.Discovery.LookupDiscovery(name)
+		if !ok {
+			d.result.Unreadable++
+			continue
+		}
+		host := &projectFiles{d: &d, bases: env.nativeDirectories(name)}
+		report, err := provider.Discover(ctx, agentapi.DiscoveryRequest{
+			Purpose: agentapi.DiscoveryBoundedProjects, Stage: agentapi.DiscoveryIdentities,
+			Locations: agentapi.NativeLocations{UserHome: env.Home, Directories: host.bases},
+			Files:     host, MaxFiles: 4096 - d.files, HeaderBytes: headLineLimit + 1, RecordBytes: headLineLimit,
+			Scan: func(path string, visit func([]byte) bool) error { return firstProjectRecord(ctx, env, path, visit) },
+		}, func(c agentapi.DiscoveryCandidate) error {
+			if d.stopped() {
+				return errProjectLimit
+			}
+			d.files++
+			if c.IdentityError == nil {
+				d.addProject(c.Header.Directory)
+				if d.stopped() {
+					return errProjectLimit
+				}
+			} else {
+				d.result.Unreadable++
+			}
+			return nil
+		})
+		d.result.Capped = d.result.Capped || host.truncated
+		d.result.Unreadable += report.UnreadableFolders
+		if report.StoreUnreadable {
+			d.result.Unreadable++
+		}
+		if report.Incomplete && !d.result.Incomplete() {
+			d.result.Capped = true
+		}
+		if err != nil && !errors.Is(err, errProjectLimit) && ctx.Err() == nil {
+			d.result.Unreadable++
+		}
+		if d.files >= 4096 {
+			d.result.Capped = true
+		}
 	}
+	d.stopped()
 	return d.result
 }
 
@@ -75,70 +120,7 @@ func (d *projectDiscovery) stopped() bool {
 	return d.result.Capped
 }
 
-func (d *projectDiscovery) walk(dir string, codex bool, depth int) {
-	if d.stopped() {
-		return
-	}
-	// ReadDir itself is a native syscall boundary. Process its entries one
-	// at a time so neither conversion nor sorting bypasses our budget.
-	entries, err := d.env.readDir(dir)
-	if d.stopped() {
-		return
-	}
-	if err != nil {
-		if !isNotExist(err) {
-			d.result.Unreadable++
-		}
-		return
-	}
-	for _, entry := range entries {
-		if d.stopped() {
-			return
-		}
-		d.entries++
-		if d.entries > 8192 {
-			d.result.Capped = true
-			return
-		}
-		path := filepath.Join(dir, entry.Name())
-		if d.stopped() {
-			return
-		}
-		if entry.IsDir() {
-			if depth >= 32 {
-				d.result.Capped = true
-				return
-			}
-			d.walk(path, codex, depth+1)
-			continue
-		}
-		if !entry.Type().IsRegular() || !strings.HasSuffix(path, ".jsonl") || (codex && !strings.HasPrefix(entry.Name(), "rollout-")) {
-			continue
-		}
-		d.readProject(path, codex)
-	}
-}
-
-func (d *projectDiscovery) readProject(path string, codex bool) {
-	d.files++
-	if d.files > 4096 {
-		d.result.Capped = true
-		return
-	}
-	if _, ok := fileSize(d.env, path); !ok {
-		d.result.Unreadable++
-		return
-	}
-	if d.stopped() {
-		return
-	}
-	cwd, err := firstProjectRecord(d.ctx, d.env, path, codex)
-	if err != nil {
-		if !d.stopped() {
-			d.result.Unreadable++
-		}
-		return
-	}
+func (d *projectDiscovery) addProject(cwd string) {
 	if cwd == "" || d.stopped() {
 		return
 	}
@@ -168,52 +150,108 @@ func projectOperation[T any](ctx context.Context, operation func(string) (T, err
 	}
 }
 
-func firstProjectRecord(ctx context.Context, env Environment, path string, codex bool) (string, error) {
+func firstProjectRecord(ctx context.Context, env Environment, path string, visit func([]byte) bool) (err error) {
 	if err := ctx.Err(); err != nil {
-		return "", err
+		return err
 	}
 	f, err := env.open(path)
 	if err != nil {
-		return "", err
+		return err
 	}
-	defer func() { _ = f.Close() }()
+	defer func() { err = errors.Join(err, f.Close()) }()
 	reader := bufio.NewReaderSize(io.LimitReader(f, headLineLimit+1), 4096)
 	var line []byte
 	for {
 		if err := ctx.Err(); err != nil {
-			return "", err
+			return err
 		}
 		chunk, err := reader.ReadSlice('\n')
 		line = append(line, chunk...)
 		if len(line) > headLineLimit {
-			return "", errors.New("project header exceeds limit")
+			return errors.New("project header exceeds limit")
 		}
 		if errors.Is(err, bufio.ErrBufferFull) {
 			continue
 		}
 		if err != nil && !errors.Is(err, io.EOF) {
-			return "", err
+			return err
 		}
 		break
 	}
 	if err := ctx.Err(); err != nil {
-		return "", err
+		return err
 	}
-	var record struct {
-		Cwd     string `json:"cwd"`
-		Type    string `json:"type"`
-		Payload struct {
-			Cwd string `json:"cwd"`
-		} `json:"payload"`
-	}
-	if err := json.Unmarshal(line, &record); err != nil {
-		return "", err
-	}
-	if codex {
-		if record.Type == "session_meta" {
-			return record.Payload.Cwd, nil
-		}
-		return "", nil
-	}
-	return record.Cwd, nil
+	visit(line)
+	return nil
 }
+
+var errProjectLimit = errors.New("bounded project discovery stopped")
+
+// projectFiles bounds entry conversion and traversal before native enumeration.
+type projectFiles struct {
+	d         *projectDiscovery
+	bases     []string
+	truncated bool
+}
+
+func (p *projectFiles) ReadDir(path string) ([]fs.DirEntry, error) {
+	if p.d.stopped() || p.d.entries >= 8192 {
+		p.d.result.Capped = true
+		return nil, errProjectLimit
+	}
+	// Each configured native root starts its own bounded traversal. Unrelated
+	// roots do not constrain this path, and a nested root gives it a fresh budget.
+	depth := -1
+	for _, base := range p.bases {
+		rel, err := filepath.Rel(base, path)
+		if err != nil || !local.PathWithin(path, base) {
+			continue
+		}
+		n := len(strings.Split(rel, string(filepath.Separator)))
+		if depth < 0 || n < depth {
+			depth = n
+		}
+	}
+	if depth > 33 {
+		p.d.result.Capped = true
+		return nil, errProjectLimit
+	}
+	entries, err := p.d.env.readDir(path)
+	if p.d.stopped() {
+		return nil, p.d.ctx.Err()
+	}
+	if err != nil {
+		return nil, err
+	}
+	capacity := min(len(entries), 8192-p.d.entries)
+	out := make([]fs.DirEntry, 0, capacity)
+	wrapped := make([]projectEntry, capacity)
+	for _, entry := range entries {
+		if p.d.stopped() {
+			return nil, p.d.ctx.Err()
+		}
+		if p.d.entries >= 8192 {
+			p.truncated = true
+			break
+		}
+		p.d.entries++
+		name := entry.Name()
+		if p.d.stopped() {
+			return nil, p.d.ctx.Err()
+		}
+		wrapped[len(out)] = projectEntry{DirEntry: entry, name: name}
+		out = append(out, &wrapped[len(out)])
+	}
+	return out, nil
+}
+
+func (p *projectFiles) Lstat(path string) (fs.FileInfo, error) { return p.d.env.lstat(path) }
+
+func (p *projectFiles) Open(path string) (io.ReadCloser, error) { return p.d.env.open(path) }
+
+type projectEntry struct {
+	fs.DirEntry
+	name string
+}
+
+func (e projectEntry) Name() string { return e.name }

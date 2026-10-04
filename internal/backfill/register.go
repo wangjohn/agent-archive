@@ -8,9 +8,9 @@ import (
 	"os"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
-	"github.com/wangjohn/agent-archive/internal/cursorstore"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/state"
 )
@@ -36,6 +36,7 @@ const (
 // keeps `pause` out (it takes that lock), so collection cannot be paused
 // while registration runs; each hold still rereads the configuration.
 type Registration struct {
+	Sources    agentapi.SourcesLookup
 	Home       string
 	Store      *state.Store
 	Batch      string
@@ -130,7 +131,9 @@ func (r Registration) Run(candidates []Candidate) (RegistrationResult, error) {
 		if r.Stop != nil && r.Stop() {
 			return result, ErrStopped
 		}
-		r.checkChats(works[i:])
+		if err := r.checkChats(works[i:]); err != nil {
+			return result, err
+		}
 		r.resolveRepoKeys(works[i:], repoKeys)
 		err := r.hold(works, &i, &result)
 		if flushErr := flush(); err == nil {
@@ -153,7 +156,7 @@ func (r Registration) Run(candidates []Candidate) (RegistrationResult, error) {
 // of the hold. The answer can be a hold old by the time it is used; it only
 // ever was a check against the plan, and the collector handles a chat
 // deleted later.
-func (r Registration) checkChats(works []*parentWork) {
+func (r Registration) checkChats(works []*parentWork) error {
 	limit := maxHoldSteps
 	if r.MaxHoldSteps > 0 {
 		limit = r.MaxHoldSteps
@@ -161,9 +164,14 @@ func (r Registration) checkChats(works []*parentWork) {
 	// A hold finishes at most one session per step.
 	for _, w := range works[:min(limit, len(works))] {
 		if w.c.SourceKind == archive.SourceKindCursorSQLite && !w.chatChecked {
-			w.chatChecked, w.chatGone = true, r.chatGone(w.c)
+			gone, err := r.chatGone(w.c)
+			if err != nil {
+				return err
+			}
+			w.chatChecked, w.chatGone = true, gone
 		}
 	}
+	return nil
 }
 
 // resolveRepoKeys asks, before hooks.lock is taken, for the repository key of
@@ -395,17 +403,34 @@ func (r Registration) registration(c Candidate, archiveID, repoKey string) archi
 // longer there. It reads a few indexed rows in place, never a copy. A
 // database that can't be read now (Cursor holds a lock) is not "gone": the
 // chat is registered, and the collector reads it when it can.
-func (r Registration) chatGone(c Candidate) bool {
+func (r Registration) chatGone(c Candidate) (bool, error) {
 	if r.CursorDatabase == "" {
-		return false
+		return false, nil
 	}
-	_, err := readChatSignature(context.Background(), r.CursorDatabase, c.SourceKey)
-	return isNotExist(err)
+	_, err := observeSource(context.Background(), r.Sources, agentapi.SourceEnvironment{Database: r.CursorDatabase}, c.Harness, agentapi.SourceRef{Kind: c.SourceKind, Path: c.TranscriptPath, Key: c.SourceKey})
+	if fatalSourceFailure(err) {
+		return false, err
+	}
+	return isNotExist(err), nil
 }
 
-// readChatSignature is cursorstore.ReadSignature, as a variable only so a
-// test can see when registration reads Cursor's database.
-var readChatSignature = cursorstore.ReadSignature
+// observeSource asks the selected provider and closes its serial owner before
+// registration takes hooks.lock. Cleanup failures remain observable.
+func observeSource(ctx context.Context, sources agentapi.SourcesLookup, environment agentapi.SourceEnvironment, name string, ref agentapi.SourceRef) (observation agentapi.SourceObservation, err error) {
+	if sources == nil {
+		return observation, errors.New("source lookup required")
+	}
+	provider, _, ok := sources.LookupSources(name)
+	if !ok {
+		return observation, errors.New("source capability unavailable")
+	}
+	pass, err := provider.OpenPass(ctx, environment)
+	if err != nil {
+		return observation, err
+	}
+	defer func() { err = errors.Join(err, pass.Close()) }()
+	return pass.Signature(ctx, ref)
+}
 
 // regularFile reports whether path is still a regular file, without
 // following a symlink.

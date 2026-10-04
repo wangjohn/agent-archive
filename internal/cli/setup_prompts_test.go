@@ -46,7 +46,7 @@ func TestAppSelectionSuggestionsAndManualFallback(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			var out bytes.Buffer
-			got, err := promptHarnesses(newPrompter(strings.NewReader(tt.input), &out), tt.detected, tt.existing)
+			got, err := promptHarnesses(allHarnesses, newPrompter(strings.NewReader(tt.input), &out), tt.detected, tt.existing)
 			if err != nil || !reflect.DeepEqual(got, tt.want) {
 				t.Fatalf("got %v, %v; want %v", got, err, tt.want)
 			}
@@ -110,7 +110,7 @@ func TestInteractiveReviewCanChangeSkillEvidence(t *testing.T) {
 	var out bytes.Buffer
 	p := newPrompter(strings.NewReader("skills\nnone\n"), &out)
 	draft := setupDraft{Config: config.Config{SkillEvidence: config.SkillEvidenceMetadata}}
-	if err := editSetupReview(p, &draft, t.TempDir(), nil, nil); err != nil {
+	if err := editSetupReview(allHarnesses, p, &draft, t.TempDir(), nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if draft.Config.SkillEvidence != config.SkillEvidenceNone {
@@ -220,7 +220,7 @@ func TestReviewActionRefusesStartWhenBlocked(t *testing.T) {
 func TestNewlyFoundAppsOmitAppsNotDetected(t *testing.T) {
 	t.Parallel()
 	var out bytes.Buffer
-	got, err := promptHarnesses(newPrompter(strings.NewReader("\n"), &out), []string{"claude", "cursor"}, []string{"cursor"})
+	got, err := promptHarnesses(allHarnesses, newPrompter(strings.NewReader("\n"), &out), []string{"claude", "cursor"}, []string{"cursor"})
 	if err != nil || !reflect.DeepEqual(got, []string{"claude", "cursor"}) {
 		t.Fatalf("got %v, %v", got, err)
 	}
@@ -277,7 +277,7 @@ func TestReviewEditNeverOffersFoundApps(t *testing.T) {
 	draft := setupDraft{Config: config.Config{Harnesses: []string{"cursor"}, DeclinedHarnesses: []string{"codex", "claude"}}}
 	var out bytes.Buffer
 	p := newPrompter(strings.NewReader("apps\ny\nn\ny\ny\n"), &out)
-	if err := editSetupReview(p, &draft, t.TempDir(), nil, nil); err != nil {
+	if err := editSetupReview(allHarnesses, p, &draft, t.TempDir(), nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(out.String(), "Also found") || !strings.Contains(out.String(), "Change which apps are included?") {
@@ -317,14 +317,14 @@ func TestReviewEditRemovalIsNotOfferedAgain(t *testing.T) {
 	t.Parallel()
 	draft := setupDraft{Config: config.Config{Harnesses: []string{"codex", "claude"}}}
 	p := newPrompter(strings.NewReader("apps\ny\nn\ny\nn\n"), &bytes.Buffer{})
-	if err := editSetupReview(p, &draft, t.TempDir(), nil, nil); err != nil {
+	if err := editSetupReview(allHarnesses, p, &draft, t.TempDir(), nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(draft.Config.Harnesses, []string{"claude"}) || !reflect.DeepEqual(draft.Config.DeclinedHarnesses, []string{"codex"}) {
 		t.Fatalf("harnesses %v declined %v", draft.Config.Harnesses, draft.Config.DeclinedHarnesses)
 	}
 	var out bytes.Buffer
-	if err := chooseHarnesses(newPrompter(strings.NewReader("\n"), &out), []string{"codex", "claude"}, &draft.Config); err != nil {
+	if err := chooseHarnesses(allHarnesses, newPrompter(strings.NewReader("\n"), &out), []string{"codex", "claude"}, &draft.Config); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(out.String(), "Also found") || !reflect.DeepEqual(draft.Config.Harnesses, []string{"claude"}) {

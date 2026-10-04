@@ -15,6 +15,7 @@ import (
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	awscredentials "github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/smithy-go/logging"
+	"github.com/wangjohn/agent-archive/internal/destination"
 )
 
 var (
@@ -35,6 +36,7 @@ var (
 // KeychainService is the canonical macOS Keychain service name this archive
 // uses for every R2CredentialRef, so a hook, the collector, and setup all
 // resolve the same stored item.
+
 const KeychainService = "agent-archive"
 
 // R2Credentials are intentionally only accepted through a reference to a
@@ -43,6 +45,7 @@ const KeychainService = "agent-archive"
 // inject a test credential provider without any shell or command-line transport.
 // The JSON tags pin the format already stored in users' Keychains: renaming
 // one would make existing credentials unreadable.
+
 type R2Credentials struct {
 	AccessKeyID     string `json:"AccessKeyID"`
 	SecretAccessKey string `json:"SecretAccessKey"`
@@ -58,36 +61,21 @@ func (c R2Credentials) validate() error {
 
 // CredentialStore stores and resolves opaque references. Implementations must
 // never include secret values in errors or diagnostic output.
+
 type CredentialStore interface {
 	Save(ctx context.Context, reference string, value R2Credentials) error
 	Load(ctx context.Context, reference string) (R2Credentials, error)
 	Delete(ctx context.Context, reference string) error
 }
 
-// Config describes one archive storage destination. For S3, AWSProfile is
-// mandatory and is loaded deterministically. For R2, R2CredentialRef points
-// to an item in the credential store (see OpenDefault) and Endpoint may be
-// omitted when AccountID is supplied.
-// The JSON tags spell the Go field names, the format already saved in users'
-// config files: renaming one would make existing configs unreadable.
-type Config struct {
-	Provider        string `json:"Provider"`
-	Bucket          string `json:"Bucket"`
-	Region          string `json:"Region"`
-	Prefix          string `json:"Prefix"`
-	AWSProfile      string `json:"AWSProfile"`
-	R2CredentialRef string `json:"R2CredentialRef"`
-	R2AccountID     string `json:"R2AccountID"`
-	R2Endpoint      string `json:"R2Endpoint"`
-}
+// Config is the persisted pure destination value.
+type Config = destination.Config
 
-// Config.Provider values.
-const (
-	// ProviderS3 is Amazon S3, authenticated through a shared AWS profile.
-	ProviderS3 = "s3"
-	// ProviderR2 is Cloudflare R2, authenticated through a credential store item.
-	ProviderR2 = "r2"
-)
+// ProviderS3 identifies a destination using the selected AWS profile.
+const ProviderS3 = destination.ProviderS3
+
+// ProviderR2 identifies a destination using stored R2 credentials.
+const ProviderR2 = destination.ProviderR2
 
 // LoadAWSConfig loads exactly the selected shared AWS profile. Supplying an
 // explicit profile makes the SDK resolve that profile's static, SSO,
@@ -100,6 +88,7 @@ const (
 // default prints to stderr, such as "SDK <date> WARN falling back to
 // IMDSv1" when a profile has no credentials. Failures still reach the
 // caller as errors.
+
 func LoadAWSConfig(ctx context.Context, profile, region string) (aws.Config, error) {
 	profile = strings.TrimSpace(profile)
 	if profile == "" {
@@ -122,6 +111,7 @@ func LoadAWSConfig(ctx context.Context, profile, region string) (aws.Config, err
 // LoadR2Config creates an AWS config using a store-resolved static
 // provider. Region is always "auto", as required by Cloudflare R2. Endpoint
 // is normalized and may be derived from a Cloudflare account ID.
+
 func LoadR2Config(ctx context.Context, cfg Config, store CredentialStore) (aws.Config, string, error) {
 	if store == nil {
 		return aws.Config{}, "", ErrUnavailable
@@ -146,23 +136,13 @@ func LoadR2Config(ctx context.Context, cfg Config, store CredentialStore) (aws.C
 
 // R2Endpoint returns a validated endpoint. Cloudflare's account endpoint is
 // inferred only when the caller explicitly supplies an account ID.
+
 func R2Endpoint(endpoint, accountID string) (string, error) {
-	endpoint = strings.TrimSpace(endpoint)
-	if endpoint == "" {
-		accountID = strings.TrimSpace(accountID)
-		if accountID == "" || strings.ContainsAny(accountID, "/\\ \t\r\n") {
-			return "", errors.New("R2 endpoint or account ID is required")
-		}
-		endpoint = "https://" + accountID + ".r2.cloudflarestorage.com"
-	}
-	u, err := url.Parse(endpoint)
-	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.Path != "" && u.Path != "/" || u.RawQuery != "" || u.Fragment != "" {
-		return "", errors.New("invalid R2 endpoint")
-	}
-	return strings.TrimRight(endpoint, "/"), nil
+	return destination.R2Endpoint(endpoint, accountID)
 }
 
 // R2Location is what an R2 account ID or URL pasted into setup names.
+
 type R2Location struct {
 	// AccountID is set when the input is an account ID, or a URL on the
 	// account's default endpoint.
@@ -175,13 +155,16 @@ type R2Location struct {
 }
 
 // r2HostSuffix ends the host of every Cloudflare R2 endpoint.
+
 const r2HostSuffix = ".r2.cloudflarestorage.com"
 
 // r2AccountID is the shape of a Cloudflare account ID.
+
 var r2AccountID = regexp.MustCompile(`^[0-9a-f]{32}$`)
 
 // Cloudflare reports whether l is on a Cloudflare R2 host. Any other https
 // endpoint is accepted, as an S3-compatible service, but is worth a warning.
+
 func (l R2Location) Cloudflare() bool {
 	return l.Endpoint == "" || strings.HasSuffix(l.Endpoint, r2HostSuffix)
 }
@@ -191,6 +174,7 @@ func (l R2Location) Cloudflare() bool {
 // https://<account>.r2.cloudflarestorage.com/<bucket>: the account comes
 // from the host and the bucket from the path. A Cloudflare host without its
 // https:// is read as a URL.
+
 func ParseR2Location(input string) (R2Location, error) {
 	input = strings.TrimSpace(input)
 	if !strings.Contains(input, "://") && strings.Contains(strings.ToLower(input), r2HostSuffix) {
@@ -224,6 +208,7 @@ func ParseR2Location(input string) (R2Location, error) {
 
 // EncodeSecret is used by KeychainStore and FileStore and is exported solely so a test can
 // verify that the stored representation contains no JSON configuration.
+
 func EncodeSecret(value R2Credentials) ([]byte, error) {
 	if err := value.validate(); err != nil {
 		return nil, err
@@ -235,6 +220,7 @@ func EncodeSecret(value R2Credentials) ([]byte, error) {
 
 // DecodeSecret parses a value EncodeSecret produced. Any decoding failure is
 // ErrUnavailable, so the stored bytes never appear in an error.
+
 func DecodeSecret(data []byte) (R2Credentials, error) {
 	var value R2Credentials
 	if err := json.Unmarshal(data, &value); err != nil {

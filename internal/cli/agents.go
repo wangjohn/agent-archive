@@ -8,6 +8,7 @@ import (
 )
 
 // Production composition happens once, without filesystem or runtime probes.
+
 var productionAgents = builtin.NewBuiltins()
 
 func (e Env) agentRegistry() *builtin.Registry {
@@ -41,3 +42,5 @@ func previewsFor(deps any) agentapi.PreviewsLookup { return registryFor(deps) }
 func (e Env) runtimeLookup() agentapi.RuntimeLookup { return e.agentRegistry() }
 
 func (e Env) launcherLookup() agentapi.LauncherLookup { return e.agentRegistry() }
+
+func (e Env) setupNames() []string { return agentmeta.SetupNames(e.agentRegistry().Catalog()) }

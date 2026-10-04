@@ -46,34 +46,6 @@ type Locations struct {
 	// OS is the system these are the locations of.
 	OS OS
 
-	// CursorAppDir is Cursor's per-user application-data folder, the parent
-	// of its User folder.
-	//
-	//   - Darwin: <home>/Library/Application Support/Cursor.
-	//   - Linux: Cursor is a VS Code fork and keeps its data where VS Code
-	//     does, under the XDG config home: $XDG_CONFIG_HOME/Cursor when that
-	//     is an absolute path, else <home>/.config/Cursor. The XDG Base
-	//     Directory specification says a relative $XDG_CONFIG_HOME is invalid
-	//     and must be ignored, as is an empty one. The Linux layout is the VS
-	//     Code convention and has not been confirmed on a real Cursor
-	//     install.
-	//   - Unknown: "". Cursor's data is not looked for on a system this
-	//     program does not know, so Cursor there counts as not installed.
-	CursorAppDir string
-	// CursorStateDB is Cursor's chat database, state.vscdb, under
-	// CursorAppDir; "" when CursorAppDir is.
-	CursorStateDB string
-	// CursorWorkspaceStorage is Cursor's folder of per-workspace state; ""
-	// when CursorAppDir is.
-	CursorWorkspaceStorage string
-
-	// ClaudeDesktopScratch is where the Claude desktop app starts scratch
-	// chats, and CodexDocuments where the Codex desktop app puts its dated
-	// workspaces (<date>/<name>). Both are macOS desktop-app locations: ""
-	// on any other system.
-	ClaudeDesktopScratch string
-	CodexDocuments       string
-
 	// UserUnitDir is where the user's own systemd units are, which the
 	// systemd scheduler writes the collector's job into: <home>/.config/
 	// systemd/user, whatever XDG_CONFIG_HOME says (the user manager reads
@@ -110,28 +82,13 @@ func NewLocations(os OS, home string, getenv func(string) string, deps LocationD
 	}
 	switch os {
 	case Darwin:
-		if home != "" {
-			support := filepath.Join(home, "Library", "Application Support")
-			l.CursorAppDir = filepath.Join(support, "Cursor")
-			l.ClaudeDesktopScratch = filepath.Join(support, "Claude", "scratch-workspaces")
-			l.CodexDocuments = filepath.Join(home, "Documents", "Codex")
-		}
 		l.TempRoots = []string{"/tmp", "/private/tmp", "/var/folders", "/private/var/folders"}
 	case Linux:
-		if dir := getenv("XDG_CONFIG_HOME"); dir != "" && filepath.IsAbs(dir) {
-			l.CursorAppDir = filepath.Join(dir, "Cursor")
-		} else if home != "" {
-			l.CursorAppDir = filepath.Join(home, ".config", "Cursor")
-		}
 		if home != "" {
 			l.UserUnitDir = filepath.Join(home, ".config", "systemd", "user")
 		}
 		l.TempRoots = []string{"/tmp", "/var/tmp"}
 	case Unknown:
-	}
-	if l.CursorAppDir != "" {
-		l.CursorStateDB = filepath.Join(l.CursorAppDir, "User", "globalStorage", "state.vscdb")
-		l.CursorWorkspaceStorage = filepath.Join(l.CursorAppDir, "User", "workspaceStorage")
 	}
 	return l
 }
@@ -241,7 +198,7 @@ func (l Locations) SnapshotCacheDir() string {
 // home there is no root ("").
 //
 // An Unknown system has no snapshot root: it is "", because Cursor's
-// database is not looked for there (CursorStateDB is ""), so no copy is ever
+// database is not looked for there (the native provider returns no database location), so no copy is ever
 // wanted, and guessing a shared temporary directory for one would be a
 // privacy decision made without knowing the system. A caller must treat ""
 // as "take no snapshot".

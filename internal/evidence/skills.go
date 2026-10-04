@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
@@ -43,6 +44,7 @@ type SkillOptions struct {
 	UserHome    string
 	ObservedAt  time.Time
 	Mode        config.SkillEvidence
+	Locations   []agentapi.SkillRoot
 }
 
 type skillRoot struct {
@@ -95,45 +97,25 @@ func ObserveSkills(options SkillOptions) ([]archive.SupplementalEvidence, error)
 }
 
 func skillRoots(options SkillOptions) []skillRoot {
-	project, user := filepath.Clean(options.ProjectRoot), filepath.Clean(options.UserHome)
-	if options.ProjectRoot == "" {
-		project = ""
-	}
-	if options.UserHome == "" {
-		user = ""
-	}
 	var roots []skillRoot
-	addUser := func(suffix, scope string) {
-		if user != "" {
-			roots = append(roots, skillRoot{path: filepath.Join(user, suffix), scope: scope, user: user})
+	for _, declared := range options.Locations {
+		if declared.UserBoundary != "" {
+			addUserRoot := skillRoot{path: declared.Path, scope: declared.Scope, user: declared.UserBoundary}
+			roots = append(roots, addUserRoot)
+			continue
 		}
-	}
-	// A project root that is a user-level root (the session ran from the
-	// home directory) is observed once, under the user scope and its rules.
-	addProject := func(suffix, scope string) {
-		if project == "" {
-			return
-		}
-		path := filepath.Join(project, suffix)
+		duplicate := false
 		for _, root := range roots {
-			if sameDirectory(root.path, path) {
-				return
+			if sameDirectory(root.path, declared.Path) {
+				duplicate = true
+				break
 			}
 		}
-		roots = append(roots, skillRoot{path: path, scope: scope, project: project})
+		if !duplicate {
+			roots = append(roots, skillRoot{path: declared.Path, scope: declared.Scope, project: declared.ProjectBoundary})
+		}
 	}
-	switch archive.CanonicalHarness(options.Harness) {
-	case "codex":
-		addUser(".agents/skills", "user_agents")
-		addUser(".codex/skills", "user_codex_legacy")
-		addProject(".agents/skills", "project_agents")
-	case archive.HarnessClaude:
-		addUser(".claude/skills", "user_claude")
-		addProject(".claude/skills", "project_claude")
-	case "cursor":
-		addUser(".cursor/skills", "user_cursor")
-		addProject(".cursor/skills", "project_cursor")
-	}
+
 	return roots
 }
 

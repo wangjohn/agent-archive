@@ -1,7 +1,7 @@
 # Coding-agent integration abstraction
 
-Prepared 2026-10-01 against `main` at `98f8bd0`. Status: proposed; not
-implemented. Reviewed against the current capture, state, collector, parser,
+Prepared 2026-10-01 against `main` at `98f8bd0`. Status: stacked implementation in progress; readiness and independent review
+remain pending. Reviewed against the current capture, state, collector, parser,
 and source-reader implementations on 2026-10-01. The interface sketch is ready
 for design iteration; the contracts and performance gates below must be settled
 before their corresponding implementation phase.
@@ -587,18 +587,21 @@ historical filtered bundles as well as current native-input fixtures.
 
 ## Implementation sequence
 
-Each phase lands before dependent work begins. Update this table with PRs and
-implementation differences as work proceeds.
+The user explicitly authorized stacked implementation before parent phases land.
+Each child integrates committed parent ancestry without rewriting it; readiness
+requires the final combined checks and independent review. Update this table
+with PRs and implementation differences as work proceeds.
 
 | Phase | Deliverable | Completion gate | Status |
 | --- | --- | --- | --- |
 | 0 | Characterization, identity migration design, performance baseline | Capture/index races, native-label/outcome paths, read consistency, and existing hot-path costs are recorded before contracts move. | [PR #278](https://github.com/wangjohn/agent-archive/pull/278): contracts and measured references; independent review/CI pending. |
-| 1 | Catalog, immutable registry, operation lookup | Config, flags, setup order, known-agent reader probes, and destinations consume one identity source; aliases and unknown archive names retain behavior. | Proposed |
-| 2 | Launch/runtime contracts for all three agents | Existing argument, environment, terminal, current-session, and noninteractive tests pass through injected integrations. | Proposed |
-| 3 | Lifecycle and hook plans | Qualified native-key migration precedes decoder cutover; native names/payload interpretation leave capture; generic admission preserves fresh/resume, deferred intent, lock, parent/child, and transactional setup behavior. | Proposed |
-| 4 | Source passes and snapshots | File/text/database reads use common contracts; bounds, locator transitions, legacy signatures, typed failures, cleanup, declarative rewrite policy, and Cursor reuse are preserved. | Proposed |
-| 5 | Codec dispatch and bundle observability | Filters/parsers expose shared Analysis; native facts leave bundle/metadata/labels/subagent paths; one analysis feeds shared rendering; old and new fixtures remain equivalent. | Proposed |
-| 6 | Discovery, skills, contributor guide, extension proof | Backfill/evidence/skills use integrations; test-only fourth agent completes archive flows; temporary wrappers and duplicated lists are removed. | Proposed |
+| 1 | Catalog, immutable registry, operation lookup | Config, flags, setup order, known-agent reader probes, and destinations consume one identity source; aliases and unknown archive names retain behavior. | [PR #290](https://github.com/wangjohn/agent-archive/pull/290): stacked implementation; readiness and review pending. |
+| 2 | Launch/runtime contracts for all three agents | Existing argument, environment, terminal, current-session, and noninteractive tests pass through injected integrations. | [PR #293](https://github.com/wangjohn/agent-archive/pull/293): stacked implementation; readiness and review pending. |
+| 3a | Qualified identity and migration | Opaque agent-qualified keys, compatibility adoption, races and recovery preserve archive identity. | [PR #295](https://github.com/wangjohn/agent-archive/pull/295): stacked implementation; readiness and review pending. |
+| 3b | Lifecycle and hook plans | Qualified native-key migration precedes decoder cutover; native names/payload interpretation leave capture; generic admission preserves fresh/resume, deferred intent, lock, parent/child, and transactional setup behavior. | [PR #298](https://github.com/wangjohn/agent-archive/pull/298): stacked implementation; readiness and review pending. |
+| 4 | Source passes and snapshots | File/text/database reads use common contracts; bounds, locator transitions, legacy signatures, typed failures, cleanup, declarative rewrite policy, and Cursor reuse are preserved. | [PR #299](https://github.com/wangjohn/agent-archive/pull/299): stacked implementation; readiness and review pending. |
+| 5 | Codec dispatch and bundle observability | Filters/parsers expose shared Analysis; native facts leave bundle/metadata/labels/subagent paths; one analysis feeds shared rendering; old and new fixtures remain equivalent. | [PR #300](https://github.com/wangjohn/agent-archive/pull/300): stacked implementation; readiness and review pending. |
+| 6 | Discovery, skills, contributor guide, extension proof | Backfill/evidence/skills use integrations; test-only fourth agent completes archive flows; temporary wrappers and duplicated lists are removed. | [PR #301](https://github.com/wangjohn/agent-archive/pull/301): stacked implementation; readiness and review pending. |
 
 Phases are review boundaries, not a promise of exactly seven PRs. Define
 interfaces in the phase that first uses them; phase 1 does not land the entire

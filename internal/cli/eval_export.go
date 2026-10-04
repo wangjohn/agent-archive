@@ -21,7 +21,6 @@ import (
 	"github.com/wangjohn/agent-archive/internal/backfill"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
-	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/terminal"
@@ -220,7 +219,7 @@ func evalExportOptionsFromArgs(args []string, stderr io.Writer, env Env) (evalEx
 		if canonical != "" {
 			opts.filters.Harnesses = []string{canonical}
 		}
-		if err := opts.filters.Validate(); err != nil {
+		if err := opts.filters.Validate(env.agentRegistry()); err != nil {
 			return evalExportOptions{}, fs.usageError("%v", err)
 		}
 	}
@@ -564,29 +563,29 @@ func transcriptSessionID(adapter archive.Adapter, path string, filtered archive.
 	return strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 }
 
-// transcriptHarness is the app whose transcript folder holds path: Claude
-// Code's and Codex's session folders (the defaults and the ones
-// CLAUDE_CONFIG_DIR and CODEX_HOME name), or a Cursor agent-transcripts
-// folder. "" when it is in none of them.
+// transcriptHarness infers one owner from declared native path recognition ports.
+// Ambiguous or unavailable locations require an explicit --harness.
 func (x *evalExporter) transcriptHarness(path string) string {
-	if userHome, err := x.env.userHomeDir(); err == nil {
-		claude, codex := x.env.appSessionDirs(userHome, config.Config{})
-		for _, store := range []struct {
-			harness string
-			dirs    []string
-		}{{"claude", claude}, {"codex", codex}} {
-			harness, dirs := store.harness, store.dirs
-			for _, dir := range dirs {
-				if local.PathWithin(path, dir) {
-					return harness
-				}
-			}
+	home, _ := x.env.userHomeDir()
+	dirs := x.env.nativeSessionDirectories(home, config.Config{})
+	registry := x.env.agentRegistry()
+	var owner string
+	for _, name := range registry.NativePathAgents() {
+		provider, _ := registry.LookupNativePaths(name)
+		recognizer, ok := provider.(agentapi.TranscriptPathRecognizer)
+		if !ok {
+			continue
 		}
+		observed := agentapi.NativePathEnvironment{Locations: agentapi.NativeLocations{UserHome: home, Directories: dirs[name]}, OperatingSystem: x.env.operatingSystem(), Getenv: x.env.getenv}
+		if !recognizer.RecognizesTranscriptPath(observed, path) {
+			continue
+		}
+		if owner != "" && owner != name {
+			return ""
+		}
+		owner = name
 	}
-	if strings.Contains(filepath.ToSlash(path), "/agent-transcripts/") {
-		return "cursor"
-	}
-	return ""
+	return owner
 }
 
 // writeEvalRecord writes one record as a line of JSON. Its strings come from

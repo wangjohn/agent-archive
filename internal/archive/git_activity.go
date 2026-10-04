@@ -2,7 +2,7 @@ package archive
 
 import (
 	"encoding/json"
-	"net"
+	"net/netip"
 	"net/url"
 	"regexp"
 	"strconv"
@@ -338,7 +338,10 @@ func parseRemote(remote string) (host, repository string) {
 // publicHost reports whether host is a DNS name a URL may be built on: not
 // empty, not localhost, not an IP address (a local git proxy), and dotted.
 func publicHost(host string) bool {
-	if host == "" || !hostPattern.MatchString(host) || strings.EqualFold(host, "localhost") || net.ParseIP(host) != nil {
+	if host == "" || !hostPattern.MatchString(host) || strings.EqualFold(host, "localhost") {
+		return false
+	}
+	if _, err := netip.ParseAddr(host); err == nil {
 		return false
 	}
 	return strings.Contains(host, ".")
