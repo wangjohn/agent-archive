@@ -67,6 +67,22 @@ esac
 '''
 FAKE_AGENT_ARCHIVE = r'''#!/bin/sh
 echo "$1" >> "$FAKE_AGENT_ARCHIVE_LOG"
+
+if [ "$1" = pause ] && [ -n "${FAKE_INSTALL_STATE:-}" ]; then
+  echo "fake installation $FAKE_INSTALL_STATE; pause refuses" >&2
+  exit 1
+fi
+if [ "$1" = uninstall ]; then
+  printf '%s\n' "$*" > "$FAKE_S3/../uninstall-args.log"
+  [ "$#" = 2 ] && [ "$2" = --yes ] || { echo 'unsupported uninstall arguments' >&2; exit 2; }
+  if [ -n "${FAKE_UNINSTALL_FAIL:-}" ]; then
+    if [ -n "${FAKE_WRITER_KEY:-}" ]; then
+      printf 'in-flight source\n' > "$FAKE_S3/my-archive-bucket/$FAKE_WRITER_KEY"
+    fi
+    echo "fake uninstall $FAKE_UNINSTALL_FAIL" >&2
+    exit 1
+  fi
+fi
 if [ "$(wc -l < "$FAKE_AGENT_ARCHIVE_LOG" | tr -d ' ')" = "${FAKE_PAUSE_FAIL_AT:-0}" ]; then
   if [ -n "${FAKE_WRITER_KEY:-}" ]; then
     printf 'in-flight source\n' > "$FAKE_S3/my-archive-bucket/$FAKE_WRITER_KEY"
@@ -727,6 +743,53 @@ mv() {
                     self.assertEqual(result.returncode, 0, result.stderr)
                     self.assertEqual(self.keys(bucket), [])
                     self.assertEqual(self.attempts(), [])
+
+
+    def test_stop_route_after_removed_installation(self):
+        for shell in self.shells:
+            for state in ('disabled', 'missing'):
+                with self.subTest(shell=shell, state=state):
+                    bucket = self.build(extra=['outside/keep'])
+                    before = self.keys(bucket)
+                    result = self.run_recipe(shell, 'agent-archive/', ['list', 'all', 'delete'],
+                        env_extra={'FAKE_INSTALL_STATE': state})
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(self.keys(bucket), ['outside/keep'])
+                    targets = [k.removeprefix('my-archive-bucket/') for k in self.attempts()]
+                    metadata = sorted(k for k in before if k.endswith('/metadata.json'))
+                    self.assertEqual(targets[:len(metadata)], metadata)
+                    self.assertEqual(sorted(targets), sorted(k for k in before if k.startswith('agent-archive/')))
+                    self.assertEqual((self.root / 'agent-archive.log').read_text().splitlines(), ['pause', 'uninstall'])
+                    self.assertEqual((self.root / 'uninstall-args.log').read_text().strip(), 'uninstall --yes')
+
+    def test_removed_installation_never_automatically_uninstalls(self):
+        for shell in self.shells:
+            for state in ('disabled', 'missing'):
+                with self.subTest(shell=shell, state=state):
+                    bucket = self.build()
+                    before = self.keys(bucket)
+                    result = self.run_recipe(shell, 'agent-archive/', ['list', 'delete'],
+                        env_extra={'FAKE_INSTALL_STATE': state})
+                    self.assertNotEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(self.attempts(), [])
+                    self.assertEqual(self.keys(bucket), before)
+                    self.assertEqual((self.root / 'agent-archive.log').read_text().splitlines(), ['pause'])
+
+    def test_failed_explicit_uninstall_invalidates_previous_plan(self):
+        for shell in self.shells:
+            for failure in ('lock', 'unknown-scheduler'):
+                with self.subTest(shell=shell, failure=failure):
+                    bucket = self.build()
+                    before = self.keys(bucket)
+                    writer_key = 'agent-archive/sessions/codex/bbbb/source.' + 'e' * 64 + '.jsonl.gz'
+                    result = self.run_recipe(shell, 'agent-archive/', ['list'],
+                        env_extra={'FAKE_UNINSTALL_FAIL': failure, 'FAKE_WRITER_KEY': writer_key},
+                        tail='purge_stop_uploads uninstall\npurge_prepare all\npurge_apply')
+                    self.assertNotEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(self.attempts(), [])
+                    self.assertEqual(self.keys(bucket), sorted(before + [writer_key]))
+                    self.assertIn(failure, result.stderr)
+                    self.assertEqual((self.root / 'uninstall-args.log').read_text().strip(), 'uninstall --yes')
 
 
 if __name__ == '__main__':
