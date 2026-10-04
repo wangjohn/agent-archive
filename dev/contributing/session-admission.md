@@ -70,8 +70,13 @@ then resumes derived-index application from a content-free cursor tied to that
 inventory, the request generation, and the membership revision. A partial,
 interrupted or damaged cursor never certifies absence. Candidate reservations
 and requested misses must also finish before the complete marker is written.
-Repeated requests for an already retained exact key preserve progress; a new
-request changes the recovery generation.
+Repeated requests for an already retained exact key preserve progress, including
+an applied absence that is not yet certified; readers still require the complete
+marker before accepting that absence. A new request changes the recovery
+generation. After a fresh complete census proves equivalent membership and
+inventory, owner/candidate application can retain its earlier progress across
+that change; candidate facts must also match their complete phase fingerprint.
+Requested-miss coverage restarts so the new generation cannot skip a new key.
 
 Registration membership changes stage a small durable revision outside locks.
 The request lock precedes the short membership lock, which commits the revision

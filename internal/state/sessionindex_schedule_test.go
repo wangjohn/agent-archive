@@ -760,3 +760,277 @@ func TestRecoveryCensusDoesNotInheritOmittedRegistrationFields(t *testing.T) {
 		t.Fatalf("incomplete registration inherited authority: inventory=%v err=%v", inventory, err)
 	}
 }
+
+// An applied absence remains uncertified until the complete census finishes.
+// Reobserving it must retain the request without restarting all application.
+func TestRepeatedUncertifiedAbsentRequestRetainsRecoveryProgress(t *testing.T) {
+	s := newTestStore(t)
+	seedRecoveryInventory(t, s, 3)
+	if err := recoverytest.Exhaust(t.Context(), s, SessionIndexRecoverySlice, false); err != nil {
+		t.Fatal(err)
+	}
+	// Choose a key before the existing owners in phase two, so there is
+	// remaining application work after its absence is durably written.
+	entries, err := os.ReadDir(filepath.Join(s.home, "sessions-v1"))
+	if err != nil || len(entries) == 0 {
+		t.Fatalf("owner indexes: %v %v", entries, err)
+	}
+	var key agentmeta.SessionKey
+	for i := range 10000 {
+		candidate := agentmeta.SessionKey{Agent: agentmeta.Codex, NativeID: fmt.Sprintf("reobserved-%d", i)}
+		if filepath.Base(qualifiedSessionIndexPath(s.home, candidate)) < entries[0].Name() {
+			key = candidate
+			break
+		}
+	}
+	if key.NativeID == "" {
+		t.Fatal("no early key found")
+	}
+	if err := s.RequestSessionIndexRecovery(key); err != nil {
+		t.Fatal(err)
+	}
+	synctest.Test(t, func(t *testing.T) {
+		delayed := false
+		s.onWriteSync = func() {
+			entry, found, err := s.readQualifiedIndex(key)
+			if !delayed && err == nil && found && entry.Absent {
+				delayed = true
+				time.Sleep(time.Second)
+			}
+		}
+		complete, err := s.RecoverSessionIndexScheduled(t.Context(), time.Second)
+		if complete || err != nil || !delayed {
+			t.Fatalf("partial absence: complete=%v delayed=%v err=%v", complete, delayed, err)
+		}
+		s.onWriteSync = nil
+		var before sessionRecoveryCursor
+		if err := readRecoveryJSON(filepath.Join(s.home, sessionRecoveryCursorFile), &before); err != nil || before.Phase != 2 || before.Offset != 1 {
+			t.Fatalf("partial phase-two cursor: %#v %v", before, err)
+		}
+		if _, _, err := s.ArchiveSessionID(key); !errors.Is(err, ErrSessionIndexRecoveryRequired) {
+			t.Fatalf("uncertified miss gained authority: %v", err)
+		}
+		for range 3 {
+			if err := s.RequestSessionIndexRecovery(key); err != nil {
+				t.Fatal(err)
+			}
+		}
+		var marker sessionIndexMarker
+		if err := readRecoveryJSON(filepath.Join(s.home, sessionIndexMarkerFile), &marker); err != nil || marker.Generation != before.Generation || marker.Complete {
+			t.Fatalf("same uncertified key restarted recovery: %#v %v", marker, err)
+		}
+		if absent, err := s.SessionIndexAbsent(key); absent || !errors.Is(err, ErrSessionIndexRecoveryRequired) {
+			t.Fatalf("coalesced miss gained authority: %v %v", absent, err)
+		}
+		if complete, err := s.RecoverSessionIndexScheduled(t.Context(), time.Second); !complete || err != nil {
+			t.Fatalf("finite reobservations stranded recovery: %v %v", complete, err)
+		}
+		if absent, err := s.SessionIndexAbsent(key); !absent || err != nil {
+			t.Fatalf("completed absence: %v %v", absent, err)
+		}
+	})
+}
+
+// New keys must rotate the final-certificate generation while an equivalent
+// fresh complete inventory preserves already applied owner progress.
+func TestNewRecoveryRequestRetainsValidatedOwnerProgress(t *testing.T) {
+	for _, mutate := range []bool{false, true} {
+		t.Run(strconv.FormatBool(mutate), func(t *testing.T) {
+			s := newTestStore(t)
+			seedRecoveryInventory(t, s, 3)
+			first := agentmeta.SessionKey{Agent: agentmeta.Codex, NativeID: "first-request"}
+			if err := s.RequestSessionIndexRecovery(first); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			applied := 0
+			s.onIndexStep = func(step string) error {
+				if step == "recovery-entry" {
+					applied++
+					cancel()
+				}
+				return nil
+			}
+			if complete, err := s.RecoverSessionIndexScheduled(ctx, time.Second); complete || !errors.Is(err, context.Canceled) || applied != 1 {
+				t.Fatalf("first owner checkpoint: %v %v applied=%d", complete, err, applied)
+			}
+			cancel()
+			s.onIndexStep = nil
+			var before sessionRecoveryCursor
+			if err := readRecoveryJSON(filepath.Join(s.home, sessionRecoveryCursorFile), &before); err != nil || before.Phase != 0 || before.Offset != 1 {
+				t.Fatalf("owner checkpoint: %#v %v", before, err)
+			}
+			second := agentmeta.SessionKey{Agent: agentmeta.Codex, NativeID: "second-request"}
+			if err := s.RequestSessionIndexRecovery(second); err != nil {
+				t.Fatal(err)
+			}
+			var marker sessionIndexMarker
+			if err := readRecoveryJSON(filepath.Join(s.home, sessionIndexMarkerFile), &marker); err != nil || marker.Generation == before.Generation || marker.Complete {
+				t.Fatalf("distinct request lost generation fence: %#v %v", marker, err)
+			}
+			if mutate {
+				key := agentmeta.SessionKey{Agent: agentmeta.Codex, NativeID: "new-member"}
+				if err := s.SaveRegistration(migrationRegistration(key, "new-owner")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			s.onIndexStep = func(step string) error {
+				if step == "recovery-entry" {
+					applied++
+				}
+				return nil
+			}
+			if complete, err := s.RecoverSessionIndexScheduled(t.Context(), time.Second); !complete || err != nil {
+				t.Fatalf("request recovery: %v %v", complete, err)
+			}
+			want := 3
+			if mutate {
+				want = 5 // New membership requires all four owners again.
+			}
+			if applied != want {
+				t.Fatalf("owner applications=%d want%d; equivalent inventory must resume, changed membership must restart", applied, want)
+			}
+			for _, key := range []agentmeta.SessionKey{first, second} {
+				if absent, err := s.SessionIndexAbsent(key); !absent || err != nil {
+					t.Fatalf("new generation complete absence: %v %v", absent, err)
+				}
+			}
+		})
+	}
+}
+
+func TestNewRecoveryRequestRetainsOnlyMatchingCandidateProgress(t *testing.T) {
+	for _, mutate := range []bool{false, true} {
+		t.Run(strconv.FormatBool(mutate), func(t *testing.T) {
+			s := newTestStore(t)
+			parent := agentmeta.SessionKey{Agent: agentmeta.Codex, NativeID: "parent"}
+			if err := s.SaveRegistration(migrationRegistration(parent, "parent-owner")); err != nil {
+				t.Fatal(err)
+			}
+			var candidates []SubagentCandidate
+			for i := range 2 {
+				candidate := SubagentCandidate{ArchiveSessionID: fmt.Sprintf("child-owner-%d", i), NativeSessionID: fmt.Sprintf("child-native-%d", i), ParentArchiveSessionID: "parent-owner", ParentNativeSessionID: "parent", ProjectID: "p", ProjectRoot: "/synthetic", Harness: archive.Harness{Name: "codex"}, AgentID: fmt.Sprintf("child-%d", i), TranscriptPath: "/synthetic/child.jsonl", ObservedAt: time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)}
+				if err := s.SaveSubagentCandidate(candidate); err != nil {
+					t.Fatal(err)
+				}
+				candidates = append(candidates, candidate)
+			}
+			first := agentmeta.SessionKey{Agent: agentmeta.Codex, NativeID: candidates[0].NativeSessionID}
+			ctx, cancel := context.WithCancel(t.Context())
+			s.onIndexSync = func() {
+				entry, found, err := s.readQualifiedIndex(first)
+				if err == nil && found && entry.Reservation != "" {
+					cancel()
+				}
+			}
+			if complete, err := s.RecoverSessionIndexScheduled(ctx, time.Second); complete || !errors.Is(err, context.Canceled) {
+				t.Fatalf("candidate checkpoint: %v %v", complete, err)
+			}
+			cancel()
+			s.onIndexSync = nil
+			var before sessionRecoveryCursor
+			if err := readRecoveryJSON(filepath.Join(s.home, sessionRecoveryCursorFile), &before); err != nil || before.Phase != 1 || before.Offset != 1 {
+				t.Fatalf("candidate checkpoint: %#v %v", before, err)
+			}
+			request := agentmeta.SessionKey{Agent: agentmeta.Codex, NativeID: "new-request"}
+			if err := s.RequestSessionIndexRecovery(request); err != nil {
+				t.Fatal(err)
+			}
+			if mutate {
+				candidates[0].ObservedAt = candidates[0].ObservedAt.Add(time.Second)
+				if err := s.SaveSubagentCandidate(candidates[0]); err != nil {
+					t.Fatal(err)
+				}
+			}
+			// No applications fit, but the fresh census and complete candidate
+			// fingerprint must choose the correct resume point before checkpoint.
+			if complete, err := s.RecoverSessionIndexScheduled(t.Context(), time.Nanosecond); complete || err != nil {
+				t.Fatalf("new-generation checkpoint: %v %v", complete, err)
+			}
+			var after sessionRecoveryCursor
+			if err := readRecoveryJSON(filepath.Join(s.home, sessionRecoveryCursorFile), &after); err != nil {
+				t.Fatal(err)
+			}
+			want := 1
+			if mutate {
+				want = 0
+			}
+			if after.Phase != 1 || after.Offset != want || after.Generation == before.Generation {
+				t.Fatalf("candidate progress ignored equivalence or generation: %#v want offset%d", after, want)
+			}
+			if complete, err := s.RecoverSessionIndexScheduled(t.Context(), time.Second); !complete || err != nil {
+				t.Fatalf("candidate convergence: %v %v", complete, err)
+			}
+			for _, candidate := range candidates {
+				key := agentmeta.SessionKey{Agent: agentmeta.Codex, NativeID: candidate.NativeSessionID}
+				entry, found, err := s.readQualifiedIndex(key)
+				if err != nil || !found || entry.ArchiveSessionID != candidate.ArchiveSessionID || entry.Reservation == "" {
+					t.Fatalf("candidate ownership lost: %#v %v %v", entry, found, err)
+				}
+			}
+			if absent, err := s.SessionIndexAbsent(request); !absent || err != nil {
+				t.Fatalf("new request omitted: %v %v", absent, err)
+			}
+		})
+	}
+}
+
+func TestNewRecoveryGenerationRestartsRequestedMissCoverage(t *testing.T) {
+	s := newTestStore(t)
+	seedRecoveryInventory(t, s, 2)
+	if err := recoverytest.Exhaust(t.Context(), s, SessionIndexRecoverySlice, false); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(filepath.Join(s.home, "sessions-v1"))
+	if err != nil || len(entries) == 0 {
+		t.Fatalf("owner indexes: %v %v", entries, err)
+	}
+	keyBefore := func(name, prefix string) agentmeta.SessionKey {
+		for i := range 10000 {
+			key := agentmeta.SessionKey{Agent: agentmeta.Codex, NativeID: fmt.Sprintf("%s-%d", prefix, i)}
+			if filepath.Base(qualifiedSessionIndexPath(s.home, key)) < name {
+				return key
+			}
+		}
+		t.Fatal("no earlier key found")
+		return agentmeta.SessionKey{}
+	}
+	first := keyBefore(entries[0].Name(), "first-miss")
+	second := keyBefore(filepath.Base(qualifiedSessionIndexPath(s.home, first)), "second-miss")
+	if err := s.RequestSessionIndexRecovery(first); err != nil {
+		t.Fatal(err)
+	}
+	synctest.Test(t, func(t *testing.T) {
+		delayed := false
+		s.onWriteSync = func() {
+			entry, found, err := s.readQualifiedIndex(first)
+			if !delayed && err == nil && found && entry.Absent {
+				delayed = true
+				time.Sleep(time.Second)
+			}
+		}
+		if complete, err := s.RecoverSessionIndexScheduled(t.Context(), time.Second); complete || err != nil || !delayed {
+			t.Fatalf("requested-miss checkpoint: %v %v delayed=%v", complete, err, delayed)
+		}
+		s.onWriteSync = nil
+		var before sessionRecoveryCursor
+		if err := readRecoveryJSON(filepath.Join(s.home, sessionRecoveryCursorFile), &before); err != nil || before.Phase != 2 || before.Offset != 1 {
+			t.Fatalf("requested-miss cursor: %#v %v", before, err)
+		}
+		if err := s.RequestSessionIndexRecovery(second); err != nil {
+			t.Fatal(err)
+		}
+		resumed, complete, err := s.prepareRecoveryCursor(t.Context())
+		if complete || err != nil || resumed.Phase != 2 || resumed.Offset != 0 || resumed.PhaseInventory != "" || resumed.Generation == before.Generation {
+			t.Fatalf("new misses could be skipped: %#v %v %v", resumed, complete, err)
+		}
+		if complete, err := s.RecoverSessionIndexScheduled(t.Context(), time.Second); !complete || err != nil {
+			t.Fatalf("new miss convergence: %v %v", complete, err)
+		}
+		for _, key := range []agentmeta.SessionKey{first, second} {
+			if absent, err := s.SessionIndexAbsent(key); !absent || err != nil {
+				t.Fatalf("new generation omitted key: %v %v", absent, err)
+			}
+		}
+	})
+}

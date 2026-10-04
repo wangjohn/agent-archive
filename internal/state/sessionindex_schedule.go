@@ -210,7 +210,14 @@ func (s *Store) prepareRecoveryCursor(ctx context.Context) (sessionRecoveryCurso
 	}
 	var cursor sessionRecoveryCursor
 	cursorErr := readRecoveryJSON(filepath.Join(s.home, sessionRecoveryCursorFile), &cursor)
-	if err != nil || marker.Version != 1 || marker.Generation == "" || cursorErr != nil || !cursor.validChecksum() || cursor.Version != 1 || cursor.Generation != marker.Generation || cursor.Phase < 0 || cursor.Phase > 2 || cursor.Offset < 0 {
+	validCursor := cursorErr == nil && cursor.validChecksum() && cursor.Version == 1 && cursor.Generation != "" && cursor.Phase >= 0 && cursor.Phase <= 2 && cursor.Offset >= 0
+	if err != nil || marker.Version != 1 || marker.Generation == "" || !validCursor || cursor.Generation != marker.Generation {
+		// New requests fence the final certificate, but do not change owner
+		// application already covered by an equivalent complete inventory.
+		// The fresh census below must match both membership and fingerprint
+		// before retaining phase zero/one progress; candidate facts also match
+		// their phase fingerprint. Requested misses restart for the new generation.
+		resume := err == nil && marker.Version == 1 && !marker.Complete && marker.Generation != "" && validCursor
 		if err := s.indexStep("recovery-begin"); err != nil {
 			return sessionRecoveryCursor{}, false, err
 		}
@@ -218,7 +225,14 @@ func (s *Store) prepareRecoveryCursor(ctx context.Context) (sessionRecoveryCurso
 		if err != nil {
 			return sessionRecoveryCursor{}, false, err
 		}
-		cursor = sessionRecoveryCursor{Version: 1, Generation: generation}
+		if resume {
+			cursor.Generation = generation
+			if cursor.Phase == 2 {
+				cursor.Offset, cursor.PhaseInventory = 0, ""
+			}
+		} else {
+			cursor = sessionRecoveryCursor{Version: 1, Generation: generation}
+		}
 		if err := s.indexStep("recovery-incomplete"); err != nil {
 			return sessionRecoveryCursor{}, false, err
 		}
