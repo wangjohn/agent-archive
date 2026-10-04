@@ -12,6 +12,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 	"github.com/wangjohn/agent-archive/internal/state"
+	"golang.org/x/text/unicode/norm"
 	"os"
 	"path/filepath"
 	"strings"
@@ -664,7 +665,7 @@ func ConfiguredProjectActivationFor(cfg config.Config, root string) (archive.Pro
 	}
 	var best archive.ProjectActivation
 	var locations resolvedLocationMatcher
-	bestLen, found := -1, false
+	bestDepth, found, conflicting := -1, false, false
 	for _, project := range cfg.Archive.Projects {
 		configured := resolvedPath(project.Root)
 		// An unresolved rule may be an exclusion; never fall through to an
@@ -676,10 +677,23 @@ func ConfiguredProjectActivationFor(cfg config.Config, root string) (archive.Pro
 		if !certain {
 			return archive.ProjectActivation{}, false
 		}
-		if !within || len(configured) <= bestLen {
+		if !within {
 			continue
 		}
-		best, bestLen, found = project, len(configured), true
+		// Equivalent Unicode spellings can differ in byte length. Resolved
+		// directory depth, rather than spelling length, determines ownership.
+		depth := strings.Count(strings.TrimRight(configured, string(filepath.Separator)), string(filepath.Separator))
+		if depth < bestDepth {
+			continue
+		}
+		if depth == bestDepth {
+			conflicting = conflicting || project.Included != best.Included
+			continue
+		}
+		best, bestDepth, found, conflicting = project, depth, true, false
+	}
+	if conflicting {
+		return archive.ProjectActivation{}, false
 	}
 	return best, found
 }
@@ -712,8 +726,9 @@ func (m *resolvedLocationMatcher) statPrefix(path string) (os.FileInfo, error) {
 // Differently spelled existing components may be the same directory on a
 // case-insensitive volume. Stat only those differing prefixes; enumerating each
 // ancestor directory to canonicalize every hook would make large homes costly.
-// Differently cased absent components have an uncertain identity: callers must
-// decline capture rather than bypass a possibly equivalent exclusion.
+// Case or Unicode-normalization variants of absent components have uncertain
+// identity: callers must decline capture rather than bypass a possibly equivalent
+// exclusion.
 func (m *resolvedLocationMatcher) within(path, root string) (within, certain bool) {
 	if local.PathWithin(path, root) {
 		return true, true
@@ -737,7 +752,7 @@ func (m *resolvedLocationMatcher) within(path, root string) (within, certain boo
 		pathInfo, pathErr := m.statPrefix(pathPrefix)
 		rootInfo, rootErr := m.statPrefix(rootPrefix)
 		if pathErr != nil || rootErr != nil {
-			if errors.Is(pathErr, os.ErrNotExist) && errors.Is(rootErr, os.ErrNotExist) && strings.EqualFold(pathParts[i], part) {
+			if errors.Is(pathErr, os.ErrNotExist) && errors.Is(rootErr, os.ErrNotExist) && strings.EqualFold(norm.NFD.String(pathParts[i]), norm.NFD.String(part)) {
 				return false, false
 			}
 			if pathErr != nil && !errors.Is(pathErr, os.ErrNotExist) || rootErr != nil && !errors.Is(rootErr, os.ErrNotExist) {

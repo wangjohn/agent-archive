@@ -12,8 +12,9 @@ Planned for v0.2.0. This release has not been tagged or published.
 
 - Project capture scope resolves symlinked checkout paths even when a nested
   directory is absent, preserving nested exclusions and reinclusions. Existing
-  components with another casing on case-insensitive volumes retain those rules.
-  Capture refuses unresolved symlink identities and ambiguous absent case
+  components with another casing or canonically equivalent Unicode spelling
+  retain those rules on volumes that treat them as one location. Capture refuses
+  unresolved symlink identities and ambiguous absent case or Unicode normalization
   variants instead of falling through to an included ancestor.
 
 - Before-setup handoff launch files use a private temporary namespace per user,
