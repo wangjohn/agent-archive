@@ -6,7 +6,13 @@ use session-addressed revision-qualified `listing/v3/` entries; existing
 at most N canonical metadata bodies on a cold run, or N selected cache files
 on a warm run, and no transcript bodies. Both the 10,000 and 20,000 session
 fixtures assert the default 50-body budget against the exhaustive reader.
-Warm unchanged selections perform no remote metadata GETs.
+Warm unchanged selections perform no remote metadata GETs. Normal metadata
+refreshes share the same total body budget: a stale cached revision is never
+opened before downloading its replacement. Cache paths encode the canonical
+key and a SHA-256 of the opaque validator; header-only pruning removes old
+versions. Flat legacy cache files are disposable cold misses and are removed
+without opening their bodies. Cache key limits and corruption fallback remain
+unchanged.
 
 The budget covers bodies, not discovery: fresh canonical and both v2/v3 index LIST
 headers are enumerated on every query, proportional to archive size. Text
