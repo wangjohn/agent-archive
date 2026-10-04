@@ -142,11 +142,17 @@ func TestPortableScopeAncestorLookupPreservesOutput(t *testing.T) {
 			if sharedKey {
 				outerKey = archive.RepoKey("https://example.test/shared.git")
 			}
-			for _, cache := range []map[string]string{nil, {
-				local.CanonicalPath(outer):   outerKey,
-				local.CanonicalPath(nested):  archive.RepoKey("https://example.test/nested.git"),
-				local.CanonicalPath(sibling): "invalid-key",
-			}} {
+			for cacheCase, cache := range []map[string]string{
+				nil,
+				{outer: archive.RepoKey("https://example.test/cached.git")},
+				{outer: "", sibling: "invalid-key"},
+				{outer: archive.RepoKey("https://example.test/shared.git"), sibling: archive.RepoKey("https://example.test/shared.git")},
+				{
+					local.CanonicalPath(outer):   outerKey,
+					local.CanonicalPath(nested):  archive.RepoKey("https://example.test/nested.git"),
+					local.CanonicalPath(sibling): "invalid-key",
+				},
+			} {
 				calls = nil
 				want := referencePortableProjectScope(projects, home, env, t.Context(), cache)
 				wantCalls := append([]string(nil), calls...)
@@ -158,7 +164,7 @@ func TestPortableScopeAncestorLookupPreservesOutput(t *testing.T) {
 					got = portableProjectScopeWithKeys(projects, home, env, t.Context(), cache)
 				}
 				if got != want || !reflect.DeepEqual(calls, wantCalls) {
-					t.Fatalf("case %d shared=%v cached=%v output or repository calls changed: got %s calls %v want %s calls %v", i, sharedKey, cache != nil, got, calls, want, wantCalls)
+					t.Fatalf("case %d shared=%v cache=%d output or repository calls changed: got %s calls %v want %s calls %v", i, sharedKey, cacheCase, got, calls, want, wantCalls)
 				}
 			}
 		}
