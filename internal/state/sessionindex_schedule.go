@@ -284,9 +284,7 @@ func (s *Store) applyPackedRecovery(ctx context.Context, cursor *sessionRecovery
 		if cursor.Offset > packedSessionIndexShards {
 			cursor.Offset = 0
 		}
-		complete, err := s.applyRecoveryPhase(ctx, cursor, deadline, packedSessionIndexShards, func(i int) error {
-			return s.recoverPackedShardSlice(ctx, packedShardName(i), marker, owners[i], children[i], deadline)
-		})
+		complete, err := s.applyPackedShardPhase(ctx, cursor, deadline, marker, owners, children)
 		if err != nil || !complete {
 			return candidates, false, err
 		}
@@ -438,4 +436,57 @@ func (cursor sessionRecoveryCursor) validChecksum() bool {
 	checksum := cursor.Checksum
 	cursor.Checksum = ""
 	return checksum != "" && checksum == phaseFingerprint(cursor)
+}
+
+// applyPackedShardPhase retains a durable contiguous cursor prefix while at most
+// two shards overlap native file and directory sync. The allowance is shared by
+// the entire phase, and all publications finish before checkpoint or return.
+func (s *Store) applyPackedShardPhase(ctx context.Context, cursor *sessionRecoveryCursor, deadline time.Time, marker sessionIndexMarker, owners [packedSessionIndexShards]map[agentmeta.SessionKey][]string, children [packedSessionIndexShards][]SubagentCandidate) (bool, error) {
+	for cursor.Offset < packedSessionIndexShards {
+		batch := make([]packedPublication, 0, 2)
+		var prepareErr error
+		for i := cursor.Offset; i < min(cursor.Offset+2, packedSessionIndexShards); i++ {
+			if !time.Now().Before(deadline) {
+				prepareErr = errPackedSlicePending
+				break
+			}
+			if prepareErr = ctx.Err(); prepareErr != nil {
+				break
+			}
+			shard := packedShardName(i)
+			data, err := s.preparePackedShardSlice(ctx, shard, marker, owners[i], children[i], deadline)
+			if err != nil {
+				prepareErr = err
+				break
+			}
+			path := packedIndexPath(s.home, shard)
+			before, err := readSnapshot(path)
+			if err != nil {
+				prepareErr = err
+				break
+			}
+			batch = append(batch, packedPublication{path: path, before: before, data: data})
+		}
+		errs := s.publishPackedBatch(ctx, marker, batch)
+		for _, err := range errs {
+			if err != nil {
+				break
+			}
+			cursor.Offset++
+		}
+		publicationErr := errors.Join(errs...)
+		if publicationErr != nil {
+			return false, errors.Join(publicationErr, prepareErr)
+		}
+		if prepareErr != nil {
+			if errors.Is(prepareErr, errPackedSlicePending) {
+				return false, s.saveRecoveryCursor(cursor)
+			}
+			if errors.Is(prepareErr, context.Canceled) || errors.Is(prepareErr, context.DeadlineExceeded) {
+				return false, errors.Join(prepareErr, s.saveRecoveryCursor(cursor))
+			}
+			return false, prepareErr
+		}
+	}
+	return true, nil
 }

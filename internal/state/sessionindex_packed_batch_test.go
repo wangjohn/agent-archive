@@ -1,0 +1,147 @@
+package state
+
+import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
+	"github.com/wangjohn/agent-archive/internal/local"
+)
+
+func TestPackedBatchCancellationRetainsOnlyDurablePrefix(t *testing.T) {
+	s, _, marker := packedOwnerFixture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	syncs := 0
+	s.onWriteSync = func() {
+		syncs++
+		// The first rename succeeded and its directory sync must still finish.
+		if syncs == 2 {
+			cancel()
+		}
+	}
+	cursor := sessionRecoveryCursor{Version: 2}
+	var owners [packedSessionIndexShards]map[agentmeta.SessionKey][]string
+	var children [packedSessionIndexShards][]SubagentCandidate
+	complete, err := s.applyPackedShardPhase(ctx, &cursor, time.Now().Add(time.Second), marker, owners, children)
+	if complete || !errors.Is(err, context.Canceled) || cursor.Offset != 1 {
+		t.Fatalf("complete=%v offset=%d err=%v", complete, cursor.Offset, err)
+	}
+	if _, err := s.readPackedSessionIndex("00", marker); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(packedIndexPath(s.home, "01")); !os.IsNotExist(err) {
+		t.Fatalf("canceled shard published: %v", err)
+	}
+	temps, err := filepath.Glob(filepath.Join(s.home, packedSessionIndexDir, ".pending-*"))
+	if err != nil || len(temps) != 0 {
+		t.Fatalf("staging not cleaned before return: %v %v", temps, err)
+	}
+}
+
+func TestPackedBatchRechecksSecondSnapshotAfterFirstCommit(t *testing.T) {
+	s, _, marker := packedOwnerFixture(t)
+	syncs := 0
+	second := packedIndexPath(s.home, "01")
+	s.onWriteSync = func() {
+		syncs++
+		if syncs == 2 {
+			if err := local.WriteBytes(second, []byte("concurrent replacement")); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	cursor := sessionRecoveryCursor{Version: 2}
+	var owners [packedSessionIndexShards]map[agentmeta.SessionKey][]string
+	var children [packedSessionIndexShards][]SubagentCandidate
+	complete, err := s.applyPackedShardPhase(context.Background(), &cursor, time.Now().Add(time.Second), marker, owners, children)
+	if complete || !errors.Is(err, errIndexMoved) || cursor.Offset != 1 {
+		t.Fatalf("complete=%v offset=%d err=%v", complete, cursor.Offset, err)
+	}
+	got, err := os.ReadFile(second)
+	if err != nil || string(got) != "concurrent replacement" {
+		t.Fatalf("replacement overwritten %q %v", got, err)
+	}
+}
+
+func TestPackedBatchDoesNotAdvancePastFirstCommitFailure(t *testing.T) {
+	s, _, marker := packedOwnerFixture(t)
+	first := packedIndexPath(s.home, "00")
+	syncs := 0
+	s.onWriteSync = func() {
+		syncs++
+		if syncs == 1 {
+			if err := os.Mkdir(first, 0700); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	// The directory prevents the first rename; the second independent file may
+	// be durable, but it cannot authorize a contiguous checkpoint prefix.
+	cursor := sessionRecoveryCursor{Version: 2}
+	var owners [packedSessionIndexShards]map[agentmeta.SessionKey][]string
+	var children [packedSessionIndexShards][]SubagentCandidate
+	complete, err := s.applyPackedShardPhase(context.Background(), &cursor, time.Now().Add(time.Second), marker, owners, children)
+	if complete || err == nil || cursor.Offset != 0 {
+		t.Fatalf("complete=%v offset=%d err=%v", complete, cursor.Offset, err)
+	}
+}
+
+func TestPackedBatchMembershipMutationFencesSecondCommit(t *testing.T) {
+	s, _, marker := packedOwnerFixture(t)
+	syncs := 0
+	s.onWriteSync = func() {
+		// Native staging and directory durability remain outside the short lock.
+		unlock, err := local.NamedLock(s.home, sessionMembershipLock)
+		if err != nil {
+			t.Fatalf("sync seam held membership lock: %v", err)
+		}
+		unlock()
+		syncs++
+		if syncs == 2 {
+			if err := local.WriteBytes(filepath.Join(s.home, sessionMembershipFile), []byte("changed-revision")); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	cursor := sessionRecoveryCursor{Version: 2}
+	var owners [packedSessionIndexShards]map[agentmeta.SessionKey][]string
+	var children [packedSessionIndexShards][]SubagentCandidate
+	complete, err := s.applyPackedShardPhase(context.Background(), &cursor, time.Now().Add(time.Second), marker, owners, children)
+	if complete || !errors.Is(err, ErrSessionIndexRecoveryRequired) || cursor.Offset != 1 {
+		t.Fatalf("complete=%v offset=%d err=%v", complete, cursor.Offset, err)
+	}
+	if _, err := os.Stat(packedIndexPath(s.home, "01")); !os.IsNotExist(err) {
+		t.Fatalf("stale census shard published: %v", err)
+	}
+}
+
+func TestPackedBatchJoinsSecondStagingFailure(t *testing.T) {
+	s, _, marker := packedOwnerFixture(t)
+	data, err := s.preparePackedShardSlice(context.Background(), "00", marker, nil, nil, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocked := filepath.Join(s.home, "blocked-parent")
+	if err := os.WriteFile(blocked, []byte("file"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	errs := s.publishPackedBatch(context.Background(), marker, []packedPublication{
+		{path: packedIndexPath(s.home, "00"), data: data},
+		{path: filepath.Join(blocked, "01.idx"), data: data},
+	})
+	if errs[0] != nil || errs[1] == nil {
+		t.Fatalf("independent durable results: %v", errs)
+	}
+	if _, err := s.readPackedSessionIndex("00", marker); err != nil {
+		t.Fatal(err)
+	}
+	temps, err := filepath.Glob(filepath.Join(s.home, packedSessionIndexDir, ".pending-*"))
+	if err != nil || len(temps) != 0 {
+		t.Fatalf("staging not joined/cleaned: %v %v", temps, err)
+	}
+}

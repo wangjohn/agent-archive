@@ -437,31 +437,39 @@ func (s *Store) preparePackedSessionIndex(ctx context.Context, revision, invento
 var errPackedSlicePending = errors.New("packed application slice pending")
 
 func (s *Store) recoverPackedShardSlice(ctx context.Context, shard string, marker sessionIndexMarker, owners map[agentmeta.SessionKey][]string, candidates []SubagentCandidate, deadline time.Time) error {
+	data, err := s.preparePackedShardSlice(ctx, shard, marker, owners, candidates, deadline)
+	if err != nil {
+		return err
+	}
+	return s.publishPackedIndex(ctx, shard, marker, data, true)
+}
+
+func (s *Store) preparePackedShardSlice(ctx context.Context, shard string, marker sessionIndexMarker, owners map[agentmeta.SessionKey][]string, candidates []SubagentCandidate, deadline time.Time) ([]byte, error) {
 
 	sizing, oversized, err := packedShardSizing(marker, owners, candidates)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	if oversized {
 		sizing.Fallback = true
 		empty, err := encodePackedIndex(sizing)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		return s.publishPackedIndex(ctx, shard, marker, empty, true)
+		return empty, nil
 	}
 	entries := make(map[string]qualifiedSessionIndexEntry, len(owners)+len(candidates))
 	if err := s.packedShardOwners(ctx, owners, entries, deadline); err != nil {
-		return err
+		return nil, err
 	}
 	if err := s.packedShardCandidates(ctx, candidates, entries, marker, deadline); err != nil {
-		return err
+		return nil, err
 	}
 	index := packedSessionIndex{Version: 1, Epoch: marker.PackedEpoch, Revision: marker.PackedRevision, Inventory: marker.PackedInventory, Entries: entries}
 	data, err := encodePackedIndex(index)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if len(entries) > packedSessionIndexMaxEntries || len(data) > packedSessionIndexMaxBytes {
 		// Large/skewed existing identities remain supported by the ordinary durable
@@ -474,18 +482,14 @@ func (s *Store) recoverPackedShardSlice(ctx context.Context, shard string, marke
 		index.Fallback = true
 		empty, err := encodePackedIndex(index)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		if err := s.publishPackedIndex(ctx, shard, marker, empty, true); err != nil {
-			return err
-		}
-
-		return nil
+		return empty, nil
 	}
 	if err := ctx.Err(); err != nil {
-		return err
+		return nil, err
 	}
-	return s.publishPackedIndex(ctx, shard, marker, data, true)
+	return data, nil
 }
 
 func (s *Store) packedShardOwners(ctx context.Context, owners map[agentmeta.SessionKey][]string, entries map[string]qualifiedSessionIndexEntry, deadline time.Time) error {
@@ -840,8 +844,19 @@ func (s *Store) commitPackedIndexGuarded(ctx context.Context, path string, marke
 	}
 	defer staged.Discard()
 	s.writeSynced()
+	committed, err := s.commitStagedPackedIndex(ctx, path, marker, before, staged, census, guard)
+	if !committed {
+		return err
+	}
+	s.writeSynced()
+	return errors.Join(err, staged.SyncDir())
+}
+
+// commitStagedPackedIndex applies the original publication fences to a synced
+// temporary file. Its caller must sync the directory after a successful rename.
+func (s *Store) commitStagedPackedIndex(ctx context.Context, path string, marker sessionIndexMarker, before fileSnapshot, staged *local.Staged, census bool, guard func() (func() error, error)) (bool, error) {
 	committed := false
-	err = func() (err error) {
+	err := func() (err error) {
 		if guard != nil {
 			unlock, err := guard()
 			if err != nil {
@@ -878,11 +893,7 @@ func (s *Store) commitPackedIndexGuarded(ctx context.Context, path string, marke
 		committed = err == nil
 		return err
 	}()
-	if !committed {
-		return err
-	}
-	s.writeSynced()
-	return errors.Join(err, staged.SyncDir())
+	return committed, err
 }
 
 // Capture linked archive IDs before candidate deletion; cleanup does not need
@@ -1290,4 +1301,61 @@ func (s *Store) reconcilePackedExpiryProofs(marker sessionIndexMarker) error {
 		return dir.Sync()
 	}
 	return nil
+}
+
+// packedPublication holds one shard's bounded bytes and pre-staging snapshot.
+type packedPublication struct {
+	path   string
+	before fileSnapshot
+	data   []byte
+}
+
+// publishPackedBatch overlaps only disk durability for at most two shards.
+// Authority preparation, commit fences, and test seams stay on the caller.
+// Every started operation is joined before returning, including failures.
+func (s *Store) publishPackedBatch(ctx context.Context, marker sessionIndexMarker, batch []packedPublication) []error {
+	if len(batch) > 2 {
+		panic("packed publication batch exceeds two shards")
+	}
+	type stagedResult struct {
+		staged *local.Staged
+		err    error
+	}
+	stages := make([]chan stagedResult, len(batch))
+	for i, publication := range batch {
+		stages[i] = make(chan stagedResult, 1)
+		go func() {
+			staged, err := local.StageBytes(publication.path, publication.data)
+			stages[i] <- stagedResult{staged, err}
+		}()
+	}
+	results := make([]stagedResult, len(batch))
+	for i := range batch {
+		results[i] = <-stages[i]
+		defer results[i].staged.Discard()
+	}
+	errs := make([]error, len(batch))
+	syncs := make([]chan error, len(batch))
+	for i, publication := range batch {
+		result := results[i]
+		if result.err != nil {
+			errs[i] = result.err
+			continue
+		}
+		s.writeSynced()
+		committed, err := s.commitStagedPackedIndex(ctx, publication.path, marker, publication.before, result.staged, true, nil)
+		errs[i] = err
+		if !committed {
+			continue
+		}
+		s.writeSynced()
+		syncs[i] = make(chan error, 1)
+		go func() { syncs[i] <- result.staged.SyncDir() }()
+	}
+	for i := range batch {
+		if syncs[i] != nil {
+			errs[i] = errors.Join(errs[i], <-syncs[i])
+		}
+	}
+	return errs
 }
