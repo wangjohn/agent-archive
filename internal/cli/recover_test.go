@@ -141,6 +141,7 @@ func TestRecoverCrashWindowsQueueHooksUntilReceiptCompletes(t *testing.T) {
 }
 
 func recoverFixture(t *testing.T) (Env, string, string, string) {
+	t.Helper()
 	env, home, path, id, _ := recoverFixtureWithStorage(t)
 	return env, home, path, id
 }
