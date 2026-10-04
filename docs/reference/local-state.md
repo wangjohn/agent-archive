@@ -150,6 +150,13 @@ contain no conversation content after a transition completes. They survive
 content retention so index reconstruction cannot route to a frozen ancestor.
 Unknown or damaged lineage fails closed.
 
+Settled frozen generations use a retained-maintenance scan signature, separate
+from native file stats. A pass checks bounded lineage authority, derivation and
+privacy versions, recorded HEAD and outstanding work before skipping them.
+Unchanged frozen history costs no source decode or per-session scan journal;
+feedback, policy or version changes and interrupted publications still trigger
+maintenance from retained evidence.
+
 Recovery holds `collector.lock`, then `hooks.lock`. Registration, request and
 index commits use the existing staging helpers: disk syncs occur outside
 request locks, and membership commits retain request-before-membership order.
