@@ -126,6 +126,27 @@ func TestBoundedRecoveryReaderAccessProbe(t *testing.T) {
 	}
 }
 
+type recoveryHealthDamage string
+
+const (
+	healthDamageMissing           recoveryHealthDamage = "missing"
+	healthDamageCorrupt           recoveryHealthDamage = "corrupt"
+	healthDamageFuture            recoveryHealthDamage = "future"
+	healthDamageChecksum          recoveryHealthDamage = "checksum"
+	healthDamageGeneration        recoveryHealthDamage = "generation"
+	healthDamageRevision          recoveryHealthDamage = "revision"
+	healthDamagePhase             recoveryHealthDamage = "phase"
+	healthDamageOffset            recoveryHealthDamage = "offset"
+	healthDamageEpoch             recoveryHealthDamage = "epoch"
+	healthDamageInventory         recoveryHealthDamage = "inventory"
+	healthDamageMembership        recoveryHealthDamage = "membership"
+	healthDamageMissingMembership recoveryHealthDamage = "missing-membership"
+	healthDamageCorruptMembership recoveryHealthDamage = "corrupt-membership"
+	healthDamageFutureMembership  recoveryHealthDamage = "future-membership"
+	healthDamageMissingAnchor     recoveryHealthDamage = "missing-anchor"
+	healthDamageCorruptAnchor     recoveryHealthDamage = "corrupt-anchor"
+)
+
 func TestPackedRecoveryStatusScheduledEvidence(t *testing.T) {
 	s := newTestStore(t)
 	seedRecoveryInventory(t, s, 2)
@@ -152,31 +173,31 @@ func TestPackedRecoveryStatusScheduledEvidence(t *testing.T) {
 	if err := local.Read(filepath.Join(s.home, sessionRecoveryCursorFile), &cursor); err != nil || cursor.Version != 2 || !cursor.validChecksum() {
 		t.Fatalf("persisted packed cursor: %#v %v", cursor, err)
 	}
-	for _, damage := range []string{"missing", "corrupt", "future", "checksum", "generation", "revision", "phase", "offset"} {
-		t.Run("pending-"+damage, func(t *testing.T) {
+	for _, damage := range []recoveryHealthDamage{healthDamageMissing, healthDamageCorrupt, healthDamageFuture, healthDamageChecksum, healthDamageGeneration, healthDamageRevision, healthDamagePhase, healthDamageOffset} {
+		t.Run("pending-"+string(damage), func(t *testing.T) {
 			damaged := cursor
 			path := filepath.Join(s.home, sessionRecoveryCursorFile)
 			switch damage {
-			case "missing":
+			case healthDamageMissing:
 				err = os.Remove(path)
-			case "corrupt":
+			case healthDamageCorrupt:
 				err = os.WriteFile(path, []byte("{"), 0600)
-			case "future":
+			case healthDamageFuture:
 				damaged.Version = 3
 				err = s.saveRecoveryCursor(&damaged)
-			case "checksum":
+			case healthDamageChecksum:
 				damaged.Checksum = "invalid"
 				err = local.Write(path, damaged)
-			case "generation":
+			case healthDamageGeneration:
 				damaged.Generation = "changed"
 				err = s.saveRecoveryCursor(&damaged)
-			case "revision":
+			case healthDamageRevision:
 				damaged.Revision = "changed"
 				err = s.saveRecoveryCursor(&damaged)
-			case "phase":
+			case healthDamagePhase:
 				damaged.Phase = 3
 				err = s.saveRecoveryCursor(&damaged)
-			case "offset":
+			case healthDamageOffset:
 				damaged.Offset = packedSessionIndexShards + 1
 				err = s.saveRecoveryCursor(&damaged)
 			}
@@ -239,37 +260,37 @@ func TestPackedRecoveryStatusScheduledEvidence(t *testing.T) {
 		t.Fatal(err)
 	}
 	markerPath := filepath.Join(s.home, sessionIndexMarkerFile)
-	for _, damage := range []string{"missing", "corrupt", "future", "epoch", "revision", "inventory", "membership", "missing-membership", "corrupt-membership", "future-membership", "missing-anchor", "corrupt-anchor"} {
-		t.Run(damage, func(t *testing.T) {
+	for _, damage := range []recoveryHealthDamage{healthDamageMissing, healthDamageCorrupt, healthDamageFuture, healthDamageEpoch, healthDamageRevision, healthDamageInventory, healthDamageMembership, healthDamageMissingMembership, healthDamageCorruptMembership, healthDamageFutureMembership, healthDamageMissingAnchor, healthDamageCorruptAnchor} {
+		t.Run(string(damage), func(t *testing.T) {
 			damaged := marker
 			switch damage {
-			case "missing":
+			case healthDamageMissing:
 				err = os.Remove(markerPath)
-			case "corrupt":
+			case healthDamageCorrupt:
 				err = os.WriteFile(markerPath, []byte("{"), 0600)
-			case "future":
+			case healthDamageFuture:
 				damaged.Version = 3
 				err = local.Write(markerPath, damaged)
-			case "epoch":
+			case healthDamageEpoch:
 				damaged.PackedEpoch = ""
 				err = local.Write(markerPath, damaged)
-			case "revision":
+			case healthDamageRevision:
 				damaged.PackedRevision = "changed"
 				err = local.Write(markerPath, damaged)
-			case "inventory":
+			case healthDamageInventory:
 				damaged.PackedInventory = ""
 				err = local.Write(markerPath, damaged)
-			case "missing-membership":
+			case healthDamageMissingMembership:
 				err = os.Remove(filepath.Join(s.home, sessionMembershipFile))
-			case "corrupt-membership":
+			case healthDamageCorruptMembership:
 				err = os.WriteFile(filepath.Join(s.home, sessionMembershipFile), []byte("{"), 0600)
-			case "future-membership":
+			case healthDamageFutureMembership:
 				err = local.Write(filepath.Join(s.home, sessionMembershipFile), sessionMembershipRevision{Version: 2, Revision: revision})
-			case "missing-anchor":
+			case healthDamageMissingAnchor:
 				err = os.Remove(anchorPath)
-			case "corrupt-anchor":
+			case healthDamageCorruptAnchor:
 				err = os.WriteFile(anchorPath, []byte("changed"), 0600)
-			case "membership":
+			case healthDamageMembership:
 				err = local.Write(filepath.Join(s.home, sessionMembershipFile), sessionMembershipRevision{Version: 1, Revision: "changed"})
 			}
 			if err != nil {
