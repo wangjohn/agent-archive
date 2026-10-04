@@ -48,6 +48,9 @@ import (
 // never stores credentials or a second copy of conversation content beyond
 // what the published source bundle itself already contains.
 type Store struct {
+	// indexSnapshots uses logical packed authority for qualified-index writes.
+	indexSnapshots bool
+
 	home string
 	// hook marks a Store from ForHook.
 	hook bool
@@ -95,7 +98,7 @@ func Open(home string) (*Store, error) {
 func (s *Store) Home() string { return s.home }
 
 // storeDirs are the directories Open creates under home.
-var storeDirs = []string{"registrations", "requests", "request-locks", "published", "pending", "sessions", "sessions-v1", "pending-scans", "scan-signatures", "subagent-candidates"}
+var storeDirs = []string{"registrations", "requests", "request-locks", "published", "pending", "sessions", "sessions-v1", packedSessionIndexDir, "pending-scans", "scan-signatures", "subagent-candidates"}
 
 // lazyStoreDirs are the directories the store creates under home on first
 // use rather than up front.

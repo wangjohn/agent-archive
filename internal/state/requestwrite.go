@@ -63,6 +63,7 @@ func (s *Store) ForHook() *Store {
 
 // lockedWrite is one read-modify-write for writeUnderLock.
 type lockedWrite struct {
+	snapshot       func(string) (fileSnapshot, error)
 	membership     *local.Staged
 	membershipHome string
 	// lock takes the lock guarding path.
@@ -147,6 +148,9 @@ func (s *Store) writeUnderRequestLock(archiveSessionID, path string, check func(
 // as a write. An error from change or check is returned as is, with nothing
 // written.
 func (s *Store) writeUnderLock(w lockedWrite) error {
+	if s.indexSnapshots {
+		w.snapshot = s.readIndexSnapshot
+	}
 	attempts := unlockedWriteAttempts
 	if s.hook {
 		attempts = hookUnlockedWriteAttempts
@@ -155,7 +159,7 @@ func (s *Store) writeUnderLock(w lockedWrite) error {
 		var before fileSnapshot
 		if !w.blind {
 			var err error
-			if before, err = readSnapshot(w.path); err != nil {
+			if before, err = w.readSnapshot(); err != nil {
 				return err
 			}
 		}
@@ -219,7 +223,7 @@ func (s *Store) writeHoldingLock(w lockedWrite) error {
 				return nil, err
 			}
 		}
-		current, err := readSnapshot(w.path)
+		current, err := w.readSnapshot()
 		if err != nil {
 			return nil, err
 		}
@@ -258,7 +262,7 @@ func commitUnderLock(w lockedWrite, before fileSnapshot, staged *local.Staged) (
 		}
 	}
 	if !w.blind {
-		current, err := readSnapshot(w.path)
+		current, err := w.readSnapshot()
 		if err != nil || !current.equal(before) {
 			return false, err
 		}
@@ -284,4 +288,11 @@ func (s *Store) namedLockWait(name string, timeout time.Duration) (func(), error
 		s.onLockWait(name)
 	}
 	return local.NamedLockWait(s.home, name, timeout)
+}
+
+func (w lockedWrite) readSnapshot() (fileSnapshot, error) {
+	if w.snapshot != nil {
+		return w.snapshot(w.path)
+	}
+	return readSnapshot(w.path)
 }

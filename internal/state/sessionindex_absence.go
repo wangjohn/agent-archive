@@ -26,7 +26,7 @@ func (s *Store) SessionIndexAbsent(key agentmeta.SessionKey) (bool, error) {
 	if err := local.Read(filepath.Join(s.home, sessionIndexMarkerFile), &marker); err != nil {
 		return false, ErrSessionIndexRecoveryRequired
 	}
-	if marker.Version != 1 || !marker.Complete {
+	if !recoveryMarkerVersion(marker.Version) || !marker.Complete {
 		return false, ErrSessionIndexRecoveryRequired
 	}
 	if marker.MembershipFenced {
