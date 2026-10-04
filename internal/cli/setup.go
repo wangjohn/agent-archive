@@ -1063,6 +1063,9 @@ func printNextSteps(p *prompter, cfg config.Config, paused, unattended bool) {
 // printAnotherMachine ends a committed setup with the command that sets up
 // another machine with the same storage.
 func printAnotherMachine(p *prompter, cfg config.Config, userHome string, environments ...Env) {
+	if len(cfg.Archive.Projects) > maxProjectScopeRules {
+		p.warn("Scope transfer accepts at most 4096 rules and refuses larger saved or resulting destination scopes. Review a larger scope before transferring; equal source aliases may coalesce.")
+	}
 	if cfg.Storage.Provider == credentials.ProviderR2 {
 		terminal.Printf(p.out, "\nTo set up another machine with this storage, set %s and\n%s there, then run:\n", envR2AccessKeyID, envR2SecretAccessKey)
 	} else {

@@ -24,6 +24,14 @@ type portableProjectRule struct {
 	Included bool   `json:"included"`
 }
 
+const maxProjectScopeRules = 4096
+
+type projectScopeInputRule struct {
+	RepoKey  string `json:"repo_key,omitempty"`
+	Path     string `json:"path"`
+	Included *bool  `json:"included"`
+}
+
 func hasProjectExclusions(projects []archive.ProjectActivation) bool {
 	for _, project := range projects {
 		if !project.Included {
@@ -191,24 +199,49 @@ func readProjectScopeInput(opts setupOptions, stdin io.Reader) (setupOptions, er
 	return opts, nil
 }
 
+// decodeProjectScope bounds rule allocation before filesystem or Git discovery.
+func decodeProjectScope(encoded string) ([]projectScopeInputRule, error) {
+	decoder := json.NewDecoder(strings.NewReader(encoded))
+	decoder.DisallowUnknownFields()
+	token, err := decoder.Token()
+	if err != nil {
+		return nil, fmt.Errorf("--project-scope: %w", err)
+	}
+	if token != json.Delim('[') {
+		return nil, errors.New("--project-scope must contain a nonempty JSON array")
+	}
+	var rules []projectScopeInputRule
+	for decoder.More() {
+		if len(rules) == maxProjectScopeRules {
+			return nil, errors.New("--project-scope accepts at most 4096 rules")
+		}
+		var rule projectScopeInputRule
+		if err := decoder.Decode(&rule); err != nil {
+			return nil, fmt.Errorf("--project-scope: %w", err)
+		}
+		rules = append(rules, rule)
+	}
+	if _, err := decoder.Token(); err != nil {
+		return nil, fmt.Errorf("--project-scope: %w", err)
+	}
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
+		return nil, errors.New("--project-scope must contain one JSON array")
+	}
+	if len(rules) == 0 {
+		return nil, errors.New("--project-scope must contain a nonempty JSON array")
+	}
+	return rules, nil
+}
+
 // setupProjectScope resolves every rule before changing the candidate config.
 // A failed exclusion must never leave its ancestor newly included.
 func setupProjectScope(cfg *config.Config, encoded, home string, env Env) []error {
-	var rules []struct {
-		RepoKey  string `json:"repo_key,omitempty"`
-		Path     string `json:"path"`
-		Included *bool  `json:"included"`
+	rules, err := decodeProjectScope(encoded)
+	if err != nil {
+		return []error{err}
 	}
-	decoder := json.NewDecoder(strings.NewReader(encoded))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&rules); err != nil {
-		return []error{fmt.Errorf("--project-scope: %w", err)}
-	}
-	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
-		return []error{errors.New("--project-scope must contain one JSON array")}
-	}
-	if len(rules) == 0 {
-		return []error{errors.New("--project-scope must contain a nonempty JSON array")}
+	if len(cfg.Archive.Projects) > maxProjectScopeRules {
+		return []error{errors.New("--project-scope cannot transfer into a saved scope with more than 4096 rules; review the saved capture scope first")}
 	}
 	requests := []projectMatchRequest{}
 	indices := map[string]int{}
@@ -275,15 +308,31 @@ func setupProjectScope(cfg *config.Config, encoded, home string, env Env) []erro
 
 // applyProjectScope checks destination consent before updating any capture rule.
 func applyProjectScope(cfg *config.Config, resolved []archive.ProjectActivation) []error {
+	if len(cfg.Archive.Projects) > maxProjectScopeRules {
+		return []error{errors.New("--project-scope cannot transfer into a saved scope with more than 4096 rules; review the saved capture scope first")}
+	}
 	saved := make([]archive.ProjectActivation, len(cfg.Archive.Projects))
 	copy(saved, cfg.Archive.Projects)
 	decisions := map[string]bool{}
 	for i := range saved {
-		saved[i].Root = local.CanonicalPath(saved[i].Root)
+		root, err := resolveProjectScopePath(saved[i].Root)
+		if err != nil {
+			return []error{fmt.Errorf("--project-scope cannot resolve saved path safely: %w", err)}
+		}
+		saved[i].Root = root
 		if included, exists := decisions[saved[i].Root]; exists && included != saved[i].Included {
 			return []error{errors.New("--project-scope saved aliases have conflicting capture decisions; review the saved capture scope first")}
 		}
 		decisions[saved[i].Root] = saved[i].Included
+	}
+	combinedCount := len(saved)
+	for _, project := range resolved {
+		if _, exists := decisions[project.Root]; !exists {
+			combinedCount++
+		}
+	}
+	if combinedCount > maxProjectScopeRules {
+		return []error{errors.New("--project-scope would create more than 4096 rules; review the saved capture scope first")}
 	}
 	// Saved reinclusions must not defeat a transferred exclusion. Refuse
 	// before writing anything, while keeping explicitly transferred reinclusions.

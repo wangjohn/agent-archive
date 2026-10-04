@@ -64,3 +64,5 @@ Second-machine capture scope follows
 input to `setup --project-scope` or `setup --project-scope-file`. It preserves inclusion and exclusion decisions
 as a single transfer. Repository matching and resolved-path containment are
 runtime checks beyond the JSON schema; these rules are not uploaded.
+The input array has at most 4,096 rules. Transfer also refuses saved or resulting
+destination scopes above that size and unresolved saved symlinks.

@@ -16,6 +16,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/santhosh-tekuri/jsonschema/v6"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/config"
@@ -928,5 +929,167 @@ func TestStreamFallbackKeepsResolvedRepositoryKeys(t *testing.T) {
 	must(t, json.Unmarshal([]byte(parts[1]), &rules))
 	if rules[0].RepoKey != key || rules[0].Path != "." || calls != 1 {
 		t.Fatalf("resolved identity lost or queried again: %+v, %d lookups", rules[0], calls)
+	}
+}
+
+func TestScopeTransferRefusesUnresolvedSavedSymlinkAtomically(t *testing.T) {
+	t.Parallel()
+	for _, aliasFirst := range []bool{true, false} {
+		t.Run(strconv.FormatBool(aliasFirst), func(t *testing.T) {
+			t.Parallel()
+			home := t.TempDir()
+			future, alias := filepath.Join(home, "future"), filepath.Join(home, "alias")
+			must(t, os.Symlink(future, alias))
+			saved := []archive.ProjectActivation{{Root: alias, Included: true}, {Root: future, Included: false}}
+			if !aliasFirst {
+				saved[0], saved[1] = saved[1], saved[0]
+			}
+			cfg := config.Config{Archive: archive.Config{Projects: saved}}
+			before := append([]archive.ProjectActivation(nil), saved...)
+			encoded, err := json.Marshal([]portableProjectRule{{Path: future, Included: false}})
+			must(t, err)
+			problems := setupProjectScope(&cfg, string(encoded), home, Env{})
+			if len(problems) == 0 || !reflect.DeepEqual(before, cfg.Archive.Projects) {
+				t.Errorf("unresolved saved alias was accepted or changed: problems=%v projects=%+v", problems, cfg.Archive.Projects)
+			}
+			must(t, os.Mkdir(future, 0700))
+			activation, found := capture.ConfiguredProjectActivationFor(cfg, future)
+			t.Logf("capture after target creation: aliasFirst=%t found=%t included=%t root=%s", aliasFirst, found, activation.Included, activation.Root)
+		})
+	}
+}
+
+func TestScopeTransferBoundsRulesBeforeResolution(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	rules := []portableProjectRule{{Path: home, Included: true}}
+	for i := range 4096 {
+		rules = append(rules, portableProjectRule{Path: filepath.Join(home, fmt.Sprintf("excluded-%04d", i)), Included: false})
+	}
+	encoded, err := json.Marshal(rules[:4096])
+	must(t, err)
+	raw, err := os.ReadFile(filepath.Join("..", "..", "schemas", "project-scope.schema.json"))
+	must(t, err)
+	doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(raw))
+	must(t, err)
+	compiler := jsonschema.NewCompiler()
+	id := doc.(map[string]any)["$id"].(string)
+	must(t, compiler.AddResource(id, doc))
+	schema, err := compiler.Compile(id)
+	must(t, err)
+	value, err := jsonschema.UnmarshalJSON(bytes.NewReader(encoded))
+	must(t, err)
+	must(t, schema.Validate(value))
+	cfg := config.Config{}
+	if problems := setupProjectScope(&cfg, string(encoded), home, Env{}); len(problems) != 0 || len(cfg.Archive.Projects) != 4096 {
+		t.Fatalf("4096-rule boundary refused: %v rules=%d", problems, len(cfg.Archive.Projects))
+	}
+	for _, unsafeLast := range []bool{false, true} {
+		cfg = config.Config{}
+		if unsafeLast {
+			rules[4096].Path = "invalid-relative-path"
+		}
+		encoded, err = json.Marshal(rules)
+		must(t, err)
+		value, err = jsonschema.UnmarshalJSON(bytes.NewReader(encoded))
+		must(t, err)
+		if err := schema.Validate(value); err == nil {
+			t.Error("published schema accepted 4097 rules")
+		}
+		problems := setupProjectScope(&cfg, string(encoded), home, Env{})
+		if len(problems) == 0 || !strings.Contains(problems[0].Error(), "4096") || len(cfg.Archive.Projects) != 0 {
+			t.Errorf("4097 rules did not refuse before resolution: unsafeLast=%t problems=%v rules=%d", unsafeLast, problems, len(cfg.Archive.Projects))
+		}
+	}
+	rules[4096] = portableProjectRule{RepoKey: archive.RepoKey("https://example.test/repo.git"), Path: ".", Included: false}
+	encoded, err = json.Marshal(rules)
+	must(t, err)
+	discovered := false
+	env := Env{LookupEnv: noEnv, WorkingDir: func() (string, error) { discovered = true; return home, nil }}
+	cfg = config.Config{}
+	if problems := setupProjectScope(&cfg, string(encoded), home, env); discovered || len(problems) == 0 || !strings.Contains(problems[0].Error(), "4096") {
+		t.Fatalf("oversized scope reached repository discovery: discovered=%t problems=%v", discovered, problems)
+	}
+}
+
+func TestScopeTransferBoundsSavedAndCombinedRules(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	for _, savedCount := range []int{4096, 4097} {
+		t.Run(strconv.Itoa(savedCount), func(t *testing.T) {
+			t.Parallel()
+			projects := []archive.ProjectActivation{{Root: home, Included: true}}
+			for i := 1; i < savedCount; i++ {
+				projects = append(projects, archive.ProjectActivation{Root: filepath.Join(home, strconv.Itoa(i)), Included: false})
+			}
+			cfg := config.Config{Archive: archive.Config{Projects: projects}}
+			before := append([]archive.ProjectActivation(nil), projects...)
+			problems := applyProjectScope(&cfg, []archive.ProjectActivation{{Root: filepath.Join(home, "new-exclusion"), Included: false}})
+			if len(problems) == 0 || !strings.Contains(problems[0].Error(), "4096") || !reflect.DeepEqual(before, cfg.Archive.Projects) {
+				t.Errorf("oversized saved or combined rules accepted: saved=%d problems=%v rules=%d", savedCount, problems, len(cfg.Archive.Projects))
+			}
+		})
+	}
+}
+
+func TestScopeTransferKeepsSafeMissingSavedExclusion(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	future := filepath.Join(home, "future")
+	cfg := config.Config{Archive: archive.Config{Projects: []archive.ProjectActivation{{Root: future, Included: false}}}}
+	encoded, err := json.Marshal([]portableProjectRule{{Path: home, Included: true}})
+	must(t, err)
+	if problems := setupProjectScope(&cfg, string(encoded), home, Env{}); len(problems) != 0 {
+		t.Fatal(problems)
+	}
+	must(t, os.Mkdir(future, 0700))
+	activation, found := capture.ConfiguredProjectActivationFor(cfg, future)
+	if !found || activation.Included {
+		t.Fatalf("safe missing saved exclusion lost: %+v", activation)
+	}
+}
+
+func TestPrintedOversizedScopeExplainsLimitWithoutDroppingRules(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	projects := make([]archive.ProjectActivation, 4097)
+	for i := range projects {
+		projects[i] = archive.ProjectActivation{Root: filepath.Join(home, strconv.Itoa(i)), Included: false}
+	}
+	cfg := config.Config{Archive: archive.Config{Projects: projects}}
+	var out bytes.Buffer
+	p := newPrompter(strings.NewReader(""), &out)
+	printAnotherMachine(p, cfg, home)
+	if !strings.Contains(out.String(), "at most 4096") {
+		t.Fatal("oversized scope has no visible limit explanation")
+	}
+	lines := strings.Split(anotherMachineCommand(cfg, home), "\n")
+	var rules []portableProjectRule
+	must(t, json.Unmarshal([]byte(lines[1]), &rules))
+	if len(rules) != len(projects) {
+		t.Fatalf("oversized source truncated: got %d want %d", len(rules), len(projects))
+	}
+	for i, rule := range rules {
+		if rule.Included || rule.Path != homeRelative(projects[i].Root, home) {
+			t.Fatalf("oversized source altered rule %d: %+v", i, rule)
+		}
+	}
+}
+
+func TestScopeDecodeStopsBeforeOversizedRuleAndTrailingValues(t *testing.T) {
+	t.Parallel()
+	rule := `{"path":"/synthetic","included":false}`
+	boundary := "[" + strings.TrimSuffix(strings.Repeat(rule+",", 4096), ",") + "]"
+	if rules, err := decodeProjectScope(boundary); err != nil || len(rules) != 4096 {
+		t.Fatalf("valid decoder boundary refused: rules=%d err=%v", len(rules), err)
+	}
+	// Rule 4097 is malformed: the count refusal must precede decoding it.
+	if _, err := decodeProjectScope(strings.TrimSuffix(boundary, "]") + `,{"broken":`); err == nil || !strings.Contains(err.Error(), "4096") {
+		t.Fatalf("oversized last rule was decoded: %v", err)
+	}
+	for _, input := range []string{"[" + rule + "] []", "[" + rule + "] {", "[" + rule, "{}", "null"} {
+		if _, err := decodeProjectScope(input); err == nil {
+			t.Errorf("invalid array or trailing value accepted: %s", input)
+		}
 	}
 }
