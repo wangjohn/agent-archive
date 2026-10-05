@@ -19,7 +19,7 @@ func TestCodexCaptureGatePrecedesPrivacyOmission(t *testing.T) {
 		`,"source":{"subagent":{"thread_spawn":{"parent_thread_id":"` + other + `","depth":1}}}`,
 	} {
 		raw := `{"type":"session_meta","payload":{"id":"` + id + `"` + fields + `}}` + "\n" + `{"type":"response_item","payload":{"type":"message","role":"user","content":"private inherited prompt"}}` + "\n"
-		filtered, err := FilterCodexCaptureJSONL(strings.NewReader(raw))
+		filtered, err := FilterCodexCaptureJSONL(strings.NewReader(raw), "")
 		if !errors.Is(err, archive.ErrRelatedHistory) || len(filtered.Records) != 0 {
 			t.Fatalf("partial history admitted: %v", err)
 		}
@@ -27,7 +27,7 @@ func TestCodexCaptureGatePrecedesPrivacyOmission(t *testing.T) {
 	// Existing retained sources have already lost producer/relationship fields;
 	// they still pass the historical privacy-only refilter, byte for byte.
 	raw := `{"type":"session_meta","payload":{"id":"` + id + `","session_id":"` + id + `","cwd":"/synthetic/project"}}` + "\n"
-	live, err := FilterCodexCaptureJSONL(strings.NewReader(raw))
+	live, err := FilterCodexCaptureJSONL(strings.NewReader(raw), "")
 	if err != nil {
 		t.Fatal(err)
 	}

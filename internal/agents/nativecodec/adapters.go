@@ -448,10 +448,8 @@ func filterRecords(format string, knownTypes map[string]bool, lead map[string]an
 		}
 		noteNativeIdentity(&result, raw)
 		kind, _ := raw["type"].(string)
-		if kind == "session_meta" && validateMeta != nil {
-			if err := validateMeta(line); err != nil {
-				return archive.FilteredTranscript{}, err
-			}
+		if err := validateMetadata(kind, line, validateMeta); err != nil {
+			return archive.FilteredTranscript{}, err
 		}
 		if format == "claude-jsonl" && isCompactBoundary(raw) {
 			recognized++
@@ -477,7 +475,7 @@ func filterRecords(format string, knownTypes map[string]bool, lead map[string]an
 			retain(&result, encoded)
 			continue
 		}
-		cursorRoleContent := format == "cursor-jsonl" && kind == "" && firstString(raw, "role") != ""
+		cursorRoleContent := cursorRoleRecord(format, kind, raw)
 		if !recordTypeAllowed(knownTypes, kind, cursorRoleContent) {
 			addGap("unknown_record_type", lineNo, "record omitted")
 			continue
@@ -517,6 +515,17 @@ func filterRecords(format string, knownTypes map[string]bool, lead map[string]an
 	}
 	sort.SliceStable(result.Gaps, func(i, j int) bool { return result.Gaps[i].Code < result.Gaps[j].Code })
 	return result, nil
+}
+
+func cursorRoleRecord(format, kind string, raw map[string]any) bool {
+	return format == "cursor-jsonl" && kind == "" && firstString(raw, "role") != ""
+}
+
+func validateMetadata(kind string, line []byte, validate func([]byte) error) error {
+	if kind == "session_meta" && validate != nil {
+		return validate(line)
+	}
+	return nil
 }
 
 func retain(t *archive.FilteredTranscript, encoded []byte) {
