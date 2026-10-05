@@ -57,6 +57,10 @@ Planned for v0.2.0. This release has not been tagged or published.
 
 ### Added
 
+- Installers point to `agent-archive backfill` for importing older sessions.
+  Installation docs include preview guidance and explain that upgrades keep
+  your capture settings.
+
 - `agent-archive recover SESSION_ID` previews a linked generation for a
   rewritten transcript; `--confirm` preserves the earlier archive and queues
   current activity under a new ID. Each generation keeps its own retention

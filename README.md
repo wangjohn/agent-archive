@@ -47,6 +47,8 @@ OpenAI and Anthropic are constantly one-upping each other or the best model, but
 
 6. **Verify capture.** Allow the background collector to run, or run `agent-archive sync`, then `agent-archive status`. Look for your app's **archived, verified** Capture row: this establishes publication and read-back. Find the new session with `agent-archive list` and inspect it with `agent-archive show SESSION_ID` ([first successful capture and troubleshooting](docs/README.md#first-successful-capture)).
 
+7. If you want to pull in older sessions, you can import them with `agent-archive backfill` ([backfill guide](docs/guides/backfill.md)). Add `--dry-run` to preview without importing.
+
 To add a second machine, install and run setup there with the same bucket (see [multiple machines](docs/guides/multiple-machines.md)).
 
 **Platforms.** macOS (Apple Silicon and Intel) and Linux (x86-64 and arm64) capture in the background. On Linux the collector is a systemd user timer, which needs systemd 240 or newer and a user manager (`loginctl enable-linger` on a headless machine); R2 credentials are kept in a private file rather than the Keychain; and Cursor capture is best effort, because the real Cursor app and `cursor-agent` hooks have not been verified there. Windows is not supported. [What was tested, and what was not](docs/getting-started/install.md#platforms).
