@@ -88,17 +88,22 @@ func TestClientBucketNameCollisionIsAlreadyExists(t *testing.T) {
 	srv.Buckets["taken-name"] = ""
 	err := client.CreateBucket(context.Background(), cloudflaretest.AccountID, cloudflare.BucketSpec{BucketRef: cloudflare.BucketRef{Name: "taken-name"}})
 	apiErr := apiError(t, err)
-	if !apiErr.AlreadyExists() || apiErr.Status != http.StatusConflict || len(apiErr.Codes) != 1 || apiErr.Codes[0] != 10073 {
+	if !apiErr.AlreadyExists() || apiErr.Status != http.StatusConflict || len(apiErr.Codes) != 1 || apiErr.Codes[0] != 10004 {
 		t.Fatalf("error %+v", apiErr)
 	}
-	// Only the documented code, with its 409, is a name collision: not a bare
-	// 409, not a message that happens to say so, not the code on another status.
+	// Both the observed REST code and documented Workers/S3 code need 409.
+	for _, code := range []int{10004, 10073} {
+		if !(&cloudflare.Error{Status: http.StatusConflict, Codes: []int{code}}).AlreadyExists() {
+			t.Errorf("bucket conflict code %d was refused", code)
+		}
+	}
 	for name, other := range map[string]*cloudflare.Error{
-		"bare conflict":  {Status: http.StatusConflict},
-		"message only":   {Status: http.StatusConflict, Messages: []string{"The bucket already exists."}},
-		"other code":     {Status: http.StatusConflict, Codes: []int{10008}},
-		"code, bad 400":  {Status: http.StatusBadRequest, Codes: []int{10073}},
-		"message at 400": {Status: http.StatusBadRequest, Messages: []string{"Bucket name already exists."}},
+		"bare conflict":      {Status: http.StatusConflict},
+		"message only":       {Status: http.StatusConflict, Messages: []string{"The bucket already exists."}},
+		"other code":         {Status: http.StatusConflict, Codes: []int{10008}},
+		"REST code, bad 400": {Status: http.StatusBadRequest, Codes: []int{10004}},
+		"code, bad 400":      {Status: http.StatusBadRequest, Codes: []int{10073}},
+		"message at 400":     {Status: http.StatusBadRequest, Messages: []string{"Bucket name already exists."}},
 	} {
 		if other.AlreadyExists() {
 			t.Errorf("%s counts as a name collision", name)

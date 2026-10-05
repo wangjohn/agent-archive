@@ -53,6 +53,9 @@ Planned for v0.2.0. This release has not been tagged or published.
 
 ### Fixed
 
+- Guided R2 creation recognizes the management API's observed bucket-name
+  conflict (HTTP 409, code 10004) and retries a generated name.
+
 - Draft machine revocation rejects forged self labels, leaves registry commands
   usable after progress publication, and preserves unverified request targets.
   Own-key migrations retire completed checkpoints and disclose shared access
