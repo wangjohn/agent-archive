@@ -63,6 +63,17 @@ func (c Config) ValidateMachine() error {
 	if c.MachineName != "" && !ValidMachineName(c.MachineName) {
 		return errors.New("machine_name must contain 1 to 40 lowercase letters, digits, or hyphens, starting with a letter or digit")
 	}
+	if len(c.RetiredMachineAssignments) > 128 {
+		return errors.New("retired machine assignment history exceeds 128 entries; retain history before reconfiguring")
+	}
+	for _, retired := range c.RetiredMachineAssignments {
+		if retired.Kind != MachineAssignmentR2Own {
+			return errors.New("retired history requires dedicated assignments")
+		}
+		if err := (Config{MachineAssignment: &retired}).ValidateMachine(); err != nil {
+			return err
+		}
+	}
 	a := c.MachineAssignment
 	if a == nil {
 		return nil

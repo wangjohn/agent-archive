@@ -561,8 +561,8 @@ one-time value. Ambiguous exposure is never returned to the spare pool. Removing
 issuer-local delivered secret retains lineage, because an issuer could have copied
 any secret it created. Bucket claims remain informational and cannot establish
 ownership or authorize deletion. The management token is acquired for one explicit
-command, never saved, never sent to storage, and discarded afterward. Live provider
-acceptance and revocation integration are still pending for this draft.
+command, never saved, never sent to storage, and discarded afterward. Combined fake revocation integration is tested; live provider
+acceptance remains pending for this draft.
 
 ## Encrypted shared-key pairing beta
 
@@ -597,6 +597,16 @@ journals and distinct bucket operation objects never contain credential values.
 Operator binding files must come from independent local/out-of-band evidence;
 bucket claims do not authorize deletion. Own-key checkpoints store only opaque
 references and slot IDs, keeping old local access until replacement commits.
+
+
+Committed setup keeps `retired_machine_assignments` in local configuration so a
+later pairing cannot hide earlier dedicated provider keys. This history contains
+only destination and immutable credential bindings, never secrets, and is not
+carried in a pairing bundle. Machine records now include unused spare bindings
+and bounded retired credential hints; all remain forgeable bucket claims. Local
+revocation journals are trusted outcomes of this installation's explicit operations;
+remote progress is labelled untrusted and cannot authorize deletion. Chosen names
+and random default names remain intentional: pairing never reads a hostname.
 
 ## Consent for automatic Codex discovery
 

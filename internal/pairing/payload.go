@@ -183,21 +183,7 @@ func (p Payload) validateScopes() error {
 		scopes[inc.ID] = true
 	}
 	for _, exc := range p.Exclusions {
-		if len(exc.Affected) == 0 || len(exc.Affected) > 128 {
-			return bad
-		}
-		for _, id := range exc.Affected {
-			if !scopes[id] {
-				return bad
-			}
-		}
-		if exc.Unresolved {
-			if exc.Path != "" || exc.InclusionID != "" || exc.HomeRelative {
-				return bad
-			}
-			continue
-		}
-		if !RelativePath(exc.Path) || (exc.HomeRelative && exc.InclusionID != "") || (!exc.HomeRelative && !scopes[exc.InclusionID]) {
+		if !validExclusion(exc, scopes) {
 			return bad
 		}
 	}
@@ -230,4 +216,25 @@ func (p Payload) validateCaptureAndLocation() error {
 		return bad
 	}
 	return nil
+}
+
+func validExclusion(exc Exclusion, scopes map[string]bool) bool {
+	if len(exc.Affected) > 128 || len(exc.Affected) == 0 && !exc.HomeRelative && !exc.Unresolved {
+		return false
+	}
+	for _, id := range exc.Affected {
+		if !scopes[id] {
+			return false
+		}
+	}
+	if exc.Unresolved {
+		if exc.Path != "" || exc.InclusionID != "" || exc.HomeRelative {
+			return false
+		}
+		return true
+	}
+	if !RelativePath(exc.Path) || (exc.HomeRelative && exc.InclusionID != "") || (!exc.HomeRelative && !scopes[exc.InclusionID]) {
+		return false
+	}
+	return true
 }

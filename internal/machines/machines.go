@@ -15,6 +15,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
+	"github.com/wangjohn/agent-archive/internal/revocation"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -41,16 +42,19 @@ type CredentialBinding struct {
 
 // Record describes one machine, without paths or session content.
 type Record struct {
-	SchemaVersion       int               `json:"schema_version"`
-	MachineID           string            `json:"machine_id"`
-	Name                string            `json:"name"`
-	Platform            string            `json:"platform"`
-	AgentArchiveVersion string            `json:"agent_archive_version"`
-	PairedAt            *time.Time        `json:"paired_at,omitempty"`
-	PairedFrom          string            `json:"paired_from,omitempty"`
-	PairingID           string            `json:"pairing_id,omitempty"`
-	Credential          CredentialBinding `json:"credential"`
-	HeartbeatAt         time.Time         `json:"heartbeat_at"`
+	CredentialHistoryPartial bool                `json:"credential_history_partial,omitempty"`
+	UnusedSpares             []CredentialBinding `json:"unused_spares,omitempty"`
+	RetiredCredentials       []CredentialBinding `json:"retired_credentials,omitempty"`
+	SchemaVersion            int                 `json:"schema_version"`
+	MachineID                string              `json:"machine_id"`
+	Name                     string              `json:"name"`
+	Platform                 string              `json:"platform"`
+	AgentArchiveVersion      string              `json:"agent_archive_version"`
+	PairedAt                 *time.Time          `json:"paired_at,omitempty"`
+	PairedFrom               string              `json:"paired_from,omitempty"`
+	PairingID                string              `json:"pairing_id,omitempty"`
+	Credential               CredentialBinding   `json:"credential"`
+	HeartbeatAt              time.Time           `json:"heartbeat_at"`
 }
 
 // Build constructs a record only from local committed settings. Stale
@@ -81,6 +85,15 @@ func Build(cfg config.Config, platform, version, accessKeyID string, now time.Ti
 		r.Credential = CredentialBinding{Kind: a.Kind, AccessKeyID: a.AccessKeyID, RecipientID: a.RecipientID, IssuerID: a.IssuerID, SlotID: a.SlotID, SharedWith: a.SharedWith}
 		r.PairedAt, r.PairedFrom, r.PairingID = a.PairedAt, a.PairedFrom, a.PairingID
 	}
+	for _, a := range cfg.RetiredMachineAssignments {
+		if a.DestinationID == cfg.DestinationID() {
+			if len(r.RetiredCredentials) >= 16 {
+				r.CredentialHistoryPartial = true
+				continue
+			}
+			r.RetiredCredentials = append(r.RetiredCredentials, CredentialBinding{Kind: a.Kind, AccessKeyID: a.AccessKeyID, RecipientID: a.RecipientID, IssuerID: a.IssuerID, SlotID: a.SlotID})
+		}
+	}
 	return r, validate(r)
 }
 
@@ -97,6 +110,21 @@ func validate(r Record) error {
 	a := config.MachineAssignment{DestinationID: strings.Repeat("0", 64), Kind: r.Credential.Kind, AccessKeyID: r.Credential.AccessKeyID, RecipientID: r.Credential.RecipientID, IssuerID: r.Credential.IssuerID, SlotID: r.Credential.SlotID, SharedWith: r.Credential.SharedWith, PairedFrom: r.PairedFrom, PairingID: r.PairingID, PairedAt: r.PairedAt}
 	if err := (config.Config{MachineAssignment: &a}).ValidateMachine(); err != nil {
 		return errors.New("unsupported or invalid credential claim")
+	}
+	if len(r.UnusedSpares) > 5 || len(r.RetiredCredentials) > 16 {
+		return errors.New("too many credential claims")
+	}
+	seen := map[string]bool{}
+	for _, b := range append(append([]CredentialBinding{}, r.UnusedSpares...), r.RetiredCredentials...) {
+		if b.Kind != config.MachineAssignmentR2Own || !config.ValidMachineID(b.AccessKeyID) || !config.ValidMachineID(b.RecipientID) || !config.ValidMachineID(b.IssuerID) || !config.ValidMachineID(b.SlotID) || seen[b.AccessKeyID] {
+			return errors.New("invalid credential history claim")
+		}
+		seen[b.AccessKeyID] = true
+	}
+	for _, spare := range r.UnusedSpares {
+		if spare.IssuerID != r.MachineID {
+			return errors.New("unused spare issuer mismatch")
+		}
 	}
 	if r.HeartbeatAt.IsZero() {
 		return errors.New("missing heartbeat time")
@@ -136,11 +164,12 @@ type Unreadable struct {
 
 // ListResult preserves successful records when listing is incomplete.
 type ListResult struct {
-	SchemaVersion    int          `json:"schema_version"`
-	Records          []Record     `json:"records"`
-	Unreadable       []Unreadable `json:"unreadable,omitempty"`
-	Partial          bool         `json:"partial"`
-	ProviderVerified bool         `json:"provider_verified"`
+	Revocations      []revocation.Journal `json:"revocations,omitempty"`
+	SchemaVersion    int                  `json:"schema_version"`
+	Records          []Record             `json:"records"`
+	Unreadable       []Unreadable         `json:"unreadable,omitempty"`
+	Partial          bool                 `json:"partial"`
+	ProviderVerified bool                 `json:"provider_verified"`
 }
 
 func diagnostic(key, reason string) Unreadable {
@@ -151,21 +180,7 @@ func diagnostic(key, reason string) Unreadable {
 	return Unreadable{Key: strconv.QuoteToASCII(key), Reason: reason}
 }
 
-// Nested progress objects never become records or identity proof. They still
-// count toward the caller's bounded listing budget and are never fetched.
-func machineRecordObjects(objects []storage.Object) []storage.Object {
-	const prefix = "machines/revocations/"
-	result := objects[:0]
-	for _, object := range objects {
-		if strings.HasPrefix(object.Key, prefix) && strings.HasSuffix(object.Key, ".json") && config.ValidMachineID(strings.TrimSuffix(strings.TrimPrefix(object.Key, prefix), ".json")) {
-			continue
-		}
-		result = append(result, object)
-	}
-	return result
-}
-
-// List reads only machine records, with one five-second deadline, at most
+// List reads machine records and informational progress with one five-second deadline, at most
 // 1000 pages or examined keys and four concurrent allocation-bounded fetches. Stores
 // lacking the required extensions are refused rather than read unboundedly.
 func List(ctx context.Context, store storage.ObjectStore) ListResult {
@@ -199,65 +214,30 @@ func List(ctx context.Context, store storage.ObjectStore) ListResult {
 			result.Partial = true
 		}
 		examined += len(objects)
-		objects = machineRecordObjects(objects)
-		type fetched struct {
-			record  Record
-			problem *Unreadable
-		}
-		got := make([]fetched, len(objects))
+
+		got := make([]fetchedMachineObject, len(objects))
 		var wg sync.WaitGroup
 		slots := make(chan struct{}, 4)
 		for i, obj := range objects {
-			if len(obj.Key) != len("machines/")+32+len(".json") || !strings.HasPrefix(obj.Key, "machines/") || !strings.HasSuffix(obj.Key, ".json") {
-				d := diagnostic(obj.Key, "invalid record path")
-				got[i].problem = &d
-				continue
-			}
-			name := obj.Key[len("machines/") : len(obj.Key)-len(".json")]
-			if !config.ValidMachineID(name) {
-				d := diagnostic(obj.Key, "invalid record path")
-				got[i].problem = &d
-				continue
-			}
 			if seenKeys[obj.Key] {
-				d := diagnostic(obj.Key, "duplicate listed key")
-				got[i].problem = &d
+				got[i] = badMachineObject(obj.Key, "duplicate listed key")
 				continue
 			}
 			seenKeys[obj.Key] = true
-			if obj.Size > MaxRecordBytes {
-				d := diagnostic(obj.Key, "record exceeds 16 KiB")
-				got[i].problem = &d
-				continue
-			}
 			select {
 			case slots <- struct{}{}:
 			case <-ctx.Done():
-				d := diagnostic(obj.Key, "read timed out")
-				got[i].problem = &d
+				got[i] = badMachineObject(obj.Key, "read timed out")
 				continue
 			}
-			wg.Go(func() {
-				defer func() { <-slots }()
-				b, e := getter.GetLimited(ctx, obj.Key, MaxRecordBytes)
-				if e != nil {
-					d := diagnostic(obj.Key, "record unreadable or oversized")
-					got[i].problem = &d
-					return
-				}
-				var r Record
-				if json.Unmarshal(b, &r) != nil || validate(r) != nil || r.MachineID != name {
-					d := diagnostic(obj.Key, "invalid, unsupported, or mismatched record")
-					got[i].problem = &d
-					return
-				}
-				got[i].record = r
-			})
+			wg.Go(func() { defer func() { <-slots }(); got[i] = fetchMachineObject(ctx, getter, obj) })
 		}
 		wg.Wait()
 		for _, f := range got {
 			if f.problem != nil {
 				result.Unreadable = append(result.Unreadable, *f.problem)
+			} else if f.operation != nil {
+				result.Revocations = append(result.Revocations, *f.operation)
 			} else {
 				result.Records = append(result.Records, f.record)
 			}
@@ -314,4 +294,49 @@ func Select(records []Record, query string) (Record, error) {
 		return Record{}, fmt.Errorf("machine name is ambiguous; use its full machine ID")
 	}
 	return Record{}, errors.New("machine not found; list machines and use its full machine ID")
+}
+
+type fetchedMachineObject struct {
+	record    Record
+	operation *revocation.Journal
+	problem   *Unreadable
+}
+
+func badMachineObject(key, reason string) fetchedMachineObject {
+	d := diagnostic(key, reason)
+	return fetchedMachineObject{problem: &d}
+}
+
+func fetchMachineObject(ctx context.Context, getter storage.LimitedGetter, obj storage.Object) fetchedMachineObject {
+	const progressPrefix = "machines/revocations/"
+	prefix := "machines/"
+	limit := int64(MaxRecordBytes)
+	progress := strings.HasPrefix(obj.Key, progressPrefix)
+	if progress {
+		prefix = progressPrefix
+		limit = 65536
+	}
+	id := strings.TrimSuffix(strings.TrimPrefix(obj.Key, prefix), ".json")
+	if obj.Key != prefix+id+".json" || !config.ValidMachineID(id) {
+		return badMachineObject(obj.Key, "invalid record or progress path")
+	}
+	if obj.Size > limit {
+		return badMachineObject(obj.Key, "record or progress exceeds body limit")
+	}
+	raw, err := getter.GetLimited(ctx, obj.Key, limit)
+	if err != nil {
+		return badMachineObject(obj.Key, "record or progress unreadable or oversized")
+	}
+	if progress {
+		var j revocation.Journal
+		if json.Unmarshal(raw, &j) != nil || j.OperationID != id || j.Validate() != nil {
+			return badMachineObject(obj.Key, "invalid or unreadable progress claim")
+		}
+		return fetchedMachineObject{operation: &j}
+	}
+	var r Record
+	if json.Unmarshal(raw, &r) != nil || validate(r) != nil || r.MachineID != id {
+		return badMachineObject(obj.Key, "invalid, unsupported, or mismatched record")
+	}
+	return fetchedMachineObject{record: r}
 }

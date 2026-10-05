@@ -38,6 +38,7 @@ consistent with each other.
 | `handoff.default_to` | Optional, edited by hand. Per source harness, the destination `handoff` offers first, for example `{"claude": "codex"}`. Unknown agent names are refused when the file is read. |
 | `destination_since`, `previous_destinations` | When the current storage destination was configured, and the ones it replaced. Sessions stay with the destination they were published to. |
 | `storage_verified_at`, `bucket_privacy` | The last storage access check and bucket privacy inspection. Evidence, not settings. |
+| `retired_machine_assignments` | Up to 128 nonsecret dedicated assignments retired by committed setup, retaining destination, provider, recipient, issuer and slot bindings for explicit ordinary revocation. Never imported from a pairing or draft. |
 | `retired_credential_refs` | Credential references (Keychain items, or credential files) of R2 credentials a reconfiguration replaced, kept so `uninstall --delete-local-data` can remove them too. |
 
 ## Environment variables

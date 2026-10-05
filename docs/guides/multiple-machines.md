@@ -422,15 +422,31 @@ With `AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_REVOKE=1`, use
 `--recipient-id`, `--pairing-id`, or retry `--operation-id`. A bucket name or
 machine record is a hint, never deletion authority. A current destination-bound
 local assignment supports self-revocation; a healthy issuer's ledger supports
-recipient/pairing selection. A remote machine requires a private
+recipient/pairing selection and unique original issuance labels, independently of bucket names. After rename, use the original trusted issuer label or recipient/pairing ID; for the new name or immutable machine ID, provide a private
 `--binding-file` independently established from the machine's committed local
 assignment and an out-of-band check. Never copy bucket claims into this file.
-Its strict JSON shape is `{"machine_id":"<32hex>","independently_verified":true,
-"assignment":{...}}`, with the destination-bound assignment fields from
+Its strict JSON shape is `{"machine_id":"<32hex>","name":"portable",
+"independently_verified":true,"assignment":{...},"retired_assignments":[],
+"unused_spares":[]}`, with the destination-bound assignment fields from
 `machine-assignment.schema.json`. The declaration records operator evidence;
 the software still verifies exact provider token ID, scope and immutable name.
 It cannot establish that an operator's assertion is honest. Unknown ownership
-refuses even with `--yes`.
+refuses even with `--yes`. `name` is independently checked operator evidence, not
+a label taken from storage. After a rename, use `--machine-id` with the existing
+verified file, or recheck the new name out of band. Include all same-destination
+retired dedicated assignments from the target
+configuration and only independently checked, undelivered spare bindings from
+its local issuance ledger in the two optional arrays. Each uses the assignment
+shape above; an unused spare must have that machine as issuer and no pairing ID.
+The file is a private regular file (mode 0600), limited to 64 KiB and 128 extra
+bindings. Do not derive spare eligibility from provider names or bucket claims.
+
+Retired bindings already deleted by this operator's exact local journal confirmation
+are retained for history but excluded from a new selection. Destination, provider
+scope, requester and every immutable key binding must match. Unknown, pending,
+foreign or bucket-only outcomes cannot omit keys; missing provider metadata alone
+remains unresolved. This lets revoke → re-pair → revoke work without weakening
+absence checks.
 
 Normal revocation selects verified dedicated/retired keys and unused spares;
 it excludes keys delivered to other recipients merely by the target issuer.
@@ -494,13 +510,47 @@ key is active, the binding is unknown, or setup recovery is pending. A committed
 own-key operation cannot be cancelled this way; use verified revocation.
 
 The fake combined acceptance recipe is
-`go test ./internal/cli -run TestMachineTwoHomeFakeAcceptance -count=1`.
-It uses two temporary homes, an in-memory credential store and object store,
+`go test ./internal/cli -run 'TestMachine(TwoHome|Remote)FakeAcceptance' -count=1`.
+It uses isolated source, recipient and operator homes, an in-memory credential store and object store,
 and a loopback fake provider. It exercises own-key, dedicated add, pair setup,
 list with provider verification, rename preserving identity, and receiver
-revocation. The focused revocation tests cover forged mappings, delivered-key
+revocation, source issuer-label selection, third-machine revocation after rename,
+re-pairing with retired assignments, explicit unused-spare ownership, delivered
+descendant exclusion, compromised issuer lineage, and partial deletion/retry.
+The focused revocation tests cover forged mappings, delivered-key
 exclusion and issuer inclusion, scope mismatch, unknown 404 outcomes, and
 publication failure. This establishes local contracts only. Live provider
 permission, inventory visibility, absence semantics and revocation propagation
 acceptance remain unrun; all Phase 4 commands remain experimental draft features
 and the first-setup pairing question remains disabled.
+
+
+Ordinary `machines` listing reads records and revocation operations together within
+one five-second budget, at most 1,000 pages or objects and four concurrent reads.
+Records are limited to 16 KiB and operation snapshots to 64 KiB. Operation results
+are explicitly **untrusted bucket claims**, distinguishing requested, partial,
+failed/unknown, and claimed provider-confirmed selected sets. They never prove
+removal, identity, or account-wide completeness. `status` reports bounded local
+operation snapshots as local provider results. Machine records include up to five
+unused spare bindings and up to sixteen retired credential hints; longer retired
+history is explicitly incomplete. The full committed history stays local and is
+used for revocation regardless of these listing hints.
+
+Pairing preserves standalone home-relative exclusions as well as nested and ancestor
+restrictions. Unmappable source paths remain secret-free warnings; affected roots
+are withheld under `--yes`. Interactive setup offers safe home-relative exclusion
+mapping before any explicit scope override. Recovering one clone preserves every
+successful exclusion mapping; other unmapped clones are withheld individually.
+Manual project paths accept `~` and `~/` against the receiving home, while ordinary
+relative paths remain relative to that home. Discovery checks direct candidates
+first; app-history headers are read only for unresolved requests. Partial candidates
+remain visible with an explicit warning that additional clones may exist; unattended
+setup skips incomplete evidence. Interactive recovery can select a manual directory,
+checks repository identity and subtree boundaries, and shows repository/path provenance.
+
+Clipboard failure offers a retry, a new private file, deliberate terminal bundle
+printing, or a stop that retains uncertain delivery. A password-manager failure can
+be retried once or replaced with hidden token input during an explicit interactive
+invocation. Missing apps offer a recheck after installation or a deliberate skip.
+Pairing success is printed once setup commits, before housekeeping and any import
+offer; failed draft removal is reported as pending cleanup of committed setup.
