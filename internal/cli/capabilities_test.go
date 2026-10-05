@@ -21,7 +21,7 @@ import (
 func TestCapabilityProfilesDoNotClaimUnverifiedNativeEvidence(t *testing.T) {
 	t.Parallel()
 	for _, name := range []string{"codex", "claude", "cursor"} {
-		profile := captureCapabilityProfile(name)
+		profile := captureCapabilityProfile(productionAgents, name)
 		if profile.Transcript.State != capabilityDocumented {
 			t.Fatalf("%s profile=%#v", name, profile)
 		}
@@ -33,12 +33,12 @@ func TestCapabilityProfilesDoNotClaimUnverifiedNativeEvidence(t *testing.T) {
 			t.Fatalf("%s invented native capability: %#v", name, profile)
 		}
 	}
-	if !strings.Contains(captureCapabilityProfile("claude").SubagentLinkage.Evidence, "unverified") {
+	if !strings.Contains(captureCapabilityProfile(productionAgents, "claude").SubagentLinkage.Evidence, "unverified") {
 		t.Fatal("fixture coverage claimed live verification")
 	}
 	// Cursor fresh start rests on the documented transcript_path, not on
 	// cursor_version or on an unverified reading of sessionStart semantics.
-	cursorStart := captureCapabilityProfile("cursor").FreshStart
+	cursorStart := captureCapabilityProfile(productionAgents, "cursor").FreshStart
 	if cursorStart.State != capabilityDocumented || !strings.Contains(cursorStart.Evidence, "transcript_path") {
 		t.Fatalf("Cursor start=%#v", cursorStart)
 	}
@@ -306,7 +306,7 @@ func TestVersionSupportUsesPublishedVersionNotResumedRegistration(t *testing.T) 
 		t.Fatal(err)
 	}
 	remote := storagetest.NewMemoryStore()
-	result, err := collector.Run(context.Background(), localStore, remote, collector.Options{MachineID: cfg.MachineID, Now: func() time.Time { return at }})
+	result, err := collector.Run(context.Background(), localStore, remote, collector.Options{Parsers: productionAgents, Sources: productionAgents, MachineID: cfg.MachineID, Now: func() time.Time { return at }})
 	if err != nil || len(result.Errors) > 0 {
 		t.Fatalf("%+v %v", result, err)
 	}

@@ -1,6 +1,7 @@
 package reader
 
 import (
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"testing"
@@ -18,7 +19,11 @@ func TestOpeningTheCacheRemovesStaleTemporaryFiles(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	stale, fresh := filepath.Join(dir, ".pending-stale"), filepath.Join(dir, ".pending-fresh")
+	keyDir := filepath.Join(dir, hex.EncodeToString([]byte("sessions/codex/temp/metadata.json")))
+	if err := os.Mkdir(keyDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	stale, fresh := filepath.Join(keyDir, ".pending-stale"), filepath.Join(keyDir, ".pending-fresh")
 	for _, path := range []string{stale, fresh} {
 		if err := os.WriteFile(path, []byte("{}"), 0o600); err != nil {
 			t.Fatal(err)

@@ -79,6 +79,21 @@ Not observed on 3.21.13, and kept fail-closed:
 the fallback proof, and a payload that names no transcript still proves
 nothing.
 
+## Replay sessions
+
+A session is marked as a replay when `AGENT_ARCHIVE_REPLAY` is set in the
+environment of the hook that registers it ([the design](../../dev/specs/replay-sessions.md)).
+The hook reads its own environment, which it inherits from whatever starts it:
+
+| App | Where the hook's environment comes from | Status |
+| --- | --- | --- |
+| Claude Code | The `claude` process, which runs hooks as its children | `documented` (hooks inherit the agent's environment); not yet observed with a replay runner |
+| Codex | The `codex` process, which runs hooks as its children | `documented`; not yet observed with a replay runner |
+| Cursor | The app (or the Cursor agent CLI) as it was launched: a variable exported in a terminal after the app started does not reach it | `unverified` |
+
+A runner that cannot get the variable to the hooks gets ordinary sessions,
+which `list` then shows as the person's own.
+
 ## Capability states and subagents
 
 `documented` means the vendor exposes the named evidence. `unavailable` means
@@ -124,6 +139,24 @@ Please continue from where you left off" after a restart. That record has
 the SDK, so nothing in it distinguishes it from something a person sent and it
 is still counted as a prompt. Matching its text is deliberately not done.
 
+## The commit a session started on
+
+No app reports the commit it is working on, so agent-archive's hook asks git
+itself, in the directory the payload names (see
+[the design](../../dev/specs/git-head.md)). What each app gives it:
+
+| App | Registering hook | Directory | Stop hooks that read HEAD again |
+| --- | --- | --- | --- |
+| Claude Code | `SessionStart` (`startup`, `clear`) | `cwd`, which follows a persisted `cd` and names a worktree under `.claude/worktrees/` | `Stop`, `StopFailure`, `SessionEnd` |
+| Codex | `SessionStart` (`startup`, `clear`) | `cwd` | `Stop`, `Interrupt`, `SessionEnd` |
+| Cursor | `beforeSubmitPrompt` of a new chat (3.21.13 fires no `sessionStart`) | the first of `workspace_roots` (no `cwd`); a multi-root workspace uses its first root | `stop`, `sessionEnd` |
+
+This is `documented` for the payload fields and relies on nothing else from
+the app: git, not the app, answers. It is recorded wherever git is installed
+and answers within the hook's budget, and is absent (a capture gap in the
+sense of "unknown", not an error) otherwise. A session a hook did not register
+(an import, a subagent) has no starting commit.
+
 ## Installed version versus captured version
 
 `installed_version` comes from setup-time discovery and is labelled by
@@ -153,3 +186,19 @@ When support is `unverified`, `installed_version_support_reason` says why:
 
 `application-versions.json` is advisory. If it cannot be read, `status` reports
 a warning, treats installed versions as `unknown`, and continues.
+
+## Integration extension evidence
+
+Operation availability comes from populated registry ports. Capability evidence
+remains a separate declaration, and installed-version health still requires
+real publication and readback. Purpose-specific discovery availability and skill
+roots are declared by each native integration; import compatibility and no-setup
+handoff do not implicitly share all roots or formats. Cursor skill installation
+uses `.agents/skills`, while its existing evidence inventory uses `.cursor/skills`.
+
+The test-only Orbifold fixture uses an independent native vocabulary and retained
+format through normal injected registry consumers. Its hook, source, filter and
+analysis flow exercises replay, colliding IDs, transient reads, unknown metrics,
+publication/readback and replacement provenance. This is fixture evidence only:
+Orbifold is absent from production composition, and the tests make no claim about
+an installed app version.

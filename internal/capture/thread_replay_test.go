@@ -8,6 +8,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/state"
+	"github.com/wangjohn/agent-archive/internal/testutil/recoverytest"
 	"os"
 	"testing"
 	"time"
@@ -39,7 +40,7 @@ func TestThreadTriageFollowupThenStart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	queued, err := queueEventBatchInGeneration(home, batch, at, cfg.PauseGeneration, nil)
+	queued, err := queueEventBatchInGeneration(home, batch, at, cfg.PauseGeneration, nil, nil)
 	if err != nil || !queued {
 		t.Fatalf("queue=%v err=%v", queued, err)
 	}
@@ -75,7 +76,7 @@ func TestFollowupStartBatchSurvivesEachPartialReplay(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			queued, err := queueEventBatchInGeneration(home, batch, at, cfg.PauseGeneration, nil)
+			queued, err := queueEventBatchInGeneration(home, batch, at, cfg.PauseGeneration, nil, nil)
 			if err != nil || !queued {
 				t.Fatalf("queue %v %v", queued, err)
 			}
@@ -301,7 +302,7 @@ func TestOrderedBatchRequestsRecoveryAndHonorsRevokedGeneration(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := store.RecoverSessionIndex(context.Background()); err != nil {
+		if err := recoverytest.Exhaust(context.Background(), store, state.SessionIndexRecoverySlice, true); err != nil {
 			t.Fatal(err)
 		}
 		if err := ReplayAdmissionIntents(home, at.Add(time.Second)); err != nil {
@@ -388,7 +389,7 @@ func TestMultipleDeferredStartsReplayPreservesNativeOrder(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			queued, err := queueEventBatchInGeneration(home, batch, at, cfg.PauseGeneration, nil)
+			queued, err := queueEventBatchInGeneration(home, batch, at, cfg.PauseGeneration, nil, nil)
 			if err != nil || !queued {
 				t.Fatalf("queue %t %v", queued, err)
 			}
@@ -455,7 +456,7 @@ func TestMultiStartReplayPreservesNewOnlyAndNewerLiveObservations(t *testing.T) 
 		if err != nil {
 			t.Fatal(err)
 		}
-		queued, err := queueEventBatchInGeneration(home, batch, at, cfg.PauseGeneration, nil)
+		queued, err := queueEventBatchInGeneration(home, batch, at, cfg.PauseGeneration, nil, nil)
 		if err != nil || !queued {
 			t.Fatalf("queue %t %v", queued, err)
 		}

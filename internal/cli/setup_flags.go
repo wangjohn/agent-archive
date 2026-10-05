@@ -26,35 +26,49 @@ const (
 	envR2SecretAccessKey = "AGENT_ARCHIVE_R2_SECRET_ACCESS_KEY" //nolint:gosec // G101: a variable's name, not a credential.
 )
 
+type discoverySetting string
+
+const (
+	discoveryOn  discoverySetting = "on"
+	discoveryOff discoverySetting = "off"
+)
+
 // setupOptions are setup's answers given as flags, for setup --yes.
 type setupOptions struct {
-	pair                   bool
-	pairFile               string
-	prefix                 string
-	prefixSupplied         bool
-	retentionDays          int
-	retentionSupplied      bool
-	requireSkillUse        bool
-	noRequireSkillUse      bool
-	requireSkillSupplied   bool
-	noRequireSkillSupplied bool
-	provider               string
-	bucket                 string
-	r2Account              string
-	r2KeyID                string
-	awsProfile             string
-	region                 string
-	apps                   string
-	projects               []string
-	projectRepos           []string
-	projectMatches         *projectMatchResult
-	yes                    bool
-	verbose                bool
-	skillEvidence          string
-	noSkills               bool
-	skills                 bool
-	allowNetworkHome       bool
-	storageFlagsSupplied   bool
+	codexDiscovery           string
+	codexCaptureScope        string
+	pair                     bool
+	pairFile                 string
+	prefix                   string
+	prefixSupplied           bool
+	retentionDays            int
+	retentionSupplied        bool
+	requireSkillUse          bool
+	noRequireSkillUse        bool
+	requireSkillSupplied     bool
+	noRequireSkillSupplied   bool
+	provider                 string
+	bucket                   string
+	r2Account                string
+	r2KeyID                  string
+	awsProfile               string
+	region                   string
+	apps                     string
+	projects                 []string
+	projectRepos             []string
+	projectScope             string
+	projectScopeFile         string
+	projectScopeSupplied     bool
+	projectScopeFileSupplied bool
+	projectScopeInputRead    bool
+	projectMatches           *projectMatchResult
+	yes                      bool
+	verbose                  bool
+	skillEvidence            string
+	noSkills                 bool
+	skills                   bool
+	allowNetworkHome         bool
+	storageFlagsSupplied     bool
 }
 
 // skillsChoice is what the person asked of the agent skills on this run:
@@ -127,12 +141,29 @@ func setupFlags(fs *commandFlags, args []string) (setupOptions, bool) {
 	fs.StringVar(&opts.r2KeyID, "r2-access-key-id", "", "R2 access key ID")
 	fs.StringVar(&opts.awsProfile, "aws-profile", "", "AWS profile for S3")
 	fs.StringVar(&opts.region, "region", "", "S3 bucket region")
+	fs.Func("codex-discovery", "on or off; automatically discover supported Codex tasks", func(value string) error {
+		if discoverySetting(value) != discoveryOn && discoverySetting(value) != discoveryOff {
+			return fmt.Errorf("--codex-discovery requires on or off")
+		}
+		opts.codexDiscovery = value
+		return nil
+	})
+	fs.Func("codex-capture-scope", "included-projects or all-projects; Codex only", func(value string) error {
+		scope := config.CodexCaptureScope(value)
+		if scope != config.CodexIncludedProjects && scope != config.CodexAllProjects {
+			return fmt.Errorf("--codex-capture-scope requires included-projects or all-projects")
+		}
+		opts.codexCaptureScope = value
+		return nil
+	})
 	fs.StringVar(&opts.apps, "apps", "", "apps to capture, comma-separated")
 	fs.StringVar(&opts.skillEvidence, "skill-evidence", "", "none, metadata, or body")
 	fs.BoolVar(&opts.noSkills, "no-skills", false, "install no agent skills, and remove those setup wrote")
 	fs.BoolVar(&opts.skills, "skills", false, "install the agent skills again after --no-skills")
 	fs.BoolVar(&opts.allowNetworkHome, "allow-network-home", false, "allow a data directory or systemd unit directory on a network filesystem (Linux), when only one machine uses this home")
 	fs.Var(&projectRepos, "project-repo", "repository key to capture (repeatable; unresolved or ambiguous keys are skipped)")
+	fs.StringVar(&opts.projectScope, "project-scope", "", "portable JSON capture rules, including exclusions")
+	fs.StringVar(&opts.projectScopeFile, "project-scope-file", "", "read portable capture rules from PATH, or - for stdin")
 	fs.Var(&projects, "project", "project directory to capture (repeatable)")
 	fs.BoolVar(&opts.yes, "yes", false, "apply without questions")
 	fs.BoolVar(&opts.verbose, "verbose", false, "show a failed storage check's full error")
@@ -144,6 +175,10 @@ func setupFlags(fs *commandFlags, args []string) (setupOptions, bool) {
 	fs.Visit(func(f *flag.Flag) {
 		//lint:ignore LV1001 flag names are the ones defined just above
 		switch f.Name {
+		case "project-scope":
+			opts.projectScopeSupplied = true
+		case "project-scope-file":
+			opts.projectScopeFileSupplied = true
 		case "prefix":
 			opts.prefixSupplied = true
 		case "retention-days":
@@ -156,12 +191,16 @@ func setupFlags(fs *commandFlags, args []string) (setupOptions, bool) {
 			opts.storageFlagsSupplied = true
 		}
 	})
+	if err := validateProjectScopeOptions(opts); err != nil {
+		fs.usageError("%s", err)
+		return opts, false
+	}
 	return opts, true
 }
 
 // given reports whether any answer flag was passed.
 func (o setupOptions) given() bool {
-	return o.prefixSupplied || o.retentionSupplied || o.requireSkillSupplied || o.noRequireSkillSupplied || o.storageFlagsSupplied || o.apps != "" || len(o.projects) > 0 || len(o.projectRepos) > 0 || o.skillEvidence != ""
+	return o.codexCaptureScope != "" || o.codexDiscovery != "" || o.prefixSupplied || o.retentionSupplied || o.requireSkillSupplied || o.noRequireSkillSupplied || o.storageFlagsSupplied || o.apps != "" || len(o.projects) > 0 || len(o.projectRepos) > 0 || o.hasProjectScope() || o.skillEvidence != ""
 }
 
 // setupWithoutQuestions is setup --yes: the answers come from opts, the
@@ -169,6 +208,15 @@ func (o setupOptions) given() bool {
 // check and the same transaction as interactive setup, and refuses before
 // changing anything when an answer is missing.
 func setupWithoutQuestions(opts setupOptions, stdin io.Reader, out, errOut io.Writer, env Env) error {
+	opts, err := readProjectScopeInput(opts, stdin)
+	if err != nil {
+		return err
+	}
+	return applySetupWithoutQuestions(opts, stdin, out, errOut, env)
+}
+
+// applySetupWithoutQuestions applies answers after explicit scope input is read.
+func applySetupWithoutQuestions(opts setupOptions, stdin io.Reader, out, errOut io.Writer, env Env) error {
 	home, err := env.home()
 	if err != nil {
 		return err
@@ -213,7 +261,11 @@ func setupWithoutQuestions(opts setupOptions, stdin io.Reader, out, errOut io.Wr
 	if err != nil {
 		return err
 	}
-	if secret.SecretAccessKey, err = scriptR2Secret(secret, p, stdin, env); err != nil {
+	if err := validateScriptCodexChoices(cfg, opts, found && containsString(existing.Harnesses, "codex")); err != nil {
+		return err
+	}
+	prepareDiscoveryHomes(&cfg, env, userHome)
+	if secret.SecretAccessKey, err = scopeR2Secret(secret, p, stdin, env, opts); err != nil {
 		return err
 	}
 	// The checks interactive setup makes before its first question, for the
@@ -257,12 +309,8 @@ func setupWithoutQuestions(opts setupOptions, stdin io.Reader, out, errOut io.Wr
 		}
 		return failure
 	}
-	if secret.SecretAccessKey != "" {
-		if err = stageR2Key(home, &cfg, &draft, secret, env); err != nil {
-			return discard(err)
-		}
-	} else if cfg.Storage.Provider == credentials.ProviderR2 && !storedCredentialReadable(env, cfg.Storage.R2CredentialRef) {
-		return fmt.Errorf("the stored R2 key can't be read from the %s; pass --r2-access-key-id and the secret (see agent-archive setup --help)", credentials.StoreName(credentialOS))
+	if err = stageScriptR2Credential(home, &cfg, &draft, secret, env); err != nil {
+		return discard(err)
 	}
 
 	accessErr := runStorageCheck(p, &cfg, env)
@@ -299,6 +347,7 @@ func reviewWithoutQuestions(home string, existing, cfg config.Config, p *prompte
 	if err := reviewChanges(home, existing, cfg, p, env); err != nil {
 		return err
 	}
+	printDiscoveryConsent(p, cfg)
 	terminal.Printf(p.out, "Apps: %s. Projects: %d. Storage: %s bucket %s.\n", appList(cfg.Harnesses), includedProjects(cfg.Archive.Projects), providerName(cfg.Storage.Provider), cfg.Storage.Bucket)
 	policy := string(cfg.EffectiveSkillEvidence())
 	if cfg.SkillEvidence == "" {
@@ -319,6 +368,9 @@ func reviewWithoutQuestions(home string, existing, cfg config.Config, p *prompte
 // check out. Every missing or wrong answer is reported together.
 func setupAnswers(existing config.Config, opts setupOptions, home, userHome string, installed bool, env Env) (config.Config, credentials.R2Credentials, error) {
 	cfg := existing
+	if err := validateProjectScopeOptions(opts); err != nil {
+		return cfg, credentials.R2Credentials{}, err
+	}
 	if opts.retentionSupplied {
 		if opts.retentionDays < 1 || opts.retentionDays > 36500 {
 			return cfg, credentials.R2Credentials{}, errors.New("--retention-days must be between 1 and 36500")
@@ -343,7 +395,7 @@ func setupAnswers(existing config.Config, opts setupOptions, home, userHome stri
 		cfg.SkillEvidence = config.SkillEvidenceMetadata
 	}
 	if opts.skillEvidence != "" {
-		cfg.SkillEvidence = config.SkillEvidence(opts.skillEvidence)
+		config.SetSkillEvidence(&cfg, config.SkillEvidence(opts.skillEvidence))
 	}
 	cfg.NoSkills = opts.skillsChoice().noSkills(existing.NoSkills)
 	cfg.AllowNetworkHome = env.networkHomeOptIn(home, userHome, opts.allowNetworkHome, existing)
@@ -351,7 +403,13 @@ func setupAnswers(existing config.Config, opts setupOptions, home, userHome stri
 		return cfg, credentials.R2Credentials{}, fmt.Errorf("--skill-evidence must be none, metadata, or body")
 	}
 	cfg.Archive.Projects = slices.Clone(existing.Archive.Projects)
-	problems := setupApps(&cfg, opts.apps, env.detectHarnesses(userHome), installed)
+	problems := setupApps(env.setupNames(), &cfg, opts.apps, env.detectHarnesses(userHome), installed)
+	if err := configureCodexCaptureScope(&cfg, opts.codexCaptureScope); err != nil {
+		problems = append(problems, err)
+	}
+	if err := configureDiscovery(&cfg, discoverySetting(opts.codexDiscovery)); err != nil {
+		problems = append(problems, err)
+	}
 	if len(problems) == 0 {
 		if other := env.installation(home, userHome).otherInstallationProblems(env.hookFiles(userHome), cfg.Harnesses); len(other) > 0 {
 			return cfg, credentials.R2Credentials{}, &otherInstallationError{problems: other}
@@ -378,6 +436,9 @@ func setupAnswers(existing config.Config, opts setupOptions, home, userHome stri
 			}
 		}
 	}
+	if opts.projectScope != "" {
+		problems = append(problems, setupProjectScope(&cfg, opts.projectScope, userHome, env)...)
+	}
 	problems = append(problems, setupProjects(&cfg, opts.projects, userHome)...)
 	secret, storageProblems := setupStorageFromFlags(&cfg, opts, env)
 	problems = append(problems, storageProblems...)
@@ -387,12 +448,19 @@ func setupAnswers(existing config.Config, opts setupOptions, home, userHome stri
 	return cfg, secret, answersError(problems)
 }
 
-// scriptR2Secret reads a script's R2 secret for the new key in secret, set
+// scopeR2Secret reads a script's R2 secret for the new key in secret, set
 // in the environment or piped in. setup --yes calls it once every other
 // answer checks out, so nothing is read from standard input for a run that
 // is refused, and a missing secret is reported before launchctl or the
 // Keychain is asked. A terminal is asked for it only after the preflight
 // checks, so it returns nothing then.
+func scopeR2Secret(secret credentials.R2Credentials, p *prompter, stdin io.Reader, env Env, opts setupOptions) (string, error) {
+	if opts.projectScopeFile == "-" && secret.AccessKeyID != "" && lookupEnvTrimmed(env, envR2SecretAccessKey) == "" {
+		return "", errors.New("--project-scope-file - owns stdin; set AGENT_ARCHIVE_R2_SECRET_ACCESS_KEY for the R2 secret, or read scope from a file")
+	}
+	return scriptR2Secret(secret, p, stdin, env)
+}
+
 func scriptR2Secret(secret credentials.R2Credentials, p *prompter, stdin io.Reader, env Env) (string, error) {
 	if secret.AccessKeyID == "" || (env.interactive(stdin) && lookupEnvTrimmed(env, envR2SecretAccessKey) == "") {
 		return "", nil
@@ -464,20 +532,20 @@ func providerName(provider string) string {
 // hooks are installed, since taking them out is a choice for interactive
 // setup, which shows the hooks it removes. It returns every problem with
 // --apps.
-func setupApps(cfg *config.Config, apps string, detected []string, installed bool) []error {
+func setupApps(available []string, cfg *config.Config, apps string, detected []string, installed bool) []error {
 	var chosen, unknown []string
 	switch {
 	case apps != "":
 		for app := range strings.SplitSeq(apps, ",") {
 			app = strings.TrimSpace(app)
-			if !containsString(allHarnesses, app) {
+			if !containsString(available, app) {
 				unknown = append(unknown, strconv.Quote(app))
 			} else if !containsString(chosen, app) {
 				chosen = append(chosen, app)
 			}
 		}
 		if len(unknown) > 0 {
-			return []error{fmt.Errorf("--apps takes codex, claude, and cursor, not %s", strings.Join(unknown, " or "))}
+			return []error{fmt.Errorf("--apps takes %s, not %s", strings.Join(available, ", "), strings.Join(unknown, " or "))}
 		}
 	case len(cfg.Harnesses) > 0:
 		chosen = cfg.Harnesses
@@ -488,7 +556,7 @@ func setupApps(cfg *config.Config, apps string, detected []string, installed boo
 			}
 		}
 		if len(chosen) == 0 {
-			return []error{errors.New("no apps were found on this machine; pass --apps (codex, claude, cursor)")}
+			return []error{fmt.Errorf("no apps were found on this machine; pass --apps (%s)", strings.Join(available, ", "))}
 		}
 	}
 	if installed {
@@ -503,7 +571,7 @@ func setupApps(cfg *config.Config, apps string, detected []string, installed boo
 		}
 	}
 	var ordered, declined []string
-	for _, app := range allHarnesses {
+	for _, app := range available {
 		if containsString(chosen, app) {
 			ordered = append(ordered, app)
 		} else if containsString(cfg.DeclinedHarnesses, app) {
@@ -537,7 +605,7 @@ func setupProjects(cfg *config.Config, paths []string, userHome string) []error 
 	if len(problems) > 0 {
 		return problems
 	}
-	if includedProjects(cfg.Archive.Projects) == 0 {
+	if setupNeedsProject(*cfg) {
 		return []error{errors.New("no project is included; pass --project DIR")}
 	}
 	return nil
@@ -688,4 +756,14 @@ func (e Env) forgetR2Variables() {
 func lookupEnvTrimmed(env Env, key string) string {
 	value, _ := env.lookupEnv(key)
 	return strings.TrimSpace(value)
+}
+
+func stageScriptR2Credential(home string, cfg *config.Config, draft *setupDraft, secret credentials.R2Credentials, env Env) error {
+	if secret.SecretAccessKey != "" {
+		return stageR2Key(home, cfg, draft, secret, env)
+	}
+	if cfg.Storage.Provider == credentials.ProviderR2 && !storedCredentialReadable(env, cfg.Storage.R2CredentialRef) {
+		return fmt.Errorf("the stored R2 key can't be read from the %s; pass --r2-access-key-id and the secret (see agent-archive setup --help)", credentials.StoreName(credentialOS))
+	}
+	return nil
 }

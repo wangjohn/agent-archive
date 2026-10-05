@@ -1,0 +1,134 @@
+{
+  "schema": 1,
+  "tag": "vX.Y.Z",
+  "commit": "",
+  "sha256": {
+    "agent-archive-darwin-amd64": "",
+    "agent-archive-darwin-arm64": "",
+    "agent-archive-linux-amd64": "",
+    "agent-archive-linux-arm64": "",
+    "SHA256SUMS": "",
+    "release-candidate.json": ""
+  },
+  "checks": {
+    "signed-install-darwin-amd64": {
+      "result": "pending",
+      "tester": "",
+      "utc": "",
+      "evidence": ""
+    },
+    "signed-install-darwin-arm64": {
+      "result": "pending",
+      "tester": "",
+      "utc": "",
+      "evidence": ""
+    },
+    "install-linux-amd64": {
+      "result": "pending",
+      "tester": "",
+      "utc": "",
+      "evidence": ""
+    },
+    "install-linux-arm64": {
+      "result": "pending",
+      "tester": "",
+      "utc": "",
+      "evidence": ""
+    },
+    "clean-user": {
+      "result": "pending",
+      "tester": "",
+      "utc": "",
+      "evidence": ""
+    },
+    "upgrade": {
+      "result": "pending",
+      "tester": "",
+      "utc": "",
+      "evidence": ""
+    },
+    "s3": {
+      "result": "pending",
+      "tester": "",
+      "utc": "",
+      "evidence": ""
+    },
+    "r2": {
+      "result": "pending",
+      "tester": "",
+      "utc": "",
+      "evidence": ""
+    },
+    "claude-code": {
+      "result": "pending",
+      "tester": "",
+      "utc": "",
+      "evidence": ""
+    },
+    "codex": {
+      "result": "pending",
+      "tester": "",
+      "utc": "",
+      "evidence": ""
+    },
+    "cursor": {
+      "result": "pending",
+      "tester": "",
+      "utc": "",
+      "evidence": ""
+    },
+    "recovery": {
+      "result": "pending",
+      "tester": "",
+      "utc": "",
+      "evidence": ""
+    },
+    "cleanup": {
+      "result": "pending",
+      "tester": "",
+      "utc": "",
+      "evidence": ""
+    },
+    "listing-budget": {
+      "result": "pending",
+      "tester": "",
+      "utc": "",
+      "evidence": ""
+    },
+    "documentation": {
+      "result": "pending",
+      "tester": "",
+      "utc": "",
+      "evidence": ""
+    },
+    "repository-settings": {
+      "result": "pending",
+      "tester": "",
+      "utc": "",
+      "evidence": ""
+    }
+  },
+  "ci": {
+    "Test": {
+      "result": "pending",
+      "tester": "",
+      "utc": "",
+      "evidence": "",
+      "run_id": 0
+    },
+    "Levenshtein": {
+      "result": "pending",
+      "tester": "",
+      "utc": "",
+      "evidence": "",
+      "run_id": 0
+    },
+    "Extended": {
+      "result": "pending",
+      "tester": "",
+      "utc": "",
+      "evidence": "",
+      "run_id": 0
+    }
+  }
+}

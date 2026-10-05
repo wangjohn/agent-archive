@@ -28,9 +28,9 @@ func TestParserBumpRepublishesModelTokensFromRetainedSource(t *testing.T) {
 	if err := local.SaveRegistration(reg); err != nil {
 		t.Fatal(err)
 	}
-	remote := &countedPublications{ObjectStore: storagetest.NewMemoryStore()}
+	remote := &countedPublications{MemoryStore: storagetest.NewMemoryStore()}
 	now := reg.RegisteredAt.Add(time.Hour)
-	opts := Options{MachineID: "machine", ParserVersion: "0.13.0", Now: func() time.Time { return now }}
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "machine", ParserVersion: "0.13.0", Now: func() time.Time { return now }}
 	if result, err := Run(context.Background(), local, remote, opts); err != nil || len(result.Errors) != 0 {
 		t.Fatalf("%#v %v", result, err)
 	}
@@ -54,7 +54,7 @@ func TestParserBumpRepublishesModelTokensFromRetainedSource(t *testing.T) {
 	}
 	metadataKey, _ := archive.MetadataObjectKey("codex", reg.ArchiveSessionID)
 	// The metadata and its listing entries, never the source object.
-	if len(remote.keys) != 3 || remote.keys[2] != metadataKey || slices.Contains(remote.keys, old.SourceBundle.Key) {
+	if len(remote.keys) != 2 || remote.keys[0] != metadataKey || slices.Contains(remote.keys, old.SourceBundle.Key) {
 		t.Fatalf("a parser bump wrote %v, want only the metadata and its listing", remote.keys)
 	}
 	var models []string
@@ -66,5 +66,45 @@ func TestParserBumpRepublishesModelTokensFromRetainedSource(t *testing.T) {
 	}
 	if next.Counts.ReasoningTokens == nil || *next.Counts.ReasoningTokens != 40 || next.Counts.CacheWriteTokens == nil || *next.Counts.CacheWriteTokens != 57 {
 		t.Fatalf("counts = %+v", next.Counts)
+	}
+}
+
+// Metadata from the previous parser must refresh from retained evidence even
+// when the native transcript is gone; import provenance stays attached.
+func TestParserUpgradeFrom019RefreshesRetainedImportMetadata(t *testing.T) {
+	t.Parallel()
+	raw, err := os.ReadFile(filepath.Join("..", "archive", "testdata", "codex-model-switch.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	local := newTestStore(t)
+	path := writeTranscript(t, t.TempDir(), "session.jsonl", string(raw))
+	reg := registration(t, path)
+	reg.Origin = archive.SessionOriginImport
+	if err := local.SaveRegistration(reg); err != nil {
+		t.Fatal(err)
+	}
+	remote := &countedPublications{MemoryStore: storagetest.NewMemoryStore()}
+	now := reg.RegisteredAt.Add(time.Hour)
+	opts := Options{Sources: testSources, MachineID: "machine", ParserVersion: "0.19.0", Now: func() time.Time { return now }}
+	if result, err := Run(context.Background(), local, remote, opts); err != nil || len(result.Errors) != 0 {
+		t.Fatalf("%#v %v", result, err)
+	}
+	old := fetchMetadata(t, remote, "codex", reg.ArchiveSessionID)
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(time.Hour)
+	opts.ParserVersion = ""
+	remote.keys = nil
+	if result, err := Run(context.Background(), local, remote, opts); err != nil || len(result.Errors) != 0 {
+		t.Fatalf("%#v %v", result, err)
+	}
+	next := fetchMetadata(t, remote, "codex", reg.ArchiveSessionID)
+	if next.Parser.Version == old.Parser.Version || next.SourceBundle != old.SourceBundle || next.Origin != archive.SessionOriginImport {
+		t.Fatalf("retained metadata did not refresh with provenance: %#v", next)
+	}
+	if len(remote.keys) != 2 || slices.Contains(remote.keys, old.SourceBundle.Key) {
+		t.Fatalf("parser upgrade wrote %v, want metadata and listing only", remote.keys)
 	}
 }

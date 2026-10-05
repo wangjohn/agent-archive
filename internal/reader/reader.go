@@ -68,7 +68,9 @@ const (
 // request or response model, and From and To bound CapturedAt, inclusive.
 // Skill and SkillSHA256 match a skill by name and content hash, in the
 // relationship SkillUsage names. RequireCompleteCoverage keeps only sessions
-// whose parser status is complete and which have no capture gaps.
+// whose parser status is complete and which have no capture gaps. Replays
+// says what to do with sessions a replay tool ran; its zero value includes
+// them, so only a caller that asks hides them.
 type Filter struct {
 	Harness                 string
 	Model                   string
@@ -78,7 +80,22 @@ type Filter struct {
 	To                      time.Time
 	RequireCompleteCoverage bool
 	SkillUsage              SkillUsage
+	Replays                 ReplayFilter
 }
+
+// ReplayFilter selects by whether a session is a replay (archive.Replay).
+type ReplayFilter string
+
+const (
+	// ReplaysIncluded is the zero value: it matches replays and ordinary
+	// sessions alike.
+	ReplaysIncluded ReplayFilter = ""
+	// ReplaysHidden matches only ordinary sessions: what list and stats
+	// show by default.
+	ReplaysHidden ReplayFilter = "hide"
+	// ReplaysOnly matches only replays.
+	ReplaysOnly ReplayFilter = "only"
+)
 
 // Limits bounds how much of a source bundle LoadSource reads: the compressed
 // object (default 32 MiB) and the decompressed stream (default 128 MiB). A
@@ -121,6 +138,18 @@ const listConcurrency = 8
 // ListOptions tunes ListMetadataWithOptions. The zero value reads every
 // matching sidecar from the store.
 type ListOptions struct {
+	// ScopeMatch tests only identity summaries before body selection.
+	ScopeMatch func(archive.Metadata) bool
+
+	// ActivityOrder selects the text listing's activity ordering.
+	ActivityOrder bool
+	// TopLevelOnly excludes subagents before the limit and returns their counts.
+	TopLevelOnly bool
+	// CompatibilityScan explains why the exhaustive reader was required.
+	CompatibilityScan func(string)
+	// BodyRead observes successful selected metadata or cache body reads.
+	BodyRead func(key string, cached bool)
+
 	// Cache, when set, serves a sidecar whose listed ETag is unchanged from
 	// local disk instead of downloading it, and forgets sidecars which are
 	// no longer listed. It holds metadata only.
@@ -189,7 +218,16 @@ func ListMetadataWithOptions(ctx context.Context, store storage.ObjectStore, pre
 			results = append(results, metadata)
 		}
 	}
-	sort.SliceStable(results, func(i, j int) bool { return results[i].CapturedAt.After(results[j].CapturedAt) })
+	sort.Slice(results, func(i, j int) bool {
+		a, b := results[i], results[j]
+		if !a.CapturedAt.Equal(b.CapturedAt) {
+			return a.CapturedAt.After(b.CapturedAt)
+		}
+		if a.Harness.Name != b.Harness.Name {
+			return a.Harness.Name < b.Harness.Name
+		}
+		return a.SessionID < b.SessionID
+	})
 	return results, nil
 }
 
@@ -439,6 +477,13 @@ func matchesCapture(m archive.Metadata, f Filter) bool {
 	}
 	if !f.To.IsZero() && m.CapturedAt.After(f.To) {
 		return false
+	}
+	switch f.Replays {
+	case ReplaysHidden:
+		return !m.IsReplay()
+	case ReplaysOnly:
+		return m.IsReplay()
+	case ReplaysIncluded:
 	}
 	return true
 }

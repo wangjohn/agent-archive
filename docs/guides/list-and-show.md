@@ -5,12 +5,15 @@ touching local collector state. `feedback` attaches your own assessment to
 a session.
 
 ```sh
-# Newest archived sessions matching the filters (at most 50 by default),
-# top-level sessions only, from this repository when you are in one:
-# title (the name your agent gave the session, else a preview of the first
-# filtered prompt), pull request, relative time, harness, project, and short
-# ID. Metadata only, never full transcript text. On an interactive terminal,
-# pick a numbered row to see that session's summary (see below).
+# The most recently active archived sessions matching the filters (at most
+# 50 by default), top-level sessions only, from this repository when you are
+# in one: title (the name your agent gave the session, else a preview of the
+# first filtered prompt), pull request, how long ago it was last active
+# (WHEN: its latest record, so a session backfill imported is dated by when
+# it ran, not the import), harness, project, and short ID. --json keeps the
+# newest captured first. Metadata only, never full transcript text. On an
+# interactive terminal, pick a numbered row to see that session's summary
+# (see below).
 # Otherwise the table is paged through $PAGER (or less; see Scrolling below);
 # use --no-pager to print directly.
 agent-archive list
@@ -25,18 +28,20 @@ agent-archive list "flaky retention"  # the sessions these words find (see Which
 agent-archive list --harness claude --model claude-opus-5 --since 7d
 agent-archive list --imported          # only sessions backfill imported
 agent-archive list --hook-captured     # only sessions captured as they ran
+agent-archive list --replays include   # also sessions a replay tool ran (hidden by default)
+agent-archive list --replays only      # only those, marked [replay]
 agent-archive list --skill review --skill-usage available
 agent-archive list --skill review --skill-sha256 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 agent-archive list --complete          # complete parser coverage, no capture gaps
 
 # For scripts: {"schema_version": 4, "sessions": [...], "limit", "returned",
 # "total_matched_known"}, and "scope" inside a project. "total_matched" is
-# omitted when the indexed listing stops after the limit. Never paged or
+# exact when fresh headers prove index coverage. Never paged or
 # interactive. Run inside a project it lists that repository's sessions, so a
 # script that wants everything adds --all-projects.
 agent-archive list --json
 agent-archive list --json --limit 0
-agent-archive list --rebuild-index  # one-time full scan for older archives
+agent-archive list --rebuild-index  # migrate legacy entries and repair auxiliary hints
 
 # One session's summary: title, when, app, models, activity, skills,
 # subagents, and capture gaps. With no SESSION_ID on a terminal, the same
@@ -81,7 +86,7 @@ claude · agent-archive · 2h ago                                      ✓ compl
   Subagents 2 linked (1 available, 1 expired)
 
   ID 03e60c25f1a04b7c9d2e8f6a1b3c5d7e
-     origin hook · parser 0.18.0 (partial) · filter 14
+     origin hook · parser 0.19.0 (partial) · filter 14
 
   Transcript: agent-archive show 03e60c25f1a04b7c9d2e8f6a1b3c5d7e --harness claude --transcript
   JSON:       agent-archive show 03e60c25f1a04b7c9d2e8f6a1b3c5d7e --harness claude --json
@@ -94,7 +99,9 @@ gave, and Tools lists the most-called tools (`tools_used`). Times are in
 your local time zone. The session ends at `ended_at`, its latest record
 timestamp. Metadata from before parser 0.13.0, or from an app whose records
 carry no timestamps, has no end time, so the summary uses when the session
-was last captured and labels the time since the start a span.
+was last captured and labels the time since the start a span. A session
+`backfill` imported with no end time shows only its start, since it was
+captured when the import ran.
 
 Capture gaps are the parser's notes on what the archived copy leaves out.
 Most are expected: the privacy filter dropping injected instructions and
@@ -305,6 +312,11 @@ requests the session created or merged, when its own tool calls confirmed
 them; the `Git` row counts commits and pushes and names each pull request.
 See [JSON output](../reference/json-output.md#show).
 
+A session captured by this release's hooks in a git repository also records
+the commit it started on, whether the working tree had uncommitted changes,
+and the last commit a stop hook saw; the `Commit` row shows them
+(`started on 3f9c2ab4d1e0 with uncommitted changes · last seen on
+9e01d4c7a2b8`), and `--json` has the full names in `git_head`.
 From parser `0.17.0` metadata also records the name your agent gave the
 session (`name`), the last git branch it recorded (`branch`), and the pull
 requests it was linked to (`pull_requests`). The summary's heading is the
@@ -316,7 +328,9 @@ name was kept (privacy filter 13) gets one the next time the collector
 re-reads its transcript, if the transcript is still on the machine. A Claude
 Code subagent's name is the description its parent gave the task (filter 14
 and parser `0.18.0`), so a subagent archived before that gets one the same
-way.
+way. From parser `0.19.0` a Cursor session's title is the prompt as you
+typed it, without the `<timestamp>` line and `<user_query>` tags Cursor
+wraps it in.
 
 `show` prints conversation content only when asked, with `--transcript` or
 the browser's `t`: it downloads the session's source bundle, verifies its

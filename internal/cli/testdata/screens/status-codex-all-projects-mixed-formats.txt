@@ -1,0 +1,20 @@
+$ agent-archive status
+Agent Archive  ● Waiting for capture
+
+  ! Waiting for the first Codex task
+    Start a supported new Codex task in any non-excluded project, then run agent-archive sync. Hook approval is optional for discovery.
+
+Capture
+  ! Codex 0.121.0   discovery coverage pending; all current and future Codex projects   no sessions yet
+    · Last discovery attempt 1 minute ago; discovery/reconciliation pending; sync advances bounded work, additional scans may be needed; 0 registered → 0 queued → 0 published → 0 read-back verified
+    · Optional hooks: hooks on; actual hook observation is separate evidence.
+    ! Last scan skipped 2 unsupported, incomplete or malformed observations (unsupported producer: 1, invalid metadata: 1). Update agent-archive for format support; use hooks or deliberate backfill only where that source format is supported.
+  ! Identity recovery: unknown; run agent-archive sync for current bounded local evidence.
+
+Storage
+  ✓ s3://team-archive/agent-archive/   reachable, checked by setup just now
+  ✓ Background collector on            no scan yet
+  ! Bucket privacy not verified        this storage can't be inspected; see https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
+
+More: agent-archive status --verbose · agent-archive status codex
+[exit 0]

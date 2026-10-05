@@ -11,7 +11,7 @@ name: Levenshtein
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, 'release-candidate/**']
   schedule:
     # Daily fresh audit, so a newly published vulnerability surfaces without
     # waiting for the next change.
@@ -47,7 +47,7 @@ jobs:
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: levenshtein/.go-version
-          cache-dependency-path: levenshtein/go.sum
+          cache: false
       - name: Verify
         env:
           EVENT: ${{ github.event_name }}

@@ -139,6 +139,7 @@ func TestSetupWhilePausedOffersNoImport(t *testing.T) {
 	t.Parallel()
 	f := newScreenFixture(t)
 	f.installed(t)
+	f.env.Now = func() time.Time { return screenNow.Add(time.Minute) }
 	var out bytes.Buffer
 	if code := Run([]string{"pause"}, nil, &out, &out, f.env); code != 0 {
 		t.Fatalf("pause: %s", &out)
@@ -179,7 +180,7 @@ func TestAnotherMachineCommandNeverCarriesTheR2Secret(t *testing.T) {
 		if strings.Contains(out, secret) || strings.Contains(out, keyID) {
 			t.Fatalf("output carries the key:\n%s", out)
 		}
-		want := "To set up another machine with this storage, set " + envR2AccessKeyID + " and\n" + envR2SecretAccessKey + " there, then run:\n  agent-archive setup --yes --provider r2 --bucket test-bucket --r2-account " + testR2Account + " --apps codex --prefix agent-archive/ --retention-days 90 --no-require-skill-use --skill-evidence metadata --skills --project "
+		want := "To set up another machine with this storage, set " + envR2AccessKeyID + " and\n" + envR2SecretAccessKey + " there, then run:\n  agent-archive setup --yes --provider r2 --bucket test-bucket --r2-account " + testR2Account + " --apps codex --codex-discovery on --codex-capture-scope included-projects --prefix agent-archive/ --retention-days 90 --no-require-skill-use --skill-evidence metadata --skills --project "
 		if !strings.Contains(out, want) {
 			t.Fatalf("missing %q:\n%s", want, out)
 		}
@@ -188,14 +189,14 @@ func TestAnotherMachineCommandNeverCarriesTheR2Secret(t *testing.T) {
 		t.Parallel()
 		home := t.TempDir()
 		env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
-		input := strings.Join([]string{"y", "n", "n", t.TempDir(), "", "r2-existing", testR2Account, "test-bucket", keyID, secret, "y"}, "\n") + "\n"
+		input := strings.Join([]string{"y", "n", "n", "included-projects", t.TempDir(), "", "r2-existing", testR2Account, "test-bucket", keyID, secret, "y"}, "\n") + "\n"
 		check(t, setupRun(t, env, input, 0))
 	})
 	t.Run("yes", func(t *testing.T) {
 		t.Parallel()
 		env := withEnvironment(setupTestEnv(t, t.TempDir(), t.TempDir(), newFakeKeychain(), time.Now()), map[string]string{envR2AccessKeyID: keyID, envR2SecretAccessKey: secret})
 		var out bytes.Buffer
-		args := []string{"setup", "--yes", "--provider", "r2", "--r2-account", testR2Account, "--bucket", "test-bucket", "--apps", "codex", "--project", t.TempDir()}
+		args := []string{"setup", "--yes", "--provider", "r2", "--r2-account", testR2Account, "--bucket", "test-bucket", "--apps", "codex", "--codex-discovery", "on", "--codex-capture-scope", "included-projects", "--project", t.TempDir()}
 		if code := Run(args, strings.NewReader(""), &out, &out, env); code != 0 {
 			t.Fatalf("exit %d\n%s", code, &out)
 		}
@@ -218,7 +219,9 @@ func TestAnotherMachineCommand(t *testing.T) {
 		}},
 	}
 	got := anotherMachineCommand(cfg, "/Users/alex")
-	want := `agent-archive setup --yes --provider s3 --bucket team-archive --aws-profile work --region us-east-1 --apps codex,claude --prefix agent-archive/ --retention-days 90 --no-require-skill-use --skill-evidence body --skills --project '~/src/web app' --project '/Volumes/work/it'\''s' --project ~`
+	want := `agent-archive setup --yes --provider s3 --bucket team-archive --aws-profile work --region us-east-1 --apps codex,claude --codex-discovery off --codex-capture-scope included-projects --prefix agent-archive/ --retention-days 90 --no-require-skill-use --skill-evidence body --skills --project-scope-file - <<'AGENT_ARCHIVE_PROJECT_SCOPE'
+[{"path":"~/src/web app","included":true},{"path":"~/src/api","included":false},{"path":"/Volumes/work/it's","included":true},{"path":"~","included":true}]
+AGENT_ARCHIVE_PROJECT_SCOPE`
 	if got != want {
 		t.Fatalf("got  %s\nwant %s", got, want)
 	}

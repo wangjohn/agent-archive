@@ -293,6 +293,8 @@ const (
 	// SessionOriginImport means `agent-archive backfill` imported the session
 	// after the fact, so it has no hook evidence.
 	SessionOriginImport SessionOrigin = "import"
+	// SessionOriginDiscovery means bounded local source discovery admitted the session.
+	SessionOriginDiscovery SessionOrigin = "discovery"
 )
 
 // StartedAtSource says where a registration's SessionStartedAt came from. The
@@ -313,8 +315,20 @@ const (
 //
 // SessionStartedAt is when the conversation began. It is not the capture
 // boundary: project activation and the storage destination compare Admitted().
+// CodexAdmissionProof is immutable evidence of fresh blanket admission.
+type CodexAdmissionProof struct {
+	Cwd        string `json:"cwd"`
+	Generation string `json:"generation"`
+	Revision   string `json:"revision"`
+}
+
 type SessionRegistration struct {
-	ArchiveSessionID string    `json:"archive_session_id"`
+	CodexAdmission   *CodexAdmissionProof `json:"codex_admission,omitempty"`
+	ArchiveSessionID string               `json:"archive_session_id"`
+	// PreviousGenerationID links recovery generations independently of subagents.
+	PreviousGenerationID string `json:"previous_generation_id,omitempty"`
+	// CaptureFrozen forbids further native capture; retained privacy maintenance remains.
+	CaptureFrozen    bool      `json:"capture_frozen,omitempty"`
 	NativeSessionID  string    `json:"native_session_id"`
 	ProjectID        string    `json:"project_id"`
 	ProjectRoot      string    `json:"project_root"`
@@ -326,11 +340,23 @@ type SessionRegistration struct {
 	// registered: a hash, never the URL. Empty when there was no portable
 	// origin, or on older registrations; the collector then derives it from
 	// ProjectRoot when it publishes.
-	RepoKey               string    `json:"repo_key,omitempty"`
-	ParentSessionID       string    `json:"parent_session_id,omitempty"`
-	ParentNativeSessionID string    `json:"parent_native_session_id,omitempty"`
-	SubagentID            string    `json:"subagent_id,omitempty"`
-	SubagentObservedAt    time.Time `json:"subagent_observed_at,omitempty"`
+	RepoKey string `json:"repo_key,omitempty"`
+	// StartHead is the commit the session's working directory had checked
+	// out, and whether its tree was dirty, when the hook registered it. Set
+	// once; nil when git could not tell in time, and on registrations made
+	// before the field, by backfill, or for a subagent.
+	StartHead *GitHead `json:"start_head,omitempty"`
+	// LastHead is HEAD at the latest stop hook that could read it, replaced
+	// only when the commit changes (see GitHead.ObservedAt). Nil when no
+	// stop hook has.
+	LastHead *GitHead `json:"last_head,omitempty"`
+	// LastHeadSeenAt fences delayed stop observations without changing the
+	// first-seen time published in LastHead. Local only; absent on older state.
+	LastHeadSeenAt        *time.Time `json:"last_head_seen_at,omitempty"`
+	ParentSessionID       string     `json:"parent_session_id,omitempty"`
+	ParentNativeSessionID string     `json:"parent_native_session_id,omitempty"`
+	SubagentID            string     `json:"subagent_id,omitempty"`
+	SubagentObservedAt    time.Time  `json:"subagent_observed_at,omitempty"`
 	// AdmittedAt is when this machine took ownership of the session: the
 	// boundary for project activation and storage destination. Hooks set it at
 	// registration and backfill sets it to the import time. Empty on older
@@ -338,6 +364,18 @@ type SessionRegistration struct {
 	AdmittedAt time.Time `json:"admitted_at,omitempty"`
 	// Origin is how the session entered the archive. Set once.
 	Origin SessionOrigin `json:"origin,omitempty"`
+	// HookObservedAt records actual lifecycle hook execution independently of origin.
+	HookObservedAt time.Time `json:"hook_observed_at,omitzero"`
+	// DiscoveryRoot confines reopening a discovered source to its approved root.
+	DiscoveryRoot       string `json:"discovery_root,omitempty"`
+	DiscoveryCwd        string `json:"discovery_cwd,omitempty"`
+	DiscoveryGeneration string `json:"discovery_generation,omitempty"`
+	// DiscoveryProducerOriginator and DiscoveryProducerSource retain admitted
+	// producer facts for publication revalidation. They remain private state.
+	DiscoveryProducerOriginator string `json:"discovery_producer_originator,omitempty"`
+	DiscoveryProducerSource     string `json:"discovery_producer_source,omitempty"`
+	// DiscoverySourcePriority is an adapter scheduling hint for source preference.
+	DiscoverySourcePriority int `json:"discovery_source_priority,omitempty"`
 	// StartedAtSource says where SessionStartedAt came from.
 	StartedAtSource StartedAtSource `json:"started_at_source,omitempty"`
 	// ImportBatch is the backfill run that registered the session. Whether
@@ -349,6 +387,10 @@ type SessionRegistration struct {
 	// registrations, which fall back to comparing Admitted() with the
 	// destination's start.
 	DestinationID string `json:"destination_id,omitempty"`
+	// Replay marks a session a replay tool ran: ReplayEnv was set in the
+	// hook that registered it. Set once, at registration; a subagent copies
+	// its parent's. Nil for an ordinary session.
+	Replay *Replay `json:"replay,omitempty"`
 	// SourceKind is where the collector reads the session from, fixed at
 	// registration: a transcript file ("") or a Cursor database chat.
 	SourceKind SourceKind `json:"source_kind,omitempty"`
@@ -375,6 +417,12 @@ func (r SessionRegistration) Imported() bool {
 // a missing session ID, project, harness name, or start time, or source
 // fields (SourceKind, SourceKey, TranscriptPath) that do not fit together.
 func (r SessionRegistration) Validate() error {
+	if r.PreviousGenerationID == r.ArchiveSessionID && r.PreviousGenerationID != "" {
+		return errors.New("generation cannot precede itself")
+	}
+	if r.CodexAdmission != nil && (r.Harness.Name != "codex" || r.Imported() || (r.Origin != SessionOriginHook && r.Origin != SessionOriginDiscovery) || r.CodexAdmission.Generation == "" || r.CodexAdmission.Revision == "" || !filepath.IsAbs(r.CodexAdmission.Cwd) || r.ProjectID != ProjectID(r.ProjectRoot) || !filepath.IsAbs(r.ProjectRoot)) {
+		return errors.New("invalid Codex admission proof")
+	}
 	if strings.TrimSpace(r.ArchiveSessionID) == "" || strings.TrimSpace(r.NativeSessionID) == "" {
 		return errors.New("archive and native session IDs are required")
 	}
@@ -405,9 +453,21 @@ type CaptureBoundary struct {
 	RetainedBytes   int `json:"retained_bytes"`
 }
 
+// NativeSessionIdentity is sanitized retained identity evidence supplied by an
+// integration. ID is authoritative when set; Candidates preserve retained order.
+// These observations are transient and are never persisted in source bundles.
+type NativeSessionIdentity struct {
+	ID         string
+	Candidates []string
+}
+
 // FilteredTranscript is the only adapter output accepted by NewSourceBundle.
 // Records retain their allowed native JSON shape and source ordering.
 type FilteredTranscript struct {
+	// LocalIdentity is safe retained identity evidence, never raw ownership IDs.
+	LocalIdentity NativeSessionIdentity `json:"-"`
+	// ObservedHarness is sanitized retained version/mode evidence for source assembly.
+	ObservedHarness     Harness         `json:"-"`
 	Format              string          `json:"format"`
 	Records             [][]byte        `json:"-"`
 	Boundary            CaptureBoundary `json:"boundary"`
@@ -433,6 +493,8 @@ type SupplementalEvidence struct {
 
 // SourceCapture describes the provenance shared by all records in a snapshot.
 type SourceCapture struct {
+	// Origin is emitted for discovery sources without inventing hook evidence.
+	Origin         SessionOrigin   `json:"origin,omitempty"`
 	Harness        Harness         `json:"harness"`
 	AdapterName    string          `json:"adapter_name"`
 	AdapterVersion string          `json:"adapter_version"`
@@ -454,6 +516,7 @@ type SourceBundle struct {
 	NativeRecords        []map[string]any         `json:"native_records"`
 	NativeText           []TextTranscript         `json:"native_text,omitempty"`
 	SupplementalEvidence []SupplementalEvidence   `json:"supplemental_evidence,omitempty"`
+	PreviousGenerationID string                   `json:"previous_generation_id,omitempty"`
 	ParentSessionID      string                   `json:"parent_session_id,omitempty"`
 	LinkedSessions       []LinkedSessionReference `json:"linked_sessions,omitempty"`
 }
@@ -632,11 +695,12 @@ type ToolUsage struct {
 // tool payloads and no full transcript. Title is an optional short preview of
 // the first filtered human prompt, derived for browsing.
 type Metadata struct {
-	SchemaVersion   int    `json:"schema_version"`
-	SessionID       string `json:"session_id"`
-	NativeSessionID string `json:"native_session_id"`
-	MachineID       string `json:"machine_id"`
-	ProjectID       string `json:"project_id"`
+	SchemaVersion        int    `json:"schema_version"`
+	SessionID            string `json:"session_id"`
+	PreviousGenerationID string `json:"previous_generation_id,omitempty"`
+	NativeSessionID      string `json:"native_session_id"`
+	MachineID            string `json:"machine_id"`
+	ProjectID            string `json:"project_id"`
 	// Title is a one-line, truncated preview of the first human prompt after
 	// filtering. Omitted when no prompt text was available.
 	Title string `json:"title,omitempty"`
@@ -658,8 +722,12 @@ type Metadata struct {
 	// of where it is checked out: a hash of the normalized origin URL (see
 	// RepoKey), never the URL. Omitted when the project had no portable
 	// origin remote.
-	RepoKey   string    `json:"repo_key,omitempty"`
-	StartedAt time.Time `json:"started_at"`
+	RepoKey string `json:"repo_key,omitempty"`
+	// GitHead is the commit the session's working directory had checked out
+	// when it started and when a stop hook last looked, as its hooks
+	// recorded them (see ApplyGitHead). Omitted when no hook could tell.
+	GitHead   *SessionGitHead `json:"git_head,omitempty"`
+	StartedAt time.Time       `json:"started_at"`
 	// EndedAt is the latest timestamp any retained record of the session
 	// carries, never earlier than StartedAt. Omitted when no record carries
 	// a timestamp (a Cursor transcript) or the source could not be parsed.
@@ -707,26 +775,41 @@ type Metadata struct {
 	Origin          SessionOrigin   `json:"origin,omitempty"`
 	ImportedAt      *time.Time      `json:"imported_at,omitempty"`
 	StartedAtSource StartedAtSource `json:"started_at_source,omitempty"`
+	// Replay marks a session a replay tool ran (see ApplyReplay). Omitted
+	// for an ordinary session.
+	Replay *Replay `json:"replay,omitempty"`
 }
 
 // CaptureGapImportedWithoutHookEvidence marks an imported session: no hook
 // ran while it happened, so it has no lifecycle events, final-response text,
 // or skill inventory.
+const CaptureGapDiscoveredWithoutHookEvidence = "discovered_without_hook_evidence"
+
 const CaptureGapImportedWithoutHookEvidence = "imported_without_hook_evidence"
 
 // ApplyRegistrationProvenance records how the session entered the archive.
 // It changes nothing for a hook registration. Callers apply it to every
 // metadata document BuildMetadata returns, including a failed parse's.
 func (m *Metadata) ApplyRegistrationProvenance(r SessionRegistration) {
-	if !r.Imported() {
+	m.PreviousGenerationID = r.PreviousGenerationID
+	if !r.Imported() && r.Origin != SessionOriginDiscovery {
 		return
 	}
 	m.Origin = r.Origin
-	if !r.AdmittedAt.IsZero() {
+	if r.Imported() && !r.AdmittedAt.IsZero() {
 		importedAt := r.AdmittedAt.UTC()
 		m.ImportedAt = &importedAt
 	}
 	m.StartedAtSource = r.StartedAtSource
+	if r.Origin == SessionOriginDiscovery {
+		for _, gap := range m.CaptureGaps {
+			if gap.Code == CaptureGapDiscoveredWithoutHookEvidence {
+				return
+			}
+		}
+		m.CaptureGaps = append(m.CaptureGaps, CaptureGap{Code: CaptureGapDiscoveredWithoutHookEvidence, Detail: "Discovered locally; hooks did not establish complete lifecycle coverage"})
+		return
+	}
 	for _, gap := range m.CaptureGaps {
 		if gap.Code == CaptureGapImportedWithoutHookEvidence {
 			return

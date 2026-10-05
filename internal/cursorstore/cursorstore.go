@@ -18,21 +18,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wangjohn/agent-archive/internal/platform"
-
 	// modernc.org/sqlite is a pure-Go SQLite, so builds and tests need no
 	// cgo (spec, "Phase 2: Cursor database chats", decision 4).
 	"modernc.org/sqlite"
 	sqlite3 "modernc.org/sqlite/lib"
 )
-
-// StateDatabase is where Cursor keeps its chats under home on this machine:
-// platform.Locations.CursorStateDB for the running system and environment, ""
-// when this system is not one the program knows (Cursor's data is not looked
-// for there, and Read of "" is ErrNoDatabase).
-func StateDatabase(home string) string {
-	return platform.NewLocations(platform.Current(), home, os.Getenv, platform.LocationDeps{}).CursorStateDB
-}
 
 // Reason says why Cursor's database was not checked.
 type Reason string
@@ -175,7 +165,7 @@ type source struct {
 // requires the -wal to be still empty and still the only side file.
 //
 // An empty link is a system with no known location for the database
-// (platform.Locations.CursorStateDB): ErrNoDatabase, as if Cursor were not
+// (the native provider's database location): ErrNoDatabase, as if Cursor were not
 // installed.
 //
 // No error names the path: a path error is kept only for Unwrap.

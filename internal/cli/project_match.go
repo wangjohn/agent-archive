@@ -21,6 +21,8 @@ import (
 type projectMatchRequest struct {
 	RepoKey string
 	Path    string
+	// TransferredScope defers saved-scope consent to the complete rule set.
+	TransferredScope bool
 }
 
 type projectMatchResult struct {
@@ -237,7 +239,7 @@ func (c *projectCandidates) match(request projectMatchRequest, keys, checkoutRoo
 		if request.RepoKey == "" || keys[j] == "" {
 			root = candidate
 		}
-		if seen[root] || !projectRequestMatches(request.RepoKey, hint, root, keys[j], known[j]) || projectScopeBlocked(root, included, excluded) {
+		if seen[root] || !projectRequestMatches(request.RepoKey, hint, root, keys[j], known[j]) || (!request.TransferredScope && projectScopeBlocked(root, included, excluded)) {
 			continue
 		}
 		seen[root] = true

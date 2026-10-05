@@ -378,6 +378,14 @@ func (p *statsPrinter) filterText() string {
 	if f.Origin != "" {
 		parts = append(parts, f.Origin+" only")
 	}
+	switch replaysFlag(f.Replays) {
+	case replaysInclude:
+		parts = append(parts, "replays included")
+	case replaysOnly:
+		parts = append(parts, "replays only")
+	case replaysHide:
+		// The default: nothing to name.
+	}
 	return strings.Join(parts, ", ")
 }
 

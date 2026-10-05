@@ -17,8 +17,10 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/platform"
 )
@@ -194,10 +196,13 @@ func (f Filters) Active() bool {
 const dateLayout = "2006-01-02"
 
 // Validate checks the filters' values before any file is read.
-func (f Filters) Validate() error {
+func (f Filters) Validate(discovery agentapi.DiscoveryLookup) error {
 	for _, h := range f.Harnesses {
-		if _, known := archive.KnownHarness(h); !known {
-			return fmt.Errorf("--harness must be claude, codex, or cursor, not %q", h)
+		if discovery == nil {
+			return errors.New("historical discovery integrations are required")
+		}
+		if _, known := discovery.LookupDiscovery(h); !known {
+			return fmt.Errorf("--harness must be %s, not %q", historicalChoices(discovery.DiscoveryAgents()), h)
 		}
 	}
 	if slices.Contains(f.Projects, "") {
@@ -221,6 +226,23 @@ func (f Filters) Validate() error {
 	return nil
 }
 
+// Canonicalize resolves external names to the declared discovery identities.
+// It returns a copy so caller-owned flag slices are never changed.
+func (f Filters) Canonicalize(discovery agentapi.DiscoveryLookup) (Filters, error) {
+	if err := f.Validate(discovery); err != nil {
+		return Filters{}, err
+	}
+	f.Harnesses = append([]string(nil), f.Harnesses...)
+	for i, name := range f.Harnesses {
+		canonical, ok := discovery.CanonicalDiscovery(name)
+		if !ok {
+			return Filters{}, fmt.Errorf("historical identity unavailable for %q", name)
+		}
+		f.Harnesses[i] = canonical
+	}
+	return f, nil
+}
+
 // harness is an app whose sessions backfill imports, by the name the archive
 // uses for it.
 type harness string
@@ -236,14 +258,19 @@ const (
 // through collector.FilterTranscriptFile, the collector's own filter, which
 // reads transcripts from the real file system whatever is injected here.
 type Environment struct {
+	Discovery        agentapi.DiscoveryLookup
+	DatabaseCatalogs agentapi.DatabaseCatalogLookup
+	NativePaths      agentapi.NativePathsLookup
+	Worktrees        agentapi.WorktreeLookup
+	Workspaces       agentapi.WorkspaceLookup
+	Children         agentapi.ChildrenLookup
+	Imports          agentapi.ImportsLookup
+	Sources          agentapi.SourcesLookup
 	// Home is the user's home directory, where the apps keep their stores.
 	Home string
-	// ClaudeDirs and CodexDirs are the folders Claude Code and Codex keep
-	// their sessions in: ~/.claude and ~/.codex, and any other folder
-	// CLAUDE_CONFIG_DIR or CODEX_HOME names, now or when setup ran. Nil
-	// means the default one under Home.
-	ClaudeDirs []string
-	CodexDirs  []string
+	// NativeDirectories are observed current and previously configured native locations.
+	// Nil entries use the integration's declared default; no native paths live here.
+	NativeDirectories map[string][]string
 	// TempDirs are the temporary directories (rule 6 of project resolution).
 	// Nil means DefaultTempDirs; the CLI adds $TMPDIR.
 	TempDirs []string
@@ -313,7 +340,7 @@ func (e Environment) getenv(key string) string {
 
 // cursorStateDatabase is Cursor's state.vscdb under Home, "" where the
 // environment's operating system has no known place for it.
-func (e Environment) cursorStateDatabase() string { return e.locations().CursorStateDB }
+func (e Environment) cursorStateDatabase() string { return e.nativeProjectPaths("cursor").Database }
 
 func (e Environment) now() time.Time {
 	if e.Now != nil {
@@ -386,18 +413,16 @@ func (e Environment) fileCreated(path string) (time.Time, error) {
 	return info.ModTime(), nil
 }
 
-func (e Environment) claudeDirs() []string {
-	if e.ClaudeDirs != nil {
-		return e.ClaudeDirs
+func (e Environment) nativeDirectories(name string) []string {
+	if dirs, ok := e.NativeDirectories[name]; ok {
+		return dirs
 	}
-	return []string{filepath.Join(e.Home, ".claude")}
-}
-
-func (e Environment) codexDirs() []string {
-	if e.CodexDirs != nil {
-		return e.CodexDirs
+	if e.Discovery != nil {
+		if provider, ok := e.Discovery.LookupDiscovery(name); ok {
+			return provider.DefaultDirectories(e.Home)
+		}
 	}
-	return []string{filepath.Join(e.Home, ".codex")}
+	return nil
 }
 
 func (e Environment) tempDirs() []string {
@@ -433,5 +458,31 @@ func (e Environment) resolved(path string) string {
 		if filepath.Dir(ancestor) == ancestor {
 			return path
 		}
+	}
+}
+
+func (e Environment) nativePathEnvironment(name string) agentapi.NativePathEnvironment {
+	return agentapi.NativePathEnvironment{Locations: agentapi.NativeLocations{UserHome: e.Home, Directories: e.nativeDirectories(name)}, OperatingSystem: e.operatingSystem(), Getenv: e.getenv}
+}
+
+func (e Environment) nativeProjectPaths(name string) agentapi.NativeProjectPaths {
+	if e.NativePaths != nil {
+		if provider, ok := e.NativePaths.LookupNativePaths(name); ok {
+			return provider.ProjectPaths(e.nativePathEnvironment(name))
+		}
+	}
+	return agentapi.NativeProjectPaths{}
+}
+
+func historicalChoices(names []string) string {
+	switch len(names) {
+	case 0:
+		return "a registered historical agent"
+	case 1:
+		return names[0]
+	case 2:
+		return strings.Join(names, " or ")
+	default:
+		return strings.Join(names[:len(names)-1], ", ") + ", or " + names[len(names)-1]
 	}
 }

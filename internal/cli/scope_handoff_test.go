@@ -47,6 +47,10 @@ func (f pickerFixture) addArchivedWith(t *testing.T, id, title, project string, 
 	if change != nil {
 		change(&m)
 	}
+	// The copy was last active when it was captured, which dates and orders
+	// its row, as change left it.
+	ended := m.CapturedAt
+	m.EndedAt = &ended
 	key, err = archive.MetadataObjectKey("codex", id)
 	if err != nil {
 		t.Fatal(err)

@@ -10,7 +10,7 @@ func TestHarnessFilterAcceptsEverySpellingOfAnApp(t *testing.T) {
 	t.Parallel()
 	for _, spelling := range []string{"claude", "Claude", " CLAUDE", "claude-code", "Claude-Code"} {
 		f := Filters{Harnesses: []string{spelling}}
-		if err := f.Validate(); err != nil {
+		if err := f.Validate(testSources); err != nil {
 			t.Errorf("--harness %q refused: %v", spelling, err)
 		}
 		if !harnessMatches(f.Harnesses, string(harnessClaude)) {
@@ -21,7 +21,7 @@ func TestHarnessFilterAcceptsEverySpellingOfAnApp(t *testing.T) {
 		}
 	}
 	for _, unknown := range []string{"gemini", "claude code", ""} {
-		if err := (Filters{Harnesses: []string{unknown}}).Validate(); err == nil {
+		if err := (Filters{Harnesses: []string{unknown}}).Validate(testSources); err == nil {
 			t.Errorf("--harness %q accepted", unknown)
 		}
 	}

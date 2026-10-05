@@ -23,7 +23,7 @@ func TestDerivedRepoKeyIsStickyAcrossPublications(t *testing.T) {
 	remote := storagetest.NewMemoryStore()
 	now := reg.RegisteredAt.Add(time.Hour)
 	git := &countingLookup{keys: map[string]string{"/p": widgetKey}}
-	opts := Options{MachineID: "machine", RepoKey: git.lookup, Now: func() time.Time { return now }}
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "machine", RepoKey: git.lookup, Now: func() time.Time { return now }}
 	if got := publishOnce(t, local, remote, reg, &opts); got.RepoKey != widgetKey {
 		t.Fatalf("first publication repo_key = %q, want %q", got.RepoKey, widgetKey)
 	}
@@ -64,7 +64,7 @@ func TestDerivedRepoKeyIsStickyAcrossAParserRefresh(t *testing.T) {
 	remote := storagetest.NewMemoryStore()
 	now := reg.RegisteredAt.Add(time.Hour)
 	git := &countingLookup{keys: map[string]string{"/p": widgetKey}}
-	opts := Options{MachineID: "machine", ParserVersion: "one", RepoKey: git.lookup, Now: func() time.Time { return now }}
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "machine", ParserVersion: "one", RepoKey: git.lookup, Now: func() time.Time { return now }}
 	if got := publishOnce(t, local, remote, reg, &opts); got.RepoKey != widgetKey {
 		t.Fatalf("setup: repo_key = %q", got.RepoKey)
 	}
@@ -105,7 +105,7 @@ func TestRegisteredRepoKeyIsNotReDerived(t *testing.T) {
 	remote := storagetest.NewMemoryStore()
 	now := reg.RegisteredAt.Add(time.Hour)
 	git := &countingLookup{keys: map[string]string{"/p": gadgetKey}}
-	opts := Options{MachineID: "machine", ParserVersion: "one", RepoKey: git.lookup, Now: func() time.Time { return now }}
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "machine", ParserVersion: "one", RepoKey: git.lookup, Now: func() time.Time { return now }}
 	publishOnce(t, local, remote, reg, &opts)
 	now = now.Add(time.Hour)
 	opts.ParserVersion = "two"

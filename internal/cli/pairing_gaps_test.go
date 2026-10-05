@@ -76,7 +76,7 @@ func TestMachineRemoteFakeAcceptance(t *testing.T) {
 					}
 					return source.LookupEnv(k)
 				}
-				output := run(receiver, bundle, "setup", "--pair-file", "-", "--yes", "--project", project)
+				output := run(receiver, bundle, "setup", "--pair-file", "-", "--yes", "--codex-discovery", "off", "--codex-capture-scope", "included-projects", "--project", project)
 				if strings.Index(output, "Paired with") > strings.Index(output, "Configuration saved") {
 					t.Fatal("pair success appears after housekeeping")
 				}
@@ -488,7 +488,7 @@ func TestPairingMissingAppRecheckAndManualRepositoryMismatch(t *testing.T) {
 		return []string{"codex"}
 	}
 	var out bytes.Buffer
-	cfg, err := pairingCaptureSettings(newPrompter(strings.NewReader("retry\n"), &out), pairing.Payload{Apps: []string{"codex"}, SkillEvidence: "metadata"}, config.Config{}, config.Config{}, userHome, setupOptions{projects: []string{userHome}}, env)
+	cfg, err := pairingCaptureSettings(newPrompter(strings.NewReader("retry\n"), &out), pairing.Payload{Apps: []string{"codex"}, SkillEvidence: "metadata"}, config.Config{}, config.Config{}, userHome, setupOptions{projects: []string{userHome}, codexCaptureScope: string(config.CodexIncludedProjects)}, env)
 	must(t, err)
 	if len(cfg.Harnesses) != 1 || calls != 2 || !strings.Contains(out.String(), "not found") {
 		t.Fatal("missing app was not recovered")

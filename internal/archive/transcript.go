@@ -2,7 +2,7 @@ package archive
 
 import (
 	"reflect"
-	"regexp"
+
 	"strings"
 )
 
@@ -92,34 +92,6 @@ type TranscriptStep struct {
 	TextTruncated bool
 }
 
-// BuildTranscript arranges a filtered bundle for reading. Tool results and
-// command output are trimmed to opts' limits; prompts and assistant text are
-// kept whole.
-func BuildTranscript(bundle SourceBundle, opts HandoffOptions) (Transcript, error) {
-	view, err := ParseNormalized(bundle)
-	if err != nil {
-		return Transcript{}, err
-	}
-	var exchanges []TranscriptExchange
-	toolResultsUnavailable := bundle.harness() == "cursor" && len(view.ToolResults) == 0 && len(view.ToolCalls) > 0
-	if len(bundle.NativeRecords) == 0 && len(bundle.NativeText) > 0 {
-		// A Cursor text transcript: role sections, read as handoff reads
-		// them.
-		handoff, _ := textTranscriptExchanges(bundle.NativeText, opts)
-		exchanges = fromHandoffExchanges(handoff)
-		toolResultsUnavailable = false
-	} else {
-		exchanges = transcriptExchanges(handoffEvents(view), workspaceRoot(bundle), opts)
-	}
-	t := Transcript{
-		Exchanges:              exchanges,
-		HookFinals:             unmatchedHookFinals(bundle, view, exchanges),
-		ToolResultsUnavailable: toolResultsUnavailable,
-	}
-	out, _ := displayValue(reflect.ValueOf(t)).Interface().(Transcript)
-	return out, nil
-}
-
 // transcriptExchanges groups turns and tool calls in record order.
 func transcriptExchanges(events []handoffEvent, root string, opts HandoffOptions) []TranscriptExchange {
 	exchanges := []TranscriptExchange{}
@@ -140,26 +112,26 @@ func transcriptExchanges(events []handoffEvent, root string, opts HandoffOptions
 		switch turn.Kind {
 		case TurnKindHumanPrompt:
 			flush()
-			current = TranscriptExchange{Kind: TranscriptExchangePrompt, Text: cleanPrompt(turn.Text), Timestamp: turn.Timestamp}
+			current = TranscriptExchange{Kind: TranscriptExchangePrompt, Text: turnDisplayText(*turn), Timestamp: turn.Timestamp}
 		case TurnKindHarnessNotification:
 			// A new exchange, so the reply that follows is not credited to
 			// the prompt before it.
 			flush()
-			current = TranscriptExchange{Kind: TranscriptExchangeNotification, Text: notificationText(turn.Text), Timestamp: turn.Timestamp}
+			current = TranscriptExchange{Kind: TranscriptExchangeNotification, Text: turnDisplayText(*turn), Timestamp: turn.Timestamp}
 		case TurnKindAssistant:
 			if text := strings.TrimSpace(turn.Text); text != "" {
 				current.Steps = append(current.Steps, TranscriptStep{Kind: TranscriptStepText, Text: text})
 			}
 		case TurnKindShellCommand:
-			if command := strings.TrimSpace(stripHarnessTag(turn.Text, "bash-input")); command != "" {
+			if command := strings.TrimSpace(turnDisplayText(*turn)); command != "" {
 				current.Steps = append(current.Steps, TranscriptStep{Kind: TranscriptStepShell, Text: command})
 			}
 		case TurnKindLocalCommand:
-			if command := cleanPrompt(turn.Text); command != "" {
+			if command := turnDisplayText(*turn); command != "" {
 				current.Steps = append(current.Steps, TranscriptStep{Kind: TranscriptStepCommand, Text: command})
 			}
 		case TurnKindCommandOutput:
-			output := trimResult(commandOutput(turn.Text), opts.resultLines(), opts.resultBytes())
+			output := trimResult(turnDisplayText(*turn), opts.resultLines(), opts.resultBytes())
 			if output == "" {
 				continue
 			}
@@ -198,45 +170,6 @@ func lastCommandStep(steps []TranscriptStep) *TranscriptStep {
 		}
 	}
 	return nil
-}
-
-var (
-	// commandOutputTag matches the tags Claude Code wraps command output in.
-	commandOutputTag = regexp.MustCompile(`(?s)<(bash-stdout|bash-stderr|local-command-stdout|local-command-stderr)>(.*?)</(?:bash-stdout|bash-stderr|local-command-stdout|local-command-stderr)>`)
-	// taskStatus reads a background task notice's status.
-	taskStatus = regexp.MustCompile(`(?s)<status>\s*(.*?)\s*</status>`)
-)
-
-// commandOutput is the text of a command-output record: stdout, then
-// stderr, without their tags. The caveat Claude Code adds before local
-// command output is not output.
-func commandOutput(text string) string {
-	matches := commandOutputTag.FindAllStringSubmatch(text, -1)
-	if matches == nil {
-		if strings.Contains(text, "<local-command-caveat>") {
-			return ""
-		}
-		return strings.TrimSpace(text)
-	}
-	var parts []string
-	for _, m := range matches {
-		if body := strings.Trim(m[2], "\n"); strings.TrimSpace(body) != "" {
-			parts = append(parts, body)
-		}
-	}
-	return strings.Join(parts, "\n")
-}
-
-// notificationText describes a notice the app posted: "Background task
-// completed" for Claude Code's task notification.
-func notificationText(text string) string {
-	if strings.Contains(text, "<task-notification>") {
-		if m := taskStatus.FindStringSubmatch(text); m != nil && m[1] != "" {
-			return "Background task " + firstLine(m[1], handoffSummaryCap)
-		}
-		return "Background task notification"
-	}
-	return "App notification"
 }
 
 // fromHandoffExchanges carries a text transcript's handoff exchanges over.
@@ -294,4 +227,27 @@ func unmatchedHookFinals(bundle SourceBundle, view NormalizedView, exchanges []T
 		out = append(out, text)
 	}
 	return out
+}
+
+// BuildTranscriptWithAnalysis renders a transcript from one previously derived analysis.
+func BuildTranscriptWithAnalysis(bundle SourceBundle, analysis Analysis, opts HandoffOptions) (Transcript, error) {
+	view := analysis.View
+	var exchanges []TranscriptExchange
+	toolResultsUnavailable := !analysis.Observability.ToolResults.Available()
+	if analysis.Facts.TextOnly {
+		// A Cursor text transcript: role sections, read as handoff reads
+		// them.
+		handoff, _ := textTurnsExchanges(view.Turns, opts)
+		exchanges = fromHandoffExchanges(handoff)
+		toolResultsUnavailable = false
+	} else {
+		exchanges = transcriptExchanges(handoffEvents(view), analysis.Facts.WorkspaceRoot, opts)
+	}
+	t := Transcript{
+		Exchanges:              exchanges,
+		HookFinals:             unmatchedHookFinals(bundle, view, exchanges),
+		ToolResultsUnavailable: toolResultsUnavailable,
+	}
+	out, _ := displayValue(reflect.ValueOf(t)).Interface().(Transcript)
+	return out, nil
 }

@@ -5,11 +5,14 @@ Agent Archive  ● Paused
     Run agent-archive resume when ready. Registered sessions can catch up after resume.
 
 Capture
-  ✓ Codex   hooks on   1 session
+  ✓ Codex   discovery: no supported task observed in last scan; included projects   1 session
+    · Last discovery attempt 1 minute ago; 1 registered → 0 queued → 1 published → 1 read-back verified
+    · Optional hooks: hooks on; actual hook observation is separate evidence.
+  · Identity recovery: complete
 
 Storage
-  ✓ s3://team-archive/agent-archive/   reachable · uploaded just now
-  · Background collector paused        last scan just now
+  ✓ s3://team-archive/agent-archive/   reachable · uploaded 1 minute ago
+  · Background collector paused        last scan 1 minute ago
   ! Bucket privacy not verified        this storage can't be inspected; see https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
 
 More: agent-archive status --verbose · agent-archive status codex

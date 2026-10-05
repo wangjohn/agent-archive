@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"io"
 	"os"
 	"path/filepath"
@@ -116,6 +117,14 @@ func sessionsAdmittedInto(home string, cfg config.Config) (int, error) {
 }
 
 func reviewChanges(home string, old, next config.Config, p *prompter, env Env) error {
+	if old.EffectiveCodexCaptureScope() != next.EffectiveCodexCaptureScope() {
+		if next.EffectiveCodexCaptureScope() == config.CodexAllProjects {
+			p.warn("Codex scope expands to all current and future projects (Codex only).",
+				"New admissions start after this local consent; old history and paused or excluded starts remain out of scope.")
+		} else {
+			p.warn("Codex scope reduces to included projects. Capture outside remaining scope stops; published archives are retained.")
+		}
+	}
 	if old.MachineID == "" {
 		return nil
 	}
@@ -204,6 +213,9 @@ func carriedImportedHarnesses(committed, harnesses, stopImported []string) []str
 }
 
 func applySetup(home, userHome, executable string, old config.Config, next *config.Config, stopImported []string, env Env) error {
+	if len(next.Harnesses) > 0 && setupNeedsProject(*next) {
+		return errors.New("no project is included; include a project before saving these capture settings")
+	}
 	unlock, err := lockCollector(home, "setup", env.now())
 	if err != nil {
 		return fmt.Errorf("%s holds the collector lock; retry setup when it finishes: %w", lockHolder(home), err)
@@ -224,6 +236,9 @@ func applySetup(home, userHome, executable string, old config.Config, next *conf
 	if !reflect.DeepEqual(withoutBucketPrivacy(current), withoutBucketPrivacy(old)) {
 		return fmt.Errorf("settings changed while setup was open; restart setup to review the current settings")
 	}
+	if err := protectSetupWriter(home, current, *next); err != nil {
+		return err
+	}
 	if fresher := freshestBucketPrivacy(*next, current.BucketPrivacy); fresher != nil {
 		next.BucketPrivacy = fresher
 	}
@@ -238,8 +253,8 @@ func applySetup(home, userHome, executable string, old config.Config, next *conf
 	err = setupjournal.Commit(home, journal, env.backends())
 	// A command file created and rolled back, or removed, leaves the
 	// directories written for it; they go while empty.
-	agentskills.RemoveEmptyDirs(userHome, claudeConfigDir(env.hookFiles(userHome)))
-	agentskills.RemoveEmptyDirs(userHome, claudeConfigDir(env.installedHookFiles(userHome, old)))
+	agentskills.RemoveEmptyDirs(env.agentRegistry(), userHome, claudeConfigDir(env.hookFiles(userHome)))
+	agentskills.RemoveEmptyDirs(env.agentRegistry(), userHome, claudeConfigDir(env.installedHookFiles(userHome, old)))
 	return err
 }
 
@@ -250,15 +265,19 @@ func applySetup(home, userHome, executable string, old config.Config, next *conf
 // Only a file setup wrote is replaced or removed (see agentskills.PlanInstall).
 // While they are off the other files at the skills' paths are returned in
 // kept, for setup to say it left them.
-func planAgentSkills(userHome, claudeDir, previousClaudeDir string, cfg config.Config, executable, dataHome string) (changes []hooks.Change, kept []string, err error) {
+func planAgentSkills(userHome, claudeDir, previousClaudeDir string, cfg config.Config, executable, dataHome string, sources ...agentapi.SkillsLookup) (changes []hooks.Change, kept []string, err error) {
+	ports := agentapi.SkillsLookup(productionAgents)
+	if len(sources) > 0 {
+		ports = sources[0]
+	}
 	if !cfg.NoSkills {
-		changes, _, err = agentskills.PlanInstall(userHome, claudeDir, cfg.Harnesses, executable, dataHome, previousClaudeDir)
+		changes, _, err = agentskills.PlanInstall(ports, userHome, claudeDir, cfg.Harnesses, executable, dataHome, previousClaudeDir)
 		return changes, nil, err
 	}
-	if changes, _, err = agentskills.PlanInstall(userHome, claudeDir, nil, executable, dataHome, previousClaudeDir); err != nil {
+	if changes, _, err = agentskills.PlanInstall(ports, userHome, claudeDir, nil, executable, dataHome, previousClaudeDir); err != nil {
 		return nil, nil, err
 	}
-	_, kept, err = agentskills.PlanRemoval(userHome, claudeDir, dataHome)
+	_, kept, err = agentskills.PlanRemoval(ports, userHome, claudeDir, dataHome)
 	return changes, kept, err
 }
 
@@ -382,6 +401,19 @@ func planSetupTransaction(home, userHome, executable string, old config.Config, 
 	for _, app := range next.Harnesses {
 		next.HookFiles[app] = files[app]
 	}
+	if next.Discovery == nil {
+		next.Discovery = old.Discovery
+	}
+	if next.Discovery != nil {
+		d := *next.Discovery
+		if len(d.CodexHomes) == 0 && files["codex"] != "" {
+			d.CodexHomes = []string{filepath.Dir(files["codex"])}
+		}
+		next.Discovery = &d
+	}
+	if err := config.ReconcileDiscovery(next, old, env.now()); err != nil {
+		return setupjournal.Journal{}, err
+	}
 	// Another installation's hooks in a file this one would install into
 	// mean every session would be captured twice; they are its to remove.
 	if problems := env.installation(home, userHome).otherInstallationProblems(files, next.Harnesses); len(problems) > 0 {
@@ -396,7 +428,7 @@ func planSetupTransaction(home, userHome, executable string, old config.Config, 
 	}
 	// The agent skills (/handoff), for the apps chosen, or none while they
 	// are turned off. Only a file setup wrote is replaced or removed.
-	commands, _, err := planAgentSkills(userHome, claudeConfigDir(files), claudeConfigDir(previousFiles), *next, executable, env.installation(home, userHome).commandDataHome())
+	commands, _, err := planAgentSkills(userHome, claudeConfigDir(files), claudeConfigDir(previousFiles), *next, executable, env.installation(home, userHome).commandDataHome(), env.agentRegistry())
 	if err != nil {
 		return setupjournal.Journal{}, err
 	}
@@ -626,4 +658,26 @@ func prepareMachineAssignment(old config.Config, next *config.Config) {
 			next.MachineName = "unnamed-" + next.MachineID[:4]
 		}
 	}
+}
+
+// protectSetupWriter fences protected rollback snapshots before journal planning.
+// Callers hold hooks.lock after settling any previous setup transaction.
+func protectSetupWriter(home string, current config.Config, proposed ...config.Config) error {
+	if setupjournal.TransactionPending(home) {
+		return errors.New("setup pending before writer protection")
+	}
+	if len(proposed) > 0 && proposed[0].CodexCapture != nil && current.CodexCapture == nil {
+		if _, found, err := config.Load(home); err != nil {
+			return err
+		} else if found {
+			config.PreserveWriterFence(&current, proposed[0])
+			if err := config.Save(home, current); err != nil {
+				return err
+			}
+		}
+	}
+	if current.Discovery == nil && current.CodexCapture == nil {
+		return nil
+	}
+	return config.ProtectIdentityWriter(home)
 }

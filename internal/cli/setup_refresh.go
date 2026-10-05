@@ -168,6 +168,9 @@ func refreshSetup(env Env) (plan refreshPlan, userHome string, err error) {
 	if err != nil {
 		return plan, userHome, err
 	}
+	if err := protectSetupWriter(home, cfg); err != nil {
+		return plan, userHome, err
+	}
 	if plan, err = planSetupRefresh(home, userHome, exe, cfg, env); err != nil {
 		return plan, userHome, err
 	}
@@ -182,7 +185,7 @@ func refreshSetup(env Env) (plan refreshPlan, userHome string, err error) {
 	defer stopSignals()
 	err = setupjournal.Commit(home, plan.journal, env.backends())
 	// A skill file removed leaves the directories written for it.
-	agentskills.RemoveEmptyDirs(userHome, claudeConfigDir(env.installedHookFiles(userHome, cfg)))
+	agentskills.RemoveEmptyDirs(env.agentRegistry(), userHome, claudeConfigDir(env.installedHookFiles(userHome, cfg)))
 	return plan, userHome, err
 }
 
@@ -254,7 +257,7 @@ func planSetupRefresh(home, userHome, exe string, cfg config.Config, env Env) (r
 	next := cfg
 	next.InstalledExecutable = exe
 	claudeDir, dataHome := claudeConfigDir(files), in.commandDataHome()
-	skillChanges, _, err := planAgentSkills(userHome, claudeDir, claudeDir, next, exe, dataHome)
+	skillChanges, _, err := planAgentSkills(userHome, claudeDir, claudeDir, next, exe, dataHome, env.agentRegistry())
 	if err != nil {
 		return plan, refuse("%v", err)
 	}
@@ -263,7 +266,7 @@ func planSetupRefresh(home, userHome, exe string, cfg config.Config, env Env) (r
 		plan.skills = append(plan.skills, change.Path)
 	}
 	if !cfg.NoSkills {
-		plan.left = leftSkillFiles(agentskills.Files(userHome, claudeDir, cfg.Harnesses, exe, dataHome), skillChanges)
+		plan.left = leftSkillFiles(agentskills.Files(env.agentRegistry(), userHome, claudeDir, cfg.Harnesses, exe, dataHome), skillChanges)
 	}
 	definition := env.jobDefinition(userHome, in.ref())
 	jobChanges, err := refreshJob(in, userHome, home, exe, definition)

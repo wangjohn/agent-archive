@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"github.com/wangjohn/agent-archive/internal/agents/claude"
 	"io"
 	"os"
 	"path/filepath"
@@ -248,11 +249,11 @@ func transcriptFixture(t *testing.T) archive.Transcript {
 	if err != nil {
 		t.Fatal(err)
 	}
-	adapter, err := archive.NewAdapter("claude")
-	if err != nil {
-		t.Fatal(err)
+	_, adapter, ok := productionAgents.LookupSources("claude")
+	if !ok {
+		t.Fatal("Claude filter unavailable")
 	}
-	filtered, err := adapter.FilterJSONL(bytes.NewReader(raw))
+	filtered, err := (claude.Filter{}).FilterJSONL(bytes.NewReader(raw))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -264,7 +265,7 @@ func transcriptFixture(t *testing.T) archive.Transcript {
 	if err != nil {
 		t.Fatal(err)
 	}
-	transcript, err := buildTranscript(bundle)
+	transcript, err := buildTranscript(context.Background(), nil, bundle)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -558,5 +559,105 @@ func TestSummaryGit(t *testing.T) {
 	}
 	if got := summaryGit(archive.Metadata{Counts: archive.Counts{Commits: intPtr(0), Pushes: intPtr(0)}}); got != nil {
 		t.Fatalf("a session with no git work shows %q", got)
+	}
+}
+
+// The Commit row names the commit the session started on, says when its tree
+// was dirty, and adds the last commit a stop saw when it moved.
+func TestSummaryCommit(t *testing.T) {
+	t.Parallel()
+	start, last := strings.Repeat("3f", 20), strings.Repeat("9e", 20)
+	at := time.Date(2026, 9, 29, 10, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		head *archive.SessionGitHead
+		want string
+	}{
+		{nil, ""},
+		{&archive.SessionGitHead{Start: &archive.GitHead{SHA: start, Dirty: new(false), ObservedAt: at}}, "started on 3f3f3f3f3f3f"},
+		{&archive.SessionGitHead{Start: &archive.GitHead{SHA: start, ObservedAt: at}}, "started on 3f3f3f3f3f3f"},
+		{&archive.SessionGitHead{Start: &archive.GitHead{SHA: start, Dirty: new(true), ObservedAt: at}}, "started on 3f3f3f3f3f3f with uncommitted changes"},
+		{&archive.SessionGitHead{Start: &archive.GitHead{SHA: start, ObservedAt: at}, Last: &archive.GitHead{SHA: start, ObservedAt: at}}, "started on 3f3f3f3f3f3f"},
+		{&archive.SessionGitHead{Start: &archive.GitHead{SHA: start, ObservedAt: at}, Last: &archive.GitHead{SHA: last, ObservedAt: at}}, "started on 3f3f3f3f3f3f · last seen on 9e9e9e9e9e9e"},
+		{&archive.SessionGitHead{Last: &archive.GitHead{SHA: last, ObservedAt: at}}, "last seen on 9e9e9e9e9e9e"},
+	} {
+		if got := strings.Join(summaryCommit(tc.head), " · "); got != tc.want {
+			t.Errorf("summaryCommit(%+v) = %q, want %q", tc.head, got, tc.want)
+		}
+	}
+	view := sessionView{Metadata: archive.Metadata{SessionID: "s", GitHead: &archive.SessionGitHead{Start: &archive.GitHead{SHA: start, Dirty: new(true), ObservedAt: at}}}}
+	if out := renderSummaryText(view, summaryOptions{Now: at, Location: time.UTC}); !strings.Contains(out, "Commit    started on 3f3f3f3f3f3f with uncommitted changes") {
+		t.Errorf("show has no Commit row:\n%s", out)
+	}
+}
+
+// The Tools row wraps between tools: no line is cut with an ellipsis and then
+// carries on, at the default width or a narrow one. Only a tool too wide for
+// a line by itself is cut.
+func TestSessionSummaryToolsWrapBetweenTools(t *testing.T) {
+	t.Parallel()
+	view := summaryFixture()
+	view.ToolsUsed = []archive.ToolUsage{
+		{Name: "Bash", Count: 251}, {Name: "Agent", Count: 65}, {Name: "SendMessage", Count: 33}, {Name: "ToolSearch", Count: 6},
+		{Name: "Write", Count: 5}, {Name: "mcp__ccd_session__spawn_task", Count: 4}, {Name: "mcp__ccd_pr__get_status", Count: 3},
+		{Name: "Read", Count: 2}, {Name: "TaskStop", Count: 2}, {Name: "mcp__ccd_pr__bind_pr", Count: 2},
+	}
+	want := summaryTools(view.ToolsUsed)
+	// At 52 columns the widest tool, 30, still fits a line with its " ·".
+	for _, width := range []int{summaryWidth, 52} {
+		text := renderSummaryText(view, summaryOptions{Now: summaryNow, Location: time.UTC, Style: textStyle{width: width}})
+		var got []string
+		inTools := false
+		for line := range strings.SplitSeq(text, "\n") {
+			switch {
+			case strings.HasPrefix(line, "  Tools "):
+				inTools = true
+			case inTools && !strings.HasPrefix(line, strings.Repeat(" ", 12)):
+				inTools = false
+			}
+			if !inTools {
+				continue
+			}
+			if w := visibleWidth(line); w > width {
+				t.Errorf("width %d: Tools line of %d columns: %q", width, w, line)
+			}
+			value := strings.TrimSuffix(strings.TrimSpace(line[12:]), " ·")
+			if strings.Contains(value, "…") {
+				t.Errorf("width %d: a line is cut with an ellipsis: %q", width, line)
+			}
+			got = append(got, strings.Split(value, " · ")...)
+		}
+		if strings.Join(got, "|") != strings.Join(want, "|") {
+			t.Errorf("width %d: Tools lists %q, want %q\n%s", width, got, want, text)
+		}
+	}
+	// A tool too wide for a line is cut on a line of its own.
+	wide := "mcp__" + strings.Repeat("x", 60)
+	view.ToolsUsed = []archive.ToolUsage{{Name: "Bash", Count: 3}, {Name: wide, Count: 1}, {Name: "Read", Count: 1}}
+	text := renderSummaryText(view, summaryOptions{Now: summaryNow, Location: time.UTC, Style: textStyle{width: 40}})
+	// 40 columns less the 12 the label takes, and 2 for the " ·" after it.
+	cut := wide[:25] + "…"
+	for _, wantLine := range []string{"  Tools     Bash 3 ·\n", "            " + cut + " ·\n", "            Read 1\n"} {
+		if !strings.Contains(text, wantLine) {
+			t.Errorf("no line %q in:\n%s", wantLine, text)
+		}
+	}
+}
+
+// An imported session with no end time is not given a span to the import:
+// its capture time is when backfill ran. The When row and the header both
+// date it by its start.
+func TestSessionSummaryImportWithoutAnEndIsNotSpannedToTheImport(t *testing.T) {
+	t.Parallel()
+	view := summaryFixture()
+	view.EndedAt = nil
+	view.Origin = archive.SessionOriginImport
+	view.StartedAt = summaryNow.Add(-14 * 24 * time.Hour)
+	view.CapturedAt = summaryNow.Add(-time.Hour)
+	text := renderSummaryText(view, summaryOptions{Now: summaryNow, Location: time.UTC, Style: textStyle{width: summaryWidth}})
+	if want := "  When      " + formatSummaryTime(view.StartedAt, summaryOptions{Now: summaryNow, Location: time.UTC}) + "\n"; !strings.Contains(text, want) {
+		t.Errorf("no When row %q:\n%s", want, text)
+	}
+	if strings.Contains(text, "span") || strings.Contains(text, "1h ago") {
+		t.Errorf("the summary dates an import by the import:\n%s", text)
 	}
 }

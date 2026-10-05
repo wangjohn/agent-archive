@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agents/builtin"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -45,7 +46,7 @@ func TestDiscoveryCancellationDuringCheckoutScoping(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	files := &scopeCancelFS{cancel: cancel, scope: cwd}
-	result, err := Discover(ctx, files, []StoreRoot{root}, Scope{Directories: []string{cwd}}, discoveryLimits())
+	result, err := Discover(ctx, builtin.NewBuiltins(), files, []StoreRoot{root}, Scope{Directories: []string{cwd}}, discoveryLimits())
 	t.Logf("context=%v resultError=%v candidates=%d extraCanonicalResolutionsAfterCancel=%d", ctx.Err(), err, len(result.Candidates), files.resolutions)
 	if !errors.Is(err, context.Canceled) || files.resolutions != 0 || len(result.Candidates) != 0 {
 		t.Error("discovery ignores cancellation during checkout-scoping stage")

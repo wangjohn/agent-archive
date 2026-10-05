@@ -25,6 +25,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
+	"github.com/wangjohn/agent-archive/internal/discovery"
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/scheduler"
@@ -35,15 +36,19 @@ import (
 )
 
 type appStatus struct {
-	PublishedSessions int       `json:"published_sessions"`
-	VerifiedSessions  int       `json:"verified_sessions"`
-	Configured        bool      `json:"configured"`
-	HookObserved      bool      `json:"hook_observed"`
-	CapturedLocally   bool      `json:"captured_locally"`
-	Published         bool      `json:"published"`
-	ReadBackVerified  bool      `json:"read_back_verified"`
-	VerifiedAt        time.Time `json:"verified_at,omitzero"`
-	VerificationState string    `json:"verification_state"`
+	hooksNeedRepair bool
+	// Discovery health is independent of hook execution and publication verification.
+	CodexCaptureScope string            `json:"codex_capture_scope,omitempty"`
+	Discovery         *discovery.Health `json:"discovery,omitempty"`
+	PublishedSessions int               `json:"published_sessions"`
+	VerifiedSessions  int               `json:"verified_sessions"`
+	Configured        bool              `json:"configured"`
+	HookObserved      bool              `json:"hook_observed"`
+	CapturedLocally   bool              `json:"captured_locally"`
+	Published         bool              `json:"published"`
+	ReadBackVerified  bool              `json:"read_back_verified"`
+	VerifiedAt        time.Time         `json:"verified_at,omitzero"`
+	VerificationState string            `json:"verification_state"`
 	// VerificationDetail explains a read-back that has not succeeded yet for
 	// the current publication: the last error, attempts so far, and when the
 	// collector will retry. Empty once every publication is verified.
@@ -89,13 +94,18 @@ type appStatus struct {
 	Name               string   `json:"name"`
 	//lint:ignore LV1001 an open-ended, human-readable label built from many phrasings; statusCode maps it to the stable Code
 	State string `json:"state"`
-	// Sessions counts the app's sessions its hooks registered, subagents
+	// Sessions counts the app's hook and discovery registrations, subagents
 	// included; SubagentSessions counts the subagents among them.
 	Sessions         int `json:"sessions"`
 	SubagentSessions int `json:"subagent_sessions"`
 	// ImportedSessions counts the app's top-level sessions agent-archive
 	// backfill imported that the configuration publishes (AcceptSession).
 	ImportedSessions int `json:"imported_sessions"`
+	// ReplaySessions counts the top-level sessions among Sessions that a
+	// replay tool ran (archive.ReplayEnv). They are hook captures, so they
+	// count as sessions and verify the app's hooks; list hides them.
+	// Absent when there are none.
+	ReplaySessions int `json:"replay_sessions,omitempty"`
 	// UploadingSessions counts the app's top-level sessions, captured or
 	// imported, with work not yet published (state.Outstanding's Pending)
 	// that is not a recorded capture gap; Uploading lists them.
@@ -157,13 +167,16 @@ type projectCaptureStatus struct {
 	sessions  int
 	imported  int
 	uploading int
+	// Imports can appear in a project row without requiring a fresh capture.
+	automaticCapture bool
 }
 
 type statusView struct {
-	MachineRegistrationPending bool                  `json:"machine_registration_pending,omitempty"`
-	PrivacyEvidence            storage.PrivacyReport `json:"privacy_evidence"`
-	ConfigurationID            string                `json:"configuration_id,omitempty"`
-	Authentication             storageHealth         `json:"authentication"`
+	IdentityRecovery           *state.SessionIndexRecoveryStatus `json:"identity_recovery,omitempty"`
+	MachineRegistrationPending bool                              `json:"machine_registration_pending,omitempty"`
+	PrivacyEvidence            storage.PrivacyReport             `json:"privacy_evidence"`
+	ConfigurationID            string                            `json:"configuration_id,omitempty"`
+	Authentication             storageHealth                     `json:"authentication"`
 
 	Code    string `json:"code"`
 	Version int    `json:"schema_version"`
@@ -249,8 +262,8 @@ func runStatusCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		return 2
 	}
 	app := strings.ToLower(appArg)
-	if appArg != "" && !slices.Contains(allHarnesses, app) {
-		return fs.usageError("unknown app %q; choose one of %s", appArg, strings.Join(allHarnesses, ", "))
+	if appArg != "" && !slices.Contains(env.setupNames(), app) {
+		return fs.usageError("unknown app %q; choose one of %s", appArg, strings.Join(env.setupNames(), ", "))
 	}
 	if app != "" && *jsonOut {
 		return fs.usageError("an app and --json can't be combined; status --json lists every app under applications")
@@ -318,7 +331,9 @@ func blockedReasonDetail(reason state.BlockedReason) string {
 		return "The application has deleted its own transcript, as each one does on its own schedule. The last published snapshot stays retained and readable, and capture resumes by itself if the file returns."
 	case state.BlockedReasonRecordTooLarge:
 		return fmt.Sprintf("One record in the transcript (or a plain-text transcript as a whole) is larger than the %d MiB record size limit, so the transcript cannot be read. The last published snapshot, if any, stays retained, and capture resumes when the transcript changes.", archive.MaxRecordBytes>>20)
-	case state.BlockedReasonTranscriptRewritten, state.BlockedReasonTranscriptTooLarge:
+	case state.BlockedReasonTranscriptRewritten:
+		return "The current transcript cannot prove extension of retained history. Automatic capture resumes only if extension can be proved. To preserve this history and capture current activity under a new linked ID, preview agent-archive recover SESSION_ID, then explicitly confirm it."
+	case state.BlockedReasonTranscriptTooLarge:
 		// Permanent for the current transcript: the general wording below.
 	}
 	return "The current transcript can no longer be captured; the last published snapshot, if any, stays retained."
@@ -330,13 +345,17 @@ func readBackProgress(app appStatus) string {
 	if len(app.Projects) == 0 {
 		return fmt.Sprintf("%d of %d sessions verified", app.VerifiedSessions, app.PublishedSessions)
 	}
-	verified := 0
+	verified, required := 0, 0
 	for _, pair := range app.Projects {
+		if !requiresAutomaticCapture(app, pair) {
+			continue
+		}
+		required++
 		if pair.ReadBackVerified {
 			verified++
 		}
 	}
-	return fmt.Sprintf("%d of %d projects verified", verified, len(app.Projects))
+	return fmt.Sprintf("%d of %d projects verified", verified, required)
 }
 
 func readStatus(env Env) (view statusView, err error) {
@@ -350,7 +369,7 @@ func readStatus(env Env) (view statusView, err error) {
 	// missing, as launchd reports a job that is not loaded, and storage not
 	// configured; neither is unknown.
 	view = statusView{
-		Version:        3,
+		Version:        4,
 		State:          "Not set up",
 		Privacy:        "not_verified",
 		Background:     "missing",
@@ -373,6 +392,10 @@ func readStatus(env Env) (view statusView, err error) {
 	}
 	readConfiguredStatus(&view, cfg, home, env)
 	store := state.OpenReadOnly(home)
+	if slices.Contains(cfg.Harnesses, "codex") {
+		recovery, _ := store.SessionIndexRecoveryStatus()
+		view.IdentityRecovery = &recovery
+	}
 	sessions := readSessionStatus(&view, cfg, home, store)
 	// The collector prunes the list each pass; one that has not run for a
 	// while must not show subagents from before the window.
@@ -444,7 +467,7 @@ func readConfiguredStatus(view *statusView, cfg config.Config, home string, env 
 		view.Warnings = append(view.Warnings, unreadableWarning(capture.DiagnosticsPath(home), err, "The next capture diagnostic replaces it; deleting it loses only past diagnostics."))
 		view.CaptureDiagnostics = nil
 	}
-	view.CaptureDiagnostics = capture.IncludedDiagnostics(view.CaptureDiagnostics, cfg.Archive.Projects)
+	view.CaptureDiagnostics = capture.IncludedDiagnosticsForConfig(view.CaptureDiagnostics, cfg)
 	if env.copiedFromAnotherMachine(cfg) {
 		first, rest := copiedMachineWarning(home)
 		view.Warnings = append(view.Warnings, strings.Join(append([]string{first}, rest...), " "))
@@ -481,7 +504,7 @@ func readConfiguredStatus(view *statusView, cfg config.Config, home string, env 
 	view.Paused = cfg.Paused
 	if userHome, err := env.userHomeDir(); err == nil {
 		claudeDir, dataHome := claudeConfigDir(env.installedHookFiles(userHome, cfg)), env.installation(home, userHome).commandDataHome()
-		view.AgentSkills = agentskills.Installed(userHome, claudeDir, dataHome)
+		view.AgentSkills = agentskills.Installed(env.agentRegistry(), userHome, claudeDir, dataHome)
 		if cfg.NoSkills {
 			// Setup removes a file of its own here rather than refreshing it,
 			// so it is left over (a restored backup, an interrupted removal),
@@ -490,7 +513,7 @@ func readConfiguredStatus(view *statusView, cfg config.Config, home string, env 
 				view.Warnings = append(view.Warnings, fmt.Sprintf("The agent skills are turned off, but the %s skill file at %s is still there. Run agent-archive setup to remove it.", skillLabel(path), path))
 			}
 		} else {
-			view.AgentSkillsOutOfDate = agentskills.Stale(userHome, claudeDir, cfg.InstalledExecutable, dataHome)
+			view.AgentSkillsOutOfDate = agentskills.Stale(env.agentRegistry(), userHome, claudeDir, cfg.InstalledExecutable, dataHome)
 			for _, path := range view.AgentSkillsOutOfDate {
 				view.Warnings = append(view.Warnings, fmt.Sprintf("The %s skill at %s is out of date. Run agent-archive setup --refresh to refresh it.", skillLabel(path), path))
 			}
@@ -582,8 +605,17 @@ func readSessionStatus(view *statusView, cfg config.Config, home string, store *
 func (s statusSessions) appStatus(name string, cfg config.Config, home string, issues map[string]string) appStatus {
 	app := appStatus{Name: name, State: "waiting for first session", Configured: true, Trust: "unknown", VerificationState: "not_verified", Uploading: []uploadingSession{}}
 	pairIndex := map[string]int{}
+	configuredRoots := map[string]archive.ProjectActivation{}
 	for _, project := range cfg.Archive.Projects {
 		if !project.Included {
+			continue
+		}
+		if _, exists := configuredRoots[project.Root]; !exists {
+			configuredRoots[project.Root] = project
+		}
+		if name == "codex" && cfg.EffectiveCodexCaptureScope() == config.CodexAllProjects {
+			// Explicit rules remain exceptions in all-mode, not a checklist
+			// requiring one capture from every current and future directory.
 			continue
 		}
 		if _, dup := pairIndex[project.Root]; dup {
@@ -606,6 +638,13 @@ func (s statusSessions) appStatus(name string, cfg config.Config, home string, i
 		if position, found := pairIndex[root]; found {
 			return &app.Projects[position]
 		}
+		if name == "codex" && cfg.EffectiveCodexCaptureScope() == config.CodexAllProjects {
+			position := len(app.Projects)
+			pairIndex[root] = position
+			configured, explicit := configuredRoots[root]
+			app.Projects = append(app.Projects, projectCaptureStatus{ProjectID: string(archive.ProjectID(root)), ProjectRoot: root, ActivatedAt: configured.ActivatedAt, Configured: explicit, VerificationState: "not_verified"})
+			return &app.Projects[position]
+		}
 		position, found := others[root]
 		if !found {
 			position = len(app.otherProjects)
@@ -621,10 +660,20 @@ func (s statusSessions) appStatus(name string, cfg config.Config, home string, i
 		if reg.Harness.Name != name || !cfg.AcceptSession(reg) {
 			continue
 		}
+		// Explicit observation survives imports and discovery. Registrations
+		// written before this field existed retain their hook-origin evidence.
+		observed := registrationHookObserved(reg)
+		if observed {
+			app.HookObserved = true
+			project(reg.ProjectRoot).HookObserved = true
+			if app.State == "waiting for first session" {
+				app.State = "hook observed; waiting for capture"
+			}
+		}
 		if reg.Imported() {
-			// An import is not evidence that this app's hooks work: it
-			// never counts toward the app's sessions, hook observation,
-			// or verification, only toward its imports and uploads.
+			// Import publication is not evidence that this app's hooks captured
+			// the session. Actual subsequent hook observation is recorded above.
+			// Imports only count toward imports and uploads, not verification.
 			// Subagents go with their parent.
 			if reg.ParentSessionID == "" {
 				app.ImportedSessions++
@@ -639,6 +688,9 @@ func (s statusSessions) appStatus(name string, cfg config.Config, home string, i
 		if reg.ParentSessionID != "" {
 			app.SubagentSessions++
 		} else {
+			if reg.Replay != nil {
+				app.ReplaySessions++
+			}
 			project(reg.ProjectRoot).sessions++
 			s.addUploading(&app, project(reg.ProjectRoot), reg, issues)
 		}
@@ -651,6 +703,16 @@ func (s statusSessions) appStatus(name string, cfg config.Config, home string, i
 			pair = &app.Projects[position]
 		}
 		s.addSession(&app, pair, reg, cfg, home, issues, &readBackIssue)
+	}
+	if name == "codex" {
+		health, found, healthErr := discovery.ReadHealth(home)
+		if healthErr != nil || !found {
+			health.Errors = []string{"discovery health unknown; run sync to produce a current summary"}
+
+		}
+		health.Enabled = cfg.Discovery != nil && cfg.Discovery.Enabled && cfg.Archive.Enabled && containsString(cfg.Harnesses, "codex")
+		app.Discovery = &health
+		app.CodexCaptureScope = string(cfg.EffectiveCodexCaptureScope())
 	}
 	finishReadBack(&app, readBackIssue)
 	sortUploading(app.Uploading)
@@ -705,14 +767,19 @@ func sortUploading(sessions []uploadingSession) {
 }
 
 // addSession adds one accepted session's evidence to app and to its project
-// pair (nil for a session no configured project owns): hook observation,
+// pair (nil for a session no configured project owns):
 // local capture and gaps, publication, and read-back verification. A session
 // whose files cannot be read is skipped where it fails.
 func (s statusSessions) addSession(app *appStatus, pair *projectCaptureStatus, reg archive.SessionRegistration, cfg config.Config, home string, issues map[string]string, readBackIssue *verificationOutcome) {
 	app.Sessions++
-	app.HookObserved = true
-	gapsBefore := len(app.CaptureGaps)
 	if pair != nil {
+		pair.automaticCapture = true
+	}
+	if registrationHookObserved(reg) {
+		app.HookObserved = true
+	}
+	gapsBefore := len(app.CaptureGaps)
+	if pair != nil && registrationHookObserved(reg) {
 		pair.HookObserved = true
 	}
 	if issue := issues[reg.ArchiveSessionID]; issue != "" {
@@ -722,7 +789,11 @@ func (s statusSessions) addSession(app *appStatus, pair *projectCaptureStatus, r
 		app.HarnessVersions = append(app.HarnessVersions, reg.Harness.Version)
 	}
 	if app.State == "waiting for first session" {
-		app.State = "hook observed; waiting for capture"
+		if app.HookObserved {
+			app.State = "hook observed; waiting for capture"
+		} else {
+			app.State = "task found; waiting for capture"
+		}
 	}
 	bundle, _, cacheStatus, found, err := s.store.LoadPublished(reg.ArchiveSessionID)
 	if err != nil {
@@ -821,9 +892,9 @@ func (s statusSessions) addPublication(app *appStatus, pair *projectCaptureStatu
 // app's projects and the app as a whole are read-back verified.
 func finishReadBack(app *appStatus, readBackIssue verificationOutcome) {
 	app.ReadBackVerified = len(app.Projects) > 0
-	if len(app.Projects) == 0 {
-		// Nothing to require per pair (legacy configuration without
-		// projects): the sessions themselves are the evidence.
+	if len(app.Projects) == 0 || (app.Name == "codex" && app.CodexCaptureScope == string(config.CodexAllProjects)) {
+		// Legacy configuration and all-mode require actual automatic
+		// publication evidence, never verification of an import-only root.
 		app.ReadBackVerified = app.PublishedSessions > 0 && app.VerifiedSessions == app.PublishedSessions
 	}
 	for i := range app.Projects {
@@ -841,7 +912,7 @@ func finishReadBack(app *appStatus, readBackIssue verificationOutcome) {
 		default:
 			pair.VerificationState = "not_verified"
 		}
-		if !pair.ReadBackVerified {
+		if requiresAutomaticCapture(*app, *pair) && !pair.ReadBackVerified {
 			app.ReadBackVerified = false
 		}
 	}
@@ -857,6 +928,12 @@ func finishReadBack(app *appStatus, readBackIssue verificationOutcome) {
 			// A verified session is not a read-back issue.
 		}
 	}
+}
+
+// Included-project mode keeps its configured capture checklist. In all-mode,
+// historical imports alone never add a requirement to start a fresh task there.
+func requiresAutomaticCapture(app appStatus, pair projectCaptureStatus) bool {
+	return app.Name != "codex" || app.CodexCaptureScope != string(config.CodexAllProjects) || pair.automaticCapture
 }
 
 // readInstalledApps fills in each app's installed version, support, and
@@ -888,6 +965,9 @@ func readInstalledApps(view *statusView, cfg config.Config, home, userHome strin
 		discovered = map[string]applicationDiscovery{}
 	}
 	for i := range view.Apps {
+		if d := view.Apps[i].Discovery; d != nil && !d.LastAttempt.IsZero() && (env.now().Before(d.LastAttempt) || env.now().Sub(d.LastAttempt) > scanStaleAfter) {
+			d.Errors = append(d.Errors, "discovery health stale; run sync for a current scan")
+		}
 		appDiscovery := discovered[view.Apps[i].Name]
 		if appDiscovery.VersionState == "" {
 			appDiscovery.VersionState = "unknown"
@@ -901,10 +981,17 @@ func readInstalledApps(view *statusView, cfg config.Config, home, userHome strin
 		view.Apps[i].VersionObservedAt = appDiscovery.ObservedAt
 		view.Apps[i].VersionKind = appDiscovery.VersionKind
 		view.Apps[i].VersionState = appDiscovery.VersionState
-		view.Apps[i].Capabilities = captureCapabilityProfile(view.Apps[i].Name)
+		view.Apps[i].Capabilities = captureCapabilityProfile(env.agentRegistry(), view.Apps[i].Name)
 		view.Apps[i].VersionSupport, view.Apps[i].VersionSupportReason = installedVersionSupportDetail(appDiscovery, view.Apps[i].verifiedHarnessVersions)
 		in := env.installation(home, userHome)
 		installed, e := hooks.Installed(hookFiles, in.hook(executable), view.Apps[i].Name)
+		if !installed && e == nil {
+			inspection, inspectErr := hooks.Inspect(hookFiles, in.hook(executable), view.Apps[i].Name)
+			view.Apps[i].hooksNeedRepair = inspection.Owned
+			if inspectErr != nil {
+				e = inspectErr
+			}
+		}
 		if others, err := hooks.OtherInstallations(hookFiles, in.owner(), view.Apps[i].Name); err == nil && len(others) > 0 {
 			for _, other := range others {
 				view.Apps[i].OtherInstallations = append(view.Apps[i].OtherInstallations, cmp.Or(other.DataHome, other.Command, "default"))
@@ -1011,7 +1098,7 @@ func chooseNextStep(view *statusView, cfg config.Config, home string, env Env, b
 		view.State = "Needs attention"
 		view.problem = "No apps are selected"
 		view.Next = "Run agent-archive setup and select at least one application."
-	} else if len(view.Projects) == 0 {
+	} else if len(view.Projects) == 0 && !codexOnlyAllProjects(cfg) {
 		view.State = "Needs attention"
 		view.problem = "No projects are included"
 		view.Next = "Run agent-archive setup and include at least one project."
@@ -1096,8 +1183,18 @@ func chooseNextStep(view *statusView, cfg config.Config, home string, env Env, b
 // capture is not yet read-back verified, if any.
 func chooseCaptureStep(view *statusView) {
 	for _, app := range view.Apps {
+		if app.Name == "codex" && app.CodexCaptureScope == string(config.CodexAllProjects) && app.Sessions == 0 {
+			view.State = "Waiting for capture"
+			view.problem = "Waiting for the first Codex task"
+			if discoveryEnabled(app) {
+				view.Next = "Start a supported new Codex task in any non-excluded project, then run agent-archive sync. Hook approval is optional for discovery."
+			} else {
+				view.Next = "Approve the Codex archive hooks, then start a supported new task in any non-excluded project. Automatic discovery is off."
+			}
+			break
+		}
 		for _, pair := range app.Projects {
-			if pair.ReadBackVerified {
+			if pair.ReadBackVerified || !requiresAutomaticCapture(app, pair) {
 				continue
 			}
 			view.State = "Waiting for capture"
@@ -1107,14 +1204,16 @@ func chooseCaptureStep(view *statusView) {
 				view.problem = "Waiting for a " + appName(app.Name) + " session in " + pair.ProjectRoot
 			}
 			switch {
-			case app.Capabilities.FreshStart.State == capabilityUnavailable && !pair.HookObserved:
+			case app.Capabilities.FreshStart.State == capabilityUnavailable && !pair.HookObserved && !discoveryEnabled(app):
 				view.Next = app.Capabilities.FreshStart.NextAction
 			case pair.Published:
 				view.problem = appName(app.Name) + "'s upload hasn't been read back yet"
 				view.Next = "Run agent-archive sync to retry read-back verification for " + appName(app.Name) + " in " + pair.ProjectRoot + "."
-			case pair.HookObserved:
+			case pair.HookObserved || (discoveryEnabled(app) && pair.sessions > 0):
 				view.problem = appName(app.Name) + " session seen but not uploaded yet"
 				view.Next = "Run agent-archive sync to capture and publish the " + appName(app.Name) + " session in " + pair.ProjectRoot + "."
+			case discoveryEnabled(app):
+				view.Next = "Start a supported new Codex task in " + pair.ProjectRoot + ", then run agent-archive sync. Hook approval is optional for discovery."
 			default:
 				view.Next = "Review hook approval in " + appName(app.Name) + ", then start a new session in " + pair.ProjectRoot + "."
 			}
@@ -1130,7 +1229,7 @@ func chooseCaptureStep(view *statusView) {
 // background collector that is not loaded (plist is its LaunchAgent).
 func chooseInstallationStep(view *statusView, background statusBackground) {
 	for _, app := range view.Apps {
-		if app.Hooks != "installed" {
+		if app.Hooks != "installed" && (!discoveryEnabled(app) || app.Hooks == hooksBroken || app.Hooks == "unknown" || app.hooksNeedRepair) {
 			view.State = "Needs attention"
 			view.problem = appName(app.Name) + " hooks aren't installed"
 			if app.Hooks == "unknown" {
@@ -1259,6 +1358,7 @@ func statusCode(label string) string {
 		"Not installed": "not_installed", "Setup needs recovery": "recovery_required",
 		"waiting for first session":          "awaiting_session",
 		"hook observed; waiting for capture": "hook_observed",
+		"task found; waiting for capture":    "awaiting_capture",
 		"published; read-back pending":       "published",
 		"captured locally":                   "captured_local", "published; source verified": "published_source_verified",
 	}
@@ -1483,11 +1583,27 @@ func (sc statusScreen) captureRows(view statusView) []statusRow {
 		}
 		rows = append(rows, statusRow{mark: sc.info(), cells: []string{text}})
 	}
+	if recovery := view.IdentityRecovery; recovery != nil {
+		mark, text := sc.info(), "Identity recovery: complete"
+		switch {
+		case recovery.Complete:
+		case recovery.Pending && recovery.Phase != "unknown":
+			text = "Identity recovery: pending (" + strings.ReplaceAll(recovery.Phase, "-", " ") + "); sync advances bounded local work, additional passes may be needed."
+		default:
+			mark = sc.style.warnMark()
+			text = "Identity recovery: unknown; run agent-archive sync for current bounded local evidence."
+		}
+		rows = append(rows, statusRow{mark: mark, cells: []string{text}})
+	}
 	for _, app := range view.importedApps {
 		rows = append(rows, sc.importedAppRow(app, uploadingRowsShown))
 	}
 	for _, diagnostic := range view.CaptureDiagnostics {
-		rows = append(rows, statusRow{mark: sc.style.warnMark(), cells: []string{fmt.Sprintf("%s skipped a session in %s %s: %s", appName(diagnostic.Harness), sc.path(diagnostic.ProjectRoot), relativeAge(sc.now, diagnostic.ObservedAt), capture.DiagnosticMessage(diagnostic.Code))}})
+		location := ""
+		if diagnostic.ProjectRoot != "" {
+			location = " in " + sc.path(diagnostic.ProjectRoot)
+		}
+		rows = append(rows, statusRow{mark: sc.style.warnMark(), cells: []string{fmt.Sprintf("%s skipped a session%s %s: %s", appName(diagnostic.Harness), location, relativeAge(sc.now, diagnostic.ObservedAt), capture.DiagnosticMessage(diagnostic.Code))}})
 	}
 	if !sc.verbose {
 		return rows
@@ -1530,7 +1646,7 @@ func (sc statusScreen) appRow(app appStatus, limit int) statusRow {
 	}
 	row := statusRow{mark: s.okMark(), cells: []string{name, hooksLabel(app.Hooks)}, detail: appCounts(app)}
 	hint := ""
-	if _, ok := hookApproval[app.Name]; ok && app.Hooks == "installed" && !app.HookObserved {
+	if _, ok := hookApproval[app.Name]; ok && app.Hooks == "installed" && !app.HookObserved && !discoveryEnabled(app) {
 		hint = "Approve the archive hooks with " + s.cmd("/hooks") + " in " + appName(app.Name) + "."
 		if sc.verbose {
 			hint = fmt.Sprintf(hookApproval[app.Name], s.cmd("/hooks"))
@@ -1539,11 +1655,11 @@ func (sc statusScreen) appRow(app appStatus, limit int) statusRow {
 		// shows they do: not yet "on".
 		row.cells[1] = "hooks installed"
 	}
-	freshStart := app.Capabilities.FreshStart.State == capabilityUnavailable
+	freshStart := app.Capabilities.FreshStart.State == capabilityUnavailable && !discoveryEnabled(app)
 	switch {
 	case app.Hooks == hooksBroken:
 		row.mark = s.failMark()
-	case app.Hooks != "installed", app.readBackFailure.Attempts > 0:
+	case (app.Hooks != "installed" && !optionalCodexHooks(app)), app.readBackFailure.Attempts > 0:
 		row.mark = s.warnMark()
 	case app.Sessions == 0 && (hint != "" || freshStart):
 		// Nothing captured yet, and something the user can do about it.
@@ -1555,6 +1671,8 @@ func (sc statusScreen) appRow(app appStatus, limit int) statusRow {
 	if freshStart {
 		row.notes = append(row.notes, statusNote{s.warnMark(), "New sessions can't be captured yet: " + app.Capabilities.FreshStart.NextAction})
 	}
+	sc.addCodexDiscoveryRow(&row, app)
+
 	if sc.verbose {
 		row.notes = append(row.notes, statusNote{sc.info(), appProgress(sc.now, app)})
 		if len(app.Projects) > 1 && !app.ReadBackVerified {
@@ -1642,6 +1760,9 @@ func appCounts(app appStatus) string {
 			parts[0] += " (+" + plural(app.SubagentSessions, "subagent") + ")"
 		}
 	}
+	if app.ReplaySessions > 0 {
+		parts[0] += fmt.Sprintf(", %d of them replays", app.ReplaySessions)
+	}
 	if app.ImportedSessions > 0 {
 		parts = append(parts, fmt.Sprintf("%d imported", app.ImportedSessions))
 	}
@@ -1665,7 +1786,7 @@ func appProgress(now time.Time, app appStatus) string {
 		return "uploaded, read-back pending"
 	case "captured locally":
 		return "captured, not uploaded yet"
-	case "hook observed; waiting for capture":
+	case "hook observed; waiting for capture", "task found; waiting for capture":
 		return "session seen, not captured yet"
 	}
 	return "waiting for first session"
@@ -2502,11 +2623,20 @@ func subagentDetailLines(collector state.Status) []string {
 
 // printAppDetails writes one app's lines in the Details section.
 func printAppDetails(out io.Writer, app appStatus) {
+
 	gaps := ""
 	if len(app.CaptureGaps) > 0 {
 		gaps = fmt.Sprintf("; %d with a capture gap", app.SessionsWithCaptureGaps)
 	}
 	terminal.Printf(out, "  %s: %s (%s; %d session(s)%s); hooks %s\n", appName(app.Name), app.State, app.Code, app.Sessions, gaps, app.Hooks)
+	if app.Discovery != nil {
+		terminal.Printf(out, "    Automatic %s.\n", discoveryLabel(app.Discovery))
+		terminal.Printf(out, "    Last attempt: %s; registered %d in that scan.\n", formatTimeOrNever(app.Discovery.LastAttempt), app.Discovery.Registered)
+		if skipped, reasons := discoverySkipped(app.Discovery); skipped > 0 {
+			terminal.Printf(out, "    Unsupported/incomplete/malformed observations: %d (%s); update agent-archive for source format support.\n", skipped, reasons)
+		}
+	}
+
 	if app.Trust == "unknown" {
 		terminal.Println(out, "    Hook trust: unknown here; it is granted inside the app and is not observable from this machine's files.")
 	}
@@ -2594,4 +2724,104 @@ func installedVersionLabel(app appStatus) string {
 		return app.VersionState
 	}
 	return "unknown"
+}
+
+func discoveryEnabled(app appStatus) bool {
+	return app.Discovery != nil && app.Discovery.Enabled
+}
+
+// Empty origin is the documented legacy hook-registration encoding. Other
+// origins need durable observation rather than capture/publication inference.
+func registrationHookObserved(reg archive.SessionRegistration) bool {
+	return !reg.HookObservedAt.IsZero() || reg.Origin == archive.SessionOriginHook || reg.Origin == ""
+}
+
+// optionalCodexHooks identifies a genuinely absent optional installation;
+// broken owned hooks and foreign installations still require attention.
+func optionalCodexHooks(app appStatus) bool {
+	return discoveryEnabled(app) && app.Name == "codex" && app.Hooks != "installed" && app.Hooks != hooksBroken && app.Hooks != "unknown" && !app.hooksNeedRepair && len(app.OtherInstallations) == 0
+}
+
+func discoveryLabel(d *discovery.Health) string {
+	switch {
+	case !d.Enabled:
+		return "discovery off"
+	case len(d.Errors) > 0 || d.Outcomes["source_unavailable"] > 0:
+		return "discovery unknown or source unavailable"
+	case d.LastAttempt.IsZero():
+		return "discovery waiting for first scan"
+	case d.Pending:
+		return "discovery coverage pending"
+	case !d.Supported && d.Outcomes["incomplete_metadata"] > 0:
+		return "discovery: waiting for complete task metadata"
+	case !d.Supported:
+		return "discovery: no supported task observed in last scan"
+	default:
+		return "discovery: supported observations"
+	}
+}
+
+func discoverySkipped(d *discovery.Health) (int, string) {
+	var reasons []string
+	total := 0
+	for _, reason := range []string{"unsupported_producer", "unsupported_execution", "unsupported_format", "unsupported_history", "incomplete_metadata", "invalid_metadata", "oversized_metadata", "invalid_identity", "invalid_source", "invalid_candidate", "inherited_history"} {
+		if n := d.Outcomes[reason]; n > 0 {
+			total += n
+			reasons = append(reasons, fmt.Sprintf("%s: %d", strings.ReplaceAll(reason, "_", " "), n))
+		}
+	}
+	return total, strings.Join(reasons, ", ")
+}
+
+func discoveryProgress(now time.Time, app appStatus) string {
+	d := app.Discovery
+	parts := []string{}
+	if !d.LastAttempt.IsZero() {
+		parts = append(parts, "Last discovery attempt "+relativeAge(now, d.LastAttempt))
+	}
+	if d.Pending {
+		parts = append(parts, "discovery/reconciliation pending; sync advances bounded work, additional scans may be needed")
+	}
+	if d.Outcomes["admission_retry"] > 0 {
+		parts = append(parts, "admission retry pending")
+	}
+	parts = append(parts, fmt.Sprintf("%d registered → %d queued → %d published → %d read-back verified", app.Sessions, app.UploadingSessions, app.PublishedSessions, app.VerifiedSessions))
+	return strings.Join(parts, "; ")
+}
+
+func (sc statusScreen) addCodexDiscoveryRow(row *statusRow, app appStatus) {
+	if app.Name != "codex" || app.Discovery == nil {
+		return
+	}
+	s := sc.style
+	row.cells[1] = discoveryLabel(app.Discovery)
+	if app.CodexCaptureScope == string(config.CodexAllProjects) {
+		row.cells[1] += "; all current and future Codex projects"
+	} else {
+		row.cells[1] += "; included projects"
+	}
+	if discoveryEnabled(app) {
+		row.notes = append(row.notes, statusNote{sc.info(), discoveryProgress(sc.now, app)})
+	}
+	if optionalCodexHooks(app) {
+		row.notes = append(row.notes, statusNote{sc.info(), "Optional hooks: absent; supported automatic discovery does not require hook approval."})
+	} else {
+		label := "Hooks: "
+		if discoveryEnabled(app) {
+			label = "Optional hooks: "
+		}
+		row.notes = append(row.notes, statusNote{sc.info(), label + hooksLabel(app.Hooks) + "; actual hook observation is separate evidence."})
+	}
+	if discoveryEnabled(app) && (len(app.Discovery.Errors) > 0 || app.Discovery.Outcomes["source_unavailable"] > 0) {
+		row.mark = s.warnMark()
+		row.notes = append(row.notes, statusNote{s.warnMark(), "Discovery health is unknown or a source is unavailable. Restore source access if needed, then run agent-archive sync for a current bounded scan."})
+	}
+	if skipped, reasons := discoverySkipped(app.Discovery); discoveryEnabled(app) && skipped > 0 {
+		if skipped == app.Discovery.Outcomes["incomplete_metadata"] {
+			row.notes = append(row.notes, statusNote{sc.info(), fmt.Sprintf("Last scan saw %d records waiting for complete task metadata. Start a supported new task, then run sync; capture is not yet established.", skipped)})
+		} else {
+			row.mark = s.warnMark()
+			row.notes = append(row.notes, statusNote{s.warnMark(), fmt.Sprintf("Last scan skipped %d unsupported, incomplete or malformed observations (%s). Update agent-archive for format support; use hooks or deliberate backfill only where that source format is supported.", skipped, reasons)})
+		}
+	}
 }

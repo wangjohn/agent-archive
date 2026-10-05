@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"strings"
 	"time"
 
@@ -77,6 +78,7 @@ func reviewRows(cfg config.Config, discoveries map[string]applicationDiscovery, 
 		rows = append(rows, reviewRow{label: "Imported", values: []string{friendlyApps(cfg.ImportedHarnesses) + " (sessions imported by backfill stay published; new sessions are not captured)"}})
 	}
 	rows = append(rows, reviewRow{label: "Projects", values: projects})
+	rows = append(rows, codexConsentRows(cfg)...)
 	skillScope := string(cfg.EffectiveSkillEvidence())
 	if cfg.SkillEvidence == "" {
 		skillScope += " (kept from previous setup)"
@@ -232,8 +234,15 @@ func reviewChecklist(cfg config.Config, review setupReview, at time.Time) []revi
 		{mark: symbolOK, label: "Storage connected", detail: "write, read, list, delete"},
 		privacyCheck(cfg, at),
 	}
+	if len(cfg.Harnesses) > 0 && setupNeedsProject(cfg) {
+		checks = append(checks, reviewCheck{mark: symbolFail, label: "Project required", detail: "Use Edit a setting → Projects to include a directory. Only Codex-only all-projects scope permits no included projects."})
+	}
 	checks = append(checks, hookFilesChecks(cfg.Harnesses, review.hookFiles, review.userHome)...)
 	for _, app := range cfg.Harnesses {
+		if app == "codex" && cfg.Discovery != nil && cfg.Discovery.Enabled {
+			checks = append(checks, reviewCheck{mark: symbolOK, label: "Codex discovery", detail: "supported new tasks do not require hook approval"})
+			continue
+		}
 		// An app whose hooks are installed already has taken its step,
 		// unless they move to another file, which it has not approved.
 		if review.reconfiguring && containsString(review.existing.Harnesses, app) && review.installedHookFiles[app] == review.hookFiles[app] {
@@ -322,18 +331,27 @@ func printReviewChecklist(p *prompter, checks []reviewCheck) {
 // differs from the one setup saw then, and confirming moves the hooks.
 // recorded is whether the configuration recorded where setup installed
 // them; an earlier release did not, and always used the fixed paths.
-func reviewHookFiles(p *prompter, apps []string, next, previous hooks.Files, installed []string, recorded bool, userHome string) {
-	variable := map[string]string{"claude": "CLAUDE_CONFIG_DIR", "codex": "CODEX_HOME"}
+func reviewHookFiles(ports agentapi.HooksLookup, p *prompter, apps []string, next, previous hooks.Files, installed []string, recorded bool, userHome string) {
 	for _, app := range apps {
 		if !containsString(installed, app) || previous[app] == next[app] {
 			continue
 		}
-		reason := []string{variable[app] + " in this shell differs from when setup last ran.", "To keep them where they are, cancel and run " + p.style.cmd("agent-archive setup")}
+		var variable string
+		if provider, ok := ports.LookupHooks(app); ok {
+			if keys := provider.EnvironmentKeys(); len(keys) > 0 {
+				variable = strings.Join(keys, ", ")
+			}
+		}
+		if variable == "" {
+			p.warn(fmt.Sprintf("%s hooks move to %s from %s.", appName(app), displayPath(next[app], userHome), displayPath(previous[app], userHome)), "The native configuration location differs from when setup last ran.", "To keep them where they are, cancel setup and restore its previous configuration location.")
+			continue
+		}
+		reason := []string{variable + " in this shell differs from when setup last ran.", "To keep them where they are, cancel and run " + p.style.cmd("agent-archive setup")}
 		if !recorded {
-			reason = []string{"An earlier release installed them at the fixed path,", "and " + variable[app] + " is set in this shell.", "To keep them there, cancel and run " + p.style.cmd("agent-archive setup")}
+			reason = []string{"An earlier release installed them at the fixed path,", "and " + variable + " is set in this shell.", "To keep them there, cancel and run " + p.style.cmd("agent-archive setup")}
 		}
 		p.warn(fmt.Sprintf("%s hooks move to %s from %s.", appName(app), displayPath(next[app], userHome), displayPath(previous[app], userHome)),
-			append(reason, "from a shell without "+variable[app]+".")...)
+			append(reason, "from a shell without "+variable+".")...)
 	}
 }
 
@@ -461,7 +479,7 @@ func offerStopImported(p *prompter, draft *setupDraft, committed config.Config) 
 
 // editSetupReview asks which setting to change and asks for it again.
 // known, when not nil, lists the projects the apps' history mentions.
-func editSetupReview(p *prompter, draft *setupDraft, userHome string, backfilled map[string]bool, known func(config.Config) []backfill.KnownProject) error {
+func editSetupReview(available []string, p *prompter, draft *setupDraft, userHome string, backfilled map[string]bool, known func(config.Config) []backfill.KnownProject) error {
 	// Whoever opens the edit menu has found it; the hint about it would be
 	// stale beside what they change.
 	p.reviewHint = ""
@@ -477,6 +495,12 @@ func editSetupReview(p *prompter, draft *setupDraft, userHome string, backfilled
 	if draft.Config.Storage.Provider == credentials.ProviderS3 {
 		choices = append(choices, option{"region", "AWS bucket region"})
 	}
+	if containsString(draft.Config.Harnesses, "codex") {
+		choices = append(choices, option{"discovery", "Automatic Codex discovery"}, option{"codex-scope", "Codex capture scope"})
+		if draft.Config.EffectiveCodexCaptureScope() == config.CodexAllProjects {
+			choices = append(choices, option{"codex-exceptions", "Codex project exceptions"})
+		}
+	}
 	choices = append(choices, option{"back", "Nothing, go back to the review"})
 	choice, err := p.menu("\nWhat would you like to change?", "back", choices...)
 	if err != nil {
@@ -484,8 +508,19 @@ func editSetupReview(p *prompter, draft *setupDraft, userHome string, backfilled
 	}
 	//lint:ignore LV1001 menu keys are the option keys listed just above
 	switch choice {
+	case "codex-exceptions":
+		err = promptCodexExceptions(p, &draft.Config, userHome)
+	case "codex-scope":
+		err = promptCodexCaptureScope(p, &draft.Config)
+	case "discovery":
+		enabled := draft.Config.Discovery != nil && draft.Config.Discovery.Enabled
+		enabled, err = p.yesNo("Enable automatic Codex discovery? Recent indistinguishable copies may be captured.", enabled)
+		if err == nil {
+			enableDiscovery(&draft.Config, enabled)
+			draft.DiscoveryReviewed = true
+		}
 	case "apps":
-		if err = chooseHarnesses(p, nil, &draft.Config); err != nil {
+		if err = chooseHarnesses(available, p, nil, &draft.Config); err != nil {
 			return err
 		}
 		err = promptStopImported(p, draft)
@@ -513,7 +548,7 @@ func editSetupReview(p *prompter, draft *setupDraft, userHome string, backfilled
 		if e != nil {
 			return e
 		}
-		draft.Config.SkillEvidence = config.SkillEvidence(mode)
+		config.SetSkillEvidence(&draft.Config, config.SkillEvidence(mode))
 	case "retention":
 		draft.Config.RetentionDays, err = p.retentionDays(draft.Config.RetentionDays)
 	case "storage":

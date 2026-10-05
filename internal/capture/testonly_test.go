@@ -56,12 +56,12 @@ func classifyHookEvent(harness, name string) hookEventKind {
 	return hookEventIgnored
 }
 
-func handleEvent(home, harness string, payload map[string]any, now time.Time, lock lockHooks, afterLock func(), repoKey RepoKeyFunc) error {
+func handleEvent(home, harness string, payload map[string]any, now time.Time, lock lockHooks, afterLock func()) error {
 	batch, err := testBatch(harness, payload, now)
 	if err != nil {
 		return err
 	}
-	return handleBatch(home, harness, batch, now, lock, afterLock, eventOptions{repoKey: repoKey, decoders: testDecoders})
+	return handleBatch(home, harness, batch, now, lock, afterLock, eventOptions{decoders: testDecoders})
 }
 
 func provesFreshSessionStart(harness string, payload map[string]any) bool {
@@ -133,7 +133,7 @@ func queueAdmissionIntentWithGeneration(home, harness string, _ hookEventKind, p
 	if generation != nil {
 		gen = *generation
 	}
-	return queueEventBatchInGeneration(home, resolveFreshness(batch, nil), now, gen, after)
+	return queueEventBatchInGeneration(home, resolveFreshness(batch, nil), now, gen, nil, after)
 }
 
 // credentialsTestConfig is a syntactically valid storage destination for

@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/agents/cursor"
 	"os"
 	"strings"
 	"testing"
@@ -44,7 +46,7 @@ func TestCursorSQLiteRewrittenChatRepublishes(t *testing.T) {
 		t.Fatal(err)
 	}
 	remote := storagetest.NewMemoryStore()
-	opts := Options{MachineID: "m", CursorDatabase: db.path, Now: advancingClock()}
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "m", CursorDatabase: db.path, Now: advancingClock()}
 	if result, _ := run(t, local, remote, opts, passes); len(result.Published) != 1 {
 		t.Fatalf("first capture: %+v", result)
 	}
@@ -113,7 +115,7 @@ func TestCursorSQLiteNamingAChatIsNotARewrite(t *testing.T) {
 		t.Fatal(err)
 	}
 	remote := storagetest.NewMemoryStore()
-	opts := Options{MachineID: "m", CursorDatabase: db.path, Now: advancingClock()}
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "m", CursorDatabase: db.path, Now: advancingClock()}
 	if result, _ := run(t, local, remote, opts, passes); len(result.Published) != 1 {
 		t.Fatalf("first capture: %+v", result)
 	}
@@ -188,7 +190,7 @@ func TestCursorSQLiteMetadataRegeneration(t *testing.T) {
 		t.Fatal(err)
 	}
 	remote := storagetest.NewMemoryStore()
-	opts := Options{MachineID: "m", CursorDatabase: db.path, Now: advancingClock(), ParserVersion: "one"}
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "m", CursorDatabase: db.path, Now: advancingClock(), ParserVersion: "one"}
 	if result, err := Run(context.Background(), local, remote, opts); err != nil || len(result.Published) != 1 {
 		t.Fatalf("%+v %v", result, err)
 	}
@@ -226,11 +228,11 @@ func TestCursorSQLiteReadLocalBundle(t *testing.T) {
 	db.chatSaying("chat", 1767225700000, "hand this off", "b1")
 	reg := cursorRegistration("session", "chat")
 	at := time.Date(2026, 1, 1, 3, 0, 0, 0, time.UTC)
-	bundle, err := ReadLocalBundle(context.Background(), home, reg, at, db.path)
+	bundle, err := ReadLocalBundle(context.Background(), home, reg, at, db.path, testSources)
 	if err != nil || bundle.Capture.SourceFormat != "cursor-composer" || !strings.Contains(recordsText(bundle), "hand this off") {
 		t.Fatalf("%v: %+v", err, bundle.Capture)
 	}
-	if last, ok := LastActivity(context.Background(), reg, db.path); !ok || !last.Equal(time.UnixMilli(1767225700000)) {
+	if last, ok := LastActivity(context.Background(), reg, db.path, testSources); !ok || !last.Equal(time.UnixMilli(1767225700000)) {
 		t.Fatalf("last activity %v %v", last, ok)
 	}
 	root, err := cursorstore.SnapshotRoot()
@@ -241,7 +243,7 @@ func TestCursorSQLiteReadLocalBundle(t *testing.T) {
 		t.Fatalf("snapshot left: %v", entries)
 	}
 	reg.SourceKey, reg.NativeSessionID = "gone", "gone"
-	if _, err := ReadLocalBundle(context.Background(), home, reg, at, db.path); !errors.Is(err, ErrNoTranscript) {
+	if _, err := ReadLocalBundle(context.Background(), home, reg, at, db.path, testSources); !errors.Is(err, ErrNoTranscript) {
 		t.Fatalf("deleted chat: %v", err)
 	}
 }
@@ -265,7 +267,7 @@ func TestCursorSQLiteRememberedFailureWithRequest(t *testing.T) {
 	}
 	remote := storagetest.NewMemoryStore()
 	at := time.Date(2026, 1, 1, 2, 0, 0, 0, time.UTC)
-	opts := Options{MachineID: "m", CursorDatabase: db.path, Now: advancingClock()}
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "m", CursorDatabase: db.path, Now: advancingClock()}
 	if result, copies := run(t, local, remote, opts, passes); !errors.Is(result.Errors[bad.ArchiveSessionID], archive.ErrUnsafeSourceFormat) || copies != 1 {
 		t.Fatalf("%v, %d copies", result.Errors, copies)
 	}
@@ -334,15 +336,23 @@ func TestCursorSQLiteChatNewerThanTheSnapshot(t *testing.T) {
 	local := newTestStore(t)
 	db := newCursorDB(t, true)
 	db.chat("old", 1, "m")
-	pass := cursorstore.NewReader(db.path)
-	defer func() { _ = pass.Close() }()
-	if _, _, err := pass.ReadComposer(context.Background(), "old"); err != nil || pass.Snapshots() != 1 {
-		t.Fatalf("%v, %d snapshots", err, pass.Snapshots())
+	provider, _, _ := testSources.LookupSources("cursor")
+	pass, err := provider.OpenPass(context.Background(), agentapi.SourceEnvironment{Database: db.path})
+	if err != nil {
+		t.Fatal(err)
 	}
+	defer func() { _ = pass.Close() }()
+	snap, err := pass.Read(context.Background(), agentapi.SourceRef{Kind: archive.SourceKindCursorSQLite, Key: "old"}, agentapi.ReadLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = snap.Close()
+	passes := &sourcePassSet{passes: map[sourcePassKey]agentapi.SourcePass{{name: "cursor"}: pass}}
+
 	db.chat("new", 1, "m")
 	reg := cursorRegistration("session", "new")
-	reader := cursorSQLiteReader{reg: reg, dbPath: db.path, pass: pass}
-	_, _, err := reader.Filter(context.Background(), archive.CursorAdapter{}, DefaultMaxTranscriptBytes)
+	reader, _ := newSourceReader(reg, Options{Sources: testSources, Parsers: testParsers, CursorDatabase: db.path, sourcePasses: passes})
+	_, _, err = reader.Filter(context.Background(), cursor.Filter{}, DefaultMaxTranscriptBytes)
 	var nc *cursorstore.NotCheckedError
 	if errors.Is(err, os.ErrNotExist) || !errors.As(err, &nc) || nc.Reason != cursorstore.ChangedDuringRead {
 		t.Fatalf("err %v", err)
@@ -356,7 +366,7 @@ func TestCursorSQLiteChatNewerThanTheSnapshot(t *testing.T) {
 	if err := local.SaveRequest(reg.ArchiveSessionID, "stop", time.Date(2026, 1, 1, 2, 0, 0, 0, time.UTC)); err != nil {
 		t.Fatal(err)
 	}
-	opts := Options{MachineID: "m", CursorDatabase: db.path, Now: advancingClock(), cursorPass: pass}
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "m", CursorDatabase: db.path, Now: advancingClock(), sourcePasses: passes}
 	if _, err := processSession(context.Background(), local, storagetest.NewMemoryStore(), reg, mustRequest(t, local, reg.ArchiveSessionID), opts.now(), opts); err == nil {
 		t.Fatal("no error")
 	}
@@ -394,7 +404,7 @@ func TestCursorSQLiteChatEmptiedAfterPublicationIsARewriteGap(t *testing.T) {
 		t.Fatal(err)
 	}
 	remote := storagetest.NewMemoryStore()
-	opts := Options{MachineID: "m", CursorDatabase: db.path, Now: advancingClock()}
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "m", CursorDatabase: db.path, Now: advancingClock()}
 	if result, _ := run(t, local, remote, opts, passes); len(result.Published) != 1 {
 		t.Fatalf("first capture: %+v", result)
 	}

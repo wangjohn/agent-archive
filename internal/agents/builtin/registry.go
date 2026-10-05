@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
+	"strings"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
@@ -15,20 +16,37 @@ import (
 
 // Integration binds implemented operations to an identity declaration.
 type Integration struct {
-	Descriptor agentmeta.Descriptor
-	Launcher   agentapi.Launcher
-	Runtime    agentapi.RuntimeDetector
-	Hooks      agentapi.HookConfigurator
-	Decoder    agentapi.HookDecoder
+	Descriptor      agentmeta.Descriptor
+	Launcher        agentapi.Launcher
+	Parser          agentapi.TranscriptParser
+	Preview         agentapi.RecordPreviewer
+	Sources         agentapi.SourceProvider
+	Filter          agentapi.TranscriptFilter
+	Runtime         agentapi.RuntimeDetector
+	Hooks           agentapi.HookConfigurator
+	Decoder         agentapi.HookDecoder
+	Skills          agentapi.SkillProvider
+	NativeHeaders   agentapi.NativeHeaderInspector
+	Evidence        agentapi.CapabilityEvidenceProvider
+	Version         agentapi.VersionInspector
+	Discovery       agentapi.Discoverer
+	DatabaseCatalog agentapi.DatabaseCatalogInspector
+	NativePaths     agentapi.NativePathsProvider
+	Worktrees       agentapi.MissingWorktreeResolver
+	Workspace       agentapi.WorkspaceResolver
+	Children        agentapi.ChildDiscoverer
+	Imports         agentapi.ImportInspector
 }
 
 // Registry holds validated immutable lookups and operation projections.
 type Registry struct {
-	catalog     agentmeta.Catalog
-	bindings    map[agentmeta.ID]Integration
-	supporting  map[agentmeta.Operation][]Integration
-	runtime     []Integration
-	sessionKeys []string
+	catalog        agentmeta.Catalog
+	sourceBindings map[string]Integration
+	bindings       map[agentmeta.ID]Integration
+	supporting     map[agentmeta.Operation][]Integration
+	ordered        []Integration
+	runtime        []Integration
+	sessionKeys    []string
 }
 
 // New binds each identity exactly once and derives operations from actual ports.
@@ -36,7 +54,7 @@ func New(identities agentmeta.Catalog, bindings []Integration) (*Registry, error
 	if identities == nil || nilImplementation(identities) {
 		return nil, fmt.Errorf("missing identity catalog")
 	}
-	r := &Registry{bindings: make(map[agentmeta.ID]Integration), supporting: make(map[agentmeta.Operation][]Integration)}
+	r := &Registry{bindings: make(map[agentmeta.ID]Integration), sourceBindings: map[string]Integration{}, supporting: make(map[agentmeta.Operation][]Integration)}
 	for _, b := range bindings {
 		d, ok := identities.Lookup(string(b.Descriptor.ID))
 		if !ok || d.ID != b.Descriptor.ID {
@@ -45,31 +63,16 @@ func New(identities agentmeta.Catalog, bindings []Integration) (*Registry, error
 		if _, ok := r.bindings[d.ID]; ok {
 			return nil, fmt.Errorf("duplicate binding %q", d.ID)
 		}
-		if b.Launcher != nil && nilImplementation(b.Launcher) || b.Runtime != nil && nilImplementation(b.Runtime) || b.Hooks != nil && nilImplementation(b.Hooks) || b.Decoder != nil && nilImplementation(b.Decoder) {
-			return nil, fmt.Errorf("agent %s has a typed-nil implementation", d.ID)
-		}
-		if b.Launcher == nil && b.Runtime == nil && b.Hooks == nil && b.Decoder == nil {
-			return nil, fmt.Errorf("agent %s has no operations", d.ID)
-		}
-		// Declaration metadata and operation promises cannot override the catalog.
-		if len(b.Descriptor.Aliases) > 0 || b.Descriptor.DisplayName != "" || len(b.Descriptor.Operations) > 0 {
-			return nil, fmt.Errorf("binding %s must contain only its canonical ID", d.ID)
-		}
-		d.Operations = nil
-		if b.Launcher != nil {
-			d.Operations = append(d.Operations, agentmeta.Launch)
-		}
-		if b.Runtime != nil {
-			d.Operations = append(d.Operations, agentmeta.Runtime)
-		}
-		if b.Hooks != nil {
-			d.Operations = append(d.Operations, agentmeta.ManagedHooks)
-		}
-		if b.Decoder != nil {
-			d.Operations = append(d.Operations, agentmeta.LifecycleHooks)
+		var err error
+		d, err = boundDescriptor(b, d)
+		if err != nil {
+			return nil, err
 		}
 		b.Descriptor = d
 		r.bindings[d.ID] = b
+		for _, name := range append([]string{string(d.ID)}, d.Aliases...) {
+			r.sourceBindings[name] = b
+		}
 	}
 	ds := identities.All()
 	for i, d := range ds {
@@ -78,6 +81,7 @@ func New(identities agentmeta.Catalog, bindings []Integration) (*Registry, error
 			return nil, fmt.Errorf("missing binding %s", d.ID)
 		}
 		ds[i] = b.Descriptor
+		r.ordered = append(r.ordered, b)
 		r.addOperations(b)
 	}
 	var err error
@@ -124,9 +128,9 @@ func (r *Registry) Supporting(op agentmeta.Operation) []Integration {
 // NewBuiltins binds the built-in identities to their concrete implementations.
 func NewBuiltins() *Registry {
 	r, err := New(agentmeta.Builtins(), []Integration{
-		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Claude}, Launcher: claude.Launcher{}, Runtime: claude.RuntimeDetector{}, Hooks: claude.Hooks(), Decoder: claude.Decoder()},
-		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Codex}, Launcher: codex.Launcher{}, Runtime: codex.RuntimeDetector{}, Hooks: codex.Hooks(), Decoder: codex.Decoder()},
-		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Cursor}, Launcher: cursor.Launcher{}, Runtime: cursor.RuntimeDetector{}, Hooks: cursor.Hooks(), Decoder: cursor.Decoder()},
+		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Claude}, Launcher: claude.Launcher{}, Skills: claude.Skills(), Imports: claude.Imports(), Evidence: claude.CapabilityEvidence{}, Version: claude.VersionInspector{}, NativeHeaders: claude.NativeHeaders{}, Discovery: claude.NativeHeaders{}, NativePaths: claude.ProjectEvidence{}, Worktrees: claude.ProjectEvidence{}, Children: claude.Children{}, Sources: claude.SourceProvider{}, Filter: claude.Filter{}, Runtime: claude.RuntimeDetector{}, Hooks: claude.Hooks(), Decoder: claude.Decoder(), Parser: claude.Parser{}, Preview: claude.Previewer{}},
+		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Codex}, Launcher: codex.Launcher{}, Skills: codex.Skills(), Imports: codex.Imports(), Evidence: codex.CapabilityEvidence{}, Version: codex.VersionInspector{}, NativeHeaders: codex.NativeHeaders{}, Discovery: codex.NativeHeaders{}, NativePaths: codex.ProjectEvidence{}, Sources: codex.SourceProvider{}, Filter: codex.Filter{}, Runtime: codex.RuntimeDetector{}, Hooks: codex.Hooks(), Decoder: codex.Decoder(), Parser: codex.Parser{}, Preview: codex.Previewer{}},
+		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Cursor}, Launcher: cursor.Launcher{}, Skills: cursor.Skills(), Imports: cursor.Imports(), Evidence: cursor.CapabilityEvidence{}, Version: cursor.VersionInspector{}, Discovery: cursor.Discovery{}, NativePaths: cursor.ProjectEvidence{}, Workspace: cursor.ProjectEvidence{}, DatabaseCatalog: cursor.DatabaseCatalogInspector{}, Sources: cursor.SourceProvider{}, Filter: cursor.Filter{}, Runtime: cursor.RuntimeDetector{}, Hooks: cursor.Hooks(), Decoder: cursor.Decoder(), Parser: cursor.Parser{}},
 	})
 	if err != nil {
 		panic(err)
@@ -134,9 +138,21 @@ func NewBuiltins() *Registry {
 	return r
 }
 
+// LookupParser resolves only the parser needed by retained-source derivation.
+func (r *Registry) LookupParser(name string) (agentapi.TranscriptParser, bool) {
+	b, ok := r.sourceBindings[strings.ToLower(strings.TrimSpace(name))]
+	return b.Parser, ok && b.Parser != nil
+}
+
+// LookupPreview resolves a bounded safe-record preview decoder.
+func (r *Registry) LookupPreview(name string) (agentapi.RecordPreviewer, bool) {
+	b, ok := r.sourceBindings[strings.ToLower(strings.TrimSpace(name))]
+	return b.Preview, ok && b.Preview != nil
+}
+
 // Launcher resolves the native launch operation without exposing other ports.
 func (r *Registry) Launcher(name string) (agentapi.Launcher, bool) {
-	b, ok := r.Lookup(name)
+	b, ok := r.sourceBindings[agentmeta.Normalize(name)]
 	return b.Launcher, ok && b.Launcher != nil
 }
 
@@ -157,7 +173,7 @@ func (r *Registry) SessionEnvironmentKeys() []string { return slices.Clone(r.ses
 
 // Launchers returns the implemented launch projection in presentation order.
 func (r *Registry) Launchers() []agentapi.AgentLauncher {
-	bindings := r.Supporting(agentmeta.Launch)
+	bindings := r.supporting[agentmeta.Launch]
 	out := make([]agentapi.AgentLauncher, 0, len(bindings))
 	for _, b := range bindings {
 		out = append(out, agentapi.AgentLauncher{Agent: b.Descriptor.ID, Launcher: b.Launcher})
@@ -182,14 +198,14 @@ func (r *Registry) addOperations(b Integration) {
 
 // LookupHooks returns only the managed configuration port.
 func (r *Registry) LookupHooks(name string) (agentapi.HookConfigurator, bool) {
-	b, ok := r.Lookup(name)
+	b, ok := r.sourceBindings[agentmeta.Normalize(name)]
 	return b.Hooks, ok && b.Hooks != nil
 }
 
 // HookAgents returns stable native configuration owners.
 func (r *Registry) HookAgents() []string {
 	var names []string
-	for _, b := range r.Supporting(agentmeta.ManagedHooks) {
+	for _, b := range r.supporting[agentmeta.ManagedHooks] {
 		names = append(names, string(b.Descriptor.ID))
 	}
 	return names
@@ -199,4 +215,217 @@ func (r *Registry) HookAgents() []string {
 func (r *Registry) LookupDecoder(name string) (agentapi.HookDecoder, bool) {
 	b, ok := r.bindings[agentmeta.ID(agentmeta.Canonical(r.catalog, name))]
 	return b.Decoder, ok && b.Decoder != nil
+}
+
+// LookupSources resolves only source and filter ports.
+func (r *Registry) LookupSources(name string) (agentapi.SourceProvider, agentapi.TranscriptFilter, bool) {
+	b, ok := r.sourceBindings[strings.ToLower(strings.TrimSpace(name))]
+	return b.Sources, b.Filter, ok && b.Sources != nil && b.Filter != nil
+}
+
+// SweepSources invokes only provider-declared abandoned-resource cleanup.
+func (r *Registry) SweepSources() {
+	for _, b := range r.bindings {
+		if p, ok := b.Sources.(interface{ Sweep() }); ok {
+			p.Sweep()
+		}
+	}
+}
+
+func boundDescriptor(b Integration, d agentmeta.Descriptor) (agentmeta.Descriptor, error) {
+	if len(b.Descriptor.Aliases) > 0 || b.Descriptor.DisplayName != "" || len(b.Descriptor.Operations) > 0 {
+		return agentmeta.Descriptor{}, fmt.Errorf("binding %s must contain only its canonical ID", d.ID)
+	}
+	operations, err := implementedOperations(b)
+	if err != nil {
+		return agentmeta.Descriptor{}, err
+	}
+	if len(operations) == 0 {
+		return agentmeta.Descriptor{}, fmt.Errorf("agent %s has no operations", d.ID)
+	}
+	if b.Sources != nil || b.Filter != nil {
+		if b.Sources == nil || b.Filter == nil {
+			return agentmeta.Descriptor{}, fmt.Errorf("agent %s has incomplete source bindings", d.ID)
+		}
+		if b.Filter.Name() != string(d.ID) {
+			return agentmeta.Descriptor{}, fmt.Errorf("agent %s has filter for %s", d.ID, b.Filter.Name())
+		}
+	}
+	d.Operations = operations
+	return d, nil
+}
+
+// LookupSkills resolves a native skill provider.
+func (r *Registry) LookupSkills(name string) (agentapi.SkillProvider, bool) {
+	b, ok := r.sourceBindings[agentmeta.Normalize(name)]
+	return b.Skills, ok && b.Skills != nil
+}
+
+// SkillAgents lists implemented skill providers in catalog order.
+func (r *Registry) SkillAgents() []string {
+	var out []string
+	for _, b := range r.supporting[agentmeta.Skills] {
+		out = append(out, string(b.Descriptor.ID))
+	}
+	return out
+}
+
+// LookupNativeHeaders resolves bounded read-only identity interpretation.
+func (r *Registry) LookupNativeHeaders(name string) (agentapi.NativeHeaderInspector, bool) {
+	b, ok := r.sourceBindings[agentmeta.Normalize(name)]
+	return b.NativeHeaders, ok && b.NativeHeaders != nil
+}
+
+// NativeHeaderAgents lists bound inspectors without probing the host.
+func (r *Registry) NativeHeaderAgents() []string {
+	var out []string
+	for _, b := range r.ordered {
+		if b.NativeHeaders != nil {
+			out = append(out, string(b.Descriptor.ID))
+		}
+	}
+	return out
+}
+
+// LookupCapabilityEvidence resolves declared support evidence independently of health.
+func (r *Registry) LookupCapabilityEvidence(name string) (agentapi.CapabilityEvidenceProvider, bool) {
+	b, ok := r.sourceBindings[agentmeta.Normalize(name)]
+	return b.Evidence, ok && b.Evidence != nil
+}
+
+// LookupVersionInspector resolves native installed-version observation.
+func (r *Registry) LookupVersionInspector(name string) (agentapi.VersionInspector, bool) {
+	b, ok := r.sourceBindings[agentmeta.Normalize(name)]
+	return b.Version, ok && b.Version != nil
+}
+
+// VersionAgents lists bound inspectors without eager probes.
+func (r *Registry) VersionAgents() []string {
+	var names []string
+	for _, b := range r.ordered {
+		if b.Version != nil {
+			names = append(names, string(b.Descriptor.ID))
+		}
+	}
+	return names
+}
+
+// LookupDiscovery resolves native read-only discovery.
+func (r *Registry) LookupDiscovery(name string) (agentapi.Discoverer, bool) {
+	b, ok := r.sourceBindings[agentmeta.Normalize(name)]
+	return b.Discovery, ok && b.Discovery != nil
+}
+
+// DiscoveryAgents lists actual discovery bindings in catalog order.
+func (r *Registry) DiscoveryAgents() []string {
+	var names []string
+	for _, b := range r.ordered {
+		if b.Discovery != nil {
+			names = append(names, string(b.Descriptor.ID))
+		}
+	}
+	return names
+}
+
+// LookupDatabaseCatalog resolves native compact catalog interpretation without opening a database.
+func (r *Registry) LookupDatabaseCatalog(name string) (agentapi.DatabaseCatalogInspector, bool) {
+	b, ok := r.sourceBindings[agentmeta.Normalize(name)]
+	return b.DatabaseCatalog, ok && b.DatabaseCatalog != nil
+}
+
+// LookupNativePaths resolves native path declarations without probing the host.
+func (r *Registry) LookupNativePaths(name string) (agentapi.NativePathsProvider, bool) {
+	b, ok := r.sourceBindings[agentmeta.Normalize(name)]
+	return b.NativePaths, ok && b.NativePaths != nil
+}
+
+// NativePathAgents lists implemented native path providers in catalog order.
+func (r *Registry) NativePathAgents() []string {
+	var out []string
+	for _, b := range r.ordered {
+		if b.NativePaths != nil {
+			out = append(out, string(b.Descriptor.ID))
+		}
+	}
+	return out
+}
+
+// WorktreeResolvers lists implemented native missing-worktree conventions in catalog order.
+func (r *Registry) WorktreeResolvers() []agentapi.MissingWorktreeResolver {
+	var out []agentapi.MissingWorktreeResolver
+	for _, b := range r.ordered {
+		if p := b.Worktrees; p != nil {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// LookupWorkspace resolves a native workspace metadata interpreter.
+func (r *Registry) LookupWorkspace(name string) (agentapi.WorkspaceResolver, bool) {
+	b, ok := r.sourceBindings[agentmeta.Normalize(name)]
+	return b.Workspace, ok && b.Workspace != nil
+}
+
+// LookupChildren resolves native child discovery without admitting registrations.
+func (r *Registry) LookupChildren(name string) (agentapi.ChildDiscoverer, bool) {
+	b, ok := r.sourceBindings[agentmeta.Normalize(name)]
+	return b.Children, ok && b.Children != nil
+}
+
+// LookupImport resolves native historical observation without admission policy.
+func (r *Registry) LookupImport(name string) (agentapi.ImportInspector, bool) {
+	b, ok := r.sourceBindings[agentmeta.Normalize(name)]
+	return b.Imports, ok && b.Imports != nil
+}
+
+// implementedOperations validates optional ports and derives promises only from
+// actual implementations. Multiple project ports contribute one capability.
+func implementedOperations(b Integration) ([]agentmeta.Operation, error) {
+	ports := []struct {
+		name           string
+		operation      agentmeta.Operation
+		implementation any
+	}{
+		{"launcher", agentmeta.Launch, b.Launcher},
+		{"runtime", agentmeta.Runtime, b.Runtime},
+		{"parser", agentmeta.Parse, b.Parser},
+		{"preview", "", b.Preview},
+		{"sources", agentmeta.Source, b.Sources},
+		{"filter", "", b.Filter},
+		{"decoder", agentmeta.LifecycleHooks, b.Decoder},
+		{"hooks", agentmeta.ManagedHooks, b.Hooks},
+		{"skills", agentmeta.Skills, b.Skills},
+		{"native headers", agentmeta.NativeInspection, b.NativeHeaders},
+		{"version inspector", agentmeta.VersionInspection, b.Version},
+		{"evidence provider", "", b.Evidence},
+		{"native paths", agentmeta.NativeProjects, b.NativePaths},
+		{"worktrees", agentmeta.NativeProjects, b.Worktrees},
+		{"workspace", agentmeta.NativeProjects, b.Workspace},
+		{"import inspector", agentmeta.HistoricalInspection, b.Imports},
+		{"children", agentmeta.ChildDiscovery, b.Children},
+		{"database catalog", agentmeta.DatabaseInspection, b.DatabaseCatalog},
+		{"discovery", agentmeta.HistoricalDiscovery, b.Discovery},
+	}
+	var operations []agentmeta.Operation
+	seen := map[agentmeta.Operation]bool{}
+	for _, port := range ports {
+		if port.implementation == nil {
+			continue
+		}
+		if nilImplementation(port.implementation) {
+			return nil, fmt.Errorf("typed nil %s for %s", port.name, b.Descriptor.ID)
+		}
+		if port.operation != "" && !seen[port.operation] {
+			seen[port.operation] = true
+			operations = append(operations, port.operation)
+		}
+	}
+	return operations, nil
+}
+
+// CanonicalDiscovery normalizes a supported external name before planning.
+func (r *Registry) CanonicalDiscovery(name string) (string, bool) {
+	b, ok := r.sourceBindings[agentmeta.Normalize(name)]
+	return string(b.Descriptor.ID), ok && b.Discovery != nil
 }

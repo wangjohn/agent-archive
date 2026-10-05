@@ -39,7 +39,7 @@ func TestAcceptSessionAdmissionMatrix(t *testing.T) {
 		}
 		return admitted.Add(time.Hour)
 	}
-	for _, origin := range []archive.SessionOrigin{"", archive.SessionOriginHook, archive.SessionOriginImport} {
+	for _, origin := range []archive.SessionOrigin{"", archive.SessionOriginHook, archive.SessionOriginImport, archive.SessionOriginDiscovery} {
 		for _, afterActivation := range []bool{false, true} {
 			for _, afterDestination := range []bool{false, true} {
 				for listName, list := range appLists {
@@ -56,9 +56,9 @@ func TestAcceptSessionAdmissionMatrix(t *testing.T) {
 						Harness: archive.Harness{Name: "claude"}, Origin: origin,
 					}
 					switch origin {
-					case archive.SessionOriginImport:
-						// An import's start is its true start, long before
-						// every boundary; only its admission can pass them.
+					case archive.SessionOriginImport, archive.SessionOriginDiscovery:
+						// Original native start does not govern publication
+						// boundaries after admission.
 						reg.SessionStartedAt, reg.AdmittedAt = yearsAgo, admitted
 					case archive.SessionOriginHook:
 						reg.SessionStartedAt, reg.AdmittedAt = admitted, admitted

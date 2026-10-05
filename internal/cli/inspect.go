@@ -81,6 +81,7 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	rebuildIndex := fs.Bool("rebuild-index", false, "rebuild the time-ordered listing index from all live metadata sidecars")
 	imported := fs.Bool("imported", false, "only sessions agent-archive backfill imported")
 	hookCaptured := fs.Bool("hook-captured", false, "only sessions captured by hooks as they ran")
+	replays := fs.String("replays", string(replaysHide), replaysFlagUsage)
 	limit := fs.Int("limit", defaultListLimit, "show at most this many sessions, newest first (0 for all)")
 	noPager := fs.Bool("no-pager", false, "print directly to the terminal; do not page through $PAGER")
 	verbose := fs.Bool("verbose", false, "show full session IDs, absolute times, origin, parser, and all models/skills")
@@ -101,7 +102,7 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	opts, code := listOptionsFromFlags(fs, listFlagValues{
 		harness: *harness, model: *model, skill: *skill, skillSHA256: *skillSHA256,
 		skillUsage: *skillUsage, since: *since, complete: *complete,
-		imported: *imported, hookCaptured: *hookCaptured, limit: *limit,
+		imported: *imported, hookCaptured: *hookCaptured, replays: replaysFlag(*replays), limit: *limit,
 		noCache: *noCache, noPager: *noPager, verbose: *verbose, jsonOut: *jsonOut,
 	}, env.now())
 	if code != 0 {
@@ -116,11 +117,8 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		terminal.Println(stderr, notSetUpMessage)
 		return 1
 	}
-	if *rebuildIndex {
-		if _, err := reader.RebuildIndex(context.Background(), store, archiveSessionsPrefix); err != nil {
-			terminal.Printf(stderr, "agent-archive: list: rebuild index: %v\n", err)
-			return 1
-		}
+	if *rebuildIndex && !rebuildListingIndex(store, stderr) {
+		return 1
 	}
 	scope, err := scopeFor(env, *project, *allProjects)
 	if err != nil {
@@ -128,18 +126,17 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		return 1
 	}
 	browsing := !opts.jsonOut && browseInteractive(env, stdin, stdout)
-	// The index lists the newest sessions of every project. A scope is
-	// applied before --limit, so it reads them all; so does a search, and
-	// every table and browser, which leave subagents out before --limit
-	// counts (a browser may also switch to the scope).
-	full := opts.limit == 0 || opts.imported || opts.hookCaptured || scope.narrowed() || !q.empty() || !opts.jsonOut
+	// Revision summaries support the implicit repository scope before limit.
+	// Explicit project names, searches and interactive scope switching still
+	// need exhaustive metadata. Text activity and child counts use summaries.
+	full := listRequiresFullScan(opts, *project, scope, q, browsing)
 	var stopList func()
 	if !opts.jsonOut {
 		stopList = startActivity(stdout, "Listing sessions…")
 	} else {
 		stopList = func() {}
 	}
-	listOpts := reader.ListOptions{Cache: listCache(env, opts.noCache), Skipped: warnSkippedSidecar(stderr, "list")}
+	listOpts := listingReadOptions(env, scope, opts, full, stderr)
 	listLimit := opts.limit
 	if full {
 		listLimit = 0
@@ -151,6 +148,11 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		return 1
 	}
 	sessions := filterListOrigin(listed.Sessions, opts.imported, opts.hookCaptured)
+	if !opts.jsonOut {
+		// --json keeps the listing's order, newest capture first, which
+		// the index's fast path can give without reading every session.
+		sortByActivity(sessions)
+	}
 	labels := projectLabels(cfg)
 	view := listViews{sessions: sessions, listed: listed, full: full, limit: opts.limit, jsonOut: opts.jsonOut, query: q,
 		fields: func(m archive.Metadata) sessionFields { return fieldsOf(m, sessionProjectName(m, labels)) }}.view
@@ -159,7 +161,7 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	}
 	format := listFormatOptions{
 		Now: env.now(), Verbose: opts.verbose, Projects: labels, Style: styleFor(stdout),
-		GroupByProject: true, Numbered: browsing, Children: childCounts(sessions),
+		GroupByProject: true, Numbered: browsing, Children: listingChildren(listed, sessions, full),
 	}
 	words := strings.Join(strings.Fields(query), " ")
 	choices := listChoices(scope, format, browsing, sessions, opts.limit, view, words)
@@ -247,6 +249,13 @@ type listViews struct {
 // with none of them is empty and the caller moves to all projects. Without
 // one, a table lists top-level sessions only, and --json every session.
 func (v listViews) view(s sessionScope) listView {
+	if !v.full {
+		if s.narrowed() && v.listed.ScopeEmpty {
+			return listView{}
+		}
+		return listView{shown: v.sessions, total: v.listed.TotalMatched, truncated: v.listed.TotalMatched > len(v.sessions), hidden: v.listed.Hidden, outside: v.listed.Outside}
+	}
+
 	switch {
 	case !v.query.empty():
 		res := searchSessions(v.sessions, v.query, s, v.fields)
@@ -311,11 +320,39 @@ type listFlagValues struct {
 	complete     bool
 	imported     bool
 	hookCaptured bool
+	replays      replaysFlag
 	noCache      bool
 	noPager      bool
 	verbose      bool
 	jsonOut      bool
 	limit        int
+}
+
+// replaysFlag is a value of --replays.
+type replaysFlag string
+
+// The values of --replays, on list and stats. hide, the default, keeps the
+// sessions a replay tool ran (archive.ReplayEnv) out of a person's history.
+const (
+	replaysHide    replaysFlag = "hide"
+	replaysInclude replaysFlag = "include"
+	replaysOnly    replaysFlag = "only"
+)
+
+// replaysFlagUsage is --replays' help.
+const replaysFlagUsage = "sessions a replay tool ran (" + archive.ReplayEnv + " set): hide, include, or only"
+
+// replayFilterFlag reads --replays; ok is false for any other value.
+func replayFilterFlag(value replaysFlag) (reader.ReplayFilter, bool) {
+	switch value {
+	case replaysHide:
+		return reader.ReplaysHidden, true
+	case replaysInclude:
+		return reader.ReplaysIncluded, true
+	case replaysOnly:
+		return reader.ReplaysOnly, true
+	}
+	return "", false
 }
 
 // listOptions is the validated list command configuration.
@@ -339,6 +376,13 @@ func listOptionsFromFlags(fs *commandFlags, v listFlagValues, now time.Time) (li
 	}
 	if v.imported && v.hookCaptured {
 		return listOptions{}, fs.usageError("choose one of --imported and --hook-captured")
+	}
+	if v.replays == "" {
+		v.replays = replaysHide
+	}
+	replays, ok := replayFilterFlag(v.replays)
+	if !ok {
+		return listOptions{}, fs.usageError("--replays must be hide, include, or only, not %q", v.replays)
 	}
 	canonical, ok := harnessFlagWithCatalog(fs.catalog, v.harness)
 	if !ok {
@@ -372,7 +416,7 @@ func listOptionsFromFlags(fs *commandFlags, v listFlagValues, now time.Time) (li
 	return listOptions{
 		filter: reader.Filter{
 			Harness: canonical, Model: v.model, Skill: v.skill, SkillSHA256: v.skillSHA256,
-			RequireCompleteCoverage: v.complete, SkillUsage: usage, From: from,
+			RequireCompleteCoverage: v.complete, SkillUsage: usage, From: from, Replays: replays,
 		},
 		skillUsage: usage, imported: v.imported, hookCaptured: v.hookCaptured,
 		noCache: v.noCache, noPager: v.noPager, verbose: v.verbose, jsonOut: v.jsonOut, limit: v.limit,
@@ -501,6 +545,7 @@ func sessionOrigin(m archive.Metadata) string {
 	if m.Origin == archive.SessionOriginImport {
 		return "imported"
 	}
+	// A replay is hook-captured too; its [replay] title mark says it is one.
 	return "hook"
 }
 
@@ -690,8 +735,9 @@ func printSessionTranscript(ctx context.Context, store storage.ObjectStore, env 
 		return 1
 	}
 	pruneHandoffs(home, env.now())
+	analysis, parseErr := analyzeSource(ctx, parsersFor(env), bundle)
 	if opts.json {
-		normalizedView, err := archive.ParseNormalized(bundle)
+		normalizedView, err := analysis.View, parseErr
 		stopShow()
 		if err != nil {
 			terminal.Printf(stderr, "agent-archive: show: normalized view unavailable: %v\n", err)
@@ -716,7 +762,12 @@ func printSessionTranscript(ctx context.Context, store storage.ObjectStore, env 
 		terminal.Print(stdout, string(data))
 		return 0
 	}
-	t, err := buildTranscript(bundle)
+	var t archive.Transcript
+	if parseErr != nil {
+		err = parseErr
+	} else {
+		t, err = archive.BuildTranscriptWithAnalysis(bundle, analysis, archive.HandoffOptions{ToolResultLines: transcriptResultLines, ToolResultBytes: transcriptResultBytes})
+	}
 	stopShow()
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: show: normalized view unavailable: %v\n", err)
@@ -886,4 +937,46 @@ func listOrDash(names []string) string {
 		display[i] = archive.DisplayLine(name)
 	}
 	return strings.Join(display, ",")
+}
+
+func listingChildren(listed reader.RecentResult, sessions []archive.Metadata, full bool) map[string]int {
+	if !full && listed.Children != nil {
+		return listed.Children
+	}
+	return childCounts(sessions)
+}
+
+// listRequiresFullScan keeps queries needing metadata predicates exhaustive.
+func listRequiresFullScan(opts listOptions, project string, scope sessionScope, query sessionQuery, browsing bool) bool {
+	return opts.limit == 0 || opts.imported || opts.hookCaptured || (project != "" && scope.narrowed()) || !query.empty() || browsing
+}
+
+// listingReadOptions builds selection and observation options for one CLI listing.
+func listingReadOptions(env listCommandDependencies, scope sessionScope, opts listOptions, full bool, stderr io.Writer) reader.ListOptions {
+	var bodyRead func(string, bool)
+	if observer, ok := env.(interface{ listBodyObserver() func(string, bool) }); ok {
+		bodyRead = observer.listBodyObserver()
+	}
+	var scopeMatch func(archive.Metadata) bool
+	if scope.narrowed() && !full {
+		scopeMatch = func(m archive.Metadata) bool { return scope.contains(m, nil) }
+	}
+	return reader.ListOptions{
+		Cache: listCache(env, opts.noCache), Skipped: warnSkippedSidecar(stderr, "list"),
+		ActivityOrder: !opts.jsonOut && !full, TopLevelOnly: !opts.jsonOut && !full,
+		CompatibilityScan: func(reason string) { terminal.Printf(stderr, "agent-archive: list: %s.\n", reason) },
+		BodyRead:          bodyRead, ScopeMatch: scopeMatch,
+	}
+}
+
+// rebuildListingIndex reports explicit index maintenance progress and resumable failure.
+func rebuildListingIndex(store storage.ObjectStore, stderr io.Writer) bool {
+	terminal.Println(stderr, "agent-archive: list: rebuilding listing entries from live metadata…")
+	count, err := reader.RebuildIndex(context.Background(), store, archiveSessionsPrefix)
+	if err != nil {
+		terminal.Printf(stderr, "agent-archive: list: rebuild index stopped after %d metadata entries: %v; rerun to resume\n", count, err)
+		return false
+	}
+	terminal.Printf(stderr, "agent-archive: list: rebuilt %d metadata entries.\n", count)
+	return true
 }

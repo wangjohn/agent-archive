@@ -5,6 +5,16 @@ usage halfway through a task, or want Codex to take a look? Hand the session
 off, and the other agent starts with it as context. You don't copy or paste
 anything.
 
+Handoff transfers filtered conversation context. Prepare the receiving checkout
+separately: files, uncommitted edits, and running processes do not move.
+
+Start with [local sessions before setup](#before-setup-native-local-sessions),
+[handoff inside an agent](#from-inside-an-agent-handoff), or
+[handoff from a terminal](#from-a-terminal). Advanced details cover
+[separate checkouts](#working-in-a-separate-checkout---worktree),
+[session search](#naming-a-session-in-words), and
+[what the receiving agent sees](#what-the-receiving-agent-is-told).
+
 There are two ways to do it:
 
 - **Inside an agent.** In Claude Code, type `/handoff codex`. In Codex, ask
@@ -65,8 +75,10 @@ platforms remain unverified; synthetic home/launcher tests cover the command
 flow. Setup installs agent skills only when explicitly requested later.
 
 Rendering creates no archive. Launch files are private (directory 0700, file
-0600) under `agent-archive-local-handoffs` in the temporary directory and survive
-asynchronous launch. Subsequent local handoffs remove owned directories older
+0600) under `agent-archive-local-handoffs-<uid>` in the temporary directory and survive
+asynchronous launch. Each user has a separate namespace; reuse and cleanup refuse
+directories owned by another user, public directories, and symlinks. Subsequent
+local handoffs remove owned directories older
 than seven days, best effort; files can remain until another invocation or OS
 cleanup. Trimmed output has no automatic saved full copy before setup: use
 `--max-bytes 0` or explicit `--output`. `--source archive` requires setup.

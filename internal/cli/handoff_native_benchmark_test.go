@@ -34,16 +34,16 @@ func BenchmarkNativeFirstPreview(b *testing.B) {
 					b.Fatal(err)
 				}
 			}
-			roots := []nativesessions.StoreRoot{{Harness: "claude", Path: root}}
+			roots := []nativesessions.StoreRoot{{Harness: "claude", Depth: 1, Suffix: ".jsonl", Path: root}}
 			b.ReportAllocs()
 			b.ResetTimer()
 			for b.Loop() {
 				files := &nativeReadMeter{}
-				result, err := nativesessions.Discover(context.Background(), files, roots, nativesessions.Scope{Directories: []string{cwd}}, nativesessions.Limits{Files: 10000, HeaderBytes: nativeWindowBytes, RecordBytes: nativeWindowBytes, TotalBytes: nativeReadBudget, Workers: 2})
+				result, err := nativesessions.Discover(context.Background(), productionAgents, files, roots, nativesessions.Scope{Directories: []string{cwd}}, nativesessions.Limits{Files: 10000, HeaderBytes: nativeWindowBytes, RecordBytes: nativeWindowBytes, TotalBytes: nativeReadBudget, Workers: 2})
 				if err != nil {
 					b.Fatal(err)
 				}
-				catalog := &nativePreviewCatalog{ctx: context.Background(), files: files, candidates: result.Candidates, reserved: result.Coverage.ReservedBytes, stderr: io.Discard, now: time.Unix(0, 0)}
+				catalog := &nativePreviewCatalog{sources: productionAgents, previews: productionAgents, ctx: context.Background(), files: files, candidates: result.Candidates, reserved: result.Coverage.ReservedBytes, stderr: io.Discard, now: time.Unix(0, 0)}
 				if _, err := catalog.load(); err != nil {
 					b.Fatal(err)
 				}

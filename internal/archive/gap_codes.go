@@ -8,6 +8,8 @@ package archive
 // archive-authored and never carry transcript content; see
 // dev/specs/privacy-filter.md for what each one means.
 var CaptureGapCodes = []string{
+	CaptureGapDiscoveredWithoutHookEvidence,
+	"recovered_generation",
 	// Source filter (every format).
 	"binary_content_omitted",
 	"content_truncated",

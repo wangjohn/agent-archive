@@ -9,10 +9,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
+	"github.com/wangjohn/agent-archive/internal/discovery"
 	"github.com/wangjohn/agent-archive/internal/evidence"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/retention"
@@ -147,6 +149,26 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 	stop := func() bool {
 		return time.Since(started) >= collectSoftDeadline || (pass.stop != nil && pass.stop())
 	}
+	// Local identity recovery and admission must not depend on credentials or
+	// storage availability. Source observation retains its own short budget.
+	// The complete authority census precedes the application allowance. Give it
+	// part of the remaining pass budget so a census slower than four seconds
+	// does not consume every future slice before any owner can be applied.
+	recoveryBudget := max(time.Nanosecond, (collectSoftDeadline-time.Since(started))/2)
+	applicationBudget := min(state.SessionIndexRecoverySlice, recoveryBudget) * 3 / 4
+	recoveryCtx, recoveryCancel := context.WithTimeout(ctx, recoveryBudget)
+	_, recoveryErr := localStore.RecoverSessionIndexScheduled(recoveryCtx, max(time.Nanosecond, applicationBudget))
+	if errors.Is(recoveryErr, context.DeadlineExceeded) && state.SessionIndexRecoveryInterrupted(recoveryErr) && ctx.Err() == nil {
+		recoveryErr = nil
+	}
+	if recoveryErr != nil {
+		recordPreflightError(localStore, recoveryErr)
+	}
+	recoveryCancel()
+	_, discoveryErr := discovery.Run(ctx, localStore, cfg, discovery.Options{Now: env.Now, Stop: stop})
+	if discoveryErr != nil {
+		recordPreflightError(localStore, errors.Join(recoveryErr, discoveryErr))
+	}
 	objectStore, cfg, err := openPassStorage(ctx, home, cfg, env, localStore, quietOnBusy)
 	if err != nil {
 		return collector.Result{}, err
@@ -161,18 +183,29 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 	if previous, err := localStore.LoadStatus(); err == nil {
 		previousScanAt = previous.LastScanAt
 	}
-	result, err := collector.Run(ctx, localStore, objectStore, collector.Options{Decoders: env.agentRegistry(),
-		MachineID:            cfg.MachineID,
-		SupplementalEvidence: skillObserver(env, cfg.EffectiveSkillEvidence()),
-		SkillEvidence:        cfg.EffectiveSkillEvidence(),
-		AcceptSession:        cfg.AcceptSession,
-		Now:                  env.Now,
-		RequireSkillUse:      cfg.RequireSkillUse,
-		Progress:             pass.progress,
-		Stop:                 stop,
-		CursorDatabase:       env.cursorDatabase(),
-		RepoKey:              env.repoKey,
+	result, err := collector.Run(ctx, localStore, objectStore, collector.Options{
+		SkipSessionIndexRecovery: true,
+		Parsers:                  parsersFor(env),
+		Sources:                  registryFor(env),
+		Decoders:                 env.agentRegistry(),
+		MachineID:                cfg.MachineID,
+		SupplementalEvidence:     skillObserver(env, cfg.EffectiveSkillEvidence()),
+		SkillEvidence:            cfg.EffectiveSkillEvidence(),
+		AcceptSession:            cfg.AcceptSession,
+		Now:                      env.Now,
+		RequireSkillUse:          cfg.RequireSkillUse,
+		Progress:                 pass.progress,
+		Stop:                     stop,
+		CursorDatabase:           env.cursorDatabase(),
+		RepoKey:                  env.repoKey,
 	})
+	// Collector status replaces its previous LastErrors. Preserve every local
+	// preflight failure, even if recovery later succeeds or collection errors.
+	for _, preflightErr := range []error{recoveryErr, discoveryErr} {
+		if preflightErr != nil {
+			addStatusProblem(localStore, preflightErr.Error())
+		}
+	}
 	if err != nil {
 		return result, err
 	}
@@ -479,7 +512,7 @@ func skillObserver(env Env, mode config.SkillEvidence) func(archive.SessionRegis
 			if err != nil {
 				return nil, err
 			}
-			userScope, err = evidence.ObserveSkills(evidence.SkillOptions{Harness: reg.Harness.Name, UserHome: userHome, ObservedAt: at, Mode: mode})
+			userScope, err = evidence.ObserveSkills(evidence.SkillOptions{Harness: reg.Harness.Name, UserHome: userHome, ObservedAt: at, Mode: mode, Locations: skillEvidenceRoots(env, reg.Harness.Name, agentapi.SkillLocations{UserHome: userHome})})
 			if err != nil {
 				return nil, err
 			}
@@ -489,7 +522,7 @@ func skillObserver(env Env, mode config.SkillEvidence) func(archive.SessionRegis
 		projectScope, ok := projectCache[projectKey]
 		if !ok {
 			var err error
-			projectScope, err = evidence.ObserveSkills(evidence.SkillOptions{Harness: reg.Harness.Name, ProjectRoot: reg.ProjectRoot, ObservedAt: at, Mode: mode})
+			projectScope, err = evidence.ObserveSkills(evidence.SkillOptions{Harness: reg.Harness.Name, ProjectRoot: reg.ProjectRoot, ObservedAt: at, Mode: mode, Locations: skillEvidenceRoots(env, reg.Harness.Name, agentapi.SkillLocations{ProjectRoot: reg.ProjectRoot})})
 			if err != nil {
 				return nil, err
 			}
@@ -497,4 +530,11 @@ func skillObserver(env Env, mode config.SkillEvidence) func(archive.SessionRegis
 		}
 		return append(append([]archive.SupplementalEvidence(nil), userScope...), projectScope...), nil
 	}
+}
+
+func skillEvidenceRoots(env Env, name string, l agentapi.SkillLocations) []agentapi.SkillRoot {
+	if p, ok := env.agentRegistry().LookupSkills(name); ok {
+		return p.EvidenceRoots(l)
+	}
+	return nil
 }

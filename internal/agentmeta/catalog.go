@@ -23,6 +23,12 @@ type Operation string
 // Launch means an integration implements native launch argument construction.
 const Launch Operation = "launch"
 
+// Parse means an integration interprets retained safe transcript evidence.
+const Parse Operation = "parse"
+
+// Source means an integration provides bounded sources and native filtering.
+const Source Operation = "source"
+
 // Runtime means an integration implements native runtime observation.
 const Runtime Operation = "runtime"
 
@@ -31,6 +37,30 @@ const ManagedHooks Operation = "managed-hooks"
 
 // LifecycleHooks means native hook decoding is implemented.
 const LifecycleHooks Operation = "lifecycle-hooks"
+
+// Skills means native skill planning and inspection are implemented.
+const Skills Operation = "skills"
+
+// NativeInspection means bounded purpose-specific native header inspection is implemented.
+const NativeInspection Operation = "native-inspection"
+
+// VersionInspection means installed-version observation is implemented.
+const VersionInspection Operation = "version-inspection"
+
+// HistoricalDiscovery means native candidate enumeration is implemented.
+const HistoricalDiscovery Operation = "historical-discovery"
+
+// DatabaseInspection means read-only native database catalog inspection is implemented.
+const DatabaseInspection Operation = "database-inspection"
+
+// NativeProjects means native path or workspace project interpretation is implemented.
+const NativeProjects Operation = "native-projects"
+
+// ChildDiscovery means native child transcript enumeration is implemented.
+const ChildDiscovery Operation = "child-discovery"
+
+// HistoricalInspection means native historical admission evidence is implemented.
+const HistoricalInspection Operation = "historical-inspection"
 
 // Descriptor describes one identity. Operations are populated by composition.
 type Descriptor struct {
@@ -69,7 +99,7 @@ func New(descriptors []Descriptor) (Catalog, error) {
 		}
 		seen := map[Operation]bool{}
 		for _, op := range d.Operations {
-			if (op != Launch && op != Runtime && op != ManagedHooks && op != LifecycleHooks) || seen[op] {
+			if (op != Parse && op != Launch && op != Runtime && op != ManagedHooks && op != LifecycleHooks && op != Source && op != Skills && op != NativeInspection && op != VersionInspection && op != HistoricalDiscovery && op != DatabaseInspection && op != NativeProjects && op != ChildDiscovery && op != HistoricalInspection) || seen[op] {
 				return nil, fmt.Errorf("invalid operation %q for %s", op, d.ID)
 			}
 			seen[op] = true

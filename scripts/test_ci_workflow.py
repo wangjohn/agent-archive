@@ -8,6 +8,8 @@ from pathlib import Path
 import re
 import unittest
 
+from test_release_assets import steps
+
 ROOT = Path(__file__).resolve().parent.parent
 EXTENDED_YML = ROOT / '.github' / 'workflows' / 'extended.yml'
 TESTING_MD = ROOT / 'dev' / 'contributing' / 'testing.md'
@@ -65,6 +67,68 @@ class RealSystemdJobTest(unittest.TestCase):
     def test_the_testing_docs_name_the_same_image(self):
         runs_on = job_key(self.job(), 'runs-on')
         self.assertIn(f'`{runs_on}`', TESTING_MD.read_text(), f'dev/contributing/testing.md should name {runs_on}')
+
+
+class PublishedWriterJobTest(unittest.TestCase):
+    def test_published_writer_runs_only_on_native_macos(self):
+        found = jobs(EXTENDED_YML.read_text())
+        self.assertIn('bash scripts/test_published_writer.sh', found['macos-full'])
+        self.assertRegex(job_key(found['macos-full'], 'runs-on'), r'^macos-')
+        for name, text in found.items():
+            if name != 'macos-full':
+                self.assertNotIn('test_published_writer.sh', text)
+
+
+class CandidateCampaignTest(unittest.TestCase):
+    def test_candidate_validation_never_restores_shared_go_build_state(self):
+        # Candidate evidence must come from fresh source/module verification,
+        # not executable build state restored from another workflow's cache.
+        expected = {'test': 4, 'levenshtein': 1, 'extended': 4}
+        for name, count in expected.items():
+            workflow = (ROOT / '.github/workflows' / f'{name}.yml').read_text()
+            setup = [step for job in jobs(workflow).values() for step in steps(job)
+                     if re.search(r'uses: actions/setup-go@', step)]
+            self.assertEqual(len(setup), count, name)
+            for step in setup:
+                with self.subTest(workflow=name, step=step):
+                    self.assertRegex(step, r'(?m)^          cache: false(?:\s+#.*)?$')
+                    self.assertNotIn('cache-dependency-path:', step)
+
+    def test_candidate_push_triggers_test_verify_and_extended_without_signing(self):
+        for name in ('test', 'levenshtein', 'extended'):
+            workflow = (ROOT / '.github/workflows' / f'{name}.yml').read_text()
+            self.assertRegex(workflow, r"(?m)^  push:\n    branches: \[.*'release-candidate/\*\*'.*\]$")
+            self.assertNotIn('environment: release', workflow)
+            self.assertNotIn('secrets.APPLE_', workflow)
+        release = (ROOT / '.github/workflows/release.yml').read_text()
+        self.assertNotIn('branches:', release)
+        self.assertNotIn('workflow_dispatch:', release)
+        self.assertIn("      - 'v*.*.*'", release)
+
+    def test_candidate_test_keeps_all_pr_gates(self):
+        workflow = (ROOT / '.github/workflows/test.yml').read_text()
+        self.assertIn('  pull_request:', workflow)
+        self.assertEqual(set(jobs(workflow)), {'linux-race', 'macos-smoke', 'cross-build', 'lint'})
+        for name, text in jobs(workflow).items():
+            self.assertIsNone(job_key(text, 'if'), name)
+        self.assertIn('go test -race -timeout 20m ./...', workflow)
+        self.assertIn('github.event.pull_request.number || github.ref', workflow)
+
+    def test_extended_conditions_preserve_main_nightly_dispatch_and_add_candidate_campaign(self):
+        workflow = EXTENDED_YML.read_text()
+        conditions = {name: job_key(text, 'if') for name, text in jobs(workflow).items()}
+        expected = {
+            'linux-race': "(github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'linux'))",
+            'macos-full': "github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'macos'))",
+        }
+        for name, suite in (('fuzz', 'fuzz'), ('real-systemd', 'systemd')):
+            expected[name] = "(github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release-candidate/')) || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == '" + suite + "'))"
+        self.assertEqual(conditions, expected)
+        self.assertIn("github.event_name == 'push' && github.ref || github.run_id", workflow)
+        self.assertIn('go test -race -timeout 20m ./...', jobs(workflow)['macos-full'])
+        self.assertIn('-fuzztime 30s -fuzzminimizetime 2s', jobs(workflow)['fuzz'])
+        self.assertIn('test "$found" -ge 24', jobs(workflow)['fuzz'])
+        self.assertIn('AGENT_ARCHIVE_REAL_SYSTEMD:', jobs(workflow)['real-systemd'])
 
 
 class JobsParserTest(unittest.TestCase):

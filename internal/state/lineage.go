@@ -161,6 +161,15 @@ func (s *Store) ForgetIdleSession(archiveSessionID string, key agentmeta.Session
 	if removal != nil && agentmeta.Canonical(agentmeta.Builtins(), removal.Harness) != string(key.Agent) {
 		return false, ErrSessionIdentityConflict
 	}
+	packedIDs, err := s.packedRemovalIDs(archiveSessionID)
+	if err != nil {
+		return false, err
+	}
+	revision, err := s.stageRegistrationRemovalRevision(archiveSessionID, key)
+	if err != nil {
+		return false, err
+	}
+	defer revision.Discard()
 	takeBack := func() error { return nil }
 	if removal != nil {
 		if takeBack, err = s.recordRemovalRevocably(removal.Harness, key.NativeID, removal.Reason, removal.At); err != nil {
@@ -170,10 +179,22 @@ func (s *Store) ForgetIdleSession(archiveSessionID string, key agentmeta.Session
 			s.afterRemovalRecord()
 		}
 	}
-	started, err := s.forgetIdleLocked(archiveSessionID, key, deferForWork)
+	retirement, err := s.stageGenerationRetirement(key, archiveSessionID)
+	if err != nil {
+		return false, errors.Join(err, takeBack())
+	}
+	defer retirement.Discard()
+	started, err := s.forgetIdleLocked(archiveSessionID, key, deferForWork, revision, retirement)
 	if started {
 		// A forget that failed part way keeps its record: the session may
 		// be unregistered already.
+		if revision != nil {
+			s.writeSynced()
+		}
+		err = errors.Join(err, syncRegistrationRevision(revision), syncRegistrationRevision(retirement), s.removePackedIdentities(packedIDs))
+		if err == nil {
+			err = s.recordPackedExpiry(key, archiveSessionID)
+		}
 		return err == nil, err
 	}
 	// None of the session's own records are gone, so the record goes back.
@@ -189,7 +210,7 @@ func (s *Store) ForgetIdleSession(archiveSessionID string, key agentmeta.Session
 // forgetIdleLocked is the part of ForgetIdleSession done under the request
 // lock: the recheck, then the forget. started reports whether the forget
 // began removing the session's own records.
-func (s *Store) forgetIdleLocked(archiveSessionID string, key agentmeta.SessionKey, deferForWork bool) (started bool, err error) {
+func (s *Store) forgetIdleLocked(archiveSessionID string, key agentmeta.SessionKey, deferForWork bool, revision, retirement *local.Staged) (started bool, err error) {
 	unlock, err := s.lockRequest(archiveSessionID)
 	if err != nil {
 		return false, err
@@ -214,7 +235,7 @@ func (s *Store) forgetIdleLocked(archiveSessionID string, key agentmeta.SessionK
 	case busy:
 		return false, fmt.Errorf("forget session %q: a subagent candidate naming it is being recorded: %w", archiveSessionID, local.ErrBusy)
 	}
-	return true, s.forgetSession(archiveSessionID, key, false)
+	return true, s.forgetSession(archiveSessionID, key, false, revision, retirement)
 }
 
 // hasWork reports whether a session has a request or a pending publication:
@@ -299,6 +320,16 @@ func (s *Store) ForgetOrphan(archiveSessionID string) (forgotten bool, err error
 	if !safeFileComponent(archiveSessionID) {
 		return false, errors.New("archive session ID is not a safe file name component")
 	}
+	packedIDs, err := s.packedRemovalIDs(archiveSessionID)
+	if err != nil {
+		return false, err
+	}
+	defer func() {
+		if forgotten {
+			err = errors.Join(err, s.removePackedIdentities(packedIDs))
+			forgotten = err == nil
+		}
+	}()
 	unlock, err := s.lockRequest(archiveSessionID)
 	if err != nil {
 		return false, err
@@ -314,7 +345,7 @@ func (s *Store) ForgetOrphan(archiveSessionID string) (forgotten bool, err error
 	case busy:
 		return false, fmt.Errorf("forget session %q: a subagent candidate naming it is being recorded: %w", archiveSessionID, local.ErrBusy)
 	}
-	if err := s.forgetSession(archiveSessionID, agentmeta.SessionKey{}, false); err != nil {
+	if err := s.forgetSession(archiveSessionID, agentmeta.SessionKey{}, false, nil, nil); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -342,12 +373,34 @@ func (s *Store) SessionDir(archiveSessionID string) string {
 // to write for the session, UpdateRegistration reports it forgotten, and
 // RegisterNewSession assigns a fresh archive ID instead of reusing this one.
 func (s *Store) ForgetSession(archiveSessionID string, key agentmeta.SessionKey) error {
-	return s.forgetSession(archiveSessionID, key, true)
+	packedIDs, err := s.packedRemovalIDs(archiveSessionID)
+	if err != nil {
+		return err
+	}
+	revision, err := s.stageRegistrationRemovalRevision(archiveSessionID, key)
+	if err != nil {
+		return err
+	}
+	defer revision.Discard()
+	retirement, err := s.stageGenerationRetirement(key, archiveSessionID)
+	if err != nil {
+		return err
+	}
+	defer retirement.Discard()
+	err = s.forgetSession(archiveSessionID, key, true, revision, retirement)
+	if revision != nil {
+		s.writeSynced()
+	}
+	err = errors.Join(err, syncRegistrationRevision(revision), syncRegistrationRevision(retirement), s.removePackedIdentities(packedIDs))
+	if err == nil {
+		err = s.recordPackedExpiry(key, archiveSessionID)
+	}
+	return err
 }
 
 // forgetSession is ForgetSession; withCandidates false is for a caller that
 // already removed the session's subagent candidates under their locks.
-func (s *Store) forgetSession(archiveSessionID string, key agentmeta.SessionKey, withCandidates bool) error {
+func (s *Store) forgetSession(archiveSessionID string, key agentmeta.SessionKey, withCandidates bool, revision, retirement *local.Staged) error {
 	if !safeFileComponent(archiveSessionID) {
 		return errors.New("archive session ID is not a safe file name component")
 	}
@@ -369,6 +422,14 @@ func (s *Store) forgetSession(archiveSessionID string, key agentmeta.SessionKey,
 	if withCandidates {
 		if err := s.removeSubagentCandidatesForSession(archiveSessionID); err != nil {
 			return fmt.Errorf("remove linked subagent candidates: %w", err)
+		}
+	}
+	if retirement != nil {
+		if err := retirement.Commit(); err != nil {
+			return err
+		}
+		if err := s.indexStep("generation-retired"); err != nil {
+			return err
 		}
 	}
 	paths := []string{
@@ -409,7 +470,11 @@ func (s *Store) forgetSession(archiveSessionID string, key agentmeta.SessionKey,
 				return err
 			}
 		}
-		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		remove := os.Remove
+		if path == s.registrationPath(archiveSessionID) {
+			remove = func(path string) error { return s.removeRegistrationWithRevision(path, revision) }
+		}
+		if err := remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return errors.Join(fmt.Errorf("remove %q: %w", path, err), s.MarkSessionIndexRecoveryNeeded())
 		}
 	}

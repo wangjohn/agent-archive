@@ -4,80 +4,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
+
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 )
 
-// tokenTotals collects whatever token accounting the retained records expose,
-// keyed by the message the accounting belongs to. Claude Code writes one JSONL
-// record per content block of a single API message, and every one of those
-// records repeats the same `message.id` and the same `message.usage`; adding
-// each record's usage would count one response as many. The latest record seen
-// for a message id replaces the earlier ones. Accounting with no message
-// identity (Codex's `turn_token_usage`) is summed as it comes.
-//
-// Each record's accounting also remembers the model it belongs to, so the same
-// records that make the session-wide totals make the per-model ones: the
-// per-model sums add up to the totals by construction.
-type tokenTotals struct {
-	byMessage map[string]modelUsage
-	anonymous []modelUsage
-}
-
-// modelUsage is one record's usage object and the model it is attributed to
-// ("" when no model name could be attached).
-type modelUsage struct {
-	usage map[string]any
-	model string
-}
-
-func (t *tokenTotals) observe(usage map[string]any, messageID, model string) {
-	entry := modelUsage{usage: usage, model: model}
-	if messageID == "" {
-		t.anonymous = append(t.anonymous, entry)
-		return
-	}
-	if t.byMessage == nil {
-		t.byMessage = map[string]modelUsage{}
-	}
-	t.byMessage[messageID] = entry
-}
-
 // maxTokenCount is the largest count JSON carries exactly (2^53).
 const maxTokenCount = 1 << 53
-
-// tokenCount reads one native token count. Only a whole number from 0 to
-// maxTokenCount is a count; a negative, fractional, or larger value (a
-// corrupt or hostile record) is treated as absent, so it can neither make a
-// total negative nor break the schema's bounds.
-func tokenCount(raw any) (int, bool) {
-	value, ok := raw.(float64)
-	if !ok || value < 0 || value > maxTokenCount || value != math.Trunc(value) {
-		return 0, false
-	}
-	return int(value), true
-}
-
-// reasoningTokenCount reads a usage object's reasoning tokens: Codex's
-// `reasoning_output_tokens`, or the `thinking_tokens` (or OpenAI-style
-// `reasoning_tokens`) inside Claude Code's `output_tokens_details`. They are
-// part of the output tokens, not in addition to them.
-func reasoningTokenCount(source map[string]any) (int, bool) {
-	if value, ok := tokenCount(source["reasoning_output_tokens"]); ok {
-		return value, true
-	}
-	if details, ok := source["output_tokens_details"].(map[string]any); ok {
-		for _, key := range []string{"thinking_tokens", "reasoning_tokens"} {
-			if value, ok := tokenCount(details[key]); ok {
-				return value, true
-			}
-		}
-	}
-	return 0, false
-}
 
 // addTokenCount adds one count to a field that stays nil until some record
 // reports it, so "no accounting" is never published as zero tokens. Each
@@ -92,54 +27,7 @@ func addTokenCount(target **int, value int) {
 	*target = &total
 }
 
-// addUsage adds one usage object's counts to out. Of the several names a
-// field goes by, the first one present with a valid count is read.
-func addUsage(out *TokenUsage, source map[string]any) {
-	add := func(target **int, keys ...string) {
-		for _, key := range keys {
-			if value, ok := tokenCount(source[key]); ok {
-				addTokenCount(target, value)
-				return
-			}
-		}
-	}
-	add(&out.Input, "input_tokens", "prompt_tokens")
-	add(&out.Output, "output_tokens", "completion_tokens")
-	add(&out.CacheRead, "cache_read_input_tokens", "cached_input_tokens")
-	add(&out.CacheWrite, "cache_creation_input_tokens", "cache_write_input_tokens")
-	if value, ok := reasoningTokenCount(source); ok {
-		addTokenCount(&out.Reasoning, value)
-	}
-}
-
-// usage sums the collected accounting, session-wide and per model (sorted by
-// model id, UnknownModel for accounting no model was named on). A field stays
-// nil until some record reports it, and a record that reports no count makes
-// no per-model entry.
-func (t *tokenTotals) usage() (TokenUsage, []ModelTokens) {
-	var total TokenUsage
-	byModel := map[string]*TokenUsage{}
-	sources := append([]modelUsage(nil), t.anonymous...)
-	for _, source := range t.byMessage {
-		sources = append(sources, source)
-	}
-	for _, source := range sources {
-		var one TokenUsage
-		addUsage(&one, source.usage)
-		if one == (TokenUsage{}) {
-			continue
-		}
-		addUsage(&total, source.usage)
-		model := boundModelName(source.model)
-		if model == "" {
-			model = UnknownModel
-		}
-		if byModel[model] == nil {
-			byModel[model] = &TokenUsage{}
-		}
-		addUsage(byModel[model], source.usage)
-	}
-	foldExtraModels(byModel)
+func sortedModelTokens(byModel map[string]*TokenUsage) []ModelTokens {
 	models := make([]string, 0, len(byModel))
 	for model := range byModel {
 		models = append(models, model)
@@ -153,7 +41,7 @@ func (t *tokenTotals) usage() (TokenUsage, []ModelTokens) {
 			CacheReadTokens: u.CacheRead, CacheWriteTokens: u.CacheWrite, ReasoningTokens: u.Reasoning,
 		})
 	}
-	return total, split
+	return split
 }
 
 // boundModelName caps a model id at maxModelNameRunes runes, since the filter
@@ -221,82 +109,6 @@ func addTokenUsage(dst *TokenUsage, src TokenUsage) {
 	}
 }
 
-// tokenModel is the model a record's token accounting belongs to: for Codex
-// the model of the latest turn_context (the token record itself names none),
-// for any other harness the model the record names. "" when there is none, or
-// only a placeholder.
-func tokenModel(bundle SourceBundle, record map[string]any, codexModel string) string {
-	if bundle.harness() == HarnessCodex && codexModel != "" && !isPlaceholderModel(codexModel) {
-		return codexModel
-	}
-	return recordModel(record)
-}
-
-// accumulateTokens records one record's token accounting: Claude stamps
-// `message.usage` on each assistant record and Codex writes `turn_token_usage`
-// on each token_usage_record. Cumulative (`total_token_usage`) and thread-wide
-// figures are deliberately ignored, so the sum stays additive across records.
-// The accounting is attributed to the `id` of the object that carries it
-// (Claude's `message.id`), which is what lets repeated streamed records of one
-// message count once, and to the model given.
-func accumulateTokens(record map[string]any, model string, totals *tokenTotals) {
-	usage, owner := firstMapDeepOwner(record, "usage")
-	if usage == nil {
-		usage, owner = firstMapDeepOwner(record, "turn_token_usage")
-	}
-	if usage == nil {
-		return
-	}
-	totals.observe(usage, firstString(owner, "id"), model)
-}
-
-// nativeTurnEnd reads Cursor's own end-of-turn record. Cursor has no lifecycle
-// hook for this, so without it a Cursor session's outcome stays unknown even
-// though the transcript states it.
-func nativeTurnEnd(bundle SourceBundle) (MetadataState, TurnOutcome, bool) {
-	if bundle.harness() != "cursor" {
-		return "", "", false
-	}
-	state, outcome, found := MetadataStateUnknown, TurnOutcomeUnknown, false
-	for _, record := range bundle.NativeRecords {
-		if strings.ToLower(strings.TrimSpace(firstString(record, "type"))) != "turn_ended" {
-			continue
-		}
-		// The turn is over whatever it reported; a later record wins.
-		state, found = MetadataStateIdle, true
-		switch strings.ToLower(strings.TrimSpace(firstString(record, "status"))) {
-		case "completed":
-			outcome = TurnOutcomeCompleted
-		case "aborted", "cancelled", "canceled", "interrupted":
-			outcome = TurnOutcomeInterrupted
-		case "error", "failed":
-			outcome = TurnOutcomeError
-		default:
-			outcome = TurnOutcomeUnknown
-		}
-	}
-	return state, outcome, found
-}
-
-// BuildMetadata derives a replaceable metadata sidecar. If parsing fails, it
-// returns failed minimal metadata together with a ParseError; callers should
-// still publish the verified filtered source and retry a parser upgrade later.
-func BuildMetadata(bundle SourceBundle, machineID string, startedAt, derivedAt time.Time, reference SourceReference, parser ParserInfo) (Metadata, error) {
-	if err := validateMetadataInputs(bundle, machineID, startedAt, derivedAt, reference); err != nil {
-		return Metadata{}, err
-	}
-	parser = defaultMetadataParser(bundle, parser)
-	view, parseErr := ParseNormalized(bundle)
-	if parseErr != nil {
-		parser.Status = ParserStatusFailed
-	}
-	metadata := baseMetadata(bundle, machineID, startedAt, derivedAt, reference, parser)
-	if parseErr != nil {
-		return metadata, parseErr
-	}
-	return assembleParsedMetadata(bundle, view, metadata), nil
-}
-
 func validateMetadataInputs(bundle SourceBundle, machineID string, startedAt, derivedAt time.Time, reference SourceReference) error {
 	if err := validateBundle(bundle); err != nil {
 		return err
@@ -337,45 +149,6 @@ func baseMetadata(bundle SourceBundle, machineID string, startedAt, derivedAt ti
 		ParentSessionID: bundle.ParentSessionID,
 		LinkedSessions:  append([]LinkedSessionReference(nil), bundle.LinkedSessions...),
 	}
-}
-
-func assembleParsedMetadata(bundle SourceBundle, view NormalizedView, metadata Metadata) Metadata {
-	// A native end-of-turn record fills in only what the hook evidence could
-	// not establish: an observed hook stop, interrupt, or closure still wins.
-	if state, outcome, found := nativeTurnEnd(bundle); found {
-		if metadata.State == MetadataStateUnknown {
-			metadata.State = state
-		}
-		if metadata.TurnOutcome == TurnOutcomeUnknown {
-			metadata.TurnOutcome = outcome
-		}
-	}
-	prompts, messages, shellCommands, models := summarizeTurns(view.Turns)
-	// Native text has unproven structure, so structured counts remain unknown.
-	if len(bundle.NativeText) == 0 {
-		metadata.Counts = structuredCounts(bundle, view, prompts, messages, shellCommands)
-		metadata.ToolsUsed = deriveToolsUsed(view.ToolCalls, workspaceRoot(bundle))
-		metadata.MCPCalls = deriveMCPCalls(view.ToolCalls, workspaceRoot(bundle))
-		metadata.ModelTokens = view.ModelTokens
-		var git gitCounts
-		metadata.GitActivity, git = deriveGitActivity(bundle, view.ToolCalls)
-		metadata.Counts.Commits, metadata.Counts.Pushes = &git.commits, &git.pushes
-		metadata.Counts.PRsCreated, metadata.Counts.PRsMerged = &git.prsCreated, &git.prsMerged
-	}
-	metadata.EndedAt = deriveEndedAt(view, metadata.StartedAt)
-	metadata.Models = models
-	deriveHookModels(bundle, &metadata)
-	deriveSkills(bundle, view.NativeSkillUses, &metadata)
-	labels := deriveLabels(bundle, view)
-	metadata.Name, metadata.Title, metadata.Branch, metadata.PullRequests = labels.Name, labels.Title, labels.Branch, labels.PullRequests
-	feedback := 0
-	for _, e := range bundle.SupplementalEvidence {
-		if e.Kind == EvidenceKindExplicitFeedback {
-			feedback++
-		}
-	}
-	metadata.Counts.ExplicitFeedback = &feedback
-	return metadata
 }
 
 func summarizeTurns(turns []NormalizedTurn) (prompts, messages, shellCommands int, summaries []ModelSummary) {
@@ -451,51 +224,6 @@ func addTurnModel(models map[string]*ModelSummary, turn NormalizedTurn) {
 		model.TurnCount = &zero
 	}
 	*model.TurnCount++
-}
-
-func structuredCounts(bundle SourceBundle, view NormalizedView, prompts, messages, shellCommands int) Counts {
-	toolCalls, toolResults := len(view.ToolCalls), len(view.ToolResults)
-	filesTouched := len(sessionFilesTouched(view.ToolCalls, workspaceRoot(bundle)))
-	var compactions *int
-	if compactionsObservable(bundle) {
-		// Count boundaries; use summaries only when no boundary was retained.
-		count := view.CompactBoundaries
-		if count == 0 {
-			count = view.CompactSummaries
-		}
-		compactions = &count
-	}
-	var toolErrors *int
-	if toolErrorsObservable(bundle) {
-		count := 0
-		for _, result := range view.ToolResults {
-			if result.IsError {
-				count++
-			}
-		}
-		toolErrors = &count
-	}
-	return Counts{
-		Turns: &prompts, Messages: &messages, ToolCalls: &toolCalls, ToolResults: &toolResults,
-		UserShellCommands: &shellCommands, Compactions: compactions, FilesTouched: &filesTouched,
-		InputTokens: view.Tokens.Input, OutputTokens: view.Tokens.Output,
-		CacheReadTokens: view.Tokens.CacheRead, CacheWriteTokens: view.Tokens.CacheWrite,
-		ReasoningTokens: view.Tokens.Reasoning, ToolErrors: toolErrors,
-	}
-}
-
-// toolErrorsObservable reports whether a bundle's tool results say whether
-// they failed: Claude Code writes is_error on a tool_result, and Cursor's
-// adapter sets it on a tool that reported an error. Codex writes no such flag,
-// so its failed calls cannot be told from the rest and the count is unknown,
-// not zero.
-func toolErrorsObservable(bundle SourceBundle) bool {
-	switch bundle.harness() {
-	case HarnessClaude, HarnessCursor:
-		return true
-	default:
-		return false
-	}
 }
 
 // MaxToolsUsed is the most entries Metadata.ToolsUsed holds: the session's
@@ -634,39 +362,6 @@ func deriveEndedAt(view NormalizedView, startedAt time.Time) *time.Time {
 // sessionTitleLimit is the maximum rune length of Metadata.Title and Name.
 // Keep enough context to distinguish prompts with a shared preamble in list.
 const sessionTitleLimit = 128
-
-// deriveSessionTitle returns a one-line preview of the first human prompt:
-// from normalized JSONL turns when present, otherwise from the first user
-// section of a filtered NativeText transcript (Cursor text sessions).
-func deriveSessionTitle(view NormalizedView, texts []TextTranscript) string {
-	for _, turn := range view.Turns {
-		if turn.Kind != TurnKindHumanPrompt {
-			continue
-		}
-		if title := collapseSessionTitle(turn.Text); title != "" {
-			return title
-		}
-	}
-	for _, transcript := range texts {
-		parsed, _ := parseTextSections(transcript.Content)
-		for _, section := range parsed.sections {
-			if section.role != textRoleUser {
-				continue
-			}
-			parts := make([]string, 0, len(section.lines))
-			if header := strings.TrimSpace(section.header); header != "" {
-				parts = append(parts, header)
-			}
-			if len(section.lines) > 1 {
-				parts = append(parts, section.lines[1:]...)
-			}
-			if title := collapseSessionTitle(strings.Join(parts, "\n")); title != "" {
-				return title
-			}
-		}
-	}
-	return ""
-}
 
 // collapseSessionTitle flattens whitespace to a single line and caps length.
 func collapseSessionTitle(text string) string {
@@ -912,7 +607,7 @@ func deriveSkills(bundle SourceBundle, nativeSkillUses []SkillUse, metadata *Met
 		}
 	}
 	// Native invocation/read-inference evidence is collected once, in
-	// toolCalls()'s per-record walk (see ParseNormalized), rather than a
+	// the native parser's per-record walk, rather than a
 	// second traversal of bundle.NativeRecords here.
 	for _, entry := range nativeSkillUses {
 		recordUse(entry)
@@ -967,4 +662,96 @@ func (m *Metadata) ValidateSourceReference() error {
 		return errors.New("metadata has no verified source reference")
 	}
 	return nil
+}
+
+// BuildMetadataWithAnalysis derives metadata without resolving or invoking a parser.
+// A failed analysis retains the existing source-first minimal metadata behavior.
+func BuildMetadataWithAnalysis(bundle SourceBundle, analysis Analysis, parseErr error, machineID string, startedAt, derivedAt time.Time, reference SourceReference, parser ParserInfo) (Metadata, error) {
+	if err := validateMetadataInputs(bundle, machineID, startedAt, derivedAt, reference); err != nil {
+		return Metadata{}, err
+	}
+	parser = defaultMetadataParser(bundle, parser)
+	if parseErr != nil {
+		parser.Status = ParserStatusFailed
+	}
+	metadata := baseMetadata(bundle, machineID, startedAt, derivedAt, reference, parser)
+	if parseErr != nil {
+		return metadata, parseErr
+	}
+	return assembleAnalyzedMetadata(bundle, analysis, metadata), nil
+}
+
+func assembleAnalyzedMetadata(bundle SourceBundle, analysis Analysis, metadata Metadata) Metadata {
+	view := analysis.View
+	// A native end-of-turn record fills in only what the hook evidence could
+	// not establish: an observed hook stop, interrupt, or closure still wins.
+	if end := analysis.Facts.TurnEnd; end.Present {
+		state, outcome := end.State, end.Outcome
+		if metadata.State == MetadataStateUnknown {
+			metadata.State = state
+		}
+		if metadata.TurnOutcome == TurnOutcomeUnknown {
+			metadata.TurnOutcome = outcome
+		}
+	}
+	prompts, messages, shellCommands, models := summarizeTurns(view.Turns)
+	// Native text has unproven structure, so structured counts remain unknown.
+	if analysis.Observability.StructuredCounts.Available() {
+		metadata.Counts = analyzedCounts(analysis, prompts, messages, shellCommands)
+		metadata.ToolsUsed = deriveToolsUsed(view.ToolCalls, analysis.Facts.WorkspaceRoot)
+		metadata.MCPCalls = deriveMCPCalls(view.ToolCalls, analysis.Facts.WorkspaceRoot)
+		metadata.ModelTokens = view.ModelTokens
+		var git gitCounts
+		metadata.GitActivity, git = deriveAnalyzedGitActivity(view.ToolCalls)
+		metadata.Counts.Commits, metadata.Counts.Pushes = &git.commits, &git.pushes
+		metadata.Counts.PRsCreated, metadata.Counts.PRsMerged = &git.prsCreated, &git.prsMerged
+	}
+	metadata.EndedAt = deriveEndedAt(view, metadata.StartedAt)
+	if !analysis.Facts.TextOnly {
+		metadata.Models = models
+	}
+	deriveHookModels(bundle, &metadata)
+	deriveSkills(bundle, view.NativeSkillUses, &metadata)
+	labels, _ := LabelsFromAnalysis(analysis)
+	metadata.Name, metadata.Title, metadata.Branch, metadata.PullRequests = labels.Name, labels.Title, labels.Branch, labels.PullRequests
+	feedback := 0
+	for _, e := range bundle.SupplementalEvidence {
+		if e.Kind == EvidenceKindExplicitFeedback {
+			feedback++
+		}
+	}
+	metadata.Counts.ExplicitFeedback = &feedback
+	return metadata
+}
+
+func analyzedCounts(analysis Analysis, prompts, messages, shellCommands int) Counts {
+	view := analysis.View
+	toolCalls, toolResults := len(view.ToolCalls), len(view.ToolResults)
+	filesTouched := len(sessionFilesTouched(view.ToolCalls, analysis.Facts.WorkspaceRoot))
+	var compactions *int
+	if analysis.Observability.Compactions.Available() {
+		// Count boundaries; use summaries only when no boundary was retained.
+		count := view.CompactBoundaries
+		if count == 0 {
+			count = view.CompactSummaries
+		}
+		compactions = &count
+	}
+	var toolErrors *int
+	if analysis.Observability.ToolErrors.Available() {
+		count := 0
+		for _, result := range view.ToolResults {
+			if result.IsError {
+				count++
+			}
+		}
+		toolErrors = &count
+	}
+	return Counts{
+		Turns: &prompts, Messages: &messages, ToolCalls: &toolCalls, ToolResults: &toolResults,
+		UserShellCommands: &shellCommands, Compactions: compactions, FilesTouched: &filesTouched,
+		InputTokens: view.Tokens.Input, OutputTokens: view.Tokens.Output,
+		CacheReadTokens: view.Tokens.CacheRead, CacheWriteTokens: view.Tokens.CacheWrite,
+		ReasoningTokens: view.Tokens.Reasoning, ToolErrors: toolErrors,
+	}
 }

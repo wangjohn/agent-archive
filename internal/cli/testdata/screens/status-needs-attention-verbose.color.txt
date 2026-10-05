@@ -6,8 +6,11 @@ $ agent-archive status --verbose
     To change credentials, run \e[36magent-archive setup\e[0m and choose storage.
 
 \e[1mCapture\e[0m
-  \e[32m✓\e[0m Codex   hooks on   \e[2m1 session\e[0m
+  \e[32m✓\e[0m Codex   discovery: no supported task observed in last scan; included projects   \e[2m1 session\e[0m
+    \e[2m·\e[0m Last discovery attempt just now; 1 registered → 0 queued → 1 published → 1 read-back verified
+    \e[2m·\e[0m Optional hooks: hooks on; actual hook observation is separate evidence.
     \e[2m·\e[0m 1 session archived, verified just now
+  \e[2m·\e[0m Identity recovery: complete
   \e[2m·\e[0m Projects: ~/src/web-app
   \e[2m·\e[0m Skill evidence: metadata
 
@@ -34,6 +37,8 @@ $ agent-archive status --verbose
   Last publish:  2026-09-25T12:00:00Z
   Skill evidence: metadata
   Codex: published; source verified (published_source_verified; 1 session(s)); hooks installed
+    Automatic discovery: no supported task observed in last scan.
+    Last attempt: 2026-09-25T12:00:00Z; registered 0 in that scan.
     Hook trust: unknown here; it is granted inside the app and is not observable from this machine's files.
     Installed version: unknown; support unknown.
     Project /Users/alex/src/web-app: verified_at_recorded_time.

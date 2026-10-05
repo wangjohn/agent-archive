@@ -1,49 +1,100 @@
 # Listing performance target
 
-The baseline implementation lists every object below `sessions/` and reads
-every metadata sidecar before applying the default `--limit 50`. A fixture
-with 10,000 sessions and three source snapshots per session therefore
-requires 40,000 listed keys and 10,000 sidecar reads on a cold cache. A warm
-cache avoids downloads but still lists all 40,000 keys and reads 10,000 local
-sidecars.
+Ordinary noninteractive `list --limit N` and `list --json --limit N`
+use session-addressed revision-qualified `listing/v3/` entries; existing
+`listing/v2/` summaries remain readable. A complete healthy archive reads
+at most N canonical metadata bodies on a cold run, or N selected cache files
+on a warm run, and no transcript bodies. Both the 10,000 and 20,000 session
+fixtures assert the default 50-body budget against the exhaustive reader.
+Warm unchanged selections perform no remote metadata GETs. Normal metadata
+refreshes share the same total body budget: a stale cached revision is never
+opened before downloading its replacement. Cache paths encode the canonical
+key and a SHA-256 of the opaque validator; header-only pruning removes old
+versions. Flat legacy cache files are disposable cold misses and are removed
+without opening their bodies. Cache key limits and corruption fallback remain
+unchanged.
 
-For an indexed archive with 10,000 sessions, the target for an unfiltered
-default list is at most **two listing pages** and **60 metadata reads** on
-both cold and warm runs, with no source downloads. A full scan remains
-available with `--limit 0`, and an older archive without an index uses that
-scan until `list --rebuild-index` completes. The index is a hint: every
-displayed session must pass a live sidecar read and validation.
+The budget covers bodies, not discovery: fresh canonical and both v2/v3 index LIST
+headers are enumerated on every query, proportional to archive size. Text
+uses activity time, excludes subagents before limiting, and obtains child
+counts from covered summaries. JSON preserves capture-time order. Equal
+capture times use harness and session identity as deterministic tie breakers. Implicit repository scope matches RepoKey
+across clones and falls back to local ProjectIDs for legacy sidecars. Empty
+scopes choose the existing all-project fallback before reading bodies.
 
-The target covers `list --json` without search words, outside any project
-or with `--all-projects`. Every other listing reads the whole listing,
-through the local metadata cache, as the handoff picker and bare `show` do
-(see [session finding](../specs/session-finding.md#deviations)):
+Named explicit project scope, interactive browsing, search, origin, model, skill and
+completeness queries remain exhaustive, as does `--limit 0`. A missing,
+stale, unsupported or damaged index produces an explicit compatibility-scan
+diagnostic and complete legacy results. A selected object deleted or changed
+during a bounded query fails explicitly, suggesting retry or `--limit 0`;
+it never refills indefinitely. Exact counts describe discovered matching
+identities, not validation of every unselected sidecar.
 
-- Inside a project, `list` and `list --json` apply the repository's scope
-  before `--limit`.
-- `list`'s table and browser, wherever they run (outside any project and
-  with `--all-projects` too), leave subagent sessions out before `--limit`
-  counts, and count them for the footer and each parent's `· N subagents`
-  hint. The index's newest page cannot do either: a top-level filter on it
-  would still read several subagent sidecars for each session shown, and the
-  counts need every one.
-- `list "<words>"` searches every session.
+## Revision protocol
 
-The index's repository-scoped window and its per-parent subagent counts are
-to bring those back under the target.
+Canonical metadata is authoritative. Keys are
+`listing/v3/<harness>/<id>/<19-digit reverse Unix nanoseconds>/<summary>`.
+Legacy v2 keys put the reverse timestamp before harness/id. Both forms
+encode the same validated summaries; v3 needs no separate cleanup pointer.
+The summary is canonical JSON encoded as unpadded base64url, containing the
+fresh publication nonce (`n`), opaque provider ETag (`v`), SHA-256 of canonical bytes (`h`), activity timestamp
+(`a`), optional parent ID (`p`), replay marker (`r`), ProjectID (`j`) and RepoKey (`k`). No source or skill
+content is included. Unsupported/noncanonical summaries and keys exceeding
+S3's 1,024-byte key bound are refused. Activity is EndedAt when present,
+otherwise StartedAt for imports, otherwise CapturedAt.
 
-The benchmark in `internal/reader/list_index_bench_test.go` reports elapsed
-time and allocations for the cold full-scan baseline, indexed cold listing,
-and indexed warm listing. Memory-store listing is an in-process stand-in for
-remote pages; the request-count target above is the release gate.
+Each live canonical header must have an entry matching exact key and opaque
+ETag before any body is selected. No ready marker can establish coverage.
+The selected response returns bytes and ETag together; its ETag, SHA-256,
+canonical identity, schema and summary must match. Cache bytes are checked
+against the same entry digest. ETags are never decoded as content hashes on
+this path. Stores without response-bound validators use the exhaustive path.
+S3 and R2 use their GetObject ETag; fake HTTP and opaque-validator tests cover
+the protocol. Real provider acceptance remains a release acceptance task.
 
-On an Intel macOS development machine, a one-iteration run on 2026-09-28
-measured 97.7 ms and 98.6 MB allocated for the cold full scan; indexed cold
-and warm runs measured 6.5 ms / 214 KB and 6.7 ms / 214 KB respectively.
-These are local measurements, not a network latency guarantee. The indexed
-test asserts one listing page and 51 live sidecar reads
-for 300 sessions; the same early-stop rule applies to the 10,000-session
-benchmark fixture.
+Publication journals a destination-bound per-session repair intent before
+canonical commit. Successful capture survives an auxiliary failure; its
+warning and repair intent remain visible. Collector passes retry at most 32
+intents, rotating the cursor so a failing group cannot starve later intents.
+Entries are empty immutable objects addressed directly under each session.
+A v3 repair snapshots only that session's hint headers before publishing its
+fresh identity, confirms the canonical validator, then retires at most 32
+snapshot candidates. It leaves its intent until cleanup completes. One
+normal publication reads one response-bound canonical metadata body and no
+auxiliary bodies; it writes one hint rather than a pointer/hint pair. Delayed
+writes and crash retries remain discoverable directly from session headers.
+Concurrent snapshots cannot each include the other's later fresh identity,
+so one current survivor remains even for equivalent writers or reused
+validators. No logical counter or clock is needed.
+
+`list --rebuild-index` snapshots legacy v2 headers and pointers before fresh
+v3 publication and retires a combined maximum of 32 v2/v3 candidates per
+session repair. Each v3 candidate needs one DELETE; legacy pairs need up to
+two DELETEs (at most 64 calls for 32 candidates). Legacy partial pointers
+can require at most one body GET per candidate; known hint keys require none. It reclaims legacy pointerless hints while canonical metadata
+remains live. Repeating a partial rebuild resumes cleanup, including malformed
+or canonical-absent hints (up to 32 per cleanup slice). It validates canonical
+response bytes and writes/deletes only auxiliary objects; transcripts and
+canonical metadata are unchanged. Failure reports completed metadata entries.
+Legacy partial pointers are inspected only within that same candidate budget;
+a corrupt pointer never authorizes deleting another session's claimed hint.
+
+Retention and undo delete canonical discovery first, then the session's v3
+entries and sources. They also enumerate legacy v2 hint headers to reclaim
+pointerless artifacts, with a combined 32-candidate v2/v3 cleanup slice that
+can be retried. Auxiliary failure never postpones source deletion. Archive-wide
+legacy header enumeration is confined to explicit rebuild and deletion; normal
+v3 publication never scans the full hint archive. Delayed old v2 writers may
+recreate legacy artifacts, which remain discoverable by later explicit sweeps.
+Equivalent current summaries are deduplicated across v2 and v3; conflicting
+claims for one validator require compatibility scanning. A v2-only reader
+cannot prove coverage for v3-only sessions and uses its exhaustive fallback.
+Concurrent writers require no global lock. A concurrent rewrite invalidates
+fresh coverage and produces compatibility scanning or a bounded-query error.
+
+The benchmark in `internal/reader/list_index_bench_test.go` compares the cold
+full scan, indexed cold selection and a real selected metadata cache. Timing
+is supplementary; deterministic operation counts are the regression gate.
 
 ## Full scans
 

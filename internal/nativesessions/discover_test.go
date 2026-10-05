@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agents/builtin"
 	"github.com/wangjohn/agent-archive/internal/transcriptio"
 	"os"
 	"path/filepath"
@@ -82,7 +83,7 @@ func nativeFixture(tb testing.TB, count int) (StoreRoot, string) {
 			tb.Fatal(e)
 		}
 	}
-	return StoreRoot{Harness: "claude", Path: root}, cwd
+	return StoreRoot{Harness: "claude", Depth: 1, Suffix: ".jsonl", Path: root}, cwd
 }
 
 func discoveryLimits() Limits {
@@ -93,7 +94,7 @@ func TestDiscoverOrdersScopesAndBoundsReads(t *testing.T) {
 	t.Parallel()
 	root, cwd := nativeFixture(t, 103)
 	files := &countedFiles{}
-	result, e := Discover(context.Background(), files, []StoreRoot{root, root}, Scope{Directories: []string{cwd}}, discoveryLimits())
+	result, e := Discover(context.Background(), builtin.NewBuiltins(), files, []StoreRoot{root, root}, Scope{Directories: []string{cwd}}, discoveryLimits())
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -105,7 +106,7 @@ func TestDiscoverOrdersScopesAndBoundsReads(t *testing.T) {
 		t.Fatalf("cwd not cached: %d", files.canonical)
 	}
 	other := t.TempDir()
-	r, e := Discover(context.Background(), files, []StoreRoot{root}, Scope{Directories: []string{other}}, discoveryLimits())
+	r, e := Discover(context.Background(), builtin.NewBuiltins(), files, []StoreRoot{root}, Scope{Directories: []string{other}}, discoveryLimits())
 	if e != nil || len(r.Candidates) != 0 {
 		t.Fatalf("broadened scope: %v %v", r.Candidates, e)
 	}
@@ -116,13 +117,13 @@ func TestDiscoveryBudgetCapAndUnknownIdentityRefuseCompleteness(t *testing.T) {
 	root, cwd := nativeFixture(t, 6)
 	limits := discoveryLimits()
 	limits.Files = 3
-	r, e := Discover(context.Background(), &countedFiles{}, []StoreRoot{root}, Scope{Directories: []string{cwd}}, limits)
+	r, e := Discover(context.Background(), builtin.NewBuiltins(), &countedFiles{}, []StoreRoot{root}, Scope{Directories: []string{cwd}}, limits)
 	if e != nil || r.Coverage.IdentityComplete || r.Coverage.Enumerated > 3 {
 		t.Fatalf("cap %+v %v", r.Coverage, e)
 	}
 	limits = discoveryLimits()
 	limits.TotalBytes = 1
-	r, e = Discover(context.Background(), &countedFiles{}, []StoreRoot{root}, Scope{Directories: []string{cwd}}, limits)
+	r, e = Discover(context.Background(), builtin.NewBuiltins(), &countedFiles{}, []StoreRoot{root}, Scope{Directories: []string{cwd}}, limits)
 	if e != nil || r.Coverage.IdentityComplete || r.Coverage.ReservedBytes > 1 {
 		t.Fatalf("budget %+v %v", r.Coverage, e)
 	}
@@ -130,7 +131,7 @@ func TestDiscoveryBudgetCapAndUnknownIdentityRefuseCompleteness(t *testing.T) {
 	if e := os.WriteFile(path, []byte(`{"type":"user","cwd":"`+cwd+`"}`+"\n"), 0o600); e != nil {
 		t.Fatal(e)
 	}
-	r, e = Discover(context.Background(), &countedFiles{}, []StoreRoot{root}, Scope{Directories: []string{cwd}}, discoveryLimits())
+	r, e = Discover(context.Background(), builtin.NewBuiltins(), &countedFiles{}, []StoreRoot{root}, Scope{Directories: []string{cwd}}, discoveryLimits())
 	if e != nil || r.Coverage.IdentityComplete || len(r.Candidates) != 5 {
 		t.Fatalf("unknown %+v %v", r.Coverage, e)
 	}
@@ -144,7 +145,7 @@ func BenchmarkDiscoverNativeCatalog(b *testing.B) {
 			b.ResetTimer()
 			for b.Loop() {
 				files := &countedFiles{}
-				r, e := Discover(context.Background(), files, []StoreRoot{root}, Scope{Directories: []string{cwd}}, discoveryLimits())
+				r, e := Discover(context.Background(), builtin.NewBuiltins(), files, []StoreRoot{root}, Scope{Directories: []string{cwd}}, discoveryLimits())
 				if e != nil {
 					b.Fatal(e)
 				}
@@ -165,7 +166,7 @@ func TestDiscoveryCapsTenThousandAndBoundsNoisyOutOfScopeStores(t *testing.T) {
 	t.Parallel()
 	root, cwd := nativeFixture(t, 10001)
 	files := &countedFiles{}
-	r, err := Discover(context.Background(), files, []StoreRoot{root}, Scope{Directories: []string{cwd}}, discoveryLimits())
+	r, err := Discover(context.Background(), builtin.NewBuiltins(), files, []StoreRoot{root}, Scope{Directories: []string{cwd}}, discoveryLimits())
 	if err != nil || r.Coverage.Enumerated != 10000 || r.Coverage.IdentityComplete || len(r.Candidates) != 10000 || files.active != 0 || files.peak > 2 {
 		t.Fatalf("ten-thousand cap %+v %v files=%d", r.Coverage, err, len(r.Candidates))
 	}
@@ -182,7 +183,7 @@ func TestDiscoveryCapsTenThousandAndBoundsNoisyOutOfScopeStores(t *testing.T) {
 	}
 	small, source := nativeFixture(t, 1)
 	files = &countedFiles{}
-	r, err = Discover(context.Background(), files, []StoreRoot{small, {Harness: "codex", Path: other, Recursive: true}, small}, Scope{Directories: []string{source}}, discoveryLimits())
+	r, err = Discover(context.Background(), builtin.NewBuiltins(), files, []StoreRoot{small, {Harness: "codex", Prefix: "rollout-", Suffix: ".jsonl", Path: other, Recursive: true}, small}, Scope{Directories: []string{source}}, discoveryLimits())
 	if err != nil || len(r.Candidates) != 1 || r.Coverage.Enumerated != 2 || !r.Coverage.IdentityComplete || files.reads > 2*discoveryLimits().HeaderBytes || files.active != 0 || files.peak > 2 {
 		t.Fatalf("noisy multi-store %+v %v reads=%d", r.Coverage, err, files.reads)
 	}

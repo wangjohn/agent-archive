@@ -48,12 +48,12 @@ S3 credentials stay in your AWS profile.
 
 | Entry | What it is |
 | --- | --- |
-| `registrations/<id>.json` | One per captured session: archive session ID, native ID, project, repository key (a hash of its git origin, when it had one), app, transcript path or Cursor chat ID, start and admission times, origin (hook or import), destination. |
+| `registrations/<id>.json` | One per captured session: archive session ID, native ID, project, repository key (a hash of its git origin, when it had one), the commit its working directory started on (with whether the tree was dirty) and the last commit a stop hook saw, app, transcript path or Cursor chat ID, start and admission times, origin (hook or import), destination, and, for a session a replay tool ran, its replay marker. |
 | `requests/<id>.json`, `request-locks/` | Hook evidence waiting for the next collector pass, and the per-session locks around it. |
 | `sessions/<hash>.json` | Index from a native session ID (hashed, since it is app-controlled input) to its archive session ID. |
 | `sessions/<id>/` | Per-session evidence, such as `verification.json` (the last read-back check). |
 | `subagent-candidates/` | Subagent transcripts a hook reported, waiting for the collector to validate them. |
-| `pending-scans/`, `scan-signatures/` | Transcript reads in progress, and what each transcript looked like at its last read, so an unchanged one isn't read again. |
+| `pending-scans/`, `scan-signatures/` | Transcript reads in progress, and what each transcript looked like at its last read (and which last commit its published metadata names), so an unchanged one isn't read again. |
 | `pending/<id>.json` | A publication frozen before its first upload: the exact source and metadata bytes, so retries are byte-identical. |
 | `published/<id>.json` | The last bundle built and the last one published, with the uploaded source's key, SHA-256, and size, and its metadata. |
 | `superseded/<id>.json` | Earlier source objects of the session, oldest first. Filter-version predecessors carry a privacy-sensitive marker; retention removes them after verified republish and a 24-hour reader grace interval, retrying failures. |
@@ -135,3 +135,61 @@ list in step with `state.OwnedEntries()`.
   backup tools to skip it; never `/tmp` and never the data directory, which
   may be backed up or synced. The copy is removed when the read ends, and an
   abandoned one is swept by the next read.
+
+## Discovery state
+
+Discovery keeps a bounded source catalog and enumeration cursor, plus a
+content-free health snapshot. These are scheduling hints, not identity or consent
+authority. Namespaced native identities and their registration journal prevent
+duplicate logical archives across hooks, discovery and deliberate imports.
+Deleting a scan cache may cause another bounded scan; it does not grant permission
+to capture old history. Preserve protected configuration and identity state when
+disabling discovery; an older binary refuses protected configuration.
+
+## Archive generations
+
+`generation-heads/` holds one small qualified-native-identity head, naming its
+unique active archive ID, a retirement marker, or an interrupted transition.
+Hooks read this bounded head and the selected registration, never enumerate
+or decode the complete chain. They also read at most 4097 bytes from each of
+the selected generation's own and predecessor receipts; unfinished journals
+fail closed before their publication body is decoded. `generation-nodes/` retains immutable identity
+nodes, and `generation-recovery/` retains transition journals which become
+small immutable successor receipts after completion. These identity records
+contain no conversation content after a transition completes. They survive
+content retention so index reconstruction cannot route to a frozen ancestor.
+Unknown or damaged lineage fails closed.
+
+Settled frozen generations use a retained-maintenance scan signature, separate
+from native file stats. A pass checks bounded lineage authority, derivation and
+privacy versions, recorded HEAD and outstanding work before skipping them.
+Unchanged frozen history costs no source decode or per-session scan journal;
+feedback, policy or version changes and interrupted publications still trigger
+maintenance from retained evidence.
+
+Recovery holds `collector.lock`, then `hooks.lock`. Registration, request and
+index commits use the existing staging helpers: disk syncs occur outside
+request locks, and membership commits retain request-before-membership order.
+The journal precedes the routing fence, immutable nodes, old capture freeze,
+successor registration, fixed pending publication, fixed request token, index
+redirect, active head and completed receipt. A collector resumes interrupted
+transitions before its qualified index census and native scans. Every retry
+uses the same successor ID, capture time and frozen publication bytes.
+
+Retention stages active-tip retirement before its request lock, commits that
+head before removing registration/index, and syncs after releasing the lock.
+Earlier frozen generations expire independently. A genuine fresh start can
+create an unrelated root after tip retirement; immutable prior-root membership
+lets the collector validate remaining historical registrations while keeping
+that separate from published transcript continuity. Imports keep their original
+batch, admission and destination, so batch undo continues to select all of its
+generations.
+
+The packed native-identity census validates generation lineage before selecting
+the active tip; linked generations are not unrelated duplicate owners. Queued
+children may still name a retained frozen parent. A journal or validated lineage
+census can replace an obsolete packed predecessor through a fenced per-key
+override, while ordinary hook lookups retain their fail-closed checks. Active-tip
+expiry retires generation routing before removing content, then prunes packed
+identities after request locks release. Retired generations use an explicit
+absence override rather than redirecting native hooks to a retained ancestor.

@@ -50,7 +50,7 @@ func TestSetupInstallsTheHandoffSkillUnderTheSandboxedHome(t *testing.T) {
 	output := setupRun(t, env, s3SetupInput("test-bucket", "us-east-1", "profile", true, true, false, project), 0)
 	cfg, _, err := config.Load(home)
 	must(t, err)
-	files := agentskills.Files(userHome, filepath.Join(userHome, ".claude"), []string{"codex", "claude"}, cfg.InstalledExecutable, env.installation(home, userHome).commandDataHome())
+	files := agentskills.Files(productionAgents, userHome, filepath.Join(userHome, ".claude"), []string{"codex", "claude"}, cfg.InstalledExecutable, env.installation(home, userHome).commandDataHome())
 	if len(files) != 2*len(agentskills.Registry) {
 		t.Fatalf("files = %+v", files)
 	}

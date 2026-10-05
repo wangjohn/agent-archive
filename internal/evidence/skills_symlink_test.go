@@ -56,7 +56,7 @@ func symlink(t *testing.T, target, link string) {
 // observeClaudeSkills returns the inventory and snapshots for one scope.
 func observeClaudeSkills(t *testing.T, l skillLayout, scope string) (map[string]any, []map[string]any, string) {
 	t.Helper()
-	got, err := ObserveSkills(SkillOptions{Harness: "claude", ProjectRoot: l.project, UserHome: l.home, ObservedAt: time.Now()})
+	got, err := observeBuiltinSkills(SkillOptions{Harness: "claude", ProjectRoot: l.project, UserHome: l.home, ObservedAt: time.Now()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +167,7 @@ func TestObserveSkillsProjectRootAtHomeUsesUserRules(t *testing.T) {
 	writeSkillFile(t, filepath.Join(l.home, ".claude", "skills", "real", "SKILL.md"), "---\nname: real\n---\nbody\n")
 	l.project = l.home
 
-	got, err := ObserveSkills(SkillOptions{Harness: "claude", ProjectRoot: l.project, UserHome: l.home, ObservedAt: time.Now()})
+	got, err := observeBuiltinSkills(SkillOptions{Harness: "claude", ProjectRoot: l.project, UserHome: l.home, ObservedAt: time.Now()})
 	if err != nil {
 		t.Fatal(err)
 	}

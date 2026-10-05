@@ -137,7 +137,7 @@ func renderStatsHTML(computed stats.Stats, filters statsFilters, now time.Time, 
 	return statshtml.Render(computed, statshtml.Options{
 		GeneratedAt:  now,
 		IncludeNames: includeNames,
-		Filters:      statshtml.Filters{Harness: filters.Harness, Model: filters.Model, Origin: filters.Origin},
+		Filters:      statshtml.Filters{Harness: filters.Harness, Model: filters.Model, Origin: filters.Origin, Replays: filters.Replays},
 		EmptyMessage: emptyMessage,
 	})
 }

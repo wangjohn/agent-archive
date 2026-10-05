@@ -6,8 +6,6 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-Planned for v0.2.0. This release has not been tagged or published.
-
 ### Added
 
 - Complete non-live experimental pairing/revocation handling: committed retired
@@ -17,6 +15,159 @@ Planned for v0.2.0. This release has not been tagged or published.
   recovery and reports success before post-commit cleanup and history import.
   Both peers must be upgraded for standalone exclusions; live provider and platform
   acceptance remain pending and general availability stays disabled.
+
+## [0.2.0]
+
+### Documentation
+
+- Documentation provides a v0.2.0 quickstart for macOS and Linux,
+  explains conversation-only handoff and Codex all-project capture consent,
+  and moves the shell cleanup recipe into a focused archive-cleanup guide.
+
+### Fixed
+
+- After local session membership changes, the collector rebuilds a completed
+  packed identity index against the current registrations so recovery status
+  can return to complete. Status remains unknown until recovery restarts, then
+  pending until the authoritative rebuild finishes. Large or frequently changing
+  inventories can require multiple sync passes.
+
+- Listing cache lookup selects the current opaque metadata revision before
+  opening a body, preserving the combined read limit after normal refreshes.
+
+- Default listing uses session-addressed immutable revision hints to keep
+  concurrent cleanup discoverable. Existing v2 entries remain readable;
+  `list --rebuild-index` reclaims legacy pointerless hints with bounded cleanup.
+  Malformed legacy pointers cannot claim or delete v3 hints.
+- Status recognizes valid packed identity-recovery scheduling evidence and
+  distinguishes shard application and fallback work without scanning the index.
+  Damaged or stale scheduling evidence reports unknown status.
+
+- Existing project-scoped hook sessions decline continuation updates when the
+  incoming checkout or a saved scope rule has unknown filesystem identity,
+  preserving their transcript locator and lifecycle timestamps.
+
+- The bucket cleanup recipe works after local integrations or configuration
+  have been removed. An explicit ordinary uninstall check stops local uploads
+  before planning full-prefix deletion; failed stop checks invalidate prior plans.
+
+- Project capture scope resolves symlinked checkout paths even when a nested
+  directory is absent, preserving nested exclusions and reinclusions. Existing
+  components with another casing or canonically equivalent Unicode spelling
+  retain those rules on volumes that treat them as one location. Capture refuses
+  unresolved symlink identities and ambiguous absent case or Unicode normalization
+  variants instead of falling through to an included ancestor.
+
+- Before-setup handoff launch files use a private temporary namespace per user,
+  so users sharing a temporary directory do not block one another. Reuse and
+  seven-day cleanup check ownership as well as permissions and reject symlinks.
+
+### Added
+
+- Codex setup offers included-project or all-current-and-future-project scope,
+  independent of supported-source discovery. Fresh scripts explicitly choose
+  both source and scope; omitted reconfiguration preserves consent. Codex-only
+  all-mode permits zero explicitly included projects. Discovery does not require hooks;
+  existing installations opt in explicitly. Original creation-time consent, pause
+  intervals and project/destination scope apply. Indistinguishable recent native
+  copies may qualify. Status schema 4 separates discovery health and actual hook
+  observation from publication/read-back verification.
+
+- `agent-archive recover SESSION_ID` previews a linked generation for a
+  rewritten transcript; `--confirm` preserves the earlier archive and queues
+  current activity under a new ID. Each generation keeps its own retention
+  age. Recovery permanently requires a generation-aware writer. See the
+  [guide](docs/guides/transcript-recovery.md).
+
+- **`agent-archive eval export`** prints archived sessions for an evaluation
+  tool: one JSON line per session, in a versioned format
+  ([`schemas/eval-export.schema.json`](schemas/eval-export.schema.json)).
+  `--detail metadata` reads only metadata sidecars and prints identity,
+  commits (`git_head`), counts, tokens, tools, and outcome; `--detail full`
+  (the default) adds every filtered human prompt in order, the final
+  response, the edited files, and feedback. A session that cannot be
+  exported is an error record on its own line and the rest still print.
+  `--max-bytes` bounds each record. Read-only and never interactive. See the
+  [guide](docs/guides/eval-export.md). Export failures omit private decoder
+  details, reject mismatched session identities, and report failed output
+  writes; size limits include escaped display controls and preserve whole
+  UTF-8 characters at the text floor. Decoded sidecars with missing or null
+  model attributes are rejected; model, tool and MCP name limits count
+  Unicode characters, matching the published schema. Malformed HTTPS URLs
+  in Git activity produce a `read_failed` error at either detail without
+  exposing the invalid URL.
+- `eval export` also works without setup, on this machine's transcripts:
+  `--file PATH --harness NAME` for one, and `--scan` for every transcript
+  backfill would find (with its `--harness`, `--project`, `--since`, and
+  `--until` filters). It never creates the data directory. `--ids-from -`
+  reads session IDs and transcript paths from standard input, and
+  `--workers N` exports several sessions at once, writing each record as it
+  finishes. Local records carry the transcript's path and project folder,
+  and no commit, replay marker, or feedback. Original native start times
+  are preserved, native identities come from filtered records, local decoder
+  errors omit private details, and failed
+  output cancels further source reads.
+
+- **Replay sessions stay out of your history.** A tool that replays archived
+  tasks with other agents sets `AGENT_ARCHIVE_REPLAY=<run id>` for the
+  agents it runs; the sessions its runs produce are captured as usual but
+  marked with `replay` in their metadata (with the run ID when it is a plain
+  identifier). `list`, `stats`, and `handoff --latest` and its pickers leave
+  them out; `list --replays include|only` and `stats --replays include|only`
+  show them, marked `[replay]` in the table. `show ID` opens one as usual,
+  and `status --json` counts them per app in `replay_sessions`. See
+  [JSON output](docs/reference/json-output.md#replay-sessions).
+
+- **The commit a session started on.** When a session starts in a git
+  repository, the hook records the commit checked out in its working
+  directory and whether the working tree had uncommitted changes, and each
+  stop records the commit checked out then. The metadata carries them as
+  `git_head` (`start` with `sha`, `dirty` and `observed_at`; `last` with
+  `sha` and `observed_at`), `show` has a `Commit` row, and `show --json` and
+  `list --json` include the field. Only full commit names, a yes/no, and
+  times are kept: no branch, remote, path, or file name. The hook runs
+  `git rev-parse` and `git status` with the same short timeout as the
+  repository key, before it takes its lock, and records nothing when git is
+  missing, slow, or the directory is not a repository. Sessions registered
+  before this release and imported sessions have no starting commit; later
+  live stops can still record `last`. Subagents have neither, and nothing
+  infers a commit later. See
+  [JSON output](docs/reference/json-output.md#show) and
+  [privacy](docs/security/privacy.md#what-is-uploaded).
+
+- Codex-only blanket policy and admission consumers retain one explicit scope
+  across current and future physical projects, independently of discovery.
+  Fresh hook/discovery starts keep immutable local proof and current exclusion/
+  destination checks; new projects never grow configuration. Scope-capable
+  configuration uses the incompatible `codex-scope-floor-v3` writer fence,
+  including disabled history. Scope and source generations retain immutable
+  start floors; invalid clock transitions refuse atomically.
+  Public selection remains in the activation change.
+
+- Disabled Codex discovery machinery performs bounded source scans before
+  storage access and reopens admitted sources within approved roots. Identity
+  misses require registration-census recovery before allocation. Startup
+  restores surviving owners after both derived indexes are lost, including
+  admitted continuations outside a later consent window. Producer activation
+  and setup remain a separate implementation phase. Failed directories retry
+  without waiting for backlog completion, local recovery failures survive final
+  collector status, and existing hook/import origins keep their own locators.
+
+- Shared local discovery foundations: shared project/worktree facts, durable
+  authorization intervals, immutable admission, and actual hook observation.
+  Parser 0.20.0 records discovery provenance alongside the existing Cursor
+  title derivation. Automatic Codex discovery remains disabled pending scanner and onboarding
+  integration. Protected discovery configuration makes published older writers
+  refuse rather than discard authorization; existing hook-only configs retain
+  their numeric schema and behavior. Status uses actual hook observation,
+  including hooks that resume imported sessions, with legacy hook-origin fallback.
+  Setup drafts preserve protected authorization while changing skill evidence;
+  start hooks avoid synchronizing an already persisted observation twice.
+  Every permission generation retains its native-start floor even when created
+  while paused; updated protected writer fencing refuses older discovery writers.
+  Unknown empty older histories require setup renewal before resume.
+  Pause/resume rejects clock reversals that would erase consent boundaries;
+  shared child materialization retains native transcript start provenance.
 
 - Draft experimental revocation with verified immutable selection, per-key
   recovery journals, serialized issuance selection and independent publication,
@@ -28,7 +179,7 @@ Planned for v0.2.0. This release has not been tagged or published.
   creation: exact immutable provider identities, verified fresh keys, default
   two spare keys (`--spares 0..5`), and an authoritative secret-free slot ledger.
   Creation, reservation, delivery, and uncertain cleanup are tracked durably;
-  management tokens are never persisted. This phase remains gated and unmerged
+  management tokens are never persisted. This implementation is merged but remains experimentally gated
   pending live provider acceptance and integrated revocation/recovery review.
 
 - Handoff before setup discovers Claude Code and Codex native conversations in
@@ -60,6 +211,23 @@ Planned for v0.2.0. This release has not been tagged or published.
   refreshes heartbeats at most daily. Records are untrusted bucket claims.
 
 ### Fixed
+
+- Second-machine setup commands preserve excluded folders and reincluded
+  subtrees, including when a repository checkout moves to another path.
+  Scope transfer resolves all rules before applying any inclusion, treats
+  symlink aliases as the same scope, and refuses conflicts with saved
+  destination exclusions or reinclusions. Distinct clones retain separate
+  scopes, unresolved symlinks are refused, and pairing rejects ordinary
+  scope-transfer flags. Compatible keyed scopes can be reapplied; equal
+  alias decisions coalesce and conflicting aliases are refused. Printed
+  scope transfers use stdin to avoid operating-system argument limits, retain
+  established repository identities when switching transport, and reject empty
+  inputs or companion project flags that could defeat transferred exclusions.
+  Saved dangling symlinks now refuse transfer before they can defeat future
+  exclusions. Scope input, saved destination scopes, and resulting scopes are
+  limited to 4,096 rules during transfer; oversized source rules are never truncated.
+- File handoff retrieval commands preserve transcript paths containing shell
+  metacharacters, quotes, backslashes, and newlines without expanding them.
 
 - Draft machine revocation rejects forged self labels, leaves registry commands
   usable after progress publication, and preserves unverified request targets.
@@ -116,7 +284,19 @@ Planned for v0.2.0. This release has not been tagged or published.
   creating a client, matching its environment, command and initial prompt sources.
 - Experimental provider verification identifies existing permissions without
   requiring permission to create a new token with them.
-
+- `list`, `show` and `handoff` line up their columns when color is on: a
+  dimmed hint such as `· 18 subagents` no longer pushes the rest of its row
+  out of line.
+- `list` and `show` date a session by when it was last active, as `handoff`
+  does, and list the most recently active first: a session `backfill`
+  imported shows when it ran, not when it was imported. `list --json` keeps
+  its order and fields.
+- The `handoff` picker's footer names the subagent sessions it leaves out,
+  as `list` and `show` do.
+- The Tools row of `show`'s summary wraps between tools and no longer cuts a
+  line short with `…`.
+- A Cursor session's title (parser 0.19.0) leaves out the `<timestamp>` line
+  and `<user_query>` tags Cursor wraps a prompt in.
 - Guided R2 setup checks the token before asking for bucket settings, offers
   token replacement or retry on failure, and summarizes the bucket and
   automatic or customized location before creation.
@@ -1153,6 +1333,7 @@ The first release.
   `credential_process` fails there. See
   [configuration](docs/reference/configuration.md#environment-variables).
 
-[Unreleased]: https://github.com/wangjohn/agent-archive/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/wangjohn/agent-archive/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/wangjohn/agent-archive/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/wangjohn/agent-archive/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/wangjohn/agent-archive/releases/tag/v0.1.0

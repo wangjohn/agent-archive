@@ -78,7 +78,7 @@ func (s *Store) readQualifiedIndex(key agentmeta.SessionKey) (qualifiedSessionIn
 	var entry qualifiedSessionIndexEntry
 	err := local.Read(qualifiedSessionIndexPath(s.home, key), &entry)
 	if errors.Is(err, os.ErrNotExist) {
-		return entry, false, nil
+		return s.packedSessionIndexEntry(key)
 	}
 	if IsUndecodable(err) {
 		return entry, false, ErrSessionIndexRecoveryRequired
@@ -109,6 +109,20 @@ func (s *Store) matchingRegistration(key agentmeta.SessionKey, id string) (bool,
 	}
 	if err := reg.Validate(); err != nil {
 		return false, ErrSessionIndexRecoveryRequired
+	}
+	if err := s.generationRegistrationAllowed(key, reg); err != nil {
+		return false, err
+	}
+	if reg.CaptureFrozen {
+		return false, ErrSessionIndexRecoveryRequired
+	}
+	if reg.PreviousGenerationID != "" {
+		if err := s.generationLookup(key, id); err != nil {
+			return false, err
+		}
+		if _, found, err := s.loadGenerationHead(key); err != nil || !found {
+			return false, ErrSessionIndexRecoveryRequired
+		}
 	}
 	actual, err := registrationKey(reg)
 	if err != nil || actual != key || reg.ArchiveSessionID != id {
@@ -151,11 +165,15 @@ func (s *Store) legacySessionID(key agentmeta.SessionKey) (string, bool, error) 
 	if err != nil || reg.ArchiveSessionID != entry.ArchiveSessionID {
 		return "", false, ErrSessionIndexRecoveryRequired
 	}
+	if actual.NativeID != key.NativeID {
+		return "", false, ErrSessionIdentityConflict
+	}
 	if actual.Agent != key.Agent {
 		return "", false, nil
 	}
-	if actual.NativeID != key.NativeID {
-		return "", false, ErrSessionIdentityConflict
+	registered, err := s.matchingRegistration(key, entry.ArchiveSessionID)
+	if err != nil || !registered {
+		return "", false, err
 	}
 	return entry.ArchiveSessionID, true, nil
 }
@@ -172,11 +190,11 @@ func (s *Store) legacyCandidateRecovery(key agentmeta.SessionKey, id string) err
 	if err != nil || candidate.ArchiveSessionID != id {
 		return ErrSessionIndexRecoveryRequired
 	}
-	if actual.Agent != key.Agent {
-		return nil
-	}
 	if actual.NativeID != key.NativeID {
 		return ErrSessionIdentityConflict
+	}
+	if actual.Agent != key.Agent {
+		return nil
 	}
 	return ErrSessionIndexRecoveryRequired
 }
@@ -186,6 +204,19 @@ func (s *Store) legacyCandidateRecovery(key agentmeta.SessionKey, id string) err
 // or unfinished legacy child candidate.
 // It performs no writes, enumeration or adoption outside the writer's locks.
 func (s *Store) ArchiveSessionID(key agentmeta.SessionKey) (string, bool, error) {
+	if h, found, err := s.loadGenerationHead(key); err != nil {
+		return "", false, err
+	} else if found {
+		if h.Transition != "" {
+			return "", false, ErrSessionIndexRecoveryRequired
+		}
+		if h.Retired {
+			if _, present, err := s.LoadRegistration(h.Active); err != nil || present {
+				return "", false, ErrSessionIndexRecoveryRequired
+			}
+			return "", false, s.sessionIndexMissAllowed()
+		}
+	}
 	if err := key.Validate(); err != nil {
 		return "", false, err
 	}
@@ -201,10 +232,16 @@ func (s *Store) ArchiveSessionID(key agentmeta.SessionKey) (string, bool, error)
 		if err != nil || !registered {
 			return "", false, err
 		}
+		if err := s.generationLookup(key, entry.ArchiveSessionID); err != nil {
+			return "", false, err
+		}
 		return entry.ArchiveSessionID, true, nil
 	}
 	id, found, err := s.legacySessionID(key)
 	if err != nil || found {
+		if err == nil && found {
+			err = s.generationLookup(key, id)
+		}
 		return id, found, err
 	}
 	if err := s.sessionIndexMissAllowed(); err != nil {
@@ -217,6 +254,10 @@ func (s *Store) ArchiveSessionID(key agentmeta.SessionKey) (string, bool, error)
 // child candidate. A reservation is not proof of an admitted registration.
 // Callers hold hooks.lock, or the collector lock for child materialization.
 func (s *Store) EnsureArchiveSessionID(key agentmeta.SessionKey) (id string, created bool, err error) {
+	if err := s.generationReservationAllowed(key); err != nil {
+		return "", false, err
+	}
+
 	if err := key.Validate(); err != nil {
 		return "", false, err
 	}
@@ -230,6 +271,9 @@ func (s *Store) EnsureArchiveSessionID(key agentmeta.SessionKey) (id string, cre
 			return "", false, err
 		}
 		if registered || entry.Reservation != "" {
+			if err := s.ensureGenerationReservation(key, entry.ArchiveSessionID); err != nil {
+				return "", false, err
+			}
 			return entry.ArchiveSessionID, false, nil
 		}
 		// A committed registration disappeared; its old ID must not be revived.
@@ -271,15 +315,8 @@ func (s *Store) EnsureArchiveSessionID(key agentmeta.SessionKey) (id string, cre
 			if !found || existing != entry {
 				return nil, false, errIndexMoved
 			}
-			if existing.Absent {
-				return next, true, nil
-			}
-			valid, err := s.matchingRegistration(key, existing.ArchiveSessionID)
-			if err != nil {
+			if err := s.replaceableReservation(key, existing); err != nil {
 				return nil, false, err
-			}
-			if valid || existing.Reservation != "" {
-				return nil, false, errIndexMoved
 			}
 		} else if found {
 			return nil, false, errIndexMoved
@@ -290,6 +327,9 @@ func (s *Store) EnsureArchiveSessionID(key agentmeta.SessionKey) (id string, cre
 		return "", false, err
 	}
 	if err := s.indexStep("reservation"); err != nil {
+		return "", false, err
+	}
+	if err := s.ensureGenerationReservation(key, fresh); err != nil {
 		return "", false, err
 	}
 	return fresh, true, nil
@@ -379,6 +419,7 @@ func (s *Store) indexStep(step string) error {
 func (s *Store) writeIndexUnderRequestLock(id, path string, check func() error, change func(fileSnapshot) (any, bool, error)) error {
 	indexStore := *s
 	indexStore.onWriteSync = s.onIndexSync
+	indexStore.indexSnapshots = true
 	return indexStore.writeUnderRequestLock(id, path, check, change)
 }
 
@@ -412,4 +453,18 @@ func (s *Store) adoptLegacySessionIndex(key agentmeta.SessionKey) (string, bool,
 		return legacy, true, nil
 	}
 	return "", false, nil
+}
+
+func (s *Store) replaceableReservation(key agentmeta.SessionKey, existing qualifiedSessionIndexEntry) error {
+	if existing.Absent {
+		return nil
+	}
+	valid, err := s.matchingRegistration(key, existing.ArchiveSessionID)
+	if err != nil {
+		return err
+	}
+	if valid || existing.Reservation != "" {
+		return errIndexMoved
+	}
+	return nil
 }

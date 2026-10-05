@@ -20,6 +20,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/agents/builtin"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/cursorstore"
 )
@@ -263,7 +265,7 @@ func TestCursorDatabaseReader(t *testing.T) {
 			if want := map[string][]string{"parent": {"sub1"}, "draft": {"sub2"}}; !reflect.DeepEqual(res.Subagents, want) {
 				t.Errorf("subagents %v, want %v", res.Subagents, want)
 			}
-			if res.ReadChat == nil || res.Close == nil {
+			if res.ReadSnapshot == nil || res.Close == nil {
 				t.Fatal("a checked result can't read its chats")
 			}
 			if err := res.Close(); err != nil {
@@ -281,8 +283,8 @@ func TestCursorDatabaseReaderNewerFormat(t *testing.T) {
 	home := t.TempDir()
 	writeCursorDB(t, CursorStateDatabase(home), false, map[string]any{
 		"composerData:known": composerJSON("known", 1, nil),
-		"composerData:newer": composerJSON("newer", 1, map[string]any{"_v": maxComposerVersion + 1, "someNewField": map[string]any{"x": 1}}),
-		"composerData:draft": composerJSON("draft", 1, map[string]any{"_v": maxComposerVersion + 7, "isDraft": true}),
+		"composerData:newer": composerJSON("newer", 1, map[string]any{"_v": 18 + 1, "someNewField": map[string]any{"x": 1}}),
+		"composerData:draft": composerJSON("draft", 1, map[string]any{"_v": 18 + 7, "isDraft": true}),
 	})
 	res := readCursor(t, home)
 	if !res.Checked || res.NewerFormat != 2 || !reflect.DeepEqual(chatIDs(res), []string{"known", "newer"}) {
@@ -326,14 +328,15 @@ func TestCursorDatabaseReaderSymlink(t *testing.T) {
 	}
 }
 
-func TestCursorDatabaseQueryUsesIndex(t *testing.T) {
-	t.Parallel()
-	path := filepath.Join(t.TempDir(), "state.vscdb")
-	db := openCursorWriter(t, path, false)
-	closeAtEnd(t, db)
-	rows, err := db.QueryContext(t.Context(), `EXPLAIN QUERY PLAN `+cursorComposerQuery)
+type queryIndexHost struct {
+	db *sql.DB
+	t  *testing.T
+}
+
+func (h queryIndexHost) Query(ctx context.Context, query string, visit func(agentapi.DatabaseRecord) error) error {
+	rows, err := h.db.QueryContext(ctx, "EXPLAIN QUERY PLAN "+query)
 	if err != nil {
-		t.Fatal(err)
+		h.t.Fatal(err)
 	}
 	defer func() { _ = rows.Close() }()
 	var plan []string
@@ -341,15 +344,26 @@ func TestCursorDatabaseQueryUsesIndex(t *testing.T) {
 		var id, parent, notUsed int
 		var detail string
 		if err := rows.Scan(&id, &parent, &notUsed, &detail); err != nil {
-			t.Fatal(err)
+			h.t.Fatal(err)
 		}
 		plan = append(plan, detail)
 	}
 	if err := rows.Err(); err != nil {
-		t.Fatal(err)
+		h.t.Fatal(err)
 	}
 	if got := strings.Join(plan, "; "); !strings.Contains(got, "USING INDEX") || !strings.Contains(got, "key>? AND key<?") {
-		t.Fatalf("query plan %q does not search the key index", got)
+		h.t.Fatalf("query plan %q does not search the key index", got)
+	}
+	return (databaseCatalogHost{h.db}).Query(ctx, query, visit)
+}
+
+func TestCursorDatabaseQueryUsesIndex(t *testing.T) {
+	t.Parallel()
+	db := openCursorWriter(t, filepath.Join(t.TempDir(), "state.vscdb"), false)
+	closeAtEnd(t, db)
+	provider, _ := builtin.NewBuiltins().LookupDatabaseCatalog("cursor")
+	if _, err := provider.InspectCatalog(t.Context(), queryIndexHost{db, t}); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -420,7 +434,7 @@ func TestCursorDatabaseReaderNotChecked(t *testing.T) {
 		"isDraft not a bool":     {value(`{"composerId":"b","isDraft":"no","fullConversationHeadersOnly":[{}]}`), CursorUncheckedUnknownFormat},
 		"headers not a list":     {value(`{"composerId":"b","fullConversationHeadersOnly":{"n":3}}`), CursorUncheckedUnknownFormat},
 		"conversation not alist": {value(`{"composerId":"b","conversation":"hi"}`), CursorUncheckedUnknownFormat},
-		"newer _v, bad isDraft":  {value(composerJSON("b", 1, map[string]any{"_v": maxComposerVersion + 1, "isDraft": 1})), CursorUncheckedUnknownFormat},
+		"newer _v, bad isDraft":  {value(composerJSON("b", 1, map[string]any{"_v": 18 + 1, "isDraft": 1})), CursorUncheckedUnknownFormat},
 		"_v not a number":        {value(composerJSON("b", 1, map[string]any{"_v": "3"})), CursorUncheckedUnknownFormat},
 		"_v zero":                {value(composerJSON("b", 1, map[string]any{"_v": 0})), CursorUncheckedUnknownFormat},
 		// A WAL database with one side file and not the other can't be
@@ -567,7 +581,7 @@ func TestCursorDatabaseReaderChangedDuringRead(t *testing.T) {
 			home := t.TempDir()
 			path := CursorStateDatabase(home)
 			writeCursorDB(t, path, true, map[string]any{"composerData:a": composerJSON("a", 1, nil)})
-			res := readCursorDatabase(context.Background(), path, cursorstore.Options{AfterImmutableRead: func(p string) { change(t, p) }})
+			res := readCursorDatabase(context.Background(), builtin.NewBuiltins(), path, cursorstore.Options{AfterImmutableRead: func(p string) { change(t, p) }})
 			if res.Checked || res.Reason != CursorUncheckedChangedDuringRead {
 				t.Fatalf("checked %v, reason %q", res.Checked, res.Reason)
 			}
