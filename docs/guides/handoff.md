@@ -5,9 +5,8 @@ usage halfway through a task, or want Codex to take a look? Hand the session
 off, and the other agent starts with it as context. You don't copy or paste
 anything.
 
-This guide describes current source; see [installation](../getting-started/install.md)
-for the features available in the published release. Handoff transfers filtered conversation context. Prepare the receiving
-checkout separately: files, uncommitted edits, and running processes do not move.
+Handoff transfers filtered conversation context. Prepare the receiving checkout
+separately: files, uncommitted edits, and running processes do not move.
 
 Start with [local sessions before setup](#before-setup-native-local-sessions),
 [handoff inside an agent](#from-inside-an-agent-handoff), or

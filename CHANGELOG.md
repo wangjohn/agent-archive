@@ -6,11 +6,11 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-Planned for v0.2.0. This release has not been tagged or published.
+## [0.2.0]
 
 ### Documentation
 
-- Documentation distinguishes published v0.1.1 from current source,
+- Documentation provides a v0.2.0 quickstart for macOS and Linux,
   explains conversation-only handoff and Codex all-project capture consent,
   and moves the shell cleanup recipe into a focused archive-cleanup guide.
 
@@ -1323,6 +1323,7 @@ The first release.
   `credential_process` fails there. See
   [configuration](docs/reference/configuration.md#environment-variables).
 
-[Unreleased]: https://github.com/wangjohn/agent-archive/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/wangjohn/agent-archive/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/wangjohn/agent-archive/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/wangjohn/agent-archive/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/wangjohn/agent-archive/releases/tag/v0.1.0
