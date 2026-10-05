@@ -348,16 +348,24 @@ func (s *Store) prepareRecoveryCursor(ctx context.Context) (sessionRecoveryCurso
 		return sessionRecoveryCursor{}, false, ErrSessionIndexRecoveryRequired
 	}
 	if err == nil && recoveryMarkerVersion(marker.Version) && marker.Complete {
-		if marker.MembershipFenced {
-			if _, err := s.sessionMembershipRevision(); err != nil {
+		var revision string
+		if marker.MembershipFenced || marker.Version == 2 {
+			var err error
+			revision, err = s.sessionMembershipRevision()
+			if err != nil {
 				return sessionRecoveryCursor{}, false, err
+			}
+			if marker.Version == 2 && revision == "" {
+				return sessionRecoveryCursor{}, false, ErrSessionIndexRecoveryRequired
 			}
 		}
 		complete, healthErr := s.completedRecoveryHealthy(marker)
 		if healthErr != nil {
 			return sessionRecoveryCursor{}, false, healthErr
 		}
-		if complete {
+		// A completed packed census certifies its recorded membership only.
+		// A valid newer revision must restart the authoritative recovery below.
+		if complete && (marker.Version != 2 || revision == marker.PackedRevision) {
 			return sessionRecoveryCursor{}, true, nil
 		}
 		err = ErrSessionIndexRecoveryRequired
