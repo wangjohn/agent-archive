@@ -33,6 +33,8 @@ type Candidate struct {
 	FirstTaskAt        time.Time
 	StartEvidence      string
 	WorkingDirectory   string
+	RecordedRepoKey    string
+	ProjectResolution  *archive.ProjectResolution
 	HarnessVersion     string
 	ProducerOriginator string
 	ProducerSource     string
@@ -163,7 +165,7 @@ func (a codexAdapter) Inspect(ctx context.Context, source SourceDescriptor) Obse
 func candidateFromHeader(h sourcefacts.Header, source SourceDescriptor) Candidate {
 	var producerSource string
 	_ = json.Unmarshal(h.Meta.Source, &producerSource)
-	return Candidate{Agent: "codex", NativeSessionID: h.Meta.ID, Source: source, StartedAt: h.Started, FirstTaskAt: h.FirstTaskAt, StartEvidence: "native_start", WorkingDirectory: h.Meta.Cwd, HarnessVersion: h.Meta.Version, ProducerOriginator: h.Meta.Originator, ProducerSource: producerSource, FormatProfile: h.Profile, Execution: "native"}
+	return Candidate{Agent: "codex", NativeSessionID: h.Meta.ID, Source: source, StartedAt: h.Started, FirstTaskAt: h.FirstTaskAt, StartEvidence: "native_start", WorkingDirectory: h.Meta.Cwd, RecordedRepoKey: archive.RepoKey(h.Meta.Git.RepositoryURL), HarnessVersion: h.Meta.Version, ProducerOriginator: h.Meta.Originator, ProducerSource: producerSource, FormatProfile: h.Profile, Execution: "native"}
 }
 
 func (codexAdapter) PriorityDirectories(now time.Time) []string {

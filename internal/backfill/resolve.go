@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/sourcefacts"
@@ -22,6 +23,7 @@ type resolution struct {
 	// included is set when a configured, included project owns the directory.
 	included bool
 	skip     SkipReason
+	proof    *archive.ProjectResolution
 }
 
 // resolver applies the spec's project resolution rules. It never runs git:
@@ -40,6 +42,7 @@ type resolver struct {
 	// in; a missing worktree there cannot be mapped to its repository.
 	worktreeStores []string
 	cache          map[string]resolution
+	recovery       *sourcefacts.RecoveryResolver
 }
 
 func newResolver(env Environment, cfg config.Config, filters Filters) *resolver {
@@ -76,6 +79,8 @@ func newResolver(env Environment, cfg config.Config, filters Filters) *resolver 
 	for _, store := range stores {
 		worktreeStores = append(worktreeStores, uniquePaths(filepath.Clean(store), env.resolved(store))...)
 	}
+	recovery := sourcefacts.NewRecoveryResolver(cfg.Archive.Projects, filters.ProjectMappings, env.resolved, env.RepositoryIdentity, nil)
+	recovery.MaxOperations = 1024
 	return &resolver{
 		env:            env,
 		cfg:            cfg,
@@ -86,6 +91,7 @@ func newResolver(env Environment, cfg config.Config, filters Filters) *resolver 
 		temps:          temps,
 		worktreeStores: worktreeStores,
 		cache:          map[string]resolution{},
+		recovery:       recovery,
 	}
 }
 
@@ -114,6 +120,29 @@ func withinAny(path string, roots []string) bool {
 
 // resolve maps a session's working directory to a project, applying the
 // spec's rules in order; the first that matches wins.
+func (r *resolver) resolveEvidence(ctx context.Context, cwd, key string) resolution {
+	cacheKey := cwd + "\x00" + r.env.resolved(cwd) + "\x00" + key + "\x00" + r.recovery.Context
+	if cached, ok := r.cache[cacheKey]; ok && !r.env.exists(cwd) {
+		return cached
+	}
+	res := r.resolveUncached(cwd)
+	// Existing filesystem evidence and nearest configured ownership take precedence.
+	if res.skip == SkipWorktreeUnresolved || (!r.env.exists(cwd) && !res.included && res.skip == "" && (key != "" || r.filters.ProjectMappings[filepath.Clean(cwd)] != "")) {
+		proof, outcome := r.recovery.Recover(ctx, cwd, key)
+		if outcome == "" {
+			res = resolution{root: proof.Root, kind: r.kindOf(proof.Root), included: true, proof: &proof}
+		}
+		if outcome != "" {
+			res = resolution{skip: SkipWorktreeUnresolved}
+		}
+		if outcome == "project_budget_exhausted" || outcome == "project_inventory_unavailable" {
+			return res
+		}
+	}
+	r.cache[cacheKey] = res
+	return res
+}
+
 func (r *resolver) resolve(cwd string) resolution {
 	if cached, ok := r.cache[cwd]; ok {
 		return cached

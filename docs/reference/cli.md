@@ -801,6 +801,7 @@ Example: agent-archive backfill --dry-run --since 30d
 | `--include-removed` | no value | — |
 | `--include-temp` | no value | — |
 | `--json` | no value | — |
+| `--map-project` | a value; repeatable | — |
 | `--project` | a value; repeatable | — |
 | `--since` | a value | — |
 | `--until` | a value | — |

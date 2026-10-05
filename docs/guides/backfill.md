@@ -128,3 +128,32 @@ folder lets backfill run again, but that import's sessions stay archived and
 An imported session whose transcript disappears before its first upload
 blocks a storage destination change until retention removes it, as a
 hook-captured session does.
+
+### Deleted Codex worktrees
+
+A removed Codex checkout can be recovered from its recorded repository identity
+when exactly one existing configured checkout owns that identity. The match
+includes excluded clones, and never uses a folder name. Missing or unreadable
+Git evidence, multiple clones, and uncertain nested exclusions leave the session
+unresolved. Existing configured rules and verified live worktree ownership win.
+
+For an ambiguous historical import, review an exact mapping with:
+
+```sh
+agent-archive backfill --dry-run --map-project /old/cwd=/configured/repository
+agent-archive backfill --map-project /old/cwd=/configured/repository
+```
+
+Repeat `--map-project` for each original cwd. Both sides must be absolute; the
+first equals sign separates them, so an equals sign can appear in the target
+but not the original cwd. The target must be an existing, included configured
+root. A mapping cannot override an exclusion or contradict usable repository
+evidence. It applies only to that exact cwd in this import; it does not grant
+future capture permission or change configuration. Repeat the same mappings to
+continue an interrupted batch. `--project` remains an output/import filter and
+cannot hide other clones to make a repository match unique.
+
+Automatic discovery uses the same unique-repository fallback, while preserving
+the native original creation time and current capture authorization. Future
+ambiguous chats remain pending. Imported ownership and its original cwd proof
+are preserved when a chat continues.

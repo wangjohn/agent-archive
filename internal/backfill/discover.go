@@ -24,7 +24,8 @@ type transcript struct {
 	cursorSlug string
 	// cwd is the working directory the transcript records (Claude Code and
 	// Codex).
-	cwd string
+	cwd     string
+	repoKey string
 	// identityMismatch is set when the transcript's own IDs disagree.
 	identityMismatch bool
 	capturePending   bool

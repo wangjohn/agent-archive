@@ -75,6 +75,7 @@ type Batch struct {
 // BatchFilters are the filters and --include-* flags a batch was run with.
 // A --project directory is recorded by its project ID.
 type BatchFilters struct {
+	MappingDigest  string   `json:"mapping_digest,omitempty"`
 	Harnesses      []string `json:"harnesses"`
 	ProjectIDs     []string `json:"project_ids"`
 	Since          string   `json:"since,omitempty"`
@@ -92,7 +93,7 @@ type BatchFilters struct {
 func (p Plan) BatchFilters() BatchFilters {
 	f := p.Filters
 	out := BatchFilters{
-		Harnesses: []string{}, ProjectIDs: []string{},
+		Harnesses: []string{}, ProjectIDs: []string{}, MappingDigest: mappingDigest(f.ProjectMappings),
 		Since: f.Since, Until: f.Until, SinceArg: f.SinceArg, UntilArg: f.UntilArg,
 		IncludeHome: f.IncludeHome, IncludeTemp: f.IncludeTemp, IncludeRemoved: f.IncludeRemoved,
 	}
@@ -153,7 +154,7 @@ func (b *Batch) Continues(filters BatchFilters, destinationID string) bool {
 }
 
 func (f BatchFilters) equal(o BatchFilters) bool {
-	return slices.Equal(f.Harnesses, o.Harnesses) && slices.Equal(f.ProjectIDs, o.ProjectIDs) &&
+	return f.MappingDigest == o.MappingDigest && slices.Equal(f.Harnesses, o.Harnesses) && slices.Equal(f.ProjectIDs, o.ProjectIDs) &&
 		sameBound(f.Since, f.SinceArg, o.Since, o.SinceArg) && sameBound(f.Until, f.UntilArg, o.Until, o.UntilArg) &&
 		f.IncludeHome == o.IncludeHome && f.IncludeTemp == o.IncludeTemp && f.IncludeRemoved == o.IncludeRemoved
 }
@@ -174,7 +175,20 @@ func sameBound(day, arg, otherDay, otherArg string) bool {
 // the configured root with project, the plan's own spelling; ok is false
 // when one of them is no longer configured.
 func (f BatchFilters) Flags(p Plan, projectRoot func(id string) (string, bool)) (flags string, ok bool) {
+	if f.MappingDigest != "" && f.MappingDigest != mappingDigest(p.Filters.ProjectMappings) {
+		return "", false
+	}
 	var out []string
+	if f.MappingDigest != "" {
+		keys := make([]string, 0, len(p.Filters.ProjectMappings))
+		for old := range p.Filters.ProjectMappings {
+			keys = append(keys, old)
+		}
+		sort.Strings(keys)
+		for _, old := range keys {
+			out = append(out, "--map-project "+shellWord(old+"="+p.Filters.ProjectMappings[old]))
+		}
+	}
 	for _, h := range f.Harnesses {
 		out = append(out, "--harness "+h)
 	}

@@ -53,6 +53,7 @@ const (
 
 // CodexMeta is identity and execution metadata, never transcript body.
 type CodexMeta struct {
+	Git             GitInfo         `json:"git"`
 	ThreadSource    json.RawMessage `json:"thread_source"`
 	AgentPath       json.RawMessage `json:"agent_path"`
 	AgentRole       json.RawMessage `json:"agent_role"`

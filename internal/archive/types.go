@@ -322,9 +322,22 @@ type CodexAdmissionProof struct {
 	Revision   string `json:"revision"`
 }
 
+// ProjectResolution is private, bounded evidence retained with local ownership.
+// Root is the selected configured spelling; Context is a content-free policy digest.
+type ProjectResolution struct {
+	OriginalCwd     string `json:"original_cwd"`
+	Root            string `json:"root"`
+	Method          string `json:"method"`
+	RecordedRepoKey string `json:"recorded_repo_key,omitempty"`
+	Context         string `json:"context"`
+	PolicyContext   string `json:"policy_context"`
+	InventoryDigest string `json:"inventory_digest,omitempty"`
+}
+
 type SessionRegistration struct {
-	CodexAdmission   *CodexAdmissionProof `json:"codex_admission,omitempty"`
-	ArchiveSessionID string               `json:"archive_session_id"`
+	ProjectResolution *ProjectResolution   `json:"project_resolution,omitempty"`
+	CodexAdmission    *CodexAdmissionProof `json:"codex_admission,omitempty"`
+	ArchiveSessionID  string               `json:"archive_session_id"`
 	// PreviousGenerationID links recovery generations independently of subagents.
 	PreviousGenerationID string `json:"previous_generation_id,omitempty"`
 	// CaptureFrozen forbids further native capture; retained privacy maintenance remains.

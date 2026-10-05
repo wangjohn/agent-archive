@@ -1046,3 +1046,31 @@ transcript.
 3. **Keeping sessions forever.** A "never delete" retention setting is more
    useful once imports exist. Recommendation: propose it separately, after
    B3.
+
+## Recorded project recovery
+
+The optional bounded Codex `git.repository_url` supplies a normalized repository
+key through native metadata; malformed optional Git evidence does not invalidate
+thread identity. Shared `sourcefacts.RecoveryResolver` evaluates all configured
+roots, including exclusions, through an injected bounded local Git identity port.
+SSH and HTTPS spellings use the existing archive normalizer. Different physical
+clones remain ambiguous; aliases of the same checkout coalesce only with equal
+scope decisions. Inherited repository identity does not identify a missing
+subtree. Descendant exclusions therefore require an exact reviewed import
+mapping. Live filesystem ownership and nearest configured rules take precedence.
+
+The discovery catalog checkpoints an incomplete configured-root sweep. Each
+pass allows at most 128 identity lookups; completed sweeps refresh next pass,
+and cached prefix metadata is validated before a resumed sweep. Unavailable
+entries cannot certify uniqueness. Bounded Git config origin names identify
+metadata dependencies; no partial Git configuration parser interprets remotes.
+Source and Git reads run outside admission locks. Under-lock scope digests and
+permission generations reject configuration changes.
+
+`--map-project OLD_CWD=CONFIGURED_ROOT` is exact and invocation-local, with at
+most 128 mappings and 4,096 bytes per absolute path. The first equals sign is
+the delimiter. Its canonical sorted digest participates in `BatchFilters`
+equality. Local registrations retain original cwd, method, normalized key and
+policy/inventory context, independently of timestamps and destination. No raw
+repository URL enters durable evidence. A mapping targets an existing included
+configured root and never overrides configured or live ownership.

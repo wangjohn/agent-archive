@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 	"github.com/wangjohn/agent-archive/internal/state"
 )
 
@@ -301,6 +303,10 @@ func (r Registration) step(cfg config.Config, w *parentWork, result *Registratio
 // last is a backstop: no registration ever starts after its admission.
 func (r Registration) skip(cfg config.Config, w *parentWork, result *RegistrationResult) (bool, error) {
 	c := w.c
+	if c.ProjectResolution != nil && c.ProjectResolution.PolicyContext != sourcefacts.RecoveryContext(cfg.Archive.Projects, nil, filepath.Clean) {
+		result.NotAdmitted++
+		return true, nil
+	}
 	if !cfg.AcceptSession(r.registration(c, "", "")) {
 		result.NotAdmitted++
 		return true, nil
@@ -380,22 +386,23 @@ func (r Registration) valid(c Candidate) bool {
 // import's admission, and the batch.
 func (r Registration) registration(c Candidate, archiveID, repoKey string) archive.SessionRegistration {
 	return archive.SessionRegistration{
-		ArchiveSessionID: archiveID,
-		NativeSessionID:  c.NativeSessionID,
-		ProjectID:        archive.ProjectID(c.ProjectRoot),
-		ProjectRoot:      c.ProjectRoot,
-		RepoKey:          repoKey,
-		Harness:          archive.Harness{Name: c.Harness},
-		TranscriptPath:   c.TranscriptPath,
-		SourceKind:       c.SourceKind,
-		SourceKey:        c.SourceKey,
-		SessionStartedAt: c.StartedAt,
-		StartedAtSource:  c.StartedAtSource,
-		RegisteredAt:     r.AdmittedAt,
-		AdmittedAt:       r.AdmittedAt,
-		Origin:           archive.SessionOriginImport,
-		ImportBatch:      archive.NewImportBatch(r.Batch),
-		DestinationID:    r.DestinationID,
+		ArchiveSessionID:  archiveID,
+		NativeSessionID:   c.NativeSessionID,
+		ProjectID:         archive.ProjectID(c.ProjectRoot),
+		ProjectRoot:       c.ProjectRoot,
+		RepoKey:           repoKey,
+		ProjectResolution: c.ProjectResolution,
+		Harness:           archive.Harness{Name: c.Harness},
+		TranscriptPath:    c.TranscriptPath,
+		SourceKind:        c.SourceKind,
+		SourceKey:         c.SourceKey,
+		SessionStartedAt:  c.StartedAt,
+		StartedAtSource:   c.StartedAtSource,
+		RegisteredAt:      r.AdmittedAt,
+		AdmittedAt:        r.AdmittedAt,
+		Origin:            archive.SessionOriginImport,
+		ImportBatch:       archive.NewImportBatch(r.Batch),
+		DestinationID:     r.DestinationID,
 	}
 }
 

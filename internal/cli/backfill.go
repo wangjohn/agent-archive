@@ -21,6 +21,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/cursorstore"
+	"github.com/wangjohn/agent-archive/internal/gitremote"
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/state"
@@ -199,9 +200,10 @@ func chooseBackfillPlanAction(opts backfillCommandOptions, plan backfill.Plan) b
 // before reading configuration or transcripts.
 func parseBackfillOptions(args []string, stderr io.Writer, env Env) (backfillCommandOptions, bool) {
 	fs := env.newCommandFlags("backfill", stderr)
-	var harnesses, projects stringList
+	var harnesses, projects, mappings stringList
 	fs.Var(&harnesses, "harness", "only sessions from this app (claude, codex, cursor); repeatable")
 	fs.Var(&projects, "project", "only sessions in this project directory; repeatable")
+	fs.Var(&mappings, "map-project", "map exact missing OLD_CWD=CONFIGURED_ROOT for this import; repeatable")
 	since := fs.String("since", "", "only sessions started on or after this local date (YYYY-MM-DD)")
 	until := fs.String("until", "", "only sessions started on or before this local date (YYYY-MM-DD)")
 	includeHome := fs.Bool("include-home", false, "import sessions run from the home directory")
@@ -228,8 +230,13 @@ func parseBackfillOptions(args []string, stderr io.Writer, env Env) (backfillCom
 	if err != nil {
 		return usageError("--until: " + err.Error())
 	}
+	projectMappings, err := backfill.ParseProjectMappings(mappings)
+	if err != nil {
+		return usageError(err.Error())
+	}
 	filters := backfill.Filters{
-		Harnesses: harnesses, Projects: projects, Since: sinceDay, Until: untilDay,
+		ProjectMappings: projectMappings,
+		Harnesses:       harnesses, Projects: projects, Since: sinceDay, Until: untilDay,
 		SinceArg: relativeTimeArg(*since), UntilArg: relativeTimeArg(*until),
 		IncludeHome: *includeHome, IncludeTemp: *includeTemp, IncludeRemoved: *includeRemoved,
 	}
@@ -688,7 +695,8 @@ func (e Env) backfillTempDirs() []string {
 func (e Env) backfillEnvironment(userHome string, cfg config.Config) backfill.Environment {
 	dirs := e.nativeSessionDirectories(userHome, cfg)
 	env := backfill.Environment{
-		Home: userHome, NativeDirectories: dirs, Sources: e.agentRegistry(), Discovery: e.agentRegistry(), DatabaseCatalogs: e.agentRegistry(), NativePaths: e.agentRegistry(), Worktrees: e.agentRegistry(), Workspaces: e.agentRegistry(), Children: e.agentRegistry(), Imports: e.agentRegistry(),
+		RepositoryIdentity: gitremote.ProjectIdentity,
+		Home:               userHome, NativeDirectories: dirs, Sources: e.agentRegistry(), Discovery: e.agentRegistry(), DatabaseCatalogs: e.agentRegistry(), NativePaths: e.agentRegistry(), Worktrees: e.agentRegistry(), Workspaces: e.agentRegistry(), Children: e.agentRegistry(), Imports: e.agentRegistry(),
 		TempDirs: e.backfillTempDirs(), Now: e.now, OS: e.OS,
 		// XDG_CONFIG_HOME places Cursor's data folder off macOS.
 		Getenv: e.getenv,

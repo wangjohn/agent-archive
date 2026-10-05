@@ -251,6 +251,9 @@ func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg con
 // working directories to projects before any archive-state classification.
 func preparePlanWork(ctx context.Context, env Environment, cfg config.Config, filters Filters) ([]*work, *resolver, unreadable, int, error) {
 	var unread unreadable
+	if err := validateProjectMappings(env, cfg, filters.ProjectMappings); err != nil {
+		return nil, nil, unread, 0, err
+	}
 	workers := env.Workers
 	if workers <= 0 {
 		workers = defaultWorkers()
@@ -258,7 +261,7 @@ func preparePlanWork(ctx context.Context, env Environment, cfg config.Config, fi
 	var items []*work
 	var err error
 	unread, err = enumerateDiscovery(ctx, env, agentapi.DiscoveryImport, func(c agentapi.DiscoveryCandidate) error {
-		t := &transcript{harness: harness(c.Session.Agent), path: c.Source.Path, size: c.Bytes, nativeID: c.Session.NativeID, cwd: c.Header.Directory, metaStart: c.Header.StartedAt, identityMismatch: c.Header.IdentityMismatch, capturePending: c.Header.CapturePending != "", cursorSlug: c.WorkspaceKey, sourcePriority: c.SourcePriority}
+		t := &transcript{harness: harness(c.Session.Agent), path: c.Source.Path, size: c.Bytes, nativeID: c.Session.NativeID, cwd: c.Header.Directory, repoKey: c.Header.RepoKey, metaStart: c.Header.StartedAt, identityMismatch: c.Header.IdentityMismatch, capturePending: c.Header.CapturePending != "", cursorSlug: c.WorkspaceKey, sourcePriority: c.SourcePriority}
 		w := &work{t: t, c: Candidate{Harness: string(c.Session.Agent), TranscriptPath: t.path, SourceKind: c.Source.Kind, SourceKey: c.Source.Key, Bytes: t.size, NativeSessionID: t.nativeID}, unsafe: c.IdentityError != nil}
 		items = append(items, w)
 		return nil
@@ -269,6 +272,9 @@ func preparePlanWork(ctx context.Context, env Environment, cfg config.Config, fi
 
 	// Projects. Cursor's come last: its slugs are matched against the roots
 	// the other apps' sessions resolved to.
+	if err := validateProjectMappings(env, cfg, filters.ProjectMappings); err != nil {
+		return nil, nil, unread, workers, err
+	}
 	r := newResolver(env, cfg, filters)
 	var cursorCandidates []string
 	for _, p := range cfg.Archive.Projects {
@@ -278,7 +284,7 @@ func preparePlanWork(ctx context.Context, env Environment, cfg config.Config, fi
 		if w.t.cursorSlug != "" || w.vanished {
 			continue
 		}
-		w.res = r.resolve(w.t.cwd)
+		w.res = r.resolveEvidence(ctx, w.t.cwd, w.t.repoKey)
 		if w.t.cwd != "" {
 			cursorCandidates = append(cursorCandidates, w.t.cwd)
 		}
@@ -475,6 +481,7 @@ func decidePlanCandidates(items []*work, since, until, now time.Time) []*work {
 			w.filtered = true
 		}
 		w.c.ProjectRoot, w.c.ProjectKind, w.c.ProjectIncluded = w.res.root, w.res.kind, w.res.included
+		w.c.ProjectResolution = w.res.proof
 		w.c.Skip = w.reason(now)
 		if w.c.Skip == "" {
 			parents = append(parents, w)

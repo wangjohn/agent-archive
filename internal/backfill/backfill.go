@@ -23,6 +23,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/platform"
+	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 )
 
 // SkipReason says why a found session is not imported. Every session found is
@@ -144,8 +145,9 @@ type Candidate struct {
 	// registered under: a configured project's own spelling, or the resolved
 	// path. It is set for a skip that has a would-be root (home, temporary,
 	// excluded) and empty when no project could be determined.
-	ProjectRoot string
-	ProjectKind ProjectKind
+	ProjectRoot       string
+	ProjectResolution *archive.ProjectResolution
+	ProjectKind       ProjectKind
 	// ProjectIncluded is set when the root is a configured, included
 	// project; otherwise importing adds it.
 	ProjectIncluded bool
@@ -174,8 +176,9 @@ type Subagent struct {
 
 // Filters narrows a backfill run.
 type Filters struct {
-	Harnesses []string
-	Projects  []string
+	Harnesses       []string
+	Projects        []string
+	ProjectMappings map[string]string
 	// Since and Until are local dates, YYYY-MM-DD, compared inclusively with
 	// the session's start.
 	Since string
@@ -262,14 +265,15 @@ const (
 // through collector.FilterTranscriptFile, the collector's own filter, which
 // reads transcripts from the real file system whatever is injected here.
 type Environment struct {
-	Discovery        agentapi.DiscoveryLookup
-	DatabaseCatalogs agentapi.DatabaseCatalogLookup
-	NativePaths      agentapi.NativePathsLookup
-	Worktrees        agentapi.WorktreeLookup
-	Workspaces       agentapi.WorkspaceLookup
-	Children         agentapi.ChildrenLookup
-	Imports          agentapi.ImportsLookup
-	Sources          agentapi.SourcesLookup
+	RepositoryIdentity sourcefacts.RepositoryLookup
+	Discovery          agentapi.DiscoveryLookup
+	DatabaseCatalogs   agentapi.DatabaseCatalogLookup
+	NativePaths        agentapi.NativePathsLookup
+	Worktrees          agentapi.WorktreeLookup
+	Workspaces         agentapi.WorkspaceLookup
+	Children           agentapi.ChildrenLookup
+	Imports            agentapi.ImportsLookup
+	Sources            agentapi.SourcesLookup
 	// Home is the user's home directory, where the apps keep their stores.
 	Home string
 	// NativeDirectories are observed current and previously configured native locations.

@@ -28,7 +28,7 @@ const (
 	// HeaderProbes caps metadata reads in one pass.
 	HeaderProbes = 256
 	// Reprobe older cached observations so they acquire explicit format profiles.
-	catalogVersion = 4
+	catalogVersion = 5
 	maxCatalog     = 8192
 	maxDirectories = 4096
 	maxRetries     = 256
@@ -42,6 +42,7 @@ type Health struct {
 	LastAttempt       time.Time           `json:"last_attempt,omitzero"`
 	LastReconciled    time.Time           `json:"last_reconciled,omitzero"`
 	Pending           bool                `json:"pending"`
+	RepositoryLookups int                 `json:"repository_lookups,omitempty"`
 	ProjectOperations int                 `json:"project_metadata_operations"`
 	GitBytes          int                 `json:"git_metadata_bytes"`
 	Probes            int                 `json:"header_probes"`
@@ -71,20 +72,23 @@ type cached struct {
 }
 
 type catalog struct {
-	Version  int                `json:"version"`
-	Roots    []string           `json:"roots"`
-	Queue    []directory        `json:"queue"`
-	Cache    map[string]cached  `json:"cache"`
-	Health   Health             `json:"health"`
-	Priority map[string]int64   `json:"priority,omitempty"`
-	Retries  []SourceDescriptor `json:"retries,omitempty"`
+	Recovery sourcefacts.RecoveryInventory `json:"project_recovery,omitempty"`
+	Version  int                           `json:"version"`
+	Roots    []string                      `json:"roots"`
+	Queue    []directory                   `json:"queue"`
+	Cache    map[string]cached             `json:"cache"`
+	Health   Health                        `json:"health"`
+	Priority map[string]int64              `json:"priority,omitempty"`
+	Retries  []SourceDescriptor            `json:"retries,omitempty"`
 }
 
 // Options contains injectable clocks and stop signals; it cannot override
 // source format support or authorize capture.
 type Options struct {
-	Now  func() time.Time
-	Stop func() bool
+	RepositoryIdentity        sourcefacts.RepositoryLookup
+	RepositoryIdentityCurrent func(sourcefacts.RepositoryIdentity) bool
+	Now                       func() time.Time
+	Stop                      func() bool
 }
 
 // Run observes configured Codex homes under the caller's collector lock,
@@ -133,7 +137,9 @@ func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config,
 	ctx, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
 	resolver := sourcefacts.NewProjectResolver()
-	priority := scan{resolver: resolver, store: store, cfg: cfg, catalog: &c, health: &h, now: now, adapter: adapter, priority: true, ctx: ctx}
+	recovery := sourcefacts.NewRecoveryResolver(cfg.Archive.Projects, nil, canonicalProjectPath, o.RepositoryIdentity, &c.Recovery)
+	recovery.Validate = o.RepositoryIdentityCurrent
+	priority := scan{resolver: resolver, recovery: recovery, store: store, cfg: cfg, catalog: &c, health: &h, now: now, adapter: adapter, priority: true, ctx: ctx}
 	priority.observeIndexHints(ctx, o, roots, deadline)
 	priority.observeActiveHints(ctx, o, roots, deadline)
 	priority.observeRetries(o)
@@ -158,7 +164,7 @@ func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config,
 			unavailable = append(unavailable, d)
 			continue
 		}
-		worker := scan{resolver: resolver, store: store, cfg: cfg, catalog: &c, health: &h, now: now, adapter: adapter, ctx: ctx, reservedDirectories: len(unavailable)}
+		worker := scan{resolver: resolver, recovery: recovery, store: store, cfg: cfg, catalog: &c, health: &h, now: now, adapter: adapter, ctx: ctx, reservedDirectories: len(unavailable)}
 		for _, source := range batch.Entries {
 			if scanStopped(ctx, o) || time.Now().After(deadline) {
 				finished = false
@@ -182,6 +188,7 @@ func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config,
 	}
 	c.Queue = append(unavailable, c.Queue...)
 	h.ProjectOperations = resolver.Operations
+	h.RepositoryLookups = recovery.Operations
 	h.GitBytes = resolver.GitBytes
 	h.Pending = len(c.Queue) > 0 || len(c.Retries) > 0
 	if !h.Pending && len(h.Errors) == 0 {
@@ -278,8 +285,8 @@ func resolveProject(cfg config.Config, cwd string) (string, bool) {
 		}
 		return facts.Root, true
 	}
-	resolved, err := filepath.EvalSymlinks(cwd)
-	if err != nil {
+	resolved := canonicalProjectPath(cwd)
+	if !filepath.IsAbs(cwd) {
 		return "", false
 	}
 	resolve := func(p string) string {
@@ -290,7 +297,8 @@ func resolveProject(cfg config.Config, cwd string) (string, bool) {
 		return r
 	}
 	if p, ok := sourcefacts.ConfiguredOwner(cfg.Archive.Projects, resolved, resolve); ok {
-		return p.Root, p.Included
+		info, err := os.Stat(p.Root)
+		return p.Root, p.Included && err == nil && info.IsDir()
 	}
 	for d, depth := resolved, 0; depth < 64; depth++ {
 		path := filepath.Join(d, ".git")
@@ -395,6 +403,9 @@ func admitSession(store *state.Store, candidate Candidate, project, generation s
 		err := store.RequestSessionIndexRecovery(sessionKey(candidate.Agent, candidate.NativeSessionID))
 		return false, errors.Join(state.ErrSessionIndexRecoveryRequired, err)
 	}
+	if candidate.ProjectResolution != nil && candidate.ProjectResolution.Method != "explicit_mapping" && candidate.ProjectResolution.Context != sourcefacts.RecoveryContext(cfg.Archive.Projects, nil, filepath.Clean) {
+		return false, errors.New("project recovery policy changed")
+	}
 	current, allowed := cfg.DiscoveryGeneration(candidate.Agent, project, candidate.StartedAt, now)
 	if cfg.EffectiveCodexCaptureScope() == config.CodexAllProjects {
 		if !factsOK || facts.Root != project || cfg.Discovery == nil || !cfg.Discovery.Enabled {
@@ -410,7 +421,7 @@ func admitSession(store *state.Store, candidate Candidate, project, generation s
 		if cfg.EffectiveCodexCaptureScope() == config.CodexAllProjects {
 			proof = &archive.CodexAdmissionProof{Generation: generation, Revision: cfg.CodexCapture.Revision, Cwd: facts.Cwd}
 		}
-		return archive.SessionRegistration{CodexAdmission: proof,
+		return archive.SessionRegistration{CodexAdmission: proof, ProjectResolution: candidate.ProjectResolution, RepoKey: candidate.RecordedRepoKey,
 			ArchiveSessionID: id, NativeSessionID: candidate.NativeSessionID, Harness: archive.Harness{Name: candidate.Agent, Version: candidate.HarnessVersion}, ProjectID: archive.ProjectID(project), ProjectRoot: project,
 			SourceKind: candidate.Source.Kind, SourceKey: candidate.Source.StableKey, TranscriptPath: locator, DiscoveryRoot: sourceRoot, DiscoveryCwd: candidate.WorkingDirectory, DiscoveryProducerOriginator: candidate.ProducerOriginator, DiscoveryProducerSource: candidate.ProducerSource, DiscoveryGeneration: generation, DiscoverySourcePriority: candidate.Source.Priority, SessionStartedAt: candidate.StartedAt, RegisteredAt: now, AdmittedAt: now,
 			Origin: archive.SessionOriginDiscovery, StartedAtSource: archive.StartedAtSourceTranscript, DestinationID: cfg.DestinationID(),
@@ -501,6 +512,7 @@ func continuationLocator(store *state.Store, agent, native string, source Source
 
 type scan struct {
 	resolver            *sourcefacts.ProjectResolver
+	recovery            *sourcefacts.RecoveryResolver
 	store               *state.Store
 	cfg                 config.Config
 	catalog             *catalog
@@ -659,6 +671,7 @@ func (s scan) admitCandidate(candidate Candidate, loc string) (bool, bool) {
 	var facts sourcefacts.ProjectFacts
 	var root string
 	var ok bool
+	var ownedRoot string
 	physical := cfg.EffectiveCodexCaptureScope() == config.CodexAllProjects
 	if id, known, e := store.ArchiveSessionID(sessionKey(candidate.Agent, candidate.NativeSessionID)); e == nil && known {
 		if prior, found, e := store.LoadRegistration(id); e == nil && found {
@@ -666,13 +679,24 @@ func (s scan) admitCandidate(candidate Candidate, loc string) (bool, bool) {
 				h.Outcomes["project_not_authorized"]++
 				return false, false
 			}
+			if prior.ProjectResolution != nil && prior.ProjectResolution.OriginalCwd == candidate.WorkingDirectory {
+				if p, matched := sourcefacts.ConfiguredOwner(cfg.Archive.Projects, canonicalProjectPath(candidate.WorkingDirectory), canonicalProjectPath); matched && !p.Included {
+					h.Outcomes["project_not_authorized"]++
+					return false, false
+				}
+				ownedRoot = prior.ProjectRoot
+				candidate.ProjectResolution = prior.ProjectResolution
+			}
 			if prior.CodexAdmission != nil {
 				physical = true
 			}
 		}
 	}
 
-	if physical {
+	if ownedRoot != "" {
+		root, ok = ownedRoot, true
+		facts = sourcefacts.ProjectFacts{Root: root, Cwd: canonicalProjectPath(candidate.WorkingDirectory)}
+	} else if physical {
 		facts, ok = s.resolver.Resolve(candidate.WorkingDirectory)
 		root = facts.Root
 		if !ok && s.resolver.Exhausted {
@@ -682,6 +706,25 @@ func (s scan) admitCandidate(candidate Candidate, loc string) (bool, bool) {
 		}
 	} else {
 		root, ok = resolveProject(cfg, candidate.WorkingDirectory)
+	}
+	if !ok && s.recovery != nil {
+		if _, err := os.Stat(candidate.WorkingDirectory); errors.Is(err, os.ErrNotExist) {
+			proof, outcome := s.recovery.Recover(s.ctx, candidate.WorkingDirectory, candidate.RecordedRepoKey)
+			if outcome == "" {
+				if info, err := os.Stat(proof.Root); err != nil || !info.IsDir() {
+					h.Outcomes["project_inventory_unavailable"]++
+					s.retainRetry(candidate.Source)
+					return false, false
+				}
+				root, ok = proof.Root, true
+				candidate.ProjectResolution = &proof
+				facts = sourcefacts.ProjectFacts{Root: root, Cwd: canonicalProjectPath(candidate.WorkingDirectory)}
+			} else {
+				h.Outcomes[outcome]++
+				s.retainRetry(candidate.Source)
+				return false, false
+			}
+		}
 	}
 	if !ok {
 		if physical {
