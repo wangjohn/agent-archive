@@ -68,6 +68,8 @@ type NativeFacts struct {
 	TextOnly bool
 	// IdentityConflict is interpreted by the native parser against the bundle ID.
 	IdentityConflict bool
+	// TokenScopeUnknown marks cumulative accounting that cannot establish own usage.
+	TokenScopeUnknown bool
 }
 
 // NativeTurnEnd distinguishes an absent outcome from a recorded unknown outcome.

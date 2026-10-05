@@ -155,7 +155,7 @@ func Open(files Opener, p string, policy OpenPolicy) (*Snapshot, error) {
 			}
 			return nil, err
 		}
-		return &Snapshot{files: files, path: path, file: f, stamp: Stamp{opened.Size(), opened.ModTime(), opened}}, nil
+		return &Snapshot{files: files, path: p, file: f, stamp: Stamp{opened.Size(), opened.ModTime(), opened}}, nil
 	}
 	f, err := files.OpenRegular(path)
 	if err != nil {
@@ -171,7 +171,7 @@ func Open(files Opener, p string, policy OpenPolicy) (*Snapshot, error) {
 		}
 		return nil, err
 	}
-	return &Snapshot{files: files, path: path, file: f, stamp: Stamp{info.Size(), info.ModTime(), info}}, nil
+	return &Snapshot{files: files, path: p, file: f, stamp: Stamp{info.Size(), info.ModTime(), info}}, nil
 }
 
 // Close releases the snapshot descriptor.
@@ -264,6 +264,13 @@ func (s *Snapshot) CheckPrefix(ctx context.Context, length int64, digest [32]byt
 			return err
 		}
 		named, err := s.files.Lstat(s.path)
+		if err == nil && named.Mode()&fs.ModeSymlink != 0 {
+			var resolved string
+			resolved, err = s.files.EvalSymlinks(s.path)
+			if err == nil {
+				named, err = s.files.Lstat(resolved)
+			}
+		}
 		if err != nil {
 			return err
 		}

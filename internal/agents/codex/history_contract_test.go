@@ -1,0 +1,272 @@
+package codex
+
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"slices"
+	"testing"
+	"time"
+
+	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/codexmeta"
+)
+
+func appendHistoryRows(t testing.TB, ref agentapi.SourceRef, start uint64, rows ...map[string]any) []byte {
+	t.Helper()
+	f, e := os.OpenFile(ref.Path, os.O_APPEND|os.O_WRONLY, 0600)
+	if e != nil {
+		t.Fatal(e)
+	}
+	for i, row := range rows {
+		row["ordinal"] = start + uint64(i)
+		if e := json.NewEncoder(f).Encode(row); e != nil {
+			t.Fatal(e)
+		}
+	}
+	if e := f.Close(); e != nil {
+		t.Fatal(e)
+	}
+	raw, e := os.ReadFile(ref.Path)
+	if e != nil {
+		t.Fatal(e)
+	}
+	return raw
+}
+
+func TestNestedHistoryDropsRemapAndRefilter(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	base, _ := historyFile(t, dir, threadA, threadA, 0, nil, "ancestor")
+	raw := appendHistoryRows(t, base, 2, map[string]any{"type": "unknown_native_type", "secret": "synthetic-private-value"})
+	middle, midraw := historyFile(t, dir, threadB, threadB, 3, map[string]any{"forked_from_id": threadA, "forked_from_ordinal_exclusive": 3, "history_base": codexmeta.CodexHistoryPosition{RolloutID: threadA, EndOrdinal: 3, EndByteOffset: uint64(len(raw))}}, "own before revert")
+	leaf, _ := historyFile(t, dir, rolloutC, threadB, 5, map[string]any{"history_base": codexmeta.CodexHistoryPosition{RolloutID: threadB, EndOrdinal: 5, EndByteOffset: uint64(len(midraw))}}, "own after revert")
+	l := &historyLookup{thread: agentapi.CodexRolloutSet{Current: &leaf, Revision: "one"}, rollouts: map[string][]agentapi.SourceRef{threadA: {base}, threadB: {middle}}}
+	b := historyRead(t, historyPass(t, dir, l), leaf)
+	if len(b.History.Spans) != 3 || !slices.Equal(b.Ordinals, []uint64{0, 1, 3, 4, 5, 6}) {
+		t.Fatalf("drop remapping: %+v %v", b.History, b.Ordinals)
+	}
+	encoded, e := archive.BuildCompressedSource(b)
+	if e != nil {
+		t.Fatal(e)
+	}
+	var rawSafe bytes.Buffer
+	if e := archive.EncodeSource(&rawSafe, b); e != nil {
+		t.Fatal(e)
+	}
+	if bytes.Contains(rawSafe.Bytes(), []byte("synthetic-private-value")) {
+		t.Fatal("unknown secret retained")
+	}
+	round, e := archive.ReadSourceBundle(bytes.NewReader(encoded.Bytes), archive.DecodeOptions{})
+	if e != nil {
+		t.Fatal(e)
+	}
+	// Future privacy rules may drop another previously retained record.
+	round.NativeRecords[1] = map[string]any{"type": "unknown_native_type"}
+	filtered, e := (Filter{}).Refilter(t.Context(), round, time.Time{})
+	if e != nil {
+		t.Fatal(e)
+	}
+	if !slices.Equal(filtered.Ordinals, []uint64{0, 3, 4, 5, 6}) || filtered.History.Spans[0].EndRecord != 1 || filtered.History.Spans[1].FirstRecord != 1 {
+		t.Fatalf("refilter remapping: %+v %v", filtered.History, filtered.Ordinals)
+	}
+	a, e := (Parser{}).Parse(t.Context(), b)
+	if e != nil || len(a.View.Turns) != 2 {
+		t.Fatalf("nested own activity: %+v %v", a.View, e)
+	}
+}
+
+func TestHistoryCumulativeAccountingDoesNotBecomeOwnedUsage(t *testing.T) {
+	t.Parallel()
+	for _, kind := range []string{"carried_total", "reset_total", "mixed", "ambiguous_turn", "per_call", "absent_child_boundary"} {
+		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			extra := map[string]any{"parent_thread_id": threadA, "subagent_history_start_ordinal": 4}
+			if kind == "absent_child_boundary" {
+				delete(extra, "subagent_history_start_ordinal")
+			}
+			leaf, _ := historyFile(t, dir, threadB, threadB, 0, extra)
+			rows := []map[string]any{
+				{"type": "turn_context", "payload": map[string]any{"model": "synthetic-context-model"}},
+				{"type": "token_usage_record", "payload": map[string]any{"usage": map[string]any{"input_tokens": 100}}},
+				{"type": "response_item", "payload": map[string]any{"type": "function_call", "name": "shell", "call_id": "inherited", "arguments": "{}"}},
+			}
+			field := "total_token_usage"
+			value := 105
+			if kind == "reset_total" {
+				value = 5
+			}
+			if kind == "per_call" || kind == "absent_child_boundary" {
+				field = "usage"
+				value = 5
+			}
+			if kind == "ambiguous_turn" {
+				field = "turn_token_usage"
+			}
+			rows = append(rows, map[string]any{"type": "token_usage_record", "payload": map[string]any{field: map[string]any{"input_tokens": value}}})
+			if kind == "mixed" {
+				rows = append(rows, map[string]any{"type": "token_usage_record", "payload": map[string]any{"usage": map[string]any{"input_tokens": 5}}})
+			}
+			appendHistoryRows(t, leaf, 1, rows...)
+			l := &historyLookup{thread: agentapi.CodexRolloutSet{Current: &leaf, Revision: "one"}}
+			b := historyRead(t, historyPass(t, dir, l), leaf)
+			a, e := (Parser{}).Parse(t.Context(), b)
+			if e != nil {
+				t.Fatal(e)
+			}
+			want := 0
+			if kind == "mixed" || kind == "per_call" {
+				want = 5
+			}
+			if kind == "absent_child_boundary" {
+				want = 105
+			}
+			if want == 0 && a.View.Tokens.Input != nil || want > 0 && (a.View.Tokens.Input == nil || *a.View.Tokens.Input != want) {
+				t.Fatalf("own tokens: %+v want %d", a.View.Tokens, want)
+			}
+			unknown := kind != "per_call" && kind != "absent_child_boundary"
+			if a.Facts.TokenScopeUnknown != unknown {
+				t.Fatalf("scope gap=%v want %v", a.Facts.TokenScopeUnknown, unknown)
+			}
+			if want > 0 && (len(a.View.ModelTokens) != 1 || a.View.ModelTokens[0].Model != "synthetic-context-model") {
+				t.Fatalf("inherited model context: %+v", a.View.ModelTokens)
+			}
+			tools := 0
+			if kind == "absent_child_boundary" {
+				tools = 1
+			}
+			if len(a.View.ToolCalls) != tools {
+				t.Fatalf("inherited tool activity counted: %d", len(a.View.ToolCalls))
+			}
+			source, e := archive.BuildCompressedSource(b)
+			if e != nil {
+				t.Fatal(e)
+			}
+			key, e := archive.SourceObjectKey(b, source.SHA256)
+			if e != nil {
+				t.Fatal(e)
+			}
+			metadata, e := archive.BuildMetadataWithAnalysis(b, a, nil, "synthetic-machine", b.Capture.CapturedAt, b.Capture.CapturedAt, archive.SourceReference{Key: key, SHA256: source.SHA256, CompressedBytes: len(source.Bytes)}, archive.ParserInfo{Name: "codex", Version: (Parser{}).Version()})
+			if e != nil {
+				t.Fatal(e)
+			}
+			found := slices.ContainsFunc(metadata.CaptureGaps, func(g archive.CaptureGap) bool { return g.Code == "history_cumulative_tokens_unavailable" })
+			if found != unknown {
+				t.Fatalf("metadata token gap %v want %v", found, unknown)
+			}
+		})
+	}
+}
+
+func TestHistorySelectionRejectsDisconnectedCycle(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	seed, _ := historyFile(t, dir, threadA, threadA, 0, nil, "tip")
+	cycle, _ := historyFile(t, dir, rolloutC, threadA, 1, map[string]any{"history_base": codexmeta.CodexHistoryPosition{RolloutID: rolloutC, EndOrdinal: 1, EndByteOffset: 1}})
+	l := &historyLookup{thread: agentapi.CodexRolloutSet{Complete: true, Candidates: []agentapi.SourceRef{seed, cycle}}, rollouts: map[string][]agentapi.SourceRef{rolloutC: {cycle}}}
+	if _, e := historyPass(t, dir, l).Read(t.Context(), seed, agentapi.ReadLimits{}); e == nil {
+		t.Fatal("accepted disconnected candidate graph")
+	}
+}
+
+func TestHistoryDefersValidUnterminatedLeafRecord(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	leaf, raw := historyFile(t, dir, threadB, threadB, 0, map[string]any{"parent_thread_id": threadA}, "complete", "unfinished newline")
+	if e := os.WriteFile(leaf.Path, raw[:len(raw)-1], 0600); e != nil {
+		t.Fatal(e)
+	}
+	l := &historyLookup{thread: agentapi.CodexRolloutSet{Current: &leaf}}
+	b := historyRead(t, historyPass(t, dir, l), leaf)
+	if len(b.NativeRecords) != 2 {
+		t.Fatalf("unterminated record captured: %d", len(b.NativeRecords))
+	}
+}
+
+func TestHistoryCacheRejectsReplacedLocator(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	leaf, raw := historyFile(t, dir, threadB, threadB, 0, map[string]any{"parent_thread_id": threadA}, "original")
+	l := &historyLookup{thread: agentapi.CodexRolloutSet{Current: &leaf}}
+	p := historyPass(t, dir, l)
+	s, e := p.Read(t.Context(), leaf, agentapi.ReadLimits{})
+	if e != nil {
+		t.Fatal(e)
+	}
+	if e := os.Rename(leaf.Path, leaf.Path+".old"); e != nil {
+		t.Fatal(e)
+	}
+	if e := os.WriteFile(leaf.Path, raw, 0600); e != nil {
+		t.Fatal(e)
+	}
+	if _, e := p.Read(t.Context(), leaf, agentapi.ReadLimits{}); agentapi.Failure(e) != agentapi.Changed {
+		t.Fatalf("cached replacement: %v", e)
+	}
+	if e := s.Close(); e != nil {
+		t.Fatal(e)
+	}
+}
+
+func TestHistoryBudgetRejectsTooManyDependencies(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	l := &historyLookup{rollouts: map[string][]agentapi.SourceRef{}}
+	var leaf agentapi.SourceRef
+	var raw []byte
+	var previous string
+	for i := range 65 {
+		id := fmt.Sprintf("%08x-1111-4111-8111-111111111111", i+1)
+		extra := map[string]any{}
+		if i > 0 {
+			extra["history_base"] = codexmeta.CodexHistoryPosition{RolloutID: previous, EndOrdinal: uint64(i), EndByteOffset: uint64(len(raw))}
+		}
+		leaf, raw = historyFile(t, dir, id, threadA, uint64(i), extra)
+		l.rollouts[id] = []agentapi.SourceRef{leaf}
+		previous = id
+	}
+	l.thread.Current = &leaf
+	p := historyPass(t, dir, l)
+	if _, e := p.Read(t.Context(), leaf, agentapi.ReadLimits{}); agentapi.Failure(e) != agentapi.Limit {
+		t.Fatalf("dependency cap: %v", e)
+	}
+	if e := p.Close(); e != nil {
+		t.Fatal(e)
+	}
+	state := p.(*relatedSourcePass)
+	if state.bytes != 0 || len(state.files) != 0 {
+		t.Fatal("budget retained after error close")
+	}
+}
+
+func TestOrdinaryAdmissionUsesCapturedHandle(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	ref, _ := historyFile(t, dir, threadA, threadA, 0, nil, "own")
+	p, e := (SourceProvider{}).OpenPass(t.Context(), agentapi.SourceEnvironment{})
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer func() { _ = p.Close() }()
+	s, e := p.Read(t.Context(), ref, agentapi.ReadLimits{})
+	if e != nil {
+		t.Fatal(e)
+	}
+	v, ok := s.(agentapi.SourceAdmissionValidator)
+	if !ok {
+		t.Fatal("ordinary admission missing")
+	}
+	if e := v.ValidateAdmission(t.Context(), agentapi.SourceAdmission{NativeID: threadA, Cwd: dir}); e != nil {
+		t.Fatal(e)
+	}
+	if e := v.ValidateAdmission(t.Context(), agentapi.SourceAdmission{NativeID: threadB, Cwd: dir}); agentapi.Failure(e) != agentapi.Unsafe {
+		t.Fatalf("wrong admission accepted: %v", e)
+	}
+	_ = s.Close()
+	if e := v.ValidateAdmission(t.Context(), agentapi.SourceAdmission{NativeID: threadA}); !errors.Is(e, agentapi.ErrClosed) {
+		t.Fatalf("closed admission: %v", e)
+	}
+}

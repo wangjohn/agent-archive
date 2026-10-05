@@ -152,9 +152,9 @@ func TestOneChangedFileAmidSettledSessionsFiltersOnce(t *testing.T) {
 			t.Fatalf("changed session read a settled neighbour: %s", key)
 		}
 	}
-	// Only the changed session's canonical confirmation is read. Cleanup uses
+	// Only the changed session's prior sidecar and canonical confirmation are read. Cleanup uses
 	// headers, so no auxiliary, settled-neighbour or source body is fetched.
-	if remote.reads-reads != 1 || remote.metadataReads-metadataReads != 1 || remote.auxiliaryReads-auxiliaryReads != 0 || remote.sourceReads-sourceReads != 0 {
-		t.Fatalf("remote reads=%d metadata=%d auxiliary=%d source=%d; want 1/1/0/0", remote.reads-reads, remote.metadataReads-metadataReads, remote.auxiliaryReads-auxiliaryReads, remote.sourceReads-sourceReads)
+	if remote.reads-reads != 2 || remote.metadataReads-metadataReads != 2 || remote.auxiliaryReads-auxiliaryReads != 0 || remote.sourceReads-sourceReads != 0 {
+		t.Fatalf("remote reads=%d metadata=%d auxiliary=%d source=%d; want 2/2/0/0", remote.reads-reads, remote.metadataReads-metadataReads, remote.auxiliaryReads-auxiliaryReads, remote.sourceReads-sourceReads)
 	}
 }

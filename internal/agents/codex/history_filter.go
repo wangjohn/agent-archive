@@ -21,6 +21,12 @@ func filterHistory(ctx context.Context, in agentapi.RecordInput) (archive.Filter
 		return archive.FilteredTranscript{}, errors.New("history descriptor required")
 	}
 	history := *descriptor.History
+	if len(history.Spans) == 0 {
+		return archive.FilteredTranscript{}, errors.New("history spans required")
+	}
+	if err := history.Validate(history.ThreadID, history.Spans[len(history.Spans)-1].EndRecord); err != nil {
+		return archive.FilteredTranscript{}, err
+	}
 	history.Spans = slices.Clone(history.Spans)
 	original := slices.Clone(history.Spans)
 	var ordinals []uint64
