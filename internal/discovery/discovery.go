@@ -707,25 +707,21 @@ func (s scan) admitCandidate(candidate Candidate, loc string) (bool, bool) {
 	} else {
 		root, ok = resolveProject(cfg, candidate.WorkingDirectory)
 	}
-	if !ok && s.recovery != nil {
-		if _, err := os.Stat(candidate.WorkingDirectory); errors.Is(err, os.ErrNotExist) {
-			proof, outcome := s.recovery.Recover(s.ctx, candidate.WorkingDirectory, candidate.RecordedRepoKey)
-			if outcome == "" {
-				if info, err := os.Stat(proof.Root); err != nil || !info.IsDir() {
-					h.Outcomes["project_inventory_unavailable"]++
+	if !ok {
+		if proof, outcome, attempted := s.recoverProject(candidate); attempted {
+			if outcome != "" {
+				h.Outcomes[string(outcome)]++
+				if outcome != sourcefacts.RecoveryExcluded {
 					s.retainRetry(candidate.Source)
-					return false, false
 				}
-				root, ok = proof.Root, true
-				candidate.ProjectResolution = &proof
-				facts = sourcefacts.ProjectFacts{Root: root, Cwd: canonicalProjectPath(candidate.WorkingDirectory)}
-			} else {
-				h.Outcomes[outcome]++
-				s.retainRetry(candidate.Source)
 				return false, false
 			}
+			root, ok = proof.Root, true
+			candidate.ProjectResolution = &proof
+			facts = sourcefacts.ProjectFacts{Root: root, Cwd: canonicalProjectPath(candidate.WorkingDirectory)}
 		}
 	}
+
 	if !ok {
 		if physical {
 			h.Outcomes["project_facts_unavailable"]++
@@ -762,4 +758,20 @@ func (s scan) admitCandidate(candidate Candidate, loc string) (bool, bool) {
 		h.Registered++
 	}
 	return false, false
+}
+
+func (s scan) recoverProject(candidate Candidate) (archive.ProjectResolution, sourcefacts.RecoveryOutcome, bool) {
+	if s.recovery == nil || s.resolver.HasRepositoryEvidence(candidate.WorkingDirectory) {
+		return archive.ProjectResolution{}, "", false
+	}
+	if _, err := os.Stat(candidate.WorkingDirectory); !errors.Is(err, os.ErrNotExist) {
+		return archive.ProjectResolution{}, "", false
+	}
+	proof, outcome := s.recovery.Recover(s.ctx, candidate.WorkingDirectory, candidate.RecordedRepoKey)
+	if outcome == "" {
+		if info, err := os.Stat(proof.Root); err != nil || !info.IsDir() {
+			outcome = sourcefacts.RecoveryInventoryUnavailable
+		}
+	}
+	return proof, outcome, true
 }

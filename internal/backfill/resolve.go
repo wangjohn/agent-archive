@@ -127,7 +127,7 @@ func (r *resolver) resolveEvidence(ctx context.Context, cwd, key string) resolut
 	}
 	res := r.resolveUncached(cwd)
 	// Existing filesystem evidence and nearest configured ownership take precedence.
-	if res.skip == SkipWorktreeUnresolved || (!r.env.exists(cwd) && !res.included && res.skip == "" && (key != "" || r.filters.ProjectMappings[filepath.Clean(cwd)] != "")) {
+	if res.skip == SkipWorktreeUnresolved || (!r.env.exists(cwd) && !res.included && res.kind == ProjectKindDirectory && res.skip == "" && (key != "" || r.filters.ProjectMappings[filepath.Clean(cwd)] != "")) {
 		proof, outcome := r.recovery.Recover(ctx, cwd, key)
 		if outcome == "" {
 			res = resolution{root: proof.Root, kind: r.kindOf(proof.Root), included: true, proof: &proof}
@@ -135,7 +135,7 @@ func (r *resolver) resolveEvidence(ctx context.Context, cwd, key string) resolut
 		if outcome != "" {
 			res = resolution{skip: SkipWorktreeUnresolved}
 		}
-		if outcome == "project_budget_exhausted" || outcome == "project_inventory_unavailable" {
+		if outcome == sourcefacts.RecoveryBudgetExhausted || outcome == sourcefacts.RecoveryInventoryUnavailable {
 			return res
 		}
 	}

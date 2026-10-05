@@ -14,15 +14,15 @@ func TestRecoveryCompleteInventory(t *testing.T) {
 		name     string
 		projects []archive.ProjectActivation
 		ids      map[string]RepositoryIdentity
-		want     string
+		want     RecoveryOutcome
 	}{
 		{"unique", []archive.ProjectActivation{{Root: "/a", Included: true}}, map[string]RepositoryIdentity{"/a": {Root: "/a", Key: key, Known: true}}, ""},
-		{"excluded clone", []archive.ProjectActivation{{Root: "/a", Included: true}, {Root: "/b", Included: false}}, map[string]RepositoryIdentity{"/a": {Root: "/a", Key: key, Known: true}, "/b": {Root: "/b", Key: key, Known: true}}, "project_ambiguous"},
-		{"excluded unique", []archive.ProjectActivation{{Root: "/a", Included: false}}, map[string]RepositoryIdentity{"/a": {Root: "/a", Key: key, Known: true}}, "project_excluded"},
-		{"unknown clone", []archive.ProjectActivation{{Root: "/a", Included: true}, {Root: "/b", Included: false}}, map[string]RepositoryIdentity{"/a": {Root: "/a", Key: key, Known: true}}, "project_inventory_unavailable"},
+		{"excluded clone", []archive.ProjectActivation{{Root: "/a", Included: true}, {Root: "/b", Included: false}}, map[string]RepositoryIdentity{"/a": {Root: "/a", Key: key, Known: true}, "/b": {Root: "/b", Key: key, Known: true}}, RecoveryAmbiguous},
+		{"excluded unique", []archive.ProjectActivation{{Root: "/a", Included: false}}, map[string]RepositoryIdentity{"/a": {Root: "/a", Key: key, Known: true}}, RecoveryExcluded},
+		{"unknown clone", []archive.ProjectActivation{{Root: "/a", Included: true}, {Root: "/b", Included: false}}, map[string]RepositoryIdentity{"/a": {Root: "/a", Key: key, Known: true}}, RecoveryInventoryUnavailable},
 		{"scratch is known", []archive.ProjectActivation{{Root: "/a", Included: true}, {Root: "/scratch", Included: true}}, map[string]RepositoryIdentity{"/a": {Root: "/a", Key: key, Known: true}, "/scratch": {Known: true}}, ""},
-		{"nested exclusion", []archive.ProjectActivation{{Root: "/a", Included: true}, {Root: "/a/private", Included: false}}, map[string]RepositoryIdentity{"/a": {Root: "/a", Key: key, Known: true}, "/a/private": {Root: "/a", Key: key, Known: true}}, "project_subtree_unavailable"},
-		{"same basename different remote", []archive.ProjectActivation{{Root: "/a/widget", Included: true}}, map[string]RepositoryIdentity{"/a/widget": {Root: "/a/widget", Key: archive.RepoKey("https://other.test/org/widget"), Known: true}}, "project_repository_unavailable"},
+		{"nested exclusion", []archive.ProjectActivation{{Root: "/a", Included: true}, {Root: "/a/private", Included: false}}, map[string]RepositoryIdentity{"/a": {Root: "/a", Key: key, Known: true}, "/a/private": {Root: "/a", Key: key, Known: true}}, RecoverySubtreeUnavailable},
+		{"same basename different remote", []archive.ProjectActivation{{Root: "/a/widget", Included: true}}, map[string]RepositoryIdentity{"/a/widget": {Root: "/a/widget", Key: archive.RepoKey("https://other.test/org/widget"), Known: true}}, RecoveryRepositoryUnavailable},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			calls := 0
@@ -59,15 +59,15 @@ func TestRecoveryMappingsAndExplicitRules(t *testing.T) {
 		t.Fatalf("exact mapping unnecessarily swept other clones: %d", calls)
 	}
 	_, outcome = r.Recover(context.Background(), "/gone/private", key)
-	if outcome != "project_excluded" {
+	if outcome != RecoveryExcluded {
 		t.Fatal(outcome)
 	}
 	_, outcome = r.Recover(context.Background(), "/gone", archive.RepoKey("https://different.test/repo"))
-	if outcome != "project_mapping_conflict" {
+	if outcome != RecoveryMappingConflict {
 		t.Fatal(outcome)
 	}
 	_, outcome = r.Recover(context.Background(), "/gone/descendant", key)
-	if outcome != "project_ambiguous" {
+	if outcome != RecoveryAmbiguous {
 		t.Fatal(outcome)
 	}
 }
@@ -75,7 +75,7 @@ func TestRecoveryMappingsAndExplicitRules(t *testing.T) {
 func TestRecoveryInventoryResumesAndCancellation(t *testing.T) {
 	key := archive.RepoKey("https://example.test/acme/repo")
 	var projects []archive.ProjectActivation
-	for i := 0; i < 300; i++ {
+	for i := range 300 {
 		projects = append(projects, archive.ProjectActivation{Root: fmt.Sprintf("/p%03d", i), Included: true})
 	}
 	inv := &RecoveryInventory{}
@@ -88,10 +88,10 @@ func TestRecoveryInventoryResumesAndCancellation(t *testing.T) {
 		}
 		return RepositoryIdentity{Root: path, Key: k, Known: true}
 	}
-	for pass := 0; pass < 3; pass++ {
+	for pass := range 3 {
 		r := NewRecoveryResolver(projects, nil, filepath.Clean, lookup, inv)
 		_, outcome := r.Recover(context.Background(), "/gone", key)
-		if pass < 2 && outcome != "project_budget_exhausted" {
+		if pass < 2 && outcome != RecoveryBudgetExhausted {
 			t.Fatal(outcome)
 		}
 		if pass == 2 && outcome != "" {
@@ -105,28 +105,101 @@ func TestRecoveryInventoryResumesAndCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	_, outcome := r.Recover(ctx, "/gone", key)
-	if outcome != "project_budget_exhausted" || r.Operations != 0 {
+	if outcome != RecoveryBudgetExhausted || r.Operations != 0 {
 		t.Fatal(outcome, r.Operations)
 	}
 }
 
 func BenchmarkRecoverySharedEvidence(b *testing.B) {
-	for _, n := range []int{1000, 10000, 100000} {
-		b.Run(fmt.Sprint(n), func(b *testing.B) {
-			projects := []archive.ProjectActivation{{Root: "/a", Included: true}}
-			key := archive.RepoKey("https://example.test/acme/repo")
-			calls := 0
-			b.ReportAllocs()
-			for i := 0; i < b.N; i++ {
-				r := NewRecoveryResolver(projects, nil, filepath.Clean, func(_ context.Context, path string) RepositoryIdentity {
-					calls++
-					return RepositoryIdentity{Root: path, Key: key, Known: true}
-				}, nil)
-				for j := 0; j < n; j++ {
-					r.Recover(context.Background(), "/gone", key)
+	for _, roots := range []int{1, 10, 128} {
+		for _, n := range []int{1000, 10000, 100000} {
+			b.Run(fmt.Sprintf("roots%d/sessions%d", roots, n), func(b *testing.B) {
+				projects := make([]archive.ProjectActivation, 0, roots)
+				for i := range roots {
+					projects = append(projects, archive.ProjectActivation{Root: fmt.Sprintf("/p%03d", i), Included: true})
 				}
-			}
-			b.ReportMetric(float64(calls)/float64(b.N), "lookups/op")
-		})
+				key := archive.RepoKey("https://example.test/acme/repo")
+				calls := 0
+				b.ReportAllocs()
+				for range b.N {
+					r := NewRecoveryResolver(projects, nil, filepath.Clean, func(_ context.Context, path string) RepositoryIdentity {
+						calls++
+						k := ""
+						if path == projects[len(projects)-1].Root {
+							k = key
+						}
+						return RepositoryIdentity{Root: path, Key: k, Known: true}
+					}, nil)
+					for range n {
+						r.Recover(context.Background(), "/gone", key)
+					}
+				}
+				b.ReportMetric(float64(calls)/float64(b.N), "lookups/op")
+			})
+		}
+	}
+}
+
+func TestRecoveryRevalidatesResumedInventoryAndAliasScope(t *testing.T) {
+	key := archive.RepoKey("https://example.test/acme/repo")
+	projects := []archive.ProjectActivation{{Root: "/a", Included: true}, {Root: "/b", Included: true}}
+	inv := &RecoveryInventory{}
+	calls := 0
+	changed := false
+	lookup := func(_ context.Context, path string) RepositoryIdentity {
+		calls++
+		k := key
+		if changed || path == "/b" {
+			k = ""
+		}
+		return RepositoryIdentity{Root: path, Key: k, Known: true}
+	}
+	first := NewRecoveryResolver(projects, nil, filepath.Clean, lookup, inv)
+	first.MaxOperations = 1
+	_, outcome := first.Recover(context.Background(), "/gone", key)
+	if outcome != RecoveryBudgetExhausted {
+		t.Fatal(outcome)
+	}
+	changed = true
+	second := NewRecoveryResolver(projects, nil, filepath.Clean, lookup, inv)
+	second.Validate = func(RepositoryIdentity) bool { return false }
+	_, outcome = second.Recover(context.Background(), "/gone", key)
+	if outcome != RecoveryRepositoryUnavailable || calls != 3 {
+		t.Fatal(outcome, calls)
+	}
+	resolve := func(path string) string {
+		if path == "/alias" {
+			return "/a"
+		}
+		return filepath.Clean(path)
+	}
+	alias := NewRecoveryResolver([]archive.ProjectActivation{{Root: "/a", Included: true}, {Root: "/alias", Included: false}}, map[string]string{"/gone": "/a"}, resolve, lookup, nil)
+	if _, outcome := alias.Recover(context.Background(), "/gone", key); outcome != RecoveryMappingConflict {
+		t.Fatal(outcome)
+	}
+}
+
+func TestRecoveryCancellationKeepsFairCursor(t *testing.T) {
+	key := archive.RepoKey("https://example.test/acme/repo")
+	projects := []archive.ProjectActivation{{Root: "/a", Included: true}, {Root: "/b", Included: true}}
+	ctx, cancel := context.WithCancel(context.Background())
+	inv := &RecoveryInventory{}
+	calls := 0
+	first := NewRecoveryResolver(projects, nil, filepath.Clean, func(_ context.Context, path string) RepositoryIdentity {
+		calls++
+		if path == "/b" {
+			cancel()
+		}
+		return RepositoryIdentity{Root: path, Known: true}
+	}, inv)
+	if _, outcome := first.Recover(ctx, "/gone", key); outcome != RecoveryBudgetExhausted || inv.Cursor != 1 {
+		t.Fatal(outcome, inv.Cursor)
+	}
+	second := NewRecoveryResolver(projects, nil, filepath.Clean, func(_ context.Context, path string) RepositoryIdentity {
+		calls++
+		return RepositoryIdentity{Root: path, Key: key, Known: true}
+	}, inv)
+	if proof, outcome := second.Recover(context.Background(), "/gone", key); outcome != "" || proof.Root != "/b" || calls != 3 {
+		t.Fatal(proof, outcome, calls)
 	}
 }

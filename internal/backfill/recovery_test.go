@@ -5,8 +5,11 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/sourcefacts"
+	"github.com/wangjohn/agent-archive/internal/state"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestDeletedWorktreeRecoveryEvidenceCache(t *testing.T) {
@@ -67,5 +70,66 @@ func TestProjectMappingValidationAndBatchDigest(t *testing.T) {
 	b := Plan{Filters: Filters{ProjectMappings: map[string]string{filepath.Join(tr.home, "gone"): "/other"}}}.BatchFilters()
 	if a.equal(b) || a.MappingDigest == "" {
 		t.Fatal("mapping change continued batch")
+	}
+}
+
+func TestDeletedWorktreeBackfillPersistsProof(t *testing.T) {
+	tr := newTree(t)
+	root := tr.repo("home/repo")
+	gone := tr.path("home/.codex/worktrees/old/repo")
+	id := "00000000-0000-0000-0000-000000000077"
+	body := codexTranscript(id, id, gone, fixedNow.Add(-time.Hour))
+	body = strings.Replace(body, `"source":"cli"`, `"git":{"repository_url":"git@example.test:acme/repo.git"},"source":"cli"`, 1)
+	tr.write(filepath.Join("home", codexFile(id)), body)
+	env := tr.env()
+	key := archive.RepoKey("https://example.test/acme/repo")
+	env.RepositoryIdentity = func(_ context.Context, path string) sourcefacts.RepositoryIdentity {
+		return sourcefacts.RepositoryIdentity{Root: path, Key: key, Known: true}
+	}
+	cfg := config.Config{Archive: archive.Config{Enabled: true, Projects: []archive.ProjectActivation{project(root, true)}}}
+	p := plan(t, env, nil, cfg, Filters{})
+	items := p.Imported()
+	if len(items) != 1 || items[0].ProjectResolution == nil {
+		t.Fatalf("%+v", p.Imported())
+	}
+	home := t.TempDir()
+	if err := config.Save(home, cfg); err != nil {
+		t.Fatal(err)
+	}
+	store, err := state.Open(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := (Registration{Home: home, Store: store, AdmittedAt: fixedNow, Batch: "synthetic-import"}).Run(items)
+	if err != nil || len(result.Sessions) != 1 {
+		t.Fatal(result, err)
+	}
+	reg, found, err := store.LoadRegistration(result.Sessions[0])
+	if err != nil || !found || reg.ProjectResolution == nil || reg.ProjectResolution.OriginalCwd != gone || reg.ProjectResolution.RecordedRepoKey != key || reg.Origin != archive.SessionOriginImport {
+		t.Fatal(reg, err)
+	}
+	cfg.Archive.Projects[0].Included = false
+	if err := config.Save(home, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.AcceptSession(reg) {
+		t.Fatal("exclusion lost after recovery")
+	}
+}
+
+func TestRecordedRecoveryCannotOverrideLiveUnconfiguredAncestor(t *testing.T) {
+	tr := newTree(t)
+	live, target := tr.repo("home/live"), tr.repo("home/target")
+	key := archive.RepoKey("https://example.test/acme/target")
+	env := tr.env()
+	calls := 0
+	env.RepositoryIdentity = func(_ context.Context, path string) sourcefacts.RepositoryIdentity {
+		calls++
+		return sourcefacts.RepositoryIdentity{Root: path, Key: key, Known: true}
+	}
+	r := newResolver(env, config.Config{Archive: archive.Config{Projects: []archive.ProjectActivation{project(target, true)}}}, Filters{})
+	res := r.resolveEvidence(context.Background(), filepath.Join(live, "deleted-subtree"), key)
+	if res.root != live || calls != 0 {
+		t.Fatal(res, calls)
 	}
 }

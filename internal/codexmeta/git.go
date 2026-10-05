@@ -11,8 +11,9 @@ type GitInfo struct {
 func (g *GitInfo) UnmarshalJSON(b []byte) error {
 	g.RepositoryURL = ""
 	var fields map[string]json.RawMessage
-	if json.Unmarshal(b, &fields) != nil {
-		return nil
+	valid := json.Unmarshal(b, &fields) == nil
+	if !valid {
+		fields = nil
 	}
 	raw := fields["repository_url"]
 	if len(raw) > 6*4096+2 {

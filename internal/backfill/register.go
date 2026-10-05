@@ -385,6 +385,9 @@ func (r Registration) valid(c Candidate) bool {
 // registration is the imported session's registration: its true start, the
 // import's admission, and the batch.
 func (r Registration) registration(c Candidate, archiveID, repoKey string) archive.SessionRegistration {
+	if repoKey == "" && c.ProjectResolution != nil && archive.IsRepoKey(c.ProjectResolution.RecordedRepoKey) {
+		repoKey = c.ProjectResolution.RecordedRepoKey
+	}
 	return archive.SessionRegistration{
 		ArchiveSessionID:  archiveID,
 		NativeSessionID:   c.NativeSessionID,

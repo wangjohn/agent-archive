@@ -5,12 +5,28 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"maps"
 	"path/filepath"
 	"sort"
 	"strings"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/local"
+)
+
+// RecoveryOutcome names content-free recovery states, independently of authorization.
+type RecoveryOutcome string
+
+// Recovery outcomes distinguish ambiguity, unavailable evidence, and budget retries.
+const (
+	RecoveryBudgetExhausted       RecoveryOutcome = "project_budget_exhausted"
+	RecoveryInventoryUnavailable  RecoveryOutcome = "project_inventory_unavailable"
+	RecoveryExcluded              RecoveryOutcome = "project_excluded"
+	RecoveryAmbiguous             RecoveryOutcome = "project_ambiguous"
+	RecoveryRepositoryUnavailable RecoveryOutcome = "project_repository_unavailable"
+	RecoveryMappingConflict       RecoveryOutcome = "project_mapping_conflict"
+	RecoverySubtreeUnavailable    RecoveryOutcome = "project_subtree_unavailable"
+	RecoveryUnavailable           RecoveryOutcome = "project_unavailable"
 )
 
 // RepositoryIdentity is a bounded local Git observation, supplied outside admission locks.
@@ -26,6 +42,8 @@ type RepositoryDependency struct {
 	Path  string
 	Stamp string
 }
+
+// RepositoryLookup observes one configured root within the caller deadline.
 type RepositoryLookup func(context.Context, string) RepositoryIdentity
 
 // RecoveryInventory carries an unfinished bounded configured-root sweep between discovery passes.
@@ -45,6 +63,7 @@ type RecoveryResolver struct {
 	Lookup        RepositoryLookup
 	Validate      func(RepositoryIdentity) bool
 	digest        string
+	results       map[string]recoveryDecision
 	Inventory     *RecoveryInventory
 	Context       string
 	PolicyContext string
@@ -52,12 +71,17 @@ type RecoveryResolver struct {
 	MaxOperations int
 }
 
+type recoveryDecision struct {
+	Proof   archive.ProjectResolution
+	Outcome RecoveryOutcome
+}
+
 // NewRecoveryResolver freezes the policy context; no paths or URLs leave its digest.
 func NewRecoveryResolver(projects []archive.ProjectActivation, mappings map[string]string, resolve func(string) string, lookup RepositoryLookup, inventory *RecoveryInventory) *RecoveryResolver {
 	if inventory == nil {
 		inventory = &RecoveryInventory{}
 	}
-	r := &RecoveryResolver{Projects: append([]archive.ProjectActivation(nil), projects...), Mappings: mappings, ResolvePath: resolve, Lookup: lookup, Inventory: inventory, MaxOperations: 128}
+	r := &RecoveryResolver{Projects: append([]archive.ProjectActivation(nil), projects...), Mappings: maps.Clone(mappings), ResolvePath: resolve, Lookup: lookup, Inventory: inventory, MaxOperations: 128}
 	sort.Slice(r.Projects, func(i, j int) bool { return r.Projects[i].Root < r.Projects[j].Root })
 	r.Context = RecoveryContext(projects, mappings, filepath.Clean)
 	r.PolicyContext = RecoveryContext(projects, nil, filepath.Clean)
@@ -80,9 +104,9 @@ func NewRecoveryResolver(projects []archive.ProjectActivation, mappings map[stri
 // RecoveryContext binds proof and continuation to the complete configured inventory, including exclusions.
 func RecoveryContext(projects []archive.ProjectActivation, mappings map[string]string, resolve func(string) string) string {
 	type rule struct {
-		Root      string
-		Canonical string
-		Included  bool
+		Root      string `json:"root"`
+		Canonical string `json:"canonical"`
+		Included  bool   `json:"included"`
 	}
 	rules := make([]rule, 0, len(projects))
 	for _, p := range projects {
@@ -90,9 +114,9 @@ func RecoveryContext(projects []archive.ProjectActivation, mappings map[string]s
 	}
 	sort.Slice(rules, func(i, j int) bool { return rules[i].Root < rules[j].Root })
 	b, _ := json.Marshal(struct {
-		Version  int
-		Rules    []rule
-		Mappings map[string]string
+		Version  int               `json:"version"`
+		Rules    []rule            `json:"rules"`
+		Mappings map[string]string `json:"mappings"`
 	}{1, rules, mappings})
 	h := sha256.Sum256(b)
 	return hex.EncodeToString(h[:])
@@ -100,15 +124,27 @@ func RecoveryContext(projects []archive.ProjectActivation, mappings map[string]s
 
 // Recover considers exact mappings and recorded keys without basename inference.
 // Unknown inventory entries remain uncertainty, even when the included match looks unique.
-func (r *RecoveryResolver) Recover(ctx context.Context, cwd, key string) (archive.ProjectResolution, string) {
-	proof := archive.ProjectResolution{OriginalCwd: cwd, RecordedRepoKey: key, Context: r.Context, PolicyContext: r.PolicyContext}
+func (r *RecoveryResolver) Recover(ctx context.Context, cwd, key string) (proof archive.ProjectResolution, outcome RecoveryOutcome) {
+	cacheKey := cwd + "\x00" + key + "\x00" + r.Context
+	if decision, ok := r.results[cacheKey]; ok {
+		return decision.Proof, decision.Outcome
+	}
+	defer func() {
+		if outcome != RecoveryBudgetExhausted && outcome != RecoveryInventoryUnavailable && len(r.results) < 4096 {
+			if r.results == nil {
+				r.results = map[string]recoveryDecision{}
+			}
+			r.results[cacheKey] = recoveryDecision{proof, outcome}
+		}
+	}()
+	proof = archive.ProjectResolution{OriginalCwd: cwd, RecordedRepoKey: key, Context: r.Context, PolicyContext: r.PolicyContext}
 	if len(cwd) > 4096 || !filepath.IsAbs(cwd) || strings.ContainsAny(cwd, "\x00\r\n") {
-		return proof, "project_unavailable"
+		return proof, RecoveryUnavailable
 	}
 	cwd = filepath.Clean(cwd)
 	if p, ok := ConfiguredOwner(r.Projects, r.ResolvePath(cwd), r.ResolvePath); ok {
 		if !p.Included {
-			return proof, "project_excluded"
+			return proof, RecoveryExcluded
 		}
 		proof.Root = p.Root
 		proof.Method = "configured_path"
@@ -116,35 +152,85 @@ func (r *RecoveryResolver) Recover(ctx context.Context, cwd, key string) (archiv
 	}
 	target, mapped := r.Mappings[cwd]
 	if mapped {
-		for _, p := range r.Projects {
-			if filepath.Clean(p.Root) != filepath.Clean(target) {
-				continue
-			}
-			if !p.Included || r.Lookup == nil {
-				return proof, "project_mapping_conflict"
-			}
-			if ctx.Err() != nil || r.Operations >= r.MaxOperations {
-				return proof, "project_budget_exhausted"
-			}
-			id := r.Lookup(ctx, p.Root)
-			r.Operations++
-			if !id.Known {
-				return proof, "project_inventory_unavailable"
-			}
-			if key != "" && id.Key != key {
-				return proof, "project_mapping_conflict"
-			}
-			proof.Root = p.Root
-			proof.Method = "explicit_mapping"
-			return proof, ""
+		return r.recoverMapped(ctx, key, target, proof)
+	}
+	if !archive.IsRepoKey(key) {
+		return proof, RecoveryRepositoryUnavailable
+	}
+	if outcome := r.prepareInventory(ctx); outcome != "" {
+		return proof, outcome
+	}
+	proof.InventoryDigest = r.digest
+	inv := r.Inventory
+	matches := map[string]int{}
+	for i, id := range inv.Entries {
+		p := r.Projects[i]
+		if id.Key != key || id.Root == "" {
+			continue
 		}
-		return proof, "project_mapping_conflict"
+		root := r.ResolvePath(id.Root)
+		// An inherited origin from a configured subtree cannot identify the missing subtree.
+		if r.ResolvePath(p.Root) != root {
+			return proof, RecoverySubtreeUnavailable
+		}
+		if old, ok := matches[root]; ok && r.Projects[old].Included != p.Included {
+			return proof, RecoveryAmbiguous
+		}
+		matches[root] = i
 	}
-	if !mapped && !archive.IsRepoKey(key) {
-		return proof, "project_repository_unavailable"
+	if len(matches) != 1 {
+		if len(matches) > 1 {
+			return proof, RecoveryAmbiguous
+		}
+		return proof, RecoveryRepositoryUnavailable
 	}
+	for root, i := range matches {
+		p := r.Projects[i]
+		if !p.Included {
+			return proof, RecoveryExcluded
+		}
+		for _, nested := range r.Projects {
+			if !nested.Included && r.ResolvePath(nested.Root) != root && local.PathWithin(r.ResolvePath(nested.Root), root) {
+				return proof, RecoverySubtreeUnavailable
+			}
+		}
+		proof.Root = p.Root
+		proof.Method = "recorded_repository"
+		return proof, ""
+	}
+	return proof, RecoveryRepositoryUnavailable
+}
+
+func (r *RecoveryResolver) recoverMapped(ctx context.Context, key, target string, proof archive.ProjectResolution) (archive.ProjectResolution, RecoveryOutcome) {
+	for _, p := range r.Projects {
+		if filepath.Clean(p.Root) != filepath.Clean(target) {
+			continue
+		}
+		owner, owned := ConfiguredOwner(r.Projects, r.ResolvePath(p.Root), r.ResolvePath)
+		if !p.Included || (owned && !owner.Included) || r.Lookup == nil {
+			return proof, RecoveryMappingConflict
+		}
+		if ctx.Err() != nil || r.Operations >= r.MaxOperations {
+			return proof, RecoveryBudgetExhausted
+		}
+		id := safeRepositoryIdentity(r.Lookup(ctx, p.Root))
+		r.Operations++
+		if !id.Known {
+			return proof, RecoveryInventoryUnavailable
+		}
+		if key != "" && id.Key != key {
+			return proof, RecoveryMappingConflict
+		}
+		proof.Root = p.Root
+		proof.Method = "explicit_mapping"
+		return proof, ""
+	}
+	return proof, RecoveryMappingConflict
+}
+
+func (r *RecoveryResolver) prepareInventory(ctx context.Context) RecoveryOutcome {
 	if r.Lookup == nil || len(r.Projects) > 1024 {
-		return proof, "project_inventory_unavailable"
+		return RecoveryInventoryUnavailable
 	}
 	inv := r.Inventory
 	if r.Validate != nil {
@@ -159,12 +245,12 @@ func (r *RecoveryResolver) Recover(ctx context.Context, cwd, key string) (archiv
 	}
 	for inv.Cursor < len(r.Projects) {
 		if ctx.Err() != nil || r.Operations >= r.MaxOperations {
-			return proof, "project_budget_exhausted"
+			return RecoveryBudgetExhausted
 		}
-		id := r.Lookup(ctx, r.Projects[inv.Cursor].Root)
+		id := safeRepositoryIdentity(r.Lookup(ctx, r.Projects[inv.Cursor].Root))
 		r.Operations++
 		if ctx.Err() != nil {
-			return proof, "project_budget_exhausted"
+			return RecoveryBudgetExhausted
 		}
 		// Temporary unavailable answers must be retried, and cannot certify uniqueness.
 
@@ -176,47 +262,28 @@ func (r *RecoveryResolver) Recover(ctx context.Context, cwd, key string) (archiv
 		sum := sha256.Sum256(b)
 		r.digest = hex.EncodeToString(sum[:])
 	}
-	proof.InventoryDigest = r.digest
 	for _, id := range inv.Entries {
 		if !id.Known {
-			return proof, "project_inventory_unavailable"
+			return RecoveryInventoryUnavailable
 		}
 	}
-	matches := map[string]int{}
-	for i, id := range inv.Entries {
-		p := r.Projects[i]
-		if id.Key != key || id.Root == "" {
-			continue
-		}
-		root := r.ResolvePath(id.Root)
-		// An inherited origin from a configured subtree cannot identify the missing subtree.
-		if r.ResolvePath(p.Root) != root {
-			return proof, "project_subtree_unavailable"
-		}
-		if old, ok := matches[root]; ok && r.Projects[old].Included != p.Included {
-			return proof, "project_ambiguous"
-		}
-		matches[root] = i
+	return ""
+}
+
+func safeRepositoryIdentity(id RepositoryIdentity) RepositoryIdentity {
+	if id.Key != "" && !archive.IsRepoKey(id.Key) {
+		return RepositoryIdentity{}
 	}
-	if len(matches) != 1 {
-		if len(matches) > 1 {
-			return proof, "project_ambiguous"
-		}
-		return proof, "project_repository_unavailable"
+	if id.Root != "" && (!filepath.IsAbs(id.Root) || len(id.Root) > 4096 || strings.ContainsAny(id.Root, "\x00\r\n")) {
+		return RepositoryIdentity{}
 	}
-	for root, i := range matches {
-		p := r.Projects[i]
-		if !p.Included {
-			return proof, "project_excluded"
-		}
-		for _, nested := range r.Projects {
-			if !nested.Included && r.ResolvePath(nested.Root) != root && local.PathWithin(r.ResolvePath(nested.Root), root) {
-				return proof, "project_subtree_unavailable"
-			}
-		}
-		proof.Root = p.Root
-		proof.Method = "recorded_repository"
-		return proof, ""
+	if len(id.Dependencies) > 128 {
+		return RepositoryIdentity{}
 	}
-	return proof, "project_repository_unavailable"
+	for _, dep := range id.Dependencies {
+		if !filepath.IsAbs(dep.Path) || len(dep.Path) > 4096 || len(dep.Stamp) > 128 {
+			return RepositoryIdentity{}
+		}
+	}
+	return id
 }

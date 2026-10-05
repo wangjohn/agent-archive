@@ -8,7 +8,9 @@ import (
 	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"syscall"
 )
 
 // ProjectIdentity supplies bounded, local checkout evidence for configured-root recovery.
@@ -45,12 +47,23 @@ func ProjectIdentity(ctx context.Context, root string) sourcefacts.RepositoryIde
 		if len(paths) > 128 {
 			return sourcefacts.RepositoryIdentity{}
 		}
+		ordered := make([]string, 0, len(paths))
 		for path := range paths {
+			ordered = append(ordered, path)
+		}
+		sort.Strings(ordered)
+		for _, path := range ordered {
 			stamp, ok := repositoryStamp(path)
 			if !ok {
 				return sourcefacts.RepositoryIdentity{}
 			}
 			id.Dependencies = append(id.Dependencies, sourcefacts.RepositoryDependency{Path: path, Stamp: stamp})
+		}
+		// The final reads must agree with the earlier identity under unchanged metadata.
+		verifiedRoot := ProjectRoot(ctx, root, nil)
+		verifiedKey, verifiedKnown := ProjectKey(ctx, root, nil)
+		if !verifiedKnown || verifiedRoot != top || verifiedKey != key || !ProjectIdentityCurrent(id) {
+			return sourcefacts.RepositoryIdentity{}
 		}
 		return id
 	}
@@ -60,6 +73,12 @@ func ProjectIdentity(ctx context.Context, root string) sourcefacts.RepositoryIde
 	info, err := os.Stat(root)
 	if err != nil || !info.IsDir() {
 		return sourcefacts.RepositoryIdentity{}
+	}
+	// Bare or damaged repository metadata cannot be discarded as scratch.
+	if _, headErr := os.Lstat(filepath.Join(root, "HEAD")); headErr == nil {
+		if _, objectsErr := os.Lstat(filepath.Join(root, "objects")); objectsErr == nil {
+			return sourcefacts.RepositoryIdentity{}
+		}
 	}
 	for p, depth := filepath.Clean(root), 0; depth < 64; depth++ {
 		_, err := os.Lstat(filepath.Join(p, ".git"))
@@ -96,7 +115,11 @@ func repositoryStamp(path string) (string, bool) {
 		return "", false
 	}
 	// Same inode, size, mode and modification time identify the observed metadata.
-	raw := fmt.Sprintf("%s:%d:%d:%d:%v", path, info.Size(), info.Mode(), info.ModTime().UnixNano(), info.Sys())
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return "", false
+	}
+	raw := fmt.Sprintf("%s:%d:%d:%d:%d:%d", path, info.Size(), info.Mode(), info.ModTime().UnixNano(), stat.Dev, stat.Ino)
 	digest := sha256.Sum256([]byte(raw))
 	return hex.EncodeToString(digest[:]), true
 }
