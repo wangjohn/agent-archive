@@ -19,6 +19,12 @@ Planned for v0.2.0. This release has not been tagged or published.
 
 ### Fixed
 
+- After local session membership changes, the collector rebuilds a completed
+  packed identity index against the current registrations so recovery status
+  can return to complete. Status remains unknown until recovery restarts, then
+  pending until the authoritative rebuild finishes. Large or frequently changing
+  inventories can require multiple sync passes.
+
 - Listing cache lookup selects the current opaque metadata revision before
   opening a body, preserving the combined read limit after normal refreshes.
 

@@ -348,12 +348,7 @@ func (s *Store) prepareRecoveryCursor(ctx context.Context) (sessionRecoveryCurso
 		return sessionRecoveryCursor{}, false, ErrSessionIndexRecoveryRequired
 	}
 	if err == nil && recoveryMarkerVersion(marker.Version) && marker.Complete {
-		if marker.MembershipFenced {
-			if _, err := s.sessionMembershipRevision(); err != nil {
-				return sessionRecoveryCursor{}, false, err
-			}
-		}
-		complete, healthErr := s.completedRecoveryHealthy(marker)
+		complete, healthErr := s.completedRecoveryCurrent(marker)
 		if healthErr != nil {
 			return sessionRecoveryCursor{}, false, healthErr
 		}
@@ -392,6 +387,27 @@ func (s *Store) prepareRecoveryCursor(ctx context.Context) (sessionRecoveryCurso
 		}
 	}
 	return cursor, false, nil
+}
+
+func (s *Store) completedRecoveryCurrent(marker sessionIndexMarker) (bool, error) {
+	var revision string
+	if marker.MembershipFenced || marker.Version == 2 {
+		var err error
+		revision, err = s.sessionMembershipRevision()
+		if err != nil {
+			return false, err
+		}
+		if marker.Version == 2 && revision == "" {
+			return false, ErrSessionIndexRecoveryRequired
+		}
+	}
+	complete, healthErr := s.completedRecoveryHealthy(marker)
+	if healthErr != nil {
+		return false, healthErr
+	}
+	// A completed packed census certifies its recorded membership only.
+	// A valid newer revision must restart the authoritative recovery in the caller.
+	return complete && (marker.Version != 2 || revision == marker.PackedRevision), nil
 }
 
 func (s *Store) completedRecoveryHealthy(marker sessionIndexMarker) (bool, error) {
