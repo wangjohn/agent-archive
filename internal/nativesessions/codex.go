@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 type codexHistoryMode string
@@ -16,6 +17,20 @@ const (
 	historyLegacy    codexHistoryMode = "legacy"
 	historyPaginated codexHistoryMode = "paginated"
 )
+
+// An absent mode is legacy, but an explicit null/empty/non-string mode is not
+// the absent-field default. Upstream's recorder rejects those representations.
+func (m *codexHistoryMode) UnmarshalJSON(raw []byte) error {
+	var mode string
+	if err := json.Unmarshal(raw, &mode); err != nil {
+		return err
+	}
+	if mode == "" {
+		return errors.New("invalid history mode")
+	}
+	*m = codexHistoryMode(mode)
+	return nil
+}
 
 type codexExecutionSource string
 
@@ -116,10 +131,24 @@ func (m CodexMeta) Classification() string {
 	if !m.LocalExecutionSource() {
 		return "unsupported_execution"
 	}
-	if m.Version == "" || m.Originator == "" {
+	if !ValidCodexVersion(m.Version) || strings.TrimSpace(m.Originator) == "" || len(m.Originator) > 256 || strings.ContainsFunc(m.Originator, unicode.IsControl) {
 		return "unsupported_producer"
 	}
 	return "native_format"
+}
+
+// ValidCodexVersion bounds the recorded diagnostic token without interpreting
+// release order. Prereleases, development builds and unknown versions qualify.
+func ValidCodexVersion(version string) bool {
+	if version == "" || len(version) > 128 {
+		return false
+	}
+	for _, ch := range version {
+		if (ch < 'a' || ch > 'z') && (ch < 'A' || ch > 'Z') && (ch < '0' || ch > '9') && ch != '.' && ch != '-' && ch != '+' && ch != '_' {
+			return false
+		}
+	}
+	return true
 }
 
 // LocalExecutionSource recognizes supported local source format tags only;

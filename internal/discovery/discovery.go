@@ -26,8 +26,9 @@ const (
 	// Budget reserves collector time for queued publications and retention.
 	Budget = 5 * time.Second
 	// HeaderProbes caps metadata reads in one pass.
-	HeaderProbes   = 256
-	catalogVersion = 2
+	HeaderProbes = 256
+	// Reprobe older cached observations so they acquire explicit format profiles.
+	catalogVersion = 3
 	maxCatalog     = 8192
 	maxDirectories = 4096
 	maxRetries     = 256
@@ -36,22 +37,23 @@ const (
 // Health separates scan coverage from upload and hook health. Codes never
 // include native IDs, paths or native operating-system errors.
 type Health struct {
-	Enabled           bool           `json:"enabled"`
-	Supported         bool           `json:"supported"`
-	LastAttempt       time.Time      `json:"last_attempt,omitzero"`
-	LastReconciled    time.Time      `json:"last_reconciled,omitzero"`
-	Pending           bool           `json:"pending"`
-	ProjectOperations int            `json:"project_metadata_operations"`
-	GitBytes          int            `json:"git_metadata_bytes"`
-	Probes            int            `json:"header_probes"`
-	Entries           int            `json:"directory_entries"`
-	IndexBytes        int64          `json:"index_bytes_read,omitempty"`
-	IndexQueries      int            `json:"index_queries,omitempty"`
-	IndexLocators     int            `json:"index_locators,omitempty"`
-	Bytes             int64          `json:"bytes_read"`
-	Registered        int            `json:"registered"`
-	Outcomes          map[string]int `json:"outcomes,omitempty"`
-	Errors            []string       `json:"errors,omitempty"`
+	Enabled           bool                `json:"enabled"`
+	Supported         bool                `json:"supported"`
+	LastAttempt       time.Time           `json:"last_attempt,omitzero"`
+	LastReconciled    time.Time           `json:"last_reconciled,omitzero"`
+	Pending           bool                `json:"pending"`
+	ProjectOperations int                 `json:"project_metadata_operations"`
+	GitBytes          int                 `json:"git_metadata_bytes"`
+	Probes            int                 `json:"header_probes"`
+	Entries           int                 `json:"directory_entries"`
+	IndexBytes        int64               `json:"index_bytes_read,omitempty"`
+	IndexQueries      int                 `json:"index_queries,omitempty"`
+	IndexLocators     int                 `json:"index_locators,omitempty"`
+	Bytes             int64               `json:"bytes_read"`
+	Registered        int                 `json:"registered"`
+	Outcomes          map[string]int      `json:"outcomes,omitempty"`
+	Errors            []string            `json:"errors,omitempty"`
+	Formats           []FormatObservation `json:"observed_formats,omitempty"`
 }
 
 type directory struct {
@@ -78,8 +80,8 @@ type catalog struct {
 	Retries  []SourceDescriptor `json:"retries,omitempty"`
 }
 
-// Options contains injectable clocks and stop signals; it never enables an
-// unverified producer. The supported registry is sourcefacts' release gate.
+// Options contains injectable clocks and stop signals; it cannot override
+// source format support or authorize capture.
 type Options struct {
 	Now  func() time.Time
 	Stop func() bool
@@ -560,6 +562,7 @@ func (s scan) visitEntry(d directory, source SourceEntry) (retry, stop bool) {
 		return false, false
 	}
 	h.Supported = true
+	h.observeFormat(candidate)
 	if s.removalBlocks(candidate) {
 		return false, false
 	}

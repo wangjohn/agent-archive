@@ -73,9 +73,9 @@ func TestIndexHintsNeverSupplyAuthorizationOrSourceSupport(t *testing.T) {
 		t.Fatalf("index date authorized native start: %#v %v", h, err)
 	}
 	writeRollout(t, root, project, at.Add(time.Minute), 2, "sessions")
-	h, err = Run(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(2 * time.Minute) }})
+	h, err = runWithAdapters(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(2 * time.Minute) }}, []SourceAdapter{codexAdapter{supported: func(sourcefacts.CodexMeta) bool { return false }}})
 	if err != nil || h.Supported || h.Registered != 0 || sourcefacts.SupportedCodexProducer(sourcefacts.CodexMeta{}) {
-		t.Fatal("SQLite activated an unverified producer", err)
+		t.Fatal("SQLite bypassed source compatibility checks", err)
 	}
 }
 

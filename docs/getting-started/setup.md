@@ -701,8 +701,18 @@ A task found locally is not an upload, and an upload is not verified until its
 filtered archive has been read back. A complete scan is coverage information,
 not proof that a task was captured.
 
-Initial discovery supports exact producer combinations for Codex `0.159.3` and
-`0.160.0`: CLI `cli/codex-tui`, exec `exec/codex_exec`, and desktop source
-`vscode/Codex Desktop`. Unknown versions remain unsupported until inspected.
-These are source-format compatibility rules, not a claim that every installed
-desktop build or GUI onboarding workflow has been tested.
+Discovery recognizes the recorded JSONL format: legacy (including an absent
+history-mode field) and native paginated history, with supported local source
+tags and valid creation/first-task evidence. Compatible versions and prereleases,
+including the `0.155` family, qualify without an exact version allowlist or a
+minimum-version gate. Records lacking essential evidence and unsupported
+history representations still reject independently of other sessions.
+
+Status reports observed session producer versions and distinguishes `runtime
+tested`, `source inspected`, and `compatible untested` evidence. Untested
+compatibility does not block capture; these labels do not establish consent or
+verified publication. An installed executable's version does not determine the
+format of existing sessions. Structural checks cannot prove that an unknown
+future producer preserves all current semantics, and these rules do not claim
+desktop GUI acceptance. See the [format contract](../reference/local-discovery-scanner.md#codex-format-compatibility)
+for supported profiles and limits.

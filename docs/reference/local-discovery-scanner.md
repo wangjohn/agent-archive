@@ -2,7 +2,7 @@
 
 This scanner backs automatic Codex discovery configured through
 [setup consent](../getting-started/setup.md#automatic-codex-discovery). Only
-inspected producer tuples qualify; Claude Code and Cursor retain their existing
+compatible recorded Codex formats qualify; Claude Code and Cursor retain their existing
 hook paths. Discovery does not claim originating local execution.
 
 A scheduled collector observes approved active and archived rollout roots before
@@ -54,8 +54,61 @@ admission time, and removal records are preserved. Discovery never supplies
 a source locator to an existing hook or import registration; their existing
 capture paths establish those locators. Scanner unit tests inject adapter
 support within the scanner package; activation integration tests use the real
-producer registry. There is no production support override, and synthetic
+format checks. There is no production support override, and synthetic
 publication/readback is not desktop GUI acceptance.
+
+## Codex format compatibility
+
+Compatibility comes from each session's recorded metadata and first task, not
+an executable version discovered on PATH or bundled with an app. There is no
+release allowlist or minimum-version gate. A prerelease or unknown version can
+qualify under either supported profile:
+
+| Profile | Required history representation |
+| --- | --- |
+| `codex_jsonl_legacy` | Line-delimited `session_meta` plus a native first task; `history_mode` absent or `legacy`. |
+| `codex_jsonl_paginated` | The same evidence with `history_mode: paginated`; no inherited history base or subagent boundary. Ordinals do not authorize capture. |
+
+Both profiles require a matching UUID filename/header identity, an absolute
+bounded cwd, a creation timestamp, a local `cli`, `exec`, or `vscode` source tag,
+and nonempty bounded producer metadata. Versions are diagnostic tokens (letters,
+digits, `.`, `-`, `+`, `_`), not ordered release numbers. Originator names are
+client-controlled metadata; a new name alone does not establish or defeat format
+compatibility. The first `task_started` (or `turn_started` alias) must have a UUID
+turn ID and valid `started_at` (Unix seconds or RFC3339). Missing/null
+`root_turn_id` is compatible with older producers; a present value must match the
+turn ID. Integer task timestamps may precede fractional creation timestamps by
+less than a second. Long idle time before the first task does not renew consent.
+
+Known imports, forks, parent/history-base/subagent markers, non-user thread
+sources and unknown execution tags still reject. A rejected first task cannot
+be repaired by a later native resume. Compressed/referenced or unknown history
+modes report `unsupported_history`; missing/malformed producer metadata reports
+`unsupported_producer` or `invalid_metadata`; missing first-task records remain
+`incomplete_metadata`. Invalid or imported first-task evidence reports
+`inherited_history`. An explicit null, empty or non-string history mode is
+`invalid_metadata`, not the absent-field legacy default. Each rejected observation is independent: other compatible
+records continue through authorization and publication.
+
+Status's optional `observed_formats` contains up to 16 combinations of profile,
+recorded producer version, source tag and evidence label, with observation counts.
+Additional combinations increment `format_summary_overflow` without blocking
+capture. `runtime_tested` records previously executed 0.159.3 CLI/app-server
+probe evidence; `source_inspected` records pinned source evidence, including
+0.150.0, 0.155.0, its inspected alphas and 0.160.0. A different version or client
+is `compatible_untested`. These labels describe evidence, never permission,
+publication, or desktop GUI acceptance. Each admitted registration and source
+bundle retains its original producer version; current executable detection is
+separate. Profile changes invalidate the private scanner cache and trigger
+bounded reprobes; they never rewrite consent or native identity ownership.
+
+Unknown additive fields are tolerated. Structural compatibility cannot prove
+unknown future semantics, detect every imported/recently copied native file, or
+guarantee that future transcript bodies remain readable. Bodies still pass
+through the existing filter/collector rules, which may reject or omit unfamiliar
+content. Successful publication and read-back verify the retained archive,
+not completeness for unknown representations. The [pinned evidence](../../dev/proposals/local-session-discovery-evidence.md)
+and synthetic fixtures document what was actually inspected and exercised.
 
 ## Measured operating envelope
 
@@ -119,8 +172,8 @@ and current policy, and expired or revoked intents are removed even when their
 working directory is no longer available.
 
 `discovery-health.json` is an atomically written, versioned summary capped at
-16 KiB. It contains aggregate counts, stable diagnostic codes and attempt/
-reconciliation timestamps, with no cwd, project sample, native ID or transcript
+16 KiB. It contains aggregate counts, bounded observed format/version summaries,
+stable diagnostic codes and attempt/reconciliation timestamps, with no cwd, project sample, native ID or transcript
 body. Status reads this summary without opening the full source catalog, Git,
 SQLite or storage. Missing/corrupt/oversized summaries are uncertainty; freshness
 must be evaluated against the caller's clock. Scan evidence remains distinct
