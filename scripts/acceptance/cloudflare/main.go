@@ -33,6 +33,8 @@ import (
 
 var revision = "unknown"
 
+var errEvidencePersistence = errors.New("cannot persist sanitized acceptance evidence")
+
 type check struct {
 	Name         string `json:"name"`
 	Result       string `json:"result"`
@@ -74,6 +76,8 @@ type runner struct {
 	ctx                 context.Context
 	stores              []*storage.S3Store
 	bucketCleanupClient *http.Client
+	cleaning            bool
+	persistenceErr      error
 }
 
 func randomID() string {
@@ -148,8 +152,38 @@ func (r *runner) record(name, result, detail string, elapsed time.Duration) {
 	}
 	fmt.Println()
 	if err := r.save(); err != nil {
-		panic("cannot persist sanitized acceptance evidence")
+		r.persistenceErr = err
+		if !r.cleaning {
+			panic(errEvidencePersistence)
+		}
 	}
+}
+
+// execute stops acceptance on a journal failure, but always attempts cleanup.
+func (r *runner) execute(run func()) {
+	defer r.api.Discard()
+	defer func() {
+		if recovered := recover(); recovered != nil && recovered != errEvidencePersistence {
+			panic(recovered)
+		}
+	}()
+	defer r.cleanup()
+	run()
+	if err := r.ctx.Err(); err != nil {
+		r.record("acceptance interrupted", "fail", safeError(err), 0)
+	}
+}
+
+func (r *runner) failed() bool {
+	if r.ctx.Err() != nil || r.persistenceErr != nil {
+		return true
+	}
+	for _, c := range r.r.Checks {
+		if c.Result == "fail" || c.Result == "pending" {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *runner) attempt(name string, fn func(context.Context) error) bool {
@@ -177,8 +211,9 @@ func (r *runner) store(key cloudflare.S3Credentials, name string) *storage.S3Sto
 func (r *runner) createToken() (cloudflare.S3Credentials, bool) {
 	name := "agent-archive r=" + randomID() + " i=" + r.r.RunID + " k=" + randomID()
 	r.r.Tokens = append(r.r.Tokens, issued{Name: name})
-	if r.save() != nil {
-		panic("cannot persist token creation intent")
+	if err := r.save(); err != nil {
+		r.persistenceErr = err
+		panic(errEvidencePersistence)
 	}
 	resource, _ := cloudflare.BucketResource(r.r.Account, cloudflare.BucketRef{Name: r.r.Buckets[0].Name})
 	ctx, cancel := context.WithTimeout(r.ctx, 45*time.Second)
@@ -383,6 +418,8 @@ func (r *runner) run() {
 }
 
 func (r *runner) cleanup() {
+	r.cleaning = true
+	defer func() { r.cleaning = false }()
 	fmt.Println("Cleaning only resources created by this run; recovery metadata is retained.")
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -507,13 +544,13 @@ func main() {
 		fmt.Fprintln(os.Stderr, "cannot create private report; no provider work started")
 		os.Exit(1)
 	}
-	func() { defer r.api.Discard(); defer r.cleanup(); r.run() }()
-	fmt.Println("Sanitized evidence:", r.path)
-	failed := false
-	for _, c := range r.r.Checks {
-		failed = failed || c.Result == "fail" || c.Result == "pending"
+	r.execute(r.run)
+	if r.persistenceErr != nil {
+		fmt.Fprintln(os.Stderr, "cannot persist complete sanitized acceptance evidence; cleanup was attempted for all tracked resources")
+	} else {
+		fmt.Println("Sanitized evidence:", r.path)
 	}
-	if failed {
+	if r.failed() {
 		os.Exit(1)
 	}
 }

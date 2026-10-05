@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"os"
@@ -60,5 +61,85 @@ func TestErrorsNeverExposeProviderMessages(t *testing.T) {
 	err := &cloudflare.Error{Status: 403, Codes: []int{1000}, Messages: []string{"sensitive-provider-canary"}}
 	if strings.Contains(safeError(err), "canary") {
 		t.Fatal("raw provider message escaped")
+	}
+}
+
+func cleanupFixture(t *testing.T) (*runner, *[]string) {
+	t.Helper()
+	var requests []string
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.Method != http.MethodDelete || req.Context().Err() != nil {
+			t.Fatal("cleanup must use DELETE and an uncancelled context")
+		}
+		requests = append(requests, req.URL.Path)
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"success":true,"result":{}}`)), Header: make(http.Header)}, nil
+	})}
+	r := &runner{
+		path: filepath.Join(t.TempDir(), "report.json"), ctx: context.Background(),
+		api:                 cloudflare.New("synthetic-token", cloudflare.Options{HTTPClient: client}),
+		bucketCleanupClient: client,
+		r: report{Account: strings.Repeat("a", 32),
+			Tokens:  []issued{{ID: "key-one"}, {ID: "key-two"}, {ID: "key-three"}},
+			Buckets: []bucket{{Name: "aa-accept-one", Created: true}, {Name: "aa-accept-two", Created: true}},
+		},
+	}
+	return r, &requests
+}
+
+func assertCompleteCleanup(t *testing.T, r *runner, requests []string) {
+	t.Helper()
+	if len(requests) != 5 {
+		t.Fatalf("expected all three token and two bucket deletions, got %v", requests)
+	}
+	for _, token := range r.r.Tokens {
+		if !token.Deleted {
+			t.Fatal("token cleanup skipped")
+		}
+	}
+	for _, bucket := range r.r.Buckets {
+		if !bucket.Deleted {
+			t.Fatal("bucket cleanup skipped")
+		}
+	}
+}
+
+func TestInterruptedAcceptanceFailsAfterSuccessfulCleanup(t *testing.T) {
+	r, requests := cleanupFixture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	r.ctx = ctx
+	r.execute(func() {
+		r.record("previous check", "pass", "", 0)
+		cancel() // Simulate returning from an interrupted retry loop.
+	})
+	assertCompleteCleanup(t, r, *requests)
+	if !r.failed() {
+		t.Fatal("interrupted acceptance reported success")
+	}
+	data, err := os.ReadFile(r.path)
+	if err != nil || !strings.Contains(string(data), "acceptance interrupted") {
+		t.Fatal("interruption was not recorded", err)
+	}
+}
+
+func TestPersistenceFailureDoesNotStopCleanup(t *testing.T) {
+	for _, duringRun := range []bool{false, true} {
+		t.Run(map[bool]string{false: "during-cleanup", true: "during-run"}[duringRun], func(t *testing.T) {
+			r, requests := cleanupFixture(t)
+			if err := r.save(); err != nil {
+				t.Fatal(err)
+			}
+			r.execute(func() {
+				if err := os.RemoveAll(filepath.Dir(r.path)); err != nil {
+					t.Fatal(err)
+				}
+				if duringRun {
+					r.record("previous check", "pass", "", 0)
+				}
+			})
+			assertCompleteCleanup(t, r, *requests)
+			if r.persistenceErr == nil || !r.failed() {
+				t.Fatal("report persistence failure was not retained as a run failure")
+			}
+		})
 	}
 }

@@ -599,8 +599,10 @@ go build -o /private/tmp/agent-archive-cloudflare-acceptance ./scripts/acceptanc
 
 It prompts for the account ID and a hidden management token, uses no real
 archive configuration, Keychain or scheduler, journals only sanitized evidence
-with mode 0600, and cleans up only resources created by that run. It does not
-exercise the CLI pairing transaction. Exact management-token permissions have
+with mode 0600, and cleans up only resources created by that run. Interrupted
+runs exit unsuccessfully. Evidence-write failures stop acceptance work but do
+not stop the remaining cleanup attempts, and are reported as failures. It does
+not exercise the CLI pairing transaction. Exact management-token permissions have
 not yet been confirmed by the operator, so account/domain reads with precisely
 the advertised two permissions remain open. The unchecked items below remain
 release gates; a partial provider observation does not close a whole item.
