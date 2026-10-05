@@ -5,6 +5,16 @@ usage halfway through a task, or want Codex to take a look? Hand the session
 off, and the other agent starts with it as context. You don't copy or paste
 anything.
 
+Handoff transfers filtered conversation context. Prepare the receiving checkout
+separately: files, uncommitted edits, and running processes do not move.
+
+Start with [local sessions before setup](#before-setup-native-local-sessions),
+[handoff inside an agent](#from-inside-an-agent-handoff), or
+[handoff from a terminal](#from-a-terminal). Advanced details cover
+[separate checkouts](#working-in-a-separate-checkout---worktree),
+[session search](#naming-a-session-in-words), and
+[what the receiving agent sees](#what-the-receiving-agent-is-told).
+
 There are two ways to do it:
 
 - **Inside an agent.** In Claude Code, type `/handoff codex`. In Codex, ask

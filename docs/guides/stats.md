@@ -41,6 +41,9 @@ it, and prints the same numbers to a pipe.
 
 ### The summary
 
+The terminal examples below match the CLI renderer’s output exactly. Their
+numbers are illustrative.
+
 ```text
 agent-archive stats · last 30 days · 3 agents
 
