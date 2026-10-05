@@ -28,6 +28,26 @@ of the filter is in the [filter changelog](../../dev/specs/privacy-filter-change
   sent anywhere but your bucket: there is no hosted service and no
   telemetry. The one thing uploaded from outside your projects is the
   [skill evidence](#what-is-uploaded) from your user-level skill folders.
+  Project scope compares resolved checkout locations, including absent
+  descendants beneath existing directories. The nearest configured rule
+  controls capture, so nested exclusions and explicit reinclusions also apply
+  through symlink aliases and differently cased or canonically equivalent Unicode
+  spellings of existing directories on volumes that treat them as one location.
+  If a checkout or a saved scope rule has an unresolved symlink identity, capture
+  declines the session until that identity can be resolved. If components with
+  different casing or canonically equivalent Unicode
+  spellings are both absent, their identities are ambiguous, so capture also
+  declines conservatively on case-sensitive or normalization-sensitive volumes.
+  Use the saved spelling, correct the scope rule, or create the intended
+  directory to establish its identity, then start a fresh session. Existing
+  distinct directories on sensitive volumes keep separate scope decisions.
+  Conflicting inclusion decisions for equivalent nearest roots also decline
+  capture; correct the saved scope rules before starting a fresh session.
+  Existing project-scoped hook sessions also decline incoming continuation
+  updates with unknown scope identity, preserving their transcript locator and
+  lifecycle timestamps. A resolved continuation location without a matching
+  scope rule retains the existing session's admission. This incoming-event guard
+  does not revoke immutable admission already recorded for queued capture.
 - **Who can change the archive.** Anyone who can write to your prefix
   controls what `list`, `show`, and `handoff` return. A handoff is a prompt
   for a coding agent, so a planted or altered session is text another agent
@@ -177,6 +197,25 @@ are filter-derived text stored in the bucket, not a separate redaction pass.
   convenience, not proof of identity: see the
   [threat model](#threat-model) for what a repository that lies about its
   `origin` can do and what `handoff` does about it.
+- **Replay marker** (`replay`, in the metadata): only for a session a
+  replay tool ran with `AGENT_ARCHIVE_REPLAY` set in its environment, the
+  tool's run identifier (letters, digits, `.`, `_`, `:`, `-`; any other
+  value marks the session without being recorded). Nothing else is read
+  from the environment.
+- **Commit** (`git_head`, in the metadata): for a session whose working
+  directory is in a git repository, the full name of the commit checked out
+  when the session started, whether the working tree then had uncommitted
+  changes (a yes or no; which files, and what changed, are never read into
+  the archive), and the commit checked out at the latest stop hook, each
+  with the time a hook saw it. agent-archive's hooks run `git rev-parse` and
+  `git status` in that directory to find them, with a short timeout. No
+  branch, remote address, or path is taken from git. Anyone who can read
+  your bucket and the repository can match a session to the commit it
+  started from. A session that was not in a repository, whose hooks could
+  not run git in time, has no observation. Sessions that started before this
+  was recorded, or that
+  `backfill` imported, have no starting commit; later live stops can record
+  the last commit. Nothing infers a commit later.
 - **Hook observations**: for each hook event, its name, the app's turn and
   message IDs, the model and model settings the hook reported, and, for a
   stop hook, the agent's final message (filtered like the transcript).
@@ -270,7 +309,9 @@ Pause every machine that uploads to the bucket first, so no publication is in
 flight: a new source is uploaded before the metadata that points at it.
 This needs the [AWS CLI](https://aws.amazon.com/cli/) and `jq`, and
 credentials that can list, read, and delete under the prefix. Keep **every**
-uploading machine paused until the plan has been applied. Run the following blocks
+uploading machine paused until the plan has been applied. Every uploading
+installation must report a successful pause; this local recipe cannot establish
+that remote writers have stopped. Run the following blocks
 in the **same bash or zsh shell**; a plan expires after five minutes and can
 only be applied once. Keep the printed plan directory for recovery with
 `purge_resume` if an attempt fails or expires. External
@@ -281,7 +322,23 @@ First, list what would be deleted:
 
 <!-- purge-recipe:list (scripts/test_purge_recipe.py runs the three blocks below) -->
 ```sh
-agent-archive pause            # on every machine that uploads to this bucket
+purge_stop_uploads() {
+  purge_dir=                  # invalidate every previous plan before attempting stop
+  purge_pause_ok=
+  case "${1:-pause}" in
+    pause)
+      if agent-archive pause; then purge_pause_ok=yes; fi ;;
+    uninstall)
+      # Explicit opt-in only. Never use --skip-scheduler for this check.
+      if agent-archive uninstall --yes; then purge_pause_ok=yes; fi ;;
+    *) echo "Choose pause or uninstall; no cleanup plan is available." >&2; return 1 ;;
+  esac
+  [ "$purge_pause_ok" = yes ] || {
+    echo "Stopping uploads failed; no cleanup plan is available. Resolve the lock or scheduler error and retry." >&2
+    return 1
+  }
+}
+purge_stop_uploads pause       # must succeed on every uploading installation
 
 bucket=my-archive-bucket       # your bucket
 prefix=agent-archive/          # your prefix with its trailing slash, or empty
@@ -374,6 +431,7 @@ purge_check_manifest() {
 purge_dir=                         # never inherit a previous plan
 purge_prepare() {
   mode=$1; selector=${2:-}
+  [ "${purge_pause_ok:-}" = yes ] || { echo "Pause must succeed before preparing a plan." >&2; return 1; }
   purge_dir=                       # a failed new attempt cannot expose an old plan
   case "$prefix" in ''|*/) ;; *) echo "Prefix must be empty or end in /." >&2; return 1 ;; esac
   case "$mode" in
@@ -407,11 +465,15 @@ purge_prepare() {
   fi
   LC_ALL=C sort -u "$purge_dir/unsorted" > "$purge_dir/keys" || return 1
   : > "$purge_dir/metas" || return 1
+  : > "$purge_dir/metadata.keys" || return 1
   while IFS= read -r key; do
     case "$key" in "${prefix}sessions/"*/metadata.json)
-      printf '%s\n' "$key" >> "$purge_dir/metas" || return 1 ;;
+      printf '%s\n' "$key" >> "$purge_dir/metadata.keys" || return 1 ;;
     esac
   done < "$purge_dir/keys"
+  # Full-prefix mode deliberately removes every scoped key, even damaged metadata.
+  # Only selective modes read metadata to establish source ownership.
+  [ "$mode" = all ] || cp "$purge_dir/metadata.keys" "$purge_dir/metas" || return 1
   : > "$purge_dir/current" || return 1
   : > "$purge_dir/selected" || return 1
   : > "$purge_dir/snapshots" || return 1
@@ -451,9 +513,9 @@ purge_prepare() {
   LC_ALL=C sort -u "$purge_dir/current" -o "$purge_dir/current" || return 1
   : > "$purge_dir/targets" || return 1
   if [ "$mode" = all ]; then
-    cat "$purge_dir/metas" > "$purge_dir/targets" || return 1
+    cat "$purge_dir/metadata.keys" > "$purge_dir/targets" || return 1
     while IFS= read -r key; do
-      if ! grep -Fxq -- "$key" "$purge_dir/metas"; then
+      if ! grep -Fxq -- "$key" "$purge_dir/metadata.keys"; then
         printf '%s\n' "$key" >> "$purge_dir/targets" || return 1
       fi
     done < "$purge_dir/keys"
@@ -484,6 +546,7 @@ purge_prepare() {
   cat "$purge_dir/targets"
 }
 purge_apply() {
+  [ "${purge_pause_ok:-}" = yes ] || { echo "Pause must succeed before deleting." >&2; return 1; }
   if [ -z "${purge_dir:-}" ] || [ ! -f "$purge_dir/VALID" ]; then
     echo "No valid plan; nothing deleted." >&2; return 1
   fi
@@ -557,6 +620,7 @@ purge_apply() {
 }
 purge_resume() {
   original=$1
+  [ "${purge_pause_ok:-}" = yes ] || { echo "Pause must succeed before recovery." >&2; return 1; }
   purge_dir=
   purge_check_manifest "$original" || { echo "Unreadable or corrupt manifest; nothing deleted." >&2; return 1; }
   [ "$(jq -r .bucket "$original/manifest.json")" = "$bucket" ] &&
@@ -621,6 +685,19 @@ purge_resume() {
       printf '%s\n' "$meta" >> "$purge_dir/tombstones" || return 1
     fi
   done < "$purge_dir/original.metas"
+  # Full-prefix plans do not snapshot metadata bodies, but retain deletion history.
+  if [ "$mode" = all ]; then
+    while IFS= read -r key; do
+      case "$key" in "${prefix}sessions/"*/metadata.json)
+        if grep -Fxq -- "$key" "$purge_dir/tombstones" &&
+           grep -Fxq -- "$key" "$purge_dir/keys"; then
+          echo "Metadata reappeared or has an interrupted delete: $key; nothing deleted." >&2; return 1
+        elif ! grep -Fxq -- "$key" "$purge_dir/keys"; then
+          printf '%s\n' "$key" >> "$purge_dir/tombstones" || return 1
+        fi ;;
+      esac
+    done < "$purge_dir/original.keys"
+  fi
   # Preserve original metadata-first order; never discover new ownership.
   jq -r '.targets[]' "$purge_dir/manifest.json" > "$purge_dir/original.targets" || return 1
   while IFS= read -r key; do
@@ -662,10 +739,14 @@ within five minutes in that shell.
 purge_prepare old 10
 ```
 
-After a failed, interrupted, or expired attempt, keep every writer paused.
+After a failed, interrupted, or expired attempt, keep every writer stopped.
 In a fresh bash or zsh shell, load the helper definitions above (omit the final
 `purge_prepare unreferenced` line), restore the same bucket, prefix, endpoint,
-profile and region (and unchanged AWS configuration), then run `purge_resume /absolute/path/to/retained-plan`.
+profile and region (and unchanged AWS configuration). For still-installed
+installations, run `purge_stop_uploads pause`; after uninstall, explicitly run
+`purge_stop_uploads uninstall`. The latter reruns ordinary uninstall without
+prompting; never use `--skip-scheduler` to establish that uploads stopped.
+Only after that stop command succeeds, run `purge_resume /absolute/path/to/retained-plan`.
 Review its printed remaining original keys and run `purge_apply` again within
 five minutes. Use the newest printed recovery directory for each subsequent retry, keeping
 its earlier directories until cleanup succeeds. Recovery uses the immutable
@@ -954,3 +1035,17 @@ journals and distinct bucket operation objects never contain credential values.
 Operator binding files must come from independent local/out-of-band evidence;
 bucket claims do not authorize deletion. Own-key checkpoints store only opaque
 references and slot IDs, keeping old local access until replacement commits.
+
+## Consent for automatic Codex discovery
+
+Automatic discovery authorizes supported new-session records from the Codex homes
+selected by setup, within the reviewed Codex capture scope and chosen destination.
+Included-project scope requires an included project; all-projects scope covers
+current and future Codex projects subject to explicit exceptions. Other apps
+retain their included-project permissions. Discovery does not
+prove that execution originated on this machine: an indistinguishable recent
+native copy may be captured. Historical records before consent, starts while
+paused, excluded projects and recognizable unsupported import/fork shapes remain
+ineligible. Discovery reads bounded identity/start/project metadata before
+admission; eligible transcripts then pass through the same privacy filter as
+hook capture. Discovery health and rejection diagnostics contain no prompt text.

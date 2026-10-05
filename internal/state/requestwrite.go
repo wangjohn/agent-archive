@@ -63,6 +63,13 @@ func (s *Store) ForHook() *Store {
 
 // lockedWrite is one read-modify-write for writeUnderLock.
 type lockedWrite struct {
+	snapshot       func(string) (fileSnapshot, error)
+	expectation    *local.Staged
+	packedEpoch    string
+	packedHome     string
+	expiryPath     string
+	membership     *local.Staged
+	membershipHome string
 	// lock takes the lock guarding path.
 	lock func() (func(), error)
 	path string
@@ -72,9 +79,10 @@ type lockedWrite struct {
 	// change computes the new content from the file's current content;
 	// write false leaves the file as it is.
 	change func(current fileSnapshot) (value any, write bool, err error)
-	// blind marks a write whose value does not depend on the file's content:
-	// the file is neither read nor compared, and change gets an empty
-	// snapshot, so no other writer can overtake it.
+	// blind marks a replacement whose value does not depend on the file's
+	// content. change gets an empty snapshot and ordinary commit does not
+	// compare prior bytes. Registration fencing separately reads identity facts;
+	// the caller's request-lock check still guards replacement and provenance.
 	blind bool
 }
 
@@ -144,6 +152,9 @@ func (s *Store) writeUnderRequestLock(archiveSessionID, path string, check func(
 // as a write. An error from change or check is returned as is, with nothing
 // written.
 func (s *Store) writeUnderLock(w lockedWrite) error {
+	if s.indexSnapshots && w.snapshot == nil {
+		w.snapshot = s.readIndexSnapshot
+	}
 	attempts := unlockedWriteAttempts
 	if s.hook {
 		attempts = hookUnlockedWriteAttempts
@@ -152,7 +163,7 @@ func (s *Store) writeUnderLock(w lockedWrite) error {
 		var before fileSnapshot
 		if !w.blind {
 			var err error
-			if before, err = readSnapshot(w.path); err != nil {
+			if before, err = w.readSnapshot(); err != nil {
 				return err
 			}
 		}
@@ -161,13 +172,34 @@ func (s *Store) writeUnderLock(w lockedWrite) error {
 			return err
 		}
 		var staged *local.Staged
+		w.expectation = nil
+		w.expiryPath = ""
 		if write {
+			var err error
+			w.expectation, w.packedEpoch, err = s.stagePackedExpectation(w.path)
+			w.packedHome = s.home
+			if err != nil {
+				return err
+			}
+			if s.indexSnapshots {
+				w.expiryPath = w.path
+			}
 			if staged, err = local.Stage(w.path, value); err != nil {
+				w.expectation.Discard()
 				return err
 			}
 			s.writeSynced()
 		}
+		membership, err := stageRegistrationRevision(s.home, w.path, before, value, write)
+		if err != nil {
+			staged.Discard()
+			w.expectation.Discard()
+			return err
+		}
+		w.membership, w.membershipHome = membership, s.home
 		committed, err := commitUnderLock(w, before, staged)
+		membership.Discard()
+		w.expectation.Discard()
 		staged.Discard()
 		if err != nil {
 			return err
@@ -179,7 +211,7 @@ func (s *Store) writeUnderLock(w lockedWrite) error {
 			return nil
 		}
 		s.writeSynced()
-		return staged.SyncDir()
+		return errors.Join(staged.SyncDir(), syncRegistrationRevision(membership))
 	}
 	if !s.hook {
 		return fmt.Errorf("write %s: %w", w.path, errWriteOvertaken)
@@ -192,18 +224,37 @@ func (s *Store) writeUnderLock(w lockedWrite) error {
 // other writer can overtake it. Only the directory sync waits until the lock
 // is released.
 func (s *Store) writeHoldingLock(w lockedWrite) error {
+	expectation, epoch, err := s.stagePackedExpectation(w.path)
+	w.packedEpoch, w.packedHome = epoch, s.home
+	if err != nil {
+		return err
+	}
+	defer expectation.Discard()
+	w.expectation = expectation
+	if s.indexSnapshots {
+		w.expiryPath = w.path
+	}
+	revision, err := stageRegistrationRevision(s.home, w.path, fileSnapshot{}, nil, true)
+	if err != nil {
+		return err
+	}
+	defer revision.Discard()
+	w.membership, w.membershipHome = revision, s.home
 	staged, err := func() (*local.Staged, error) {
 		unlock, err := w.lock()
 		if err != nil {
 			return nil, err
 		}
 		defer unlock()
+		if err := w.packedEpochValid(); err != nil {
+			return nil, err
+		}
 		if w.check != nil {
 			if err := w.check(); err != nil {
 				return nil, err
 			}
 		}
-		current, err := readSnapshot(w.path)
+		current, err := w.readSnapshot()
 		if err != nil {
 			return nil, err
 		}
@@ -215,9 +266,21 @@ func (s *Store) writeHoldingLock(w lockedWrite) error {
 		if err != nil {
 			return nil, err
 		}
-		if err := staged.Commit(); err != nil {
+		if w.expectation != nil {
+			if err := w.expectation.Commit(); err != nil {
+				staged.Discard()
+				return nil, err
+			}
+		}
+		if err := commitRegistrationRevision(w, staged); err != nil {
 			staged.Discard()
 			return nil, err
+		}
+		if w.expiryPath != "" {
+			if err := removePackedExpiryFile(w.expiryPath); err != nil {
+				staged.Discard()
+				return nil, err
+			}
 		}
 		return staged, nil
 	}()
@@ -225,7 +288,7 @@ func (s *Store) writeHoldingLock(w lockedWrite) error {
 		return err
 	}
 	s.writeSynced()
-	return staged.SyncDir()
+	return errors.Join(staged.SyncDir(), syncRegistrationRevision(revision))
 }
 
 // commitUnderLock is writeUnderLock's step under the lock. committed is
@@ -236,13 +299,16 @@ func commitUnderLock(w lockedWrite, before fileSnapshot, staged *local.Staged) (
 		return false, err
 	}
 	defer unlock()
+	if err := w.packedEpochValid(); err != nil {
+		return false, err
+	}
 	if w.check != nil {
 		if err := w.check(); err != nil {
 			return false, err
 		}
 	}
 	if !w.blind {
-		current, err := readSnapshot(w.path)
+		current, err := w.readSnapshot()
 		if err != nil || !current.equal(before) {
 			return false, err
 		}
@@ -250,7 +316,20 @@ func commitUnderLock(w lockedWrite, before fileSnapshot, staged *local.Staged) (
 	if staged == nil {
 		return true, nil
 	}
-	return true, staged.Commit()
+	if w.expectation != nil {
+		if err := w.expectation.Commit(); err != nil {
+			return false, err
+		}
+	}
+	if err := commitRegistrationRevision(w, staged); err != nil {
+		return false, err
+	}
+	if w.expiryPath != "" {
+		if err := removePackedExpiryFile(w.expiryPath); err != nil {
+			return false, err
+		}
+	}
+	return true, nil
 }
 
 // writeSynced runs the test seam, if any, where writeUnderLock syncs outside
@@ -268,4 +347,11 @@ func (s *Store) namedLockWait(name string, timeout time.Duration) (func(), error
 		s.onLockWait(name)
 	}
 	return local.NamedLockWait(s.home, name, timeout)
+}
+
+func (w lockedWrite) readSnapshot() (fileSnapshot, error) {
+	if w.snapshot != nil {
+		return w.snapshot(w.path)
+	}
+	return readSnapshot(w.path)
 }

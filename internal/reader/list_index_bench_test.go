@@ -49,10 +49,17 @@ func BenchmarkListLargeArchive(b *testing.B) {
 			}
 		}
 	})
+	cache, err := OpenMetadataCache(b.TempDir())
+	if err != nil {
+		b.Fatal(err)
+	}
+	if _, err = ListRecent(ctx, store, "sessions", Filter{}, 50, ListOptions{Cache: cache}); err != nil {
+		b.Fatal(err)
+	}
 	b.Run("indexed-warm", func(b *testing.B) {
 		b.ReportAllocs()
 		for range b.N {
-			if _, err := ListRecent(ctx, store, "sessions", Filter{}, 50, ListOptions{}); err != nil {
+			if _, err := ListRecent(ctx, store, "sessions", Filter{}, 50, ListOptions{Cache: cache}); err != nil {
 				b.Fatal(err)
 			}
 		}

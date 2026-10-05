@@ -35,6 +35,7 @@ Manage capture
   agent-archive sync        Collect and upload pending changes now
   agent-archive pause       Pause collection, uploads, and cleanup
   agent-archive resume      Resume automatic capture
+  agent-archive recover     Start a linked generation for a blocked transcript
 
 Inspect history
   agent-archive list        Find archived sessions
@@ -47,6 +48,9 @@ Import history
 
 Switch agents
   agent-archive handoff     Continue a session in another coding agent
+
+Evaluate agents
+  agent-archive eval        Export sessions for an evaluation tool (JSON Lines)
 
 Maintenance
   agent-archive uninstall   Remove integrations; keep local data
@@ -75,6 +79,8 @@ Guide: [Set up capture](../getting-started/setup.md).
 Usage: agent-archive setup [--abandon-recovery] [--verbose]
                [--no-skills | --skills] [--allow-network-home]
        agent-archive setup --yes [--provider r2|s3 ...] [--project DIR ...]
+               [--codex-discovery on|off]
+               [--codex-capture-scope included-projects|all-projects]
                [--prefix PREFIX] [--retention-days DAYS]
                [--require-skill-use | --no-require-skill-use]
                [--skill-evidence none|metadata|body] [--no-skills | --skills]
@@ -135,6 +141,12 @@ An interrupted setup is recovered on the next run.
   --project DIR         Capture this project, besides any saved (repeatable)
   --project-repo KEY    Capture a unique local repo by key (repeatable)
                        Skip ambiguous, excluded, or incomplete matches
+  --project-scope JSON  Transfer include/exclude rules together; repository
+                        subtrees follow the unique local checkout
+  --project-scope-file PATH  Read those rules from a file, or - for stdin
+                        Scope transfer accepts at most 4096 rules
+                        Scope flags need a nonempty value and cannot mix
+                        with --project or --project-repo
   --apps LIST           Apps to capture: codex,claude,cursor (default: the
                         saved apps, else those found on this machine). It must
                         name every app set up now: --yes never removes one
@@ -149,6 +161,13 @@ An interrupted setup is recovered on the next run.
                         share one identity, cannot rely on file locks, and
                         each run the background job. Only for a home that one
                         machine ever mounts; recorded while it is needed
+  --codex-discovery MODE on or off; fresh scripted Codex setup must choose.
+                        Reconfiguration keeps an omitted choice. Discovery
+                        finds supported sources; recent native copies may count
+  --codex-capture-scope MODE included-projects or all-projects (Codex only).
+                        Fresh scripts must choose; default: included projects.
+                        Omitted reconfiguration never expands recorded scope.
+                        all-projects with discovery off uses approved hooks only
   --skill-evidence MODE none: no filesystem skill evidence; metadata: names
                         and filtered hashes; body: filtered SKILL.md text.
                         Fresh setup defaults to metadata; earlier configs
@@ -168,6 +187,8 @@ Example: printf '%s\n' "$SECRET" | agent-archive setup --yes --provider r2 \
 | `--apps` | a value | — |
 | `--aws-profile` | a value | — |
 | `--bucket` | a value | — |
+| `--codex-capture-scope` | a value | — |
+| `--codex-discovery` | a value | — |
 | `--no-require-skill-use` | no value | — |
 | `--no-skills` | no value | — |
 | `--pair` | no value | — |
@@ -175,6 +196,8 @@ Example: printf '%s\n' "$SECRET" | agent-archive setup --yes --provider r2 \
 | `--prefix` | a value | — |
 | `--project` | a value | — |
 | `--project-repo` | a value | — |
+| `--project-scope` | a value | — |
+| `--project-scope-file` | a value | — |
 | `--provider` | a value | — |
 | `--r2-access-key-id` | a value | — |
 | `--r2-account` | a value | — |
@@ -415,6 +438,29 @@ Example: agent-archive resume
 
 No flags.
 
+## agent-archive recover
+
+Guide: [Recover a blocked transcript](../guides/transcript-recovery.md).
+
+```text
+Usage: agent-archive recover SESSION_ID [--confirm]
+
+Preview recovery of a local top-level append-only transcript blocked by a
+rewrite. Keep its history, feedback and handoffs; freeze its future native
+capture, and queue one new archive generation from the current transcript.
+Normal sync publishes it. Each generation expires under normal retention.
+Repeated confirmation of the old SESSION_ID returns the same successor. Imports
+remain in their original undo batch. Existing subagents keep their parent;
+new subagents use the active generation. Direct subagent recovery is not
+supported: start a fresh parent session instead. No storage is accessed.
+Recovery permanently fences older binaries out of this data directory.
+  --confirm    Start or resume the previewed generation without prompting
+```
+
+| Flag | Takes | Default |
+| --- | --- | --- |
+| `--confirm` | no value | — |
+
 ## agent-archive list
 
 Guide: [Inspect the archive](../guides/list-and-show.md); `--json` in [JSON output](json-output.md).
@@ -479,6 +525,8 @@ paged through $PAGER unless --no-pager.
                                  capture gaps
   --imported                     Only sessions agent-archive backfill imported
   --hook-captured                Only sessions hooks captured as they ran
+  --replays hide|include|only    Sessions a replay tool ran (with
+                                 AGENT_ARCHIVE_REPLAY set): hidden by default
   --limit N                      Show at most N sessions, newest first
                                  (default 50; 0 for all)
   --project DIR|NAME             List this project's sessions: the
@@ -496,9 +544,9 @@ paged through $PAGER unless --no-pager.
   --verbose                      Full SESSION_IDs, absolute times, origin,
                                  parser status, all models/skills, and title
   --no-pager                     Print directly; do not page through $PAGER
-  --no-cache                     Bypass the local metadata cache during full
-                                 scans; indexed listing always verifies live
-                                 sidecars (never conversation content)
+  --no-cache                     Bypass the local metadata cache; indexed
+                                 listing verifies current revision headers
+                                 (never conversation content)
   --json                         Print {"schema_version": 4, "sessions": [...],
                                  "limit", "returned", "total_matched_known"}:
                                  "total_matched" is present only when exact;
@@ -526,6 +574,7 @@ Example: agent-archive list --skill review-pr --skill-sha256 HASH --since 7d
 | `--no-pager` | no value | — |
 | `--project` | a value | — |
 | `--rebuild-index` | no value | — |
+| `--replays` | a value | `hide` |
 | `--since` | a value | — |
 | `--skill` | a value | — |
 | `--skill-sha256` | a value | — |
@@ -637,6 +686,8 @@ keys, q quits. Otherwise text is paged through $PAGER unless --no-pager.
                                  other models count too)
   --imported                     Only sessions agent-archive backfill imported
   --hook-captured                Only sessions hooks captured as they ran
+  --replays hide|include|only    Sessions a replay tool ran (with
+                                 AGENT_ARCHIVE_REPLAY set): hidden by default
   --prices FILE                  Price tokens with the prices in this JSON file
                                  (the built-in table's format), applied on top
                                  of it; the output says so
@@ -686,6 +737,7 @@ Example: agent-archive stats --html --output stats.html
 | `--no-pager` | no value | — |
 | `--output` | a value | — |
 | `--prices` | a value | — |
+| `--replays` | a value | `hide` |
 | `--since` | a value | — |
 | `--view` | a value | — |
 
@@ -933,6 +985,73 @@ Example: agent-archive handoff SESSION_ID --to codex -- --model o3
 | `--source` | a value | `auto` |
 | `--to` | a value | — |
 | `--worktree` | no value | — |
+
+## agent-archive eval
+
+Guide: [Export sessions for evaluation](../guides/eval-export.md); records in [eval export schema](../../schemas/eval-export.schema.json).
+
+```text
+Usage: agent-archive eval export SESSION_ID... | --ids-from - | --scan
+       | --file PATH --harness NAME [--detail metadata|full] [--max-bytes N]
+
+Export sessions for an evaluation tool, one JSON Lines record per session
+(schemas/eval-export.schema.json), from the archive or from transcripts on
+this machine. Read-only and never interactive.
+```
+
+No flags.
+
+## agent-archive eval export
+
+Guide: [Export sessions for evaluation](../guides/eval-export.md); records in [eval export schema](../../schemas/eval-export.schema.json).
+
+```text
+Usage: agent-archive eval export SESSION_ID... [--detail metadata|full]
+       agent-archive eval export --ids-from - [--detail metadata|full]
+       agent-archive eval export --scan [--harness NAME] [--project DIR]
+               [--since DATE] [--until DATE] [--detail metadata|full]
+       agent-archive eval export --file PATH --harness NAME [--detail ...]
+       Any of them also takes [--max-bytes N] [--workers N].
+
+Print one JSON line per session: its identity, commits, counts, tokens and
+tools, and with --detail full (the default) its filtered human prompts in
+order, final response, edited files and feedback. Archived sessions are
+named by full SESSION_ID. Transcripts on this machine (--file, --scan, or
+absolute paths with --ids-from) need no setup and are filtered as they
+would be before upload. With several workers each record is written as its
+session finishes. A session that cannot be exported is an error record on
+its own line; the others are still printed, and the exit code is 1.
+Nothing is uploaded or written.
+  --detail metadata|full     metadata prints no conversation text and, for
+                             the archive, reads only sidecars (default full)
+  --ids-from -               Read session IDs or transcript paths from stdin,
+                             one a line
+  --scan                     Export the transcripts backfill would find here
+  --project DIR              With --scan, only this project; repeatable
+  --since DATE|TIME|AGE      With --scan, sessions started on or after this
+                             local day (as backfill's --since)
+  --until DATE|TIME|AGE      With --scan, sessions started on or before it
+  --file PATH                Export one transcript; needs --harness
+  --harness NAME             The app: for --file, for a path outside the apps'
+                             folders, or a session under two apps
+  --workers N                Export N sessions at once (default 0: the number
+                             of CPUs, up to 8)
+  --max-bytes N              Cut each record's longest texts to fit N bytes
+                             (default 120000; 0 for no limit)
+```
+
+| Flag | Takes | Default |
+| --- | --- | --- |
+| `--detail` | a value | `full` |
+| `--file` | a value | — |
+| `--harness` | a value | — |
+| `--ids-from` | a value | — |
+| `--max-bytes` | a value | `120000` |
+| `--project` | a value; repeatable | — |
+| `--scan` | no value | — |
+| `--since` | a value | — |
+| `--until` | a value | — |
+| `--workers` | a value | `0` |
 
 ## agent-archive uninstall
 

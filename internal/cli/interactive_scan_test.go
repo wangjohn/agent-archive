@@ -48,6 +48,9 @@ var rawTerminalChecks = classifiedCalls{
 	// an agent too, where a page on the pty would land in the agent's
 	// context, so it asks the terminal itself rather than Env.interactive.
 	"stats.go": {"isTerminal": 1},
+	// eval export --ids-from - refuses a terminal as its list of inputs:
+	// a refusal, not a prompt, which holds inside an agent too.
+	"eval_export.go": {"isTerminal": 1},
 }
 
 // injectedTerminalChecks are mentions of the Env.IsTerminal field itself,
@@ -123,9 +126,10 @@ var promptSites = classifiedCalls{
 // through a prompter. A read of standard input that waits for a person must
 // be refused when interaction is off; a read of a file need not be.
 var inputReads = classifiedCalls{
-	"pairing_receive.go": {"io.ReadAll": 1},                       // bounded bundle file or explicitly requested --pair-file - stream; code/review use a checked terminal
-	"pairing_ledger.go":  {"io.ReadAll": 1},                       // bounded local ledger files, never input
-	"machines_revoke.go": {"io.ReadAll": 1, "json.NewDecoder": 1}, // explicitly selected bounded operator binding file, never stdin
+	"setup_project_scope.go": {"json.NewDecoder": 1, "io.ReadAll": 1}, // explicit JSON or --yes file/stdin scope, never an implicit prompt
+	"pairing_receive.go":     {"io.ReadAll": 1},                       // bounded bundle file or explicitly requested --pair-file - stream; code/review use a checked terminal
+	"pairing_ledger.go":      {"io.ReadAll": 1},                       // bounded local ledger files, never input
+	"machines_revoke.go":     {"io.ReadAll": 1, "json.NewDecoder": 1}, // explicitly selected bounded operator binding file, never stdin
 
 	// The prompter's own line reader: every prompt (see promptSites); and
 	// handoff's one buffer for its answers (typedInput), read only by the
@@ -141,6 +145,9 @@ var inputReads = classifiedCalls{
 	"purge.go": {"bufio.NewReader": 1},
 	// Files, not standard input.
 	"setup_aws.go": {"bufio.NewScanner": 1},
+	// eval export --ids-from -: a list piped in, refused when standard input
+	// is a terminal, so it never waits for a person.
+	"eval_export.go": {"bufio.NewScanner": 1},
 	// copyRootFile: a file copied into the new worktree.
 	"handoff_worktree.go": {"io.Copy": 1},
 	"feedback.go":         {"io.ReadAll": 1},

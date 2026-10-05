@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"io"
+	"slices"
 	"strings"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -67,11 +68,19 @@ func resolveShowQuery(ctx context.Context, store storage.ObjectStore, env showQu
 		terminal.Printf(stderr, "agent-archive: show: %v\n", err)
 		return showLookup{}, 1
 	}
+	sortByActivity(sessions)
 	// Search every listed sidecar — do not apply list's --limit window, or
 	// older title matches would be silently invisible.
-	found := searchSessions(sessions, parseSessionQuery(query), scope, func(m archive.Metadata) sessionFields {
+	q := parseSessionQuery(query)
+	fields := func(m archive.Metadata) sessionFields {
 		return fieldsOf(m, sessionProjectName(m, cfgProjects))
-	})
+	}
+	// A replay opens only by its ID, never through a search of titles and
+	// names, as it stays out of list and handoff's pickers.
+	if len(exactIDWins(sessions, q, fields)) == 0 {
+		sessions = slices.DeleteFunc(sessions, func(m archive.Metadata) bool { return m.IsReplay() })
+	}
+	found := searchSessions(sessions, q, scope, fields)
 	matches := found.matches
 	if note := found.outsideNote(scope); note != "" {
 		terminal.Println(stderr, note)

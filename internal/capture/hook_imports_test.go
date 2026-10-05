@@ -1,11 +1,12 @@
 package capture
 
 import (
-	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"reflect"
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/state"
@@ -175,10 +176,75 @@ func TestHookResumeOfImportKeepsProvenanceAndUpdatesPath(t *testing.T) {
 	}
 	want := imported
 	want.TranscriptPath, want.RegisteredAt = got.TranscriptPath, got.RegisteredAt
+	want.HookObservedAt = resumeAt
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("resume changed the import's provenance:\n got %#v\nwant %#v", got, want)
 	}
 	if requests, _ := store.LoadRequests(); len(requests) != 1 || requests[0].ArchiveSessionID != imported.ArchiveSessionID {
 		t.Fatalf("the resume's lifecycle evidence was not queued: %#v", requests)
+	}
+}
+
+// A missing child identity must not discard the parent hook observation or
+// replace the import's original admission and attribution.
+func TestSubagentStopDurablyObservesHookOnImportedParent(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	activated := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	setUpTestConfig(t, home, "/work/widget", activated)
+	cfg, _, err := config.Load(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := state.Open(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	importedAt := activated.Add(time.Hour)
+	key := agentmeta.SessionKey{Agent: agentmeta.Claude, NativeID: "imported-parent"}
+	imported, err := store.RegisterNewSession(key, func(id string) archive.SessionRegistration {
+		return archive.SessionRegistration{
+			ArchiveSessionID: id, NativeSessionID: key.NativeID,
+			ProjectID: archive.ProjectID("/work/widget"), ProjectRoot: "/work/widget",
+			Harness: archive.Harness{Name: string(key.Agent)}, TranscriptPath: "/tmp/imported.jsonl",
+			SessionStartedAt: activated.Add(-24 * time.Hour), RegisteredAt: importedAt,
+			AdmittedAt: importedAt, DestinationID: cfg.DestinationID(),
+			Origin: archive.SessionOriginImport, StartedAtSource: archive.StartedAtSourceTranscript,
+			ImportBatch: archive.NewImportBatch("2026-09-01-1"),
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	observedAt := importedAt.Add(time.Hour)
+	event := agentapi.LifecycleEvent{
+		Kind:        agentapi.EventSubagent,
+		Reason:      "subagentstop",
+		NativeEvent: "SubagentStop",
+		Session:     agentapi.NativeSession{Agent: key.Agent, NativeID: key.NativeID},
+		ProjectRoot: imported.ProjectRoot,
+		Child:       &agentapi.ChildObservation{MissingDetail: "native hook omitted child identity"},
+	}
+	if err := HandleBatch(home, string(key.Agent), []agentapi.LifecycleEvent{event}, observedAt); err != nil {
+		t.Fatal(err)
+	}
+	// Reopen to check the durable record, rather than an in-memory return value.
+	persisted := state.OpenReadOnly(home)
+	regs, err := persisted.LoadRegistrations()
+	if err != nil || len(regs) != 1 {
+		t.Fatalf("registrations=%#v err=%v", regs, err)
+	}
+	want := imported
+	want.HookObservedAt = observedAt
+	if !reflect.DeepEqual(regs[0], want) {
+		t.Fatalf("hook observation changed imported attribution:\n got %#v\nwant %#v", regs[0], want)
+	}
+	candidates, err := persisted.LoadSubagentCandidates()
+	if err != nil || len(candidates) != 0 {
+		t.Fatalf("candidates=%#v err=%v", candidates, err)
+	}
+	requests, err := persisted.LoadRequests()
+	if err != nil || len(requests) != 1 || requests[0].ArchiveSessionID != imported.ArchiveSessionID {
+		t.Fatalf("missing-child evidence was not queued for the imported parent: %#v err=%v", requests, err)
 	}
 }

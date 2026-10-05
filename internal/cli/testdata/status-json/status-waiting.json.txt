@@ -1,5 +1,10 @@
 $ agent-archive status --json
 {
+  "identity_recovery": {
+    "complete": false,
+    "pending": false,
+    "phase": "unknown"
+  },
   "privacy_evidence": {
     "state": "not_verified",
     "reason": "inspection_unavailable",
@@ -15,7 +20,7 @@ $ agent-archive status --json
     "context": ""
   },
   "code": "awaiting_capture",
-  "schema_version": 3,
+  "schema_version": 4,
   "state": "Waiting for capture",
   "storage": "s3 / team-archive / agent-archive/",
   "storage_verified_at": "2026-09-25T12:00:00Z",
@@ -30,6 +35,21 @@ $ agent-archive status --json
   ],
   "applications": [
     {
+      "codex_capture_scope": "included-projects",
+      "discovery": {
+        "enabled": true,
+        "supported": false,
+        "pending": false,
+        "project_metadata_operations": 0,
+        "git_metadata_bytes": 0,
+        "header_probes": 0,
+        "directory_entries": 0,
+        "bytes_read": 0,
+        "registered": 0,
+        "errors": [
+          "discovery health unknown; run sync to produce a current summary"
+        ]
+      },
       "published_sessions": 0,
       "verified_sessions": 0,
       "configured": true,
@@ -108,6 +128,6 @@ $ agent-archive status --json
   "imported_pending": 0,
   "imported_with_issues": 0,
   "last_import": "",
-  "next_action": "Review hook approval in Codex, then start a new session in /Users/alex/src/web-app."
+  "next_action": "Start a supported new Codex task in /Users/alex/src/web-app, then run agent-archive sync. Hook approval is optional for discovery."
 }
 [exit 0]

@@ -72,6 +72,9 @@ type HookOtherOwner struct {
 
 // HookInspection describes settings without performing reads or writes.
 type HookInspection struct {
+	// Owned reports any handlers of this installation, independently of foreign
+	// ownership and whether its required event handlers are complete.
+	Owned              bool
 	State              HookState
 	Installed          bool
 	Reason             string

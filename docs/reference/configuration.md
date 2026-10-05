@@ -143,3 +143,97 @@ it from its process environment; it is never saved. Deliver it separately from
 the encrypted bundle, and clear it in the parent shell afterward. There is no
 code command-line flag. Interactive pairing honors `AGENT_ARCHIVE_NONINTERACTIVE`;
 redirected bundle input uses a private terminal for the code and destination review.
+
+## Codex discovery consent
+
+`discovery` records `enabled`, `choice_recorded` (an explicit setup choice),
+approved `codex_homes`, and current per-project
+`authorizations`. Each authorization has an agent, project root, destination ID,
+generation and half-open unpaused intervals. Setup commits these together with
+its configuration transaction. Changing effective project scope, destination or
+source roots creates a new generation; pause closes the open interval and resume
+opens another. A session created before consent or during a closed interval does
+not become eligible merely because it is found later.
+
+Use setup's `--codex-discovery on|off` choice instead of editing this ledger.
+Disabling discovery retains writer protection and identity history. Protected
+configuration uses the schema-2 writer object; explicit Codex capture scope uses
+the stronger schema-3 `codex-scope-floor-v3` writer fence so older writers
+refuse it instead of removing consent or namespaced identities. Hook-only legacy
+configurations remain readable.
+
+
+`codex_capture.scope` is `included-projects` or `all-projects` and is independent
+of `discovery.enabled`. Legacy configurations retain included-project scope.
+The blanket authorization window, source authorization window, explicit rule
+barriers and rule revision are local permission state; pairing does not import
+another machine’s live windows. Discovery-off all-mode can still use approved
+hooks. Scope choice and history keep the strongest writer fence after disablement,
+rollback, refresh or skill-policy edits; old v2 writers refuse rather than drop it.
+## Protected Codex capture scope
+
+The optional local `codex_capture` record separates Codex project permission
+from `discovery.enabled`. Its tagged `scope` is `included-projects` or
+`all-projects`; absent means included projects. All mode grants only Codex
+fresh starts after local consent, including approved hooks when discovery is
+off. It never turns an empty project list into permission for another app.
+The public setup choice is described in the setup documentation; the policy
+and consumers preserve included-project behavior for existing configurations.
+
+One blanket authorization binds a generation to the current destination and
+at most 256 half-open unpaused intervals. Discovery also needs its independent
+source authorization: disabling and re-enabling discovery or changing approved
+homes opens a new source window without withdrawing approved hook permission.
+Changing the scope, destination or selected Codex app opens a new blanket
+window. Registered sessions keep their original admission, identity, origin and
+destination; changing destinations does not move their archives.
+
+Explicit include/exclude rules use the nearest canonical ancestor, with
+intentional child inclusions beneath exclusions. Checkout and mapped-main rules are evaluated together. An unrelated positive
+checkout rule cannot bypass a mapped-main exclusion; a deliberate child
+inclusion beneath the same excluded ancestor keeps its nearest-rule grant.
+New Git projects use their physical repository root, validated worktrees use
+the main repository, and nonGit projects use their canonical working directory.
+Existing native IDs retain their previous configured-owner attribution.
+In all mode, legacy registrations also obey current exceptions at their stored
+working directory; retaining an included parent does not override an excluded
+child. Historical hooks without a stored cwd keep their recorded project root.
+
+Removing or lifting an exclusion records a forward subtree barrier. Retargeting
+an excluded path records the same barrier at its previous physical root. Unknown starts
+from its excluded period remain ineligible, while unrelated projects retain
+their consent window. The policy stores canonical rule roots and at most 4,096
+user-edited barriers/rules. Exhausting history fails closed; discovered
+projects never append permissions or cause configuration writes.
+
+Scope-capable records use the incompatible writer fence
+`{"version":3,"writer":"codex-scope-floor-v3"}` in `schema_version` and a protected
+skill-evidence marker. Active, disabled and rollback snapshots retain this
+fence. Older discovery-v2 and numeric writers refuse it before mutation;
+removing authorization fields is not a supported downgrade. Pairing transfers
+scope preferences, then obtains new local permission, not another machine's
+live authorization.
+
+A private registration's immutable `codex_admission` proof is written only
+while admitting a fresh authorized hook/discovery start. Publication consumes
+that proof for unlisted projects while still checking current exceptions,
+selected app and destination. Legacy/import registrations never gain proof
+on continuation. An already admitted proof stops while excluded and resumes
+when the current exception permits it again; a forward barrier does not revoke
+that immutable admission. Its physical identity remains eligible inside a
+remaining included parent when scope is reduced. The proof remains local. Filtered source and metadata derivation versions
+are unchanged; native provenance already supported by the upstream filtered
+source contract remains available to child materialization.
+
+Blanket, source and included-project generations retain an immutable
+`native_start_floor`, including when created while paused. The floor is the
+latest local reconciliation and destination boundary (and project activation
+for included-project scopes). Resume below any floor or the last closed
+interval, and pause at or before an open interval's start, refuse the complete
+transition without changing configuration. Compaction never resets the floor.
+Earlier `codex-scope-v3` documents migrate nonempty histories conservatively
+from their earliest retained interval; empty unknown histories cannot resume
+or authorize starts until explicit local setup renews them. Every protected
+save, nested draft and rollback emits `codex-scope-floor-v3`, retaining schema
+version 3 and the stronger `+codex-scope-floor-v3` skill marker. Prior policy writers refuse this new
+identity before they can drop floors; schema 4 remains reserved for future UX.

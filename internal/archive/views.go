@@ -2,8 +2,7 @@ package archive
 
 import (
 	"errors"
-	"strconv"
-	"strings"
+
 	"time"
 )
 
@@ -113,9 +112,11 @@ const (
 // text, model attribution, and the IDs and timestamp the record carried.
 // RecordIndex is its position in SourceBundle.NativeRecords.
 type NormalizedTurn struct {
-	RecordIndex int      `json:"record_index"`
-	Role        string   `json:"role"`
-	Kind        TurnKind `json:"kind,omitempty"`
+	PresentationText  string   `json:"-"`
+	PresentationKnown bool     `json:"-"`
+	RecordIndex       int      `json:"record_index"`
+	Role              string   `json:"role"`
+	Kind              TurnKind `json:"kind,omitempty"`
 	// MessageID is the id of the API message a record belongs to (Claude's
 	// message.id). Several streamed records can share one.
 	MessageID     string          `json:"message_id,omitempty"`
@@ -185,13 +186,17 @@ type NormalizedToolCall struct {
 	IsError           *bool `json:"is_error,omitempty"`
 	OutputBytes       *int  `json:"output_bytes,omitempty"`
 
-	// raw is the retained native object this call was read from, and
-	// resultText the retained output of the result linked to it. They are
-	// kept from the single toolActivity walk for BuildHandoff, which needs a
-	// custom tool's raw string input and the result text; neither is part of
-	// the published view.
-	raw        map[string]any
-	resultText string
+	// Attribution and presentation facts come from the native parser and are
+	// excluded from the published normalized view. No raw record is retained.
+	RecordedBranch string     `json:"-"`
+	RecordedAt     time.Time  `json:"-"`
+	ResultAt       *time.Time `json:"-"`
+
+	ObservedName string     `json:"-"`
+	Invocation   bool       `json:"-"`
+	ShellCommand string     `json:"-"`
+	Action       ToolAction `json:"-"`
+	ResultText   string     `json:"-"`
 }
 
 // NormalizedToolResult is a tool result observed in the source, before it is
@@ -202,133 +207,10 @@ type NormalizedToolResult struct {
 	IsError     bool   `json:"is_error,omitempty"`
 	OutputBytes int    `json:"output_bytes"`
 
-	// text is the retained output OutputBytes measures; see
-	// NormalizedToolCall.resultText.
-	text string
-}
-
-// ParseNormalized derives a narrow view from already-filtered source. The
-// foundation recognizes visible user/assistant/tool messages only; all other
-// retained native shapes stay available in SourceBundle for future parsers.
-func ParseNormalized(bundle SourceBundle) (NormalizedView, error) {
-	if err := validateBundle(bundle); err != nil {
-		return NormalizedView{}, &ParseError{Reason: err.Error()}
-	}
-	view := NormalizedView{}
-	isParentBundle := bundle.ParentSessionID == ""
-	var codexModel, codexReasoning string
-	var candidates []toolCallCandidate
-	tokens := tokenTotals{}
-	for i, record := range bundle.NativeRecords {
-		if isParentBundle && isSidechainRecord(record) {
-			// A subagent's records are archived as the child's own session.
-			// Older Claude layouts inline them in the parent transcript; the
-			// parent must not count the same messages, turns, and tool calls
-			// a second time.
-			continue
-		}
-		if at := latestRecordTime(bundle, record); at.After(view.LatestRecordAt) {
-			view.LatestRecordAt = at
-		}
-		if bundle.harness() == "codex" && firstString(record, "type") == "turn_context" {
-			codexModel, codexReasoning = firstStringDeep(record, "model", "model_id"), firstStringDeep(record, "reasoning_effort")
-			continue
-		}
-		if isCompactBoundary(record) {
-			// A marker only: filter 5 keeps its ids and timestamp, no text.
-			view.CompactBoundaries++
-			continue
-		}
-		if !isPlaceholderModel(firstStringDeep(record, "model", "model_id")) {
-			accumulateTokens(record, tokenModel(bundle, record, codexModel), &tokens)
-		}
-		calls, results, skillUses := toolActivity(record, i, codexModel, codexReasoning)
-		candidates = append(candidates, calls...)
-		view.ToolResults = append(view.ToolResults, results...)
-		view.NativeSkillUses = append(view.NativeSkillUses, skillUses...)
-		role, text, kind, ok := visibleMessage(record)
-		if !ok {
-			continue
-		}
-		if isHiddenRole(role) {
-			return NormalizedView{}, &ParseError{Reason: "hidden role present in filtered source"}
-		}
-		kind = refineUserKind(record, kind, text)
-		if kind == TurnKindCompactSummary {
-			view.CompactSummaries++
-		}
-		var model, responseModel, reasoning string
-		var modelSource TurnModelSource
-		switch bundle.harness() {
-		case "codex":
-			model, reasoning, modelSource = codexModel, codexReasoning, TurnModelSourceTurnContext
-		case "claude":
-			responseModel, modelSource = recordModel(record), TurnModelSourceNativeResponse
-		default:
-			model, reasoning, modelSource = recordModel(record), firstStringDeep(record, "reasoning_effort"), TurnModelSourceNativeTranscript
-		}
-		view.Turns = append(view.Turns, NormalizedTurn{
-			RecordIndex:   i,
-			Role:          role,
-			Kind:          kind,
-			MessageID:     nestedMessageID(record),
-			Text:          text,
-			Model:         model,
-			ResponseModel: responseModel,
-			ModelSource:   modelSource,
-			Provider:      firstStringDeep(record, "model_provider"),
-			Reasoning:     reasoning,
-			ID:            firstStringDeep(record, "id", "uuid"),
-			ParentID:      firstStringDeep(record, "parent_id", "parent_uuid", "parentUuid"),
-			TurnID:        firstStringDeep(record, "turn_id"),
-			Timestamp:     firstStringDeep(record, "timestamp", "created_at"),
-		})
-	}
-	resolveSlashCommands(view.Turns)
-	view.ToolCalls = dedupeToolCalls(candidates)
-	linkToolResults(view.ToolCalls, view.ToolResults)
-	view.Tokens, view.ModelTokens = tokens.usage()
-	view.HookFinals = reconcileHookFinals(bundle, view.Turns)
-	return view, nil
-}
-
-// latestRecordTime is the latest time one record carries: its timestamp (or
-// created_at), or for a Cursor database chat's message the completion time
-// FilterComposer retains beside its creation time, when that is later.
-func latestRecordTime(bundle SourceBundle, record map[string]any) time.Time {
-	at := parseNativeTimestamp(record)
-	if bundle.Capture.SourceFormat == cursorComposerFormat {
-		if completed, ok := cursorTime(record["completed_at_ms"]); ok && completed.After(at) {
-			at = completed
-		}
-	}
-	return at
-}
-
-// compactionsObservable reports whether a bundle can show how many times its
-// session was compacted: only a Claude Code bundle from filter 5 on retains the
-// compact_boundary record and the isCompactSummary flag. For anything else the
-// count is unknown, not zero.
-func compactionsObservable(bundle SourceBundle) bool {
-	if bundle.harness() != "claude" {
-		return false
-	}
-	version, err := strconv.Atoi(strings.TrimSpace(bundle.Capture.FilterVersion))
-	return err == nil && version >= 5
-}
-
-// harness is the bundle's harness name in its one canonical spelling
-// ("claude-code" is "claude"). Every harness-specific rule compares this,
-// never the raw recorded name.
-func (b SourceBundle) harness() string { return CanonicalHarness(b.Capture.Harness.Name) }
-
-// nestedMessageID returns the id of the record's nested message object
-// (Claude's message.id), which streamed records of one response share.
-func nestedMessageID(record map[string]any) string {
-	if message, ok := record["message"].(map[string]any); ok {
-		return firstString(message, "id")
-	}
-	return ""
+	// Text is the retained output OutputBytes measures; see
+	// NormalizedToolCall.ResultText.
+	RecordedAt time.Time `json:"-"`
+	Text       string    `json:"-"`
 }
 
 func reconcileHookFinals(bundle SourceBundle, turns []NormalizedTurn) []HookFinalReconciliation {
@@ -361,37 +243,6 @@ func firstString(record map[string]any, keys ...string) string {
 	for _, key := range keys {
 		if value, _ := record[key].(string); value != "" {
 			return value
-		}
-	}
-	return ""
-}
-
-// firstMapDeepOwner finds the first object stored under key, searching the
-// record and then its nested message/payload/item/event objects, and also
-// returns the object that holds it.
-func firstMapDeepOwner(record map[string]any, key string) (map[string]any, map[string]any) {
-	if value, ok := record[key].(map[string]any); ok {
-		return value, record
-	}
-	for _, nested := range []string{"message", "payload", "item", "event"} {
-		if child, ok := record[nested].(map[string]any); ok {
-			if value, owner := firstMapDeepOwner(child, key); value != nil {
-				return value, owner
-			}
-		}
-	}
-	return nil, nil
-}
-
-func firstStringDeep(record map[string]any, keys ...string) string {
-	if value := firstString(record, keys...); value != "" {
-		return value
-	}
-	for _, key := range []string{"message", "payload", "item", "event"} {
-		if nested, ok := record[key].(map[string]any); ok {
-			if value := firstStringDeep(nested, keys...); value != "" {
-				return value
-			}
 		}
 	}
 	return ""

@@ -118,7 +118,7 @@ func TestSetupYesStopsOnACommentedSettingsFile(t *testing.T) {
 	}
 
 	// Leaving Claude Code out with --apps leaves its file unchecked.
-	output, _, _ = runUnanswered(t, env, "--yes", "--apps", "codex", "--provider", "s3", "--bucket", "b", "--aws-profile", "p", "--region", "us-east-1", "--project", t.TempDir())
+	output, _, _ = runUnanswered(t, env, "--yes", "--apps", "codex", "--codex-discovery", "on", "--codex-capture-scope", "included-projects", "--provider", "s3", "--bucket", "b", "--aws-profile", "p", "--region", "us-east-1", "--project", t.TempDir())
 	if strings.Contains(output, "Claude Code hooks") || !strings.Contains(output, "✓ Codex hooks: ") {
 		t.Errorf("setup --yes --apps codex checked other apps' files:\n%s", output)
 	}
@@ -222,8 +222,8 @@ func TestPreflightApps(t *testing.T) {
 		{},
 	}
 	for _, c := range cases {
-		if got := preflightApps(c.detected, c.saved, c.declined, c.draft); !slices.Equal(got, c.want) {
-			t.Errorf("preflightApps(%v, %v, %v, %v) = %v, want %v", c.detected, c.saved, c.declined, c.draft, got, c.want)
+		if got := preflightApps(allHarnesses, c.detected, c.saved, c.declined, c.draft); !slices.Equal(got, c.want) {
+			t.Errorf("preflightApps(allHarnesses, %v, %v, %v, %v) = %v, want %v", c.detected, c.saved, c.declined, c.draft, got, c.want)
 		}
 	}
 }

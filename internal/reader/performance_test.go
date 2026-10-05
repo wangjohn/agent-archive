@@ -294,13 +294,23 @@ func TestFindMetadataKeysReadsKnownHarnessKeysBeforeListing(t *testing.T) {
 
 func cacheFiles(t *testing.T, home string) []string {
 	t.Helper()
-	entries, err := os.ReadDir(filepath.Join(home, "cache", "metadata"))
+	root := filepath.Join(home, "cache", "metadata")
+	var names []string
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !entry.IsDir() {
+			name, err := filepath.Rel(root, path)
+			if err != nil {
+				return err
+			}
+			names = append(names, name)
+		}
+		return nil
+	})
 	if err != nil {
 		t.Fatal(err)
-	}
-	var names []string
-	for _, entry := range entries {
-		names = append(names, entry.Name())
 	}
 	return names
 }

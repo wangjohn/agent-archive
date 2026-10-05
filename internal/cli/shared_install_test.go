@@ -161,7 +161,7 @@ func TestSharedInstallOwnersReachActualSetup(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			next := config.Config{MachineID: "machine", Harnesses: []string{"first", "second"}, NoSkills: true, Storage: credentials.Config{Provider: credentials.ProviderS3, Bucket: "synthetic-bucket", Region: "region", AWSProfile: "profile"}, Archive: archive.Config{SchemaVersion: 1, Enabled: true, MachineID: "machine"}}
+			next := config.Config{MachineID: "machine", Harnesses: []string{"first", "second"}, NoSkills: true, Storage: credentials.Config{Provider: credentials.ProviderS3, Bucket: "synthetic-bucket", Region: "region", AWSProfile: "profile"}, Archive: archive.Config{SchemaVersion: 1, Enabled: true, MachineID: "machine", Projects: []archive.ProjectActivation{{Root: t.TempDir(), Included: true}}}}
 			err = applySetup(home, userHome, exe, config.Config{}, &next, nil, env)
 			got, readErr := os.ReadFile(path)
 			_, found, cfgErr := config.Load(home)
@@ -292,7 +292,7 @@ func TestSFVSharedSetupDeselect(t *testing.T) {
 			if owners == 2 {
 				apps = append(apps, "second")
 			}
-			next := config.Config{MachineID: "machine", Harnesses: apps, NoSkills: true, Storage: credentials.Config{Provider: credentials.ProviderS3, Bucket: "synthetic-bucket", Region: "region", AWSProfile: "profile"}, Archive: archive.Config{SchemaVersion: 1, Enabled: true, MachineID: "machine"}}
+			next := config.Config{MachineID: "machine", Harnesses: apps, NoSkills: true, Storage: credentials.Config{Provider: credentials.ProviderS3, Bucket: "synthetic-bucket", Region: "region", AWSProfile: "profile"}, Archive: archive.Config{SchemaVersion: 1, Enabled: true, MachineID: "machine", Projects: []archive.ProjectActivation{{Root: t.TempDir(), Included: true}}}}
 			if err := applySetup(home, userHome, exe, config.Config{}, &next, nil, env); err != nil {
 				t.Fatal("initial actual setup", err)
 			}
@@ -385,7 +385,7 @@ func TestSFVSharedSetupSwitch(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			next := config.Config{MachineID: "machine", Harnesses: []string{"first"}, NoSkills: true, Storage: credentials.Config{Provider: credentials.ProviderS3, Bucket: "synthetic-bucket", Region: "region", AWSProfile: "profile"}, Archive: archive.Config{SchemaVersion: 1, Enabled: true, MachineID: "machine"}}
+			next := config.Config{MachineID: "machine", Harnesses: []string{"first"}, NoSkills: true, Storage: credentials.Config{Provider: credentials.ProviderS3, Bucket: "synthetic-bucket", Region: "region", AWSProfile: "profile"}, Archive: archive.Config{SchemaVersion: 1, Enabled: true, MachineID: "machine", Projects: []archive.ProjectActivation{{Root: t.TempDir(), Included: true}}}}
 			if err := applySetup(home, userHome, exe, config.Config{}, &next, nil, env); err != nil {
 				t.Fatal("initial actual setup", err)
 			}
@@ -525,7 +525,7 @@ func TestSetupSharedDestinationTransitions(t *testing.T) {
 			if kind == setupTransitionDeselect || kind == setupTransitionPartial || kind == setupTransitionConflictingRemovals {
 				initial = append(initial, "second")
 			}
-			next := config.Config{MachineID: "machine", Harnesses: initial, NoSkills: true, Storage: credentials.Config{Provider: credentials.ProviderS3, Bucket: "synthetic-bucket", Region: "region", AWSProfile: "profile"}, Archive: archive.Config{SchemaVersion: 1, Enabled: true, MachineID: "machine"}}
+			next := config.Config{MachineID: "machine", Harnesses: initial, NoSkills: true, Storage: credentials.Config{Provider: credentials.ProviderS3, Bucket: "synthetic-bucket", Region: "region", AWSProfile: "profile"}, Archive: archive.Config{SchemaVersion: 1, Enabled: true, MachineID: "machine", Projects: []archive.ProjectActivation{{Root: t.TempDir(), Included: true}}}}
 			if err := applySetup(home, userHome, exe, config.Config{}, &next, nil, env); err != nil {
 				t.Fatal(err)
 			}
@@ -669,7 +669,7 @@ func TestSetupNativeOwnerSwitchKeepsExistingMode(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			next := config.Config{MachineID: "machine", Harnesses: []string{"first"}, NoSkills: true, Storage: credentials.Config{Provider: credentials.ProviderS3, Bucket: "synthetic-bucket", Region: "region", AWSProfile: "profile"}, Archive: archive.Config{SchemaVersion: 1, Enabled: true, MachineID: "machine"}}
+			next := config.Config{MachineID: "machine", Harnesses: []string{"first"}, NoSkills: true, Storage: credentials.Config{Provider: credentials.ProviderS3, Bucket: "synthetic-bucket", Region: "region", AWSProfile: "profile"}, Archive: archive.Config{SchemaVersion: 1, Enabled: true, MachineID: "machine", Projects: []archive.ProjectActivation{{Root: t.TempDir(), Included: true}}}}
 			if err := applySetup(home, userHome, exe, config.Config{}, &next, nil, env); err != nil {
 				t.Fatal(err)
 			}
@@ -741,7 +741,7 @@ func TestSetupNativeAliasRetirementRefusesDeletion(t *testing.T) {
 			if reverse {
 				apps = []string{"second", "first"}
 			}
-			next := config.Config{MachineID: "machine", Harnesses: apps, NoSkills: true, Storage: credentials.Config{Provider: credentials.ProviderS3, Bucket: "synthetic-bucket", Region: "region", AWSProfile: "profile"}, Archive: archive.Config{SchemaVersion: 1, Enabled: true, MachineID: "machine"}}
+			next := config.Config{MachineID: "machine", Harnesses: apps, NoSkills: true, Storage: credentials.Config{Provider: credentials.ProviderS3, Bucket: "synthetic-bucket", Region: "region", AWSProfile: "profile"}, Archive: archive.Config{SchemaVersion: 1, Enabled: true, MachineID: "machine", Projects: []archive.ProjectActivation{{Root: t.TempDir(), Included: true}}}}
 			if err := applySetup(home, userHome, exe, config.Config{}, &next, nil, env); err != nil {
 				t.Fatal(err)
 			}

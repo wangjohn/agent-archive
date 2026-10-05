@@ -369,7 +369,7 @@ func (b *sessionBrowser) renderTranscript(ctx context.Context, row listRow) ([]b
 	if err != nil {
 		return nil, err
 	}
-	t, err := buildTranscript(bundle)
+	t, err := buildTranscript(ctx, b.env, bundle)
 	if err != nil {
 		return nil, fmt.Errorf("normalized view unavailable: %w", err)
 	}
@@ -896,13 +896,14 @@ func readSessionView(ctx context.Context, store storage.ObjectStore, harness, se
 }
 
 // loadSessionsForBrowse lists metadata with the same filters list uses, for
-// interactive show and handoff. It reads every match, for the caller to scope
-// and limit.
+// interactive show and handoff. It reads every match, newest activity first,
+// for the caller to scope and limit.
 func loadSessionsForBrowse(env metadataCacheDependencies, store storage.ObjectStore, opts listOptions, stderr io.Writer, command string) ([]archive.Metadata, error) {
 	sessions, err := reader.ListMetadataWithOptions(context.Background(), store, archiveSessionsPrefix, opts.filter, reader.ListOptions{Cache: listCache(env, opts.noCache), Skipped: warnSkippedSidecar(stderr, command)})
 	if err != nil {
 		return nil, err
 	}
+	sortByActivity(sessions)
 	return filterListOrigin(sessions, opts.imported, opts.hookCaptured), nil
 }
 
@@ -944,7 +945,7 @@ func findBrowseSessions(env sessionSelectionDependencies, store storage.ObjectSt
 		return nil, false, 1
 	}
 	stopBrowse := startActivity(stdout, "Finding sessions…")
-	sessions, err := loadSessionsForBrowse(env, store, listOptions{filter: reader.Filter{Harness: harness}}, stderr, command)
+	sessions, err := loadSessionsForBrowse(env, store, listOptions{filter: reader.Filter{Harness: harness, Replays: reader.ReplaysHidden}}, stderr, command)
 	stopBrowse()
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: %s: %v\n", command, err)

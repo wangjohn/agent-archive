@@ -72,6 +72,7 @@ func referenceCommandOrder(t *testing.T) []string {
 // examples, linked under its reference entry. A command without one fails
 // TestCLIReferenceIsCurrent, so a new command arrives with a guide.
 var commandGuides = map[string]string{
+	"recover":          "[Recover a blocked transcript](../guides/transcript-recovery.md)",
 	"machines revoke":  "[Multiple machines](../guides/multiple-machines.md)",
 	"machines own-key": "[Multiple machines](../guides/multiple-machines.md)",
 	"machines":         "[Multiple machines](../guides/multiple-machines.md)",
@@ -91,6 +92,8 @@ var commandGuides = map[string]string{
 	"backfill undo":    "[Undo an import](../guides/backfill.md#undo)",
 	"handoff":          "[Continue a session in another agent](../guides/handoff.md)",
 	"uninstall":        "[Uninstall](../getting-started/uninstall.md)",
+	"eval":             "[Export sessions for evaluation](../guides/eval-export.md); records in [eval export schema](../../schemas/eval-export.schema.json)",
+	"eval export":      "[Export sessions for evaluation](../guides/eval-export.md); records in [eval export schema](../../schemas/eval-export.schema.json)",
 	"purge":            "[Privacy cleanup](../security/privacy.md#after-a-filter-upgrade)",
 	"purge plan":       "[Privacy cleanup](../security/privacy.md#after-a-filter-upgrade)",
 	"purge apply":      "[Privacy cleanup](../security/privacy.md#after-a-filter-upgrade)",

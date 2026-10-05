@@ -59,27 +59,37 @@ const (
 	replacedByNextPass
 	// holdsNoContent: lock files, never decoded.
 	holdsNoContent
+	// readAsRecoveryRequired: damaged membership evidence blocks certification.
+	readAsRecoveryRequired
 )
 
 // corruptionPolicies is the corruption policy of every entry OwnedEntries
 // names.
 var corruptionPolicies = map[string]corruption{
-	"registrations":        quarantineUnderLock,
-	"requests":             quarantineUnderLock,
-	"subagent-candidates":  quarantineUnderLock,
-	"published":            quarantineInPass,
-	"pending":              quarantineInPass,
-	"superseded":           quarantineInPass,
-	"scan-signatures":      readAsAbsent,
-	refreshSkipDir:         readAsAbsent,
-	"pending-scans":        readAsPending,
-	"sessions":             rebuiltFromRegistrations,
-	"sessions-v1":          rebuiltFromRegistrations,
-	sessionIndexMarkerFile: rebuiltFromRegistrations,
-	"forgotten":            readAsRemoved,
-	"status.json":          replacedByNextPass,
-	storageClockFile:       readAsAbsent,
-	"request-locks":        holdsNoContent,
+	generationHeadsDir:        readAsRecoveryRequired,
+	generationNodesDir:        readAsRecoveryRequired,
+	generationRecoveryDir:     readAsRecoveryRequired,
+	"registrations":           quarantineUnderLock,
+	"requests":                quarantineUnderLock,
+	"subagent-candidates":     quarantineUnderLock,
+	"published":               quarantineInPass,
+	"pending":                 quarantineInPass,
+	"superseded":              quarantineInPass,
+	"scan-signatures":         readAsAbsent,
+	refreshSkipDir:            readAsAbsent,
+	listingRepairDir:          quarantineInPass,
+	"pending-scans":           readAsPending,
+	"sessions":                rebuiltFromRegistrations,
+	"sessions-v1":             rebuiltFromRegistrations,
+	packedSessionIndexDir:     rebuiltFromRegistrations,
+	sessionIndexMarkerFile:    rebuiltFromRegistrations,
+	sessionRecoveryCursorFile: rebuiltFromRegistrations,
+	sessionMembershipFile:     readAsRecoveryRequired,
+	sessionMembershipLock:     holdsNoContent,
+	"forgotten":               readAsRemoved,
+	"status.json":             replacedByNextPass,
+	storageClockFile:          readAsAbsent,
+	"request-locks":           holdsNoContent,
 }
 
 // quarantineDirs are the directories whose files a reader may move aside.

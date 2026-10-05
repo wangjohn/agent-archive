@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
+	"github.com/wangjohn/agent-archive/internal/agents/claude"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -103,7 +105,7 @@ func TestRunPublishesNewSession(t *testing.T) {
 	store := storagetest.NewMemoryStore()
 	now := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 
-	result, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return now }})
+	result, err := Run(context.Background(), local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return now }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,13 +132,13 @@ func TestRunSkipsUnchangedSessionAndReusesCapturedAt(t *testing.T) {
 	store := storagetest.NewMemoryStore()
 	first := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 
-	if _, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return first }}); err != nil {
+	if _, err := Run(context.Background(), local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return first }}); err != nil {
 		t.Fatal(err)
 	}
 	firstMetadata := fetchMetadata(t, store, "codex", "session-1")
 
 	second := first.Add(10 * time.Minute)
-	result, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return second }})
+	result, err := Run(context.Background(), local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return second }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,14 +164,14 @@ func TestRunRateLimitsRepublishAndReusesFirstDetectedCapturedAt(t *testing.T) {
 	}
 	store := storagetest.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
-	if _, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return t0 }}); err != nil {
+	if _, err := Run(context.Background(), local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return t0 }}); err != nil {
 		t.Fatal(err)
 	}
 
 	// New evidence arrives, but well within the minimum upload interval.
 	writeTranscript(t, dir, "codex.jsonl", codexTranscript+"\n"+`{"type":"response_item","id":"m2","payload":{"type":"message","role":"user","content":"more"}}`)
 	tDetected := t0.Add(30 * time.Second)
-	result, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return tDetected }, MinUploadInterval: 3 * time.Minute})
+	result, err := Run(context.Background(), local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return tDetected }, MinUploadInterval: 3 * time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,7 +181,7 @@ func TestRunRateLimitsRepublishAndReusesFirstDetectedCapturedAt(t *testing.T) {
 		t.Fatalf("expected a publication waiting for the interval, got %#v", result)
 	}
 	// A pass that finds it still waiting (the resume path) reports the same.
-	if again, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return tDetected.Add(time.Minute) }, MinUploadInterval: 3 * time.Minute}); err != nil || len(again.Waiting) != 1 || len(again.Skipped) != 0 || !again.NextReadyAt.Equal(t0.Add(3*time.Minute)) {
+	if again, err := Run(context.Background(), local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return tDetected.Add(time.Minute) }, MinUploadInterval: 3 * time.Minute}); err != nil || len(again.Waiting) != 1 || len(again.Skipped) != 0 || !again.NextReadyAt.Equal(t0.Add(3*time.Minute)) {
 		t.Fatalf("still-waiting pass: %#v err=%v", again, err)
 	}
 	// Metadata in storage must still be the original, unpublished candidate.
@@ -192,7 +194,7 @@ func TestRunRateLimitsRepublishAndReusesFirstDetectedCapturedAt(t *testing.T) {
 	// pending candidate, which must carry the timestamp of when it was first
 	// detected, not this run's time.
 	tPublish := t0.Add(4 * time.Minute)
-	result, err = Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return tPublish }, MinUploadInterval: 3 * time.Minute})
+	result, err = Run(context.Background(), local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return tPublish }, MinUploadInterval: 3 * time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,7 +229,7 @@ func TestRunLeavesRequestPendingOnScanErrorAndIsolatesOtherSessions(t *testing.T
 	}
 
 	store := storagetest.NewMemoryStore()
-	result, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return now }})
+	result, err := Run(context.Background(), local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return now }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -256,7 +258,7 @@ func TestRunFoldsHookEvidenceAndCompletesRequest(t *testing.T) {
 	}
 	store := storagetest.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
-	if _, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return t0 }}); err != nil {
+	if _, err := Run(context.Background(), local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return t0 }}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -269,7 +271,7 @@ func TestRunFoldsHookEvidenceAndCompletesRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return t1 }})
+	result, err := Run(context.Background(), local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return t1 }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -298,7 +300,7 @@ func TestRunUnsafeTranscriptNeverPublishes(t *testing.T) {
 	store := storagetest.NewMemoryStore()
 	now := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 
-	result, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return now }})
+	result, err := Run(context.Background(), local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return now }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -327,12 +329,12 @@ func TestRunSurvivesRestartAcrossRateLimitedPass(t *testing.T) {
 	if err := local1.SaveRegistration(registration(t, path)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Run(context.Background(), local1, store, Options{MachineID: "m", Now: func() time.Time { return t0 }}); err != nil {
+	if _, err := Run(context.Background(), local1, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return t0 }}); err != nil {
 		t.Fatal(err)
 	}
 	writeTranscript(t, dir, "codex.jsonl", codexTranscript+"\n"+`{"type":"response_item","id":"m2","payload":{"type":"message","role":"user","content":"more"}}`)
 	tDetected := t0.Add(30 * time.Second)
-	if result, err := Run(context.Background(), local1, store, Options{MachineID: "m", Now: func() time.Time { return tDetected }}); err != nil {
+	if result, err := Run(context.Background(), local1, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return tDetected }}); err != nil {
 		t.Fatal(err)
 	} else if len(result.Waiting) != 1 {
 		t.Fatalf("expected a publication waiting before restart: %#v", result)
@@ -345,7 +347,7 @@ func TestRunSurvivesRestartAcrossRateLimitedPass(t *testing.T) {
 		t.Fatal(err)
 	}
 	tPublish := t0.Add(4 * time.Minute)
-	result, err := Run(context.Background(), local2, store, Options{MachineID: "m", Now: func() time.Time { return tPublish }})
+	result, err := Run(context.Background(), local2, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return tPublish }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -376,7 +378,7 @@ func TestRunRetriesPersistedBytesAndDoesNotAcknowledgeNewerRequest(t *testing.T)
 		t.Fatal(err)
 	}
 	store := &metadataFailStore{MemoryStore: storagetest.NewMemoryStore(), failMetadata: true}
-	result, err := Run(context.Background(), local1, store, Options{MachineID: "m", Now: func() time.Time { return t0 }, Retry: storage.RetryPolicy{MaxAttempts: 1}})
+	result, err := Run(context.Background(), local1, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return t0 }, Retry: storage.RetryPolicy{MaxAttempts: 1}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -405,7 +407,7 @@ func TestRunRetriesPersistedBytesAndDoesNotAcknowledgeNewerRequest(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err = Run(context.Background(), local2, store, Options{MachineID: "m", Now: func() time.Time { return t1 }, Retry: storage.RetryPolicy{MaxAttempts: 1}})
+	result, err = Run(context.Background(), local2, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return t1 }, Retry: storage.RetryPolicy{MaxAttempts: 1}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -440,12 +442,12 @@ func TestStopRequestFlushesRateLimitAndPreservesEarlierHookEvidence(t *testing.T
 	if err := local.SaveRequest("session-1", "stop", t0, e0); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return t0 }}); err != nil {
+	if _, err := Run(context.Background(), local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return t0 }}); err != nil {
 		t.Fatal(err)
 	}
 	writeTranscript(t, dir, "codex.jsonl", codexTranscript+"\n"+`{"type":"response_item","id":"m2","payload":{"type":"message","role":"user","content":"more"}}`)
 	t1 := t0.Add(30 * time.Second)
-	if result, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return t1 }}); err != nil || len(result.Published) != 0 {
+	if result, err := Run(context.Background(), local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return t1 }}); err != nil || len(result.Published) != 0 {
 		t.Fatalf("expected an active rate limit: result=%#v err=%v", result, err)
 	}
 	t2 := t1.Add(time.Second)
@@ -453,7 +455,7 @@ func TestStopRequestFlushesRateLimitAndPreservesEarlierHookEvidence(t *testing.T
 	if err := local.SaveRequest("session-1", "stop", t2, e1); err != nil {
 		t.Fatal(err)
 	}
-	result, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return t2 }})
+	result, err := Run(context.Background(), local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return t2 }})
 	if err != nil || len(result.Published) != 1 {
 		t.Fatalf("stop request did not flush debounce: result=%#v err=%v", result, err)
 	}
@@ -478,11 +480,15 @@ func TestPromptEvidenceRidesTheUploadIntervalAndIsPublished(t *testing.T) {
 	if err := local.SaveEvidence("session-1", "sessionstart", t0, lifecycleEvidence(t0, "SessionStart")); err != nil {
 		t.Fatal(err)
 	}
-	if result, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return t0 }}); err != nil || len(result.Published) != 1 {
+	if result, err := Run(context.Background(), local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return t0 }}); err != nil || len(result.Published) != 1 {
 		t.Fatalf("first publication is never rate limited: result=%#v err=%v", result, err)
 	}
 	if requests, _ := local.LoadRequests(); len(requests) != 0 {
 		t.Fatalf("deferred request was not acknowledged by its publication: %#v", requests)
+	}
+	beforePrompts, err := store.List(context.Background(), "")
+	if err != nil {
+		t.Fatal(err)
 	}
 	const prompts = 5
 	var at time.Time
@@ -491,12 +497,12 @@ func TestPromptEvidenceRidesTheUploadIntervalAndIsPublished(t *testing.T) {
 		if err := local.SaveEvidence("session-1", "userpromptsubmit", at, lifecycleEvidence(at, "UserPromptSubmit")); err != nil {
 			t.Fatal(err)
 		}
-		result, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return at }, MinUploadInterval: 3 * time.Minute})
+		result, err := Run(context.Background(), local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return at }, MinUploadInterval: 3 * time.Minute})
 		if err != nil || len(result.Published) != 0 || len(result.Waiting) != 1 {
 			t.Fatalf("prompt %d forced an upload inside the interval: result=%#v err=%v", i, result, err)
 		}
 	}
-	if objects, err := store.List(context.Background(), ""); err != nil || len(objects) != 5 {
+	if objects, err := store.List(context.Background(), ""); err != nil || !reflect.DeepEqual(objects, beforePrompts) {
 		t.Fatalf("prompts uploaded new objects: %v err=%v", objects, err)
 	}
 	requests, err := local.LoadRequests()
@@ -504,7 +510,7 @@ func TestPromptEvidenceRidesTheUploadIntervalAndIsPublished(t *testing.T) {
 		t.Fatalf("prompt evidence must accumulate on one deferred request: %#v err=%v", requests, err)
 	}
 	tPublish := t0.Add(4 * time.Minute)
-	result, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return tPublish }, MinUploadInterval: 3 * time.Minute})
+	result, err := Run(context.Background(), local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return tPublish }, MinUploadInterval: 3 * time.Minute})
 	if err != nil || len(result.Published) != 1 {
 		t.Fatalf("deferred evidence was never published: result=%#v err=%v", result, err)
 	}
@@ -529,14 +535,14 @@ func TestStopAfterPromptEvidenceFlushesImmediately(t *testing.T) {
 	}
 	store := storagetest.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
-	if _, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return t0 }}); err != nil {
+	if _, err := Run(context.Background(), local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return t0 }}); err != nil {
 		t.Fatal(err)
 	}
 	t1 := t0.Add(10 * time.Second)
 	if err := local.SaveEvidence("session-1", "userpromptsubmit", t1, lifecycleEvidence(t1, "UserPromptSubmit")); err != nil {
 		t.Fatal(err)
 	}
-	if result, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return t1 }, MinUploadInterval: 3 * time.Minute}); err != nil || len(result.Published) != 0 {
+	if result, err := Run(context.Background(), local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return t1 }, MinUploadInterval: 3 * time.Minute}); err != nil || len(result.Published) != 0 {
 		t.Fatalf("prompt evidence bypassed the interval: result=%#v err=%v", result, err)
 	}
 	t2 := t1.Add(10 * time.Second)
@@ -547,7 +553,7 @@ func TestStopAfterPromptEvidenceFlushesImmediately(t *testing.T) {
 	if err != nil || len(requests) != 1 || requests[0].Deferred || !requests[0].RequestedAt.Equal(t2) || len(requests[0].Reasons) != 2 {
 		t.Fatalf("stop did not make the pending request urgent: %#v err=%v", requests, err)
 	}
-	result, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return t2 }, MinUploadInterval: 3 * time.Minute})
+	result, err := Run(context.Background(), local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return t2 }, MinUploadInterval: 3 * time.Minute})
 	if err != nil || len(result.Published) != 1 {
 		t.Fatalf("stop request did not flush debounce: result=%#v err=%v", result, err)
 	}
@@ -577,7 +583,7 @@ func TestRunPreservesLastGoodSnapshotAcrossTranscriptRewrite(t *testing.T) {
 	}
 	store := storagetest.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
-	if _, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return t0 }}); err != nil {
+	if _, err := Run(context.Background(), local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return t0 }}); err != nil {
 		t.Fatal(err)
 	}
 	before := fetchMetadata(t, store, "codex", "session-1")
@@ -586,7 +592,7 @@ func TestRunPreservesLastGoodSnapshotAcrossTranscriptRewrite(t *testing.T) {
 	if err := local.SaveRequest("session-1", "stop", t1); err != nil {
 		t.Fatal(err)
 	}
-	result, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return t1 }})
+	result, err := Run(context.Background(), local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return t1 }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -617,7 +623,7 @@ func TestRunPreservesLastGoodSnapshotAcrossTranscriptRewrite(t *testing.T) {
 	if err := local.SaveRequest("session-1", "end", t2); err != nil {
 		t.Fatal(err)
 	}
-	result, err = Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return t2 }})
+	result, err = Run(context.Background(), local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return t2 }})
 	if err != nil || len(result.Errors) != 0 || len(result.Published) != 0 {
 		t.Fatalf("unchanged blocked session was reprocessed: result=%#v err=%v", result, err)
 	}
@@ -638,7 +644,7 @@ func TestRunPreservesLastGoodSnapshotAcrossTranscriptRewrite(t *testing.T) {
 	// Once the transcript again extends the retained snapshot, capture resumes.
 	writeTranscript(t, dir, "codex.jsonl", codexTranscript+"\n"+`{"type":"response_item","id":"m2","payload":{"type":"message","role":"assistant","content":"more"}}`)
 	t3 := t2.Add(10 * time.Minute)
-	result, err = Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return t3 }})
+	result, err = Run(context.Background(), local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return t3 }})
 	if err != nil || len(result.Errors) != 0 || len(result.Published) != 1 {
 		t.Fatalf("restored transcript was not republished: result=%#v err=%v", result, err)
 	}
@@ -662,7 +668,7 @@ func TestTranscriptEmptiedAfterPublicationIsARewriteGap(t *testing.T) {
 	}
 	cloud := storagetest.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
-	if _, err := Run(context.Background(), store, cloud, Options{MachineID: "m", Now: func() time.Time { return t0 }}); err != nil {
+	if _, err := Run(context.Background(), store, cloud, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return t0 }}); err != nil {
 		t.Fatal(err)
 	}
 	before := fetchMetadata(t, cloud, "codex", "session-1")
@@ -672,7 +678,7 @@ func TestTranscriptEmptiedAfterPublicationIsARewriteGap(t *testing.T) {
 		if err := store.SaveRequest("session-1", "stop", at); err != nil {
 			t.Fatal(err)
 		}
-		result, err := Run(context.Background(), store, cloud, Options{MachineID: "m", Now: func() time.Time { return at }})
+		result, err := Run(context.Background(), store, cloud, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return at }})
 		if err != nil || len(result.Errors) != 0 || len(result.Published) != 0 {
 			t.Fatalf("pass %d: emptied transcript should be a recorded gap: result=%#v err=%v", i, result, err)
 		}
@@ -693,7 +699,7 @@ func TestTranscriptEmptiedAfterPublicationIsARewriteGap(t *testing.T) {
 	// Content that again extends the snapshot resumes capture.
 	writeTranscript(t, dir, "codex.jsonl", codexTranscript+"\n"+`{"type":"response_item","id":"m2","payload":{"type":"message","role":"assistant","content":"more"}}`)
 	t3 := t0.Add(30 * time.Minute)
-	result, err := Run(context.Background(), store, cloud, Options{MachineID: "m", Now: func() time.Time { return t3 }})
+	result, err := Run(context.Background(), store, cloud, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return t3 }})
 	if err != nil || len(result.Errors) != 0 || len(result.Published) != 1 {
 		t.Fatalf("refilled transcript was not republished: result=%#v err=%v", result, err)
 	}
@@ -715,11 +721,11 @@ func TestNativeEvidenceExtendsYieldsToVersionChange(t *testing.T) {
 		NativeRecords: []map[string]any{{"a": 1}},
 		Capture:       archive.SourceCapture{AdapterVersion: "1"},
 	}
-	if nativeEvidenceExtends(previous, candidate) {
+	if nativeEvidenceExtends(claude.Filter{}, previous, candidate) {
 		t.Fatal("same-version truncation must still be caught")
 	}
 	candidate.Capture.AdapterVersion = "2"
-	if !nativeEvidenceExtends(previous, candidate) {
+	if !nativeEvidenceExtends(claude.Filter{}, previous, candidate) {
 		t.Fatal("adapter version change must not read as a rewrite")
 	}
 }
@@ -774,7 +780,7 @@ func TestFilterUpgradeKeepsCaptureTimeOfUnchangedTranscript(t *testing.T) {
 	}
 	cloud := storagetest.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
-	if _, err := Run(context.Background(), store, cloud, Options{MachineID: "m", Now: func() time.Time { return t0 }}); err != nil {
+	if _, err := Run(context.Background(), store, cloud, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return t0 }}); err != nil {
 		t.Fatal(err)
 	}
 	// Model the old release's *remote* source as well as its local cache.
@@ -826,7 +832,7 @@ func TestFilterUpgradeKeepsCaptureTimeOfUnchangedTranscript(t *testing.T) {
 	if err := os.Mkdir(ledgerPath, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	failed, err := Run(context.Background(), store, cloud, Options{MachineID: "m", Now: func() time.Time { return t1 }})
+	failed, err := Run(context.Background(), store, cloud, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return t1 }})
 	if err != nil || failed.Errors["session-1"] == nil {
 		t.Fatalf("ledger fault must report a session error: %#v %v", failed, err)
 	}
@@ -836,7 +842,7 @@ func TestFilterUpgradeKeepsCaptureTimeOfUnchangedTranscript(t *testing.T) {
 	if err := os.Remove(ledgerPath); err != nil {
 		t.Fatal(err)
 	}
-	result, err := Run(context.Background(), store, cloud, Options{MachineID: "m", Now: func() time.Time { return t1 }})
+	result, err := Run(context.Background(), store, cloud, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return t1 }})
 	if err != nil || len(result.Errors) != 0 || len(result.Published) != 1 {
 		t.Fatalf("filter upgrade should republish: result=%#v err=%v", result, err)
 	}
@@ -855,7 +861,7 @@ func TestFilterUpgradeKeepsCaptureTimeOfUnchangedTranscript(t *testing.T) {
 	simulateFilterUpgrade(t, store)
 	writeTranscript(t, dir, "codex.jsonl", codexTranscript+"\n"+`{"type":"response_item","id":"m2","payload":{"type":"message","role":"assistant","content":"more"}}`)
 	t2 := t1.Add(24 * time.Hour)
-	result, err = Run(context.Background(), store, cloud, Options{MachineID: "m", Now: func() time.Time { return t2 }})
+	result, err = Run(context.Background(), store, cloud, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return t2 }})
 	if err != nil || len(result.Errors) != 0 || len(result.Published) != 1 {
 		t.Fatalf("changed transcript should republish: result=%#v err=%v", result, err)
 	}
@@ -919,12 +925,12 @@ func TestFilterUpgradeWithNewEvidenceIsCapturedNow(t *testing.T) {
 				t.Fatal(err)
 			}
 			cloud := storagetest.NewMemoryStore()
-			if _, err := Run(context.Background(), store, cloud, Options{MachineID: "m", Now: func() time.Time { return t0 }, SupplementalEvidence: tc.first}); err != nil {
+			if _, err := Run(context.Background(), store, cloud, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return t0 }, SupplementalEvidence: tc.first}); err != nil {
 				t.Fatal(err)
 			}
 			simulateFilterUpgrade(t, store)
 			provider := tc.upgrade(t, store)
-			result, err := Run(context.Background(), store, cloud, Options{MachineID: "m", Now: func() time.Time { return t1 }, SupplementalEvidence: provider})
+			result, err := Run(context.Background(), store, cloud, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return t1 }, SupplementalEvidence: provider})
 			if err != nil || len(result.Errors) != 0 || len(result.Published) != 1 {
 				t.Fatalf("upgrade should republish: result=%#v err=%v", result, err)
 			}
@@ -949,7 +955,7 @@ func TestStableSupplementalObservationDoesNotRepublish(t *testing.T) {
 	provider := func(_ archive.SessionRegistration, observedAt time.Time) ([]archive.SupplementalEvidence, error) {
 		return []archive.SupplementalEvidence{{Kind: archive.EvidenceKindSkillInventory, ObservedAt: observedAt, Provenance: "filesystem", Payload: map[string]any{"coverage": "installed_only", "skills": []any{map[string]any{"name": "review", "sha256": "abc"}}}}}, nil
 	}
-	options := Options{MachineID: "m", Now: func() time.Time { return now }, SupplementalEvidence: provider}
+	options := Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return now }, SupplementalEvidence: provider}
 	if _, err := Run(context.Background(), local, store, options); err != nil {
 		t.Fatal(err)
 	}
@@ -988,7 +994,7 @@ func TestRunUpgradesAndCompletesLegacyTokenlessRequest(t *testing.T) {
 	if err := local.Write(requestPath(store, "session-1"), state.Request{ArchiveSessionID: "session-1", Reasons: []string{"stop"}, RequestedAt: now}); err != nil {
 		t.Fatal(err)
 	}
-	result, err := Run(context.Background(), store, storagetest.NewMemoryStore(), Options{MachineID: "m", Now: func() time.Time { return now }})
+	result, err := Run(context.Background(), store, storagetest.NewMemoryStore(), Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return now }})
 	if err != nil || len(result.Published) != 1 {
 		t.Fatalf("legacy request was not processed: result=%#v err=%v", result, err)
 	}
@@ -1020,7 +1026,7 @@ func TestRunRejectsTranscriptAboveCollectionLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := storagetest.NewMemoryStore()
-	result, err := Run(context.Background(), local, store, Options{MachineID: "m"})
+	result, err := Run(context.Background(), local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1047,7 +1053,7 @@ func TestRunOversizeTranscriptBlocksOnceAndRetainsSnapshot(t *testing.T) {
 	store := storagetest.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	limit := int64(len(codexTranscript) + 16)
-	options := Options{MachineID: "m", Now: func() time.Time { return t0 }, MaxTranscriptBytes: limit}
+	options := Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return t0 }, MaxTranscriptBytes: limit}
 	if _, err := Run(context.Background(), local, store, options); err != nil {
 		t.Fatal(err)
 	}
@@ -1187,7 +1193,7 @@ func TestRunIgnoresIncompleteFinalJSONLRecord(t *testing.T) {
 	}
 	store := storagetest.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
-	if _, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return t0 }}); err != nil {
+	if _, err := Run(context.Background(), local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return t0 }}); err != nil {
 		t.Fatal(err)
 	}
 	before := fetchMetadata(t, store, "codex", "session-1")
@@ -1201,7 +1207,7 @@ func TestRunIgnoresIncompleteFinalJSONLRecord(t *testing.T) {
 	if err := file.Close(); err != nil {
 		t.Fatal(err)
 	}
-	result, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return t0.Add(10 * time.Minute) }})
+	result, err := Run(context.Background(), local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return t0.Add(10 * time.Minute) }})
 	if err != nil || len(result.Errors) != 0 || len(result.Published) != 0 {
 		t.Fatalf("partial final record changed capture: result=%#v err=%v", result, err)
 	}
@@ -1263,7 +1269,7 @@ func TestRunComposesWithLocalLock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Run(context.Background(), localStore, storagetest.NewMemoryStore(), Options{MachineID: "m"}); err != nil {
+	if _, err := Run(context.Background(), localStore, storagetest.NewMemoryStore(), Options{Sources: testSources, Parsers: testParsers, MachineID: "m"}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -1330,7 +1336,7 @@ func TestRunDeclinesPublishWhenSkillUseRequiredAndAbsent(t *testing.T) {
 	store := storagetest.NewMemoryStore()
 	now := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 
-	result, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return now }, RequireSkillUse: true})
+	result, err := Run(context.Background(), local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return now }, RequireSkillUse: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1344,7 +1350,7 @@ func TestRunDeclinesPublishWhenSkillUseRequiredAndAbsent(t *testing.T) {
 	// A later scan with unchanged content must not retry the publish just
 	// because time passed (unlike a rate-limited candidate).
 	later := now.Add(24 * time.Hour)
-	result, err = Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return later }, RequireSkillUse: true})
+	result, err = Run(context.Background(), local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return later }, RequireSkillUse: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1370,7 +1376,7 @@ func TestRunDeclinedCandidateIsNotSpuriouslyRateLimitedOnLaterChange(t *testing.
 	store := storagetest.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 
-	if _, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return t0 }, RequireSkillUse: true}); err != nil {
+	if _, err := Run(context.Background(), local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return t0 }, RequireSkillUse: true}); err != nil {
 		t.Fatal(err)
 	}
 	_, publishedAt, status, found, err := local.LoadPublished("session-1")
@@ -1383,7 +1389,7 @@ func TestRunDeclinedCandidateIsNotSpuriouslyRateLimitedOnLaterChange(t *testing.
 
 	writeTranscript(t, dir, "codex.jsonl", codexTranscript+"\n"+`{"type":"response_item","id":"m2","payload":{"type":"message","role":"user","content":"still no skill use"}}`)
 	t1 := t0.Add(30 * time.Second)
-	if _, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return t1 }, RequireSkillUse: true, MinUploadInterval: 3 * time.Minute}); err != nil {
+	if _, err := Run(context.Background(), local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return t1 }, RequireSkillUse: true, MinUploadInterval: 3 * time.Minute}); err != nil {
 		t.Fatal(err)
 	}
 	_, _, status2, found2, err := local.LoadPublished("session-1")
@@ -1405,7 +1411,7 @@ func TestRunRecordsSupersededSourceOnRepublish(t *testing.T) {
 	}
 	store := storagetest.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
-	if _, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return t0 }}); err != nil {
+	if _, err := Run(context.Background(), local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return t0 }}); err != nil {
 		t.Fatal(err)
 	}
 	firstMetadata := fetchMetadata(t, store, "codex", "session-1")
@@ -1414,7 +1420,7 @@ func TestRunRecordsSupersededSourceOnRepublish(t *testing.T) {
 	// supersedes the first snapshot.
 	writeTranscript(t, dir, "codex.jsonl", codexTranscript+"\n"+`{"type":"response_item","id":"m2","payload":{"type":"message","role":"user","content":"more"}}`)
 	t1 := t0.Add(10 * time.Minute)
-	if _, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return t1 }}); err != nil {
+	if _, err := Run(context.Background(), local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return t1 }}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1455,7 +1461,7 @@ func TestRunFallsBackToCursorTextWhenJSONLIsUnrecognized(t *testing.T) {
 	store := storagetest.NewMemoryStore()
 	now := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 
-	result, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return now }})
+	result, err := Run(context.Background(), local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return now }})
 	if err != nil {
 		t.Fatal(err)
 	}

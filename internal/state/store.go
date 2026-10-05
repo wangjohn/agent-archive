@@ -33,10 +33,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/cursorstore"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/sourceidentity"
 	"github.com/wangjohn/agent-archive/internal/trace"
 )
 
@@ -47,6 +48,11 @@ import (
 // never stores credentials or a second copy of conversation content beyond
 // what the published source bundle itself already contains.
 type Store struct {
+	// indexSnapshots uses logical packed authority for qualified-index writes.
+	indexSnapshots bool
+	// onPackedEnumeration observes collector-only physical-index directory probes.
+	onPackedEnumeration func()
+
 	home string
 	// hook marks a Store from ForHook.
 	hook bool
@@ -94,11 +100,11 @@ func Open(home string) (*Store, error) {
 func (s *Store) Home() string { return s.home }
 
 // storeDirs are the directories Open creates under home.
-var storeDirs = []string{"registrations", "requests", "request-locks", "published", "pending", "sessions", "sessions-v1", "pending-scans", "scan-signatures", "subagent-candidates"}
+var storeDirs = []string{"registrations", "requests", "request-locks", "published", "pending", "sessions", "sessions-v1", packedSessionIndexDir, "pending-scans", "scan-signatures", "subagent-candidates"}
 
 // lazyStoreDirs are the directories the store creates under home on first
 // use rather than up front.
-var lazyStoreDirs = []string{"superseded", "forgotten", refreshSkipDir}
+var lazyStoreDirs = []string{generationHeadsDir, generationNodesDir, generationRecoveryDir, "superseded", "forgotten", refreshSkipDir, listingRepairDir}
 
 // OwnedEntries lists every top-level entry a Store can create under its
 // home: its directories, its status file, and the storage clock reading
@@ -107,7 +113,7 @@ var lazyStoreDirs = []string{"superseded", "forgotten", refreshSkipDir}
 // its list against this one, so a new directory cannot be left behind.
 func OwnedEntries() []string {
 	entries := append(append([]string{}, storeDirs...), lazyStoreDirs...)
-	return append(entries, "status.json", storageClockFile, sessionIndexMarkerFile)
+	return append(entries, "status.json", storageClockFile, sessionIndexMarkerFile, sessionMembershipFile, sessionMembershipLock, sessionRecoveryCursorFile)
 }
 
 func safeFileComponent(value string) bool {
@@ -155,7 +161,7 @@ func (s *Store) SaveRegistration(reg archive.SessionRegistration) error {
 			return err
 		}
 	}
-	_, saved, err := s.registerUnderLock(key, reg.ArchiveSessionID, func(string) archive.SessionRegistration { return reg })
+	_, saved, err := s.registerUnderLock(key, reg.ArchiveSessionID, func(string) archive.SessionRegistration { return reg }, false)
 	if err == nil && !saved {
 		return ErrSessionNotRegistered
 	}
@@ -178,6 +184,20 @@ func (s *Store) SaveRegistration(reg archive.SessionRegistration) error {
 // back after retention forgot it, leaving it without its native-session index
 // entry, so the session's next start would be given a second archive ID.
 func (s *Store) UpdateRegistration(archiveSessionID string, update func(*archive.SessionRegistration) error) (found bool, err error) {
+	return s.updateRegistration(archiveSessionID, update, nil)
+}
+
+// RecordHookObservation records actual hook execution without synchronizing a
+// registration whose observation was already persisted by the same event.
+func (s *Store) RecordHookObservation(archiveSessionID string, at time.Time) error {
+	_, err := s.updateRegistration(archiveSessionID, func(reg *archive.SessionRegistration) error {
+		reg.HookObservedAt = at
+		return nil
+	}, func(reg archive.SessionRegistration) bool { return reg.HookObservedAt.Equal(at) })
+	return err
+}
+
+func (s *Store) updateRegistration(archiveSessionID string, update func(*archive.SessionRegistration) error, unchanged func(archive.SessionRegistration) bool) (found bool, err error) {
 	if !safeFileComponent(archiveSessionID) {
 		return false, errors.New("archive session ID is not a safe file name component")
 	}
@@ -191,13 +211,24 @@ func (s *Store) UpdateRegistration(archiveSessionID string, update func(*archive
 		if err := json.Unmarshal(current.data, &reg); err != nil {
 			return nil, false, fmt.Errorf("read registration %q: %w", archiveSessionID, err)
 		}
+		var originalProof *archive.CodexAdmissionProof
+		if reg.CodexAdmission != nil {
+			proof := *reg.CodexAdmission
+			originalProof = &proof
+		}
 		originalKey, err := registrationKey(reg)
 		if err != nil {
 			return nil, false, err
 		}
+		if unchanged != nil && unchanged(reg) {
+			return nil, false, nil
+		}
 		if err := update(&reg); err != nil {
 			updateFailed = true
 			return nil, false, err
+		}
+		if !sameCodexAdmission(originalProof, reg.CodexAdmission) {
+			return nil, false, errors.New("a registration update cannot change Codex admission proof")
 		}
 		if reg.ArchiveSessionID != archiveSessionID {
 			return nil, false, errors.New("a registration update cannot change its archive session ID")
@@ -226,6 +257,17 @@ func (s *Store) UpdateRegistration(archiveSessionID string, update func(*archive
 // registration with no index entry. If the entry changed or disappeared, a
 // fresh ID is assigned and the check repeats.
 func (s *Store) RegisterNewSession(key agentmeta.SessionKey, build func(archiveSessionID string) archive.SessionRegistration) (archive.SessionRegistration, error) {
+	return s.registerSession(key, build, false)
+}
+
+// RegisterOrMerge creates a reservation-backed registration or returns its
+// compatible existing owner without rewriting original admission or provenance.
+// The caller serializes admission with hooks.lock.
+func (s *Store) RegisterOrMerge(key agentmeta.SessionKey, build func(string) archive.SessionRegistration) (archive.SessionRegistration, error) {
+	return s.registerSession(key, build, true)
+}
+
+func (s *Store) registerSession(key agentmeta.SessionKey, build func(string) archive.SessionRegistration, merge bool) (archive.SessionRegistration, error) {
 	for range 3 {
 		id, _, err := s.EnsureArchiveSessionID(key)
 		if errors.Is(err, errIndexMoved) {
@@ -234,7 +276,7 @@ func (s *Store) RegisterNewSession(key agentmeta.SessionKey, build func(archiveS
 		if err != nil {
 			return archive.SessionRegistration{}, err
 		}
-		reg, saved, err := s.registerUnderLock(key, id, build)
+		reg, saved, err := s.registerUnderLock(key, id, build, merge)
 		if err != nil || saved {
 			return reg, err
 		}
@@ -249,7 +291,7 @@ func (s *Store) RegisterReservedSession(key agentmeta.SessionKey, id string, bui
 	if err := key.Validate(); err != nil {
 		return archive.SessionRegistration{}, err
 	}
-	reg, saved, err := s.registerUnderLock(key, id, build)
+	reg, saved, err := s.registerUnderLock(key, id, build, true)
 	if err == nil && !saved {
 		return archive.SessionRegistration{}, errIndexMoved
 	}
@@ -259,7 +301,7 @@ func (s *Store) RegisterReservedSession(key agentmeta.SessionKey, id string, bui
 // registerUnderLock saves build's registration for id, atomically with
 // respect to the request lock (see writeUnderRequestLock), if the index
 // still maps nativeSessionID to id there; saved is false when it does not.
-func (s *Store) registerUnderLock(key agentmeta.SessionKey, id string, build func(string) archive.SessionRegistration) (archive.SessionRegistration, bool, error) {
+func (s *Store) registerUnderLock(key agentmeta.SessionKey, id string, build func(string) archive.SessionRegistration, merge bool) (archive.SessionRegistration, bool, error) {
 	if !safeFileComponent(id) {
 		return archive.SessionRegistration{}, false, errors.New("archive session ID is not a safe file name component")
 	}
@@ -270,8 +312,8 @@ func (s *Store) registerUnderLock(key agentmeta.SessionKey, id string, build fun
 	if err := reg.Validate(); err != nil {
 		return archive.SessionRegistration{}, false, err
 	}
-	// The registration is built without reading the file, so another
-	// writer's change to it cannot overtake this one.
+	// Replacement staging remains blind; the locked check protects immutable
+	// admission proof before committing the staged registration.
 	err := s.writeUnderLock(lockedWrite{
 		lock: func() (func(), error) { return s.lockRequest(id) },
 		path: s.registrationPath(id),
@@ -290,10 +332,27 @@ func (s *Store) registerUnderLock(key agentmeta.SessionKey, id string, build fun
 			if !registered && current.Reservation == "" {
 				return errIndexMoved
 			}
+			if !merge {
+				prior, found, err := s.LoadRegistration(id)
+				if err != nil {
+					return err
+				}
+				if found && !sameCodexAdmission(prior.CodexAdmission, reg.CodexAdmission) {
+					return errors.New("a registration replacement cannot change Codex admission proof")
+				}
+			}
 			return nil
 		},
-		change: func(fileSnapshot) (any, bool, error) { return reg, true, nil },
-		blind:  true,
+		change: func(current fileSnapshot) (any, bool, error) {
+			if !merge {
+
+				return reg, true, nil
+			}
+			var err error
+			reg, err = s.mergeAdmissionRegistration(key, reg, current)
+			return reg, true, err
+		},
+		blind: !merge,
 	})
 	if errors.Is(err, errIndexMoved) {
 		return archive.SessionRegistration{}, false, nil
@@ -308,6 +367,31 @@ func (s *Store) registerUnderLock(key agentmeta.SessionKey, id string, build fun
 		return archive.SessionRegistration{}, false, err
 	}
 	return reg, true, nil
+}
+
+// mergeAdmissionRegistration runs inside the request-lock update. Existing
+// registration attribution is immutable; only a missing compatible file locator
+// can be filled. Removal records forbid fresh automatic admission.
+func (s *Store) mergeAdmissionRegistration(key agentmeta.SessionKey, reg archive.SessionRegistration, current fileSnapshot) (archive.SessionRegistration, error) {
+	if current.found {
+		var existing archive.SessionRegistration
+		if err := json.Unmarshal(current.data, &existing); err != nil {
+			return reg, err
+		}
+		if existing.NativeSessionID != key.NativeID || agentmeta.Canonical(agentmeta.Builtins(), existing.Harness.Name) != string(key.Agent) || existing.ProjectRoot != reg.ProjectRoot || existing.DestinationID != "" && existing.DestinationID != reg.DestinationID {
+			return reg, ErrSessionIdentityConflict
+		}
+		if existing.TranscriptPath == "" && existing.ReadsTranscriptFile() && reg.ReadsTranscriptFile() {
+			existing.TranscriptPath = reg.TranscriptPath
+		}
+		return existing, nil
+	}
+	if _, removed, err := s.Removal(reg.Harness.Name, reg.NativeSessionID); err != nil {
+		return reg, err
+	} else if removed && !reg.Imported() {
+		return reg, errors.New("session was removed")
+	}
+	return reg, nil
 }
 
 // errIndexMoved is registerUnderLock's check failing: the native session's
@@ -963,9 +1047,13 @@ func (s *Store) ScanPending(id string) (bool, error) {
 // Anything that invalidates the assertion removes the token (see
 // RemoveScanSignature's callers).
 type ScanSignature struct {
-	SkillEvidence   string `json:"skill_evidence,omitempty"`
-	TranscriptSize  int64  `json:"transcript_size"`
-	TranscriptMtime int64  `json:"transcript_mtime_unix_nano"`
+	// Frozen marks completed retained-history maintenance, independently of
+	// the live native source's stat. Ordinary capture never trusts this token.
+	Frozen          bool                      `json:"frozen,omitempty"`
+	SourceSignature *agentapi.SourceSignature `json:"source_signature,omitempty"`
+	SkillEvidence   string                    `json:"skill_evidence,omitempty"`
+	TranscriptSize  int64                     `json:"transcript_size"`
+	TranscriptMtime int64                     `json:"transcript_mtime_unix_nano"`
 	// The derivation versions are part of the signature: a parser, filter, or
 	// adapter upgrade changes what an unchanged transcript would produce, so
 	// it must re-scan rather than skip.
@@ -976,7 +1064,7 @@ type ScanSignature struct {
 	// whether a stat is trustworthy evidence at all (see unchangedSinceLastScan).
 	SourceFormat string `json:"source_format,omitempty"`
 	// SourceKind is the registration's source. A Cursor database chat is
-	// identified by its cursorstore.Signature instead of a file stat.
+	// identified by its sourceidentity.CursorSignature instead of a file stat.
 	SourceKind            archive.SourceKind `json:"source_kind,omitempty"`
 	CursorLastUpdatedAt   int64              `json:"cursor_last_updated_at,omitempty"`
 	CursorHeaderCount     int                `json:"cursor_header_count,omitempty"`
@@ -999,11 +1087,16 @@ type ScanSignature struct {
 	// BlockedReasonTranscriptMissing the state is the source's absence: the
 	// signature holds while the source is still missing.
 	Blocked BlockedReason `json:"blocked,omitempty"`
+	// PublishedLastHead is the last-HEAD observation (commit and first-seen
+	// time) the published metadata held when this signature was recorded.
+	// A registration whose observation differs owes a metadata update, so
+	// the session is scanned again however unchanged its source is.
+	PublishedLastHead string `json:"published_last_head,omitempty"`
 }
 
 // CursorSignature is the Cursor chat state the signature was recorded at.
-func (s ScanSignature) CursorSignature() cursorstore.Signature {
-	return cursorstore.Signature{
+func (s ScanSignature) CursorSignature() sourceidentity.CursorSignature {
+	return sourceidentity.CursorSignature{
 		LastUpdatedAt: s.CursorLastUpdatedAt, HeaderCount: s.CursorHeaderCount, LastBubbleID: s.CursorLastBubbleID,
 		MessageRows: s.CursorMessageRows, LastMessageHash: s.CursorLastMessageHash,
 	}
@@ -1021,7 +1114,7 @@ func (s *Store) SaveScanSignature(id string, signature ScanSignature) error {
 	}
 	if existing, found, err := s.LoadScanSignature(id); err != nil {
 		return err
-	} else if found && existing == signature {
+	} else if found && sameScanSignature(existing, signature) {
 		return nil
 	}
 	return local.Write(s.scanSignaturePath(id), signature)
@@ -1060,4 +1153,23 @@ func (s *Store) RemoveScanSignature(id string) error {
 		return fmt.Errorf("remove scan signature %q: %w", id, err)
 	}
 	return nil
+}
+
+func sameCodexAdmission(a, b *archive.CodexAdmissionProof) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
+}
+
+func sameScanSignature(a, b ScanSignature) bool {
+	at, bt := a.SourceSignature, b.SourceSignature
+	a.SourceSignature, b.SourceSignature = nil, nil
+	if a != b {
+		return false
+	}
+	if at == nil || bt == nil {
+		return at == bt
+	}
+	return *at == *bt
 }

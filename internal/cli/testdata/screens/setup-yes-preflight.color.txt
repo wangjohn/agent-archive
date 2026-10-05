@@ -1,8 +1,17 @@
-$ agent-archive setup --yes --apps codex --provider s3 --bucket team-archive --aws-profile work --region us-east-1 --project ~/src/web-app
+$ agent-archive setup --yes --apps codex --codex-discovery on --codex-capture-scope included-projects --provider s3 --bucket team-archive --aws-profile work --region us-east-1 --project ~/src/web-app
   \e[32m✓\e[0m Codex hooks: ~/.codex/hooks.json
   \e[32m✓\e[0m Background job: launchctl responds
 Checking your storage connection…
 \e[32m✓\e[0m Connected to your storage.
+  \e[2m·\e[0m Codex capture: Automatic discovery plus hooks when approved.
+  \e[2m·\e[0m Codex scope: Included projects only.
+  \e[2m·\e[0m Exceptions: None configured.
+  \e[2m·\e[0m Codex sources: /Users/alex/.codex.
+  \e[2m·\e[0m Destination: s3://team-archive/agent-archive/.
+  \e[2m·\e[0m Starts: After local consent, outside pause or exclusion.
+  \e[2m·\e[0m History: Old sessions require deliberate backfill.
+  \e[2m·\e[0m Copies: Qualifying recent native copies may be captured.
+  \e[2m·\e[0m Hooks: Optional for discovery; approval and observation are separate.
 Apps: Codex. Projects: 1. Storage: Amazon S3 bucket team-archive.
 Skill evidence: metadata. User-level skill roots outside selected projects may be scanned.
   \e[33m!\e[0m Bucket privacy not verified: public-access settings could not be read.
@@ -14,11 +23,12 @@ Installed the agent-archive skill, which lets your agents look up and pull in pa
 To remove the agent skills and keep them off, run \e[36magent-archive setup --no-skills\e[0m.
 
 Next, in each app:
-  Codex: run \e[36m/hooks\e[0m and approve the archive hooks, then start a new session (or \e[36m/clear\e[0m).
+  Codex: start a supported new task in an included project; automatic discovery does not require hook approval.
+  Optional hook capture: Codex: run \e[36m/hooks\e[0m and approve the archive hooks, then start a new session (or \e[36m/clear\e[0m).
 Sessions already open are not captured. Start a new one in an included project.
 Import sessions from before setup with \e[36magent-archive backfill\e[0m.
 Check progress with \e[36magent-archive status\e[0m.
 
 To set up another machine with this storage, run there:
-  \e[36magent-archive setup --yes --provider s3 --bucket team-archive --aws-profile work --region us-east-1 --apps codex --prefix agent-archive/ --retention-days 90 --no-require-skill-use --skill-evidence metadata --skills --project ~/src/web-app\e[0m
+  \e[36magent-archive setup --yes --provider s3 --bucket team-archive --aws-profile work --region us-east-1 --apps codex --codex-discovery on --codex-capture-scope included-projects --prefix agent-archive/ --retention-days 90 --no-require-skill-use --skill-evidence metadata --skills --project ~/src/web-app\e[0m
 [exit 0]

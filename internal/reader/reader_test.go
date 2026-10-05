@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/wangjohn/agent-archive/internal/agents/codex"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agents/nativecodec"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
@@ -16,12 +18,12 @@ func fixture(t *testing.T) (archive.Metadata, archive.SourceBundle, *storagetest
 	t.Helper()
 	ctx := context.Background()
 	store := storagetest.NewMemoryStore()
-	filtered, err := archive.CodexAdapter{}.FilterJSONL(strings.NewReader(`{"type":"turn_context","model":"gpt-test"}` + "\n" + `{"type":"response_item","id":"m1","payload":{"type":"message","role":"assistant","content":"visible"}}`))
+	filtered, err := codex.Filter{}.FilterJSONL(strings.NewReader(`{"type":"turn_context","model":"gpt-test"}` + "\n" + `{"type":"response_item","id":"m1","payload":{"type":"message","role":"assistant","content":"visible"}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	reg := archive.SessionRegistration{ArchiveSessionID: "session-1", NativeSessionID: "native-1", ProjectID: "project-1", ProjectRoot: "/p", Harness: archive.Harness{Name: "codex"}, SessionStartedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
-	bundle, err := archive.NewSourceBundle(reg, archive.CodexAdapter{}, filtered, time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC), nil)
+	bundle, err := archive.NewSourceBundle(reg, codex.Filter{}, filtered, time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +38,8 @@ func fixture(t *testing.T) (archive.Metadata, archive.SourceBundle, *storagetest
 	if err = store.Put(ctx, key, packed.Bytes); err != nil {
 		t.Fatal(err)
 	}
-	metadata, err := archive.BuildMetadata(bundle, "machine", reg.SessionStartedAt, time.Date(2026, 1, 1, 2, 0, 0, 0, time.UTC), archive.SourceReference{Key: key, SHA256: packed.SHA256, CompressedBytes: len(packed.Bytes)}, archive.ParserInfo{})
+	analysis, parseErr := nativecodec.ParseCodex(context.Background(), bundle)
+	metadata, err := archive.BuildMetadataWithAnalysis(bundle, analysis, parseErr, "machine", reg.SessionStartedAt, time.Date(2026, 1, 1, 2, 0, 0, 0, time.UTC), archive.SourceReference{Key: key, SHA256: packed.SHA256, CompressedBytes: len(packed.Bytes)}, archive.ParserInfo{})
 	if err != nil {
 		t.Fatal(err)
 	}

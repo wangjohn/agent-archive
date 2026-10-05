@@ -181,6 +181,51 @@ repository root with an origin remote, so another checkout may live at a
 different path. A configured subdirectory keeps its path to preserve scope. Repository keys are hashes; remote URLs and credentials are never
 printed. Projects without a key retain their `--project DIR` argument.
 
+When exclusions are configured, the printed command instead carries all capture
+rules together through `--project-scope-file -` and a quoted shell heredoc.
+The JSON travels on stdin instead of argv, so large scopes do not exceed
+operating-system argument limits. Large lists without exclusions also use
+this transport once the assembled arguments exceed 64 KiB; smaller lists
+keep their ordinary `--project`/`--project-repo` command. This changes only
+the transport, not which projects may be configured.
+`--project-scope JSON` remains available
+for small manual inputs; `--project-scope-file PATH` reads a saved JSON file. Each rule has `path` and `included`;
+repository-relative rules also have `repo_key`. Exclusions and reincluded
+subtrees follow the matched checkout, even if its destination path changes.
+When a checkout lies inside a configured path-based ancestor, its rules stay
+relative to that ancestor instead of relocating independently.
+Distinct configured clones of the same repository keep their paths so their
+separate exclusions cannot collapse onto one checkout.
+Paths outside a configured repository use the destination home for `~/`.
+Missing excluded folders remain excluded if created later. Setup refuses the
+whole transfer when a repository is missing, ambiguous, blocked by saved
+scope, or incompletely discovered, or a subtree resolves outside its checkout.
+Saved destination exclusions stay in force. If a saved reinclusion would
+defeat a transferred exclusion, or a transferred inclusion would override a
+saved exclusion, setup refuses before changing any rule. Review the destination
+capture scope before retrying; explicit transferred reinclusions remain intact.
+Symlink aliases share the same capture decision and repository anchor.
+No inclusion is applied without its associated exclusions. Inspect these
+rules before running the command; update non-home absolute paths for the
+new machine if necessary.
+Scope flags require a nonempty value and cannot be combined with `--project`
+or `--project-repo`; put every inclusion and exclusion in the scope instead.
+Pairing receives scope from its encrypted bundle and refuses both scope flags.
+A scope on stdin owns that stream; provide an R2 secret in
+`AGENT_ARCHIVE_R2_SECRET_ACCESS_KEY` or read the scope from a file.
+File/stdin scope input is bounded to 128 MiB.
+Scope arrays contain at most 4,096 rules. Scope transfer also refuses a saved
+destination scope or resulting combined scope larger than 4,096 rules, before
+applying any rule. This limit applies to scope transfer, including legacy
+configurations without a Codex scope policy; larger source scopes are preserved
+in the printed input and refused rather than truncated. Review those scopes
+before transferring. Saved dangling or looping symlinks also refuse the transfer;
+ordinary missing excluded directories remain supported.
+Equal-decision aliases coalesce;
+conflicting alias decisions are refused atomically, so review those source
+rules before transferring. Reapplying a compatible keyed scope is supported;
+saved destination conflicts still refuse the entire transfer.
+
 `setup --yes --project-repo REPO_KEY` includes only a unique, eligible clone.
 It establishes each keyed candidate’s full checkout root with Git, so running
 from a subdirectory cannot narrow the requested repository. It checks the

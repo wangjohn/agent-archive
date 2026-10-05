@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -63,7 +64,7 @@ func publishThenGrow(t *testing.T, local *state.Store, store storage.ObjectStore
 	if err := local.SaveRegistration(registration(t, path)); err != nil {
 		t.Fatal(err)
 	}
-	if result, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return t0 }}); err != nil || len(result.Published) != 1 {
+	if result, err := Run(context.Background(), local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return t0 }}); err != nil || len(result.Published) != 1 {
 		t.Fatalf("first publication: %#v %v", result, err)
 	}
 	firstKey := fetchMetadata(t, store, "codex", "session-1").SourceBundle.Key
@@ -76,7 +77,7 @@ func publishThenGrow(t *testing.T, local *state.Store, store storage.ObjectStore
 
 func assertRepublishedSuperseding(t *testing.T, local *state.Store, store storage.ObjectStore, now time.Time, wantSuperseded []string) {
 	t.Helper()
-	result, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return now }})
+	result, err := Run(context.Background(), local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return now }})
 	if err != nil || len(result.Errors) != 0 || len(result.Published) != 1 {
 		t.Fatalf("republish: %#v %v", result, err)
 	}
@@ -158,7 +159,7 @@ func TestParserUpgradeOverUnreproducibleBundleDoesNotFailSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
-	opts := Options{MachineID: "m", ParserVersion: "one", Now: func() time.Time { return now }}
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "m", ParserVersion: "one", Now: func() time.Time { return now }}
 	if result, err := Run(context.Background(), local, store, opts); err != nil || len(result.Published) != 1 {
 		t.Fatalf("%#v %v", result, err)
 	}
@@ -185,14 +186,14 @@ func TestFutureLastPublicationDefersByAtMostOneInterval(t *testing.T) {
 		t.Fatal(err)
 	}
 	future := time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)
-	if _, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return future }}); err != nil {
+	if _, err := Run(context.Background(), local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return future }}); err != nil {
 		t.Fatal(err)
 	}
 	// The clock is corrected and the transcript grows, with no hook asking
 	// for a flush.
 	writeTranscript(t, filepath.Dir(path), "codex.jsonl", grownTranscript)
 	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
-	opts := Options{MachineID: "m", Now: func() time.Time { return now }}
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return now }}
 	if result, err := Run(context.Background(), local, store, opts); err != nil || len(result.Published) != 0 {
 		t.Fatalf("expected one interval's deferral: %#v %v", result, err)
 	}
@@ -213,7 +214,7 @@ func TestPendingReadyAtInTheFutureIsCapped(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
-	opts := Options{MachineID: "m", Now: func() time.Time { return now }}
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return now }}
 	if _, err := Run(context.Background(), local, store, opts); err != nil {
 		t.Fatal(err)
 	}
@@ -270,7 +271,7 @@ func TestCorruptStateFilesAreQuarantinedPerSession(t *testing.T) {
 	corruptFile(t, subagentCandidatePath(local, "child"))
 
 	now := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
-	result, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return now }})
+	result, err := Run(context.Background(), local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return now }})
 	if err != nil {
 		t.Fatalf("one corrupt file failed the whole pass: %v", err)
 	}
@@ -307,7 +308,7 @@ func TestCorruptStateFilesAreQuarantinedPerSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	now = now.Add(time.Hour)
-	if result, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return now }}); err != nil || len(result.Errors) != 1 || !errors.Is(result.Errors["session-index"], state.ErrSessionIndexRecoveryRequired) {
+	if result, err := Run(context.Background(), local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return now }}); err != nil || len(result.Errors) != 1 || !errors.Is(result.Errors["session-index"], state.ErrSessionIndexRecoveryRequired) {
 		t.Fatalf("second pass: %#v %v", result, err)
 	}
 }
@@ -331,7 +332,7 @@ func TestUnreadableRequestHoldsOnlyItsSession(t *testing.T) {
 	if err := os.Chmod(requestPath(local, "session-1"), 0); err != nil {
 		t.Fatal(err)
 	}
-	result, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return now }})
+	result, err := Run(context.Background(), local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return now }})
 	if err != nil || result.Errors["session-1"] == nil || errors.Is(result.Errors["session-1"], state.ErrQuarantined) || len(result.Published) != 0 {
 		t.Fatalf("%#v %v", result, err)
 	}
@@ -361,7 +362,7 @@ func TestMidPassLocalFailureIsPerSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
-	result, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return now }})
+	result, err := Run(context.Background(), local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return now }})
 	if err != nil {
 		t.Fatalf("one session's local failure ended the pass: %v", err)
 	}
@@ -388,7 +389,7 @@ func TestExpiredPassContextLeavesSessionsPending(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	result, err := Run(ctx, local, store, Options{MachineID: "m", Now: func() time.Time { return now }})
+	result, err := Run(ctx, local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return now }})
 	if err != nil || len(result.Errors) != 0 || len(result.Published) != 0 {
 		t.Fatalf("%#v %v", result, err)
 	}
@@ -424,7 +425,7 @@ func TestFIFOTranscriptFailsWithoutBlockingThePass(t *testing.T) {
 	}
 	done := make(chan outcome, 1)
 	go func() {
-		result, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return now }})
+		result, err := Run(context.Background(), local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return now }})
 		done <- outcome{result, err}
 	}()
 	select {
@@ -490,7 +491,7 @@ func TestRunRemovesStaleWriteTemporaries(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := Run(context.Background(), local, storagetest.NewMemoryStore(), Options{MachineID: "m"}); err != nil {
+	if _, err := Run(context.Background(), local, storagetest.NewMemoryStore(), Options{Sources: testSources, Parsers: testParsers, MachineID: "m"}); err != nil {
 		t.Fatal(err)
 	}
 	for _, path := range []string{stale, nested} {
@@ -515,7 +516,7 @@ func TestRetriedPublicationDoesNotRewriteItsPendingFile(t *testing.T) {
 	}
 	remote := &metadataFailStore{MemoryStore: storagetest.NewMemoryStore(), failMetadata: true}
 	at := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
-	opts := Options{MachineID: "m", Now: func() time.Time { return at }, Retry: storage.RetryPolicy{MaxAttempts: 1}}
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return at }, Retry: storage.RetryPolicy{MaxAttempts: 1}}
 	pendingFile := filepath.Join(local.Home(), "pending", "session-1.json")
 	var written os.FileInfo
 	for pass := range 3 {
@@ -541,5 +542,123 @@ func TestRetriedPublicationDoesNotRewriteItsPendingFile(t *testing.T) {
 	remote.failMetadata = false
 	if result, err := Run(context.Background(), local, remote, opts); err != nil || len(result.Published) != 1 {
 		t.Fatalf("result=%#v err=%v", result, err)
+	}
+}
+
+func TestPendingRecoveryStillPublishesAlreadyAdmittedRequest(t *testing.T) {
+	local := newTestStore(t)
+	store := storagetest.NewMemoryStore()
+	now := time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
+	path := writeTranscript(t, t.TempDir(), "codex.jsonl", codexTranscript+"\n")
+	if err := local.SaveRegistration(registration(t, path)); err != nil {
+		t.Fatal(err)
+	}
+	if err := local.SaveRequest("session-1", "stop", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := local.MarkSessionIndexRecoveryNeeded(); err != nil {
+		t.Fatal(err)
+	}
+	complete, err := local.RecoverSessionIndexScheduled(context.Background(), time.Nanosecond)
+	if err != nil || complete {
+		t.Fatalf("bounded local stage: complete=%v err=%v", complete, err)
+	}
+	result, err := Run(context.Background(), local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return now }, SkipSessionIndexRecovery: true})
+	if err != nil || len(result.Published) != 1 {
+		t.Fatalf("queued publication under pending recovery: %#v %v", result, err)
+	}
+	var marker struct {
+		Complete bool `json:"complete"`
+	}
+	data, err := os.ReadFile(filepath.Join(local.Home(), "session-index.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &marker); err != nil || marker.Complete {
+		t.Fatalf("publication certified incomplete recovery: %#v %v", marker, err)
+	}
+}
+
+// The collector must keep an IO error joined to its cancelled recovery context.
+func TestCollectorRetainsRecoveryCheckpointFailure(t *testing.T) {
+	for _, broken := range []bool{false, true} {
+		t.Run(strconv.FormatBool(broken), func(t *testing.T) {
+			local := newTestStore(t)
+			path := writeTranscript(t, t.TempDir(), "codex.jsonl", codexTranscript+"\n")
+			reg := registration(t, path)
+			if err := local.SaveRegistration(reg); err != nil {
+				t.Fatal(err)
+			}
+			data, err := json.Marshal(reg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			regPath := filepath.Join(local.Home(), "registrations", reg.ArchiveSessionID+".json")
+			if err := os.Remove(regPath); err != nil {
+				t.Fatal(err)
+			}
+			if err := syscall.Mkfifo(regPath, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if broken {
+				if err := os.Mkdir(filepath.Join(local.Home(), "session-index-recovery.json"), 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			finished := make(chan error, 1)
+			go func() {
+				var file *os.File
+				var err error
+				deadline := time.Now().Add(15 * time.Second)
+				for time.Now().Before(deadline) {
+					file, err = os.OpenFile(regPath, os.O_WRONLY|syscall.O_NONBLOCK, 0)
+					if err == nil {
+						break
+					}
+					time.Sleep(10 * time.Millisecond)
+				}
+				if err != nil {
+					finished <- err
+					return
+				}
+				// A successful writer open proves recovery reached the census
+				// read. Cancel at that boundary instead of racing a short timeout
+				// against marker staging and filesystem scheduling.
+				cancel()
+				replacement := regPath + ".replacement"
+				err = os.WriteFile(replacement, data, 0600)
+				if err == nil {
+					err = os.Rename(replacement, regPath)
+				}
+				if err == nil {
+					_, err = file.Write(data)
+				}
+				closeErr := file.Close()
+				if err == nil {
+					err = closeErr
+				}
+				finished <- err
+			}()
+			result, err := Run(ctx, local, storagetest.NewMemoryStore(), Options{Sources: testSources, Parsers: testParsers, MachineID: "m"})
+			if writeErr := <-finished; writeErr != nil {
+				t.Fatal(writeErr)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			status, err := local.LoadStatus()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if broken {
+				if !errors.Is(result.Errors["session-index"], context.Canceled) || !strings.Contains(result.Errors["session-index"].Error(), "session-index-recovery.json") || status.LastError != FailedSessionsProblem(1) {
+					t.Fatalf("checkpoint error lost: %#v %q", result.Errors, status.LastErrors)
+				}
+			} else if len(result.Errors) != 0 || len(status.LastErrors) != 0 {
+				t.Fatalf("ordinary pending warned: %#v %q", result.Errors, status.LastErrors)
+			}
+		})
 	}
 }

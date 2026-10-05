@@ -20,6 +20,15 @@ Review your changes
 
   Apps       Codex (version not detected)
   Projects   ~/src/web-app
+  Codex capture Automatic discovery plus hooks when approved
+  Codex scope Included projects only
+  Exceptions None configured  Nearest explicit project rule wins
+  Codex sources /Users/alex/.codex
+  Destination s3://team-archive/agent-archive/
+  Starts     After local consent, outside pause or exclusion
+  History    Old sessions require deliberate backfill
+  Copies     Qualifying recent native copies may be captured
+  Hooks      Optional for discovery; approval and observation are separate
   Skills     metadata  User skill roots outside selected projects may be scanned; change with Edit a setting
   Storage    s3://team-archive/agent-archive/  us-east-1 · profile work
   Keep for   90 days
@@ -30,7 +39,7 @@ Review your changes
   ! Bucket privacy unknown  public-access settings could not be read
     Make sure public access is off: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
   ✓ Hook file is valid      ~/codex-elsewhere/hooks.json
-  ! Codex needs one step    approve the hooks with /hooks after setup
+  ✓ Codex discovery         supported new tasks do not require hook approval
   ! Codex hooks move to ~/codex-elsewhere/hooks.json from ~/.codex/hooks.json.
     CODEX_HOME in this shell differs from when setup last ran.
     To keep them where they are, cancel and run agent-archive setup

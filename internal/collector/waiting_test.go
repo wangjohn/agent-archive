@@ -18,7 +18,7 @@ func TestRunReportsEarliestDueTimeAmongWaitingSessions(t *testing.T) {
 		store := storagetest.NewMemoryStore()
 		t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 		opts := func(at time.Time) Options {
-			return Options{MachineID: "m", Now: func() time.Time { return at }, MinUploadInterval: 3 * time.Minute}
+			return Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return at }, MinUploadInterval: 3 * time.Minute}
 		}
 		// IDs sort the scan order; laterFirst puts the later-due session first.
 		earlyID, lateID := "session-a", "session-b"

@@ -46,7 +46,7 @@ func TestAppSelectionSuggestionsAndManualFallback(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			var out bytes.Buffer
-			got, err := promptHarnesses(newPrompter(strings.NewReader(tt.input), &out), tt.detected, tt.existing)
+			got, err := promptHarnesses(allHarnesses, newPrompter(strings.NewReader(tt.input), &out), tt.detected, tt.existing)
 			if err != nil || !reflect.DeepEqual(got, tt.want) {
 				t.Fatalf("got %v, %v; want %v", got, err, tt.want)
 			}
@@ -65,7 +65,7 @@ func TestDetectedAppsSetupSkipsIndividualQuestions(t *testing.T) {
 	home, project := t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
 	env.DetectHarnesses = func(string) []string { return []string{"codex", "claude"} }
-	input := strings.Join([]string{"y", project, "", "s3-existing", "profile", "test-bucket", "us-east-1", "y"}, "\n") + "\n"
+	input := strings.Join([]string{"y", "included-projects", project, "", "s3-existing", "profile", "test-bucket", "us-east-1", "y"}, "\n") + "\n"
 	output := setupRun(t, env, input, 0)
 	// The Sessions row is left out while it shows the default.
 	for _, unwanted := range []string{"Detected settings", "capture policy", "Include Cursor?", "Include Codex?", "All new sessions, with or without skills"} {
@@ -110,7 +110,7 @@ func TestInteractiveReviewCanChangeSkillEvidence(t *testing.T) {
 	var out bytes.Buffer
 	p := newPrompter(strings.NewReader("skills\nnone\n"), &out)
 	draft := setupDraft{Config: config.Config{SkillEvidence: config.SkillEvidenceMetadata}}
-	if err := editSetupReview(p, &draft, t.TempDir(), nil, nil); err != nil {
+	if err := editSetupReview(allHarnesses, p, &draft, t.TempDir(), nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if draft.Config.SkillEvidence != config.SkillEvidenceNone {
@@ -132,6 +132,9 @@ func TestResumePrePolicyFreshDraftDefaultsToMetadata(t *testing.T) {
 		t.Fatalf("draft: found=%v problem=%q err=%v", found, problem, err)
 	}
 	draft.Config.SkillEvidence = "" // A draft saved before the policy existed.
+	draft.Config.Discovery = nil    // Discovery protection did not exist either.
+	draft.Config.CodexCapture = nil // Neither did scope protection.
+	draft.Config.SchemaVersion = 1
 	if err := local.Write(draftPath(home), draft); err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +143,7 @@ func TestResumePrePolicyFreshDraftDefaultsToMetadata(t *testing.T) {
 		t.Fatalf("fresh draft did not use metadata:\n%s", output)
 	}
 	resumed, _, _, err := readDraft(home)
-	if err != nil || resumed.Config.SkillEvidence != config.SkillEvidenceMetadata {
+	if err != nil || resumed.Config.EffectiveSkillEvidence() != config.SkillEvidenceMetadata {
 		t.Fatalf("resumed policy = %q, err = %v", resumed.Config.SkillEvidence, err)
 	}
 }
@@ -220,7 +223,7 @@ func TestReviewActionRefusesStartWhenBlocked(t *testing.T) {
 func TestNewlyFoundAppsOmitAppsNotDetected(t *testing.T) {
 	t.Parallel()
 	var out bytes.Buffer
-	got, err := promptHarnesses(newPrompter(strings.NewReader("\n"), &out), []string{"claude", "cursor"}, []string{"cursor"})
+	got, err := promptHarnesses(allHarnesses, newPrompter(strings.NewReader("\n"), &out), []string{"claude", "cursor"}, []string{"cursor"})
 	if err != nil || !reflect.DeepEqual(got, []string{"claude", "cursor"}) {
 		t.Fatalf("got %v, %v", got, err)
 	}
@@ -237,7 +240,7 @@ func TestSetupRemembersDeclinedApps(t *testing.T) {
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
 	env.DetectHarnesses = func(string) []string { return []string{"cursor"} }
-	setupRun(t, env, strings.Join([]string{"y", project, "", "s3-existing", "profile", "test-bucket", "us-east-1", "y"}, "\n")+"\n", 0)
+	setupRun(t, env, strings.Join([]string{"y", "included-projects", project, "", "s3-existing", "profile", "test-bucket", "us-east-1", "y"}, "\n")+"\n", 0)
 
 	env.DetectHarnesses = func(string) []string { return []string{"codex", "claude", "cursor"} }
 	// Apps and projects; decline the found apps; change nothing else; keep
@@ -277,7 +280,7 @@ func TestReviewEditNeverOffersFoundApps(t *testing.T) {
 	draft := setupDraft{Config: config.Config{Harnesses: []string{"cursor"}, DeclinedHarnesses: []string{"codex", "claude"}}}
 	var out bytes.Buffer
 	p := newPrompter(strings.NewReader("apps\ny\nn\ny\ny\n"), &out)
-	if err := editSetupReview(p, &draft, t.TempDir(), nil, nil); err != nil {
+	if err := editSetupReview(allHarnesses, p, &draft, t.TempDir(), nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(out.String(), "Also found") || !strings.Contains(out.String(), "Change which apps are included?") {
@@ -295,7 +298,7 @@ func TestSetupRemembersAppRemovedByHand(t *testing.T) {
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
 	env.DetectHarnesses = func(string) []string { return []string{"codex", "claude"} }
-	setupRun(t, env, strings.Join([]string{"y", project, "", "s3-existing", "profile", "test-bucket", "us-east-1", "y"}, "\n")+"\n", 0)
+	setupRun(t, env, strings.Join([]string{"y", "included-projects", project, "", "s3-existing", "profile", "test-bucket", "us-east-1", "y"}, "\n")+"\n", 0)
 
 	// Apps and projects; change apps: Codex no, Claude Code yes, Cursor no;
 	// keep the project; add none; start archiving.
@@ -317,14 +320,14 @@ func TestReviewEditRemovalIsNotOfferedAgain(t *testing.T) {
 	t.Parallel()
 	draft := setupDraft{Config: config.Config{Harnesses: []string{"codex", "claude"}}}
 	p := newPrompter(strings.NewReader("apps\ny\nn\ny\nn\n"), &bytes.Buffer{})
-	if err := editSetupReview(p, &draft, t.TempDir(), nil, nil); err != nil {
+	if err := editSetupReview(allHarnesses, p, &draft, t.TempDir(), nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(draft.Config.Harnesses, []string{"claude"}) || !reflect.DeepEqual(draft.Config.DeclinedHarnesses, []string{"codex"}) {
 		t.Fatalf("harnesses %v declined %v", draft.Config.Harnesses, draft.Config.DeclinedHarnesses)
 	}
 	var out bytes.Buffer
-	if err := chooseHarnesses(newPrompter(strings.NewReader("\n"), &out), []string{"codex", "claude"}, &draft.Config); err != nil {
+	if err := chooseHarnesses(allHarnesses, newPrompter(strings.NewReader("\n"), &out), []string{"codex", "claude"}, &draft.Config); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(out.String(), "Also found") || !reflect.DeepEqual(draft.Config.Harnesses, []string{"claude"}) {
@@ -357,7 +360,7 @@ func TestDecliningSuggestedProjectUsesManualSelection(t *testing.T) {
 	env.DetectHarnesses = func(string) []string { return []string{"codex"} }
 	var cfg config.Config
 	var out bytes.Buffer
-	err := chooseCapture(newPrompter(strings.NewReader("n\ny\n1\n"+other+"\n\n"), &out), &cfg, t.TempDir(), env, nil)
+	err := chooseCapture(newPrompter(strings.NewReader("n\ny\nincluded-projects\n1\n"+other+"\n\n"), &out), &cfg, t.TempDir(), env, nil)
 	if err != nil || len(cfg.Archive.Projects) != 1 || cfg.Archive.Projects[0].Root != other {
 		t.Fatalf("config=%+v err=%v", cfg, err)
 	}
@@ -376,11 +379,11 @@ func TestLeavingEveryProjectOutAsksAgain(t *testing.T) {
 			other, _ = filepath.EvalSymlinks(other)
 			env := setupTestEnv(t, t.TempDir(), t.TempDir(), newFakeKeychain(), time.Now())
 			env.DetectHarnesses = func(string) []string { return []string{"codex"} }
-			input := "y\n\n" + other + "\n\n"
+			input := "y\nincluded-projects\n\n" + other + "\n\n"
 			if inRepo {
 				current := gitRepo(t)
 				env.WorkingDir = func() (string, error) { return current, nil }
-				input = "n\ny\n1\n\n" + other + "\n\n"
+				input = "n\ny\nincluded-projects\n1\n\n" + other + "\n\n"
 			} else {
 				env.WorkingDir = func() (string, error) { return other, nil }
 			}

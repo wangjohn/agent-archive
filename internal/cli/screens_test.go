@@ -18,6 +18,8 @@ import (
 	smithyhttp "github.com/aws/smithy-go/transport/http"
 
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/discovery"
+	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
@@ -82,10 +84,40 @@ type screen struct {
 
 var screens = []screen{
 	{
+		name:    "setup-codex-all-projects-interactive",
+		answers: []string{"", "all-projects", "s3-existing", "work", "2", ""},
+		arrange: func(t *testing.T, f *screenFixture) {
+			t.Helper()
+			f.withApps(t, "codex")
+		},
+	},
+	{
+		name: "setup-codex-all-projects-hook-only",
+		args: []string{"setup", "--yes", "--apps", "codex", "--provider", "s3", "--bucket", "team-archive", "--aws-profile", "work", "--region", "us-east-1", "--codex-discovery", "off", "--codex-capture-scope", "all-projects"},
+		arrange: func(t *testing.T, f *screenFixture) {
+			t.Helper()
+			f.withApps(t, "codex")
+		},
+	},
+	{
+		name: "status-codex-all-projects-mixed-formats",
+		args: []string{"status"},
+		arrange: func(t *testing.T, f *screenFixture) {
+			t.Helper()
+			f.withApps(t, "codex")
+			setupYes(t, f.env, "", 0, "--yes", "--apps", "codex", "--provider", "s3", "--bucket", "team-archive", "--aws-profile", "work", "--region", "us-east-1", "--codex-discovery", "on", "--codex-capture-scope", "all-projects")
+			must(t, local.Write(filepath.Join(f.home, "discovery-health.json"), struct {
+				Version int              `json:"version"`
+				Health  discovery.Health `json:"health"`
+			}{Version: 1, Health: discovery.Health{Supported: true, LastAttempt: screenNow.Add(-time.Minute), Pending: true, Outcomes: map[string]int{"native_format": 2, "unsupported_producer": 1, "invalid_metadata": 1}}}))
+		},
+	},
+
+	{
 		// A first run on a Mac with all three apps, from inside a Git
 		// repository, through to the next steps.
 		name:    "setup-fresh-apps-git-cwd",
-		answers: []string{"", "s3-existing", "work", "2", ""},
+		answers: []string{"", "included-projects", "s3-existing", "work", "2", ""},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.withApps(t, "codex", "claude", "cursor")
@@ -96,7 +128,7 @@ var screens = []screen{
 		// A first run on a Mac with none of the apps, outside any
 		// repository, up to the storage question.
 		name:    "setup-fresh-no-apps",
-		answers: []string{"y", "n", "n", "~/src/web-app", ""},
+		answers: []string{"y", "n", "n", "included-projects", "~/src/web-app", ""},
 		exit:    1,
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
@@ -153,7 +185,7 @@ var screens = []screen{
 			t.Helper()
 			f.withApps(t, "codex", "claude")
 			f.inWebApp(t)
-			f.setup(t, 1, "", "", "")
+			f.setup(t, 1, "", "included-projects", "", "")
 		},
 	},
 	{
@@ -161,7 +193,7 @@ var screens = []screen{
 		// the one named like agent-archive*, and uses that bucket's own
 		// region rather than the profile's.
 		name:    "setup-s3-bucket-list",
-		answers: []string{"y", "n", "n", "", "s3", "e", "", "", "3"},
+		answers: []string{"y", "n", "n", "included-projects", "", "s3", "e", "", "", "3"},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.inWebApp(t)
@@ -175,7 +207,7 @@ var screens = []screen{
 		// S3 refuses both lookups, so setup says why and asks for the
 		// bucket and region, turning away a path typed as the region.
 		name:    "setup-s3-bucket-typed",
-		answers: []string{"y", "n", "n", "", "s3-existing", "work", "team-archive", "~/code/api", "us-east-1", "3"},
+		answers: []string{"y", "n", "n", "included-projects", "", "s3-existing", "work", "team-archive", "~/code/api", "us-east-1", "3"},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.inWebApp(t)
@@ -198,7 +230,7 @@ var screens = []screen{
 	{
 		// setup --yes makes the same checks first.
 		name: "setup-yes-preflight",
-		args: []string{"setup", "--yes", "--apps", "codex", "--provider", "s3", "--bucket", "team-archive", "--aws-profile", "work", "--region", "us-east-1", "--project", "~/src/web-app"},
+		args: []string{"setup", "--yes", "--apps", "codex", "--codex-discovery", "on", "--codex-capture-scope", "included-projects", "--provider", "s3", "--bucket", "team-archive", "--aws-profile", "work", "--region", "us-east-1", "--project", "~/src/web-app"},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.withApps(t, "codex")
@@ -330,7 +362,7 @@ var screens = []screen{
 		// The review before a first setup commits, to a bucket that blocks
 		// public access, cancelled there.
 		name:    "setup-review-fresh",
-		answers: []string{"y", "s3-existing", "work", "2", "3"},
+		answers: []string{"y", "included-projects", "s3-existing", "work", "2", "3"},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.withApps(t, "codex", "claude")
@@ -389,7 +421,7 @@ var screens = []screen{
 	{
 		// What a committed first setup ends with.
 		name:    "setup-next-steps",
-		answers: []string{"y", "y", "y", "", "s3-existing", "work", "2", ""},
+		answers: []string{"y", "y", "y", "included-projects", "", "s3-existing", "work", "2", ""},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.inWebApp(t)
@@ -462,6 +494,7 @@ var screens = []screen{
 			t.Helper()
 			f.installed(t)
 			f.published(t)
+			f.env.Now = func() time.Time { return screenNow.Add(time.Minute) }
 			var out bytes.Buffer
 			if code := Run([]string{"pause"}, strings.NewReader(""), &out, &out, f.env); code != 0 {
 				t.Fatalf("pause exit %d\n%s", code, &out)
@@ -514,7 +547,7 @@ var screens = []screen{
 
 // storageFailureAnswers set up Codex in ~/src/web-app with S3 storage, and
 // stop at the storage check's failure menu.
-var storageFailureAnswers = []string{"y", "n", "n", "", "s3-existing", "work", "2", "4"}
+var storageFailureAnswers = []string{"y", "n", "n", "included-projects", "", "s3-existing", "work", "2", "4"}
 
 // failUploads makes the bucket refuse every upload with err.
 func failUploads(err error) func(*testing.T, *screenFixture) {
@@ -667,7 +700,7 @@ func (f *screenFixture) setup(t *testing.T, exit int, answers ...string) {
 func (f *screenFixture) installed(t *testing.T) {
 	t.Helper()
 	project := f.project(t, "src/web-app")
-	f.setup(t, 0, "y", "n", "n", project, "", "s3-existing", "work", "2", "")
+	f.setup(t, 0, "y", "n", "n", "included-projects", project, "", "s3-existing", "work", "2", "")
 }
 
 // published captures and publishes one Codex session in ~/src/web-app.

@@ -242,9 +242,9 @@ func keychainCheck(env keychainOpener, ref string) preflightCheck {
 // before its first question: every app detected on this machine that neither
 // the saved configuration nor the unfinished setup leaves out, and every
 // app the saved configuration or the unfinished setup includes.
-func preflightApps(detected, saved, declined, draft []string) []string {
+func preflightApps(available []string, detected, saved, declined, draft []string) []string {
 	var apps []string
-	for _, app := range allHarnesses {
+	for _, app := range available {
 		switch {
 		case containsString(saved, app), containsString(draft, app):
 		case containsString(detected, app) && !containsString(declined, app):

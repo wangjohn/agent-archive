@@ -187,6 +187,11 @@ func Stage(path string, value any) (*Staged, error) {
 	return stage(path, write)
 }
 
+// StageBytes writes bytes to a synced temporary file beside path.
+func StageBytes(path string, data []byte) (*Staged, error) {
+	return stage(path, func(w io.Writer) error { _, err := w.Write(data); return err })
+}
+
 // StageInExistingDir is Stage without creating path's directory: when it
 // does not exist, the error satisfies os.IsNotExist and nothing is written.
 // It is for staging before a lock whose holder may delete that directory

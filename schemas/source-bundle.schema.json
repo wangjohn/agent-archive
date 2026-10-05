@@ -88,6 +88,11 @@
               "minimum": 0
             }
           }
+        },
+        "previous_generation_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Previous archive generation, independent of parent_session_id subagent lineage."
         }
       }
     },
@@ -186,6 +191,12 @@
           "items": {
             "$ref": "#/$defs/gap"
           }
+        },
+        "origin": {
+          "enum": [
+            "discovery"
+          ],
+          "description": "Source admitted by local discovery, without inferred hook execution."
         }
       }
     },
@@ -330,7 +341,9 @@
             "text_structure_partial",
             "unknown_field_omitted",
             "unknown_record_type",
-            "unsupported_value_omitted"
+            "unsupported_value_omitted",
+            "discovered_without_hook_evidence",
+            "recovered_generation"
           ]
         },
         {

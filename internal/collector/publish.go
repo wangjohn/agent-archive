@@ -17,7 +17,7 @@ func (s *sessionScan) blockThenRemember(reason state.BlockedReason, read sourceR
 	if err != nil {
 		return outcome, err
 	}
-	return outcome, rememberFailedRead(s.local, s.reg, read.adapter, read.observed, s.opts, nil, reason)
+	return outcome, rememberFailedRead(s.local, s.reg, read.adapter, read.observed, s.opts, nil, reason, s.publishedLastHead())
 }
 
 // block records a terminal capture gap for the session and completes its
@@ -86,6 +86,11 @@ func (s *sessionScan) publishPending(pending state.PendingPublication) (sessionO
 	if err := s.upload(pending); err != nil {
 		return outcomeSkipped, err
 	}
+	if err := listingindex.PublishRevision(s.ctx, s.remote, pending.MetadataKey, pending.MetadataBytes); err != nil {
+		s.warn(fmt.Errorf("listing maintenance pending: %w", err))
+	} else if err := s.local.RemoveListingRepair(s.id()); err != nil {
+		s.warn(err)
+	}
 	// The object this publication replaced is the one recorded when it was
 	// uploaded, never one rebuilt from its bundle now (see
 	// state.Published.LastPublishedSource). If it is unknown, only state from
@@ -136,23 +141,16 @@ func (s *sessionScan) publishPending(pending state.PendingPublication) (sessionO
 
 // upload writes a pending publication to storage.
 func (s *sessionScan) upload(pending state.PendingPublication) error {
-	if err := listingindex.SeedIfEmpty(s.ctx, s.remote); err != nil {
-		return fmt.Errorf("prepare listing index: %w", err)
-	}
-	writeIndex := func() error {
-		entry, err := listingindex.New(pending.MetadataKey, pending.MetadataBytes)
-		if err != nil {
-			return err
-		}
-		return listingindex.Put(s.ctx, s.remote, entry)
+	if err := s.local.SaveListingRepair(s.id(), state.ListingRepair{MetadataKey: pending.MetadataKey, DestinationID: s.reg.DestinationID}); err != nil {
+		return fmt.Errorf("journal listing repair: %w", err)
 	}
 	if !pending.CarriesNoSource() {
-		if err := storage.PutSourceThenMetadataIndexed(s.ctx, s.remote, pending.SourceKey, pending.MetadataKey, pending.SourceBytes, pending.MetadataBytes, s.opts.Retry, writeIndex); err != nil {
+		if err := storage.PutSourceThenMetadataIndexed(s.ctx, s.remote, pending.SourceKey, pending.MetadataKey, pending.SourceBytes, pending.MetadataBytes, s.opts.Retry, nil); err != nil {
 			return fmt.Errorf("publish: %w", err)
 		}
 		return nil
 	}
-	err := storage.PutMetadataForSourceIndexed(s.ctx, s.remote, pending.SourceKey, pending.SourceSHA256, pending.SourceSize, pending.MetadataKey, pending.MetadataBytes, s.opts.Retry, writeIndex)
+	err := storage.PutMetadataForSourceIndexed(s.ctx, s.remote, pending.SourceKey, pending.SourceSHA256, pending.SourceSize, pending.MetadataKey, pending.MetadataBytes, s.opts.Retry, nil)
 	if errors.Is(err, storage.ErrNotFound) || errors.Is(err, storage.ErrChecksumMismatch) {
 		// The recorded source is not in storage as recorded, and without its
 		// bytes this publication can never succeed. Dropping it keeps it from
@@ -165,7 +163,7 @@ func (s *sessionScan) upload(pending state.PendingPublication) error {
 			err = errors.Join(err, removeErr)
 		}
 		if _, buildErr := archive.BuildCompressedSource(pending.Bundle); buildErr != nil {
-			skip := state.RefreshSkip{ParserVersion: s.opts.parserVersion(), SourceKey: pending.SourceKey, Reason: state.RefreshSkipSourceUnavailable}
+			skip := state.RefreshSkip{ParserVersion: s.parserVersion(), SourceKey: pending.SourceKey, Reason: state.RefreshSkipSourceUnavailable}
 			if skipErr := s.local.SaveRefreshSkip(s.id(), skip); skipErr != nil {
 				err = errors.Join(err, skipErr)
 			}

@@ -1,6 +1,7 @@
 package evidence
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agents/nativecodec"
 	"github.com/wangjohn/agent-archive/internal/archive"
 )
 
@@ -29,7 +31,7 @@ func TestObserveSkillsHashesRedactedTextAndFiltersSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
-	got, err := ObserveSkills(SkillOptions{Harness: "codex", ProjectRoot: project, UserHome: home, ObservedAt: now})
+	got, err := observeBuiltinSkills(SkillOptions{Harness: "codex", ProjectRoot: project, UserHome: home, ObservedAt: now})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +72,7 @@ func TestObserveSkillsLabelsTruncatedSnapshotWithoutClaimingRedaction(t *testing
 	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), original, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	got, err := ObserveSkills(SkillOptions{Harness: "codex", UserHome: home, ObservedAt: time.Now()})
+	got, err := observeBuiltinSkills(SkillOptions{Harness: "codex", UserHome: home, ObservedAt: time.Now()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +113,7 @@ func TestObserveSkillsUnreadableRootIsCoverageGapNotFailure(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(home, ".agents", "skills"), []byte("not a directory"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	got, err := ObserveSkills(SkillOptions{Harness: "codex", UserHome: home, ObservedAt: time.Now()})
+	got, err := observeBuiltinSkills(SkillOptions{Harness: "codex", UserHome: home, ObservedAt: time.Now()})
 	if err != nil {
 		t.Fatalf("unreadable root failed observation: %v", err)
 	}
@@ -145,7 +147,7 @@ func TestObserveSkillsUnreadableSkillFileIsUninspected(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(locked, 0o600) })
-	got, err := ObserveSkills(SkillOptions{Harness: "codex", UserHome: home, ObservedAt: time.Now()})
+	got, err := observeBuiltinSkills(SkillOptions{Harness: "codex", UserHome: home, ObservedAt: time.Now()})
 	if err != nil {
 		t.Fatalf("unreadable SKILL.md failed observation: %v", err)
 	}
@@ -166,7 +168,7 @@ func TestObserveSkillsUnreadableSkillFileIsUninspected(t *testing.T) {
 
 func TestObserveSkillsAbsentRootsAreScopedAndLeaveUseKnowledgeUnknown(t *testing.T) {
 	now := time.Now().UTC()
-	got, err := ObserveSkills(SkillOptions{Harness: "claude", ProjectRoot: t.TempDir(), UserHome: t.TempDir(), ObservedAt: time.Now()})
+	got, err := observeBuiltinSkills(SkillOptions{Harness: "claude", ProjectRoot: t.TempDir(), UserHome: t.TempDir(), ObservedAt: time.Now()})
 	if err != nil || len(got) != 2 {
 		t.Fatalf("got=%#v err=%v", got, err)
 	}
@@ -176,7 +178,8 @@ func TestObserveSkillsAbsentRootsAreScopedAndLeaveUseKnowledgeUnknown(t *testing
 		}
 	}
 	bundle := archive.SourceBundle{SchemaVersion: archive.SourceSchemaVersion, ArchiveSessionID: "a", NativeSessionID: "n", ProjectID: "p", Capture: archive.SourceCapture{Harness: archive.Harness{Name: "claude"}, AdapterName: "claude", AdapterVersion: "1", SourceFormat: "jsonl", FilterVersion: archive.FilterVersion, CapturedAt: now}, SupplementalEvidence: got}
-	metadata, err := archive.BuildMetadata(bundle, "machine", now, now, archive.SourceReference{Key: "sessions/claude/a/source." + strings.Repeat("a", 64) + ".jsonl.gz", SHA256: strings.Repeat("a", 64)}, archive.ParserInfo{})
+	analysis, parseErr := nativecodec.ParseClaude(context.Background(), bundle)
+	metadata, err := archive.BuildMetadataWithAnalysis(bundle, analysis, parseErr, "machine", now, now, archive.SourceReference{Key: "sessions/claude/a/source." + strings.Repeat("a", 64) + ".jsonl.gz", SHA256: strings.Repeat("a", 64)}, archive.ParserInfo{})
 	if err != nil || metadata.SkillDetection != archive.SkillDetectionUnavailable || len(metadata.SkillsUsed) != 0 {
 		t.Fatalf("metadata=%#v err=%v", metadata, err)
 	}
@@ -191,7 +194,7 @@ func TestObserveSkillsDoesNotWalkUnrelatedProjectDirectories(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(unrelated, "SKILL.md"), []byte("---\nname: hidden\n---\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	got, err := ObserveSkills(SkillOptions{Harness: "codex", ProjectRoot: project, UserHome: t.TempDir(), ObservedAt: time.Now()})
+	got, err := observeBuiltinSkills(SkillOptions{Harness: "codex", ProjectRoot: project, UserHome: t.TempDir(), ObservedAt: time.Now()})
 	if err != nil || len(got) != 3 {
 		t.Fatalf("got=%#v err=%v", got, err)
 	}
@@ -213,14 +216,14 @@ func TestObserveSkillsRecordsRemovalAndDeduplicatesRepeatedAbsence(t *testing.T)
 		t.Fatal(err)
 	}
 	first := time.Date(2026, 9, 21, 1, 0, 0, 0, time.UTC)
-	present, err := ObserveSkills(SkillOptions{Harness: "codex", UserHome: home, ObservedAt: first})
+	present, err := observeBuiltinSkills(SkillOptions{Harness: "codex", UserHome: home, ObservedAt: first})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := os.RemoveAll(root); err != nil {
 		t.Fatal(err)
 	}
-	absent, err := ObserveSkills(SkillOptions{Harness: "codex", UserHome: home, ObservedAt: first.Add(time.Hour)})
+	absent, err := observeBuiltinSkills(SkillOptions{Harness: "codex", UserHome: home, ObservedAt: first.Add(time.Hour)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,7 +231,7 @@ func TestObserveSkillsRecordsRemovalAndDeduplicatesRepeatedAbsence(t *testing.T)
 	if len(merged) != len(present)+1 {
 		t.Fatalf("removal was not recorded exactly once: present=%#v absent=%#v merged=%#v", present, absent, merged)
 	}
-	repeated, err := ObserveSkills(SkillOptions{Harness: "codex", UserHome: home, ObservedAt: first.Add(2 * time.Hour)})
+	repeated, err := observeBuiltinSkills(SkillOptions{Harness: "codex", UserHome: home, ObservedAt: first.Add(2 * time.Hour)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -242,7 +245,7 @@ func TestObserveSkillsRecordsExistingEmptyRoot(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(home, ".agents", "skills"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	got, err := ObserveSkills(SkillOptions{Harness: "codex", UserHome: home, ObservedAt: time.Now()})
+	got, err := observeBuiltinSkills(SkillOptions{Harness: "codex", UserHome: home, ObservedAt: time.Now()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -273,7 +276,7 @@ func TestObserveSkillsUsesAggregateSnapshotBudgetAndDistinctCodexScopes(t *testi
 			t.Fatal(err)
 		}
 	}
-	got, err := ObserveSkills(SkillOptions{Harness: "codex", ProjectRoot: project, UserHome: home, ObservedAt: time.Now()})
+	got, err := observeBuiltinSkills(SkillOptions{Harness: "codex", ProjectRoot: project, UserHome: home, ObservedAt: time.Now()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -312,7 +315,7 @@ func TestObserveSkillsLabelsTruncatedInventory(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	got, err := ObserveSkills(SkillOptions{Harness: "codex", UserHome: home, ObservedAt: time.Now()})
+	got, err := observeBuiltinSkills(SkillOptions{Harness: "codex", UserHome: home, ObservedAt: time.Now()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -330,7 +333,7 @@ func TestObserveSkillsLabelsUnscannedLegacySubtrees(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(nested, "SKILL.md"), []byte("---\nname: imagegen\n---\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	got, err := ObserveSkills(SkillOptions{Harness: "codex", UserHome: home, ObservedAt: time.Now()})
+	got, err := observeBuiltinSkills(SkillOptions{Harness: "codex", UserHome: home, ObservedAt: time.Now()})
 	if err != nil {
 		t.Fatal(err)
 	}

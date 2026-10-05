@@ -99,7 +99,8 @@ func importPlanLocked(env Env, stdout, stderr io.Writer, home string, plan backf
 	stopRegister := startActivity(stdout, "Registering sessions…")
 	activity.set(stopRegister)
 	registration := backfill.Registration{
-		Home: home, Store: store, Batch: batch.ID, AdmittedAt: admittedAt, DestinationID: batch.DestinationID,
+		Sources: env.agentRegistry(),
+		Home:    home, Store: store, Batch: batch.ID, AdmittedAt: admittedAt, DestinationID: batch.DestinationID,
 		MaxHoldSteps: env.backfillHoldSteps, CursorDatabase: env.cursorDatabase(), RepoKey: env.repoKeyResolver(),
 		AfterHold: func(sessions, subagents []string) error {
 			batch.AddSessions(sessions, subagents)
@@ -286,9 +287,14 @@ func commitImport(env Env, home string, plan backfill.Plan, fingerprint string) 
 	if err != nil {
 		return batch, admittedAt, 0, fmt.Errorf("%w. Nothing was changed", err)
 	}
+	previous := cfg
+	previous.Archive.Projects = slices.Clone(cfg.Archive.Projects)
 	changes, err := backfill.ApplyToConfig(&cfg, plan, admittedAt)
 	if err != nil {
 		return batch, admittedAt, 0, fmt.Errorf("%w. Nothing was changed", err)
+	}
+	if err := config.ReconcileDiscovery(&cfg, previous, admittedAt); err != nil {
+		return batch, admittedAt, 0, fmt.Errorf("update discovery authorization: %w", err)
 	}
 	batch.AddChanges(changes)
 	if err := backfill.SaveBatch(home, batch); err != nil {

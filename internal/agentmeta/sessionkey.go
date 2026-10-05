@@ -10,8 +10,8 @@ import (
 // SessionKey identifies an agent's exact, opaque native session ID.
 // Construct keys with NewSessionKey; storage boundaries also validate literals.
 type SessionKey struct {
-	Agent    ID
-	NativeID string
+	Agent    ID     `json:"Agent"`
+	NativeID string `json:"NativeID"`
 }
 
 // NewSessionKey canonicalizes the agent and preserves valid native UTF-8 bytes.

@@ -14,6 +14,7 @@ package cli
 import (
 	"cmp"
 	"context"
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agents/builtin"
 	"io"
 	"os"
@@ -108,12 +109,17 @@ type Env struct {
 	// observeFlags, set only by tests, sees every command flag set as it is
 	// made, so a test can check each flag against the help text.
 	observeFlags func(*commandFlags)
+	// observeListBody, set only by tests, counts selected metadata/cache bodies.
+	observeListBody func(string, bool)
 	// exitProcess, set only by tests, replaces os.Exit where the session
 	// browser exits on a signal.
 	exitProcess func(int)
 	// repoKey, set only by tests, replaces the git lookup of a project's
 	// repository key (see repoKeyResolver).
 	repoKey func(root string) string
+	// gitHead, set only by tests, replaces the git lookup of the commit a
+	// session's working directory has checked out (see gitHeadResolver).
+	gitHead func(dir string, withDirty bool) (string, *bool)
 	// projectGitRunner replaces bounded Git operations in setup tests.
 	projectGitRunner gitremote.Runner
 	// repoKeyContext replaces bounded setup lookups in tests.
@@ -453,7 +459,11 @@ func (e Env) cursorDatabase() string {
 	if err != nil {
 		return ""
 	}
-	return platform.NewLocations(e.operatingSystem(), home, e.getenv, platform.LocationDeps{}).CursorStateDB
+	provider, ok := e.agentRegistry().LookupNativePaths("cursor")
+	if !ok {
+		return ""
+	}
+	return provider.ProjectPaths(agentapi.NativePathEnvironment{Locations: agentapi.NativeLocations{UserHome: home}, OperatingSystem: e.operatingSystem(), Getenv: e.getenv}).Database
 }
 
 // getenv reads one variable of the Env's environment (LookupEnv; the process
@@ -481,7 +491,7 @@ func (e Env) discoverApplications(userHome string) map[string]applicationDiscove
 	if e.DiscoverApplications != nil {
 		return e.DiscoverApplications(userHome)
 	}
-	return discoverApplications(userHome)
+	return discoverApplicationsWith(e.agentRegistry(), userHome, e.operatingSystem())
 }
 
 func (e Env) credentialStore() (credentials.CredentialStore, error) {
@@ -537,6 +547,7 @@ Manage capture
   agent-archive sync        Collect and upload pending changes now
   agent-archive pause       Pause collection, uploads, and cleanup
   agent-archive resume      Resume automatic capture
+  agent-archive recover     Start a linked generation for a blocked transcript
 
 Inspect history
   agent-archive list        Find archived sessions
@@ -549,6 +560,9 @@ Import history
 
 Switch agents
   agent-archive handoff     Continue a session in another coding agent
+
+Evaluate agents
+  agent-archive eval        Export sessions for an evaluation tool (JSON Lines)
 
 Maintenance
   agent-archive uninstall   Remove integrations; keep local data
@@ -564,15 +578,7 @@ Docs: https://github.com/wangjohn/agent-archive/tree/main/docs
 // never panics on malformed input; every command reports a problem through
 // stderr and a nonzero exit code instead.
 func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int {
-	if stdout == nil {
-		stdout = io.Discard
-	}
-	if stderr == nil {
-		stderr = io.Discard
-	}
-	if stdin == nil {
-		stdin = strings.NewReader("")
-	}
+	stdin, stdout, stderr = defaultStreams(stdin, stdout, stderr)
 	if len(args) == 0 {
 		if !nonInteractiveSettingUsable(args, stderr, env) {
 			return 2
@@ -619,6 +625,8 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 		return runMachinesWithInput(args[1:], stdin, stdout, stderr, env)
 	case "status":
 		return runStatusCommand(args[1:], stdout, stderr, env)
+	case "recover":
+		return runRecoverCommand(args[1:], stdout, stderr, env)
 	case "sync":
 		return runSyncCommand(args[1:], stdout, stderr, env)
 	case "pause", "resume":
@@ -644,8 +652,28 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 		return runBackfillCommand(args[1:], stdin, stdout, stderr, env)
 	case "purge":
 		return runPurgeCommand(args[1:], stdin, stdout, stderr, env)
+	case "eval":
+		return runEvalCommand(args[1:], stdin, stdout, stderr, env)
 	default:
 		terminal.Printf(stderr, "agent-archive: unknown command %q\n\n%s", args[0], usage)
 		return 2
 	}
 }
+
+// defaultStreams stands in for the streams a caller left nil: empty input
+// and discarded output.
+func defaultStreams(stdin io.Reader, stdout, stderr io.Writer) (in io.Reader, out, errOut io.Writer) {
+	in, out, errOut = stdin, stdout, stderr
+	if in == nil {
+		in = strings.NewReader("")
+	}
+	if out == nil {
+		out = io.Discard
+	}
+	if errOut == nil {
+		errOut = io.Discard
+	}
+	return in, out, errOut
+}
+
+func (e Env) listBodyObserver() func(string, bool) { return e.observeListBody }

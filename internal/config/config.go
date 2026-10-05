@@ -18,9 +18,8 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/credentials"
+	"github.com/wangjohn/agent-archive/internal/destination"
 	"github.com/wangjohn/agent-archive/internal/local"
-	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/trace"
 )
 
@@ -43,6 +42,7 @@ const (
 // EffectiveSkillEvidence preserves the behavior of configs saved before this
 // setting existed. Fresh setup persists metadata explicitly.
 func (c Config) EffectiveSkillEvidence() SkillEvidence {
+	c.SkillEvidence = underlyingSkillEvidence(c.SkillEvidence)
 	if c.SkillEvidence == "" {
 		return SkillEvidenceBody
 	}
@@ -60,9 +60,12 @@ func ValidSkillEvidence(mode SkillEvidence) bool {
 
 // Config is this machine's complete archive configuration. It contains no
 // secrets: R2 secrets live in the credential store (the Keychain on macOS, a
-// private file elsewhere; see credentials.Config.R2CredentialRef)
+// private file elsewhere; see destination.Config.R2CredentialRef)
 // and S3 credentials are resolved through the named AWS profile.
 type Config struct {
+	CodexCapture *CodexCaptureConfig `json:"codex_capture,omitempty"`
+	// Discovery carries forward-only authorization; absent means disabled.
+	Discovery *DiscoveryConfig `json:"discovery,omitempty"`
 	// SpareKeys is the desired unused key count; nil means two.
 	SpareKeys *int `json:"spare_keys,omitempty"`
 	// SpareCredentialRefs is an advisory index. The issued ledger owns eligibility.
@@ -72,20 +75,21 @@ type Config struct {
 	// MachineName is a chosen label, never a detected hostname.
 	MachineName string `json:"machine_name,omitempty"`
 	// MachineAssignment is locally committed credential provenance for one destination.
-	MachineAssignment *MachineAssignment `json:"machine_assignment,omitempty"`
+	MachineAssignment     *MachineAssignment         `json:"machine_assignment,omitempty"`
+	BucketPrivacy         *destination.PrivacyReport `json:"bucket_privacy,omitempty"`
+	RetiredCredentialRefs []string                   `json:"retired_credential_refs,omitempty"`
+	StorageVerifiedAt     time.Time                  `json:"storage_verified_at,omitempty"`
+	DestinationSince      time.Time                  `json:"destination_since,omitempty"`
+	PreviousDestinations  []destination.Config       `json:"previous_destinations,omitempty"`
 	// MCPServerNames supplies display labels for server IDs in stats.
 	MCPServerNames map[string]string `json:"mcp_server_names,omitempty"`
 
-	BucketPrivacy         *storage.PrivacyReport `json:"bucket_privacy,omitempty"`
-	RetiredCredentialRefs []string               `json:"retired_credential_refs,omitempty"`
-	StorageVerifiedAt     time.Time              `json:"storage_verified_at,omitempty"`
-	DestinationSince      time.Time              `json:"destination_since,omitempty"`
-	PreviousDestinations  []credentials.Config   `json:"previous_destinations,omitempty"`
-
-	SchemaVersion int                `json:"schema_version"`
-	MachineID     string             `json:"machine_id"`
-	Storage       credentials.Config `json:"storage"`
-	Archive       archive.Config     `json:"archive"`
+	// GenerationProtection permanently fences writers that cannot freeze archive generations.
+	GenerationProtection bool               `json:"generation_protection,omitempty"`
+	SchemaVersion        int                `json:"schema_version"`
+	MachineID            string             `json:"machine_id"`
+	Storage              destination.Config `json:"storage"`
+	Archive              archive.Config     `json:"archive"`
 	// Paused persistently suspends collection, uploads, and remote cleanup
 	// without deleting data or existing configuration.
 	Paused bool `json:"paused"`
@@ -217,35 +221,50 @@ func Load(home string) (Config, bool, error) { return LoadWithCatalog(home, agen
 
 // LoadWithCatalog reads configuration using the caller's supported identities.
 func LoadWithCatalog(home string, c agentmeta.Catalog) (cfg Config, found bool, err error) {
+	cfg, found, _, err = loadConfigWithCatalog(home, c)
+	return cfg, found, err
+}
+
+func loadConfig(home string) (Config, bool, bool, error) {
+	return loadConfigWithCatalog(home, agentmeta.Builtins())
+}
+
+func loadConfigWithCatalog(home string, c agentmeta.Catalog) (cfg Config, found, fenced bool, err error) {
 	defer trace.Start("load config").End()
-	err = local.Read(path(home), &cfg)
+	data, err := os.ReadFile(path(home))
+	if err == nil {
+		fenced, err = decodeConfig(data, &cfg)
+	}
 	if errors.Is(err, os.ErrNotExist) {
-		return Config{}, false, nil
+		return Config{}, false, false, nil
 	}
 	var syntaxErr *json.SyntaxError
 	var typeErr *json.UnmarshalTypeError
 	if errors.As(err, &syntaxErr) || errors.As(err, &typeErr) {
-		return Config{}, false, fmt.Errorf("%w: %s (%w). Restore it from a backup, or fix the JSON by hand; moving it aside (keep the copy: it records this machine's ID) and running agent-archive setup configures this machine again", ErrUnreadable, path(home), err)
+		return Config{}, false, false, fmt.Errorf("%w: %s (%w). Restore it from a backup, or fix the JSON by hand; moving it aside (keep the copy: it records this machine's ID) and running agent-archive setup configures this machine again", ErrUnreadable, path(home), err)
 	}
 	if err != nil {
-		return Config{}, false, fmt.Errorf("read %s: %w", path(home), err)
+		return Config{}, false, false, fmt.Errorf("read %s: %w", path(home), err)
+	}
+	if err := validateDiscoveryConfig(cfg); err != nil {
+		return Config{}, false, false, err
 	}
 	if !ValidSkillEvidence(cfg.EffectiveSkillEvidence()) {
-		return Config{}, false, fmt.Errorf("read %s: unsupported skill_evidence %q; choose none, metadata, or body", path(home), cfg.SkillEvidence)
+		return Config{}, false, false, fmt.Errorf("read %s: unsupported skill_evidence %q; choose none, metadata, or body", path(home), cfg.SkillEvidence)
 	}
 	if err := cfg.ValidateCloudflareTokenCommand(); err != nil {
-		return Config{}, false, err
+		return Config{}, false, false, err
 	}
 	if err := cfg.ValidateSpares(); err != nil {
-		return Config{}, false, err
+		return Config{}, false, false, err
 	}
 	if err := cfg.ValidateMachine(); err != nil {
-		return Config{}, false, err
+		return Config{}, false, false, err
 	}
 	if err := normalizeHandoff(&cfg.Handoff, c); err != nil {
-		return Config{}, false, fmt.Errorf("read %s: %w", path(home), err)
+		return Config{}, false, false, fmt.Errorf("read %s: %w", path(home), err)
 	}
-	return cfg, true, nil
+	return cfg, true, fenced, nil
 }
 
 // ErrUnreadable is a configuration file that exists but does not decode.
@@ -256,6 +275,16 @@ func Save(home string, cfg Config) error { return SaveWithCatalog(home, cfg, age
 
 // SaveWithCatalog validates and writes configuration with injected identities.
 func SaveWithCatalog(home string, cfg Config, c agentmeta.Catalog) error {
+	previous, found, _, err := loadConfigWithCatalog(home, c)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if found {
+		PreserveWriterFence(&cfg, previous)
+	}
+	if err := prepareDiscoveryConfig(&cfg); err != nil {
+		return err
+	}
 	if err := cfg.ValidateCloudflareTokenCommand(); err != nil {
 		return err
 	}
@@ -280,8 +309,16 @@ func SaveWithCatalog(home string, cfg Config, c agentmeta.Catalog) error {
 // SetPaused updates the Paused flag and rotates PauseGeneration at a state
 // transition, preserving the rest of an existing configuration. It fails if
 // setup has not run yet: pausing before there is
-// anything to pause is not a meaningful state.
-func SetPaused(home string, paused bool) (Config, error) {
+// anything to pause is not a meaningful state. An optional observation time
+// lets command callers commit pause and discovery intervals on their clock.
+func SetPaused(home string, paused bool, at ...time.Time) (Config, error) {
+	if len(at) > 1 {
+		return Config{}, errors.New("pause requires at most one observation time")
+	}
+	now := time.Now().UTC()
+	if len(at) == 1 {
+		now = at[0].UTC()
+	}
 	cfg, found, err := Load(home)
 	if err != nil {
 		return Config{}, err
@@ -295,6 +332,9 @@ func SetPaused(home string, paused bool) (Config, error) {
 			return Config{}, fmt.Errorf("generate pause boundary: %w", err)
 		}
 	}
+	if err := transitionDiscoveryPause(&cfg, paused, now.UTC()); err != nil {
+		return Config{}, err
+	}
 	cfg.Paused = paused
 	if err := Save(home, cfg); err != nil {
 		return Config{}, err
@@ -305,7 +345,7 @@ func SetPaused(home string, paused bool) (Config, error) {
 // DestinationID identifies a storage destination by its provider, endpoint,
 // bucket, and prefix. It never covers credentials or their references. It
 // lives here rather than in package archive, which imports no other internal
-// package: taking a credentials.Config would pull the AWS SDK and cgo into
+// package: taking a destination.Config would pull the AWS SDK and cgo into
 // archive.
 //
 // Registrations and batch files store this value, and it decides which bucket
@@ -313,13 +353,13 @@ func SetPaused(home string, paused bool) (Config, error) {
 // normalisation, the join, nor the prefix trimming, without a migration of
 // every stored ID: otherwise every registration silently belongs to no
 // destination. TestDestinationIDIsPinned holds it fixed.
-func DestinationID(c credentials.Config) string {
+func DestinationID(c destination.Config) string {
 	// The provider is compared as storage compares it, case- and
 	// space-insensitively; setup always writes it lowercase.
 	provider := strings.ToLower(strings.TrimSpace(c.Provider))
 	endpoint := ""
-	if provider == credentials.ProviderR2 {
-		endpoint, _ = credentials.R2Endpoint(c.R2Endpoint, c.R2AccountID)
+	if provider == destination.ProviderR2 {
+		endpoint, _ = destination.R2Endpoint(c.R2Endpoint, c.R2AccountID)
 	}
 	sum := sha256.Sum256([]byte(strings.Join([]string{provider, endpoint, c.Bucket, strings.Trim(c.Prefix, "/")}, "\x00")))
 	return hex.EncodeToString(sum[:])
@@ -341,12 +381,30 @@ func (c Config) AcceptSession(r archive.SessionRegistration) bool {
 		return false
 	}
 	admitted := r.Admitted()
+	if r.CodexAdmission != nil && r.Harness.Name == "codex" && !r.Imported() && r.CodexAdmission.Generation != "" && r.CodexAdmission.Revision != "" && filepath.IsAbs(r.CodexAdmission.Cwd) && slices.Contains(c.Harnesses, "codex") && c.Archive.Enabled && r.ProjectID == archive.ProjectID(r.ProjectRoot) {
+		if c.EffectiveCodexCaptureScope() == CodexIncludedProjects {
+			rule, found := c.codexWinningRule(r.ProjectRoot, r.CodexAdmission.Cwd)
+			if !found || !rule.Included {
+				return false
+			}
+		}
+		return c.CodexContinuationAllowed(r.ProjectRoot, r.CodexAdmission.Cwd)
+	}
+	if r.Harness.Name == "codex" && c.EffectiveCodexCaptureScope() == CodexAllProjects {
+		cwd := r.DiscoveryCwd
+		if cwd == "" {
+			cwd = r.ProjectRoot
+		}
+		if !c.CodexContinuationAllowed(r.ProjectRoot, cwd) {
+			return false
+		}
+	}
 	for _, p := range c.Archive.Projects {
 		if p.Included && p.Root == r.ProjectRoot {
 			return p.ActivatedAt.IsZero() || !admitted.Before(p.ActivatedAt)
 		}
 	}
-	return len(c.Archive.Projects) == 0 // older programmatic configurations
+	return c.CodexCapture == nil && len(c.Archive.Projects) == 0 // older programmatic configurations
 }
 
 // InCurrentDestination reports whether a registration published to the

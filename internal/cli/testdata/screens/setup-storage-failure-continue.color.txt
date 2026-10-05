@@ -40,6 +40,15 @@ Checking your storage connection…
 
   \e[2mApps      \e[0m Codex (version not detected)
   \e[2mProjects  \e[0m ~/src/web-app
+  \e[2mCodex capture\e[0m Automatic discovery plus hooks when approved
+  \e[2mCodex scope\e[0m Included projects only
+  \e[2mExceptions\e[0m None configured  \e[2mNearest explicit project rule wins\e[0m
+  \e[2mCodex sources\e[0m /Users/alex/.codex
+  \e[2mDestination\e[0m s3://team-archive/agent-archive/
+  \e[2mStarts    \e[0m After local consent, outside pause or exclusion
+  \e[2mHistory   \e[0m Old sessions require deliberate backfill
+  \e[2mCopies    \e[0m Qualifying recent native copies may be captured
+  \e[2mHooks     \e[0m Optional for discovery; approval and observation are separate
   \e[2mSkills    \e[0m metadata  \e[2mUser skill roots outside selected projects may be scanned; change with Edit a setting\e[0m
   \e[2mStorage   \e[0m s3://team-archive/agent-archive/  \e[2meu-west-1 · profile work\e[0m
   \e[2mKeep for  \e[0m 90 days
@@ -48,7 +57,7 @@ Checking your storage connection…
   \e[33m!\e[0m Bucket privacy unknown  \e[2mpublic-access settings could not be read\e[0m
     Make sure public access is off: \e[36mhttps://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html\e[0m
   \e[32m✓\e[0m Hook file is valid      \e[2m~/.codex/hooks.json\e[0m
-  \e[33m!\e[0m Codex needs one step    \e[2mapprove the hooks with /hooks after setup\e[0m
+  \e[32m✓\e[0m Codex discovery         \e[2msupported new tasks do not require hook approval\e[0m
 
 \e[2m  Filtering is best effort; sensitive text may remain in archived sessions.\e[0m
   \e[2mWhat leaves your machine:\e[0m \e[36mhttps://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md\e[0m

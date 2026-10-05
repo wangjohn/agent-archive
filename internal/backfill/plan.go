@@ -2,7 +2,6 @@ package backfill
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -13,11 +12,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
-	"github.com/wangjohn/agent-archive/internal/local"
 )
 
 // Plan is everything one backfill run found and decided. It is the input the
@@ -110,17 +109,19 @@ type work struct {
 	duplicated bool
 	duplicate  bool
 	// Adapter outcomes.
-	empty    bool
-	unsafe   bool
-	tooLarge bool
+	empty     bool
+	unsafe    bool
+	tooLarge  bool
+	sourceErr error
 }
 
 // subagentWork is one subagent transcript of an imported parent.
 type subagentWork struct {
-	parent   *work
-	sub      Subagent
-	skipped  bool
-	vanished bool
+	parent    *work
+	sub       Subagent
+	skipped   bool
+	vanished  bool
+	sourceErr error
 }
 
 // importable reports whether nothing about the file itself stops it being
@@ -134,7 +135,7 @@ func (w *work) importable() bool {
 // is too large, empty, or refused never displaces a good one; then one whose
 // own IDs agree, then a Codex file in sessions/ over archived_sessions/, then
 // the larger file, then the lexically smallest path.
-func markDuplicates(env Environment, group []*work) {
+func markDuplicates(group []*work) {
 	var live []*work
 	for _, w := range group {
 		if !w.vanished {
@@ -144,13 +145,7 @@ func markDuplicates(env Environment, group []*work) {
 	if len(live) < 2 {
 		return
 	}
-	var active []string
-	for _, dir := range env.codexDirs() {
-		active = append(active, filepath.Join(dir, "sessions"))
-	}
-	isActive := func(path string) bool {
-		return slices.ContainsFunc(active, func(dir string) bool { return local.PathWithin(path, dir) })
-	}
+
 	sort.SliceStable(live, func(i, j int) bool {
 		a, b := live[i], live[j]
 		if a.importable() != b.importable() {
@@ -159,8 +154,8 @@ func markDuplicates(env Environment, group []*work) {
 		if a.t.identityMismatch != b.t.identityMismatch {
 			return !a.t.identityMismatch
 		}
-		if aActive, bActive := isActive(a.t.path), isActive(b.t.path); aActive != bActive {
-			return aActive
+		if a.t.sourcePriority != b.t.sourcePriority {
+			return a.t.sourcePriority > b.t.sourcePriority
 		}
 		if a.t.size != b.t.size {
 			return a.t.size > b.t.size
@@ -175,7 +170,9 @@ func markDuplicates(env Environment, group []*work) {
 // BuildPlan finds every session on this machine and decides, for each, whether it
 // is imported or why not. It writes nothing.
 func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg config.Config, filters Filters) (Plan, error) {
-	if err := filters.Validate(); err != nil {
+	var err error
+	filters, err = filters.Canonicalize(env.Discovery)
+	if err != nil {
 		return Plan{}, err
 	}
 	now := env.now()
@@ -208,7 +205,7 @@ func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg con
 		}
 	}
 	var unreadableStores []string
-	for _, h := range harnessOrder {
+	for _, h := range presentationAgents(sortedAgentKeys(unread.stores)) {
 		// A store the filters leave out is not reported.
 		if unread.stores[h] && harnessMatches(filters.Harnesses, h) {
 			unreadableStores = append(unreadableStores, h)
@@ -252,31 +249,20 @@ func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg con
 // preparePlanWork performs local discovery, reads transcript heads, and maps
 // working directories to projects before any archive-state classification.
 func preparePlanWork(ctx context.Context, env Environment, cfg config.Config, filters Filters) ([]*work, *resolver, unreadable, int, error) {
-	found, unread, err := discover(ctx, env)
-	if err != nil {
-		return nil, nil, unread, 0, err
-	}
+	var unread unreadable
 	workers := env.Workers
 	if workers <= 0 {
 		workers = defaultWorkers()
 	}
-
-	items := make([]*work, len(found))
-	for i, t := range found {
-		items[i] = &work{t: t, c: Candidate{Harness: string(t.harness), TranscriptPath: t.path, Bytes: t.size}}
-	}
-	// Identity and working directory come from each transcript's leading
-	// records.
-	if err := forEach(ctx, workers, items, func(w *work) {
-		if err := readHead(env, w.t); err != nil {
-			if isNotExist(err) {
-				w.vanished = true
-			} else {
-				w.unsafe = true
-			}
-		}
-		w.c.NativeSessionID = w.t.nativeID
-	}); err != nil {
+	var items []*work
+	var err error
+	unread, err = enumerateDiscovery(ctx, env, agentapi.DiscoveryImport, func(c agentapi.DiscoveryCandidate) error {
+		t := &transcript{harness: harness(c.Session.Agent), path: c.Source.Path, size: c.Bytes, nativeID: c.Session.NativeID, cwd: c.Header.Directory, metaStart: c.Header.StartedAt, identityMismatch: c.Header.IdentityMismatch, cursorSlug: c.WorkspaceKey, sourcePriority: c.SourcePriority}
+		w := &work{t: t, c: Candidate{Harness: string(c.Session.Agent), TranscriptPath: t.path, SourceKind: c.Source.Kind, SourceKey: c.Source.Key, Bytes: t.size, NativeSessionID: t.nativeID}, unsafe: c.IdentityError != nil}
+		items = append(items, w)
+		return nil
+	})
+	if err != nil {
 		return nil, nil, unread, workers, err
 	}
 
@@ -288,7 +274,7 @@ func preparePlanWork(ctx context.Context, env Environment, cfg config.Config, fi
 		cursorCandidates = append(cursorCandidates, p.Root)
 	}
 	for _, w := range items {
-		if w.t.harness == harnessCursor || w.vanished {
+		if w.t.cursorSlug != "" || w.vanished {
 			continue
 		}
 		w.res = r.resolve(w.t.cwd)
@@ -299,12 +285,22 @@ func preparePlanWork(ctx context.Context, env Environment, cfg config.Config, fi
 			cursorCandidates = append(cursorCandidates, w.res.root)
 		}
 	}
-	matcher := newCursorMatcher(env, cursorCandidates)
+	matchers := map[string]*workspaceMatcher{}
 	for _, w := range items {
-		if w.t.harness != harnessCursor {
+		if w.t.cursorSlug == "" {
 			continue
 		}
-		if folder, ok := matcher.match(w.t.cursorSlug); ok {
+		name := string(w.t.harness)
+		matcher := matchers[name]
+		if matcher == nil {
+			matcher = &workspaceMatcher{env: env, agent: name, candidates: cursorCandidates}
+			matchers[name] = matcher
+		}
+		folder, ok, err := matcher.match(ctx, w.t.cursorSlug)
+		if err != nil {
+			return nil, nil, unread, workers, err
+		}
+		if ok {
 			w.res = r.resolve(folder)
 		} else {
 			w.res = resolution{skip: SkipProjectUnknown}
@@ -358,12 +354,17 @@ func classifyPlanWork(ctx context.Context, env Environment, state ArchiveState, 
 	if err := forEach(ctx, workers, toFilter, func(w *work) {
 		n := budget.acquire(w.t.size)
 		defer budget.release(n)
-		runAdapter(env, w)
+		runAdapter(ctx, env, w)
 	}); err != nil {
 		return err
 	}
+	for _, w := range toFilter {
+		if w.sourceErr != nil {
+			return w.sourceErr
+		}
+	}
 	for _, group := range sessions {
-		markDuplicates(env, group)
+		markDuplicates(group)
 	}
 
 	return nil
@@ -401,7 +402,11 @@ func finalizePlanWork(ctx context.Context, env Environment, items []*work, unrea
 	// parents; one that fails is left out and counted.
 	var subagents []*subagentWork
 	for _, w := range parents {
-		for _, sub := range claudeSubagents(env, w.t, unread) {
+		children, err := discoverChildren(ctx, env, w.t, unread)
+		if err != nil {
+			return err
+		}
+		for _, sub := range children {
 			subagents = append(subagents, &subagentWork{parent: w, sub: sub})
 		}
 	}
@@ -412,8 +417,12 @@ func finalizePlanWork(ctx context.Context, env Environment, items []*work, unrea
 		}
 		n := budget.acquire(s.sub.Bytes)
 		defer budget.release(n)
-		filtered, _, err := collector.FilterTranscriptFile("claude", s.sub.Path, time.Time{})
+		filtered, _, err := collector.FilterSource(ctx, string(s.parent.t.harness), agentapi.SourceRef{Path: s.sub.Path}, time.Time{}, env.Sources)
 		if err != nil {
+			if fatalSourceFailure(err) {
+				s.sourceErr = err
+				return
+			}
 			s.vanished = isNotExist(err)
 			s.skipped = !s.vanished
 			return
@@ -425,6 +434,9 @@ func finalizePlanWork(ctx context.Context, env Environment, items []*work, unrea
 		return err
 	}
 	for _, s := range subagents {
+		if s.sourceErr != nil {
+			return s.sourceErr
+		}
 		switch {
 		case s.vanished:
 		case s.skipped:
@@ -452,7 +464,7 @@ func decidePlanCandidates(items []*work, since, until, now time.Time) []*work {
 		}
 		w.c.ProjectRoot, w.c.ProjectKind, w.c.ProjectIncluded = w.res.root, w.res.kind, w.res.included
 		w.c.Skip = w.reason(now)
-		if w.c.Skip == "" && w.t.harness == harnessClaude {
+		if w.c.Skip == "" {
 			parents = append(parents, w)
 		}
 	}
@@ -492,9 +504,18 @@ func (w *work) reason(now time.Time) SkipReason {
 // runAdapter filters the whole transcript with the collector's own code and
 // keeps only what the plan needs: whether anything is left, the IDs the
 // records carry, and the earliest record's time.
-func runAdapter(env Environment, w *work) {
+func runAdapter(ctx context.Context, env Environment, w *work) {
+	if env.Imports == nil {
+		w.unsafe = true
+		return
+	}
+	inspector, ok := env.Imports.LookupImport(string(w.t.harness))
+	if !ok {
+		w.unsafe = true
+		return
+	}
 	var freshStart time.Time
-	if w.t.harness == harnessCursor {
+	if inspector.ImportPolicy(agentapi.SourceRef{Kind: w.c.SourceKind, Path: w.t.path, Key: w.c.SourceKey}).Start == agentapi.ImportFileCreatedStart {
 		// Cursor records carry no timestamps; the file's creation is the
 		// start, and the text filter needs it as its fresh-start proof.
 		created, err := env.fileCreated(w.t.path)
@@ -509,8 +530,12 @@ func runAdapter(env Environment, w *work) {
 		freshStart = created.UTC()
 		w.c.StartedAt, w.c.StartedAtSource = freshStart, archive.StartedAtSourceFileCreated
 	}
-	filtered, _, err := collector.FilterTranscriptFile(string(w.t.harness), w.t.path, freshStart)
+	filtered, _, err := collector.FilterSource(ctx, string(w.t.harness), agentapi.SourceRef{Kind: w.c.SourceKind, Path: w.t.path, Key: w.c.SourceKey}, freshStart, env.Sources)
 	if err != nil {
+		if fatalSourceFailure(err) {
+			w.sourceErr = err
+			return
+		}
 		info, statErr := env.lstat(w.t.path)
 		switch {
 		case isNotExist(err) || isNotExist(statErr):
@@ -526,78 +551,43 @@ func runAdapter(env Environment, w *work) {
 		}
 		return
 	}
-	w.empty = !carriesConversation(filtered)
-	switch w.t.harness {
-	case harnessClaude:
-		// The file stem is the ID hooks register. A fork or resume can copy
-		// records carrying an earlier session's ID, so the stem must be among
-		// the records' IDs rather than the only one. A conversation whose
-		// records carry no ID at all cannot be matched with a hook's
-		// registration either; a file with no conversation is reported as
-		// empty, which says more.
-		if (len(filtered.SessionIDs) > 0 || !w.empty) && !slices.Contains(filtered.SessionIDs, w.t.nativeID) {
-			w.t.identityMismatch = true
-		}
-		if !filtered.NativeStartAt.IsZero() {
-			w.c.StartedAt, w.c.StartedAtSource = filtered.NativeStartAt.UTC(), archive.StartedAtSourceTranscript
-		}
-	case harnessCodex:
-		switch {
-		case !w.t.metaStart.IsZero():
-			w.c.StartedAt, w.c.StartedAtSource = w.t.metaStart, archive.StartedAtSourceTranscript
-		case !filtered.NativeStartAt.IsZero():
-			w.c.StartedAt, w.c.StartedAtSource = filtered.NativeStartAt.UTC(), archive.StartedAtSourceTranscript
-		}
-	case harnessCursor:
-		// Its start is the file's creation, set above.
+	applyImportInspection(ctx, inspector, w, filtered)
+}
+
+func applyImportInspection(ctx context.Context, inspector agentapi.ImportInspector, w *work, filtered archive.FilteredTranscript) {
+	observed, err := inspector.InspectImport(ctx, agentapi.ImportInspectionRequest{Session: agentapi.NativeSession{Agent: agentmeta.ID(w.t.harness), NativeID: w.t.nativeID}, Source: agentapi.SourceRef{Kind: w.c.SourceKind, Path: w.t.path, Key: w.c.SourceKey}, Header: agentapi.NativeHeader{NativeID: w.t.nativeID, Directory: w.t.cwd, StartedAt: w.t.metaStart}, Filtered: filtered})
+	if err != nil {
+		w.unsafe = true
+		return
+	}
+	w.empty = !observed.Conversation
+	w.t.identityMismatch = w.t.identityMismatch || observed.IdentityMismatch
+	if !observed.StartedAt.IsZero() {
+		w.c.StartedAt, w.c.StartedAtSource = observed.StartedAt.UTC(), archive.StartedAtSourceTranscript
 	}
 }
 
-// conversationTypes are the retained record types that hold a turn of the
-// conversation, as opposed to bookkeeping (summaries, turn context, session
-// metadata).
-var conversationTypes = map[string]bool{
-	"user": true, "assistant": true, "message": true, "response_item": true,
-	"tool_use": true, "tool_result": true, "tool_call": true,
+func fatalSourceFailure(err error) bool {
+	return agentapi.HasFailure(err, agentapi.Cleanup) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
-// carriesConversation reports whether a filtered transcript holds anything a
-// person or agent said. A transcript without it would become a registration
-// that never publishes anything.
-func carriesConversation(filtered archive.FilteredTranscript) bool {
-	for _, text := range filtered.Text {
-		if strings.TrimSpace(text) != "" {
-			return true
-		}
+// discoverChildren consumes native association evidence while retaining shared
+// byte budgets, identity checks and admission for the selected imported parent.
+func discoverChildren(ctx context.Context, env Environment, t *transcript, u *unreadable) ([]Subagent, error) {
+	if env.Children == nil {
+		return nil, nil
 	}
-	for _, record := range filtered.Records {
-		var r struct {
-			Type string `json:"type"`
-			Role string `json:"role"`
-		}
-		if json.Unmarshal(record, &r) == nil && (conversationTypes[r.Type] || r.Role != "") {
-			return true
-		}
+	provider, ok := env.Children.LookupChildren(string(t.harness))
+	if !ok {
+		return nil, nil
 	}
-	return false
-}
-
-// claudeSubagents lists <slug>/<session>/subagents/agent-<id>.jsonl for an
-// imported Claude Code parent.
-func claudeSubagents(env Environment, t *transcript, u *unreadable) []Subagent {
-	dir := filepath.Join(filepath.Dir(t.path), t.nativeID, "subagents")
-	var subagents []Subagent
-	for _, e := range listDir(env, dir, u) {
-		if !e.regular || !strings.HasPrefix(e.name, "agent-") || !strings.HasSuffix(e.name, ".jsonl") {
-			continue
-		}
-		path := filepath.Join(dir, e.name)
-		if size, ok := fileSize(env, path); ok {
-			id := strings.TrimSuffix(strings.TrimPrefix(e.name, "agent-"), ".jsonl")
-			subagents = append(subagents, Subagent{Path: path, AgentID: id, Bytes: size})
-		}
-	}
-	return subagents
+	var children []Subagent
+	report, err := provider.DiscoverChildren(ctx, agentapi.ChildDiscoveryRequest{Parent: agentapi.NativeSession{Agent: agentmeta.ID(t.harness), NativeID: t.nativeID}, Source: agentapi.SourceRef{Path: t.path}, Files: discoveryFiles{env}}, func(c agentapi.ChildCandidate) error {
+		children = append(children, Subagent{Path: c.Source.Path, AgentID: c.NativeID, Bytes: c.Bytes})
+		return nil
+	})
+	u.folders += report.UnreadableFolders
+	return children, err
 }
 
 func harnessMatches(harnesses []string, harness string) bool {

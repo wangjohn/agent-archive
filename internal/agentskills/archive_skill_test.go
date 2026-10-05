@@ -1,6 +1,7 @@
 package agentskills
 
 import (
+	"github.com/wangjohn/agent-archive/internal/agents/builtin"
 	"path/filepath"
 	"reflect"
 	"regexp"
@@ -33,7 +34,7 @@ func TestArchiveSkillRendersByteForByte(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			files := skillFiles(archiveOnly, "/Users/me", claudeDir("/Users/me"), []string{"claude", "codex"}, tc.executable, tc.dataHome)
+			files := skillFiles(builtin.NewBuiltins(), archiveOnly, "/Users/me", claudeDir("/Users/me"), []string{"claude", "codex"}, tc.executable, tc.dataHome)
 			if len(files) != 2 || files[0].Skill != "agent-archive" || files[1].Skill != "agent-archive" {
 				t.Fatalf("files = %+v", files)
 			}
@@ -424,44 +425,44 @@ func TestArchiveSkillIsInstalledStaleAndRemovedOnItsOwn(t *testing.T) {
 	home := t.TempDir()
 	claude := filepath.Join(home, ".claude", "skills", "agent-archive", "SKILL.md")
 	agents := filepath.Join(home, ".agents", "skills", "agent-archive", "SKILL.md")
-	changes, foreign, err := PlanInstall(home, claudeDir(home), []string{"claude", "codex"}, exe, "", claudeDir(home))
+	changes, foreign, err := PlanInstall(builtin.NewBuiltins(), home, claudeDir(home), []string{"claude", "codex"}, exe, "", claudeDir(home))
 	must(t, err)
 	if len(changes) != 4 || len(foreign) != 0 {
 		t.Fatalf("changes=%d foreign=%v", len(changes), foreign)
 	}
 	must(t, hooks.Apply(changes))
-	if got := Installed(home, claudeDir(home), ""); !slices.Contains(got, claude) || !slices.Contains(got, agents) || len(got) != 4 {
+	if got := Installed(builtin.NewBuiltins(), home, claudeDir(home), ""); !slices.Contains(got, claude) || !slices.Contains(got, agents) || len(got) != 4 {
 		t.Fatalf("Installed = %v", got)
 	}
-	if got := Stale(home, claudeDir(home), exe, ""); got != nil {
+	if got := Stale(builtin.NewBuiltins(), home, claudeDir(home), exe, ""); got != nil {
 		t.Fatalf("Stale = %v", got)
 	}
 	// An upgrade's new executable makes both skills' files stale, and only an
 	// edit to this skill's own file makes just it so.
-	if got := Stale(home, claudeDir(home), "/moved/agent-archive", ""); len(got) != 4 {
+	if got := Stale(builtin.NewBuiltins(), home, claudeDir(home), "/moved/agent-archive", ""); len(got) != 4 {
 		t.Fatalf("Stale after a move = %v", got)
 	}
 	write(t, claude, "older wording\n"+marker+"\n")
-	if got := Stale(home, claudeDir(home), exe, ""); !reflect.DeepEqual(got, []string{claude}) {
+	if got := Stale(builtin.NewBuiltins(), home, claudeDir(home), exe, ""); !reflect.DeepEqual(got, []string{claude}) {
 		t.Fatalf("Stale = %v, want only %s", got, claude)
 	}
 	// Setup refreshes it, and only it.
-	changes, _, err = PlanInstall(home, claudeDir(home), []string{"claude", "codex"}, exe, "", claudeDir(home))
+	changes, _, err = PlanInstall(builtin.NewBuiltins(), home, claudeDir(home), []string{"claude", "codex"}, exe, "", claudeDir(home))
 	must(t, err)
 	if len(changes) != 1 || changes[0].Path != claude {
 		t.Fatalf("changes = %+v", changes)
 	}
 	// A skill of the person's own, marker line deleted, is theirs.
 	write(t, agents, "my own agent-archive skill\n")
-	changes, foreign, err = PlanInstall(home, claudeDir(home), []string{"claude", "codex"}, exe, "", claudeDir(home))
+	changes, foreign, err = PlanInstall(builtin.NewBuiltins(), home, claudeDir(home), []string{"claude", "codex"}, exe, "", claudeDir(home))
 	must(t, err)
 	if !reflect.DeepEqual(foreign, []string{agents}) || len(changes) != 1 {
 		t.Fatalf("changes=%+v foreign=%v", changes, foreign)
 	}
-	if got := Installed(home, claudeDir(home), ""); slices.Contains(got, agents) {
+	if got := Installed(builtin.NewBuiltins(), home, claudeDir(home), ""); slices.Contains(got, agents) {
 		t.Errorf("Installed lists the person's own file: %v", got)
 	}
-	removals, kept, err := PlanRemoval(home, claudeDir(home), "")
+	removals, kept, err := PlanRemoval(builtin.NewBuiltins(), home, claudeDir(home), "")
 	must(t, err)
 	if !slices.Contains(kept, agents) {
 		t.Errorf("uninstall would not keep %s: kept %v", agents, kept)
@@ -472,7 +473,7 @@ func TestArchiveSkillIsInstalledStaleAndRemovedOnItsOwn(t *testing.T) {
 		}
 	}
 	// Another installation sharing this HOME keeps its own copy.
-	if got := Installed(home, claudeDir(home), "/tmp/other-data"); len(got) != 0 {
+	if got := Installed(builtin.NewBuiltins(), home, claudeDir(home), "/tmp/other-data"); len(got) != 0 {
 		t.Errorf("another data directory's installed files = %v", got)
 	}
 }

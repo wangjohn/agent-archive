@@ -31,6 +31,13 @@ func handleSubagentStop(store *state.Store, cfg config.Config, event agentapi.Li
 		return nil
 	}
 
+	if _, err := store.UpdateRegistration(parentID, func(reg *archive.SessionRegistration) error {
+		reg.HookObservedAt = now
+		return nil
+	}); err != nil {
+		return err
+	}
+
 	agentID := event.Child.ID
 	if agentID == "" {
 		return saveSubagentCaptureGap(store, parent.ArchiveSessionID, "subagent_identity_unavailable", event.Child.MissingDetail, now)
@@ -52,17 +59,9 @@ func handleSubagentStop(store *state.Store, cfg config.Config, event agentapi.Li
 	if event.Child.CaptureTranscript && path != "" {
 		status = archive.LinkedSessionPending
 	}
-	if existing, childFound, err := store.LoadRegistration(childID); err != nil {
+	parent, status, accepted, err := existingSubagentOwner(store, cfg, parent, childID, agentID, status)
+	if err != nil || !accepted {
 		return err
-	} else if childFound {
-		if existing.ParentSessionID != parent.ArchiveSessionID || existing.ParentNativeSessionID != parent.NativeSessionID || existing.ProjectID != parent.ProjectID || existing.ProjectRoot != parent.ProjectRoot || archive.CanonicalHarness(existing.Harness.Name) != archive.CanonicalHarness(parent.Harness.Name) || existing.SubagentID != agentID {
-			return nil
-		}
-		if _, _, published, err := store.LoadLastPublished(childID); err != nil {
-			return err
-		} else if published {
-			status = archive.LinkedSessionPublished
-		}
 	}
 	if err := saveLinkedSessionEvidence(store, parent.ArchiveSessionID, childID, status, now); err != nil {
 		return err
@@ -100,4 +99,51 @@ func saveSubagentCaptureGap(store *state.Store, parentID, code, detail string, o
 		return err
 	}
 	return store.SaveRequest(parentID, "subagent-link-unavailable", observedAt, evidence)
+}
+
+// Recovery changes the active parent for new children. A child already admitted
+// or queued retains its original parent and evidence association.
+func recordedChildParent(store *state.Store, cfg config.Config, active archive.SessionRegistration, parentID string) (archive.SessionRegistration, error) {
+	if parentID == active.ArchiveSessionID {
+		return active, nil
+	}
+	original, found, err := store.LoadRegistration(parentID)
+	if err != nil {
+		return active, err
+	}
+	if !found || !original.CaptureFrozen || original.NativeSessionID != active.NativeSessionID || original.ProjectID != active.ProjectID || original.ProjectRoot != active.ProjectRoot || archive.CanonicalHarness(original.Harness.Name) != archive.CanonicalHarness(active.Harness.Name) || !cfg.AcceptSession(original) {
+		return active, state.ErrSubagentCandidateConflict
+	}
+	if err := store.FrozenGeneration(original); err != nil {
+		return active, err
+	}
+	return original, nil
+}
+
+func existingSubagentOwner(store *state.Store, cfg config.Config, parent archive.SessionRegistration, childID, agentID string, status archive.LinkedSessionStatus) (archive.SessionRegistration, archive.LinkedSessionStatus, bool, error) {
+	if existing, childFound, err := store.LoadRegistration(childID); err != nil {
+		return parent, status, false, err
+	} else if childFound {
+		parent, err = recordedChildParent(store, cfg, parent, existing.ParentSessionID)
+		if err != nil {
+			return parent, status, false, err
+		}
+		if existing.ParentSessionID != parent.ArchiveSessionID || existing.ParentNativeSessionID != parent.NativeSessionID || existing.ProjectID != parent.ProjectID || existing.ProjectRoot != parent.ProjectRoot || archive.CanonicalHarness(existing.Harness.Name) != archive.CanonicalHarness(parent.Harness.Name) || existing.SubagentID != agentID {
+			return parent, status, false, nil
+		}
+		if _, _, published, err := store.LoadLastPublished(childID); err != nil {
+			return parent, status, false, err
+		} else if published {
+			status = archive.LinkedSessionPublished
+		}
+	}
+	if candidate, found, err := store.LoadSubagentCandidate(childID); err != nil {
+		return parent, status, false, err
+	} else if found {
+		parent, err = recordedChildParent(store, cfg, parent, candidate.ParentArchiveSessionID)
+		if err != nil {
+			return parent, status, false, err
+		}
+	}
+	return parent, status, true, nil
 }

@@ -13,6 +13,7 @@ GOBIN=/tmp/deadcode go install golang.org/x/tools/cmd/deadcode@v0.50.0   # the L
 GOOS=linux CGO_ENABLED=0 /tmp/deadcode/deadcode ./...    # also excepts credentials.errorForOSStatus
 python3 scripts/test_release_signing.py
 python3 scripts/test_release_assets.py
+python3 scripts/test_release_candidate.py                 # synthetic release API, retry, and promotion fixtures
 python3 scripts/test_install.py
 python3 scripts/test_install_from_source.py
 python3 scripts/test_purge_recipe.py                     # runs the bucket purge recipes in the docs
@@ -30,6 +31,24 @@ golangci-lint also runs on each pull request: the first pass blocks, and
 revive's doc-comment rule checks only code the pull request adds or changes.
 All jobs use Go 1.27.1 exactly (go.mod's `toolchain` line). A new push to a
 pull request cancels that pull request's older Test and Levenshtein runs.
+
+A run-owned `release-candidate/**` branch push runs the same Test jobs and
+Levenshtein `verify` against the pushed commit, plus Extended `macos-full`,
+`fuzz`, and `real-systemd`. This provides an automatic final integration
+campaign when manual dispatch is unavailable. Extended skips its duplicate
+Linux suite on these branches because Test runs full Linux race coverage.
+Test, Levenshtein and Extended disable setup-go's shared module/build cache
+for every trigger, so candidate validation cannot restore executable build
+state from another run. Go still verifies downloaded modules against go.sum;
+fresh runners may take longer while downloading and compiling dependencies.
+Main and nightly behavior remains as described below, and concurrency groups
+keep each candidate branch separate from main. Candidate pushes cannot start
+the tag-only signing workflow or the manual promotion workflow. Record the
+exact pushed SHA and all three run URLs; missing, skipped, queued, timed-out,
+or failed required jobs leave readiness pending. Push a fresh candidate ref
+at the final main commit after merges if merge commits or squash changed the
+previously tested SHA. These campaigns do not establish live provider, app,
+architecture, or signed-installer acceptance; see [releasing](../maintainers/releasing.md).
 
 The [Extended workflow](../../.github/workflows/extended.yml) runs the full
 Linux and macOS race suites after a merge to `main`; it keeps only the newest
@@ -456,7 +475,7 @@ README says how to get a shell as the user whose manager is running.
   with synthetic content only. `filter-golden.json` pins the SHA-256 of what
   each fixture filters to; Cursor database chats
   (`internal/archive/testdata/cursor-composer/`), handoff output
-  (`testdata/handoff/`), the `stats` screens end to end at 60, 80 and 120
+  (`testdata/handoff/`), eval export records (`internal/archive/testdata/eval-export/`, each line validated against its schema), the `stats` screens end to end at 60, 80 and 120
   columns and without a terminal (`internal/cli/testdata/stats/`), every `stats`
   page (overview, detail, projects, models, agents) at 60, 80 and 120 columns
   with and without color from hand-built numbers, plus a previous period,
@@ -771,3 +790,11 @@ go test ./internal/archive -run '^$' -fuzz '^FuzzFilterJSONL$' -fuzztime 2m -fuz
 
 A failing input is written to `testdata/fuzz/<target>/`; keep it there as a
 seed once it is fixed.
+
+### Published writer refusal
+
+`bash scripts/test_published_writer.sh` runs an opt-in native macOS acceptance
+check against the checksum-pinned public v0.1.1 Darwin binary. It uses disposable
+HOME and data roots, stripped environment, and scheduler/Keychain stubs. A
+legacy scalar config is the successful control; protected config must fail the
+old integer decoder and remain byte-identical. Extended macOS runs this check.

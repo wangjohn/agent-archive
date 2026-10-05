@@ -24,7 +24,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/config"
-	"github.com/wangjohn/agent-archive/internal/cursorstore"
+	"github.com/wangjohn/agent-archive/internal/listingindex"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
@@ -33,6 +33,14 @@ import (
 // local.Lock(home) around Run; Run itself does not acquire it, so it stays
 // simple to call directly from tests.
 type Options struct {
+	// SkipSessionIndexRecovery is set after the CLI has already attempted its
+	// bounded local recovery stage. Direct collector callers recover once.
+	SkipSessionIndexRecovery bool
+	// Parsers resolves pure derivation separately from native source access.
+	Parsers      agentapi.ParsersLookup
+	parserCache  map[string]agentapi.TranscriptParser
+	Sources      agentapi.SourcesLookup
+	sourcePasses *sourcePassSet
 	// Decoders translates retained legacy admission intents; no lookup is needed for new generic effects.
 	Decoders agentapi.DecodersLookup
 	// ParserVersion identifies metadata derivation independently of source capture.
@@ -86,8 +94,6 @@ type Options struct {
 
 	// repoKeys is the pass's memory of RepoKey's answers, set by Run.
 	repoKeys *repoKeyCache
-	// cursorPass is the pass's Reader of Cursor's database, set by Run.
-	cursorPass *cursorstore.Reader
 	// afterCursorPass, set by a test, runs as a pass ends with how many
 	// snapshots of Cursor's database the pass took.
 	afterCursorPass func(snapshots int)
@@ -192,14 +198,18 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	if opts.MachineID == "" {
 		return Result{}, errors.New("machine ID is required")
 	}
+	if err := local.ResumeGenerationRecoveries(ctx); err != nil {
+		return Result{}, err
+	}
+	opts.parserCache = make(map[string]agentapi.TranscriptParser)
 	now := opts.now()
 	// Recover first-start events that could not obtain hooks.lock on the
 	// user's turn before scanning registrations for this pass.
 	var recoveryErr error
-	if ctx.Err() == nil {
-		recoveryErr = local.RecoverSessionIndexIfNeeded(ctx)
+	if ctx.Err() == nil && !opts.SkipSessionIndexRecovery {
+		_, recoveryErr = local.RecoverSessionIndexScheduled(ctx, state.SessionIndexRecoverySlice)
 	}
-	if errors.Is(recoveryErr, context.Canceled) || errors.Is(recoveryErr, context.DeadlineExceeded) {
+	if state.SessionIndexRecoveryInterrupted(recoveryErr) {
 		recoveryErr = nil
 	}
 	replayErr := capture.ReplayAdmissionIntents(local.Home(), now, opts.Decoders)
@@ -209,7 +219,9 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	local.RemoveStaleTemps()
 	// A copy of Cursor's database a killed collector or backfill left
 	// behind goes on every pass, whether or not this one reads Cursor.
-	cursorstore.RemoveStaleSnapshots()
+	if sweeper, ok := opts.Sources.(agentapi.SourceSweeper); ok {
+		sweeper.SweepSources()
+	}
 	subagents := materializeSubagentCandidates(ctx, local, opts, now)
 	opts.repoKeys = newRepoKeyCache(opts.RepoKey)
 	p := &pass{
@@ -233,6 +245,7 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	if err := p.loadWork(); err != nil {
 		return Result{}, err
 	}
+	p.repairListingIndex()
 	orderOldestRequestsFirst(p.registrations, p.requests)
 	closeCursorPass := openCursorPass(p.registrations, &p.opts)
 	defer func() {
@@ -505,7 +518,7 @@ func (p *pass) saveStatus() error {
 		PendingCount:           p.pending,
 		LastPublishedAt:        lastPublishedAt,
 		QuarantinedFiles:       p.local.QuarantinedFiles(),
-		UnrefreshableSummaries: p.local.CountRefreshSkips(p.opts.parserVersion()),
+		UnrefreshableSummaries: p.countRefreshSkips(),
 		WaitingSubagents:       len(p.result.WaitingSubagents),
 		RunningSubagents:       len(p.result.RunningSubagents),
 		// The pass rebuilds everything else from scratch; this list is a
@@ -554,10 +567,72 @@ const cursorTextSourceFormat = "cursor-text"
 
 // harnessAdapterVersion returns the version of the adapter that reads
 // harness, or known=false when no adapter does.
-func harnessAdapterVersion(harness string) (string, bool) {
-	adapter, err := archive.NewAdapter(harness)
+func harnessAdapterVersion(sources agentapi.SourcesLookup, harness string) (string, bool) {
+	adapter, err := sourceAdapter(sources, harness)
 	if err != nil {
 		return "", false
 	}
 	return adapter.Version(), true
+}
+
+// countRefreshSkips matches the parser actually bound to each registration.
+func (p *pass) countRefreshSkips() int {
+	n := 0
+	skips := p.local.RefreshSkips()
+	if len(skips) == 0 {
+		return 0
+	}
+	for _, reg := range p.registrations {
+		skipped, found := skips[reg.ArchiveSessionID]
+		if found && skipped.ParserVersion == p.opts.parserVersionFor(reg.Harness.Name) {
+			n++
+		}
+	}
+	return n
+}
+
+// repairListingIndex gives auxiliary work a bounded slice without blocking capture.
+func (p *pass) repairListingIndex() {
+	// Auxiliary maintenance has its own bounded slice and never prevents capture.
+	repairs, repairErr := p.local.ListingRepairs(32)
+	if repairErr != nil {
+		p.result.Errors["listing-maintenance"] = repairErr
+	}
+	for id, repair := range repairs {
+		reg, found, err := p.local.LoadRegistration(id)
+		if err != nil {
+			p.result.Errors["listing-maintenance"] = err
+			continue
+		}
+		if !found || reg.DestinationID != repair.DestinationID {
+			_ = p.local.RemoveListingRepair(id)
+			continue
+		}
+		expected, keyErr := archive.MetadataObjectKey(reg.Harness.Name, id)
+		if keyErr != nil || repair.MetadataKey != expected {
+			p.result.Errors["listing-maintenance"] = errors.New("invalid listing repair identity")
+			continue
+		}
+		if p.opts.AcceptSession != nil && !p.opts.AcceptSession(reg) {
+			continue
+		}
+		getter, ok := p.remote.(storage.VersionedGetter)
+		if !ok {
+			continue
+		}
+		data, _, err := getter.GetVersioned(p.ctx, repair.MetadataKey)
+		if errors.Is(err, storage.ErrNotFound) {
+			_ = p.local.RemoveListingRepair(id)
+			continue
+		}
+		if err == nil {
+			err = listingindex.PublishRevision(p.ctx, p.remote, repair.MetadataKey, data)
+		}
+		if err == nil {
+			err = p.local.RemoveListingRepair(id)
+		}
+		if err != nil {
+			p.result.Errors["listing-maintenance"] = err
+		}
+	}
 }

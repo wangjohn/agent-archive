@@ -2,27 +2,14 @@ package storage
 
 import (
 	"context"
-	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/wangjohn/agent-archive/internal/destination"
 )
 
-// PrivacyReport describes native bucket public access controls, not access
-// through authorized applications, signed URLs, or downstream copies.
-// It contains only fixed diagnostic codes, never provider error strings.
-// CheckedAt is nil until an inspection has run, so never-inspected evidence
-// omits the field instead of serializing the zero time.
-type PrivacyReport struct {
-	//lint:ignore LV1001 callers in internal/cli copy State into plain string fields and compare it to literals; a defined type would break them
-	State           string     `json:"state"`
-	Reason          string     `json:"reason"`
-	Scope           string     `json:"scope"`
-	CheckedAt       *time.Time `json:"checked_at,omitempty"`
-	ConfigurationID string     `json:"configuration_id,omitempty"`
-	GuidanceURL     string     `json:"guidance_url"`
-	Checks          []string   `json:"checks,omitempty"`
-}
+// PrivacyReport is the pure persisted observation value.
+type PrivacyReport = destination.PrivacyReport
 
 // UnknownPrivacy returns the report for a bucket whose public access has not
 // been inspected: state "not_verified", with a reason and guidance link for
