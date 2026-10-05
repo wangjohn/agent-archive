@@ -163,8 +163,11 @@ func (r *runner) record(name, result, detail string, elapsed time.Duration) {
 func (r *runner) execute(run func()) {
 	defer r.api.Discard()
 	defer func() {
-		if recovered := recover(); recovered != nil && recovered != errEvidencePersistence {
-			panic(recovered)
+		if recovered := recover(); recovered != nil {
+			err, ok := recovered.(error)
+			if !ok || !errors.Is(err, errEvidencePersistence) {
+				panic(recovered)
+			}
 		}
 	}()
 	defer r.cleanup()
@@ -299,6 +302,10 @@ func (r *runner) run() {
 			return nil
 		})
 	}
+	r.verifyStorage(firstKey)
+}
+
+func (r *runner) verifyStorage(firstKey cloudflare.S3Credentials) {
 	first := r.stores[0]
 	activation := time.Now()
 	active := false
@@ -327,7 +334,10 @@ func (r *runner) run() {
 		if err := first.Put(ctx, key, []byte("synthetic acceptance data")); err != nil {
 			return err
 		}
-		defer first.Delete(context.WithoutCancel(ctx), key)
+		defer func() {
+			// Final cleanup retries this namespace if this deletion fails.
+			_ = first.Delete(context.WithoutCancel(ctx), key)
+		}()
 		_, err := first.Get(ctx, key)
 		return err
 	})
@@ -364,6 +374,11 @@ func (r *runner) run() {
 		}
 		return nil
 	})
+	r.verifyRevocation()
+}
+
+func (r *runner) verifyRevocation() {
+	first := r.stores[0]
 	marker := "revocation/synthetic-" + r.r.RunID
 	if !r.attempt("revocation test object is readable with recipient key", func(ctx context.Context) error {
 		if err := r.stores[1].Put(ctx, marker, []byte("synthetic acceptance data")); err != nil {
