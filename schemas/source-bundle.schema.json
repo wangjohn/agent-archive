@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/wangjohn/agent-archive/main/schemas/source-bundle.schema.json",
-  "title": "Agent Archive filtered source bundle line (schema 2)",
+  "title": "Agent Archive filtered source bundle line (schemas 2 and 3)",
   "description": "A source bundle is stored as source.<sha256>.jsonl.gz: gzip of newline-delimited JSON, where <sha256> is the SHA-256 of the exact compressed bytes. This schema describes one line; every line is exactly one object and ends with a newline. Ordering rules, which a line-level schema cannot express: the first line is the only 'header' line; then every 'native_record' line, in native source order; then every 'native_text' line; then every 'supplemental_evidence' line. The header's counts equal the number of lines of each kind that follow it. A line may be at most 64 MiB plus 1 MiB of envelope. Serialization is deterministic (fixed field order, sorted object keys, fixed gzip header), so identical evidence yields identical bytes. Schema 1, a single JSON document stored as source.<sha256>.json.gz, is not read.",
   "type": "object",
   "required": [
@@ -39,7 +39,10 @@
           "const": "header"
         },
         "schema_version": {
-          "const": 2
+          "enum": [
+            2,
+            3
+          ]
         },
         "archive_session_id": {
           "type": "string",
@@ -93,8 +96,34 @@
           "type": "string",
           "minLength": 1,
           "description": "Previous archive generation, independent of parent_session_id subagent lineage."
+        },
+        "history": {
+          "$ref": "#/$defs/history"
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "schema_version": {
+                "const": 3
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "history"
+            ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "history"
+              ]
+            }
+          }
+        }
+      ]
     },
     "native_record_line": {
       "type": "object",
@@ -111,6 +140,11 @@
           "type": "object",
           "minProperties": 1,
           "description": "One filtered native record, keeping the harness's own field names and structure."
+        },
+        "ordinal": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
         }
       }
     },
@@ -351,6 +385,80 @@
           "pattern": "^[a-z][a-z0-9_]*$"
         }
       ]
+    },
+    "history_span": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rollout_id",
+        "thread_id",
+        "first_record",
+        "end_record",
+        "start_ordinal",
+        "end_ordinal_exclusive"
+      ],
+      "properties": {
+        "rollout_id": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+        },
+        "thread_id": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+        },
+        "first_record": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000
+        },
+        "end_record": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000
+        },
+        "start_ordinal": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "end_ordinal_exclusive": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        }
+      }
+    },
+    "history": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "active_rollout_id",
+        "thread_id",
+        "spans"
+      ],
+      "properties": {
+        "active_rollout_id": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+        },
+        "thread_id": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+        },
+        "own_start_ordinal": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "spans": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": {
+            "$ref": "#/$defs/history_span"
+          }
+        }
+      }
     }
   }
 }

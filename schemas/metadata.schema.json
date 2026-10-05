@@ -24,7 +24,10 @@
   ],
   "properties": {
     "schema_version": {
-      "const": 1
+      "enum": [
+        1,
+        2
+      ]
     },
     "session_id": {
       "type": "string",
@@ -395,6 +398,65 @@
       "type": "string",
       "minLength": 1,
       "description": "Previous archive generation, independent of parent_session_id subagent lineage."
+    },
+    "history": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "current_revision"
+      ],
+      "properties": {
+        "current_revision": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+        },
+        "preserved": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "revision_id",
+              "captured_at",
+              "source"
+            ],
+            "properties": {
+              "revision_id": {
+                "type": "string",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+              },
+              "captured_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "source": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "key",
+                  "sha256",
+                  "compressed_bytes"
+                ],
+                "properties": {
+                  "key": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "sha256": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  },
+                  "compressed_bytes": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "$defs": {
@@ -800,5 +862,28 @@
         }
       }
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "schema_version": {
+            "const": 2
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "history"
+        ]
+      },
+      "else": {
+        "not": {
+          "required": [
+            "history"
+          ]
+        }
+      }
+    }
+  ]
 }

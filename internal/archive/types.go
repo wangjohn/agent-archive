@@ -464,6 +464,8 @@ type NativeSessionIdentity struct {
 // FilteredTranscript is the only adapter output accepted by NewSourceBundle.
 // Records retain their allowed native JSON shape and source ordering.
 type FilteredTranscript struct {
+	History  *SourceHistory `json:"history,omitempty"`
+	Ordinals []uint64       `json:"-"`
 	// LocalIdentity is safe retained identity evidence, never raw ownership IDs.
 	LocalIdentity NativeSessionIdentity `json:"-"`
 	// ObservedHarness is sanitized retained version/mode evidence for source assembly.
@@ -508,6 +510,8 @@ type SourceCapture struct {
 // SourceBundle is the durable filtered source envelope. It intentionally has
 // no normalized transcript or local filesystem path.
 type SourceBundle struct {
+	History              *SourceHistory           `json:"history,omitempty"`
+	Ordinals             []uint64                 `json:"ordinals,omitempty"`
 	SchemaVersion        int                      `json:"schema_version"`
 	ArchiveSessionID     string                   `json:"archive_session_id"`
 	NativeSessionID      string                   `json:"native_session_id"`
@@ -695,12 +699,13 @@ type ToolUsage struct {
 // tool payloads and no full transcript. Title is an optional short preview of
 // the first filtered human prompt, derived for browsing.
 type Metadata struct {
-	SchemaVersion        int    `json:"schema_version"`
-	SessionID            string `json:"session_id"`
-	PreviousGenerationID string `json:"previous_generation_id,omitempty"`
-	NativeSessionID      string `json:"native_session_id"`
-	MachineID            string `json:"machine_id"`
-	ProjectID            string `json:"project_id"`
+	History              *RevisionHistory `json:"history,omitempty"`
+	SchemaVersion        int              `json:"schema_version"`
+	SessionID            string           `json:"session_id"`
+	PreviousGenerationID string           `json:"previous_generation_id,omitempty"`
+	NativeSessionID      string           `json:"native_session_id"`
+	MachineID            string           `json:"machine_id"`
+	ProjectID            string           `json:"project_id"`
 	// Title is a one-line, truncated preview of the first human prompt after
 	// filtering. Omitted when no prompt text was available.
 	Title string `json:"title,omitempty"`

@@ -51,6 +51,9 @@ func PrepareGenerationRecovery(ctx context.Context, reg archive.SessionRegistrat
 	if err != nil {
 		return nil, err
 	}
+	if err := archive.CheckHistoryMutation(preview, archive.Metadata{}); err != nil {
+		return nil, err
+	}
 	if opts.RequireSkillUse {
 		rendered, err := renderPublication(ctx, opts.parserFor(reg.Harness.Name), opts.parserVersionFor(reg.Harness.Name), preview, reg, at, opts, func() string { return reg.RepoKey })
 		if err != nil {

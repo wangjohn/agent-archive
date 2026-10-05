@@ -36,6 +36,19 @@ func parse(ctx context.Context, bundle archive.SourceBundle, agent nativeProfile
 		if err := ctx.Err(); err != nil {
 			return archive.Analysis{}, err
 		}
+		if agent == profileCodex && bundle.History != nil {
+			if firstString(record, "type") == "turn_context" {
+				codexModel, codexReasoning = firstStringDeep(record, "model", "model_id"), firstStringDeep(record, "reasoning_effort")
+			}
+			span, _ := bundle.History.SpanAt(i)
+			if firstString(record, "type") == "session_meta" {
+				if span.RolloutID != bundle.History.ActiveRolloutID {
+					continue
+				}
+			} else if !bundle.OwnRecord(i) {
+				continue
+			}
+		}
 		collectFacts(&analysis.Facts, bundle, record, agent)
 		collectExportFacts(&analysis.Facts, bundle, record, agent)
 		if isParentBundle && isSidechainRecord(record) {

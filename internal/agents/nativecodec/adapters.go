@@ -400,6 +400,10 @@ func filterJSONL(r io.Reader, format string, knownTypes map[string]bool, lead ma
 }
 
 func filterRecords(format string, knownTypes map[string]bool, lead map[string]any, next func() ([]byte, bool), readError func() error, validateMeta func([]byte) error) (archive.FilteredTranscript, error) {
+	return filterRecordsObserved(format, knownTypes, lead, next, readError, validateMeta, nil)
+}
+
+func filterRecordsObserved(format string, knownTypes map[string]bool, lead map[string]any, next func() ([]byte, bool), readError func() error, validateMeta func([]byte) error, retained func(int)) (archive.FilteredTranscript, error) {
 	result := archive.FilteredTranscript{Format: format, NativeStartComplete: true}
 	lineNo, recognized := 0, 0
 	gapSet := map[string]bool{}
@@ -430,6 +434,9 @@ func filterRecords(format string, knownTypes map[string]bool, lead map[string]an
 		}
 	}
 	for {
+		if retained != nil {
+			retained(len(result.Records))
+		}
 		line, more := next()
 		if !more {
 			break

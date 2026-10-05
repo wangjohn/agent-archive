@@ -47,6 +47,7 @@ type SourceCounts struct {
 
 // SourceHeader is the first line of a source bundle.
 type SourceHeader struct {
+	History              *SourceHistory           `json:"history,omitempty"`
 	Kind                 SourceLineKind           `json:"kind"`
 	SchemaVersion        int                      `json:"schema_version"`
 	ArchiveSessionID     string                   `json:"archive_session_id"`
@@ -61,6 +62,7 @@ type SourceHeader struct {
 
 // SourceLine is one decoded line. Kind names which one field is set.
 type SourceLine struct {
+	Ordinal      *uint64
 	Kind         SourceLineKind
 	Header       *SourceHeader
 	NativeRecord map[string]any
@@ -69,8 +71,9 @@ type SourceLine struct {
 }
 
 type nativeRecordLine struct {
-	Kind   SourceLineKind `json:"kind"`
-	Record map[string]any `json:"record"`
+	Ordinal *uint64        `json:"ordinal,omitempty"`
+	Kind    SourceLineKind `json:"kind"`
+	Record  map[string]any `json:"record"`
 }
 
 type nativeTextLine struct {
@@ -94,7 +97,8 @@ func EncodeSource(w io.Writer, bundle SourceBundle) error {
 		return err
 	}
 	header := SourceHeader{
-		Kind: SourceLineHeader, SchemaVersion: bundle.SchemaVersion,
+		History: bundle.History,
+		Kind:    SourceLineHeader, SchemaVersion: bundle.SchemaVersion,
 		ArchiveSessionID: bundle.ArchiveSessionID, NativeSessionID: bundle.NativeSessionID, ProjectID: bundle.ProjectID,
 		Capture: bundle.Capture, PreviousGenerationID: bundle.PreviousGenerationID, ParentSessionID: bundle.ParentSessionID, LinkedSessions: bundle.LinkedSessions,
 		Counts: SourceCounts{NativeRecords: len(bundle.NativeRecords), NativeText: len(bundle.NativeText), SupplementalEvidence: len(bundle.SupplementalEvidence)},
@@ -115,8 +119,12 @@ func EncodeSource(w io.Writer, bundle SourceBundle) error {
 	if err := write(header); err != nil {
 		return err
 	}
-	for _, record := range bundle.NativeRecords {
-		if err := write(nativeRecordLine{Kind: SourceLineNativeRecord, Record: record}); err != nil {
+	for i, record := range bundle.NativeRecords {
+		var ordinal *uint64
+		if bundle.History != nil {
+			ordinal = &bundle.Ordinals[i]
+		}
+		if err := write(nativeRecordLine{Kind: SourceLineNativeRecord, Record: record, Ordinal: ordinal}); err != nil {
 			return err
 		}
 	}
@@ -225,10 +233,11 @@ type sourceProbe struct {
 }
 
 type sourceDecodeState struct {
-	header *SourceHeader
-	seen   SourceCounts
-	stage  int
-	lineNo int
+	header  *SourceHeader
+	seen    SourceCounts
+	stage   int
+	lineNo  int
+	ordinal uint64
 }
 
 func (s *sourceDecodeState) decodeLine(raw []byte, unterminated bool, scanErr error) (SourceLine, error) {
@@ -285,11 +294,21 @@ func (s *sourceDecodeState) decodeHeader(raw []byte, probe sourceProbe) (SourceL
 	if err := json.Unmarshal(raw, &decoded); err != nil {
 		return SourceLine{}, fmt.Errorf("decode source header: %w", err)
 	}
-	if decoded.SchemaVersion != SourceSchemaVersion {
+	if decoded.SchemaVersion != SourceSchemaVersion && decoded.SchemaVersion != HistorySourceSchemaVersion {
 		return SourceLine{}, fmt.Errorf("unsupported source schema version %d; this build reads schema %d only", decoded.SchemaVersion, SourceSchemaVersion)
 	}
 	if decoded.Counts.NativeRecords < 0 || decoded.Counts.NativeText < 0 || decoded.Counts.SupplementalEvidence < 0 {
 		return SourceLine{}, errors.New("source header has negative counts")
+	}
+	if decoded.SchemaVersion == HistorySourceSchemaVersion {
+		if decoded.Capture.Harness.Name != "codex" || decoded.Counts.NativeText != 0 {
+			return SourceLine{}, errors.New("invalid history source shape")
+		}
+		if err := decoded.History.Validate(decoded.NativeSessionID, decoded.Counts.NativeRecords); err != nil {
+			return SourceLine{}, err
+		}
+	} else if decoded.History != nil {
+		return SourceLine{}, errors.New("history requires source schema 3")
 	}
 	s.header = &decoded
 	return SourceLine{Kind: SourceLineHeader, Header: s.header}, nil
@@ -342,11 +361,20 @@ func (s *sourceDecodeState) decodeNativeRecord(raw []byte) (SourceLine, error) {
 	if len(decoded.Record) == 0 {
 		return SourceLine{}, fmt.Errorf("source line %d has an empty native record", s.lineNo)
 	}
+	if s.header.History != nil {
+		span, ok := s.header.History.SpanAt(s.seen.NativeRecords)
+		if !ok || decoded.Ordinal == nil || *decoded.Ordinal < span.StartOrdinal || *decoded.Ordinal >= span.EndOrdinal || (s.seen.NativeRecords > span.FirstRecord && *decoded.Ordinal <= s.ordinal) {
+			return SourceLine{}, errors.New("invalid history record ordinal")
+		}
+		s.ordinal = *decoded.Ordinal
+	} else if decoded.Ordinal != nil {
+		return SourceLine{}, errors.New("ordinal requires history source")
+	}
 	s.seen.NativeRecords++
 	if s.seen.NativeRecords > s.header.Counts.NativeRecords {
 		return SourceLine{}, fmt.Errorf("source has more native records than its header's %d", s.header.Counts.NativeRecords)
 	}
-	return SourceLine{Kind: SourceLineNativeRecord, NativeRecord: decoded.Record}, nil
+	return SourceLine{Kind: SourceLineNativeRecord, NativeRecord: decoded.Record, Ordinal: decoded.Ordinal}, nil
 }
 
 func (s *sourceDecodeState) decodeNativeText(raw []byte) (SourceLine, error) {
@@ -402,12 +430,15 @@ func ReadSourceBundle(compressed io.Reader, options DecodeOptions) (SourceBundle
 		case SourceLineHeader:
 			h := line.Header
 			bundle = SourceBundle{
-				SchemaVersion: h.SchemaVersion, ArchiveSessionID: h.ArchiveSessionID, NativeSessionID: h.NativeSessionID,
+				History: h.History, SchemaVersion: h.SchemaVersion, ArchiveSessionID: h.ArchiveSessionID, NativeSessionID: h.NativeSessionID,
 				ProjectID: h.ProjectID, Capture: h.Capture, PreviousGenerationID: h.PreviousGenerationID, ParentSessionID: h.ParentSessionID, LinkedSessions: h.LinkedSessions,
 				NativeRecords: make([]map[string]any, 0, min(h.Counts.NativeRecords, 1<<16)),
 			}
 		case SourceLineNativeRecord:
 			bundle.NativeRecords = append(bundle.NativeRecords, line.NativeRecord)
+			if line.Ordinal != nil {
+				bundle.Ordinals = append(bundle.Ordinals, *line.Ordinal)
+			}
 		case SourceLineNativeText:
 			bundle.NativeText = append(bundle.NativeText, *line.NativeText)
 		case SourceLineSupplementalEvidence:

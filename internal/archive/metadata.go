@@ -137,7 +137,7 @@ func defaultMetadataParser(bundle SourceBundle, parser ParserInfo) ParserInfo {
 
 func baseMetadata(bundle SourceBundle, machineID string, startedAt, derivedAt time.Time, reference SourceReference, parser ParserInfo) Metadata {
 	state, outcome := deriveLifecycle(bundle.SupplementalEvidence)
-	return Metadata{
+	m := Metadata{
 		SchemaVersion: MetadataSchemaVersion, SessionID: bundle.ArchiveSessionID, NativeSessionID: bundle.NativeSessionID,
 		MachineID: machineID, ProjectID: bundle.ProjectID, StartedAt: startedAt.UTC(), CapturedAt: bundle.Capture.CapturedAt.UTC(),
 		MetadataDerivedAt: derivedAt.UTC(), Harness: bundle.Capture.Harness,
@@ -149,6 +149,11 @@ func baseMetadata(bundle SourceBundle, machineID string, startedAt, derivedAt ti
 		ParentSessionID: bundle.ParentSessionID,
 		LinkedSessions:  append([]LinkedSessionReference(nil), bundle.LinkedSessions...),
 	}
+	if bundle.History != nil {
+		m.SchemaVersion = HistoryMetadataSchemaVersion
+		m.History = &RevisionHistory{CurrentRevision: bundle.History.ActiveRolloutID}
+	}
+	return m
 }
 
 func summarizeTurns(turns []NormalizedTurn) (prompts, messages, shellCommands int, summaries []ModelSummary) {
@@ -655,7 +660,10 @@ func skillNameFromPath(value string) string {
 // version and names its source bundle: an object key and a 64-character
 // SHA-256.
 func (m *Metadata) ValidateSourceReference() error {
-	if m.SchemaVersion != MetadataSchemaVersion {
+	if err := m.validateRevisionHistory(); err != nil {
+		return err
+	}
+	if m.SchemaVersion != MetadataSchemaVersion && m.SchemaVersion != HistoryMetadataSchemaVersion {
 		return fmt.Errorf("unsupported metadata schema version %d", m.SchemaVersion)
 	}
 	if m.SourceBundle.Key == "" || len(m.SourceBundle.SHA256) != 64 {

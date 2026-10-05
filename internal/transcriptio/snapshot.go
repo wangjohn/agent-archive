@@ -3,6 +3,7 @@ package transcriptio
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -104,6 +105,8 @@ type OpenPolicy struct {
 
 // Snapshot owns one descriptor and its fixed initial size boundary.
 type Snapshot struct {
+	files    Opener
+	path     string
 	file     File
 	stamp    Stamp
 	closed   bool
@@ -152,7 +155,7 @@ func Open(files Opener, p string, policy OpenPolicy) (*Snapshot, error) {
 			}
 			return nil, err
 		}
-		return &Snapshot{file: f, stamp: Stamp{opened.Size(), opened.ModTime(), opened}}, nil
+		return &Snapshot{files: files, path: path, file: f, stamp: Stamp{opened.Size(), opened.ModTime(), opened}}, nil
 	}
 	f, err := files.OpenRegular(path)
 	if err != nil {
@@ -168,7 +171,7 @@ func Open(files Opener, p string, policy OpenPolicy) (*Snapshot, error) {
 		}
 		return nil, err
 	}
-	return &Snapshot{file: f, stamp: Stamp{info.Size(), info.ModTime(), info}}, nil
+	return &Snapshot{files: files, path: path, file: f, stamp: Stamp{info.Size(), info.ModTime(), info}}, nil
 }
 
 // Close releases the snapshot descriptor.
@@ -248,3 +251,38 @@ type Input interface {
 
 // Length returns the captured boundary without another stat.
 func (s *Snapshot) Length() int64 { return s.stamp.Size }
+
+// CheckPrefix proves a captured prefix remained unchanged while allowing later appends.
+// Both the descriptor and locator must still identify the original regular file.
+func (s *Snapshot) CheckPrefix(ctx context.Context, length int64, digest [32]byte) error {
+	if s.closed || length < 0 || length > s.stamp.Size {
+		return ErrChanged
+	}
+	check := func() error {
+		info, err := s.file.Stat()
+		if err != nil {
+			return err
+		}
+		named, err := s.files.Lstat(s.path)
+		if err != nil {
+			return err
+		}
+		if !s.stamp.SameFile(Stamp{identity: info}) || !s.stamp.SameFile(Stamp{identity: named}) || info.Size() < length || named.Size() < length {
+			return ErrChanged
+		}
+		return nil
+	}
+	if err := check(); err != nil {
+		return err
+	}
+	h := sha256.New()
+	if _, err := io.Copy(h, &contextReader{ctx, io.NewSectionReader(s, 0, length)}); err != nil {
+		return err
+	}
+	var got [32]byte
+	copy(got[:], h.Sum(nil))
+	if got != digest {
+		return ErrChanged
+	}
+	return check()
+}
