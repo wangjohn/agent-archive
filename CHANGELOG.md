@@ -10,6 +10,14 @@ Planned for v0.2.0. This release has not been tagged or published.
 
 ### Added
 
+- Complete non-live experimental pairing/revocation handling: committed retired
+  dedicated-key history, healthy issuer labels and private operator bindings,
+  unused spare observations and bounded informational operation progress.
+  Pairing preserves standalone exclusions, offers safe scope/delivery/token/app
+  recovery and reports success before post-commit cleanup and history import.
+  Both peers must be upgraded for standalone exclusions; live provider and platform
+  acceptance remain pending and general availability stays disabled.
+
 - Draft experimental revocation with verified immutable selection, per-key
   recovery journals, serialized issuance selection and independent publication,
   plus transaction-based

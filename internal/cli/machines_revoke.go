@@ -323,9 +323,12 @@ func printRevocation(out io.Writer, j revocation.Journal, asJSON bool) {
 }
 
 type operatorBinding struct {
-	MachineID             string                   `json:"machine_id"`
-	Assignment            config.MachineAssignment `json:"assignment"`
-	IndependentlyVerified bool                     `json:"independently_verified"`
+	Name                  string                     `json:"name,omitempty"`
+	RetiredAssignments    []config.MachineAssignment `json:"retired_assignments,omitempty"`
+	UnusedSpares          []config.MachineAssignment `json:"unused_spares,omitempty"`
+	MachineID             string                     `json:"machine_id"`
+	Assignment            config.MachineAssignment   `json:"assignment"`
+	IndependentlyVerified bool                       `json:"independently_verified"`
 }
 
 func selectRevocation(ctx context.Context, home string, cfg config.Config, selector revokeSelector, j revocation.Journal, api cloudflare.API, reader cloudflare.InventoryAPI, env Env) (revocation.Journal, error) {
@@ -342,17 +345,22 @@ func selectRevocation(ctx context.Context, home string, cfg config.Config, selec
 		return j, err
 	}
 	j.PermissionID = permission
-	machineID, recipientID, assignment, err := trustedRevokeTarget(ctx, cfg, selector, slots, env)
+	var binding *operatorBinding
+	if selector.BindingFile != "" {
+		proof, err := readOperatorBinding(selector.BindingFile, cfg.DestinationID())
+		if err != nil {
+			return j, err
+		}
+		binding = &proof
+	}
+	machineID, recipientID, assignment, err := trustedRevokeTarget(ctx, cfg, selector, slots, env, binding)
 	if err != nil {
 		return j, err
 	}
 	j.TargetID = machineID
-	expected := map[string]revocation.Key{}
-	if assignment != nil {
-		if assignment.Kind != config.MachineAssignmentR2Own || !config.ValidMachineID(assignment.AccessKeyID) || !config.ValidMachineID(assignment.SlotID) {
-			return j, errors.New("shared or legacy ownership cannot be independently revoked; migrate with machines own-key")
-		}
-		expected[assignment.AccessKeyID] = revocation.Key{ProviderID: assignment.AccessKeyID, RecipientID: assignment.RecipientID, IssuerID: assignment.IssuerID, SlotID: assignment.SlotID, Outcome: revocation.Pending}
+	expected, err := committedRevocationKeys(cfg, machineID, assignment, binding)
+	if err != nil {
+		return j, err
 	}
 	addLedgerRevocationKeys(expected, slots, cfg, j, machineID, recipientID)
 	if selector.IncludeIssued {
@@ -399,36 +407,34 @@ func selectRevocation(ctx context.Context, home string, cfg config.Config, selec
 	return j, j.Validate()
 }
 
-func trustedRevokeTarget(ctx context.Context, cfg config.Config, selector revokeSelector, slots []issuance.Slot, env Env) (string, string, *config.MachineAssignment, error) {
+func trustedRevokeTarget(ctx context.Context, cfg config.Config, selector revokeSelector, slots []issuance.Slot, env Env, bindings ...*operatorBinding) (string, string, *config.MachineAssignment, error) {
+	// Local issuer labels establish recipient lineage independently of bucket claims.
+	if selector.Name != "" && selector.BindingFile == "" && selector.Name != cfg.MachineName {
+		if machine, recipient, assignment, err := trustedLedgerRecipient(cfg, selector, slots); err == nil {
+			return machine, recipient, assignment, nil
+		}
+	}
 	machineID := selector.MachineID
-	if selector.Name != "" {
-		store, err := env.openStoreContext(ctx, cfg)
-		if err != nil {
-			return "", "", nil, errors.New("cannot read target hints")
-		}
-		listing := machines.List(ctx, store)
-		if listing.Partial || len(listing.Unreadable) > 0 {
-			return "", "", nil, errors.New("target listing incomplete; use trusted recipient or pairing ID")
-		}
-		record, err := machines.Select(listing.Records, selector.Name)
+	if selector.Name != "" && selector.BindingFile == "" {
+		var err error
+		machineID, err = bucketRevokeMachineHint(ctx, cfg, selector.Name, env)
 		if err != nil {
 			return "", "", nil, err
-		}
-		machineID = record.MachineID
-		// A bucket writer can replace this machine's label. Its immutable local
-		// assignment does not authorize a different name supplied by the caller.
-		localName := cfg.MachineName
-		if localName == "" && config.ValidMachineID(cfg.MachineID) {
-			localName = "unnamed-" + cfg.MachineID[:4]
-		}
-		if machineID == cfg.MachineID && selector.Name != localName && selector.Name != cfg.MachineID {
-			return "", "", nil, errors.New("bucket label does not match this machine's trusted local name; use an independently verified immutable ID")
 		}
 	}
 	if selector.BindingFile != "" {
-		proof, err := readOperatorBinding(selector.BindingFile, cfg.DestinationID())
-		if err != nil {
-			return "", "", nil, err
+		var proof operatorBinding
+		if len(bindings) > 0 && bindings[0] != nil {
+			proof = *bindings[0]
+		} else {
+			var err error
+			proof, err = readOperatorBinding(selector.BindingFile, cfg.DestinationID())
+			if err != nil {
+				return "", "", nil, err
+			}
+		}
+		if selector.Name != "" && selector.Name != proof.Name && selector.Name != proof.MachineID {
+			return "", "", nil, errors.New("name is not independently bound; use --machine-id from the operator binding after rename")
 		}
 		if machineID != "" && machineID != proof.MachineID || selector.RecipientID != "" && selector.RecipientID != proof.Assignment.RecipientID || selector.PairingID != "" && selector.PairingID != proof.Assignment.PairingID {
 			return "", "", nil, errors.New("operator binding does not match the selected immutable identity")
@@ -437,6 +443,13 @@ func trustedRevokeTarget(ctx context.Context, cfg config.Config, selector revoke
 	}
 	if machineID == cfg.MachineID && cfg.MachineAssignment != nil && cfg.MachineAssignment.DestinationID == cfg.DestinationID() {
 		return machineID, cfg.MachineAssignment.RecipientID, cfg.MachineAssignment, nil
+	}
+	if machineID == cfg.MachineID {
+		for _, retired := range cfg.RetiredMachineAssignments {
+			if retired.DestinationID == cfg.DestinationID() {
+				return machineID, "", nil, nil
+			}
+		}
 	}
 	return trustedLedgerRecipient(cfg, selector, slots)
 }
@@ -452,14 +465,31 @@ func readOperatorBinding(path, destination string) (operatorBinding, error) {
 		return proof, errors.New("cannot read independent operator binding")
 	}
 	defer func() { _ = f.Close() }()
-	raw, err := io.ReadAll(io.LimitReader(f, 16385))
-	if err != nil || len(raw) > 16384 {
+	opened, err := f.Stat()
+	if err != nil || !os.SameFile(info, opened) || !opened.Mode().IsRegular() || opened.Mode().Perm()&0077 != 0 {
+		return proof, errors.New("operator binding changed during open")
+	}
+	raw, err := io.ReadAll(io.LimitReader(f, 65537))
+	if err != nil || len(raw) > 65536 {
 		return proof, errors.New("operator binding exceeds limit")
 	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if decoder.Decode(&proof) != nil || !proof.IndependentlyVerified || !config.ValidMachineID(proof.MachineID) || proof.Assignment.DestinationID != destination || (config.Config{MachineAssignment: &proof.Assignment}).ValidateMachine() != nil {
 		return proof, errors.New("invalid independent operator binding; never copy bucket claims into this file")
+	}
+	if proof.Name != "" && !config.ValidMachineName(proof.Name) || len(proof.RetiredAssignments)+len(proof.UnusedSpares) > 128 {
+		return proof, errors.New("invalid operator binding history")
+	}
+	for _, a := range append(append([]config.MachineAssignment{proof.Assignment}, proof.RetiredAssignments...), proof.UnusedSpares...) {
+		if a.Kind != config.MachineAssignmentR2Own || a.DestinationID != destination || !config.ValidMachineID(a.AccessKeyID) || !config.ValidMachineID(a.SlotID) || (config.Config{MachineAssignment: &a}).ValidateMachine() != nil {
+			return proof, errors.New("invalid independently verified assignment")
+		}
+	}
+	for _, spare := range proof.UnusedSpares {
+		if spare.IssuerID != proof.MachineID || spare.PairingID != "" {
+			return proof, errors.New("unused spare binding cannot be delivered lineage")
+		}
 	}
 	var extra any
 	if decoder.Decode(&extra) != io.EOF {
@@ -524,7 +554,7 @@ func addLedgerRevocationKeys(expected map[string]revocation.Key, slots []issuanc
 			continue
 		}
 		belongs := slot.RecipientID == recipientID
-		ownOrSpare := machineID != "" && slot.IssuerID == machineID && (slot.State == issuance.Own || slot.State == issuance.Spare)
+		ownOrSpare := machineID != "" && slot.IssuerID == machineID && (slot.State == issuance.Own || slot.State == issuance.Spare || slot.Origin == issuance.Precreated && slot.PairingID == "")
 		if belongs || ownOrSpare {
 			expected[slot.ProviderID] = revocation.Key{ProviderID: slot.ProviderID, RecipientID: slot.RecipientID, IssuerID: slot.IssuerID, SlotID: slot.SlotID, Outcome: revocation.Pending}
 		}
@@ -538,7 +568,7 @@ func trustedLedgerRecipient(cfg config.Config, selector revokeSelector, slots []
 		if slot.DestinationID != cfg.DestinationID() || slot.IssuerID != cfg.MachineID || slot.State == issuance.Deleted {
 			continue
 		}
-		match := selector.PairingID != "" && slot.PairingID == selector.PairingID || recipient != "" && slot.RecipientID == recipient
+		match := selector.Name != "" && slot.Label == selector.Name || selector.PairingID != "" && slot.PairingID == selector.PairingID || recipient != "" && slot.RecipientID == recipient
 		if match {
 			if recipient != "" && recipient != slot.RecipientID {
 				return "", "", nil, errors.New("ambiguous trusted recipient")
@@ -565,4 +595,60 @@ func printUnverifiedRevocationClaims(out io.Writer, cfg config.Config, selector 
 	if selected {
 		terminal.Printf(out, "Claimed key %s (unverified; no access removal confirmed).\n", assignment.AccessKeyID)
 	}
+}
+
+func addAssignmentKey(expected map[string]revocation.Key, a config.MachineAssignment, destination string) {
+	if a.DestinationID == destination && a.Kind == config.MachineAssignmentR2Own && config.ValidMachineID(a.AccessKeyID) && config.ValidMachineID(a.SlotID) {
+		expected[a.AccessKeyID] = revocation.Key{ProviderID: a.AccessKeyID, RecipientID: a.RecipientID, IssuerID: a.IssuerID, SlotID: a.SlotID, Outcome: revocation.Pending}
+	}
+}
+
+func committedRevocationKeys(cfg config.Config, machineID string, assignment *config.MachineAssignment, binding *operatorBinding) (map[string]revocation.Key, error) {
+	expected := map[string]revocation.Key{}
+	if assignment != nil {
+		if assignment.Kind != config.MachineAssignmentR2Own || !config.ValidMachineID(assignment.AccessKeyID) || !config.ValidMachineID(assignment.SlotID) {
+			return nil, errors.New("shared or legacy ownership cannot be independently revoked; migrate with machines own-key")
+		}
+		expected[assignment.AccessKeyID] = revocation.Key{ProviderID: assignment.AccessKeyID, RecipientID: assignment.RecipientID, IssuerID: assignment.IssuerID, SlotID: assignment.SlotID, Outcome: revocation.Pending}
+	}
+	if machineID == cfg.MachineID {
+		for _, retired := range cfg.RetiredMachineAssignments {
+			if retired.DestinationID == cfg.DestinationID() && (!config.ValidMachineID(retired.AccessKeyID) || !config.ValidMachineID(retired.SlotID)) {
+				return nil, errors.New("retired dedicated binding is incomplete; no deletion started")
+			}
+			addAssignmentKey(expected, retired, cfg.DestinationID())
+		}
+	}
+	if binding != nil {
+		for _, a := range append(binding.RetiredAssignments, binding.UnusedSpares...) {
+			addAssignmentKey(expected, a, cfg.DestinationID())
+		}
+	}
+	return expected, nil
+}
+
+func bucketRevokeMachineHint(ctx context.Context, cfg config.Config, name string, env Env) (string, error) {
+	store, err := env.openStoreContext(ctx, cfg)
+	if err != nil {
+		return "", errors.New("cannot read target hints")
+	}
+	listing := machines.List(ctx, store)
+	if listing.Partial || len(listing.Unreadable) > 0 {
+		return "", errors.New("target listing incomplete; use trusted recipient or pairing ID")
+	}
+	record, err := machines.Select(listing.Records, name)
+	if err != nil {
+		return "", err
+	}
+	machineID := record.MachineID
+	// A bucket writer can replace this machine's label. Its immutable local
+	// assignment does not authorize a different name supplied by the caller.
+	localName := cfg.MachineName
+	if localName == "" && config.ValidMachineID(cfg.MachineID) {
+		localName = "unnamed-" + cfg.MachineID[:4]
+	}
+	if machineID == cfg.MachineID && name != localName && name != cfg.MachineID {
+		return "", errors.New("bucket label does not match this machine's trusted local name; use an independently verified immutable ID")
+	}
+	return machineID, nil
 }

@@ -31,7 +31,14 @@ func TestMachineRecordMatchesPublishedSchema(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	b, e := json.Marshal(sample(t, strings.Repeat("a", 32)))
+	r := sample(t, strings.Repeat("a", 32))
+	r.UnusedSpares = []CredentialBinding{{Kind: "r2_own", AccessKeyID: strings.Repeat("b", 32), RecipientID: strings.Repeat("c", 32), IssuerID: r.MachineID, SlotID: strings.Repeat("d", 32)}}
+	r.RetiredCredentials = []CredentialBinding{{Kind: "r2_own", AccessKeyID: strings.Repeat("e", 32), RecipientID: strings.Repeat("f", 32), IssuerID: r.MachineID, SlotID: strings.Repeat("1", 32)}}
+	r.CredentialHistoryPartial = true
+	if err := validate(r); err != nil {
+		t.Fatal(err)
+	}
+	b, e := json.Marshal(r)
 	if e != nil {
 		t.Fatal(e)
 	}

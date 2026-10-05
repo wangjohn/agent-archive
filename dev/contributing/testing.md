@@ -736,3 +736,25 @@ go test ./internal/archive -run '^$' -fuzz '^FuzzFilterJSONL$' -fuzztime 2m -fuz
 
 A failing input is written to `testdata/fuzz/<target>/`; keep it there as a
 seed once it is fixed.
+
+
+## Non-live machine pairing regression coverage
+
+Run combined source, recipient and third-operator fake acceptance together with
+scope, delivery, token-source and progress regressions:
+
+```sh
+go test -race ./internal/cli -run 'TestMachine(TwoHome|Remote)FakeAcceptance|TestPairingStandalone|TestPairingClipboardUnavailable|TestManagementTokenFailure|TestCommittedPairingHousekeeping|TestRetired|TestDirectDiscovery|TestRevocationProgressUses|TestPairingMissingApp' -count=1
+```
+
+These use temporary homes, private synthetic operator bindings, memory object and
+credential stores, and a loopback fake Cloudflare provider. Source issuer labels,
+rename-safe third-machine IDs, re-pairing history, unused versus delivered spares,
+issuer compromise and per-key partial deletion/retry are combined command flows.
+The existing issuance/revocation suites additionally exercise lock contention,
+interrupted reservations, uncertain delivery and cancelled execution budgets;
+bounded discovery/listing suites cover partial reads, shared deadlines, caps and
+worker limits. Fake results do not establish live token permissions, account
+inventory visibility, absence semantics, propagation or macOS/Linux timings.
+Keep the first-run pairing and experimental default gates disabled until the
+separate live and platform acceptance record satisfies those requirements.

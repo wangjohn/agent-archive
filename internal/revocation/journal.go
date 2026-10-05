@@ -179,3 +179,54 @@ func (j *Journal) Complete() bool {
 	}
 	return true
 }
+
+// Summary distinguishes requested, partial and ambiguous results without proving bucket claims.
+func (j Journal) Summary() string {
+	if j.RequestOnly || len(j.Keys) == 0 {
+		return "requested; access not removed"
+	}
+	confirmed, unknown := 0, false
+	for _, key := range j.Keys {
+		if key.Outcome == Confirmed {
+			confirmed++
+		}
+		unknown = unknown || key.Outcome == Unknown
+	}
+	if confirmed == len(j.Keys) {
+		return "provider-confirmed for selected key set; account completeness unknown"
+	}
+	if confirmed > 0 {
+		return "partial; access not verified removed for remaining keys"
+	}
+	if unknown {
+		return "failed or unknown; access not verified removed"
+	}
+	return "requested; provider results pending"
+}
+
+// List reads bounded local operation snapshots for informational status only.
+func List(home string) ([]Journal, error) {
+	entries, err := os.ReadDir(filepath.Join(home, "revocations"))
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, errors.New("revocation progress unreadable")
+	}
+	if len(entries) > 1000 {
+		return nil, errors.New("revocation progress exceeds entry limit")
+	}
+	var result []Journal
+	for _, entry := range entries {
+		id := strings.TrimSuffix(strings.TrimPrefix(entry.Name(), "operation-"), ".json")
+		if entry.Name() != "operation-"+id+".json" || !entry.Type().IsRegular() {
+			continue
+		}
+		j, err := Load(home, id)
+		if err != nil {
+			return result, err
+		}
+		result = append(result, j)
+	}
+	return result, nil
+}

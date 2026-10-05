@@ -271,6 +271,7 @@ func claudeConfigDir(files hooks.Files) string { return filepath.Dir(files["clau
 func mergeCommittedSetupState(old config.Config, next *config.Config, stopImported []string) {
 	// Operational ownership comes from committed state, never a resumable
 	// draft. A crash after commit can leave a pre-commit draft on disk.
+	next.RetiredMachineAssignments = append([]config.MachineAssignment(nil), old.RetiredMachineAssignments...)
 	next.DestinationSince = old.DestinationSince
 	next.PreviousDestinations = append([]credentials.Config(nil), old.PreviousDestinations...)
 	next.ImportedHarnesses = carriedImportedHarnesses(old.ImportedHarnesses, next.Harnesses, stopImported)
@@ -330,15 +331,7 @@ func prepareSetupConfig(home, executable string, old config.Config, next *config
 			return err
 		}
 	}
-	if next.MachineAssignment != nil && (next.MachineAssignment.DestinationID != next.DestinationID() || (old.Storage.R2CredentialRef != next.Storage.R2CredentialRef && reflect.DeepEqual(next.MachineAssignment, old.MachineAssignment))) {
-		next.MachineAssignment = nil
-	}
-	if next.MachineName == "" {
-		next.MachineName = "unnamed"
-		if config.ValidMachineID(next.MachineID) {
-			next.MachineName = "unnamed-" + next.MachineID[:4]
-		}
-	}
+	prepareMachineAssignment(old, next)
 	if err := next.ValidateCloudflareTokenCommand(); err != nil {
 		return err
 	}
@@ -611,4 +604,26 @@ func freshestBucketPrivacy(cfg config.Config, candidate *storage.PrivacyReport) 
 		return nil
 	}
 	return candidate
+}
+
+func prepareMachineAssignment(old config.Config, next *config.Config) {
+	if next.MachineAssignment != nil && (next.MachineAssignment.DestinationID != next.DestinationID() || (old.Storage.R2CredentialRef != next.Storage.R2CredentialRef && reflect.DeepEqual(next.MachineAssignment, old.MachineAssignment))) {
+		next.MachineAssignment = nil
+	}
+	// Retire only committed provenance, inside the same configuration transaction.
+	if a := old.MachineAssignment; a != nil && a.Kind == config.MachineAssignmentR2Own && !reflect.DeepEqual(a, next.MachineAssignment) {
+		present := false
+		for _, prior := range next.RetiredMachineAssignments {
+			present = present || prior.DestinationID == a.DestinationID && prior.AccessKeyID == a.AccessKeyID
+		}
+		if !present {
+			next.RetiredMachineAssignments = append(next.RetiredMachineAssignments, *a)
+		}
+	}
+	if next.MachineName == "" {
+		next.MachineName = "unnamed"
+		if config.ValidMachineID(next.MachineID) {
+			next.MachineName = "unnamed-" + next.MachineID[:4]
+		}
+	}
 }

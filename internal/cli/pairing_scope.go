@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -77,12 +78,15 @@ func exportPairingScope(ctx context.Context, cfg config.Config, home string, env
 			continue
 		}
 		root := local.CanonicalPath(project.Root)
+		mapped := false
 		var affected []string
 		for i, inc := range inclusions {
 			if local.PathWithin(root, roots[i]) {
+				mapped = true
 				rel, _ := filepath.Rel(roots[i], root)
 				exclusions = append(exclusions, pairing.Exclusion{InclusionID: inc.ID, Path: filepath.ToSlash(rel), Affected: []string{inc.ID}})
 			} else if local.PathWithin(roots[i], root) {
+				mapped = true
 				affected = append(affected, inc.ID)
 			}
 		}
@@ -90,6 +94,20 @@ func exportPairingScope(ctx context.Context, cfg config.Config, home string, env
 		for _, id := range affected {
 			exclusions = append(exclusions, pairing.Exclusion{InclusionID: id, Path: ".", Affected: []string{id}})
 		}
+		if !mapped {
+			if rel := portableHomePath(root, home); rel != "" {
+				exclusions = append(exclusions, pairing.Exclusion{HomeRelative: true, Path: rel, Affected: []string{}})
+			} else {
+				ids := []string{}
+				for _, inc := range inclusions {
+					ids = append(ids, inc.ID)
+				}
+				exclusions = append(exclusions, pairing.Exclusion{Unresolved: true, Affected: ids})
+			}
+		}
+	}
+	if len(exclusions) > 128 {
+		return nil, nil, fmt.Errorf("more than 128 exclusions; reduce capture scope before pairing")
 	}
 	return inclusions, exclusions, nil
 }
@@ -108,7 +126,7 @@ func resolvePortablePath(base, rel string) (string, error) {
 
 func pairScope(p *prompter, payload pairing.Payload, existing config.Config, userHome string, env Env, yes bool) ([]archive.ProjectActivation, error) {
 	matches := discoverPairingScope(payload, existing, userHome, env)
-	selected, err := choosePairingScopes(p, payload, matches, userHome, yes)
+	selected, err := choosePairingScopes(p, payload, matches, userHome, yes, env)
 	if err != nil {
 		return nil, err
 	}
@@ -162,6 +180,7 @@ func discoverPairingScope(payload pairing.Payload, existing config.Config, userH
 			}
 			mapped, e := resolvePortablePath(root, inc.RepoPath)
 			if e == nil {
+				matches.RepositoryKeys[mapped] = matches.RepositoryKeys[root]
 				validated = append(validated, mapped)
 			}
 		}
@@ -172,12 +191,26 @@ func discoverPairingScope(payload pairing.Payload, existing config.Config, userH
 	return matches
 }
 
-func choosePairingScopes(p *prompter, payload pairing.Payload, matches projectMatchResult, userHome string, yes bool) (map[string][]string, error) {
+func choosePairingScopes(p *prompter, payload pairing.Payload, matches projectMatchResult, userHome string, yes bool, environments ...Env) (map[string][]string, error) {
+	env := Env{}
+	if len(environments) > 0 {
+		env = environments[0]
+	}
 	selected := map[string][]string{}
 	for i, inc := range payload.Inclusions {
 		roots := matches.Roots[i]
-		if matches.Incomplete {
+		if matches.Incomplete && yes {
 			roots = nil
+		}
+		if matches.Incomplete && !yes && len(roots) > 0 {
+			terminal.Printf(p.out, "Partial evidence for %s; other clones may exist.\n", inc.Label)
+			allow, err := p.yesNo("Use these observed candidates despite incomplete discovery?", false)
+			if err != nil {
+				return nil, err
+			}
+			if !allow {
+				roots = nil
+			}
 		}
 		if len(roots) > 1 {
 			if yes {
@@ -212,6 +245,24 @@ func choosePairingScopes(p *prompter, payload pairing.Payload, matches projectMa
 					}
 				}
 			}
+		}
+		if len(roots) == 0 && !yes {
+			root, key, known, err := manualPairingScope(p, inc, userHome, env)
+			if err != nil {
+				return nil, err
+			}
+			if root != "" {
+				roots = []string{root}
+				if matches.RepositoryKeys == nil {
+					matches.RepositoryKeys = map[string]string{}
+				}
+				if known {
+					matches.RepositoryKeys[root] = key
+				}
+			}
+		}
+		for _, root := range roots {
+			printPairingScopeMatch(p, inc, root, userHome, matches.RepositoryKeys)
 		}
 		if len(roots) == 0 {
 			terminal.Printf(p.out, "Skipped project %s: no unique complete eligible match; use setup --project to choose manually.\n", inc.Label)
@@ -265,7 +316,20 @@ func mapPairingExclusions(p *prompter, payload pairing.Payload, selected map[str
 			allow := false
 			if !yes {
 				var err error
-				allow, err = p.yesNo("An exclusion could not be mapped. Explicitly include its affected projects without that source exclusion?", false)
+				terminal.Println(p.out, "Source exclusion could not be mapped; source absolute paths are never carried.")
+				path, e := p.ask("Map exclusion to a path relative to this home (Enter to leave unresolved)", false, nil, -1, ": ")
+				if e != nil {
+					return nil, nil, e
+				}
+				if path != "" {
+					root, e := resolvePortablePath(userHome, path)
+					if e != nil {
+						return nil, nil, e
+					}
+					exclusions = append(exclusions, archive.ProjectActivation{Root: root, ProjectID: archive.ProjectID(root), Included: false})
+					continue
+				}
+				allow, err = p.yesNo("Explicitly include affected projects without that source exclusion?", false)
 				if err != nil {
 					return nil, nil, err
 				}
@@ -352,4 +416,49 @@ func (e Env) pairingRepositoryRoot(ctx context.Context, root string) (string, er
 		return "", fmt.Errorf("repository root does not contain the inclusion")
 	}
 	return top, nil
+}
+
+func manualPairingScope(p *prompter, inc pairing.Inclusion, userHome string, env Env) (string, string, bool, error) {
+	path, err := p.ask("Manual local directory for "+inc.Label+" (Enter to skip)", false, nil, -1, ": ")
+	if err != nil || path == "" {
+		return "", "", false, err
+	}
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(userHome, path)
+	}
+	info, e := os.Stat(path)
+	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	key, known := env.projectOrigin(ctx, path)
+	known = known && ctx.Err() == nil
+	cancel()
+	if e != nil || !info.IsDir() || inc.RepoKey != "" && (!known || key != "" && key != inc.RepoKey) {
+		return "", "", false, fmt.Errorf("manual project path is missing or its repository does not match")
+	}
+	if inc.RepoPath != "" && inc.RepoPath != "." {
+		ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+		top, e := env.pairingRepositoryRoot(ctx, path)
+		cancel()
+		if e != nil {
+			return "", "", false, fmt.Errorf("manual repository root cannot be verified")
+		}
+		path, e = resolvePortablePath(top, inc.RepoPath)
+		if e != nil {
+			return "", "", false, e
+		}
+	}
+	return local.CanonicalPath(path), key, known, nil
+}
+
+func printPairingScopeMatch(p *prompter, inc pairing.Inclusion, root, userHome string, repositoryKeys map[string]string) {
+	method := "explicit path; repository evidence unavailable"
+	if key, observed := repositoryKeys[root]; observed {
+		method = "matched by path (no origin)"
+		if key != "" {
+			method = "matched by path; local repository " + key
+		}
+		if inc.RepoKey != "" && key == inc.RepoKey {
+			method = "matched by repository " + key
+		}
+	}
+	terminal.Printf(p.out, "Selected %s: %s (%s; source path hint %s).\n", inc.Label, homeRelative(root, userHome), method, inc.HomePath)
 }

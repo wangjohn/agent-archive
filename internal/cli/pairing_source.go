@@ -103,10 +103,11 @@ func runPairingAdd(args []string, stdin io.Reader, out, errOut io.Writer, env En
 	if !sparesSet {
 		*spares = -1
 	}
-	return executePairingAdd(home, cfg, payload, p, env, out, errOut, pairingAddOptions{name: *name, share: *share, spares: *spares, yes: *yes, printBundle: *printBundle, file: *file})
+	return executePairingAdd(home, cfg, payload, p, env, out, errOut, pairingAddOptions{prompt: p, name: *name, share: *share, spares: *spares, yes: *yes, printBundle: *printBundle, file: *file})
 }
 
 type pairingAddOptions struct {
+	prompt      *prompter
 	name        string
 	share       bool
 	spares      int
@@ -558,8 +559,36 @@ func deliverPairingBundle(home, bundle string, ledger *pairingLedger, slot *issu
 	} else if opts.printBundle || opts.yes {
 		_, err = fmt.Fprintln(out, bundle)
 	} else {
-		err = env.pairClipboardWrite([]byte(bundle))
-		if err == nil {
+		copied := false
+		for {
+			err = env.pairClipboardWrite([]byte(bundle))
+			copied = err == nil
+			if err == nil || opts.prompt == nil {
+				break
+			}
+			terminal.Println(errOut, "Clipboard unavailable. The key remains tracked; choose deliberate delivery or retry.")
+			choice, e := opts.prompt.menu("Bundle delivery", "cancel", option{"retry", "Retry clipboard"}, option{"file", "Write a new private file"}, option{"print", "Print encrypted bundle in this terminal"}, option{"cancel", "Stop; retain tracked key"})
+			if e != nil || choice == "cancel" {
+				break
+			}
+			if choice == "retry" {
+				continue
+			}
+			if choice == "print" {
+				_, err = fmt.Fprintln(out, bundle)
+				break
+			}
+			path, e := opts.prompt.ask("New private bundle file", false, nil, -1, ": ")
+			if e != nil {
+				err = e
+				break
+			}
+			err = writePairingFile(path, bundle)
+			if err == nil {
+				break
+			}
+		}
+		if copied {
 			// The outer command retains clipboard/code until it exits.
 			terminal.Println(out, "Encrypted bundle copied. Clipboard managers may retain it.")
 		}

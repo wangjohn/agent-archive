@@ -12,6 +12,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/cloudflare"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
+	"github.com/wangjohn/agent-archive/internal/issuance"
 	"github.com/wangjohn/agent-archive/internal/machines"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
@@ -29,6 +30,7 @@ const (
 )
 
 type machineProviderObservation struct {
+	Role        string                   `json:"role,omitempty"`
 	MachineID   string                   `json:"machine_id"`
 	AccessKeyID string                   `json:"access_key_id,omitempty"`
 	State       providerObservationState `json:"state"`
@@ -111,7 +113,16 @@ func runMachinesVerify(cfg config.Config, listing machines.ListResult, stdin io.
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), cloudflare.InventoryTimeout)
 	defer cancel()
-	report := verifyProvider(ctx, cfg, listing, api, inventoryAPI, account, bucket, env.now())
+	home, homeErr := env.readHome()
+	var slots []issuance.Slot
+	if homeErr == nil {
+		slots, homeErr = issuance.List(home)
+	}
+	report := verifyProvider(ctx, cfg, listing, api, inventoryAPI, account, bucket, env.now(), slots)
+	if homeErr != nil {
+		report.Partial = true
+		report.Diagnostic = "local_issuance_unreadable"
+	}
 	listing.ProviderVerified = !listing.Partial && len(listing.Unreadable) == 0 && !report.Partial && report.PaginationComplete
 	result := verifiedMachinesResult{ListResult: listing, Verification: report}
 	if asJSON {
@@ -127,7 +138,7 @@ func runMachinesVerify(cfg config.Config, listing machines.ListResult, stdin io.
 			terminal.Println(out, "Bucket machine listing is incomplete; provider observations cover only readable records.")
 		}
 		for _, observation := range report.Observations {
-			terminal.Printf(out, "%s  %s  %s (%s)\n", observation.MachineID, observation.AccessKeyID, observation.State, observation.Binding)
+			terminal.Printf(out, "%s  %s  %s  %s (%s)\n", observation.MachineID, observation.AccessKeyID, observation.Role, observation.State, observation.Binding)
 		}
 		for _, id := range report.Unclaimed {
 			terminal.Printf(out, "Provider key %s: claim not observed.\n", id)
@@ -144,7 +155,7 @@ func runMachinesVerify(cfg config.Config, listing machines.ListResult, stdin io.
 	return 0
 }
 
-func verifyProvider(ctx context.Context, cfg config.Config, listing machines.ListResult, api cloudflare.API, reader cloudflare.InventoryAPI, account string, bucket cloudflare.BucketRef, now time.Time) providerVerification {
+func verifyProvider(ctx context.Context, cfg config.Config, listing machines.ListResult, api cloudflare.API, reader cloudflare.InventoryAPI, account string, bucket cloudflare.BucketRef, now time.Time, localSlots ...[]issuance.Slot) providerVerification {
 	inventory, err := reader.TokenInventory(ctx, account)
 	report := newProviderVerification(now, inventory.PaginationComplete)
 	if err != nil {
@@ -167,38 +178,46 @@ func verifyProvider(ctx context.Context, cfg config.Config, listing machines.Lis
 	claimed := map[string]bool{}
 	details := 0
 	for _, record := range listing.Records {
-		binding := record.Credential
-		claimed[binding.AccessKeyID] = true
-		if !config.ValidMachineID(binding.AccessKeyID) {
-			report.Observations = append(report.Observations, machineProviderObservation{MachineID: record.MachineID, State: observationLegacy, Binding: "untrusted_bucket_claim"})
-			continue
-		}
-		token, found := tokens[binding.AccessKeyID]
-		if (!found || len(token.Policies) == 0) && details < 16 && ctx.Err() == nil {
-			details++
-			detail, detailErr := reader.TokenDetails(ctx, account, binding.AccessKeyID)
-			if detailErr == nil {
-				token = detail
-				found = true
-				tokens[token.ID] = token
-			}
-		}
-		state, complete := providerBindingState(token, found, binding, account, bucket, permissionID, now)
-		locallyCommitted := false
-		if !complete {
+		if record.CredentialHistoryPartial {
 			report.Partial = true
+			report.Diagnostic = "credential_history_claim_incomplete"
 		}
+		bindings := append([]machines.CredentialBinding{record.Credential}, record.UnusedSpares...)
+		bindings = append(bindings, record.RetiredCredentials...)
+		for index, binding := range bindings {
+			role := "current"
+			if index > 0 && index <= len(record.UnusedSpares) {
+				role = "unused_spare_claim"
+			} else if index > 0 {
+				role = "retired_credential_claim"
+			}
+			claimed[binding.AccessKeyID] = true
+			if !config.ValidMachineID(binding.AccessKeyID) {
+				report.Observations = append(report.Observations, machineProviderObservation{Role: role, MachineID: record.MachineID, State: observationLegacy, Binding: "untrusted_bucket_claim"})
+				continue
+			}
+			token, found := tokens[binding.AccessKeyID]
+			if (!found || len(token.Policies) == 0) && details < 16 && ctx.Err() == nil {
+				details++
+				detail, detailErr := reader.TokenDetails(ctx, account, binding.AccessKeyID)
+				if detailErr == nil {
+					token = detail
+					found = true
+					tokens[token.ID] = token
+				}
+			}
+			state, complete := providerBindingState(token, found, binding, account, bucket, permissionID, now)
+			if !complete {
+				report.Partial = true
+			}
 
-		if record.MachineID == cfg.MachineID && cfg.MachineAssignment != nil && cfg.MachineAssignment.DestinationID == cfg.DestinationID() {
-			local := cfg.MachineAssignment
-			if local.AccessKeyID == binding.AccessKeyID && local.RecipientID == binding.RecipientID && local.IssuerID == binding.IssuerID && local.SlotID == binding.SlotID && local.Kind == binding.Kind {
-				locallyCommitted = true
-			} else {
+			locallyCommitted, mismatch := locallyCommittedProviderBinding(cfg, record.MachineID, binding, role, localSlots)
+			if mismatch {
 				state = observationLocalMismatch
 				report.Partial = true
 			}
+			report.Observations = append(report.Observations, machineProviderObservation{Role: role, MachineID: record.MachineID, AccessKeyID: binding.AccessKeyID, State: state, Binding: providerBindingTrust(locallyCommitted)})
 		}
-		report.Observations = append(report.Observations, machineProviderObservation{MachineID: record.MachineID, AccessKeyID: binding.AccessKeyID, State: state, Binding: providerBindingTrust(locallyCommitted)})
 	}
 	for _, token := range inventory.Tokens {
 		if _, known := cloudflare.ParseProviderName(token.Name); known && !claimed[token.ID] && cloudflare.ExactBucketPolicy(token, account, bucket, permissionID) {
@@ -279,4 +298,40 @@ func providerTokenActive(token cloudflare.TokenMetadata, now time.Time) bool {
 		}
 	}
 	return true
+}
+
+func locallyCommittedProviderBinding(cfg config.Config, machineID string, binding machines.CredentialBinding, role string, localSlots [][]issuance.Slot) (bool, bool) {
+	if machineID != cfg.MachineID {
+		return false, false
+	}
+	switch role {
+	case "current":
+		local := cfg.MachineAssignment
+		if local == nil || local.DestinationID != cfg.DestinationID() {
+			return false, false
+		}
+		matches := providerAssignmentMatches(binding, *local)
+		return matches, !matches
+	case "retired_credential_claim":
+		for _, retired := range cfg.RetiredMachineAssignments {
+			if retired.DestinationID == cfg.DestinationID() && providerAssignmentMatches(binding, retired) {
+				return true, false
+			}
+		}
+	case "unused_spare_claim":
+		for _, slots := range localSlots {
+			for _, slot := range slots {
+				if providerSpareMatches(cfg, binding, slot) {
+					return true, false
+				}
+			}
+		}
+	}
+	return false, true
+}
+func providerAssignmentMatches(binding machines.CredentialBinding, a config.MachineAssignment) bool {
+	return a.AccessKeyID == binding.AccessKeyID && a.RecipientID == binding.RecipientID && a.IssuerID == binding.IssuerID && a.SlotID == binding.SlotID && a.Kind == binding.Kind
+}
+func providerSpareMatches(cfg config.Config, binding machines.CredentialBinding, slot issuance.Slot) bool {
+	return slot.State == issuance.Spare && slot.DestinationID == cfg.DestinationID() && slot.IssuerID == cfg.MachineID && slot.ProviderID == binding.AccessKeyID && slot.RecipientID == binding.RecipientID && slot.SlotID == binding.SlotID
 }

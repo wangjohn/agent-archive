@@ -759,7 +759,7 @@ func finishSetup(p *prompter, errOut io.Writer, home string, cfg config.Config, 
 		terminal.Printf(p.out, "Warning: installed application versions could not be recorded: %v\n", err)
 	}
 	if err := os.Remove(draftPath(home)); err != nil && !os.IsNotExist(err) {
-		return err
+		terminal.Println(errOut, "Configuration is committed; saved setup draft cleanup pending. Rerun setup to retry cleanup.")
 	}
 	// The configuration is committed; a diagnostic for a project that
 	// was just excluded is stale local state, not a reason to fail.

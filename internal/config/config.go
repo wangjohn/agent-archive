@@ -73,6 +73,8 @@ type Config struct {
 	MachineName string `json:"machine_name,omitempty"`
 	// MachineAssignment is locally committed credential provenance for one destination.
 	MachineAssignment *MachineAssignment `json:"machine_assignment,omitempty"`
+	// RetiredMachineAssignments retains committed dedicated bindings after replacement.
+	RetiredMachineAssignments []MachineAssignment `json:"retired_machine_assignments,omitempty"`
 	// MCPServerNames supplies display labels for server IDs in stats.
 	MCPServerNames map[string]string `json:"mcp_server_names,omitempty"`
 

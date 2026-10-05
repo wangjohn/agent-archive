@@ -210,3 +210,28 @@ independently verified binding; bucket records alone are insufficient. A
 request or unknown provider result does not mean access was removed. Local data
 removal includes this installation's revocation journals and own-key checkpoint,
 without deleting unrelated files or other users' shared provider key.
+
+
+Before deleting local data, retain independently verified nonsecret ownership
+bindings from the retiring machine: its `machine_id`, chosen name, current
+`machine_assignment`, same-destination `retired_machine_assignments`, and unused
+spare assignments from its local issuance ledger. Keep them in a private operator
+binding file as described in [machine revocation](../guides/multiple-machines.md#experimental-revocation-and-shared-key-migration).
+Do not reconstruct this evidence from bucket records. From a healthy authorized
+machine using the same destination, explicitly enable the experimental revoke gate
+for that invocation and run:
+
+```sh
+AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_REVOKE=1 agent-archive machines revoke --machine-id MACHINE_ID --binding-file /private/path/verified-binding.json
+```
+
+Use the verified immutable ID after rename. Review the provider-verified key set
+and confirm interactively; `--yes` never bypasses ownership checks. For issuer
+compromise, add `--include-issued` only after verifying the issuer ID out of band;
+this can remove delivered descendants' access too. The original healthy issuer
+can instead select its unique original issuance label, `--recipient-id` or
+`--pairing-id`. A requested, partial, failed or unknown result leaves access removal
+unconfirmed. Retain the operation journal and retry its `--operation-id` from the
+same operator home. Shared or legacy access requires provider dashboard/IAM action;
+replacing a shared key requires updating every user. Uninstall itself never deletes
+provider keys, and downloaded data remains.

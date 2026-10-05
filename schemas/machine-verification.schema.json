@@ -1,31 +1,95 @@
 {
- "$schema": "https://json-schema.org/draft/2020-12/schema",
- "$id": "https://agent-archive.dev/schemas/machine-verification.schema.json",
- "title": "Experimental provider verification observations",
- "type": "object",
- "required": ["checked_at", "pagination_complete", "account_inventory_complete", "visibility", "partial", "observations"],
- "additionalProperties": false,
- "properties": {
-  "checked_at": {"type": "string", "format": "date-time"},
-  "pagination_complete": {"type": "boolean"},
-  "account_inventory_complete": {"const": false},
-  "visibility": {"const": "unknown_may_be_creator_only"},
-  "partial": {"type": "boolean"},
-  "diagnostic": {"enum": ["token_listing_failed_or_incomplete", "permission_evidence_unavailable", "provider_budget_exhausted"]},
-  "claim_not_observed": {"type": "array", "items": {"type": "string", "pattern": "^[0-9a-f]{32}$"}},
-  "observations": {
-   "type": "array",
-   "items": {
-    "type": "object",
-    "required": ["machine_id", "state", "binding"],
-    "additionalProperties": false,
-    "properties": {
-     "machine_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
-     "access_key_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
-     "state": {"enum": ["legacy_or_unknown_binding", "missing_or_not_visible", "scope_unknown_or_mismatch", "provider_key_not_active", "issuance_unknown_or_mismatch", "provider_metadata_matches_claim", "local_binding_mismatch"]},
-     "binding": {"enum": ["untrusted_bucket_claim", "local_committed_binding"]}
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-archive.dev/schemas/machine-verification.schema.json",
+  "title": "Experimental provider verification observations",
+  "type": "object",
+  "required": [
+    "checked_at",
+    "pagination_complete",
+    "account_inventory_complete",
+    "visibility",
+    "partial",
+    "observations"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "checked_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "pagination_complete": {
+      "type": "boolean"
+    },
+    "account_inventory_complete": {
+      "const": false
+    },
+    "visibility": {
+      "const": "unknown_may_be_creator_only"
+    },
+    "partial": {
+      "type": "boolean"
+    },
+    "diagnostic": {
+      "enum": [
+        "token_listing_failed_or_incomplete",
+        "permission_evidence_unavailable",
+        "provider_budget_exhausted",
+        "local_issuance_unreadable",
+        "credential_history_claim_incomplete"
+      ]
+    },
+    "claim_not_observed": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{32}$"
+      }
+    },
+    "observations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "machine_id",
+          "state",
+          "binding"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "machine_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{32}$"
+          },
+          "access_key_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{32}$"
+          },
+          "state": {
+            "enum": [
+              "legacy_or_unknown_binding",
+              "missing_or_not_visible",
+              "scope_unknown_or_mismatch",
+              "provider_key_not_active",
+              "issuance_unknown_or_mismatch",
+              "provider_metadata_matches_claim",
+              "local_binding_mismatch"
+            ]
+          },
+          "binding": {
+            "enum": [
+              "untrusted_bucket_claim",
+              "local_committed_binding"
+            ]
+          },
+          "role": {
+            "enum": [
+              "current",
+              "unused_spare_claim",
+              "retired_credential_claim"
+            ]
+          }
+        }
+      }
     }
-   }
   }
- }
 }
