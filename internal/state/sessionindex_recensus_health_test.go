@@ -153,6 +153,9 @@ func TestPackedCompletedSchedulerRefusesDamagedMembershipWithoutFlag(t *testing.
 			writePackedHealthFixture(t, s, marker, cursor)
 			path := filepath.Join(s.home, sessionMembershipFile)
 			switch damage {
+			case certificateDamageMissing, certificateDamageCorrupt, certificateDamageFuture,
+				certificateDamageEpoch, certificateDamageRevision, certificateDamageInventory:
+				t.Fatalf("unexpected non-membership damage case: %q", damage)
 			case certificateDamageMissingMembership:
 				if err := os.Remove(path); err != nil {
 					t.Fatal(err)
