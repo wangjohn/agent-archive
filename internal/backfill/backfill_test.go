@@ -318,10 +318,10 @@ func TestIdentityAndClassification(t *testing.T) {
 			codex[filepath.Base(c.TranscriptPath)] = c.Skip
 		}
 	}
-	if codex[filepath.Base(codexFile("0a9b3c4d-0000-4000-8000-000000000005"))] != SkipIdentityMismatch {
+	if codex[filepath.Base(codexFile("0a9b3c4d-0000-4000-8000-000000000005"))] != SkipRelatedHistory {
 		t.Errorf("file name mismatch: %v", codex)
 	}
-	if len(codex) != 4 || codex[filepath.Base(codexFile(good))] != "" || codex[filepath.Base(codexFile(other))] != SkipDuplicateSession || codex[filepath.Base(codexFile("0a9b3c4d-0000-4000-8000-000000000003"))] != SkipIdentityMismatch {
+	if len(codex) != 4 || codex[filepath.Base(codexFile(good))] != SkipRelatedHistory || codex[filepath.Base(codexFile(other))] != SkipDuplicateSession || codex[filepath.Base(codexFile("0a9b3c4d-0000-4000-8000-000000000003"))] != SkipRelatedHistory {
 		t.Fatalf("codex skips: %v", codex)
 	}
 	if c := candidate(t, p, "ok"); !c.StartedAt.Equal(start.UTC().Truncate(time.Second)) || c.StartedAtSource != archive.StartedAtSourceTranscript || c.ProjectRoot != repo {

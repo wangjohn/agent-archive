@@ -30,6 +30,9 @@ func (e *FilterError) Error() string { return "unsafe source format: " + e.Reaso
 // recognizes, so nothing in it is known to be safe to retain.
 var ErrUnsafeSourceFormat = &FilterError{Reason: "no recognized safe records"}
 
+// ErrRelatedHistory refuses capture until all related native history can be read.
+var ErrRelatedHistory = &FilterError{Reason: "related history capture is not yet supported"}
+
 // ErrRecordTooLarge means one JSONL record is longer than MaxRecordBytes. It is
 // a FilterError like any other refusal, distinct so a caller can record it as
 // the capture gap it is rather than a malformed transcript.

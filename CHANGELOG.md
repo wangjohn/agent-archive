@@ -6,6 +6,15 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Codex metadata distinguishes stable threads, root conversations, immediate
+  parents, forks and physical rollout segments. Valid child, fork and revised
+  histories report that capture support is pending instead of conflicting IDs;
+  incomplete related histories are not imported or newly captured.
+- Backfill reports a transcript that changed during reading as retryable,
+  rather than an unsafe format, while continuing other imports.
+
 ## [0.2.0]
 
 ### Documentation

@@ -107,3 +107,14 @@ analysis. Filtering, adapter output and parser algorithms are unchanged, so
 filter, adapter and parser versions remain unchanged. Source schema 2 and
 metadata schema 1 remain compatible: earlier readers ignore these optional
 fields. The explicit relation is independent of subagent `parent_session_id`.
+
+Codex identity interpretation advances `codex.Parser.Version()` to 0.21.0
+through the existing per-agent parser port; Claude and Cursor remain at 0.20.0.
+For Codex, retained
+`session_meta.payload.id` identifies the thread, while `session_id` identifies
+its root conversation and is no longer an identity conflict. The private
+discovery catalog advances to version 4 to reconsider previous identity
+refusals. Related live histories remain capture-pending. No additional native
+metadata is retained, so filter 15, adapter 0.15.0, source schema 2 and metadata
+schema 1 remain unchanged. Privacy-only refiltering of existing retained
+sources remains compatible with absent older metadata.

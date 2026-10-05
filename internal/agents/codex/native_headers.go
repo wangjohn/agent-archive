@@ -7,17 +7,15 @@ import (
 	"fmt"
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
+	"github.com/wangjohn/agent-archive/internal/codexmeta"
 	"github.com/wangjohn/agent-archive/internal/discoveryio"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 )
 
 // NativeHeaders supplies purpose-specific Codex identity inspection.
 type NativeHeaders struct{}
-
-var rolloutUUID = regexp.MustCompile(`([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\.jsonl$`)
 
 // InspectHeader preserves the native 16-record metadata compatibility scan.
 func (NativeHeaders) InspectHeader(r agentapi.NativeHeaderRequest) (agentapi.NativeHeader, error) {
@@ -48,43 +46,42 @@ func (NativeHeaders) InspectHeader(r agentapi.NativeHeaderRequest) (agentapi.Nat
 	err := r.Scan(func(line []byte) bool {
 		seen++
 		var v struct {
-			Type      string `json:"type"`
-			Timestamp string `json:"timestamp"`
-			Payload   struct {
-				ID        string          `json:"id"`
-				SessionID string          `json:"session_id"`
-				Timestamp string          `json:"timestamp"`
-				Cwd       string          `json:"cwd"`
-				Source    json.RawMessage `json:"source"`
-			} `json:"payload"`
+			Type      string          `json:"type"`
+			Timestamp string          `json:"timestamp"`
+			Payload   json.RawMessage `json:"payload"`
 		}
-		if decodeErr := json.Unmarshal(line, &v); decodeErr != nil || v.Type != "session_meta" {
+		if json.Unmarshal(line, &v) != nil || v.Type != "session_meta" {
 			return seen < 16
 		}
 		found = true
-		h.NativeID = v.Payload.ID
-		h.Directory = v.Payload.Cwd
-		m := rolloutUUID.FindStringSubmatch(filepath.Base(r.Path))
-		fileID := ""
-		if m != nil {
-			fileID = m[1]
-		}
-		if v.Payload.ID == "" || v.Payload.SessionID != "" && v.Payload.SessionID != v.Payload.ID || fileID == "" || !strings.EqualFold(fileID, v.Payload.ID) {
+		var meta codexmeta.CodexMeta
+		if json.Unmarshal(v.Payload, &meta) != nil {
 			h.IdentityMismatch = true
+			return false
 		}
-		for _, ts := range []string{v.Payload.Timestamp, v.Timestamp} {
+		h.NativeID, h.Directory = meta.ID, meta.Cwd
+		facts, outcome := meta.Identity(r.Path)
+		h.IdentityMismatch = outcome == codexmeta.InvalidIdentity || outcome == codexmeta.InvalidRelationship || outcome == codexmeta.InvalidMetadata
+		// Import has older producer/start compatibility than automatic discovery,
+		// but neither may flatten a known child, fork, or physical history link.
+		if outcome == "" {
+			switch {
+			case facts.Child:
+				h.CapturePending = "child_history_pending"
+			case facts.ForkID != "":
+				h.CapturePending = "fork_history_pending"
+			case facts.HistoryBase != nil || !strings.EqualFold(facts.RolloutID, facts.ThreadID):
+				h.CapturePending = "related_history_pending"
+			}
+		}
+		for _, ts := range []string{meta.Timestamp, v.Timestamp} {
 			if parsed, e := time.Parse(time.RFC3339Nano, ts); e == nil {
 				h.StartedAt = parsed.UTC()
 				break
 			}
 		}
 		if r.Purpose == agentapi.DiscoveryHandoff {
-			var source struct {
-				Subagent json.RawMessage `json:"subagent"`
-			}
-			if json.Unmarshal(v.Payload.Source, &source) == nil && len(source.Subagent) > 0 {
-				h.SubagentOnly = true
-			}
+			h.SubagentOnly = facts.Child
 		}
 		return false
 	})

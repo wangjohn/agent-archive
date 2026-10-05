@@ -1,0 +1,34 @@
+package codex
+
+import (
+	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"testing"
+)
+
+func TestNativeHeaderUnderstandsRelatedIdentitiesWithoutAdmittingCapture(t *testing.T) {
+	t.Parallel()
+	const id = "00000000-0000-0000-0000-000000000003"
+	const root = "00000000-0000-0000-0000-000000000001"
+	const parent = "00000000-0000-0000-0000-000000000002"
+	for _, tc := range []struct {
+		fields  string
+		rollout string
+		want    string
+	}{
+		{``, id, ""},
+		{`,"session_id":"` + root + `","parent_thread_id":"` + parent + `"`, id, "child_history_pending"},
+		{`,"forked_from_id":"` + root + `"`, id, "fork_history_pending"},
+		{``, parent, "related_history_pending"},
+	} {
+		data := []byte(`{"type":"session_meta","payload":{"id":"` + id + `","cwd":"/synthetic/project"` + tc.fields + `}}`)
+		for _, purpose := range []agentapi.DiscoveryPurpose{agentapi.DiscoveryImport, agentapi.DiscoveryHandoff} {
+			h, err := (NativeHeaders{}).InspectHeader(agentapi.NativeHeaderRequest{Purpose: purpose, Path: "rollout-" + tc.rollout + ".jsonl", Scan: func(visit func([]byte) bool) error { visit(data); return nil }})
+			if err != nil || h.IdentityMismatch || h.NativeID != id || h.CapturePending != tc.want {
+				t.Fatalf("header=%+v err=%v", h, err)
+			}
+			if purpose == agentapi.DiscoveryHandoff && tc.want == "child_history_pending" && !h.SubagentOnly {
+				t.Fatal("incomplete history selectable for handoff")
+			}
+		}
+	}
+}

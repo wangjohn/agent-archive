@@ -109,10 +109,11 @@ type work struct {
 	duplicated bool
 	duplicate  bool
 	// Adapter outcomes.
-	empty     bool
-	unsafe    bool
-	tooLarge  bool
-	sourceErr error
+	empty         bool
+	unsafe        bool
+	sourceChanged bool
+	tooLarge      bool
+	sourceErr     error
 }
 
 // subagentWork is one subagent transcript of an imported parent.
@@ -127,7 +128,7 @@ type subagentWork struct {
 // importable reports whether nothing about the file itself stops it being
 // imported: the checks a session's copies can differ on.
 func (w *work) importable() bool {
-	return !w.tooLarge && !w.unsafe && !w.empty && !w.t.identityMismatch
+	return !w.tooLarge && !w.unsafe && !w.empty && !w.t.identityMismatch && !w.t.capturePending && !w.sourceChanged
 }
 
 // markDuplicates keeps one file of a session found more than once and marks
@@ -257,7 +258,7 @@ func preparePlanWork(ctx context.Context, env Environment, cfg config.Config, fi
 	var items []*work
 	var err error
 	unread, err = enumerateDiscovery(ctx, env, agentapi.DiscoveryImport, func(c agentapi.DiscoveryCandidate) error {
-		t := &transcript{harness: harness(c.Session.Agent), path: c.Source.Path, size: c.Bytes, nativeID: c.Session.NativeID, cwd: c.Header.Directory, metaStart: c.Header.StartedAt, identityMismatch: c.Header.IdentityMismatch, cursorSlug: c.WorkspaceKey, sourcePriority: c.SourcePriority}
+		t := &transcript{harness: harness(c.Session.Agent), path: c.Source.Path, size: c.Bytes, nativeID: c.Session.NativeID, cwd: c.Header.Directory, metaStart: c.Header.StartedAt, identityMismatch: c.Header.IdentityMismatch, capturePending: c.Header.CapturePending != "", cursorSlug: c.WorkspaceKey, sourcePriority: c.SourcePriority}
 		w := &work{t: t, c: Candidate{Harness: string(c.Session.Agent), TranscriptPath: t.path, SourceKind: c.Source.Kind, SourceKey: c.Source.Key, Bytes: t.size, NativeSessionID: t.nativeID}, unsafe: c.IdentityError != nil}
 		items = append(items, w)
 		return nil
@@ -338,6 +339,17 @@ func classifyPlanWork(ctx context.Context, env Environment, state ArchiveState, 
 		w.tooLarge = w.t.size > collector.DefaultMaxRawTranscriptBytes
 	}
 	for _, group := range sessions {
+		// A physical revision prevents choosing an ordinary-looking sibling as
+		// active until related-history selection is implemented.
+		pending := false
+		for _, w := range group {
+			pending = pending || w.t.capturePending
+		}
+		if pending {
+			for _, w := range group {
+				w.t.capturePending = true
+			}
+		}
 		if len(group) > 1 {
 			for _, w := range group {
 				w.duplicated = true
@@ -377,7 +389,7 @@ func selectAdapterWork(items []*work, since, until time.Time) []*work {
 	dated := !since.IsZero() || !until.IsZero()
 	var selected []*work
 	for _, w := range items {
-		if w.vanished || w.state == SkipAlreadyArchived || w.tooLarge || w.unsafe {
+		if w.vanished || w.state == SkipAlreadyArchived || w.tooLarge || w.unsafe || w.t.capturePending {
 			continue
 		}
 		if w.duplicated || (w.state == "" && !w.filtered && (dated || (w.res.skip == "" && !w.t.identityMismatch))) {
@@ -481,8 +493,10 @@ func (w *work) reason(now time.Time) SkipReason {
 		SkipDuplicateSession: w.duplicate,
 		SkipFilteredOut:      w.filtered,
 		SkipIdentityMismatch: w.t.identityMismatch,
+		SkipRelatedHistory:   w.t.capturePending,
 		SkipEmpty:            w.empty,
 		SkipUnsafeFormat:     w.unsafe,
+		SkipSourceChanged:    w.sourceChanged,
 		SkipTooLarge:         w.tooLarge,
 		// A session that would register without a start time cannot be
 		// imported: the registration requires one. Only Cursor's start
@@ -540,6 +554,10 @@ func runAdapter(ctx context.Context, env Environment, w *work) {
 		switch {
 		case isNotExist(err) || isNotExist(statErr):
 			w.vanished = true
+		case agentapi.HasFailure(err, agentapi.Changed):
+			w.sourceChanged = true
+		case errors.Is(err, archive.ErrRelatedHistory):
+			w.t.capturePending = true
 		case errors.Is(err, archive.ErrRecordTooLarge) || (statErr == nil && info.Size() > collector.DefaultMaxRawTranscriptBytes):
 			// One record over the limit, or a file that grew past it since
 			// discovery: the collector blocks it as too large.

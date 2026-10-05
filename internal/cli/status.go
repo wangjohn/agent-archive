@@ -2764,7 +2764,7 @@ func discoveryLabel(d *discovery.Health) string {
 func discoverySkipped(d *discovery.Health) (int, string) {
 	var reasons []string
 	total := 0
-	for _, reason := range []string{"unsupported_producer", "unsupported_execution", "unsupported_format", "unsupported_history", "incomplete_metadata", "invalid_metadata", "oversized_metadata", "invalid_identity", "invalid_source", "invalid_candidate", "inherited_history"} {
+	for _, reason := range []string{"unsupported_producer", "unsupported_execution", "unsupported_format", "unsupported_history", "incomplete_metadata", "invalid_metadata", "oversized_metadata", "invalid_identity", "invalid_source", "invalid_candidate", "invalid_relationship", "child_history_pending", "fork_history_pending", "related_history_pending", "inherited_history"} {
 		if n := d.Outcomes[reason]; n > 0 {
 			total += n
 			reasons = append(reasons, fmt.Sprintf("%s: %d", strings.ReplaceAll(reason, "_", " "), n))

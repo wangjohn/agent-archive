@@ -235,7 +235,8 @@ func collectFacts(f *archive.NativeFacts, b archive.SourceBundle, r map[string]a
 		}
 		if agent == profileCodex && kind == "session_meta" {
 			payload, _ := r["payload"].(map[string]any)
-			if id, alias := firstString(payload, "id"), firstString(payload, "session_id"); id != b.NativeSessionID || alias != "" && alias != b.NativeSessionID {
+			// session_id identifies the root conversation, not this thread.
+			if id := firstString(payload, "id"); id != b.NativeSessionID {
 				f.IdentityConflict = true
 			}
 		}

@@ -118,12 +118,8 @@ func ReadCodexHeader(reader io.Reader, path string) (h Header) {
 				h.Outcome = "oversized_metadata"
 				return h
 			}
-			if !meta.ValidateIdentity(path) {
-				h.Outcome = "invalid_identity"
-				return h
-			}
-			if outcome := meta.Classification(); outcome != "native_format" {
-				h.Outcome = outcome
+			if outcome := meta.CaptureOutcome(path); outcome != "native_format" {
+				h.Outcome = string(outcome)
 				return h
 			}
 			continue

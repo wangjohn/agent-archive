@@ -28,7 +28,7 @@ const (
 	// HeaderProbes caps metadata reads in one pass.
 	HeaderProbes = 256
 	// Reprobe older cached observations so they acquire explicit format profiles.
-	catalogVersion = 3
+	catalogVersion = 4
 	maxCatalog     = 8192
 	maxDirectories = 4096
 	maxRetries     = 256

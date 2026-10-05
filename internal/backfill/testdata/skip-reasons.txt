@@ -23,7 +23,9 @@ Not imported:
    1  run from temporary directories            add --include-temp
    1  Cursor chat whose project could not be determined
    1  from worktrees that no longer exist
-   1  with IDs that do not match the file
+   1  with conflicting or invalid session IDs
+   1  awaiting support for child, fork or revised history
+   1  that changed while being read; retry backfill
    1  with no conversation
    1  in a format the archive cannot read safely
    1  over the size limit

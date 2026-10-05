@@ -17,7 +17,7 @@ type Filter struct{ nativecodec.CodexAdapter }
 
 // Filter consumes verified native input under shared collection limits.
 func (f Filter) Filter(ctx context.Context, in agentapi.NativeInput, c agentapi.FilterContext) (archive.FilteredTranscript, error) {
-	return sourceio.FilterJSONL(ctx, in, c, f.FilterJSONL)
+	return sourceio.FilterJSONL(ctx, in, c, nativecodec.FilterCodexCaptureJSONL)
 }
 
 // Refilter applies current privacy rules to retained native evidence.

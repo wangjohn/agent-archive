@@ -21,6 +21,8 @@ type NativeHeader struct {
 	StartedAt        time.Time
 	IdentityMismatch bool
 	SubagentOnly     bool
+	// CapturePending names understood native history that still requires a complete reader.
+	CapturePending string
 }
 
 // NativeHeaderRequest supplies a caller-owned bounded scan; codecs cannot open paths.

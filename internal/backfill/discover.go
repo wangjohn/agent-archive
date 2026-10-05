@@ -27,6 +27,7 @@ type transcript struct {
 	cwd string
 	// identityMismatch is set when the transcript's own IDs disagree.
 	identityMismatch bool
+	capturePending   bool
 	// metaStart is Codex's session_meta timestamp.
 	metaStart time.Time
 }

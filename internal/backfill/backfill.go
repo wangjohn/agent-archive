@@ -73,6 +73,10 @@ const (
 	// SkipIdentityMismatch means the session IDs inside the transcript do not
 	// match the file (or the Cursor chat's key).
 	SkipIdentityMismatch SkipReason = "identity_mismatch"
+	// SkipRelatedHistory means complete child, fork or revision history is not yet supported.
+	SkipRelatedHistory SkipReason = "related_history_pending"
+	// SkipSourceChanged means the native file changed during a verified read; retry later.
+	SkipSourceChanged SkipReason = "source_changed"
 	// SkipEmpty means the session holds no conversation.
 	SkipEmpty SkipReason = "empty"
 	// SkipUnsafeFormat means the transcript is in a format the privacy filter
@@ -92,7 +96,7 @@ const (
 var skipOrder = []SkipReason{
 	SkipAlreadyArchived, SkipDuplicateSession, SkipRegisteredNotAdmitted, SkipRemovedByUndo, SkipRemovedByRetention,
 	SkipFilteredOut, SkipExcludedProject, SkipHomeDirectory, SkipAboveHome, SkipTemporaryDirectory,
-	SkipProjectUnknown, SkipWorktreeUnresolved, SkipIdentityMismatch,
+	SkipProjectUnknown, SkipWorktreeUnresolved, SkipIdentityMismatch, SkipRelatedHistory, SkipSourceChanged,
 	SkipEmpty, SkipUnsafeFormat, SkipTooLarge, SkipStartUnknown, SkipStartInFuture,
 }
 
