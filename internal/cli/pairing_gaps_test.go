@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/cloudflare"
 	"github.com/wangjohn/agent-archive/internal/cloudflare/cloudflaretest"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/issuance"
@@ -26,7 +27,7 @@ import (
 )
 
 func TestMachineRemoteFakeAcceptance(t *testing.T) {
-	for _, mode := range []string{"source-name", "third-rename", "re-pair-retired", "issuer-compromise", "partial-retry", "concurrent-source"} {
+	for _, mode := range []string{"source-name", "third-rename", "re-pair-retired", "issuer-compromise", "partial-retry", "concurrent-source", "revoke-repair-revoke"} {
 		t.Run(mode, func(t *testing.T) {
 			source, sourceHome, cf, _, _ := ownKeyFixture(t)
 			store := storagetest.NewMemoryStore()
@@ -89,6 +90,37 @@ func TestMachineRemoteFakeAcceptance(t *testing.T) {
 				run(source, "", "machines", "revoke", "laptop", "--yes")
 				if providerKeyLive(cf, original.AccessKeyID) {
 					t.Fatal("issuer name did not revoke recipient")
+				}
+				return
+			}
+			if mode == "revoke-repair-revoke" {
+				run(receiver, "", "machines", "revoke", "--machine-id", cfg.MachineID, "--yes")
+				if providerKeyLive(cf, original.AccessKeyID) {
+					t.Fatal("first deletion was not confirmed")
+				}
+				pair("replacement")
+				cfg, _, err = config.Load(receiverHome)
+				must(t, err)
+				if len(cfg.RetiredMachineAssignments) != 1 || cfg.RetiredMachineAssignments[0].AccessKeyID != original.AccessKeyID {
+					t.Fatal("confirmed retired history was discarded")
+				}
+				receiver.Cloudflare = func(token string) cloudflare.API {
+					api := source.Cloudflare(token)
+					return absentRetiredTokenAPI{API: api, InventoryAPI: api.(cloudflare.InventoryAPI), retiredID: original.AccessKeyID}
+				}
+				run(receiver, "", "machines", "revoke", "--machine-id", cfg.MachineID, "--yes", "--json")
+				if providerKeyLive(cf, cfg.MachineAssignment.AccessKeyID) {
+					t.Fatal("confirmed retired key blocked replacement revocation")
+				}
+				operations, err := revocation.List(receiverHome)
+				must(t, err)
+				if len(operations) != 2 {
+					t.Fatal("replacement operation was not retained")
+				}
+				for _, operation := range operations {
+					if len(operation.Keys) != 1 || !operation.Complete() {
+						t.Fatal("replacement selected an already-confirmed key")
+					}
 				}
 				return
 			}
@@ -534,5 +566,163 @@ func TestRetiredHistoryRollsBackWithFailedReplacement(t *testing.T) {
 	must(t, err)
 	if len(got.RetiredMachineAssignments) != 0 || got.MachineAssignment.AccessKeyID != original {
 		t.Fatal("failed transaction changed committed retirement history")
+	}
+}
+
+func TestPairingExclusionRecoveryRetainsMappedClones(t *testing.T) {
+	t.Parallel()
+	for _, interactive := range []bool{false, true} {
+		t.Run(fmt.Sprintf("interactive=%t", interactive), func(t *testing.T) {
+			t.Parallel()
+			home := local.CanonicalPath(t.TempDir())
+			outside := t.TempDir()
+			roots := []string{filepath.Join(home, "one"), filepath.Join(home, "two"), filepath.Join(home, "three")}
+			for _, root := range roots {
+				must(t, os.MkdirAll(root, 0700))
+			}
+			must(t, os.MkdirAll(filepath.Join(roots[0], "private"), 0700))
+			for _, root := range roots[1:] {
+				must(t, os.Symlink(outside, filepath.Join(root, "private")))
+			}
+			must(t, os.MkdirAll(filepath.Join(roots[1], "recovered"), 0700))
+			id := strings.Repeat("a", 32)
+			payload := pairing.Payload{Inclusions: []pairing.Inclusion{{ID: id, Label: "repo"}}, Exclusions: []pairing.Exclusion{{InclusionID: id, Path: "private", Affected: []string{id}}}}
+			selected := map[string][]string{id: roots}
+			var output bytes.Buffer
+			input := ""
+			if interactive {
+				input = "two/recovered\n"
+			}
+			exclusions, withheld, err := mapPairingExclusions(newPrompter(strings.NewReader(input), &output), payload, selected, home, !interactive)
+			must(t, err)
+			if !slicesContainsExcluded(exclusions, filepath.Join(roots[0], "private")) {
+				t.Fatal("successful first-clone exclusion was lost")
+			}
+			wantedClones := 1
+			if interactive {
+				wantedClones = 2
+			}
+			if withheld[id] || len(selected[id]) != wantedClones {
+				t.Fatal("safe clone lost or unresolved clone enabled")
+			}
+			for _, root := range selected[id] {
+				if root == roots[2] {
+					t.Fatal("unmapped third clone remained capturable")
+				}
+			}
+			if interactive && !slicesContainsExcluded(exclusions, filepath.Join(roots[1], "recovered")) {
+				t.Fatal("manual recovery mapping was lost")
+			}
+		})
+	}
+}
+
+func TestManualPairingScopeExpandsReceivingHome(t *testing.T) {
+	t.Parallel()
+	home := local.CanonicalPath(t.TempDir())
+	root := filepath.Join(home, "repo")
+	must(t, os.MkdirAll(root, 0700))
+	env := Env{repoKeyContext: func(context.Context, string) string { return "repo-0123456789abcdef" }}
+	for _, input := range []string{"~/repo", "repo", root} {
+		var output bytes.Buffer
+		mapped, key, known, err := manualPairingScope(newPrompter(strings.NewReader(input+"\n"), &output), pairing.Inclusion{Label: "repo", RepoKey: "repo-0123456789abcdef"}, home, env)
+		must(t, err)
+		if mapped != root || !known || key != "repo-0123456789abcdef" {
+			t.Fatalf("manual recovery resolved %q to %q", input, mapped)
+		}
+	}
+	var output bytes.Buffer
+	mapped, _, _, err := manualPairingScope(newPrompter(strings.NewReader("~\n"), &output), pairing.Inclusion{Label: "home"}, home, env)
+	must(t, err)
+	if mapped != home {
+		t.Fatal("bare tilde did not resolve to receiving home")
+	}
+}
+
+// A deleted token may no longer be visible, regardless of inventory completeness.
+type absentRetiredTokenAPI struct {
+	cloudflare.API
+	cloudflare.InventoryAPI
+	retiredID string
+}
+
+func (a absentRetiredTokenAPI) TokenDetails(ctx context.Context, account, id string) (cloudflare.TokenMetadata, error) {
+	if id == a.retiredID {
+		return cloudflare.TokenMetadata{}, errors.New("deleted token not visible")
+	}
+	return a.InventoryAPI.TokenDetails(ctx, account, id)
+}
+
+func TestRetiredConfirmationRequiresExactLocalEvidence(t *testing.T) {
+	t.Parallel()
+	changes := map[string]func(*revocation.Journal){
+		"exact":        func(*revocation.Journal) {},
+		"destination":  func(j *revocation.Journal) { j.DestinationID = strings.Repeat("d", 64) },
+		"account":      func(j *revocation.Journal) { j.AccountID = strings.Repeat("d", 32) },
+		"bucket":       func(j *revocation.Journal) { j.Bucket = "other-bucket" },
+		"jurisdiction": func(j *revocation.Journal) { j.Jurisdiction = "eu" },
+		"permission":   func(j *revocation.Journal) { j.PermissionID = strings.Repeat("d", 32) },
+		"requester":    func(j *revocation.Journal) { j.RequesterID = strings.Repeat("d", 32) },
+		"provider":     func(j *revocation.Journal) { j.Keys[0].ProviderID = strings.Repeat("d", 32) },
+		"recipient":    func(j *revocation.Journal) { j.Keys[0].RecipientID = strings.Repeat("d", 32) },
+		"issuer":       func(j *revocation.Journal) { j.Keys[0].IssuerID = strings.Repeat("d", 32) },
+		"slot":         func(j *revocation.Journal) { j.Keys[0].SlotID = strings.Repeat("d", 32) },
+		"unknown":      func(j *revocation.Journal) { j.Keys[0].Outcome = revocation.Unknown },
+		"pending":      func(j *revocation.Journal) { j.Keys[0].Outcome = revocation.Pending },
+		"bucket-claim": func(*revocation.Journal) {},
+	}
+	for name, change := range changes {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			env, home, _, cfg, store := revocationFixture(t)
+			retired := *cfg.MachineAssignment
+			current := retired
+			current.AccessKeyID = strings.Repeat("e", 32)
+			current.SlotID = strings.Repeat("f", 32)
+			cfg.MachineAssignment = &current
+			cfg.RetiredMachineAssignments = []config.MachineAssignment{retired}
+			planned, err := prepareRevocation(home, cfg, revokeSelector{MachineID: cfg.MachineID}, "", env)
+			must(t, err)
+			planned.PermissionID = strings.Repeat("a", 32)
+			prior := planned
+			prior.OperationID, err = local.ID()
+			must(t, err)
+			prior.Keys = []revocation.Key{{ProviderID: retired.AccessKeyID, RecipientID: retired.RecipientID, IssuerID: retired.IssuerID, SlotID: retired.SlotID, Outcome: revocation.Confirmed}, {ProviderID: strings.Repeat("e", 32), RecipientID: current.RecipientID, IssuerID: current.IssuerID, SlotID: current.SlotID, Outcome: revocation.Unknown}}
+			change(&prior)
+			if name == "bucket-claim" {
+				must(t, putRevocation(t.Context(), store, prior))
+			} else {
+				must(t, revocation.Save(home, prior))
+			}
+			expected, err := committedRevocationKeys(cfg, cfg.MachineID, &current, nil)
+			must(t, err)
+			must(t, excludeConfirmedRetiredKeys(home, cfg, planned, cfg.MachineID, &current, nil, expected))
+			_, retained := expected[retired.AccessKeyID]
+			if retained != (name != "exact") {
+				t.Fatal("confirmation crossed a trust, scope, binding or outcome boundary")
+			}
+			if _, present := expected[current.AccessKeyID]; !present {
+				t.Fatal("confirmation omitted current assignment")
+			}
+			if len(cfg.RetiredMachineAssignments) != 1 {
+				t.Fatal("confirmation erased retained history")
+			}
+		})
+	}
+}
+
+func TestPairingHomeExclusionStillRequiresWholeScopeCoverage(t *testing.T) {
+	t.Parallel()
+	home := local.CanonicalPath(t.TempDir())
+	root := filepath.Join(home, "repo")
+	must(t, os.MkdirAll(filepath.Join(root, "private"), 0700))
+	id := strings.Repeat("a", 32)
+	selected := map[string][]string{id: {root}}
+	payload := pairing.Payload{Exclusions: []pairing.Exclusion{{HomeRelative: true, Path: "repo/private", Affected: []string{id}}}}
+	var out bytes.Buffer
+	exclusions, withheld, err := mapPairingExclusions(newPrompter(strings.NewReader(""), &out), payload, selected, home, true)
+	must(t, err)
+	if !withheld[id] || len(selected[id]) != 0 || !slicesContainsExcluded(exclusions, filepath.Join(root, "private")) {
+		t.Fatal("partial home-relative coverage broadened a restricted scope")
 	}
 }

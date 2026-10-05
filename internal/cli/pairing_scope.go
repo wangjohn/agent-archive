@@ -291,7 +291,7 @@ func mapPairingExclusions(p *prompter, payload pairing.Payload, selected map[str
 				root, err := resolvePortablePath(base, exc.Path)
 				if err != nil {
 					unresolved = true
-					break
+					continue
 				}
 				mapped = append(mapped, root)
 			}
@@ -326,21 +326,17 @@ func mapPairingExclusions(p *prompter, payload pairing.Payload, selected map[str
 					if e != nil {
 						return nil, nil, e
 					}
-					exclusions = append(exclusions, archive.ProjectActivation{Root: root, ProjectID: archive.ProjectID(root), Included: false})
-					continue
-				}
-				allow, err = p.yesNo("Explicitly include affected projects without that source exclusion?", false)
-				if err != nil {
-					return nil, nil, err
+					mapped = append(mapped, root)
+				} else {
+					allow, err = p.yesNo("Explicitly include unresolved project paths without that source exclusion?", false)
+					if err != nil {
+						return nil, nil, err
+					}
 				}
 			}
-			if !allow {
-				for _, id := range exc.Affected {
-					withheld[id] = true
-				}
-				terminal.Println(p.out, "Affected project scope withheld because an exclusion is unresolved.")
+			if !allow && withholdUnmappedPairingClones(exc.Affected, selected, mapped, withheld, exc.HomeRelative) {
+				terminal.Println(p.out, "Project paths withheld because an exclusion is unresolved; mapped exclusions are retained.")
 			}
-			continue
 		}
 		for _, root := range mapped {
 			exclusions = append(exclusions, archive.ProjectActivation{Root: root, ProjectID: archive.ProjectID(root), Included: false})
@@ -423,8 +419,12 @@ func manualPairingScope(p *prompter, inc pairing.Inclusion, userHome string, env
 	if err != nil || path == "" {
 		return "", "", false, err
 	}
-	if !filepath.IsAbs(path) {
+	if !filepath.IsAbs(path) && path != "~" && !strings.HasPrefix(path, "~/") {
 		path = filepath.Join(userHome, path)
+	}
+	path, err = projectDir(path, userHome)
+	if err != nil {
+		return "", "", false, err
 	}
 	info, e := os.Stat(path)
 	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
@@ -461,4 +461,35 @@ func printPairingScopeMatch(p *prompter, inc pairing.Inclusion, root, userHome s
 		}
 	}
 	terminal.Printf(p.out, "Selected %s: %s (%s; source path hint %s).\n", inc.Label, homeRelative(root, userHome), method, inc.HomePath)
+}
+
+// Keep every resolved restriction and withhold only clones still lacking one.
+func withholdUnmappedPairingClones(affected []string, selected map[string][]string, mapped []string, withheld map[string]bool, wholeRoot bool) bool {
+	removed := false
+	for _, id := range affected {
+		var kept []string
+		for _, root := range selected[id] {
+			if pairingRootRestricted(root, mapped, wholeRoot) {
+				kept = append(kept, root)
+			} else {
+				removed = true
+			}
+		}
+		selected[id] = kept
+		if len(kept) == 0 {
+			withheld[id] = true
+			removed = true
+		}
+	}
+	return removed
+}
+
+func pairingRootRestricted(root string, exclusions []string, wholeRoot bool) bool {
+	root = local.CanonicalPath(root)
+	for _, exclusion := range exclusions {
+		if local.PathWithin(root, exclusion) || !wholeRoot && local.PathWithin(exclusion, root) {
+			return true
+		}
+	}
+	return false
 }

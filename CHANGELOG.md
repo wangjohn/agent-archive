@@ -16,6 +16,13 @@ follow [Semantic Versioning](https://semver.org/).
   Both peers must be upgraded for standalone exclusions; live provider and platform
   acceptance remain pending and general availability stays disabled.
 
+### Fixed
+
+- Pairing recovery preserves exclusions on other clones and accepts home-prefixed
+  manual project paths. Retired keys with exact local deletion confirmations no
+  longer block revoking a replacement key after re-pairing; unverified absence
+  remains unresolved.
+
 ## [0.2.0]
 
 ### Documentation

@@ -381,6 +381,9 @@ func selectRevocation(ctx context.Context, home string, cfg config.Config, selec
 			}
 		}
 	}
+	if err := excludeConfirmedRetiredKeys(home, cfg, j, machineID, assignment, binding, expected); err != nil {
+		return j, err
+	}
 	if len(expected) == 0 || len(expected) > 128 {
 		return j, errors.New("no bounded independently verified key set; no deletion started")
 	}
@@ -651,4 +654,53 @@ func bucketRevokeMachineHint(ctx context.Context, cfg config.Config, name string
 		return "", errors.New("bucket label does not match this machine's trusted local name; use an independently verified immutable ID")
 	}
 	return machineID, nil
+}
+
+// Confirmation comes only from this requester's exact durable local outcomes.
+// Retain history and unresolved keys; never infer deletion from provider absence.
+func excludeConfirmedRetiredKeys(home string, cfg config.Config, j revocation.Journal, machineID string, assignment *config.MachineAssignment, binding *operatorBinding, expected map[string]revocation.Key) error {
+	retired := map[string]bool{}
+	if machineID == cfg.MachineID {
+		addRetiredRevocationIDs(retired, cfg.RetiredMachineAssignments, j.DestinationID)
+	}
+	if binding != nil {
+		addRetiredRevocationIDs(retired, binding.RetiredAssignments, j.DestinationID)
+	}
+	if len(retired) == 0 {
+		return nil
+	}
+	operations, err := revocation.List(home)
+	if err != nil {
+		return err
+	}
+	for _, operation := range operations {
+		if operation.RequesterID != cfg.MachineID || !sameRevocationScope(operation, j) {
+			continue
+		}
+		for _, key := range operation.Keys {
+			if key.Outcome != revocation.Confirmed || !retired[key.ProviderID] {
+				continue
+			}
+			if assignment != nil && key.ProviderID == assignment.AccessKeyID {
+				continue
+			}
+			key.Outcome = revocation.Pending
+			if pending, ok := expected[key.ProviderID]; ok && pending == key {
+				delete(expected, key.ProviderID)
+			}
+		}
+	}
+	return nil
+}
+
+func addRetiredRevocationIDs(ids map[string]bool, assignments []config.MachineAssignment, destination string) {
+	for _, assignment := range assignments {
+		if assignment.DestinationID == destination {
+			ids[assignment.AccessKeyID] = true
+		}
+	}
+}
+
+func sameRevocationScope(a, b revocation.Journal) bool {
+	return a.DestinationID == b.DestinationID && a.AccountID == b.AccountID && a.Bucket == b.Bucket && a.Jurisdiction == b.Jurisdiction && a.PermissionID == b.PermissionID
 }

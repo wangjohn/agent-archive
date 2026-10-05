@@ -441,6 +441,13 @@ shape above; an unused spare must have that machine as issuer and no pairing ID.
 The file is a private regular file (mode 0600), limited to 64 KiB and 128 extra
 bindings. Do not derive spare eligibility from provider names or bucket claims.
 
+Retired bindings already deleted by this operator's exact local journal confirmation
+are retained for history but excluded from a new selection. Destination, provider
+scope, requester and every immutable key binding must match. Unknown, pending,
+foreign or bucket-only outcomes cannot omit keys; missing provider metadata alone
+remains unresolved. This lets revoke → re-pair → revoke work without weakening
+absence checks.
+
 Normal revocation selects verified dedicated/retired keys and unused spares;
 it excludes keys delivered to other recipients merely by the target issuer.
 `--include-issued` requires an independently bound issuer machine ID and checks
@@ -532,7 +539,10 @@ used for revocation regardless of these listing hints.
 Pairing preserves standalone home-relative exclusions as well as nested and ancestor
 restrictions. Unmappable source paths remain secret-free warnings; affected roots
 are withheld under `--yes`. Interactive setup offers safe home-relative exclusion
-mapping before any explicit scope override. Discovery checks direct candidates
+mapping before any explicit scope override. Recovering one clone preserves every
+successful exclusion mapping; other unmapped clones are withheld individually.
+Manual project paths accept `~` and `~/` against the receiving home, while ordinary
+relative paths remain relative to that home. Discovery checks direct candidates
 first; app-history headers are read only for unresolved requests. Partial candidates
 remain visible with an explicit warning that additional clones may exist; unattended
 setup skips incomplete evidence. Interactive recovery can select a manual directory,
