@@ -27,6 +27,7 @@ type Header struct {
 	Meta        CodexMeta
 	Started     time.Time
 	FirstTaskAt time.Time
+	Profile     CodexProfile
 	Outcome     string
 	Bytes       int64
 }
@@ -85,6 +86,7 @@ func ReadCodexHeader(reader io.Reader, path string) (h Header) {
 			h.Meta = CodexMeta{}
 			h.Started = time.Time{}
 			h.FirstTaskAt = time.Time{}
+			h.Profile = ""
 		}
 	}()
 	r := bufio.NewReaderSize(io.LimitReader(reader, HeaderBytes), 32<<10)
@@ -132,6 +134,7 @@ func ReadCodexHeader(reader io.Reader, path string) (h Header) {
 				h.Outcome = "inherited_history"
 			} else {
 				h.Outcome = "native_format"
+				h.Profile = CodexFormatProfile(h.Meta)
 			}
 			return h
 		}

@@ -597,7 +597,7 @@ func TestGuidedR2ValidatesTheBucketName(t *testing.T) {
 func TestGuidedR2ReplacesACollidingDefaultName(t *testing.T) {
 	t.Parallel()
 	g := newGuidedR2Fixture(t)
-	g.cf.Fail(cloudflaretest.RouteCreateBucket, cloudflaretest.Failure{Status: http.StatusConflict, Code: 10073, Message: "Bucket name already exists.", Times: 1})
+	g.cf.Fail(cloudflaretest.RouteCreateBucket, cloudflaretest.Failure{Status: http.StatusConflict, Code: 10004, Message: "Bucket name already exists.", Times: 1})
 	out := g.run(t, g.happy()+"\n", 0)
 	if !strings.Contains(out, "is taken; preparing") || g.cf.Calls(cloudflaretest.RouteCreateBucket) != 2 {
 		t.Fatalf("output:\n%s", out)

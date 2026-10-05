@@ -145,7 +145,7 @@ func TestCachedUsableFactsRecheckCurrentProducerSupport(t *testing.T) {
 	if err := local.Write(filepath.Join(store.Home(), "discovery-catalog.json"), prior); err != nil {
 		t.Fatal(err)
 	}
-	h, err := Run(context.Background(), store, cfg, Options{Now: func() time.Time { return now }})
+	h, err := runWithAdapters(context.Background(), store, cfg, Options{Now: func() time.Time { return now }}, []SourceAdapter{codexAdapter{supported: func(sourcefacts.CodexMeta) bool { return false }}})
 	if err != nil || h.Probes != 0 || h.Supported || h.Registered != 0 || h.Outcomes["unsupported_producer"] == 0 {
 		t.Fatalf("cached facts bypassed current producer gate: %#v %v", h, err)
 	}

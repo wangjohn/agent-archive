@@ -1,0 +1,2 @@
+{"timestamp":"2026-10-01T12:01:00Z","type":"session_meta","payload":{"id":"00000000-0000-0000-0000-000000000001","timestamp":"2026-10-01T12:01:00Z","cwd":"/synthetic/project","source":"cli","originator":"codex_cli_rs","cli_version":"0.100.0"}}
+{"timestamp":"2026-10-01T12:01:01Z","type":"event_msg","payload":{"type":"task_started","turn_id":"00000000-0000-0000-0000-000000000010","model_context_window":null,"collaboration_mode_kind":"default"}}

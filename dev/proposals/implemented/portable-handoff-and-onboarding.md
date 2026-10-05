@@ -34,7 +34,7 @@ Updated 2026-10-01. What shipped, and where it differs from the plan below.
 
 **Open items.**
 
-- Guided R2 has never run against real Cloudflare. Every box of "Live acceptance: guided R2 creation" in `dev/contributing/testing.md` is unrun (the S3 key derivation, the bucket-conflict code `10073`, the permissions the account and domain reads need, token expiry and the delete 404). Remove the gate only after a real-account run.
+- Guided R2 remains gated. The 2026-10-05 live provider run verified default-jurisdiction key derivation, storage operations, bucket scope and independent revocation; it exposed management REST conflict code `10004`, now recognized alongside `10073`. Actual guided CLI acceptance, exact bootstrap permissions, jurisdictions and the remaining checklist in `dev/contributing/testing.md` are still open.
 - Guided S3 has never run against real AWS (what `HeadBucket` answers for a free name without list permission, how `GetCallerIdentity` behaves through SSO and assume-role profiles, and the printed runtime policy, which is marked untested).
 - Partly applied review fixes: after creating an S3 bucket, a Ctrl-C at a later prompt leaves an unreported empty bucket (the reminder covers only the archiving-profile question), and the R2 and S3 flows keep separate trackers of what they created.
 - Sessions captured before `repo_key` have no key until a metadata refresh, so they match by path only.
