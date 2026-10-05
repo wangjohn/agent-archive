@@ -202,6 +202,8 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Guided R2 creation recognizes the management API's observed bucket-name
+  conflict (HTTP 409, code 10004) and retries a generated name.
 - Second-machine setup commands preserve excluded folders and reincluded
   subtrees, including when a repository checkout moves to another path.
   Scope transfer resolves all rules before applying any inclusion, treats

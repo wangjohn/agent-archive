@@ -374,7 +374,7 @@ func (s *Server) createBucket(w http.ResponseWriter, r *http.Request, body []byt
 		return
 	}
 	if _, exists := s.Buckets[req.Name]; exists {
-		writeError(w, http.StatusConflict, 10073, "Bucket name already exists.", "")
+		writeError(w, http.StatusConflict, 10004, "Bucket name already exists.", "")
 		return
 	}
 	s.Buckets[req.Name] = r.Header.Get("cf-r2-jurisdiction")
