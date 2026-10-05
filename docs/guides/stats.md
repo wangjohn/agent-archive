@@ -33,13 +33,6 @@ Ctrl-C stops it); it keeps a local
 copy of what it read, as `list` does, and later runs only fetch what
 changed. `--no-cache` reads everything again.
 
-## Report preview
-
-![Agent Archive stats report with synthetic example data](../assets/stats-example.png)
-
-Example data from the [shareable report fixture](../../internal/statshtml/testdata/shareable.html.golden).
-Costs are estimates at list price, not a bill.
-
 ## What it shows
 
 `--view` picks a screen (`overview` is the default); `--detail` is
@@ -47,6 +40,9 @@ Costs are estimates at list price, not a bill.
 it, and prints the same numbers to a pipe.
 
 ### The summary
+
+The terminal examples below match the CLI renderer’s output exactly. Their
+numbers are illustrative.
 
 ```text
 agent-archive stats · last 30 days · 3 agents
