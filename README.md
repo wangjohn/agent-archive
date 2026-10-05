@@ -4,46 +4,82 @@
 [![Go 1.27](https://img.shields.io/badge/go-1.27.1-00ADD8?logo=go)](go.mod)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-A lightweight CLI that captures Claude Code, Codex, and Cursor sessions and stores them in cloud storage (S3 or R2).
+**Keep your coding context when you switch agents.**
 
-OpenAI and Anthropic are constantly one-upping each other or the best model, but it's a pain to switch between their coding agents. Every time you switch, you lose your history, and then don't have a single source of truth for where all your sessions live. Also, if you run out of limits in the middle of a session, it's very annoying to have to figure out how to hand that session over to the other coding agent.
+agent-archive helps you continue Claude Code, Codex, and Cursor conversations
+across agents and machines, with searchable history stored in your own S3 or
+R2 bucket. There is no agent-archive account, hosted service, or telemetry.
 
-`agent-archive` solves these problems, and can perform the following:
+> **Status: beta.** The latest published release is **v0.1.1 (macOS)**.
+> This branch contains the upcoming **v0.2.0**, which has not been released.
+> Automatic agent launching, handoff before setup, Linux binaries, and stats
+> are upcoming features. Interfaces and the bucket layout may change before v1.0.
 
-- Automatically upload Claude Code, Codex, and Cursor transcripts into a cloud object storage like S3 or R2.
-- Hand off a session from one coding agent to another. Type `/handoff codex` in Claude Code (or ask for `$handoff` in Codex) and Codex opens in a new terminal tab or window with the session as its context (on Linux, a new tmux window; outside tmux it prints the command to paste); from a terminal, run `agent-archive handoff`, pick a session (press `/` and type a few words, a PR number, or a branch to narrow the list), and press Enter. Or name it: `agent-archive handoff "flaky retention"`. No copying and pasting. Useful especially if you run into rate limits halfway through a session ([handoff guide](docs/guides/handoff.md)).
-- Pull a past session into the agent you are in, by asking. Setup gives Claude Code, Codex, and Cursor an `agent-archive` skill, so "pull in the auth session from Codex" or "continue where my other agent left off" finds the session by a word or two (its name, branch, project, or PR number) and hands it to the agent as context, without you typing a command ([agent skills](docs/guides/agent-skills.md)).
-- Hand off a session from one computer to another with the same `agent-archive handoff`. When working locally across multiple computers, agent-archive makes it very easy to continue sessions and to keep a single source of truth for all of your sessions.
-- View all of your past sessions across coding agents with `agent-archive list` (from inside a repository it shows that repository's sessions first; `agent-archive list "retention"` finds one by words). This allows you to set up automations to understand how you're using your agents, how different coding agents perform across different tasks, and can help you perform meta-improvements on your AGENTS.md and lint rules that span across Claude Code, Codex, and Cursor.
+- **Continue in another agent.** Hand Claude Code's conversation to Codex
+  when you hit a usage limit or want another agent's help.
+- **Find earlier work.** Search sessions by words, project, branch, or PR,
+  or ask your agent to pull a past conversation into context.
+- **Keep history across machines.** Capture sessions into a bucket you own
+  and retrieve them on another configured computer.
+- **Understand your workflow.** Inspect token usage and estimated costs,
+  or export filtered sessions for an evaluation tool.
 
-## Quickstart
+Handoff transfers filtered conversation context. Repository files, uncommitted
+changes, processes, and agent runtime state are not transferred; prepare the
+receiving checkout separately. [Handoff guide](docs/guides/handoff.md).
 
-1. **Install** on macOS or Linux (details and what is verified: [platforms](docs/getting-started/install.md#platforms)):
+## Install the published release
+
+The current release supports macOS:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/wangjohn/agent-archive/v0.1.1/install.sh | AGENT_ARCHIVE_VERSION=v0.1.1 sh
+```
+
+Follow the [v0.1.1 getting-started guide](https://github.com/wangjohn/agent-archive/blob/v0.1.1/README.md#quickstart)
+for that release. Linux currently requires a source build.
+
+## Try the upcoming beta
+
+The following steps use current source, not the v0.1.1 download.
+
+1. **Build and install from source** on macOS or Linux:
 
    ```sh
-   curl -fsSL https://raw.githubusercontent.com/wangjohn/agent-archive/v0.1.1/install.sh | AGENT_ARCHIVE_VERSION=v0.1.1 sh
+   git clone https://github.com/wangjohn/agent-archive.git
+   cd agent-archive
+   ./scripts/install-from-source.sh
+   export PATH="$HOME/.local/share/agent-archive-dev/bin:$PATH"
+   agent-archive --version
    ```
 
-   v0.1.1 has no Linux binary, so that command is for macOS. On Linux, drop the two pins (`install.sh | sh`) once the latest release has Linux binaries, or [build from source](docs/getting-started/install.md#build-from-source).
+   [Build requirements and development installation](docs/getting-started/install.md#build-from-source).
+   A source build is a development binary, not a signed release candidate.
 
-2. **Try a local handoff before setup** inside a project:
+2. **With a source build, try a local handoff** inside a project:
 
    ```sh
    agent-archive handoff
    ```
 
-   Browse existing Claude Code or Codex conversations without configuring storage.
-   [Local handoff scope, preview limits and cleanup](docs/guides/handoff.md#before-setup-native-local-sessions).
+   Choose an existing Claude Code or Codex conversation without configuring
+   storage. The receiving agent must be installed.
+   [Local scope and limits](docs/guides/handoff.md#before-setup-native-local-sessions).
 
 3. **Create a private bucket** and an access key for it ([R2 and S3 steps](docs/getting-started/bucket.md)).
 
-4. **Review [what is uploaded](docs/security/privacy.md#what-is-uploaded)** before enabling capture. Capture can include visible user-level skill instructions as well as your conversation. Redaction is best effort and there is no client-side encryption. **Run setup** inside a project you want to include, or choose projects when prompted ([setup guide](docs/getting-started/setup.md)):
+4. **Review [what is uploaded](docs/security/privacy.md#what-is-uploaded)** before enabling capture. Capture includes your conversation and can include user-level skill evidence; fresh setup keeps skill names and hashes by default. Redaction is best effort and there is no client-side encryption. **Run setup** inside a project you want to include, or choose projects when prompted ([setup guide](docs/getting-started/setup.md)):
 
    ```sh
    agent-archive setup
    ```
 
-5. **Start a new task.** Interactive Codex setup reviews automatic discovery and capture scope; fresh scripts explicitly choose both. All-projects scope is Codex only; hook approval is optional for discovery. Existing installations opt in explicitly. Start a **new** Codex task within the reviewed scope, or a new Claude Code session or Cursor Agent chat in an included project, and send a prompt ([discovery consent and supported versions](docs/getting-started/setup.md#automatic-codex-discovery)). Indistinguishable recent native copies may qualify.
+5. **Review capture scope and start a new task.** Included projects are the
+   default. Codex can also capture all current and future projects when you
+   explicitly approve that scope, with configured exclusions. Its supported
+   automatic discovery works without hook approval; `/hooks` approval is needed
+   for hook capture. Start a new task in the approved scope and send a prompt.
+   [Consent, app-specific steps, and discovery limits](docs/getting-started/setup.md#automatic-codex-discovery).
 
 6. **Verify capture.** Allow the background collector to run, or run `agent-archive sync`, then `agent-archive status`. Look for your app's **archived, verified** Capture row: this establishes publication and read-back. Find the new session with `agent-archive list` and inspect it with `agent-archive show SESSION_ID` ([first successful capture and troubleshooting](docs/README.md#first-successful-capture)).
 
@@ -66,6 +102,13 @@ flowchart LR
 ```
 
 Setup edits each included app's hook settings, adds one background job (a LaunchAgent on macOS, a systemd user timer on Linux), and writes two skill files for Claude Code (in `~/.claude/skills`) and two for Codex and Cursor together (in `~/.agents/skills`; `agent-archive setup --no-skills` skips them); for Cursor it also adds a missing `version` field ([everything it changes](docs/getting-started/setup.md#what-setup-changes-on-your-machine)). Old sessions are deleted from the bucket after 90 days by default.
+
+## Usage at a glance
+
+![Agent Archive stats preview with synthetic example data](docs/assets/stats-example.png)
+
+Example data from the [shareable report fixture](internal/statshtml/testdata/shareable.html.golden).
+Stats is part of upcoming v0.2.0; costs are estimates at list price, not a bill.
 
 ## Commands and docs
 

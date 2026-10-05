@@ -6,7 +6,7 @@ are for people using it; specs and contributor guides are in
 
 ## First local handoff
 
-After installing, run `agent-archive handoff` inside a project to choose an
+With the upcoming v0.2.0 source build, run `agent-archive handoff` inside a project to choose an
 existing Claude Code or Codex conversation before configuring storage. See
 [scope, bounded previews and cleanup](guides/handoff.md#before-setup-native-local-sessions).
 
@@ -16,7 +16,7 @@ existing Claude Code or Codex conversation before configuring storage. See
 2. [Install](getting-started/install.md) a release for macOS or Linux (the [platforms](getting-started/install.md#platforms) section says what each needs and what is verified), then run `agent-archive --version` to confirm the binary starts.
 3. [Create a private bucket and configure storage credentials](getting-started/bucket.md), using [narrow bucket permissions](security/bucket-permissions.md). You need a Cloudflare or AWS account for storage; there is no agent-archive account.
 4. From a project you want archived, run `agent-archive setup`. Include that project and your app, connect the bucket, and review the [setup choices](getting-started/setup.md). If setup offers to import past sessions, decline for this new-session check; [backfill](guides/backfill.md) is available later.
-5. In Codex, run `/hooks` and approve the archive hooks. Start a **new** Codex or Claude Code session in the included project, or a new Cursor Agent chat there, and send a prompt. An already open session does not qualify; [setup explains fresh starts](getting-started/setup.md#after-setup).
+5. For Codex hook capture, run `/hooks` and approve the archive hooks; supported automatic discovery does not require hook approval. Review [source and scope consent](getting-started/setup.md#automatic-codex-discovery). Start a **new** Codex or Claude Code session in the included project, or a new Cursor Agent chat there, and send a prompt. An already open session does not qualify; [setup explains fresh starts](getting-started/setup.md#after-setup).
 6. Allow the background collector to run, or run `agent-archive sync`. Then run `agent-archive status`. A connected bucket, installed hooks, or an overall `Ready` state shows configuration or health; look for your app's **archived, verified** capture row to establish publication and read-back. Use `agent-archive status --verbose` for the per-project evidence. Finally, run `agent-archive list`, copy the new session ID, and run `agent-archive show SESSION_ID` to read its archived metadata. See [reading status](guides/troubleshooting.md#reading-status) and [list/show](guides/list-and-show.md) for detail.
 
 If your app still has no captured session, use its specific steps: [Claude Code](guides/troubleshooting.md#no-claude-code-session), [Codex](guides/troubleshooting.md#no-codex-session), or [Cursor](guides/troubleshooting.md#no-cursor-session).
@@ -44,6 +44,7 @@ If your app still has no captured session, use its specific steps: [Claude Code]
 | Doc | For |
 | --- | --- |
 | [Privacy](security/privacy.md) | Threat model, what is and isn't uploaded, cleaning up after a filter upgrade, what changes on your machine. |
+| [Archive cleanup](security/archive-cleanup.md) | Removing older filtered copies and recovering interrupted shell cleanup plans. |
 | [Bucket permissions](security/bucket-permissions.md) | Least-privilege S3 policy and R2 token. |
 | [SECURITY.md](../SECURITY.md) | Reporting a vulnerability. |
 

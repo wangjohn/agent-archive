@@ -1,6 +1,6 @@
 # Set up capture
 
-Before enabling capture, read [what leaves your machine](../security/privacy.md#what-is-uploaded): filtering and credential redaction are best effort, there is no client-side encryption, and visible user-level `SKILL.md` text may be uploaded even when you include only one project. Setup captures new sessions in explicitly included projects; [backfill](../guides/backfill.md) imports older sessions only when you choose it.
+Before enabling capture, read [what leaves your machine](../security/privacy.md#what-is-uploaded): filtering and credential redaction are best effort, there is no client-side encryption, and visible user-level `SKILL.md` text may be uploaded even when you include only one project. Included-project scope captures new sessions in explicitly included projects. Codex also offers an explicit all-current-and-future-projects scope, subject to exclusions; Claude Code and Cursor remain project scoped. [Review Codex source and scope consent](#automatic-codex-discovery). [Backfill](../guides/backfill.md) imports older sessions only when you choose it.
 
 ```sh
 agent-archive setup
@@ -45,7 +45,7 @@ makes the same checks, for the apps it would include, and checks the
 credential store (the Keychain, or on Linux the credentials folder) when it
 stores in R2.
 
-Setup captures only **new** sessions in the projects you include. To import
+Setup captures **new** sessions within the scope you approve: included projects by default, or all non-excluded projects for Codex when explicitly chosen. To import
 conversations already on this machine, run [`agent-archive
 backfill`](../guides/backfill.md) afterwards.
 
@@ -82,8 +82,12 @@ If you run setup inside a Git project, that project heads the list, marked
 ✓ as already included, so a blank line archives just it. Here a number
 switches a project in or out: enter `1` to leave the current project out.
 
-Include each project explicitly; nothing outside an included project is
-captured. If you finish with no project included, setup asks again.
+In included-project mode, include each project explicitly; nothing outside
+an included project is captured, and setup asks again if none are included.
+Codex-only all-projects mode can have zero explicitly included projects and
+covers current and future projects except configured exclusions. Review that
+choice separately from whether automatic discovery is enabled; see
+[automatic Codex discovery](#automatic-codex-discovery).
 
 ## 2. Storage
 

@@ -6,16 +6,13 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-- Codex setup offers included-project or all-current-and-future-project scope,
-  independent of supported-source discovery. Fresh scripts explicitly choose
-  both source and scope; omitted reconfiguration preserves consent. Codex-only
-  all-mode permits zero explicitly included projects. Discovery does not require hooks;
-  existing installations opt in explicitly. Original creation-time consent, pause
-  intervals and project/destination scope apply. Indistinguishable recent native
-  copies may qualify. Status schema 4 separates discovery health and actual hook
-  observation from publication/read-back verification.
-
 Planned for v0.2.0. This release has not been tagged or published.
+
+### Documentation
+
+- Launch documentation distinguishes published v0.1.1 from upcoming v0.2.0,
+  explains conversation-only handoff and Codex all-project capture consent,
+  and moves the shell cleanup recipe into a focused archive-cleanup guide.
 
 ### Fixed
 
@@ -56,6 +53,15 @@ Planned for v0.2.0. This release has not been tagged or published.
   seven-day cleanup check ownership as well as permissions and reject symlinks.
 
 ### Added
+
+- Codex setup offers included-project or all-current-and-future-project scope,
+  independent of supported-source discovery. Fresh scripts explicitly choose
+  both source and scope; omitted reconfiguration preserves consent. Codex-only
+  all-mode permits zero explicitly included projects. Discovery does not require hooks;
+  existing installations opt in explicitly. Original creation-time consent, pause
+  intervals and project/destination scope apply. Indistinguishable recent native
+  copies may qualify. Status schema 4 separates discovery health and actual hook
+  observation from publication/read-back verification.
 
 - `agent-archive recover SESSION_ID` previews a linked generation for a
   rewritten transcript; `--confirm` preserves the earlier archive and queues
@@ -163,7 +169,7 @@ Planned for v0.2.0. This release has not been tagged or published.
   creation: exact immutable provider identities, verified fresh keys, default
   two spare keys (`--spares 0..5`), and an authoritative secret-free slot ledger.
   Creation, reservation, delivery, and uncertain cleanup are tracked durably;
-  management tokens are never persisted. This phase remains gated and unmerged
+  management tokens are never persisted. This implementation is merged but remains experimentally gated
   pending live provider acceptance and integrated revocation/recovery review.
 
 - Handoff before setup discovers Claude Code and Codex native conversations in
