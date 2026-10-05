@@ -220,7 +220,7 @@ func TestListKeepsRecordsBeforeRejectingOversizedContinuation(t *testing.T) {
 	}
 }
 
-func TestListIgnoresOperationNamespaceAndKeepsMalformedRootDiagnostics(t *testing.T) {
+func TestListReportsMalformedProgressWithoutTreatingItAsIdentity(t *testing.T) {
 	t.Parallel()
 	store := &boundedStore{MemoryStore: storagetest.NewMemoryStore()}
 	id := strings.Repeat("a", 32)
@@ -233,17 +233,17 @@ func TestListIgnoresOperationNamespaceAndKeepsMalformedRootDiagnostics(t *testin
 			t.Fatal(err)
 		}
 		got := List(t.Context(), store)
-		if got.Partial || len(got.Unreadable) != 0 || len(got.Records) != 1 || got.Records[0].MachineID != id {
+		if !got.Partial || len(got.Unreadable) != 1 || len(got.Records) != 1 || got.Records[0].MachineID != id {
 			t.Fatalf("informational operation treated as identity: %+v", got)
 		}
 	}
-	if store.reads.Load() != 2 {
-		t.Fatal("operation content fetched for registry identity")
+	if store.reads.Load() != 4 {
+		t.Fatal("operation progress was not fetched within the shared budget")
 	}
 	if err := store.Put(t.Context(), "machines/bad-root.json", []byte(`{}`)); err != nil {
 		t.Fatal(err)
 	}
-	if got := List(t.Context(), store); !got.Partial || len(got.Unreadable) != 1 || len(got.Records) != 1 {
+	if got := List(t.Context(), store); !got.Partial || len(got.Unreadable) != 2 || len(got.Records) != 1 {
 		t.Fatalf("malformed root hidden: %+v", got)
 	}
 }

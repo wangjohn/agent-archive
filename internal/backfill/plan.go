@@ -345,17 +345,7 @@ func classifyPlanWork(ctx context.Context, env Environment, state ArchiveState, 
 		w.tooLarge = w.t.size > collector.DefaultMaxRawTranscriptBytes
 	}
 	for _, group := range sessions {
-		// A physical revision prevents choosing an ordinary-looking sibling as
-		// active until related-history selection is implemented.
-		pending := false
-		for _, w := range group {
-			pending = pending || w.t.capturePending
-		}
-		if pending {
-			for _, w := range group {
-				w.t.capturePending = true
-			}
-		}
+		markPendingHistory(group)
 		if len(group) > 1 {
 			for _, w := range group {
 				w.duplicated = true
@@ -382,10 +372,24 @@ func classifyPlanWork(ctx context.Context, env Environment, state ArchiveState, 
 		}
 	}
 	for _, group := range sessions {
+		markPendingHistory(group)
 		markDuplicates(group)
 	}
 
 	return nil
+}
+
+// Metadata found beyond the bounded header can also establish related history.
+// Every observed sibling must stay pending before duplicate selection.
+func markPendingHistory(group []*work) {
+	for _, w := range group {
+		if w.t.capturePending {
+			for _, sibling := range group {
+				sibling.t.capturePending = true
+			}
+			return
+		}
+	}
 }
 
 // selectAdapterWork decides which whole transcripts need filtering. It does

@@ -477,7 +477,7 @@ person reads.
 The document has `schema_version: 1` and contains `records` (each with `schema_version: 1` as defined by the
 [machine record schema](../../schemas/machine.schema.json)), `unreadable`
 (object key and a bounded safe reason), `partial`, and `provider_verified`
-(always false until a provider verification command is implemented). Unreadable
+(false for ordinary listing; see the explicit experimental provider check below). Unreadable
 records and partial listings exit with code 1 while preserving readable records.
 Records are untrusted bucket claims. Heartbeats are at most daily, not current
 activity; credential kinds do not establish provider-verified ownership.
@@ -486,7 +486,8 @@ activity; credential kinds do not establish provider-verified ownership.
 `pagination_complete`, `account_inventory_complete` (currently always false),
 `visibility` (`unknown_may_be_creator_only`), `partial`, optional `diagnostic`,
 `observations` and optional `claim_not_observed` token IDs. Observations contain
-`machine_id`, optional `access_key_id`, `state` and `binding`. `provider_verified`
+`machine_id`, optional `access_key_id`, `state`, `binding`, and optional `role`
+(`current`, `unused_spare_claim`, or `retired_credential_claim`). `provider_verified`
 is true only when pagination and all observed checks complete without partial
 results; it never asserts ownership, account completeness or revocation.
 States include `legacy_or_unknown_binding`, `missing_or_not_visible`,
@@ -496,7 +497,10 @@ States include `legacy_or_unknown_binding`, `missing_or_not_visible`,
 `local_committed_binding`. Failures return available observations and exit 1.
 
 `machines --json` additionally includes optional `pairing_warnings`, an array of
-secret-free local pending, uncertain-delivery or expired pairing descriptions.
+secret-free local pending, uncertain-delivery or expired pairing descriptions and
+local revocation summaries. Optional `revocations` contains bounded operation
+snapshots read from the bucket: these are **untrusted claims** even when a key
+outcome says `confirmed`. They never authorize deletion or prove removal.
 These warnings require no conversation scan or provider-management credential.
 An observed matching bucket claim does not prove machine ownership or revocation.
 
@@ -510,6 +514,14 @@ bounded `kind` (`name`, `machine_id`, `recipient_id`, or `pairing_id`) and `valu
 It is informational, never deletion authority; request-only operations cannot
 be retried as verified selections. Provider success confirms
 only the selected set, never all possible shared/legacy/creator-hidden access.
+
+Machine records optionally carry `unused_spares` (at most five nonsecret dedicated
+bindings), `retired_credentials` (at most sixteen hints), and
+`credential_history_partial` when the full local retired history exceeds those
+hints. Provider matching never proves a remote spare is undelivered; that requires
+independent local issuance evidence. Provider verification returns partial when
+credential history is truncated or local issuance is unreadable, with corresponding
+`credential_history_claim_incomplete` or `local_issuance_unreadable` diagnostics.
 
 The optional `applications[].discovery.observed_formats` array summarizes up to
 16 observed session format combinations. Each entry includes `profile`,

@@ -123,6 +123,157 @@
     "heartbeat_at": {
       "type": "string",
       "format": "date-time"
+    },
+    "unused_spares": {
+      "type": "array",
+      "maxItems": 5,
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "kind",
+          "access_key_id",
+          "recipient_id",
+          "issuer_id",
+          "slot_id"
+        ],
+        "properties": {
+          "kind": {
+            "const": "r2_own"
+          },
+          "access_key_id": {
+            "type": "string",
+            "maxLength": 128,
+            "pattern": "^[0-9a-f]{32}$"
+          },
+          "recipient_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{32}$"
+          },
+          "issuer_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{32}$"
+          },
+          "slot_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{32}$"
+          },
+          "shared_with": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{32}$"
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "r2_own"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "access_key_id",
+                "recipient_id",
+                "issuer_id"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "r2_shared"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "access_key_id",
+                "shared_with"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "retired_credentials": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "kind",
+          "access_key_id",
+          "recipient_id",
+          "issuer_id",
+          "slot_id"
+        ],
+        "properties": {
+          "kind": {
+            "const": "r2_own"
+          },
+          "access_key_id": {
+            "type": "string",
+            "maxLength": 128,
+            "pattern": "^[0-9a-f]{32}$"
+          },
+          "recipient_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{32}$"
+          },
+          "issuer_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{32}$"
+          },
+          "slot_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{32}$"
+          },
+          "shared_with": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{32}$"
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "r2_own"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "access_key_id",
+                "recipient_id",
+                "issuer_id"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "r2_shared"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "access_key_id",
+                "shared_with"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "credential_history_partial": {
+      "type": "boolean"
     }
   }
 }

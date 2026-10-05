@@ -82,35 +82,46 @@ func (m CodexMeta) Relationships() (CodexIdentity, Outcome) {
 	}
 	thread, _ := optionalText(m.ThreadSource)
 	f.Child = f.ParentID != "" || f.SubagentOrdinal != nil || thread == "subagent" || present(m.AgentPath) || present(m.AgentRole) || present(m.AgentType) || present(m.AgentNickname) || (f.RootID != "" && !strings.EqualFold(f.RootID, f.ThreadID))
+	if code := m.relationshipSource(&f); code != "" {
+		return f, code
+	}
+
+	if f.contradictoryRelationship() {
+		return f, InvalidRelationship
+	}
+	return f, ""
+}
+
+func (f CodexIdentity) contradictoryRelationship() bool {
+	return f.ParentID != "" && (strings.EqualFold(f.ParentID, f.ThreadID) || strings.EqualFold(f.RootID, f.ThreadID)) || f.ForkID != "" && strings.EqualFold(f.ForkID, f.ThreadID) || f.ForkOrdinal != nil && f.ForkID == ""
+}
+
+func (m CodexMeta) relationshipSource(f *CodexIdentity) Outcome {
 	if present(m.Source) {
 		var source string
 		if json.Unmarshal(m.Source, &source) != nil {
 			var object map[string]json.RawMessage
 			if json.Unmarshal(m.Source, &object) != nil || object == nil {
-				return f, InvalidMetadata
+				return InvalidMetadata
 			}
 			if sub, exists := object["subagent"]; exists {
 				f.Child = true
 				childParent, code := codexSubagentParent(sub)
 				if code != "" {
-					return f, code
+					return code
 				}
-				f.Child = true
 				if f.ParentID != "" && childParent != "" && !strings.EqualFold(f.ParentID, childParent) {
-					return f, InvalidRelationship
+					return InvalidRelationship
 				}
 				if f.ParentID == "" {
 					f.ParentID = childParent
 				}
 			} else {
-				return f, UnsupportedExecution
+				return UnsupportedExecution
 			}
 		}
 	}
-	if f.ParentID != "" && (strings.EqualFold(f.ParentID, f.ThreadID) || strings.EqualFold(f.RootID, f.ThreadID)) || f.ForkID != "" && strings.EqualFold(f.ForkID, f.ThreadID) || f.ForkOrdinal != nil && f.ForkID == "" {
-		return f, InvalidRelationship
-	}
-	return f, ""
+	return ""
 }
 
 // Identity adds the physical locator to validated relationship facts.

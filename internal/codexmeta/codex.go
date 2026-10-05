@@ -22,8 +22,8 @@ const (
 	CodexHistoryPaginated HistoryMode = "paginated"
 )
 
-// An absent mode is legacy, but an explicit null/empty/non-string mode is not
-// the absent-field default. Upstream's recorder rejects those representations.
+// UnmarshalJSON rejects explicit null, empty, and non-string modes. An absent
+// mode is legacy; upstream's recorder rejects these explicit representations.
 func (m *HistoryMode) UnmarshalJSON(raw []byte) error {
 	var mode string
 	if err := json.Unmarshal(raw, &mode); err != nil {
