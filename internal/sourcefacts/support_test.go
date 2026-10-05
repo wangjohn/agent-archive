@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/wangjohn/agent-archive/internal/nativesessions"
 )
 
 func TestCodexCompatibilityUsesFormatNotReleaseOrClientName(t *testing.T) {
@@ -15,7 +17,7 @@ func TestCodexCompatibilityUsesFormatNotReleaseOrClientName(t *testing.T) {
 				if !SupportedCodexProducer(m) || CodexFormatProfile(m) != CodexLegacyJSONL {
 					t.Fatalf("compatible metadata rejected: %+v", m)
 				}
-				m.HistoryMode = "paginated"
+				m.HistoryMode = nativesessions.CodexHistoryPaginated
 				if CodexFormatProfile(m) != CodexPaginatedJSONL {
 					t.Fatal("paginated profile lost")
 				}
@@ -26,6 +28,14 @@ func TestCodexCompatibilityUsesFormatNotReleaseOrClientName(t *testing.T) {
 
 func TestCodexCompatibilityRejectsMissingOrUnsupportedEvidence(t *testing.T) {
 	t.Parallel()
+	withHistoryMode := func(raw string) func(*CodexMeta) {
+		t.Helper()
+		var decoded CodexMeta
+		if err := json.Unmarshal([]byte(raw), &decoded.HistoryMode); err != nil {
+			t.Fatal(err)
+		}
+		return func(m *CodexMeta) { m.HistoryMode = decoded.HistoryMode }
+	}
 	for _, tc := range []struct {
 		name  string
 		alter func(*CodexMeta)
@@ -44,8 +54,8 @@ func TestCodexCompatibilityRejectsMissingOrUnsupportedEvidence(t *testing.T) {
 		{"history-base", func(m *CodexMeta) { m.HistoryBase = json.RawMessage(`{}`) }},
 		{"internal-thread", func(m *CodexMeta) { m.ThreadSource = json.RawMessage(`"memory_consolidation"`) }},
 		{"spawned-agent", func(m *CodexMeta) { m.AgentPath = json.RawMessage(`"/agent/child"`) }},
-		{"compressed", func(m *CodexMeta) { m.HistoryMode = "compressed" }},
-		{"referenced", func(m *CodexMeta) { m.HistoryMode = "referenced" }},
+		{"compressed", withHistoryMode(`"compressed"`)},
+		{"referenced", withHistoryMode(`"referenced"`)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

@@ -44,7 +44,7 @@ func (h *Health) observeFormat(c Candidate) {
 func validFormatObservation(f FormatObservation) bool {
 	return (f.Profile == sourcefacts.CodexLegacyJSONL || f.Profile == sourcefacts.CodexPaginatedJSONL) &&
 		nativesessions.ValidCodexVersion(f.Version) &&
-		(f.Source == "cli" || f.Source == "exec" || f.Source == "vscode") &&
+		nativesessions.ValidCodexExecutionSource(f.Source) &&
 		(f.Evidence == sourcefacts.CodexRuntimeTested || f.Evidence == sourcefacts.CodexSourceInspected || f.Evidence == sourcefacts.CodexCompatibleUntested) &&
 		f.Observations > 0
 }

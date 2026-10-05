@@ -1,6 +1,10 @@
 package sourcefacts
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"github.com/wangjohn/agent-archive/internal/nativesessions"
+)
 
 // CodexProfile identifies an understood on-disk history representation. It is
 // independent of release numbers and never grants capture consent.
@@ -20,9 +24,9 @@ func CodexFormatProfile(m CodexMeta) CodexProfile {
 		return ""
 	}
 	switch m.HistoryMode {
-	case "", "legacy":
+	case "", nativesessions.CodexHistoryLegacy:
 		return CodexLegacyJSONL
-	case "paginated":
+	case nativesessions.CodexHistoryPaginated:
 		return CodexPaginatedJSONL
 	default:
 		return ""
@@ -45,6 +49,17 @@ const (
 	CodexCompatibleUntested CodexEvidence = "compatible_untested"
 )
 
+type codexProducerVersion string
+
+const (
+	codexVersion150           codexProducerVersion = "0.150.0"
+	codexVersion155           codexProducerVersion = "0.155.0"
+	codexVersion155Alpha9     codexProducerVersion = "0.155.0-alpha.9"
+	codexVersion155Alpha9Dot2 codexProducerVersion = "0.155.0-alpha.9.2"
+	codexVersion159           codexProducerVersion = "0.159.3"
+	codexVersion160           codexProducerVersion = "0.160.0"
+)
+
 // CodexProducerEvidence describes pinned evidence for observed metadata, never
 // the executable on PATH. Runtime evidence includes a synthetic app-server
 // client named Codex Desktop, not acceptance of the desktop GUI.
@@ -55,10 +70,10 @@ func CodexProducerEvidence(m CodexMeta) CodexEvidence {
 		(source == "exec" && m.Originator == "codex_exec") ||
 		(source == "vscode" && m.Originator == "Codex Desktop")
 	if known {
-		switch m.Version {
-		case "0.159.3":
+		switch codexProducerVersion(m.Version) {
+		case codexVersion159:
 			return CodexRuntimeTested
-		case "0.150.0", "0.155.0", "0.155.0-alpha.9", "0.155.0-alpha.9.2", "0.160.0":
+		case codexVersion150, codexVersion155, codexVersion155Alpha9, codexVersion155Alpha9Dot2, codexVersion160:
 			return CodexSourceInspected
 		}
 	}

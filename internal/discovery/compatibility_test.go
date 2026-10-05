@@ -144,31 +144,44 @@ func TestCompatibleFormatsPublishAndReadBackAmongRejectedRecords(t *testing.T) {
 	}
 }
 
+type creationConsentCase string
+
+const (
+	consentOldCreation        creationConsentCase = "old-creation"
+	consentUnapprovedProject  creationConsentCase = "unapproved-project"
+	consentUnapprovedSource   creationConsentCase = "unapproved-source"
+	consentPausedCreation     creationConsentCase = "paused-creation"
+	consentDestinationChanged creationConsentCase = "destination-changed"
+	consentExcluded           creationConsentCase = "excluded"
+)
+
 func TestUnknownCompatibleVersionCannotBypassCreationConsent(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"old-creation", "unapproved-project", "unapproved-source", "paused-creation", "destination-changed", "excluded"} {
-		t.Run(mode, func(t *testing.T) {
+	for _, mode := range []creationConsentCase{consentOldCreation, consentUnapprovedProject, consentUnapprovedSource, consentPausedCreation, consentDestinationChanged, consentExcluded} {
+		t.Run(string(mode), func(t *testing.T) {
 			t.Parallel()
 			store, cfg, at, root := fixture(t)
 			project := cfg.Archive.Projects[0].Root
-			if mode == "unapproved-project" {
+			if mode == consentUnapprovedProject {
 				project = t.TempDir()
 			}
 			id, _ := compatibilityRollout(t, root, project, "codex-155-alpha-paginated.jsonl", "0.999.0-alpha.1", 1, func(m, _ map[string]any) {
-				if mode == "old-creation" {
+				if mode == consentOldCreation {
 					m["timestamp"] = at.Add(-time.Hour).Format(time.RFC3339Nano)
 				}
 			})
 			prior := cfg
 			switch mode {
-			case "unapproved-source":
+			case consentOldCreation, consentUnapprovedProject:
+				// These cases are applied while constructing the rollout above.
+			case consentUnapprovedSource:
 				cfg.Discovery.CodexHomes = []string{t.TempDir()}
-			case "excluded":
+			case consentExcluded:
 				cfg.Archive.Projects = append([]archive.ProjectActivation(nil), cfg.Archive.Projects...)
 				cfg.Archive.Projects[0].Included = false
-			case "destination-changed":
+			case consentDestinationChanged:
 				cfg.Storage.Bucket = "different-synthetic-bucket"
-			case "paused-creation":
+			case consentPausedCreation:
 				var err error
 				if _, err = config.SetPaused(store.Home(), true, at.Add(30*time.Second)); err != nil {
 					t.Fatal(err)
@@ -178,7 +191,7 @@ func TestUnknownCompatibleVersionCannotBypassCreationConsent(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if mode != "paused-creation" {
+			if mode != consentPausedCreation {
 				if err := config.ReconcileDiscovery(&cfg, prior, at.Add(90*time.Second)); err != nil {
 					t.Fatal(err)
 				}

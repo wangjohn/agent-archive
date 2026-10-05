@@ -14,8 +14,10 @@ import (
 type codexHistoryMode string
 
 const (
-	historyLegacy    codexHistoryMode = "legacy"
-	historyPaginated codexHistoryMode = "paginated"
+	// CodexHistoryLegacy identifies the original JSONL history representation.
+	CodexHistoryLegacy codexHistoryMode = "legacy"
+	// CodexHistoryPaginated identifies the paginated JSONL history representation.
+	CodexHistoryPaginated codexHistoryMode = "paginated"
 )
 
 // An absent mode is legacy, but an explicit null/empty/non-string mode is not
@@ -125,7 +127,7 @@ func (m CodexMeta) Classification() string {
 	if present(m.ForkedFrom) || present(m.ForkOrdinal) || present(m.Parent) || present(m.HistoryBase) || present(m.SubagentOrdinal) {
 		return "inherited_history"
 	}
-	if m.HistoryMode != "" && m.HistoryMode != historyLegacy && m.HistoryMode != historyPaginated {
+	if m.HistoryMode != "" && m.HistoryMode != CodexHistoryLegacy && m.HistoryMode != CodexHistoryPaginated {
 		return "unsupported_history"
 	}
 	if !m.LocalExecutionSource() {
@@ -154,8 +156,14 @@ func ValidCodexVersion(version string) bool {
 // LocalExecutionSource recognizes supported local source format tags only;
 // it does not establish local originating execution or producer support.
 func (m CodexMeta) LocalExecutionSource() bool {
-	var source codexExecutionSource
-	return json.Unmarshal(m.Source, &source) == nil && (source == executionCLI || source == executionExec || source == executionVSCode)
+	var source string
+	return json.Unmarshal(m.Source, &source) == nil && ValidCodexExecutionSource(source)
+}
+
+// ValidCodexExecutionSource recognizes supported local source format tags.
+func ValidCodexExecutionSource(value string) bool {
+	source := codexExecutionSource(value)
+	return source == executionCLI || source == executionExec || source == executionVSCode
 }
 
 // NativeFirstTask checks the first task_started, distinguishing Codex's built
