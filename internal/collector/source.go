@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"sync/atomic"
 	"time"
 
@@ -232,7 +233,7 @@ func (r providerReader) Filter(ctx context.Context, adapter archive.Adapter, max
 			return out, observed, err
 		}
 	}
-	out, err = f.Filter(ctx, in, agentapi.FilterContext{StartedAt: r.startedAt, Limits: limits})
+	out, err = f.Filter(ctx, in, agentapi.FilterContext{Filename: filepath.Base(r.ref.Path), StartedAt: r.startedAt, Limits: limits})
 	if err != nil {
 		return out, observed, translateSourceError(err)
 	}

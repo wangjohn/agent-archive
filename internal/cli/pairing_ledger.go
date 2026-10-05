@@ -13,6 +13,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/machines"
 	"github.com/wangjohn/agent-archive/internal/pairing"
+	"github.com/wangjohn/agent-archive/internal/revocation"
 )
 
 type pairingCredentialKind string
@@ -120,6 +121,13 @@ func pairingWarnings(home string, now time.Time) []string {
 		} else {
 			warnings = append(warnings, fmt.Sprintf("Pairing %s for %s is pending; claim not observed.", l.PairingID, l.Name))
 		}
+	}
+	progress, err := revocation.List(home)
+	if err != nil {
+		warnings = append(warnings, err.Error())
+	}
+	for _, operation := range progress {
+		warnings = append(warnings, fmt.Sprintf("Local revocation operation %s: %s.", operation.OperationID, operation.Summary()))
 	}
 	return append(warnings, dedicatedWarnings(home)...)
 }

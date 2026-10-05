@@ -1,6 +1,52 @@
 # Adding a machine: pairing, per-machine keys, and revocation
 
-> **Proposal; P2c registry is implemented in its draft PR; pairing and management phases remain unimplemented.** Prepared and reviewed 2026-10-01 against commit `4de2d07`, without builds or tests. Code wins where references differ. Both reviews are incorporated; [review history](#review-changes) records the rationale.
+> **Implemented as an experimental draft; general availability remains disabled.**
+> Original design reviewed 2026-10-01 against `4de2d07`; the non-live reconciliation
+> started from `7e804f80` on 2026-10-05. Live Cloudflare and representative platform
+> acceptance remain separate gates. Code wins where historical references differ.
+
+Current implementation retains retired committed dedicated assignments atomically
+with setup, accepts healthy issuer labels or independent operator files for remote
+revocation, verifies unused spare claims separately from delivered descendants,
+and reports bounded local and untrusted remote operation progress. Portable
+standalone exclusions, safe interactive mappings, direct-first discovery, partial
+candidate review/manual recovery, post-commit success, management-token fallback,
+clipboard recovery and missing-app recheck are implemented. See the
+[multiple-machine guide](../../docs/guides/multiple-machines.md) for the exact current
+experimental flow and [uninstall instructions](../../docs/getting-started/uninstall.md)
+for safe revocation before deleting local ownership evidence.
+
+Provider token names intentionally contain only recipient, issuer and slot IDs;
+chosen display names are local/bucket labels. Default machine names use random IDs,
+never hostnames. Rename does not change authority: an original issuer label remains
+trusted lineage, while a renamed remote label needs independently verified operator
+evidence. Ordinary revocation covers local retired assignments and independently
+listed unused spares; delivered descendants require `--include-issued` and a trusted
+immutable issuer ID. Records remain informational, including provider-confirmed claims.
+
+The operation snapshot bound is 64 KiB; ordinary registry records stay 16 KiB.
+Listings share five seconds, 1,000 pages/objects and four fetch workers. Retired
+record hints are limited to sixteen entries with an explicit partial flag; committed
+local history is limited to 128 without silently dropping earlier keys. The wire
+format/version and cryptography remain unchanged. Older receivers reject standalone
+exclusions with an empty affected set; upgrade both peers for this scope fix and
+retain operator bindings before downgrading or removing local data.
+
+The remaining design below is historical. Its command examples describe the intended
+GA experience, rather than overriding current experimental gates. Timing targets and
+live acceptance requirements below remain unverified until separately recorded.
+
+Non-live verification on 2026-10-05 (macOS arm64, Go 1.27.1): the repository-wide
+`go test -race -timeout 20m ./...` passed, as did the ten relevant package race
+suites plus doc-link checks. After complexity-only helper extraction, the affected
+pairing, machine, revocation, project, setup and schema race regressions passed.
+`go vet ./...`, pinned golangci-lint 2.14.0's blocking pass, and changed-code doc
+comment checks passed. Combined fake acceptance covers source issuer names,
+third-machine revocation after rename, retired re-pairing keys, unused/delivered
+spares, issuer compromise, competing adds for one spare, and partial deletion/retry.
+These results establish local contracts only; no real Cloudflare mutation, live
+permission/visibility/propagation check, or representative Linux/platform timing
+acceptance was performed in this implementation session.
 
 Goal: add a computer in under a minute when apps and credentials are ready, without dashboard work, retyping settings, or exposing secrets. Commands:
 
@@ -174,7 +220,7 @@ Missing tokens or partial deletion produce per-key active/unverified status and 
 
 ### Never carried
 
-`machine_id`, `host_id`, `allow_network_home`, `R2CredentialRef`, `retired_credential_refs`, `declined_harnesses`, `imported_harnesses`, `hook_files`, `installed_executable`, `background_backend`, `destination_since`, `previous_destinations`, `storage_verified_at`, `bucket_privacy`, `paused`, local state, and anything from the AWS or proxy environment (paths and endpoints differ per machine). The new machine gets its own identity, and its own checks run fresh.
+`machine_id`, `host_id`, `allow_network_home`, `R2CredentialRef`, `retired_credential_refs`, `retired_machine_assignments`, `declined_harnesses`, `imported_harnesses`, `hook_files`, `installed_executable`, `background_backend`, `destination_since`, `previous_destinations`, `storage_verified_at`, `bucket_privacy`, `paused`, local state, and anything from the AWS or proxy environment (paths and endpoints differ per machine). The new machine gets its own identity, and its own checks run fresh.
 
 Never install source identity or absolute paths; carry unmappable exclusions as scope warnings without source absolute paths.
 

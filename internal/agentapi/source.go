@@ -111,6 +111,8 @@ type NativeInput struct {
 
 // FilterContext supplies existing native filtering observations without path access.
 type FilterContext struct {
+	// Filename is a physical locator observation only; it grants no path access.
+	Filename  string
 	StartedAt time.Time
 	Limits    ReadLimits
 }

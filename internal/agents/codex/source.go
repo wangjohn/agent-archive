@@ -6,6 +6,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agents/nativecodec"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/sourceio"
+	"io"
 	"time"
 )
 
@@ -20,7 +21,9 @@ func (f Filter) Filter(ctx context.Context, in agentapi.NativeInput, c agentapi.
 	if in.Records != nil {
 		return filterHistory(ctx, in.Records)
 	}
-	return sourceio.FilterJSONL(ctx, in, c, nativecodec.FilterCodexCaptureJSONL)
+	return sourceio.FilterJSONL(ctx, in, c, func(r io.Reader) (archive.FilteredTranscript, error) {
+		return nativecodec.FilterCodexCaptureJSONL(r, c.Filename)
+	})
 }
 
 // Refilter applies current privacy rules to retained native evidence.
