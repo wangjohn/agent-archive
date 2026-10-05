@@ -27,6 +27,7 @@ import (
 	"github.com/aws/smithy-go"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
 	"github.com/wangjohn/agent-archive/internal/cloudflare"
+	"github.com/wangjohn/agent-archive/internal/platform"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"golang.org/x/term"
 )
@@ -554,7 +555,7 @@ func main() {
 	defer cancel()
 	id := randomID()
 	base := "aa-accept-" + time.Now().UTC().Format("20060102") + "-" + id[:12]
-	r := &runner{path: *output, token: token, api: cloudflare.New(token, cloudflare.Options{}), secrets: []string{token}, ctx: ctx, r: report{Revision: revision, RunID: id, Started: time.Now().UTC(), Platform: runtime.GOOS + "/" + runtime.GOARCH, Account: account, Buckets: []bucket{{Name: base}, {Name: base + "-control"}}, Pending: []string{"actual guided setup and paired CLI transaction", "exact two-permission token provenance (operator confirmation)", "r2.dev enabled-warning interaction", "eu/us/fedramp jurisdiction acceptance", "non-administrator member permissions", "R2-disabled account", "429 Retry-After observation (do not intentionally exhaust limits)", "multi-page and account-wide inventory completeness", "token creation rate limit", "prefix-scoped token-creation restrictions", "real macOS/Linux onboarding timings", "full interruption/concurrency/issuer-compromise matrix"}}}
+	r := &runner{path: *output, token: token, api: cloudflare.New(token, cloudflare.Options{}), secrets: []string{token}, ctx: ctx, r: report{Revision: revision, RunID: id, Started: time.Now().UTC(), Platform: string(platform.Current()) + "/" + runtime.GOARCH, Account: account, Buckets: []bucket{{Name: base}, {Name: base + "-control"}}, Pending: []string{"actual guided setup and paired CLI transaction", "exact two-permission token provenance (operator confirmation)", "r2.dev enabled-warning interaction", "eu/us/fedramp jurisdiction acceptance", "non-administrator member permissions", "R2-disabled account", "429 Retry-After observation (do not intentionally exhaust limits)", "multi-page and account-wide inventory completeness", "token creation rate limit", "prefix-scoped token-creation restrictions", "real macOS/Linux onboarding timings", "full interruption/concurrency/issuer-compromise matrix"}}}
 	if r.save() != nil {
 		fmt.Fprintln(os.Stderr, "cannot create private report; no provider work started")
 		os.Exit(1)
