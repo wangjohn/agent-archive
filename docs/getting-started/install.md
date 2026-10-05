@@ -5,14 +5,14 @@ dependencies. It runs on macOS (Intel and Apple Silicon) and on Linux (x86-64
 and arm64).
 
 The latest published release is **v0.1.1**, with macOS binaries only. This
-branch documents the upcoming **v0.2.0**. Linux binaries, local session browsing
-before setup, automatic agent launching, and stats require a source build until
-that release is published. For v0.1.1, follow its
+branch documents current source. Linux support, local session browsing before
+setup, automatic agent launching, and stats require a source build until the
+next release. For v0.1.1, follow its
 [versioned instructions](https://github.com/wangjohn/agent-archive/blob/v0.1.1/README.md#quickstart).
 
 After installing a source build, continue with [setup](setup.md).
 
-After installing, try `agent-archive handoff` inside a project to continue an
+With a source build, try `agent-archive handoff` inside a project to continue an
 existing Claude Code or Codex conversation before creating a bucket or running
 setup. [Native local selection, limits and verification](../guides/handoff.md#before-setup-native-local-sessions).
 

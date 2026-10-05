@@ -10,7 +10,7 @@ Planned for v0.2.0. This release has not been tagged or published.
 
 ### Documentation
 
-- Launch documentation distinguishes published v0.1.1 from upcoming v0.2.0,
+- Documentation distinguishes published v0.1.1 from current source,
   explains conversation-only handoff and Codex all-project capture consent,
   and moves the shell cleanup recipe into a focused archive-cleanup guide.
 

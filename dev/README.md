@@ -50,8 +50,7 @@ implemented design records live in `proposals/implemented/`.
 
 | Doc | For |
 | --- | --- |
-| [v0.2.0 launch preparation](maintainers/v0.2.0-launch.md) | Release sequence, demo storyboard, and blog themes. |
-| [v0.2.0 release notes](maintainers/v0.2.0-release-notes.md) | Draft candidate notes; publish after acceptance. |
+| [Demos and blog posts](maintainers/launch-writing.md) | Handoff storyboard, example screenshots, and writing themes. |
 | [Releasing](maintainers/releasing.md) | Tagging, signing, and notarization. |
 | [Published-release acceptance](maintainers/open-source-acceptance.md) | Disposable Mac and bucket smoke test with recorded pass, fail, or pending evidence. |
 | [Versions](maintainers/versions.md) | Filter, adapter, parser, and schema versions, and when each is bumped. |

@@ -6,7 +6,7 @@ are for people using it; specs and contributor guides are in
 
 ## First local handoff
 
-With the upcoming v0.2.0 source build, run `agent-archive handoff` inside a project to choose an
+With a current source build, run `agent-archive handoff` inside a project to choose an
 existing Claude Code or Codex conversation before configuring storage. See
 [scope, bounded previews and cleanup](guides/handoff.md#before-setup-native-local-sessions).
 

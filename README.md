@@ -11,9 +11,9 @@ across agents and machines, with searchable history stored in your own S3 or
 R2 bucket. There is no agent-archive account, hosted service, or telemetry.
 
 > **Status: beta.** The latest published release is **v0.1.1 (macOS)**.
-> This branch contains the upcoming **v0.2.0**, which has not been released.
-> Automatic agent launching, handoff before setup, Linux binaries, and stats
-> are upcoming features. Interfaces and the bucket layout may change before v1.0.
+> This README describes current source. Automatic agent launching, handoff
+> before setup, Linux support, and stats require a source build until the next
+> release. Interfaces and the bucket layout may change before v1.0.
 
 - **Continue in another agent.** Hand Claude Code's conversation to Codex
   when you hit a usage limit or want another agent's help.
@@ -39,7 +39,7 @@ curl -fsSL https://raw.githubusercontent.com/wangjohn/agent-archive/v0.1.1/insta
 Follow the [v0.1.1 getting-started guide](https://github.com/wangjohn/agent-archive/blob/v0.1.1/README.md#quickstart)
 for that release. Linux currently requires a source build.
 
-## Try the upcoming beta
+## Try current source
 
 The following steps use current source, not the v0.1.1 download.
 
@@ -108,7 +108,7 @@ Setup edits each included app's hook settings, adds one background job (a Launch
 ![Agent Archive stats preview with synthetic example data](docs/assets/stats-example.png)
 
 Example data from the [shareable report fixture](internal/statshtml/testdata/shareable.html.golden).
-Stats is part of upcoming v0.2.0; costs are estimates at list price, not a bill.
+Stats requires current source; costs are estimates at list price, not a bill.
 
 ## Commands and docs
 

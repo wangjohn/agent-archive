@@ -1,6 +1,15 @@
 # Set up capture
 
-Before enabling capture, read [what leaves your machine](../security/privacy.md#what-is-uploaded): filtering and credential redaction are best effort, there is no client-side encryption, and visible user-level `SKILL.md` text may be uploaded even when you include only one project. Included-project scope captures new sessions in explicitly included projects. Codex also offers an explicit all-current-and-future-projects scope, subject to exclusions; Claude Code and Cursor remain project scoped. [Review Codex source and scope consent](#automatic-codex-discovery). [Backfill](../guides/backfill.md) imports older sessions only when you choose it.
+Before enabling capture, read [what leaves your machine](../security/privacy.md#what-is-uploaded).
+Credential redaction is best effort, and there is no client-side encryption.
+Fresh setup stores skill names and hashes by default; choosing skill bodies can
+upload filtered user-level instructions even when you include only one project.
+
+Included-project scope captures new sessions in explicitly included projects.
+Codex also offers an explicit all-current-and-future-projects scope, subject to
+exclusions. Claude Code and Cursor remain project scoped. Review
+[Codex source and scope consent](#automatic-codex-discovery) before choosing it.
+[Backfill](../guides/backfill.md) imports older sessions only when you choose it.
 
 ```sh
 agent-archive setup
