@@ -722,6 +722,7 @@ func (s *Store) CompleteRequest(archiveSessionID, coveredToken string) (bool, er
 // every retry uses the same hash and timestamps even after process restart.
 // Bundle remains available for change detection and future parser-only rebuilds.
 type PendingPublication struct {
+	History       *PendingHistory      `json:"history,omitempty"`
 	SkillEvidence string               `json:"skill_evidence,omitempty"`
 	MetadataOnly  bool                 `json:"metadata_only,omitempty"`
 	Bundle        archive.SourceBundle `json:"bundle"`
@@ -769,6 +770,9 @@ func (s *Store) SavePending(id string, pending PendingPublication) error {
 	if pending.SourceKey == "" || pending.MetadataKey == "" || pending.SourceSHA256 == "" || len(pending.MetadataBytes) == 0 || (len(pending.SourceBytes) == 0 && (!pending.MetadataOnly || pending.SourceSize <= 0)) {
 		return errors.New("pending publication is incomplete")
 	}
+	if err := pending.ValidateHistory(id); err != nil {
+		return err
+	}
 	return local.WriteCompact(s.pendingPath(id), pending)
 }
 
@@ -783,10 +787,18 @@ func (s *Store) LoadPending(id string) (PendingPublication, bool, error) {
 	if !safeFileComponent(id) {
 		return PendingPublication{}, false, errors.New("archive session ID is not a safe file name component")
 	}
+	if err := s.checkPendingHistoryVersion(id); err != nil {
+		return PendingPublication{}, false, err
+	}
 	var pending PendingPublication
 	found, err := s.readOwned(s.pendingPath(id), &pending)
 	if err != nil {
 		return PendingPublication{}, false, fmt.Errorf("read pending publication %q: %w", id, s.afterLoss(id, err))
+	}
+	if found {
+		if err := pending.ValidateHistory(id); err != nil {
+			return PendingPublication{}, false, err
+		}
 	}
 	return pending, found, nil
 }
@@ -826,6 +838,11 @@ func (s *Store) RemovePending(id string) error {
 	err := os.Remove(s.pendingPath(id))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("remove pending publication %q: %w", id, err)
+	}
+	if safeFileComponent(id) {
+		if err := os.RemoveAll(filepath.Join(s.home, "sessions", id, "pending-sources")); err != nil {
+			return err
+		}
 	}
 	return nil
 }

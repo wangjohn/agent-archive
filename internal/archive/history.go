@@ -1,6 +1,9 @@
 package archive
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -136,6 +139,24 @@ func (m *Metadata) SourceReferences() ([]SourceReference, error) {
 		}
 	}
 	return out, nil
+}
+
+// SourceSetDigest identifies the complete validated active and preserved set.
+// Order and capture provenance are included so an active selection change
+// cannot reuse a receipt for an older historical view.
+func (m *Metadata) SourceSetDigest() (string, error) {
+	if _, err := m.SourceReferences(); err != nil {
+		return "", err
+	}
+	data, err := json.Marshal(struct {
+		Active  SourceReference  `json:"active"`
+		History *RevisionHistory `json:"history,omitempty"`
+	}{m.SourceBundle, m.History})
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(data)
+	return hex.EncodeToString(digest[:]), nil
 }
 
 func (m *Metadata) validateRevisionHistory() error {

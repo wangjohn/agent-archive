@@ -550,6 +550,31 @@ func matchesSkillIdentity(name, hash string, f Filter) bool {
 	return (f.Skill == "" || name == f.Skill) && (f.SkillSHA256 == "" || hash == f.SkillSHA256)
 }
 
+// LoadRevision validates the complete parent set, then reads one self-contained
+// preserved revision with its original capture time and native identity.
+func LoadRevision(ctx context.Context, store storage.ObjectStore, metadata archive.Metadata, revisionID string, limits Limits) (archive.SourceBundle, error) {
+	if _, err := metadata.SourceReferences(); err != nil {
+		return archive.SourceBundle{}, err
+	}
+	if metadata.History == nil {
+		return archive.SourceBundle{}, errors.New("session has no native revision history")
+	}
+	if metadata.History.CurrentRevision == revisionID {
+		return LoadSource(ctx, store, metadata, limits)
+	}
+	for _, revision := range metadata.History.Preserved {
+		if revision.RevisionID != revisionID {
+			continue
+		}
+		selected := metadata
+		selected.SourceBundle = revision.Source
+		selected.CapturedAt = revision.CapturedAt
+		selected.History = &archive.RevisionHistory{CurrentRevision: revision.RevisionID}
+		return LoadSource(ctx, store, selected, limits)
+	}
+	return archive.SourceBundle{}, errors.New("revision is not referenced by this session")
+}
+
 // LoadSource verifies the compressed SHA-256 before bounded, streaming
 // decompression and validates that source identity matches the selected
 // metadata pointer. A schema-1 bundle (a single JSON document) is refused with

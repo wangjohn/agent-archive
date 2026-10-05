@@ -1,6 +1,7 @@
 package collector
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -104,7 +105,26 @@ func (s *sessionScan) publishPending(pending state.PendingPublication) (sessionO
 	// reached storage, and failing it here, before it is saved, would upload
 	// it again on every pass (a ledger that no longer decodes did exactly
 	// that). A failure is reported once the publication is recorded.
-	if previous, hadPrevious := s.published.LastPublishedSource(); hadPrevious && previous.Key != pending.SourceKey {
+	var next archive.Metadata
+	if err := json.Unmarshal(pending.MetadataBytes, &next); err != nil {
+		return outcomeSkipped, err
+	}
+	refs, err := next.SourceReferences()
+	if err != nil {
+		return outcomeSkipped, err
+	}
+	protected := map[string]bool{}
+	for _, ref := range refs {
+		protected[ref.Key] = true
+	}
+	if pending.History != nil {
+		for _, retired := range pending.History.Retired {
+			if err := s.local.RecordSupersededWithPrivacy(s.id(), retired.Reference.Key, s.now, retired.PrivacySensitive); err != nil {
+				return outcomeSkipped, fmt.Errorf("record retired revision cleanup: %w", err)
+			}
+		}
+	}
+	if previous, hadPrevious := s.published.LastPublishedSource(); hadPrevious && !protected[previous.Key] {
 		priorBundle, _, havePrior := s.published.LastPublished()
 		privacySensitive := havePrior && priorBundle.Capture.FilterVersion != pending.Bundle.Capture.FilterVersion
 		if err := s.local.RecordSupersededWithPrivacy(s.id(), previous.Key, s.now, privacySensitive); err != nil {
@@ -146,6 +166,39 @@ func (s *sessionScan) publishPending(pending state.PendingPublication) (sessionO
 func (s *sessionScan) upload(pending state.PendingPublication) error {
 	if err := s.local.SaveListingRepair(s.id(), state.ListingRepair{MetadataKey: pending.MetadataKey, DestinationID: s.reg.DestinationID}); err != nil {
 		return fmt.Errorf("journal listing repair: %w", err)
+	}
+	if pending.History != nil {
+		if !pending.CarriesNoSource() {
+			if err := storage.PutVerifiedSource(s.ctx, s.remote, pending.SourceKey, pending.SourceSHA256, pending.SourceBytes, s.opts.Retry); err != nil {
+				return err
+			}
+		}
+		for _, stage := range pending.History.Sources {
+			data, err := s.local.ReadPendingSource(s.id(), stage)
+			if err != nil {
+				return err
+			}
+			if err := storage.PutVerifiedSource(s.ctx, s.remote, stage.Reference.Key, stage.Reference.SHA256, data, s.opts.Retry); err != nil {
+				return err
+			}
+		}
+		var m archive.Metadata
+		if err := json.Unmarshal(pending.MetadataBytes, &m); err != nil {
+			return err
+		}
+		refs, err := m.SourceReferences()
+		if err != nil {
+			return err
+		}
+		for _, ref := range refs {
+			if err := storage.VerifySource(s.ctx, s.remote, ref.Key, ref.SHA256, ref.CompressedBytes, s.opts.Retry); err != nil {
+				return err
+			}
+		}
+		if err := s.checkHistoryPublication(pending); err != nil {
+			return err
+		}
+		return s.remote.Put(s.ctx, pending.MetadataKey, pending.MetadataBytes)
 	}
 	if !pending.CarriesNoSource() {
 		if err := storage.PutSourceThenMetadataIndexed(s.ctx, s.remote, pending.SourceKey, pending.MetadataKey, pending.SourceBytes, pending.MetadataBytes, s.opts.Retry, nil); err != nil {

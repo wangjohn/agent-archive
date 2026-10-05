@@ -467,7 +467,7 @@ func (s *sweeper) remote(reg archive.SessionRegistration, summary state.Publishe
 	if remoteErr != nil {
 		return fmt.Errorf("current metadata is missing; preserve superseded sources")
 	}
-	return s.deleteSuperseded(reg, superseded, metadata.SourceBundle.Key)
+	return s.deleteSuperseded(reg, superseded, metadata)
 }
 
 // currentMetadata reads the session's live metadata, the pointer every
@@ -503,7 +503,19 @@ func (s *sweeper) currentMetadata(reg archive.SessionRegistration) (archive.Meta
 
 // deleteSuperseded deletes the ledger's snapshots past their grace period,
 // keeping the current source and the ordinary immediate predecessor.
-func (s *sweeper) deleteSuperseded(reg archive.SessionRegistration, superseded []state.SupersededSource, currentKey string) error {
+func (s *sweeper) deleteSuperseded(reg archive.SessionRegistration, superseded []state.SupersededSource, current archive.Metadata) error {
+	refs, err := current.SourceReferences()
+	if err != nil {
+		return err
+	}
+	protected := map[string]bool{}
+	for _, ref := range refs {
+		protected[ref.Key] = true
+	}
+	currentDigest, err := current.SourceSetDigest()
+	if err != nil {
+		return err
+	}
 	id := reg.ArchiveSessionID
 	// Append order records supersession order even if the clock moves backward.
 	var predecessorKey string
@@ -511,12 +523,12 @@ func (s *sweeper) deleteSuperseded(reg archive.SessionRegistration, superseded [
 		if !strings.HasPrefix(entry.Key, fmt.Sprintf("sessions/%s/%s/source.", reg.Harness.Name, id)) {
 			return fmt.Errorf("superseded source belongs to another session")
 		}
-		if entry.Key != currentKey {
+		if !protected[entry.Key] {
 			predecessorKey = entry.Key
 		}
 	}
 	for _, entry := range superseded {
-		if entry.Key == currentKey {
+		if protected[entry.Key] {
 			// Defensive: a key must never be both current and superseded;
 			// if it somehow is, trust "current" and just clean the ledger.
 			if err := s.local.RemoveSuperseded(id, entry.Key); err != nil {
@@ -535,7 +547,11 @@ func (s *sweeper) deleteSuperseded(reg archive.SessionRegistration, superseded [
 			if err != nil {
 				return err
 			}
-			if fresh.SourceBundle.Key != currentKey {
+			freshDigest, err := fresh.SourceSetDigest()
+			if err != nil {
+				return err
+			}
+			if freshDigest != currentDigest {
 				return fmt.Errorf("current metadata changed during privacy cleanup")
 			}
 			if !s.opts.PrivacyVerified(reg, fresh) {
