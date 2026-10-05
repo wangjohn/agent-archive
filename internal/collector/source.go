@@ -87,7 +87,7 @@ func newSourceReader(reg archive.SessionRegistration, opts Options) (sourceReade
 	return providerReader{
 		ref: sourceRef(reg), harness: reg.Harness.Name, startedAt: reg.SessionStartedAt,
 		subagentMetadata: reg.ParentSessionID != "", sources: opts.Sources,
-		passes: opts.sourcePasses, database: opts.CursorDatabase,
+		passes: opts.sourcePasses, database: opts.CursorDatabase, rollouts: opts.CodexRollouts,
 		discovery: discoveryRegistration(reg),
 	}, true
 }
@@ -95,6 +95,7 @@ func newSourceReader(reg archive.SessionRegistration, opts Options) (sourceReade
 // providerReader keeps only read dependencies; boxing whole registrations and
 // collector options would allocate their unrelated policy fields per source.
 type providerReader struct {
+	rollouts         agentapi.CodexRolloutLookup
 	ref              agentapi.SourceRef
 	harness          string
 	startedAt        time.Time
@@ -146,7 +147,9 @@ func (r providerReader) pass(ctx context.Context, p agentapi.SourceProvider, key
 		pass, err := r.passes.get(ctx, sourcePassKey{name: key, root: r.discoveryRoot(), discovery: r.discovery != nil}, p)
 		return pass, func() error { return nil }, err
 	}
-	pass, err := p.OpenPass(ctx, sourceEnvironment(r.discovery, r.database))
+	env := sourceEnvironment(r.discovery, r.database)
+	env.CodexRollouts = r.rollouts
+	pass, err := p.OpenPass(ctx, env)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -372,7 +375,7 @@ func (s *sourcePassSet) get(ctx context.Context, key sourcePassKey, p agentapi.S
 }
 
 func openCursorPass(_ []archive.SessionRegistration, opts *Options) func() error {
-	opts.sourcePasses = &sourcePassSet{env: agentapi.SourceEnvironment{Database: opts.cursorDatabase()}, passes: map[sourcePassKey]agentapi.SourcePass{}}
+	opts.sourcePasses = &sourcePassSet{env: agentapi.SourceEnvironment{Database: opts.cursorDatabase(), CodexRollouts: opts.CodexRollouts}, passes: map[sourcePassKey]agentapi.SourcePass{}}
 	return func() error {
 		var err error
 		for _, p := range opts.sourcePasses.passes {

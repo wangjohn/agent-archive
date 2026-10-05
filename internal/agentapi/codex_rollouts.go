@@ -12,6 +12,8 @@ type CodexRolloutLookup interface {
 
 // CodexRolloutSet separates a native current locator from complete lineage evidence.
 // Complete must never be inferred from a prunable observation cache alone.
+// Revision changes whenever the current locator, candidate membership, or candidate
+// identity evidence changes. Check must revalidate this token within the same budget.
 type CodexRolloutSet struct {
 	Current    *SourceRef
 	Candidates []SourceRef

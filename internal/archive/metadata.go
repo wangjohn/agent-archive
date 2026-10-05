@@ -683,6 +683,9 @@ func BuildMetadataWithAnalysis(bundle SourceBundle, analysis Analysis, parseErr 
 		parser.Status = ParserStatusFailed
 	}
 	metadata := baseMetadata(bundle, machineID, startedAt, derivedAt, reference, parser)
+	if analysis.Facts.TokenScopeUnknown {
+		metadata.CaptureGaps = append(metadata.CaptureGaps, CaptureGap{Code: "history_cumulative_tokens_unavailable", Detail: "Cumulative native accounting cannot establish own usage; independently recorded own usage is retained."})
+	}
 	if parseErr != nil {
 		return metadata, parseErr
 	}

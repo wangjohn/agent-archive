@@ -355,3 +355,54 @@ func BenchmarkRelatedHistoryRecords(b *testing.B) {
 		})
 	}
 }
+
+func TestForkThenRevertKeepsLogicalBoundary(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	fork, raw := historyFile(t, dir, threadB, threadB, 0, map[string]any{"forked_from_id": threadA, "forked_from_ordinal_exclusive": 2}, "inherited", "owned before revert")
+	leaf, _ := historyFile(t, dir, rolloutC, threadB, 3, map[string]any{"history_base": codexmeta.CodexHistoryPosition{RolloutID: threadB, EndOrdinal: 3, EndByteOffset: uint64(len(raw))}}, "owned after revert")
+	l := &historyLookup{thread: agentapi.CodexRolloutSet{Current: &leaf, Revision: "one"}, rollouts: map[string][]agentapi.SourceRef{threadB: {fork}}}
+	b := historyRead(t, historyPass(t, dir, l), leaf)
+	a, e := (Parser{}).Parse(t.Context(), b)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if len(a.View.Turns) != 2 || b.History.OwnStart == nil || *b.History.OwnStart != 2 {
+		t.Fatalf("lost logical fork ownership: %+v %+v", b.History, a.View.Turns)
+	}
+}
+
+func TestOrdinaryActiveAppendMakesProgress(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	ref, _ := historyFile(t, dir, threadA, threadA, 0, nil, "first")
+	p, e := (SourceProvider{}).OpenPass(t.Context(), agentapi.SourceEnvironment{})
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer func() { _ = p.Close() }()
+	for i := range 3 {
+		s, e := p.Read(t.Context(), ref, agentapi.ReadLimits{})
+		if e != nil {
+			t.Fatal(e)
+		}
+		f, e := os.OpenFile(ref.Path, os.O_APPEND|os.O_WRONLY, 0600)
+		if e != nil {
+			t.Fatal(e)
+		}
+		_, e = fmt.Fprintf(f, "{\"type\":\"event_msg\",\"ordinal\":%d,\"payload\":{\"type\":\"task_started\"}}\n", i+2)
+		if e = errors.Join(e, f.Close()); e != nil {
+			t.Fatal(e)
+		}
+		out, e := (Filter{}).Filter(t.Context(), s.Input(), agentapi.FilterContext{})
+		if e != nil {
+			t.Fatal(e)
+		}
+		if out.History != nil || len(out.Records) != i+2 {
+			t.Fatalf("prefix progress %d %d", i, len(out.Records))
+		}
+		if e := s.Close(); e != nil {
+			t.Fatal(e)
+		}
+	}
+}

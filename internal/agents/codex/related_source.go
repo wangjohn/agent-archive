@@ -78,7 +78,7 @@ func (p *relatedSourcePass) open(ctx context.Context, ref agentapi.SourceRef) (*
 		return nil, sourceFailure(agentapi.Unsafe, "invalid rollout kind")
 	}
 	if old := p.files[ref.Path]; old != nil {
-		if err := old.file.Check(); err == nil {
+		if err := old.file.Check(); err == nil && old.file.CheckPrefix(ctx, 0, sha256.Sum256(nil)) == nil {
 			return old, nil
 		}
 		if old.refs > 0 {
@@ -97,9 +97,13 @@ func (p *relatedSourcePass) open(ctx context.Context, ref agentapi.SourceRef) (*
 	if err != nil {
 		return nil, sourceio.Classify(err)
 	}
-	fail := func(e error) (*rolloutFile, error) { return nil, errors.Join(e, f.Close()) }
+	fail := func(e error) (*rolloutFile, error) {
+		return nil, errors.Join(e, agentapi.Wrap(agentapi.Cleanup, f.Close()))
+	}
 	if f.Length() > relatedRawBudget {
-		return fail(sourceFailure(agentapi.Limit, "rollout byte limit"))
+		stamp := f.Stamp()
+		o := agentapi.SourceObservation{Present: true, Size: stamp.Size, Activity: stamp.ModifiedAt, Signature: sourceio.FileSignature(stamp.Size, stamp.ModifiedAt.UnixNano())}
+		return fail(&agentapi.SourceError{Kind: agentapi.Limit, Err: agentapi.ErrRawLimit, Observed: &o})
 	}
 
 	if p.bytes+f.Length() > relatedRawBudget || len(p.files) >= archive.MaxHistorySpans {
@@ -113,6 +117,9 @@ func (p *relatedSourcePass) open(ctx context.Context, ref agentapi.SourceRef) (*
 	meta, _, found, err := codexmeta.ParseCodexMeta(line)
 	if err != nil || !found {
 		return fail(sourceFailure(agentapi.FormatMismatch, "invalid rollout metadata"))
+	}
+	if meta.HistoryMode != "" && meta.HistoryMode != codexmeta.CodexHistoryLegacy && meta.HistoryMode != codexmeta.CodexHistoryPaginated {
+		return fail(sourceFailure(agentapi.Unsafe, "unsupported history mode"))
 	}
 	identity, outcome := meta.Identity(ref.Path)
 	if outcome != "" {
@@ -231,6 +238,16 @@ func (p *relatedSourcePass) selectSource(ctx context.Context, ref agentapi.Sourc
 	if tip == nil {
 		return selected, sourceFailure(agentapi.Unavailable, "no complete rollout tip")
 	}
+	spans, err := p.graph(ctx, tip)
+	if err != nil {
+		return selected, err
+	}
+	for _, span := range spans {
+		delete(candidates, span.file.identity.RolloutID)
+	}
+	if len(candidates) != 0 {
+		return selected, sourceFailure(agentapi.Unavailable, "disconnected rollout lineage")
+	}
 	selected.leaf = tip
 	return selected, nil
 }
@@ -247,7 +264,10 @@ func (p *relatedSourcePass) graph(ctx context.Context, leaf *rolloutFile) ([]phy
 	var reversed []physicalSpan
 	seen := map[string]bool{}
 	current := leaf
-	end := leaf.boundary
+	end, err := newlineBoundary(leaf.file, leaf.file.Length())
+	if err != nil {
+		return nil, sourceio.Classify(err)
+	}
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -304,9 +324,12 @@ func hasRelated(f *rolloutFile) bool {
 }
 
 func (p *relatedSourcePass) Signature(ctx context.Context, ref agentapi.SourceRef) (agentapi.SourceObservation, error) {
+	if p.env.CodexRollouts == nil && codexmeta.RolloutID(ref.Path) == "" {
+		return p.legacy.Signature(ctx, ref)
+	}
 	selection, err := p.selectSource(ctx, ref)
 	if err != nil {
-		if p.env.CodexRollouts == nil && (agentapi.Failure(err) == agentapi.FormatMismatch || agentapi.Failure(err) == agentapi.Unavailable) {
+		if p.env.CodexRollouts == nil && !agentapi.HasFailure(err, agentapi.Cleanup) && (agentapi.Failure(err) == agentapi.FormatMismatch || agentapi.Failure(err) == agentapi.Unavailable) {
 			return p.legacy.Signature(ctx, ref)
 		}
 		return agentapi.SourceObservation{}, err
@@ -323,6 +346,14 @@ func (p *relatedSourcePass) Signature(ctx context.Context, ref agentapi.SourceRe
 func (p *relatedSourcePass) observation(ctx context.Context, selection sourceSelection, spans []physicalSpan) (agentapi.SourceObservation, error) {
 	h := sha256.New()
 	_, _ = fmt.Fprint(h, "codex-history-v1\x00", selection.set.Revision, "\x00", selection.leaf.ref.Path)
+	candidatePaths := make([]string, 0, len(selection.set.Candidates))
+	for _, ref := range selection.set.Candidates {
+		candidatePaths = append(candidatePaths, string(ref.Kind)+"\x00"+ref.Path+"\x00"+ref.Key)
+	}
+	slices.Sort(candidatePaths)
+	for _, candidate := range candidatePaths {
+		_, _ = fmt.Fprint(h, "\x00candidate:", candidate)
+	}
 	out := agentapi.SourceObservation{Present: true}
 	for _, span := range spans {
 		stamp := span.file.file.Stamp()
@@ -343,9 +374,12 @@ func (p *relatedSourcePass) observation(ctx context.Context, selection sourceSel
 }
 
 func (p *relatedSourcePass) Read(ctx context.Context, ref agentapi.SourceRef, limits agentapi.ReadLimits) (agentapi.SourceSnapshot, error) {
+	if p.env.CodexRollouts == nil && codexmeta.RolloutID(ref.Path) == "" {
+		return p.legacy.Read(ctx, ref, limits)
+	}
 	selection, err := p.selectSource(ctx, ref)
 	if err != nil {
-		if p.env.CodexRollouts == nil && (agentapi.Failure(err) == agentapi.FormatMismatch || agentapi.Failure(err) == agentapi.Unavailable) {
+		if p.env.CodexRollouts == nil && !agentapi.HasFailure(err, agentapi.Cleanup) && (agentapi.Failure(err) == agentapi.FormatMismatch || agentapi.Failure(err) == agentapi.Unavailable) {
 			return p.legacy.Read(ctx, ref, limits)
 		}
 		return nil, err
@@ -365,7 +399,7 @@ func (p *relatedSourcePass) Read(ctx context.Context, ref agentapi.SourceRef, li
 		return nil, sourceFailure(agentapi.Limit, "aggregate history byte limit")
 	}
 	limit := limits.RecordBytes
-	if limit <= 0 {
+	if limit <= 0 || limit > archive.MaxRecordBytes {
 		limit = archive.MaxRecordBytes
 	}
 	s := &historySnapshot{owner: p, selection: selection, spans: spans, recordLimit: limit}
@@ -400,11 +434,20 @@ type historySnapshot struct {
 func (s *historySnapshot) validate(ctx context.Context) error {
 	id := s.selection.leaf.identity
 	s.history = archive.SourceHistory{ThreadID: id.ThreadID, ActiveRolloutID: id.RolloutID, OwnStart: id.SubagentOrdinal}
-	if id.ForkID != "" && id.ForkOrdinal == nil {
-		return sourceFailure(agentapi.Unavailable, "fork ownership boundary unavailable")
-	}
-	if id.ForkOrdinal != nil && (s.history.OwnStart == nil || *id.ForkOrdinal > *s.history.OwnStart) {
-		s.history.OwnStart = id.ForkOrdinal
+	for _, span := range s.spans {
+		facts := span.file.identity
+		if facts.ThreadID != id.ThreadID {
+			continue
+		}
+		if facts.ForkID != "" && facts.ForkOrdinal == nil {
+			return sourceFailure(agentapi.Unavailable, "fork ownership boundary unavailable")
+		}
+		for _, boundary := range []*uint64{facts.ForkOrdinal, facts.SubagentOrdinal} {
+			if boundary != nil && (s.history.OwnStart == nil || *boundary > *s.history.OwnStart) {
+				value := *boundary
+				s.history.OwnStart = &value
+			}
+		}
 	}
 	count := 0
 	for i := range s.spans {
@@ -522,30 +565,41 @@ func (s *historySnapshot) Next(ctx context.Context) (agentapi.NativeRecord, bool
 	return agentapi.NativeRecord{}, false, s.check(ctx)
 }
 
-// ordinarySnapshot retains the file input contract while accepting verified appends.
+// ordinarySnapshot retains file framing while accepting verified later appends.
 type ordinarySnapshot struct {
-	agentapi.SourceSnapshot
-	file   *transcriptio.Snapshot
-	ctx    context.Context
-	length int64
-	digest [32]byte
+	owner    *relatedSourcePass
+	source   *rolloutFile
+	ctx      context.Context
+	length   int64
+	digest   [32]byte
+	closed   bool
+	observed agentapi.SourceObservation
 }
 
-func (p *relatedSourcePass) ordinary(ctx context.Context, ref agentapi.SourceRef, limits agentapi.ReadLimits, f *rolloutFile) (agentapi.SourceSnapshot, error) {
-	base, err := p.legacy.Read(ctx, ref, limits)
-	if err != nil {
-		return nil, err
+func (p *relatedSourcePass) ordinary(ctx context.Context, _ agentapi.SourceRef, limits agentapi.ReadLimits, f *rolloutFile) (agentapi.SourceSnapshot, error) {
+	if limits.RawBytes > 0 && f.file.Length() > limits.RawBytes {
+		return nil, agentapi.Wrap(agentapi.Limit, agentapi.ErrRawLimit)
 	}
 	h := sha256.New()
-	if _, err = io.Copy(h, io.NewSectionReader(f.file, 0, f.boundary)); err != nil {
-		return nil, errors.Join(err, base.Close())
+	if _, err := io.Copy(h, io.LimitReader(f.file.Reader(ctx), f.boundary)); err != nil {
+		return nil, err
 	}
-	out := &ordinarySnapshot{SourceSnapshot: base, file: f.file, ctx: ctx, length: f.boundary}
+	stamp := f.file.Stamp()
+	out := &ordinarySnapshot{owner: p, source: f, ctx: ctx, length: f.boundary, observed: agentapi.SourceObservation{Signature: sourceio.FileSignature(stamp.Size, stamp.ModifiedAt.UnixNano()), Present: true, Empty: f.boundary == 0, Activity: stamp.ModifiedAt, Size: stamp.Size}}
 	copy(out.digest[:], h.Sum(nil))
+	f.refs++
 	return out, nil
 }
+func (s *ordinarySnapshot) Observation() agentapi.SourceObservation { return s.observed }
 func (s *ordinarySnapshot) Input() agentapi.NativeInput {
-	return agentapi.NativeInput{File: ordinaryFile{FileInput: s.SourceSnapshot.Input().File, s: s}}
+	return agentapi.NativeInput{File: ordinaryFile{FileInput: s.source.file, s: s}}
+}
+func (s *ordinarySnapshot) Close() error {
+	if !s.closed {
+		s.closed = true
+		s.source.refs--
+	}
+	return nil
 }
 
 type ordinaryFile struct {
@@ -554,6 +608,60 @@ type ordinaryFile struct {
 }
 
 func (f ordinaryFile) Length() int64 { return f.s.length }
+func (f ordinaryFile) ReadAt(b []byte, off int64) (int, error) {
+	if f.s.closed || f.s.owner.closed {
+		return 0, agentapi.ErrClosed
+	}
+	return f.FileInput.ReadAt(b, off)
+}
 func (f ordinaryFile) Check() error {
-	return sourceio.Classify(f.s.file.CheckPrefix(f.s.ctx, f.s.length, f.s.digest))
+	if f.s.closed || f.s.owner.closed {
+		return agentapi.ErrClosed
+	}
+	return sourceio.Classify(f.s.source.file.CheckPrefix(f.s.ctx, f.s.length, f.s.digest))
+}
+
+// newlineBoundary excludes even valid JSON until its producer commits the newline.
+func newlineBoundary(file io.ReaderAt, size int64) (int64, error) {
+	if size == 0 {
+		return 0, nil
+	}
+	var last [1]byte
+	if _, err := file.ReadAt(last[:], size-1); err != nil {
+		return 0, err
+	}
+	if last[0] == '\n' {
+		return size, nil
+	}
+	buf := make([]byte, 64<<10)
+	floor := max(int64(0), size-archive.MaxRecordBytes-1)
+	for end := size; end > floor; {
+		start := max(floor, end-int64(len(buf)))
+		part := buf[:end-start]
+		if _, err := file.ReadAt(part, start); err != nil {
+			return 0, err
+		}
+		if i := bytes.LastIndexByte(part, '\n'); i >= 0 {
+			return start + int64(i) + 1, nil
+		}
+		end = start
+	}
+	return 0, agentapi.Wrap(agentapi.Limit, archive.ErrRecordTooLarge)
+}
+
+func (f ordinaryFile) Records(ctx context.Context, tail bool, windowBytes, recordBytes int64, visit func([]byte) bool) (transcriptio.RecordWindow, error) {
+	if f.s.closed || f.s.owner.closed {
+		return transcriptio.RecordWindow{}, agentapi.ErrClosed
+	}
+	return f.FileInput.Records(ctx, tail, windowBytes, recordBytes, visit)
+}
+
+func (s *ordinarySnapshot) ValidateAdmission(ctx context.Context, a agentapi.SourceAdmission) error {
+	if s.closed || s.owner.closed {
+		return agentapi.ErrClosed
+	}
+	if a.NativeID != s.source.identity.ThreadID || a.Cwd != "" && a.Cwd != s.source.meta.Cwd {
+		return sourceFailure(agentapi.Unsafe, "source admission identity changed")
+	}
+	return sourceio.Classify(s.source.file.CheckPrefix(ctx, s.length, s.digest))
 }

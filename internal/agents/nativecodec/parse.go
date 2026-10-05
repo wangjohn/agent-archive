@@ -70,7 +70,9 @@ func parse(ctx context.Context, bundle archive.SourceBundle, agent nativeProfile
 			view.CompactBoundaries++
 			continue
 		}
-		if !isPlaceholderModel(firstStringDeep(record, "model", "model_id")) {
+		if agent == profileCodex && bundle.History != nil && historyTokenScopeUnknown(bundle, record) {
+			analysis.Facts.TokenScopeUnknown = true
+		} else if !isPlaceholderModel(firstStringDeep(record, "model", "model_id")) {
 			accumulateTokens(record, tokenModel(agent, record, codexModel), &tokens)
 		}
 		calls, results, skillUses := toolActivity(record, i, codexModel, codexReasoning)
@@ -320,4 +322,29 @@ func collectExportFacts(f *archive.NativeFacts, b archive.SourceBundle, r map[st
 			f.NativeStartedAt = at
 		}
 	}
+}
+
+// A cumulative counter is not proof that a child reset it or carried its parent.
+// Independently recorded per-call usage remains useful even beside such counters.
+func historyTokenScopeUnknown(bundle archive.SourceBundle, record map[string]any) bool {
+	if usage, _ := firstMapDeepOwner(record, "usage"); usage != nil {
+		return false
+	}
+	if turn, _ := firstMapDeepOwner(record, "turn_token_usage"); turn != nil {
+		if bundle.History.OwnStart != nil && *bundle.History.OwnStart > 0 {
+			return true
+		}
+		for _, span := range bundle.History.Spans {
+			if span.ThreadID != bundle.NativeSessionID {
+				return true
+			}
+		}
+		return false
+	}
+	for _, key := range []string{"total_token_usage", "thread_token_usage", "last_token_usage"} {
+		if value, _ := firstMapDeepOwner(record, key); value != nil {
+			return true
+		}
+	}
+	return false
 }
