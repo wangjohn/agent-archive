@@ -35,8 +35,13 @@ func validateHealth(h Health) error {
 	if h.Enabled && h.LastAttempt.IsZero() {
 		return errors.New("discovery health has no attempt evidence")
 	}
-	if len(h.Errors) > 32 || len(h.Outcomes) > 64 {
+	if len(h.Errors) > 32 || len(h.Outcomes) > 64 || len(h.Formats) > maxObservedFormats {
 		return errors.New("discovery health limits exceeded")
+	}
+	for _, f := range h.Formats {
+		if !validFormatObservation(f) {
+			return errors.New("invalid discovery format observation")
+		}
 	}
 	for _, code := range h.Errors {
 		if !validHealthError(code) {

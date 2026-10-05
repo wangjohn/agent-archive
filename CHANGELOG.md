@@ -16,6 +16,12 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Automatic Codex discovery admits compatible legacy and paginated JSONL formats
+  across versions and prereleases, including 0.155, without a producer-version
+  allowlist. Status distinguishes runtime-tested, source-inspected and untested
+  compatible session metadata. Creation consent, inherited-history exclusions,
+  filtering and publication/read-back checks remain required.
+
 - After local session membership changes, the collector rebuilds a completed
   packed identity index against the current registrations so recovery status
   can return to complete. Status remains unknown until recovery restarts, then

@@ -2802,6 +2802,9 @@ func (sc statusScreen) addCodexDiscoveryRow(row *statusRow, app appStatus) {
 	}
 	if discoveryEnabled(app) {
 		row.notes = append(row.notes, statusNote{sc.info(), discoveryProgress(sc.now, app)})
+		if formats := discoveryFormats(app.Discovery); formats != "" {
+			row.notes = append(row.notes, statusNote{sc.info(), formats})
+		}
 	}
 	if optionalCodexHooks(app) {
 		row.notes = append(row.notes, statusNote{sc.info(), "Optional hooks: absent; supported automatic discovery does not require hook approval."})
@@ -2824,4 +2827,15 @@ func (sc statusScreen) addCodexDiscoveryRow(row *statusRow, app appStatus) {
 			row.notes = append(row.notes, statusNote{s.warnMark(), fmt.Sprintf("Last scan skipped %d unsupported, incomplete or malformed observations (%s). Update agent-archive for format support; use hooks or deliberate backfill only where that source format is supported.", skipped, reasons)})
 		}
 	}
+}
+
+func discoveryFormats(d *discovery.Health) string {
+	var formats []string
+	for _, f := range d.Formats {
+		formats = append(formats, fmt.Sprintf("%s (%s, %s, %s)", f.Version, f.Source, f.Profile, strings.ReplaceAll(string(f.Evidence), "_", " ")))
+	}
+	if len(formats) == 0 {
+		return ""
+	}
+	return "Recorded session formats: " + strings.Join(formats, "; ") + ". Compatibility permits discovery; capture still requires consent and publication/read-back."
 }

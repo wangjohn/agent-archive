@@ -511,6 +511,16 @@ It is informational, never deletion authority; request-only operations cannot
 be retried as verified selections. Provider success confirms
 only the selected set, never all possible shared/legacy/creator-hidden access.
 
+The optional `applications[].discovery.observed_formats` array summarizes up to
+16 observed session format combinations. Each entry includes `profile`,
+`producer_version`, `producer_source`, `evidence` (`runtime_tested`,
+`source_inspected`, or `compatible_untested`), and `observations`. These are
+recorded session facts, independent of `installed_version`. Counts describe
+scan observations, not unique sessions or verified captures. Compatible untested
+versions remain eligible; `outcomes.format_summary_overflow` counts observations
+beyond the summary limit without blocking capture. Older health files omit the
+array. See [format compatibility](local-discovery-scanner.md#codex-format-compatibility).
+
 Status schema 4 separates automatic discovery from hook evidence. The Codex app
 entry has `codex_capture_scope` (`included-projects` or `all-projects`) and a `discovery` health object (`enabled`, `supported`, coverage/backlog and
 last-attempt diagnostics). Discovery-origin sessions do not imply `hook_observed`;

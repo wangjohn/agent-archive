@@ -36,6 +36,7 @@ type Candidate struct {
 	HarnessVersion     string
 	ProducerOriginator string
 	ProducerSource     string
+	FormatProfile      sourcefacts.CodexProfile
 	Execution          string
 	ParentNativeID     string
 	ForkNativeID       string
@@ -91,7 +92,7 @@ type SourceAdapter interface {
 	PriorityDirectories(time.Time) []string
 }
 
-// The compile-time registry ships only Codex. Producer support stays gated;
+// The compile-time registry ships only Codex. Format support stays bounded;
 // Claude and Cursor retain their existing hooks and gain no discovery path.
 func registeredAdapters() []SourceAdapter { return []SourceAdapter{codexAdapter{}} }
 
@@ -162,7 +163,7 @@ func (a codexAdapter) Inspect(ctx context.Context, source SourceDescriptor) Obse
 func candidateFromHeader(h sourcefacts.Header, source SourceDescriptor) Candidate {
 	var producerSource string
 	_ = json.Unmarshal(h.Meta.Source, &producerSource)
-	return Candidate{Agent: "codex", NativeSessionID: h.Meta.ID, Source: source, StartedAt: h.Started, FirstTaskAt: h.FirstTaskAt, StartEvidence: "native_start", WorkingDirectory: h.Meta.Cwd, HarnessVersion: h.Meta.Version, ProducerOriginator: h.Meta.Originator, ProducerSource: producerSource, Execution: "native"}
+	return Candidate{Agent: "codex", NativeSessionID: h.Meta.ID, Source: source, StartedAt: h.Started, FirstTaskAt: h.FirstTaskAt, StartEvidence: "native_start", WorkingDirectory: h.Meta.Cwd, HarnessVersion: h.Meta.Version, ProducerOriginator: h.Meta.Originator, ProducerSource: producerSource, FormatProfile: h.Profile, Execution: "native"}
 }
 
 func (codexAdapter) PriorityDirectories(now time.Time) []string {
@@ -174,6 +175,9 @@ func (codexAdapter) PriorityDirectories(now time.Time) []string {
 }
 
 func (a codexAdapter) Supported(c Candidate) bool {
+	if c.FormatProfile != sourcefacts.CodexLegacyJSONL && c.FormatProfile != sourcefacts.CodexPaginatedJSONL {
+		return false
+	}
 	supported := a.supported
 	if supported == nil {
 		supported = sourcefacts.SupportedCodexProducer

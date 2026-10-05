@@ -8,14 +8,31 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 type codexHistoryMode string
 
 const (
-	historyLegacy    codexHistoryMode = "legacy"
-	historyPaginated codexHistoryMode = "paginated"
+	// CodexHistoryLegacy identifies the original JSONL history representation.
+	CodexHistoryLegacy codexHistoryMode = "legacy"
+	// CodexHistoryPaginated identifies the paginated JSONL history representation.
+	CodexHistoryPaginated codexHistoryMode = "paginated"
 )
+
+// An absent mode is legacy, but an explicit null/empty/non-string mode is not
+// the absent-field default. Upstream's recorder rejects those representations.
+func (m *codexHistoryMode) UnmarshalJSON(raw []byte) error {
+	var mode string
+	if err := json.Unmarshal(raw, &mode); err != nil {
+		return err
+	}
+	if mode == "" {
+		return errors.New("invalid history mode")
+	}
+	*m = codexHistoryMode(mode)
+	return nil
+}
 
 type codexExecutionSource string
 
@@ -110,23 +127,43 @@ func (m CodexMeta) Classification() string {
 	if present(m.ForkedFrom) || present(m.ForkOrdinal) || present(m.Parent) || present(m.HistoryBase) || present(m.SubagentOrdinal) {
 		return "inherited_history"
 	}
-	if m.HistoryMode != "" && m.HistoryMode != historyLegacy && m.HistoryMode != historyPaginated {
+	if m.HistoryMode != "" && m.HistoryMode != CodexHistoryLegacy && m.HistoryMode != CodexHistoryPaginated {
 		return "unsupported_history"
 	}
 	if !m.LocalExecutionSource() {
 		return "unsupported_execution"
 	}
-	if m.Version == "" || m.Originator == "" {
+	if !ValidCodexVersion(m.Version) || strings.TrimSpace(m.Originator) == "" || len(m.Originator) > 256 || strings.ContainsFunc(m.Originator, unicode.IsControl) {
 		return "unsupported_producer"
 	}
 	return "native_format"
 }
 
+// ValidCodexVersion bounds the recorded diagnostic token without interpreting
+// release order. Prereleases, development builds and unknown versions qualify.
+func ValidCodexVersion(version string) bool {
+	if version == "" || len(version) > 128 {
+		return false
+	}
+	for _, ch := range version {
+		if (ch < 'a' || ch > 'z') && (ch < 'A' || ch > 'Z') && (ch < '0' || ch > '9') && ch != '.' && ch != '-' && ch != '+' && ch != '_' {
+			return false
+		}
+	}
+	return true
+}
+
 // LocalExecutionSource recognizes supported local source format tags only;
 // it does not establish local originating execution or producer support.
 func (m CodexMeta) LocalExecutionSource() bool {
-	var source codexExecutionSource
-	return json.Unmarshal(m.Source, &source) == nil && (source == executionCLI || source == executionExec || source == executionVSCode)
+	var source string
+	return json.Unmarshal(m.Source, &source) == nil && ValidCodexExecutionSource(source)
+}
+
+// ValidCodexExecutionSource recognizes supported local source format tags.
+func ValidCodexExecutionSource(value string) bool {
+	source := codexExecutionSource(value)
+	return source == executionCLI || source == executionExec || source == executionVSCode
 }
 
 // NativeFirstTask checks the first task_started, distinguishing Codex's built
