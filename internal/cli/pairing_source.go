@@ -559,7 +559,7 @@ func deliverPairingBundle(home, bundle string, ledger *pairingLedger, slot *issu
 	} else if opts.printBundle || opts.yes {
 		_, err = fmt.Fprintln(out, bundle)
 	} else {
-		copied := false
+		var copied bool
 		for {
 			err = env.pairClipboardWrite([]byte(bundle))
 			copied = err == nil

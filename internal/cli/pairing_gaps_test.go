@@ -33,8 +33,8 @@ func TestMachineRemoteFakeAcceptance(t *testing.T) {
 			source.OpenStore = func(config.Config) (storage.ObjectStore, error) { return store, nil }
 			lookup := source.LookupEnv
 			source.LookupEnv = func(k string) (string, bool) {
-				if k == "AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_REVOKE" || k == "AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_VERIFY" {
-					return "1", true
+				if value, ok := map[string]string{"AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_REVOKE": "1", "AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_VERIFY": "1"}[k]; ok {
+					return value, true
 				}
 				return lookup(k)
 			}
@@ -278,6 +278,7 @@ func TestPairingClipboardUnavailableDeliberateFallback(t *testing.T) {
 	t.Parallel()
 	for _, choice := range []string{"print", "retry", "cancel"} {
 		t.Run(choice, func(t *testing.T) {
+			t.Parallel()
 			env, home, _ := pairingSourceFixture(t)
 			var output bytes.Buffer
 			payload, err := sourcePairingPayload(mustLoadPairConfig(t, home), "receiver", t.TempDir(), 15*time.Minute, env)
@@ -311,6 +312,7 @@ func TestPairingClipboardUnavailableDeliberateFallback(t *testing.T) {
 		})
 	}
 }
+
 func mustLoadPairConfig(t *testing.T, home string) config.Config {
 	t.Helper()
 	cfg, _, err := config.Load(home)
@@ -322,15 +324,15 @@ func TestManagementTokenFailureOffersDeliberateRetryAndPaste(t *testing.T) {
 	t.Parallel()
 	for _, choice := range []string{"retry", "paste", "cancel"} {
 		t.Run(choice, func(t *testing.T) {
-			env := Env{LookupEnv: noEnv, Environ: func() []string { return nil }}
+			t.Parallel()
 			calls := 0
-			env.RunTokenCommand = func(context.Context, []string, []string) (string, error) {
+			env := Env{LookupEnv: noEnv, Environ: func() []string { return nil }, RunTokenCommand: func(context.Context, []string, []string) (string, error) {
 				calls++
 				if calls == 1 {
 					return "LEAK-CANARY", errors.New("LEAK-CANARY")
 				}
 				return "SYNTHETIC-TOKEN", nil
-			}
+			}}
 			var output bytes.Buffer
 			p := newPrompter(strings.NewReader(choice+"\nSYNTHETIC-TOKEN\n"), &output)
 			token, _, _, err := readManagementToken(t.Context(), p, env, []string{"synthetic"}, true)

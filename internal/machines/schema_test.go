@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
+	"github.com/wangjohn/agent-archive/internal/config"
 )
 
 func TestMachineRecordMatchesPublishedSchema(t *testing.T) {
@@ -32,8 +33,8 @@ func TestMachineRecordMatchesPublishedSchema(t *testing.T) {
 		t.Fatal(e)
 	}
 	r := sample(t, strings.Repeat("a", 32))
-	r.UnusedSpares = []CredentialBinding{{Kind: "r2_own", AccessKeyID: strings.Repeat("b", 32), RecipientID: strings.Repeat("c", 32), IssuerID: r.MachineID, SlotID: strings.Repeat("d", 32)}}
-	r.RetiredCredentials = []CredentialBinding{{Kind: "r2_own", AccessKeyID: strings.Repeat("e", 32), RecipientID: strings.Repeat("f", 32), IssuerID: r.MachineID, SlotID: strings.Repeat("1", 32)}}
+	r.UnusedSpares = []CredentialBinding{{Kind: config.MachineAssignmentR2Own, AccessKeyID: strings.Repeat("b", 32), RecipientID: strings.Repeat("c", 32), IssuerID: r.MachineID, SlotID: strings.Repeat("d", 32)}}
+	r.RetiredCredentials = []CredentialBinding{{Kind: config.MachineAssignmentR2Own, AccessKeyID: strings.Repeat("e", 32), RecipientID: strings.Repeat("f", 32), IssuerID: r.MachineID, SlotID: strings.Repeat("1", 32)}}
 	r.CredentialHistoryPartial = true
 	if err := validate(r); err != nil {
 		t.Fatal(err)

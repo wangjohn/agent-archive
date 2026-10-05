@@ -306,6 +306,7 @@ func badMachineObject(key, reason string) fetchedMachineObject {
 	d := diagnostic(key, reason)
 	return fetchedMachineObject{problem: &d}
 }
+
 func fetchMachineObject(ctx context.Context, getter storage.LimitedGetter, obj storage.Object) fetchedMachineObject {
 	const progressPrefix = "machines/revocations/"
 	prefix := "machines/"

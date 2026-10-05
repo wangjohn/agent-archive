@@ -29,8 +29,16 @@ const (
 	observationLocalMismatch providerObservationState = "local_binding_mismatch"
 )
 
+type providerObservationRole string
+
+const (
+	observationCurrent           providerObservationRole = "current"
+	observationUnusedSpare       providerObservationRole = "unused_spare_claim"
+	observationRetiredCredential providerObservationRole = "retired_credential_claim"
+)
+
 type machineProviderObservation struct {
-	Role        string                   `json:"role,omitempty"`
+	Role        providerObservationRole  `json:"role,omitempty"`
 	MachineID   string                   `json:"machine_id"`
 	AccessKeyID string                   `json:"access_key_id,omitempty"`
 	State       providerObservationState `json:"state"`
@@ -185,11 +193,11 @@ func verifyProvider(ctx context.Context, cfg config.Config, listing machines.Lis
 		bindings := append([]machines.CredentialBinding{record.Credential}, record.UnusedSpares...)
 		bindings = append(bindings, record.RetiredCredentials...)
 		for index, binding := range bindings {
-			role := "current"
+			role := observationCurrent
 			if index > 0 && index <= len(record.UnusedSpares) {
-				role = "unused_spare_claim"
+				role = observationUnusedSpare
 			} else if index > 0 {
-				role = "retired_credential_claim"
+				role = observationRetiredCredential
 			}
 			claimed[binding.AccessKeyID] = true
 			if !config.ValidMachineID(binding.AccessKeyID) {
@@ -300,25 +308,25 @@ func providerTokenActive(token cloudflare.TokenMetadata, now time.Time) bool {
 	return true
 }
 
-func locallyCommittedProviderBinding(cfg config.Config, machineID string, binding machines.CredentialBinding, role string, localSlots [][]issuance.Slot) (bool, bool) {
+func locallyCommittedProviderBinding(cfg config.Config, machineID string, binding machines.CredentialBinding, role providerObservationRole, localSlots [][]issuance.Slot) (bool, bool) {
 	if machineID != cfg.MachineID {
 		return false, false
 	}
 	switch role {
-	case "current":
+	case observationCurrent:
 		local := cfg.MachineAssignment
 		if local == nil || local.DestinationID != cfg.DestinationID() {
 			return false, false
 		}
 		matches := providerAssignmentMatches(binding, *local)
 		return matches, !matches
-	case "retired_credential_claim":
+	case observationRetiredCredential:
 		for _, retired := range cfg.RetiredMachineAssignments {
 			if retired.DestinationID == cfg.DestinationID() && providerAssignmentMatches(binding, retired) {
 				return true, false
 			}
 		}
-	case "unused_spare_claim":
+	case observationUnusedSpare:
 		for _, slots := range localSlots {
 			for _, slot := range slots {
 				if providerSpareMatches(cfg, binding, slot) {
@@ -329,9 +337,11 @@ func locallyCommittedProviderBinding(cfg config.Config, machineID string, bindin
 	}
 	return false, true
 }
+
 func providerAssignmentMatches(binding machines.CredentialBinding, a config.MachineAssignment) bool {
 	return a.AccessKeyID == binding.AccessKeyID && a.RecipientID == binding.RecipientID && a.IssuerID == binding.IssuerID && a.SlotID == binding.SlotID && a.Kind == binding.Kind
 }
+
 func providerSpareMatches(cfg config.Config, binding machines.CredentialBinding, slot issuance.Slot) bool {
 	return slot.State == issuance.Spare && slot.DestinationID == cfg.DestinationID() && slot.IssuerID == cfg.MachineID && slot.ProviderID == binding.AccessKeyID && slot.RecipientID == binding.RecipientID && slot.SlotID == binding.SlotID
 }

@@ -181,7 +181,7 @@ func (j *Journal) Complete() bool {
 }
 
 // Summary distinguishes requested, partial and ambiguous results without proving bucket claims.
-func (j Journal) Summary() string {
+func (j *Journal) Summary() string {
 	if j.RequestOnly || len(j.Keys) == 0 {
 		return "requested; access not removed"
 	}
