@@ -167,10 +167,10 @@ func setupPairing(opts setupOptions, stdin io.Reader, out, errOut io.Writer, env
 	if err = applySetup(home, userHome, exe, existing, &cfg, nil, env); err != nil {
 		return fmt.Errorf("pairing setup did not commit: %w; retry the same pairing or finish/discard the saved setup", err)
 	}
+	terminal.Printf(out, "Paired with %s. This machine is %s. %s.\n", payload.IssuerName, payload.Name, pairingCredentialDescription(payload))
 	if err = finishSetup(p, errOut, home, cfg, existing.Paused, discoveries, env.now(), setupFinish{env: env, userHome: userHome, offerImport: !opts.yes, skills: skills}); err != nil {
 		return err
 	}
-	terminal.Printf(out, "Paired with %s. This machine is %s. %s.\n", payload.IssuerName, payload.Name, pairingCredentialDescription(payload))
 	return nil
 }
 
@@ -276,7 +276,23 @@ func pairingCaptureSettings(p *prompter, payload pairing.Payload, cfg, existing 
 		if slices.Contains(detected, app) || slices.Contains(existing.Harnesses, app) {
 			apps = append(apps, app)
 		} else {
-			terminal.Printf(p.out, "Source app %s is not found here (skipped); install it and rerun ordinary setup to add it.\n", app)
+			terminal.Printf(p.out, "Source app %s is not found here. See https://github.com/wangjohn/agent-archive/blob/main/docs/getting-started/setup.md for app installation and permissions.\n", app)
+			if !opts.yes {
+				choice, e := p.menu("Missing app "+app, "skip", option{"retry", "Recheck after installing the app"}, option{"skip", "Continue without this app"}, option{"cancel", "Cancel pairing setup"})
+				if e != nil {
+					return cfg, e
+				}
+				if choice == "cancel" {
+					return cfg, fmt.Errorf("pairing setup cancelled before commit")
+				}
+				if choice == "retry" && slices.Contains(env.detectHarnesses(userHome), app) {
+					apps = append(apps, app)
+				} else {
+					terminal.Printf(p.out, "Skipped %s; rerun setup after installing it.\n", app)
+				}
+			} else {
+				terminal.Printf(p.out, "Skipped %s; rerun setup after installing it.\n", app)
+			}
 		}
 	}
 	for _, app := range existing.Harnesses {

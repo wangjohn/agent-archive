@@ -6,6 +6,23 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Complete non-live experimental pairing/revocation handling: committed retired
+  dedicated-key history, healthy issuer labels and private operator bindings,
+  unused spare observations and bounded informational operation progress.
+  Pairing preserves standalone exclusions, offers safe scope/delivery/token/app
+  recovery and reports success before post-commit cleanup and history import.
+  Both peers must be upgraded for standalone exclusions; live provider and platform
+  acceptance remain pending and general availability stays disabled.
+
+### Fixed
+
+- Pairing recovery preserves exclusions on other clones and accepts home-prefixed
+  manual project paths. Retired keys with exact local deletion confirmations no
+  longer block revoking a replacement key after re-pairing; unverified absence
+  remains unresolved.
+
 ## [0.2.0]
 
 ### Documentation

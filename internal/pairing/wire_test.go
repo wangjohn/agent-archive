@@ -289,3 +289,22 @@ func TestHyphenatedWordCodeEncryptsAndDecryptsDisplayedAndPrefixForms(t *testing
 		}
 	}
 }
+
+func TestStandaloneExclusionRoundTripAndScopeReferences(t *testing.T) {
+	t.Parallel()
+	payload := testPayload()
+	payload.Exclusions = []Exclusion{{HomeRelative: true, Path: "private", Affected: []string{}}, {Unresolved: true, Affected: []string{payload.Inclusions[0].ID}}}
+	code := "aardvark-abandoned-abbreviate-abdomen-abhorrence-abiding"
+	bundle, err := Seal(payload, code)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := Open(bundle, code, payload.CreatedAt)
+	if err != nil || len(got.Exclusions) != 2 || !got.Exclusions[0].HomeRelative || got.Exclusions[0].Path != "private" {
+		t.Fatalf("portable standalone restriction lost: %v %+v", err, got.Exclusions)
+	}
+	payload.Exclusions[1].Affected = []string{strings.Repeat("f", 32)}
+	if payload.Validate() == nil {
+		t.Fatal("unknown affected scope accepted")
+	}
+}
