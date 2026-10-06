@@ -582,14 +582,15 @@ func (p *relatedSourcePass) readHistorySelection(ctx context.Context, limits age
 	for _, span := range spans {
 		largest = max(largest, span.end)
 	}
+	recordCeiling := limit
 	bufferCharge := min(max(int64(4096), min(largest+1, limit+1)), min(relatedRawBudget-p.bytes, p.env.ReadBudget.Available()))
 	if bufferCharge < 4096 {
-		return fail(sourceFailure(agentapi.Limit, "shared record buffer budget exhausted"))
+		return fail(agentapi.ReadBudgetLimit(errors.New("shared record buffer budget exhausted")))
 	}
 	limit = min(limit, bufferCharge-1)
-	s := &historySnapshot{owner: p, selection: selection, spans: spans, headers: selection.headerFiles(spans), recordLimit: limit, bufferCharge: bufferCharge}
+	s := &historySnapshot{owner: p, selection: selection, spans: spans, headers: selection.headerFiles(spans), recordLimit: limit, recordCeiling: recordCeiling, bufferCharge: bufferCharge}
 	if !p.reserve(bufferCharge) {
-		return fail(sourceFailure(agentapi.Limit, "shared record buffer budget exhausted"))
+		return fail(agentapi.ReadBudgetLimit(errors.New("shared record buffer budget exhausted")))
 	}
 	for _, f := range s.headers {
 		f.refs++
@@ -609,21 +610,22 @@ func (p *relatedSourcePass) readHistorySelection(ctx context.Context, limits age
 }
 
 type historySnapshot struct {
-	admission    *archive.CodexSourceBinding
-	firstOwnTask *agentapi.OwnTaskFacts
-	owner        *relatedSourcePass
-	selection    sourceSelection
-	spans        []physicalSpan
-	headers      []*rolloutFile
-	history      archive.SourceHistory
-	observed     agentapi.SourceObservation
-	recordLimit  int64
-	bufferCharge int64
-	span         int
-	scanner      *bufio.Scanner
-	nextOrdinal  uint64
-	headerSent   bool
-	closed       bool
+	admission     *archive.CodexSourceBinding
+	firstOwnTask  *agentapi.OwnTaskFacts
+	owner         *relatedSourcePass
+	selection     sourceSelection
+	spans         []physicalSpan
+	headers       []*rolloutFile
+	history       archive.SourceHistory
+	observed      agentapi.SourceObservation
+	recordLimit   int64
+	recordCeiling int64
+	bufferCharge  int64
+	span          int
+	scanner       *bufio.Scanner
+	nextOrdinal   uint64
+	headerSent    bool
+	closed        bool
 }
 
 func (s *historySnapshot) validate(ctx context.Context) error {
@@ -754,7 +756,7 @@ func (s *historySnapshot) Next(ctx context.Context) (agentapi.NativeRecord, bool
 		}
 		if err := s.scanner.Err(); err != nil {
 			if errors.Is(err, bufio.ErrTooLong) {
-				return agentapi.NativeRecord{}, false, agentapi.Wrap(agentapi.Limit, archive.ErrRecordTooLarge)
+				return agentapi.NativeRecord{}, false, s.recordCapacityError(0)
 			}
 			return agentapi.NativeRecord{}, false, sourceio.Classify(err)
 		}
@@ -1124,11 +1126,23 @@ func (p *relatedSourcePass) cachePrefixes(ctx context.Context, spans []physicalS
 	return nil
 }
 
+// recordCapacityError keeps a shared-capacity scanner refusal distinct from
+// the configured native record ceiling. Only the latter can establish a gap.
+func (s *historySnapshot) recordCapacityError(recordBytes int64) error {
+	if recordBytes > s.recordCeiling && s.recordCeiling > 0 {
+		return agentapi.Wrap(agentapi.Limit, archive.ErrRecordTooLarge)
+	}
+	if s.recordLimit < s.recordCeiling {
+		return agentapi.ReadBudgetLimit(errors.New("history record scanner exceeds shared capacity"))
+	}
+	return agentapi.Wrap(agentapi.Limit, archive.ErrRecordTooLarge)
+}
+
 func (s *historySnapshot) validateSpan(ctx context.Context, span *physicalSpan) (prefixValidation, error) {
 	cached := span.file.validated
 	if cached != nil && int64(len(span.file.prefix)) == span.end && cached.startOrdinal == span.startOrdinal {
 		if cached.maxRecordBytes > s.recordLimit {
-			return prefixValidation{}, agentapi.Wrap(agentapi.Limit, archive.ErrRecordTooLarge)
+			return prefixValidation{}, s.recordCapacityError(cached.maxRecordBytes)
 		}
 		s.owner.cacheHits++
 		result := *cached
@@ -1156,7 +1170,7 @@ func (s *historySnapshot) validateSpan(ctx context.Context, span *physicalSpan) 
 		}
 		facts.maxRecordBytes = max(facts.maxRecordBytes, int64(len(scanner.Bytes())))
 		if facts.maxRecordBytes > s.recordLimit {
-			return facts, agentapi.Wrap(agentapi.Limit, archive.ErrRecordTooLarge)
+			return facts, s.recordCapacityError(facts.maxRecordBytes)
 		}
 		line := bytes.TrimSpace(scanner.Bytes())
 		if len(line) == 0 {
@@ -1188,7 +1202,7 @@ func (s *historySnapshot) validateSpan(ctx context.Context, span *physicalSpan) 
 	}
 	if err := scanner.Err(); err != nil {
 		if errors.Is(err, bufio.ErrTooLong) {
-			return facts, agentapi.Wrap(agentapi.Limit, archive.ErrRecordTooLarge)
+			return facts, s.recordCapacityError(0)
 		}
 		return facts, sourceio.Classify(err)
 	}
