@@ -34,11 +34,17 @@ func (NativeLabelProvider) LabelContext(b archive.SourceBundle) agentapi.LabelCo
 	if !proof.Ordinary || proof.Producer != "0.159.2" {
 		return proof
 	}
+	seen := false
 	for _, record := range b.NativeRecords {
 		if record["type"] != "session_meta" {
 			continue
 		}
 		payload, _ := record["payload"].(map[string]any)
+		if seen || payload["id"] != proof.NativeID {
+			proof.APICompatible = false
+			return proof
+		}
+		seen = true
 		mode, explicit := payload["history_mode"]
 		proof.APICompatible = mode == "legacy" || mode == "paginated" || (!explicit && proof.Legacy && proof.PreviewComplete)
 	}

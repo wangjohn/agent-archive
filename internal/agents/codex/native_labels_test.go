@@ -318,3 +318,20 @@ func TestNativeLabelContractSourcePairs(t *testing.T) {
 		t.Fatal("file accepted API contract")
 	}
 }
+
+func TestNativeCompatibilityRejectsAdditionalMetadataWithoutStartingHost(t *testing.T) {
+	home, request := labelFixture(t)
+	for _, id := range []string{request.Bundle.NativeSessionID, "01900000-0000-7000-8000-000000000002"} {
+		b := request.Bundle
+		b.NativeRecords = append(append([]map[string]any(nil), b.NativeRecords...), map[string]any{"type": "session_meta", "payload": map[string]any{"id": id, "history_mode": "paginated"}})
+		request.Context = (NativeLabelProvider{}).LabelContext(b)
+		if request.Context.APICompatible {
+			t.Fatal("additional metadata authorized native lookup")
+		}
+		provider := NativeLabelProvider{Host: func(context.Context, string) (agentapi.LabelTransport, error) {
+			t.Fatal("ambiguous metadata started a host")
+			return nil, agentapi.ErrLabelHostUnavailable
+		}}
+		_ = provider.LookupLabels(context.Background(), agentapi.LabelEnvironment{Homes: []string{home}}, []agentapi.LabelRequest{request})
+	}
+}
