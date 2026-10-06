@@ -7,6 +7,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 	"github.com/wangjohn/agent-archive/internal/state"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -229,5 +230,166 @@ func TestDeletedWorktreePlanningContinuesPastRecoveryCache(t *testing.T) {
 	}
 	if calls != 2 {
 		t.Fatalf("inventory re-read per cwd: %d", calls)
+	}
+}
+
+// mutationReader runs a deterministic external write after a borrowed read or close.
+type mutationReader struct {
+	io.ReadCloser
+	afterRead  func()
+	afterClose func()
+}
+
+func (r *mutationReader) Read(b []byte) (int, error) {
+	n, err := r.ReadCloser.Read(b)
+	if r.afterRead != nil {
+		r.afterRead()
+	}
+	return n, err
+}
+
+func (r *mutationReader) Close() error {
+	err := r.ReadCloser.Close()
+	if r.afterClose != nil {
+		r.afterClose()
+	}
+	return err
+}
+
+type sourceMutation string
+
+const (
+	mutationExcludedCwd   sourceMutation = "excluded_cwd"
+	mutationRepositoryKey sourceMutation = "repository_key"
+	mutationProducer      sourceMutation = "producer"
+	mutationCreation      sourceMutation = "creation"
+	mutationReplacement   sourceMutation = "replacement"
+)
+
+func TestImportRejectsSourceChangesAcrossHeaderAndRecovery(t *testing.T) {
+	for _, phase := range []string{"header_read", "after_header", "repository_lookup"} {
+		for _, change := range []sourceMutation{mutationExcludedCwd, mutationRepositoryKey, mutationProducer, mutationCreation, mutationReplacement} {
+			t.Run(phase+"/"+string(change), func(t *testing.T) {
+				tr := newTree(t)
+				root := tr.repo("home/repo")
+				excluded := tr.repo("home/excluded")
+				gone := tr.path("home/.codex/worktrees/gone/repo")
+				id := "00000000-0000-0000-0000-000000000098"
+				body := strings.Replace(codexTranscript(id, id, gone, fixedNow.Add(-time.Hour)), `"source":"cli"`, `"git":{"repository_url":"https://example.test/acme/repo"},"source":"cli"`, 1)
+				relative := filepath.Join("home", codexFile(id))
+				source := tr.path(relative)
+				tr.write(relative, body)
+				// Unrelated settled work must still progress through the same plan/import.
+				other := "00000000-0000-0000-0000-000000000099"
+				tr.write(filepath.Join("home", codexFile(other)), codexTranscript(other, other, root, fixedNow.Add(-time.Hour)))
+				changed := false
+				mutate := func() {
+					if changed {
+						return
+					}
+					changed = true
+					replacement := body
+					switch change {
+					case mutationExcludedCwd:
+						replacement = strings.Replace(body, gone, excluded, 1)
+					case mutationRepositoryKey:
+						replacement = strings.Replace(body, "acme/repo", "acme/other", 1)
+					case mutationProducer:
+						replacement = strings.Replace(body, `"source":"cli"`, `"source":"exec"`, 1)
+					case mutationCreation:
+						replacement = strings.ReplaceAll(body, fixedNow.Add(-time.Hour).UTC().Format(time.RFC3339), fixedNow.Add(-2*time.Hour).UTC().Format(time.RFC3339))
+					case mutationReplacement:
+						// Preserve size and mtime: path replacement must compare file identity.
+						info, err := os.Stat(source)
+						if err != nil {
+							t.Fatal(err)
+						}
+						tmp := source + ".replacement"
+						if err := os.WriteFile(tmp, []byte(body), 0600); err != nil {
+							t.Fatal(err)
+						}
+						if err := os.Chtimes(tmp, info.ModTime(), info.ModTime()); err != nil {
+							t.Fatal(err)
+						}
+						if err := os.Rename(tmp, source); err != nil {
+							t.Fatal(err)
+						}
+						return
+					}
+					if replacement == body {
+						t.Fatal("mutation did not change fixture")
+					}
+					tr.write(relative, replacement)
+				}
+				env := tr.env()
+				if phase != "repository_lookup" {
+					env.Open = func(path string) (io.ReadCloser, error) {
+						f, err := os.Open(path)
+						if err != nil {
+							return nil, err
+						}
+						if path != source {
+							return f, nil
+						}
+						if phase == "header_read" {
+							return &mutationReader{ReadCloser: f, afterRead: mutate}, nil
+						}
+						return &mutationReader{ReadCloser: f, afterClose: mutate}, nil
+					}
+				}
+				key := archive.RepoKey("https://example.test/acme/repo")
+				env.RepositoryIdentity = func(_ context.Context, path string) sourcefacts.RepositoryIdentity {
+					if phase == "repository_lookup" {
+						mutate()
+					}
+					k := key
+					if path == excluded {
+						k = archive.RepoKey("https://example.test/acme/excluded")
+					}
+					return sourcefacts.RepositoryIdentity{Root: path, Key: k, Known: true}
+				}
+				env.RepositoryIdentityCurrent = func(sourcefacts.RepositoryIdentity) bool { return true }
+				cfg := config.Config{Archive: archive.Config{Enabled: true, Projects: []archive.ProjectActivation{project(root, true), project(excluded, false)}}}
+				p := plan(t, env, nil, cfg, Filters{})
+				if !changed {
+					t.Fatal("mutation hook was not exercised")
+				}
+				var affected Candidate
+				for _, c := range p.Candidates {
+					if c.NativeSessionID == id {
+						affected = c
+					}
+				}
+				if affected.Skip != SkipSourceChanged {
+					t.Fatalf("changed candidate: %+v", affected)
+				}
+				home := t.TempDir()
+				if err := config.Save(home, cfg); err != nil {
+					t.Fatal(err)
+				}
+				store, err := state.Open(home)
+				if err != nil {
+					t.Fatal(err)
+				}
+				result, err := (Registration{Home: home, Store: store, AdmittedAt: fixedNow, Batch: "synthetic-source-observation"}).Run(p.Imported())
+				if err != nil || len(result.Sessions) != 1 || len(p.Imported()) != 1 || p.Imported()[0].NativeSessionID != other {
+					t.Fatalf("unrelated progress: %+v, %v", result, err)
+				}
+				// A later scan considers settled fresh facts rather than permanently
+				// poisoning the native ID as an unsafe format.
+				fresh := tr.env()
+				fresh.RepositoryIdentity = env.RepositoryIdentity
+				fresh.RepositoryIdentityCurrent = env.RepositoryIdentityCurrent
+				settled := plan(t, fresh, nil, cfg, Filters{})
+				for _, c := range settled.Candidates {
+					if c.NativeSessionID == id && (c.Skip == SkipSourceChanged || c.Skip == SkipUnsafeFormat) {
+						t.Fatalf("settled retry: %+v", c)
+					}
+					if c.NativeSessionID == id && change == mutationExcludedCwd && c.Skip != SkipExcludedProject {
+						t.Fatalf("excluded retry: %+v", c)
+					}
+				}
+			})
+		}
 	}
 }

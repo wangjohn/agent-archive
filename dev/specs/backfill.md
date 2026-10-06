@@ -1084,6 +1084,11 @@ ancestors with no Git metadata. Unsupported Git path queries remain unavailable;
 establishes that no config path applies.
 New discovery checks the source fingerprint and original cwd again; imports validate each source and
 cwd and coalesce the common inventory check for each short registration hold.
+Import attribution retains the file identity, size and modification time sampled
+before bounded native header inspection. It checks that same observation after
+header inspection, repository resolution and full filtering, and before each
+registration hold for recovered attribution. A rewrite or replacement during those stages reports
+`source_changed`; a settled retry resolves current cwd/repository facts.
 These checks run outside hooks.lock; current policy and consent still run under
 it. Already retained ownership continues without rerunning recovery evidence.
 

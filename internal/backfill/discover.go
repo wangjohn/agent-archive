@@ -13,6 +13,7 @@ import (
 
 // transcript is one native transcript file found on disk, before resolution.
 type transcript struct {
+	sourceInfo     fs.FileInfo
 	sourcePriority int
 	harness        harness
 	path           string

@@ -22,6 +22,8 @@ follow [Semantic Versioning](https://semver.org/).
   unique recorded repository identity, or an exact historical backfill mapping.
   Excluded clones, ambiguous scope and damaged live checkouts remain pending;
   recovery preserves original creation consent and retained ownership.
+  Backfill retries a source rewritten or replaced during header inspection or
+  repository recovery instead of importing with earlier project facts.
 
 - Pairing recovery preserves exclusions on other clones and accepts home-prefixed
   manual project paths. Retired keys with exact local deletion confirmations no

@@ -95,7 +95,7 @@ func inspectCandidate(ctx context.Context, r agentapi.DiscoveryRequest, id agent
 		}
 		return ScanRecords(ctx, r.Files, ref.Path, r.HeaderBytes, r.RecordBytes, visit)
 	}})
-	return agentapi.DiscoveryCandidate{Session: agentapi.NativeSession{Agent: id, NativeID: header.NativeID}, Source: agentapi.SourceRef{Path: ref.Path}, Root: root.Path, SourcePriority: root.Priority, Bytes: info.Size(), Header: header, IdentityInspected: true, IdentityError: identityErr}, true
+	return agentapi.DiscoveryCandidate{Session: agentapi.NativeSession{Agent: id, NativeID: header.NativeID}, Source: agentapi.SourceRef{Path: ref.Path}, Root: root.Path, SourcePriority: root.Priority, Bytes: info.Size(), SourceInfo: info, Header: header, IdentityInspected: true, IdentityError: identityErr}, true
 }
 
 func candidatePresent(c agentapi.DiscoveryCandidate) bool {

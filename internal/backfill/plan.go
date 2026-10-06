@@ -262,8 +262,9 @@ func preparePlanWork(ctx context.Context, env Environment, cfg config.Config, fi
 	var items []*work
 	var err error
 	unread, err = enumerateDiscovery(ctx, env, agentapi.DiscoveryImport, func(c agentapi.DiscoveryCandidate) error {
-		t := &transcript{harness: harness(c.Session.Agent), path: c.Source.Path, size: c.Bytes, nativeID: c.Session.NativeID, cwd: c.Header.Directory, repoKey: c.Header.RepoKey, metaStart: c.Header.StartedAt, identityMismatch: c.Header.IdentityMismatch, capturePending: c.Header.CapturePending != "", cursorSlug: c.WorkspaceKey, sourcePriority: c.SourcePriority}
+		t := &transcript{harness: harness(c.Session.Agent), path: c.Source.Path, size: c.Bytes, nativeID: c.Session.NativeID, cwd: c.Header.Directory, repoKey: c.Header.RepoKey, metaStart: c.Header.StartedAt, identityMismatch: c.Header.IdentityMismatch, capturePending: c.Header.CapturePending != "", cursorSlug: c.WorkspaceKey, sourcePriority: c.SourcePriority, sourceInfo: c.SourceInfo}
 		w := &work{t: t, c: Candidate{Harness: string(c.Session.Agent), TranscriptPath: t.path, SourceKind: c.Source.Kind, SourceKey: c.Source.Key, Bytes: t.size, NativeSessionID: t.nativeID}, unsafe: c.IdentityError != nil}
+		w.checkSource(env)
 		items = append(items, w)
 		return nil
 	})
@@ -285,14 +286,19 @@ func preparePlanWork(ctx context.Context, env Environment, cfg config.Config, fi
 		if w.t.cursorSlug != "" || w.vanished {
 			continue
 		}
+		// Header facts and all later reads share the pre-header observation.
+		// A settled rewrite during discovery or Git lookup cannot become a new
+		// baseline for attribution from the earlier header.
+		w.checkSource(env)
+		if w.sourceChanged || w.vanished || w.tooLarge {
+			continue
+		}
 		w.res = r.resolveEvidence(ctx, w.t.cwd, w.t.repoKey)
-		if w.res.current != nil {
-			original, statErr := env.lstat(w.t.path)
+		w.checkSource(env)
+		if w.t.sourceInfo != nil && w.res.current != nil {
 			base := w.res.current
-			path := w.t.path
 			w.res.current = &resolutionCheck{reset: base.reset, valid: func() bool {
-				current, err := env.lstat(path)
-				return statErr == nil && err == nil && os.SameFile(original, current) && original.Size() == current.Size() && original.ModTime().Equal(current.ModTime()) && base.valid()
+				return w.sourceCurrent(env) && base.valid()
 			}}
 		}
 		if w.t.cwd != "" {
@@ -352,7 +358,7 @@ func classifyPlanWork(ctx context.Context, env Environment, state ArchiveState, 
 			sessions[key] = append(sessions[key], w)
 		}
 		w.filtered = !harnessMatches(filters.Harnesses, string(w.t.harness)) || !projectMatches(env, projectFilter, w.res.root)
-		w.tooLarge = w.t.size > collector.DefaultMaxRawTranscriptBytes
+		w.tooLarge = w.tooLarge || w.t.size > collector.DefaultMaxRawTranscriptBytes
 	}
 	for _, group := range sessions {
 		markPendingHistory(group)
@@ -409,7 +415,7 @@ func selectAdapterWork(items []*work, since, until time.Time) []*work {
 	dated := !since.IsZero() || !until.IsZero()
 	var selected []*work
 	for _, w := range items {
-		if w.vanished || w.state == SkipAlreadyArchived || w.tooLarge || w.unsafe || w.t.capturePending {
+		if w.vanished || w.state == SkipAlreadyArchived || w.tooLarge || w.unsafe || w.sourceChanged || w.t.capturePending {
 			continue
 		}
 		if w.duplicated || (w.state == "" && !w.filtered && (dated || (w.res.skip == "" && !w.t.identityMismatch))) {
@@ -517,11 +523,11 @@ func (w *work) reason(now time.Time) SkipReason {
 	for reason, set := range map[SkipReason]bool{
 		SkipDuplicateSession: w.duplicate,
 		SkipFilteredOut:      w.filtered,
-		SkipIdentityMismatch: w.t.identityMismatch,
-		SkipRelatedHistory:   w.t.capturePending,
+		SkipIdentityMismatch: w.t.identityMismatch && !w.sourceChanged,
+		SkipRelatedHistory:   w.t.capturePending && !w.sourceChanged,
 		SkipEmpty:            w.empty,
 		SkipUnsafeFormat:     w.unsafe,
-		SkipSourceChanged:    w.sourceChanged,
+		SkipSourceChanged:    w.sourceChanged && !w.tooLarge,
 		SkipTooLarge:         w.tooLarge,
 		// A session that would register without a start time cannot be
 		// imported: the registration requires one. Only Cursor's start
@@ -540,10 +546,49 @@ func (w *work) reason(now time.Time) SkipReason {
 	return ""
 }
 
+// checkSource preserves disappearance and size-limit outcomes while treating
+// other changes to the header observation as a retryable source change.
+func (w *work) checkSource(env Environment) {
+	if w.t.sourceInfo == nil {
+		return
+	}
+	current, err := env.lstat(w.t.path)
+	if isNotExist(err) {
+		w.vanished = true
+		return
+	}
+	if err == nil && current.Size() > collector.DefaultMaxRawTranscriptBytes {
+		w.tooLarge = true
+	}
+	w.sourceChanged = w.sourceChanged || !w.matchesSource(current, err)
+}
+
+// sourceCurrent compares with the observation that produced the native header.
+// Providers without file headers (such as Cursor's catalog) keep their own bounds.
+func (w *work) sourceCurrent(env Environment) bool {
+	if w.t.sourceInfo == nil {
+		return true
+	}
+	current, err := env.lstat(w.t.path)
+	return w.matchesSource(current, err)
+}
+
+func (w *work) matchesSource(current os.FileInfo, err error) bool {
+	original := w.t.sourceInfo
+	return err == nil && current.Mode().IsRegular() && os.SameFile(original, current) && original.Size() == current.Size() && original.ModTime().Equal(current.ModTime())
+}
+
 // runAdapter filters the whole transcript with the collector's own code and
 // keeps only what the plan needs: whether anything is left, the IDs the
 // records carry, and the earliest record's time.
 func runAdapter(ctx context.Context, env Environment, w *work) {
+	w.checkSource(env)
+	if w.sourceChanged || w.vanished || w.tooLarge {
+		return
+	}
+	defer func() {
+		w.checkSource(env)
+	}()
 	if env.Imports == nil {
 		w.unsafe = true
 		return
