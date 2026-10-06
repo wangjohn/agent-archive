@@ -1,6 +1,7 @@
 package backfill
 
 import (
+	"fmt"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/state"
@@ -72,5 +73,21 @@ func TestNestedUndoOrdersDescendantsAndRejectsCycles(t *testing.T) {
 	ordered[2].Registration.ParentSessionID = "grandchild"
 	if _, err := orderUndoChildrenFirst(ordered); err == nil {
 		t.Fatal("cyclic ownership accepted for deletion")
+	}
+}
+
+func TestNestedUndoRejectsOverdepthRegardlessOfMemoizedParentOrder(t *testing.T) {
+	var sessions []UndoSession
+	for i := 0; i < 66; i++ {
+		reg := archive.SessionRegistration{ArchiveSessionID: fmt.Sprint(i)}
+		if i > 0 {
+			reg.ParentSessionID = fmt.Sprint(i - 1)
+		}
+		sessions = append(sessions, UndoSession{Registration: reg})
+	}
+	for range 50 {
+		if _, err := orderUndoChildrenFirst(sessions); err == nil {
+			t.Fatal("overdepth relationship accepted")
+		}
 	}
 }

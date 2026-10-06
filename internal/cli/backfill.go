@@ -274,7 +274,7 @@ func planBackfill(env Env, stdout, stderr io.Writer, home, userHome string, cfg 
 	// folder. A second Ctrl-C, SIGTERM, SIGHUP, or SIGQUIT quits at once, removing
 	// the copy first.
 	planCtx, stopPlanning := interruptibleContext(env, stderr)
-	plan, err := backfill.BuildPlan(planCtx, env.backfillEnvironment(userHome, cfg), newArchiveState(home, cfg), cfg, opts.filters)
+	plan, err := buildBackfillPlan(planCtx, env, home, userHome, cfg, opts.filters)
 	interrupted := planCtx.Err() != nil
 	stopPlanning()
 	stopLooking()
@@ -426,7 +426,7 @@ func offerSetupImport(p *prompter, errOut io.Writer, home, userHome string, env 
 		stopLooking = func() {}
 	}
 	planCtx, stopPlanning := interruptibleContext(env, errOut)
-	plan, err := backfill.BuildPlan(planCtx, env.backfillEnvironment(userHome, cfg), newArchiveState(home, cfg), cfg, filters)
+	plan, err := buildBackfillPlan(planCtx, env, home, userHome, cfg, filters)
 	interrupted := planCtx.Err() != nil
 	stopPlanning()
 	stopLooking()

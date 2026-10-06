@@ -490,7 +490,7 @@ var skipLabels = map[SkipReason]string{
 	SkipWorktreeUnresolved:    "from worktrees that no longer exist",
 	SkipIdentityMismatch:      "with conflicting or invalid session IDs",
 	SkipSourceChanged:         "that changed while being read; retry backfill",
-	SkipRelatedHistory:        "awaiting support for child, fork or revised history",
+	SkipRelatedHistory:        "waiting for native history or own-task evidence",
 	SkipEmpty:                 "with no conversation",
 	SkipUnsafeFormat:          "in a format the archive cannot read safely",
 	SkipTooLarge:              "over the size limit",

@@ -419,7 +419,7 @@ func (r Registration) registration(c Candidate, archiveID, repoKey string) archi
 		repoKey = c.ProjectResolution.RecordedRepoKey
 	}
 	return archive.SessionRegistration{
-		ProjectResolution: c.ProjectResolution, NativeChild: c.NativeChild, NativeRootSessionID: c.RootNativeID, ParentNativeSessionID: c.ParentNativeID, NativeSourceHome: c.NativeHome,
+		CodexBinding: c.CodexBinding, ProjectResolution: c.ProjectResolution, NativeChild: c.NativeChild, NativeRootSessionID: c.RootNativeID, ParentNativeSessionID: c.ParentNativeID, NativeSourceHome: c.NativeHome,
 		ArchiveSessionID: archiveID,
 		NativeSessionID:  c.NativeSessionID,
 		ProjectID:        archive.ProjectID(c.ProjectRoot),

@@ -184,6 +184,17 @@ func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg con
 		return Plan{}, err
 	}
 
+	if env.PrepareCodexProof != nil {
+		var ids []string
+		for _, w := range items {
+			if w.t.harness == harnessCodex && (w.c.NativeChild || w.c.RelatedHistory) && w.c.NativeSessionID != "" {
+				ids = append(ids, w.c.NativeSessionID)
+			}
+		}
+		if err := env.PrepareCodexProof(ctx, ids); err != nil {
+			return Plan{}, err
+		}
+	}
 	projectFilter := make([]string, 0, len(filters.Projects))
 	for _, p := range filters.Projects {
 		if abs, err := filepath.Abs(p); err == nil {
@@ -263,10 +274,11 @@ func preparePlanWork(ctx context.Context, env Environment, cfg config.Config, fi
 	var items []*work
 	var err error
 	unread, err = enumerateDiscovery(ctx, env, agentapi.DiscoveryImport, func(c agentapi.DiscoveryCandidate) error {
-		t := &transcript{harness: harness(c.Session.Agent), path: c.Source.Path, size: c.Bytes, nativeID: c.Session.NativeID, cwd: c.Header.Directory, repoKey: c.Header.RepoKey, metaStart: c.Header.StartedAt, identityMismatch: c.Header.IdentityMismatch, capturePending: c.Header.CapturePending != "", cursorSlug: c.WorkspaceKey, sourcePriority: c.SourcePriority, sourceInfo: c.SourceInfo}
+		t := &transcript{harness: harness(c.Session.Agent), path: c.Source.Path, size: c.Bytes, nativeID: c.Session.NativeID, cwd: c.Header.Directory, repoKey: c.Header.RepoKey, metaStart: c.Header.StartedAt, identityMismatch: c.Header.IdentityMismatch, capturePending: c.Header.CapturePending != "" && env.CodexRollouts == nil, cursorSlug: c.WorkspaceKey, sourcePriority: c.SourcePriority, sourceInfo: c.SourceInfo}
 		w := &work{t: t, c: Candidate{Harness: string(c.Session.Agent), TranscriptPath: t.path, SourceKind: c.Source.Kind, SourceKey: c.Source.Key, Bytes: t.size, NativeSessionID: t.nativeID}, unsafe: c.IdentityError != nil}
 		if identity := c.Header.CodexIdentity; identity != nil {
 			w.c.NativeChild = identity.Child
+			w.c.RelatedHistory = identity.ForkID != "" || identity.HistoryBase != nil || identity.RolloutID != identity.ThreadID
 			w.c.ParentNativeID = identity.ParentID
 			w.c.RootNativeID = identity.RootID
 			w.c.NativeHome = c.Root
@@ -625,7 +637,7 @@ func runAdapter(ctx context.Context, env Environment, w *work) {
 		freshStart = created.UTC()
 		w.c.StartedAt, w.c.StartedAtSource = freshStart, archive.StartedAtSourceFileCreated
 	}
-	filtered, _, err := collector.FilterSource(ctx, string(w.t.harness), agentapi.SourceRef{Kind: w.c.SourceKind, Path: w.t.path, Key: w.c.SourceKey}, freshStart, env.Sources)
+	filtered, err := filterImportSource(ctx, env, w, freshStart)
 	if err != nil {
 		if fatalSourceFailure(err) {
 			w.sourceErr = err
@@ -637,7 +649,7 @@ func runAdapter(ctx context.Context, env Environment, w *work) {
 			w.vanished = true
 		case agentapi.HasFailure(err, agentapi.Changed):
 			w.sourceChanged = true
-		case errors.Is(err, archive.ErrRelatedHistory):
+		case errors.Is(err, archive.ErrRelatedHistory) || agentapi.HasFailure(err, agentapi.Unavailable) || agentapi.HasFailure(err, agentapi.Limit):
 			w.t.capturePending = true
 		case errors.Is(err, archive.ErrRecordTooLarge) || (statErr == nil && info.Size() > collector.DefaultMaxRawTranscriptBytes):
 			// One record over the limit, or a file that grew past it since

@@ -98,6 +98,7 @@ type catalog struct {
 // Options contains injectable clocks and stop signals; it cannot override
 // source format support or authorize capture.
 type Options struct {
+	nativeOnly    bool
 	Sources       agentapi.SourcesLookup
 	CodexRollouts agentapi.CodexRolloutLookup
 	Now           func() time.Time
@@ -141,7 +142,7 @@ func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config,
 	if o.Rollouts != nil {
 		allowance = min(Budget-time.Second, o.Rollouts.remaining-time.Second)
 		if allowance <= 0 {
-			return h, errors.New("native observation budget exhausted")
+			return h, agentapi.Wrap(agentapi.Limit, errors.New("native observation budget exhausted"))
 		}
 	}
 	started := time.Now()
@@ -159,24 +160,31 @@ func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config,
 	resolver := sourcefacts.NewProjectResolver()
 	recovery := sourcefacts.NewRecoveryResolver(cfg.Archive.Projects, nil, canonicalProjectPath, o.RepositoryIdentity, &c.Recovery)
 	recovery.Validate = o.RepositoryIdentityCurrent
-	priority := scan{proofs: proofs, resolver: resolver, recovery: recovery, store: store, cfg: cfg, catalog: &c, health: &h, now: now, adapter: adapter, priority: true, ctx: ctx, rollouts: o.Rollouts}
+	priority := scan{nativeOnly: o.nativeOnly, proofs: proofs, resolver: resolver, recovery: recovery, store: store, cfg: cfg, catalog: &c, health: &h, now: now, adapter: adapter, priority: true, ctx: ctx, rollouts: o.Rollouts}
 	// The shared lookup owns the only native index projection. Production
 	// observation uses the shared directory worker rather than opening native
 	// SQLite via the legacy settled-only scheduling hint adapter.
 	if o.Rollouts == nil {
 		priority.observeIndexHints(ctx, o, roots, deadline)
 	}
-	priority.observeActiveHints(ctx, o, roots, deadline)
-	priority.observeRetries(o)
+	if !o.nativeOnly {
+		priority.observeActiveHints(ctx, o, roots, deadline)
+		priority.observeRetries(o)
+	}
 
 	priority.observeDirectories(o, deadline)
+	// A just-validated inventory can prove deferred native ownership before the
+	// next pass starts a new coverage epoch. The same deadline/ledger still applies.
+	if !o.nativeOnly && hasValidatedCoverage(c.Coverage) {
+		priority.observeRetries(o)
+	}
 	h.NativeValidationBytes, h.NativeValidationReads, h.NativeValidationOpens = proofs.bytes, proofs.reads, proofs.opens
 	h.NativeValidationAttempts = proofs.attempts
 	h.ProjectOperations = resolver.Operations
 	h.RepositoryMetadataOperations = recovery.MetadataOperations
 	h.RepositoryLookups = recovery.Operations
 	h.GitBytes = resolver.GitBytes
-	h.Pending = len(c.Queue) > 0 || len(c.Retries) > 0 || c.Coverage != nil && c.Coverage.Phase != coverageComplete
+	h.Pending = catalogPending(c, o.nativeOnly)
 	if !h.Pending && len(h.Errors) == 0 {
 		h.LastReconciled = now
 	}
@@ -186,6 +194,12 @@ func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config,
 		if err := c.Coverage.validate(roots); err != nil {
 			return h, err
 		}
+	}
+	if o.nativeOnly {
+		if o.Rollouts != nil {
+			o.Rollouts.catalog = &c
+		}
+		return h, nil
 	}
 	if err := local.WriteCompact(path, c); err != nil {
 		return h, errors.New("discovery state write failed; retry next scan")
@@ -407,18 +421,8 @@ func admitSession(store *state.Store, candidate Candidate, project, generation s
 		err := store.RequestSessionIndexRecovery(sessionKey(candidate.Agent, candidate.NativeSessionID))
 		return false, errors.Join(state.ErrSessionIndexRecoveryRequired, err)
 	}
-	if candidate.ProjectResolution != nil && candidate.ProjectResolution.Method != "explicit_mapping" && candidate.ProjectResolution.Context != sourcefacts.RecoveryContext(cfg.Archive.Projects, nil, filepath.Clean) {
-		return false, errors.New("project recovery policy changed")
-	}
-	current, allowed := cfg.DiscoveryGeneration(candidate.Agent, project, candidate.StartedAt, now)
-	if cfg.EffectiveCodexCaptureScope() == config.CodexAllProjects {
-		if !factsOK || facts.Root != project || cfg.Discovery == nil || !cfg.Discovery.Enabled {
-			return false, errors.New("project facts changed")
-		}
-		current, allowed = cfg.CodexDiscoveryGeneration(facts.Root, facts.Cwd, candidate.StartedAt, now)
-	}
-	if !allowed || current != generation {
-		return false, errors.New("authorization changed")
+	if err := validateAdmissionGeneration(cfg, candidate, project, generation, now, facts, factsOK); err != nil {
+		return false, err
 	}
 	if candidate.Binding != nil && !cfg.CodexHistoryProtection {
 		cfg.CodexHistoryProtection = true
@@ -522,6 +526,7 @@ func continuationLocator(store *state.Store, agent, native string, source Source
 }
 
 type scan struct {
+	nativeOnly          bool
 	proofs              *nativeProofPasses
 	rollouts            *CodexRolloutLookup
 	resolver            *sourcefacts.ProjectResolver
@@ -590,6 +595,15 @@ func (s scan) visitEntry(d directory, source SourceEntry) (retry, stop bool) {
 	if s.rollouts != nil {
 		s.rollouts.Observe(source.Source, source.Fingerprint, entry.Observation.Identity)
 	}
+	if s.nativeOnly {
+		return false, false
+	}
+	return s.admitObservation(source, entry)
+}
+
+func (s scan) admitObservation(source SourceEntry, entry cached) (bool, bool) {
+	c, h, now := s.catalog, s.health, s.now
+	loc := source.Source.Locator
 	if observedSourceChanged(entry.Observation, source.Source) {
 		delete(c.Cache, loc)
 		h.Outcomes[string(outcomeChanged)]++
@@ -716,7 +730,7 @@ func pruneCatalog(c *catalog) {
 }
 
 func (s scan) admitCandidate(candidate Candidate, loc string) (bool, bool) {
-	cfg, store, h, c, now := s.cfg, s.store, s.health, s.catalog, s.now
+	cfg, store, h, now := s.cfg, s.store, s.health, s.now
 	var facts sourcefacts.ProjectFacts
 	var root string
 	var ok bool
@@ -795,6 +809,11 @@ func (s scan) admitCandidate(candidate Candidate, loc string) (bool, bool) {
 			return false, false
 		}
 	}
+	return s.finishCandidate(candidate, loc, root, generation, ownedRoot, physical, facts)
+}
+
+func (s scan) finishCandidate(candidate Candidate, loc, root, generation, ownedRoot string, physical bool, facts sourcefacts.ProjectFacts) (bool, bool) {
+	store, h, c, now := s.store, s.health, s.catalog, s.now
 	if !candidate.SnapshotProven {
 		proven, err := s.proofs.Prove(s.ctx, candidate)
 		if err != nil {
@@ -914,7 +933,7 @@ func (s scan) observeDirectories(o Options, deadline time.Time) {
 			unavailable = append(unavailable, d)
 			continue
 		}
-		worker := scan{proofs: s.proofs, resolver: s.resolver, recovery: s.recovery, store: s.store, cfg: s.cfg, catalog: c, health: h, now: s.now, adapter: s.adapter, ctx: s.ctx, reservedDirectories: len(unavailable), rollouts: o.Rollouts}
+		worker := scan{nativeOnly: s.nativeOnly, proofs: s.proofs, resolver: s.resolver, recovery: s.recovery, store: s.store, cfg: s.cfg, catalog: c, health: h, now: s.now, adapter: s.adapter, ctx: s.ctx, reservedDirectories: len(unavailable), rollouts: o.Rollouts}
 		advanced := true
 		for _, source := range batch.Entries {
 			if scanStopped(s.ctx, o) || time.Now().After(deadline) {
@@ -1048,4 +1067,28 @@ func (s scan) retainedProject(candidate Candidate) (*archive.SessionRegistration
 		return nil, true
 	}
 	return &prior, false
+}
+
+func validateAdmissionGeneration(cfg config.Config, candidate Candidate, project, generation string, now time.Time, facts sourcefacts.ProjectFacts, factsOK bool) error {
+	if candidate.ProjectResolution != nil && candidate.ProjectResolution.Method != "explicit_mapping" && candidate.ProjectResolution.Context != sourcefacts.RecoveryContext(cfg.Archive.Projects, nil, filepath.Clean) {
+		return errors.New("project recovery policy changed")
+	}
+	current, allowed := cfg.DiscoveryGeneration(candidate.Agent, project, candidate.StartedAt, now)
+	if cfg.EffectiveCodexCaptureScope() == config.CodexAllProjects {
+		if !factsOK || facts.Root != project || cfg.Discovery == nil || !cfg.Discovery.Enabled {
+			return errors.New("project facts changed")
+		}
+		current, allowed = cfg.CodexDiscoveryGeneration(facts.Root, facts.Cwd, candidate.StartedAt, now)
+	}
+	if !allowed || current != generation {
+		return errors.New("authorization changed")
+	}
+	return nil
+}
+
+func hasValidatedCoverage(coverage *coverageInventory) bool {
+	return coverage != nil && coverage.Phase == coverageComplete && coverage.proofEpoch == coverage.Epoch
+}
+func catalogPending(c catalog, nativeOnly bool) bool {
+	return len(c.Queue) > 0 || !nativeOnly && len(c.Retries) > 0 || c.Coverage != nil && c.Coverage.Phase != coverageComplete
 }

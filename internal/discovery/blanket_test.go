@@ -610,7 +610,7 @@ func TestBlanketLegacyContinuationResumesAfterExclusionLiftWithoutAdmittingExclu
 				t.Fatal("permitted legacy discovery did not replace missing locator")
 			}
 			objects := storagetest.NewMemoryStore()
-			result, err := collector.Run(context.Background(), store, objects, collector.Options{Parsers: builtin.NewBuiltins(), Sources: builtin.NewBuiltins(), MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: func() time.Time { return at.Add(8 * time.Minute) }})
+			result := collectNativeFixture(t, store, objects, codex, at.Add(8*time.Minute))
 			if err != nil || len(result.Errors) != 0 || len(result.Published) != 1 {
 				t.Fatalf("resumed publication %#v %v", result, err)
 			}

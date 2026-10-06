@@ -945,7 +945,7 @@ func bindingFacts(f *rolloutFile, home string, own *uint64) (archive.CodexSource
 		source = string(encoded)
 	}
 	root := f.identity.RootID
-	if root == "" && !f.identity.Child {
+	if root == "" && !f.identity.Child && f.identity.ForkID == "" {
 		root = f.identity.ThreadID
 	}
 	facts := archive.CodexSourceBinding{Version: 1, Child: f.identity.Child, NativeThreadID: f.identity.ThreadID, NativeCreatedAt: created, Cwd: f.meta.Cwd, SelectedCwd: f.meta.Cwd, ProducerSource: source, PhysicalProducerVersion: f.meta.Version, PhysicalProducerOriginator: f.meta.Originator, RootID: root, ParentID: f.identity.ParentID, OwnStart: own, PhysicalRolloutID: f.identity.RolloutID, Path: f.ref.Path, Home: home}

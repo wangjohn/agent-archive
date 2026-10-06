@@ -74,7 +74,7 @@ const (
 	// SkipIdentityMismatch means the session IDs inside the transcript do not
 	// match the file (or the Cursor chat's key).
 	SkipIdentityMismatch SkipReason = "identity_mismatch"
-	// SkipRelatedHistory means complete child, fork or revision history is not yet supported.
+	// SkipRelatedHistory means native history or independent own-task evidence is pending.
 	SkipRelatedHistory SkipReason = "related_history_pending"
 	// SkipSourceChanged means the native file changed during a verified read; retry later.
 	SkipSourceChanged SkipReason = "source_changed"
@@ -137,9 +137,11 @@ type Candidate struct {
 	NativeSessionID string
 	// NativeChild and native relationship IDs describe Codex ownership, not admission.
 	NativeChild    bool
+	RelatedHistory bool
 	ParentNativeID string
 	RootNativeID   string
 	NativeHome     string
+	CodexBinding   *archive.CodexSourceBinding
 	// TranscriptPath is the session's transcript file. A Cursor chat found
 	// only in Cursor's database has none: its SourceKind is
 	// archive.SourceKindCursorSQLite and SourceKey its chat ID.
@@ -282,6 +284,10 @@ type Environment struct {
 	Children                  agentapi.ChildrenLookup
 	Imports                   agentapi.ImportsLookup
 	Sources                   agentapi.SourcesLookup
+	// CodexRollouts shares native selection and its resource ledger with planning.
+	CodexRollouts agentapi.CodexRolloutLookup
+	// PrepareCodexProof advances qualified inventory without authorizing capture.
+	PrepareCodexProof func(context.Context, []string) error
 	// Home is the user's home directory, where the apps keep their stores.
 	Home string
 	// NativeDirectories are observed current and previously configured native locations.

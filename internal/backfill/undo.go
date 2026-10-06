@@ -1072,6 +1072,9 @@ func orderUndoChildrenFirst(sessions []UndoSession) ([]UndoSession, error) {
 			}
 			d = parent + 1
 		}
+		if d > 64 {
+			return 0, errors.New("invalid nested child relationship")
+		}
 		delete(visiting, id)
 		depth[id] = d
 		return d, nil

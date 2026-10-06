@@ -48,8 +48,12 @@ func (p *nativeProofPasses) Prove(ctx context.Context, c Candidate) (out Candida
 			return c, agentapi.Wrap(agentapi.Unavailable, errors.New("native provider unavailable"))
 		}
 
+		var budget *agentapi.NativeReadBudget
+		if shared, ok := p.lookup.(agentapi.CodexRolloutResourceBudget); ok {
+			budget = shared.NativeReadBudget()
+		}
 		var err error
-		pass, err = provider.OpenPass(ctx, agentapi.SourceEnvironment{CodexRollouts: p.lookup, Files: proofOpener{RootOpener: sourcefacts.RootOpener{Root: c.Source.Root}, owner: p}, Policy: transcriptio.OpenPolicy{Root: c.Source.Root, RejectSymlinks: true}})
+		pass, err = provider.OpenPass(ctx, agentapi.SourceEnvironment{ReadBudget: budget, CodexRollouts: p.lookup, Files: proofOpener{RootOpener: sourcefacts.RootOpener{Root: c.Source.Root}, owner: p}, Policy: transcriptio.OpenPolicy{Root: c.Source.Root, RejectSymlinks: true}})
 		if err != nil {
 			return c, err
 		}

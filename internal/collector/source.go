@@ -582,7 +582,7 @@ func (r providerReader) snapshotBinding(ctx context.Context, snap agentapi.Sourc
 		if evidenceErr != nil {
 			return nil, evidenceErr
 		}
-		if evidence.Binding.Child && evidence.Task.Seen && (!evidence.Task.Native || !evidence.Task.LocalExecution) {
+		if evidence.Binding.Child && (!evidence.Task.Seen || !evidence.Task.Native || !evidence.Task.LocalExecution || evidence.Task.StartedAt.IsZero()) {
 			return nil, agentapi.Wrap(agentapi.Unavailable, errors.New("first own task does not establish native execution"))
 		}
 		if r.admission.Binding != nil && !r.admission.Binding.FirstNativeTaskAt.IsZero() {

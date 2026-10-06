@@ -5,9 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/wangjohn/agent-archive/internal/agents/builtin"
+	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/state"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -15,8 +19,7 @@ import (
 )
 
 // Initial admission benchmark includes the real native registry, source snapshot,
-// current permission checks and durable registration. Publication is measured by
-// the separate combined-stack end-to-end suite, never inferred from these costs.
+// current permission checks, durable registration and actual source/metadata publication.
 func BenchmarkNativeChildInitialAdmission(b *testing.B) {
 	for _, count := range []int{1000, 10000, 100000} {
 		b.Run(strconv.Itoa(count), func(b *testing.B) {
@@ -53,9 +56,14 @@ func BenchmarkNativeChildInitialAdmission(b *testing.B) {
 				decodes := state.PublishedStateLoads()
 				b.StartTimer()
 				health, err := runWithCensus(context.Background(), store, cfg, options, registeredAdapters())
-				b.StopTimer()
 				if err != nil || health.Registered != 1 {
 					b.Fatalf("initial admission count=%d health=%+v err=%v", count, health, err)
+				}
+				cloud := storagetest.NewMemoryStore()
+				published, publishErr := collector.Run(context.Background(), store, cloud, collector.Options{Sources: builtin.NewBuiltins(), Parsers: builtin.NewBuiltins(), MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: options.Now})
+				b.StopTimer()
+				if publishErr != nil || len(published.Published) != 1 || len(published.Errors) != 0 {
+					b.Fatalf("publication count=%d result=%+v err=%v", count, published, publishErr)
 				}
 				b.ReportMetric(float64(nativeBytes), "native-file-bytes")
 				b.ReportMetric(float64(health.NativeValidationBytes), "native-validation-bytes")
@@ -64,7 +72,48 @@ func BenchmarkNativeChildInitialAdmission(b *testing.B) {
 				b.ReportMetric(float64(health.Probes), "header-probes")
 				b.ReportMetric(float64(health.NativeValidationAttempts), "native-proof-attempts")
 				b.ReportMetric(float64(state.PublishedStateLoads()-decodes), "full-published-decodes")
+				before := childBenchmarkState(b, store.Home())
+				settledLoads := state.PublishedStateLoads()
+				reopened, err := state.Open(store.Home())
+				if err != nil {
+					b.Fatal(err)
+				}
+				settledStart := time.Now()
+				settled, err := collector.Run(context.Background(), reopened, cloud, collector.Options{Sources: builtin.NewBuiltins(), Parsers: builtin.NewBuiltins(), MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: options.Now})
+				b.ReportMetric(float64(time.Since(settledStart).Nanoseconds()), "settled-ns")
+				fullLoads := state.PublishedStateLoads() - settledLoads
+				b.ReportMetric(float64(fullLoads), "settled-full-decodes")
+				if err != nil || len(settled.Errors) != 0 || len(settled.Skipped) != 1 || fullLoads != 0 || !reflect.DeepEqual(before, childBenchmarkState(b, store.Home())) {
+					b.Fatalf("settled child changed or decoded retained state: %+v %v loads=%d", settled, err, fullLoads)
+				}
+				b.ReportMetric(0, "settled-session-writes")
+
 			}
 		})
 	}
+}
+
+func childBenchmarkState(b *testing.B, home string) map[string]int64 {
+	b.Helper()
+	out := map[string]int64{}
+	for _, dir := range []string{"registrations", "published", "scan-signatures", "pending-scans", "pending", "requests"} {
+		err := filepath.WalkDir(filepath.Join(home, dir), func(path string, entry fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if entry.IsDir() {
+				return nil
+			}
+			info, err := entry.Info()
+			if err != nil {
+				return err
+			}
+			out[path] = info.ModTime().UnixNano()
+			return nil
+		})
+		if err != nil && !os.IsNotExist(err) {
+			b.Fatal(err)
+		}
+	}
+	return out
 }

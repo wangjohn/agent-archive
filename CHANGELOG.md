@@ -8,6 +8,12 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Capture native Codex children without a stop hook or archived parent. Children
+  keep their own identity, creation, task evidence, consent and activity. Historical
+  imports validate the same native source facts; nested children belong to the new
+  import batch, and undo leaves a parent from an earlier batch in place. Backfill
+  previews remain read-only and report pending native evidence accurately.
+
 - Readers understand self-contained Codex fork, child and revised histories,
   preserve exact raw ordinal boundaries and count only the chat's own activity.
   Related-history writes and cleanup remain protected pending revision-aware
