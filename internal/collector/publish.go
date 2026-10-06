@@ -1,6 +1,7 @@
 package collector
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -74,56 +75,66 @@ func (s *sessionScan) publishPending(pending state.PendingPublication) (sessionO
 	if err := s.checkHistoryPublication(pending); err != nil {
 		return outcomeSkipped, err
 	}
-	if !pending.CarriesNoSource() && !storage.VerifySHA256(pending.SourceBytes, pending.SourceSHA256) {
-		return outcomeSkipped, errors.New("pending source checksum does not match its persisted bytes")
+	if err := s.sealPending(&pending); err != nil {
+		return outcomeSkipped, err
 	}
 	// Marking it attempted rewrites the whole file, source bytes and bundle
 	// included, so it is done once: a retry of an attempted publication, or
 	// one saved already marked because it was due at once, skips it.
 	if !pending.Attempted {
 		pending.Attempted = true
-		if err := s.local.SavePending(s.id(), pending); err != nil {
+		if err := s.savePending(&pending); err != nil {
 			return outcomeSkipped, fmt.Errorf("mark pending publication attempted: %w", err)
 		}
 	}
 	if err := s.upload(pending); err != nil {
 		return outcomeSkipped, err
 	}
-	if err := listingindex.PublishRevision(s.ctx, s.remote, pending.MetadataKey, pending.MetadataBytes); err != nil {
+	// Auxiliary repair always follows the authoritative winner, never an old journal body.
+	body, err := storage.ReadPublicationMetadata(s.ctx, s.remote, pending.MetadataKey)
+	if err != nil {
+		return outcomeSkipped, err
+	}
+	if err := listingindex.PublishRevision(s.ctx, s.remote, pending.MetadataKey, body); err != nil {
 		s.warn(fmt.Errorf("listing maintenance pending: %w", err))
 	} else if err := s.local.RemoveListingRepair(s.id()); err != nil {
 		s.warn(err)
 	}
-	// The object this publication replaced is the one recorded when it was
-	// uploaded, never one rebuilt from its bundle now (see
-	// state.Published.LastPublishedSource). If it is unknown, only state from
-	// an old version without cached metadata, nothing is recorded: the old
-	// object then stays until the whole session expires, which is safe.
-	//
-	// For the same reason recording it is best effort: the publication has
-	// reached storage, and failing it here, before it is saved, would upload
-	// it again on every pass (a ledger that no longer decodes did exactly
-	// that). A failure is reported once the publication is recorded.
-	if previous, hadPrevious := s.published.LastPublishedSource(); hadPrevious && previous.Key != pending.SourceKey {
-		priorBundle, _, havePrior := s.published.LastPublished()
+	if storage.SHA256Hex(body) != pending.Commit.MetadataSHA256 {
+		return outcomeSkipped, storage.ErrPublicationConflict
+	}
+	// Record only references absent from the complete next set. Preserved revisions
+	// stay live; privacy-sensitive predecessor ledger failure keeps replay evidence.
+	priorBundle, _, havePrior := s.published.LastPublished()
+	previous, err := s.published.CommittedSources()
+	if err != nil {
+		return outcomeSkipped, err
+	}
+	selected := map[string]bool{}
+	for _, source := range pending.Sources {
+		selected[source.Reference.Key] = true
+	}
+	for _, previous := range previous {
+		if selected[previous.Key] {
+			continue
+		}
 		privacySensitive := havePrior && priorBundle.Capture.FilterVersion != pending.Bundle.Capture.FilterVersion
 		if err := s.local.RecordSupersededWithPrivacy(s.id(), previous.Key, s.now, privacySensitive); err != nil {
 			if privacySensitive {
-				// Keep the pending publication for another attempt. Saving the
-				// new published state here would lose the only retry path for
-				// this old-filter source, leaving it until session expiry.
 				return outcomeSkipped, fmt.Errorf("record privacy-sensitive predecessor: %w", err)
 			}
 			s.warn(fmt.Errorf("record superseded source for cleanup: %w", err))
 		}
 	}
-	var saveErr error
-	if pending.MetadataOnly {
-		saveErr = s.published.SaveRepublishedMetadata(pending, s.now)
-	} else {
-		saveErr = s.published.SavePublication(pending.Bundle, s.now, pending.SourceReference(), pending.MetadataBytes)
+	// Verify once more after listing/ledger work before committing local authority.
+	body, err = storage.ReadPublicationMetadata(s.ctx, s.remote, pending.MetadataKey)
+	if err != nil {
+		return outcomeSkipped, err
 	}
-	if err := saveErr; err != nil {
+	if storage.SHA256Hex(body) != pending.Commit.MetadataSHA256 {
+		return outcomeSkipped, storage.ErrPublicationConflict
+	}
+	if err := s.published.SaveCommittedPublication(pending, s.now); err != nil {
 		return outcomeSkipped, fmt.Errorf("update published cache: %w", err)
 	}
 	// Whatever kept this session's metadata from being refreshed described
@@ -147,33 +158,76 @@ func (s *sessionScan) upload(pending state.PendingPublication) error {
 	if err := s.local.SaveListingRepair(s.id(), state.ListingRepair{MetadataKey: pending.MetadataKey, DestinationID: s.reg.DestinationID}); err != nil {
 		return fmt.Errorf("journal listing repair: %w", err)
 	}
-	if !pending.CarriesNoSource() {
-		if err := storage.PutSourceThenMetadataIndexed(s.ctx, s.remote, pending.SourceKey, pending.MetadataKey, pending.SourceBytes, pending.MetadataBytes, s.opts.Retry, nil); err != nil {
-			return fmt.Errorf("publish: %w", err)
+	sources := make([]storage.SourcePublication, len(pending.Sources))
+	for i, source := range pending.Sources {
+		payload := source.Bytes
+		if i == 0 {
+			payload = pending.SourceBytes
 		}
-		return nil
+		sources[i] = storage.SourcePublication{Key: source.Reference.Key, SHA256: source.Reference.SHA256, Size: source.Reference.CompressedBytes, Bytes: payload}
 	}
-	err := storage.PutMetadataForSourceIndexed(s.ctx, s.remote, pending.SourceKey, pending.SourceSHA256, pending.SourceSize, pending.MetadataKey, pending.MetadataBytes, s.opts.Retry, nil)
-	if errors.Is(err, storage.ErrNotFound) || errors.Is(err, storage.ErrChecksumMismatch) {
-		// The recorded source is not in storage as recorded, and without its
-		// bytes this publication can never succeed. Dropping it keeps it from
-		// holding back normal capture; the metadata still points at whatever
-		// it pointed at before. If this build can build the bundle after all,
-		// the next refresh publishes it as a new source; if not, the refresh
-		// is recorded as impossible so it is not retried (with a download)
-		// on every pass.
-		if removeErr := s.local.RemovePending(s.id()); removeErr != nil {
-			err = errors.Join(err, removeErr)
-		}
-		if _, buildErr := archive.BuildCompressedSource(pending.Bundle); buildErr != nil {
-			skip := state.RefreshSkip{ParserVersion: s.parserVersion(), SourceKey: pending.SourceKey, Reason: state.RefreshSkipSourceUnavailable}
-			if skipErr := s.local.SaveRefreshSkip(s.id(), skip); skipErr != nil {
-				err = errors.Join(err, skipErr)
-			}
-		}
-	}
-	if err != nil {
-		return fmt.Errorf("publish metadata: %w", err)
+	prior := storage.MetadataPredecessor{Known: pending.Commit.Predecessor != state.PredecessorUnknown, Exists: pending.Commit.Predecessor == state.PredecessorPresent, SHA256: pending.Commit.PredecessorSHA256}
+	if err := storage.PutSourceSetThenMetadata(s.ctx, s.remote, sources, pending.MetadataKey, pending.MetadataBytes, prior, s.opts.Retry); err != nil {
+		return fmt.Errorf("publish exact source set: %w", err)
 	}
 	return nil
+}
+
+// sealPending upgrades legacy replay only from retained local committed evidence.
+func (s *sessionScan) sealPending(p *state.PendingPublication) error {
+	policy, err := s.publicationPolicy(p.Bundle)
+	if err != nil {
+		return err
+	}
+	if p.Commit != nil {
+		if p.Commit.DestinationID != s.reg.DestinationID || p.Commit.PolicyContext != policy || p.Commit.AdmissionContext != s.publicationAdmission() {
+			return errors.New("publication destination, admission or filter policy changed; retain pending evidence and reconcile")
+		}
+		return p.ValidatePublication()
+	}
+	prior := s.published.PublicationPredecessor()
+	purpose := state.PublicationCapture
+	if p.MetadataOnly {
+		purpose = state.PublicationMetadata
+	}
+	sealed, err := state.PreparePublication(*p, prior, s.reg.DestinationID, s.publicationAdmission(), policy, purpose)
+	if err != nil {
+		return fmt.Errorf("prepare publication: %w", err)
+	}
+	// Persist the sealed predecessor before any remote write, including legacy replay.
+	if err := s.local.SavePending(s.id(), sealed); err != nil {
+		return err
+	}
+	*p = sealed
+	return nil
+}
+
+func (s *sessionScan) savePending(p *state.PendingPublication) error {
+	if p.Commit == nil {
+		return s.sealPending(p)
+	}
+	return s.local.SavePending(s.id(), *p)
+}
+
+func (s *sessionScan) publicationPolicy(bundle archive.SourceBundle) (string, error) {
+	adapter, err := sourceAdapter(s.opts.Sources, s.reg.Harness.Name)
+	if err != nil {
+		return "", fmt.Errorf("active publication privacy policy unavailable: %w", err)
+	}
+	if bundle.Capture.FilterVersion != archive.FilterVersion || bundle.Capture.AdapterVersion != adapter.Version() {
+		return "", errors.New("pending source privacy policy changed; retain evidence and refilter before publication")
+	}
+	return storage.SHA256Hex([]byte(archive.FilterVersion + "\x00" + adapter.Version() + "\x00" + string(s.opts.skillEvidence()))), nil
+}
+
+func (s *sessionScan) publicationAdmission() string {
+	body, _ := json.Marshal(struct {
+		Session   string
+		Native    string
+		Project   string
+		Admission string
+		Origin    archive.SessionOrigin
+		Batch     archive.ImportBatch
+	}{Session: s.reg.ArchiveSessionID, Native: s.reg.NativeSessionID, Project: s.reg.ProjectID, Admission: s.reg.Admitted().UTC().Format("2006-01-02T15:04:05.999999999Z07:00"), Origin: s.reg.Origin, Batch: s.reg.ImportBatch})
+	return storage.SHA256Hex(body)
 }

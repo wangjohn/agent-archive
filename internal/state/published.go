@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"sync/atomic"
 	"time"
@@ -81,11 +82,14 @@ type publishedState struct {
 	// LoadPublishedSummary), so they can be read without decoding the source
 	// bundles that follow. write keeps it in step; state written before it
 	// existed has none and is decoded in full instead.
-	Summary       *PublishedSummary    `json:"summary,omitempty"`
-	MetadataBytes []byte               `json:"metadata_bytes,omitempty"`
-	Bundle        archive.SourceBundle `json:"bundle"`
-	PublishedAt   time.Time            `json:"published_at"`
-	Status        CacheStatus          `json:"status"`
+	Summary            *PublishedSummary         `json:"summary,omitempty"`
+	Commit             *PublicationCommit        `json:"commit,omitempty"`
+	Sources            []archive.SourceReference `json:"sources,omitempty"`
+	PredecessorUnknown bool                      `json:"predecessor_unknown,omitempty"`
+	MetadataBytes      []byte                    `json:"metadata_bytes,omitempty"`
+	Bundle             archive.SourceBundle      `json:"bundle"`
+	PublishedAt        time.Time                 `json:"published_at"`
+	Status             CacheStatus               `json:"status"`
 	// BlockedReason is set only while Status is CacheStatusBlocked.
 	BlockedReason BlockedReason `json:"blocked_reason,omitempty"`
 	// PreBlockStatus is the status a recoverable block replaced, so clearing
@@ -275,12 +279,14 @@ func validSourceReference(ref archive.SourceReference) bool {
 // replaces it; a recoverable block remembers the status it replaced and
 // accumulates the hook evidence it held back while it lasts.
 func (p publishedState) next(bundle archive.SourceBundle, publishedAt time.Time, status CacheStatus, reason BlockedReason, metadata []byte, deferred []archive.SupplementalEvidence, source *archive.SourceReference) publishedState {
+	commit, sources := p.Commit, p.Sources
 	last := p.detachedLastPublished()
 	if last == nil && p.Status == CacheStatusPublished {
 		snapshot := publishedSnapshot{Bundle: p.Bundle, PublishedAt: p.PublishedAt}
 		last = &snapshot
 	}
 	if status == CacheStatusPublished {
+		commit, sources = nil, nil
 		// The candidate becoming the current bundle is exactly what was just
 		// published, so the snapshot records only when, not a second copy.
 		last = &publishedSnapshot{PublishedAt: publishedAt, SameAsBundle: true, Source: source}
@@ -304,7 +310,7 @@ func (p publishedState) next(bundle archive.SourceBundle, publishedAt time.Time,
 	if len(metadata) == 0 {
 		metadata = p.MetadataBytes
 	}
-	return publishedState{Bundle: bundle, PublishedAt: publishedAt, Status: status, BlockedReason: reason, PreBlockStatus: preBlock, DeferredHookEvidence: held, LastPublished: last, MetadataBytes: metadata, AgeFrom: p.ageClampFor(bundle)}
+	return publishedState{Commit: commit, Sources: sources, PredecessorUnknown: p.PredecessorUnknown, Bundle: bundle, PublishedAt: publishedAt, Status: status, BlockedReason: reason, PreBlockStatus: preBlock, DeferredHookEvidence: held, LastPublished: last, MetadataBytes: metadata, AgeFrom: p.ageClampFor(bundle)}
 }
 
 // Published is one session's published state, read from published/<id>.json
@@ -486,8 +492,23 @@ func (p *Published) Save(bundle archive.SourceBundle, publishedAt time.Time, sta
 // SavePublication records a completed publication: bundle becomes both the
 // comparison baseline and the last published snapshot, source is the object
 // its metadata points at, and metadata is the document that was uploaded.
-func (p *Published) SavePublication(bundle archive.SourceBundle, publishedAt time.Time, source archive.SourceReference, metadata []byte) error {
-	return p.write(p.state.next(bundle, publishedAt, CacheStatusPublished, "", metadata, nil, &source))
+func (p *Published) SavePublication(bundle archive.SourceBundle, publishedAt time.Time, source archive.SourceReference, metadata []byte, committed ...PendingPublication) error {
+	if len(committed) > 1 {
+		return errors.New("at most one committed source-set journal is permitted")
+	}
+	next := p.state.next(bundle, publishedAt, CacheStatusPublished, "", metadata, nil, &source)
+	if len(committed) == 1 {
+		pending := committed[0]
+		if pending.SourceReference() != source || !bytes.Equal(pending.MetadataBytes, metadata) || !reflect.DeepEqual(bundle, pending.Bundle) {
+			return errors.New("committed journal differs from publication")
+		}
+		var err error
+		next, err = attachPublication(next, pending)
+		if err != nil {
+			return err
+		}
+	}
+	return p.write(next)
 }
 
 // SaveBlocked records a terminal capture gap (see CacheStatusBlocked).
@@ -556,6 +577,10 @@ func (p *Published) CacheMetadata(metadata []byte) error {
 		return nil
 	}
 	next := p.state
+	// A newly fetched legacy body is useful for derivation, not replacement authority.
+	if len(p.state.MetadataBytes) == 0 && len(metadata) > 0 {
+		next.PredecessorUnknown = p.state.Commit == nil || publicationSHA256(metadata) != p.state.Commit.MetadataSHA256
+	}
 	next.MetadataBytes = metadata
 	return p.write(next)
 }
@@ -577,6 +602,13 @@ func (p *Published) SaveRepublishedMetadata(pending PendingPublication, at time.
 		next.LastPublished = &publishedSnapshot{PublishedAt: at, SameAsBundle: true, Source: &source}
 	} else {
 		next.LastPublished = &publishedSnapshot{Bundle: pending.Bundle, PublishedAt: at, Source: &source}
+	}
+	if pending.Commit != nil {
+		var err error
+		next, err = attachPublication(next, pending)
+		if err != nil {
+			return err
+		}
 	}
 	return p.write(next)
 }

@@ -40,6 +40,10 @@ follow [Semantic Versioning](https://semver.org/).
   configuration-path introspection, including Git 2.39.2. Bounded semantic
   revalidation preserves clone ambiguity and exclusions, and larger Git config
   inventories no longer consume the short remote-URL output limit.
+- Publication retries verify the complete selected source set and exact committed
+  metadata before acknowledging capture. A different remote winner or unknown
+  predecessor stays pending instead of overwriting retained evidence. History
+  writers remain protected pending admission and lifecycle support.
 
 - Deleted Codex worktrees can recover an existing configured project from a
   unique recorded repository identity, or an exact historical backfill mapping.
