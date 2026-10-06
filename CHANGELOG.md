@@ -12,16 +12,36 @@ follow [Semantic Versioning](https://semver.org/).
   preserve exact raw ordinal boundaries and count only the chat's own activity.
   Related-history writes and cleanup remain protected pending revision-aware
   lifecycle support. Active captures can finish while a chat keeps appending.
+  Concurrent header rewrites defer capture for retry, including ordinary
+  admission headers and dependencies with empty captured prefixes.
+
+- Make machine pairing, dedicated R2 keys, provider verification, revocation,
+  and guided R2 bucket creation generally available without experimental flags.
+  First setup offers pairing from another machine.
 
 - Complete non-live experimental pairing/revocation handling: committed retired
   dedicated-key history, healthy issuer labels and private operator bindings,
   unused spare observations and bounded informational operation progress.
   Pairing preserves standalone exclusions, offers safe scope/delivery/token/app
   recovery and reports success before post-commit cleanup and history import.
-  Both peers must be upgraded for standalone exclusions; live provider and platform
-  acceptance remain pending and general availability stays disabled.
+  Both peers must be upgraded for standalone exclusions; additional live provider and platform
+  coverage remains tracked for release testing.
 
 ### Fixed
+
+- Deleted Codex worktrees can recover an existing configured project from a
+  unique recorded repository identity, or an exact historical backfill mapping.
+  Excluded clones, ambiguous scope and damaged live checkouts remain pending;
+  recovery preserves original creation consent and retained ownership.
+  Backfill and automatic discovery retry a source rewritten or replaced during
+  header inspection or repository recovery instead of admitting earlier project
+  facts. Cached discovery facts for missing directories are reprobed before
+  admitting new ownership, including headers without recorded repository keys.
+  Configured subdirectory identities invalidate when a nearer repository appears.
+- Status distinguishes installed hooks from observed execution and shows Codex
+  automatic capture with archived and verified session counts. Optional hook
+  evidence and detailed scan diagnostics move to verbose output; capture warnings
+  and required hook approval instructions stay visible in normal status.
 
 - Pairing recovery preserves exclusions on other clones and accepts home-prefixed
   manual project paths. Retired keys with exact local deletion confirmations no
@@ -88,6 +108,10 @@ follow [Semantic Versioning](https://semver.org/).
   seven-day cleanup check ownership as well as permissions and reject symlinks.
 
 ### Added
+
+- Installers point to `agent-archive backfill` for importing older sessions.
+  Installation docs include preview guidance and explain that upgrades keep
+  your capture settings.
 
 - Codex setup offers included-project or all-current-and-future-project scope,
   independent of supported-source discovery. Fresh scripts explicitly choose
@@ -480,7 +504,7 @@ the release behavior.
   revokes the new key), or continue anyway. Not available with
   `setup --yes`. It has not yet been run against every kind of Cloudflare
   account, which is why it is behind the switch. See [creating a
-  bucket](docs/getting-started/bucket.md#let-setup-create-it-experimental).
+  bucket](docs/getting-started/bucket.md#let-setup-create-it).
 - **`agent-archive stats` is interactive on a terminal.** Plain `stats` opens
   a screen with a bar of keys: `o` `d` `p` `m` `a` switch between the
   overview, detail, projects, models and agents views, `w` cycles the window

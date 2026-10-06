@@ -10,6 +10,9 @@ to continue an existing Claude Code or Codex conversation before creating a
 bucket or running setup. See [native local selection and limits](../guides/handoff.md#before-setup-native-local-sessions).
 
 For persistent capture and cross-machine history, continue with [setup](setup.md).
+If you want to pull in older sessions, you can import them with
+`agent-archive backfill` after setup ([backfill guide](../guides/backfill.md)).
+Add `--dry-run` to preview without importing.
 
 ## Platforms
 
@@ -132,8 +135,13 @@ cannot (for example, an interrupted setup needs recovery), the installer
 says why and how to run it yourself, and the install still succeeds. Run
 under `sudo` (which the installer never needs), it skips the refresh, since it
 would leave root-owned files in your home directory, and says to run it as
-yourself. A fresh install runs nothing. To pin both the installer script and
-the published release, or to choose a directory, use this `v0.2.0` example:
+yourself. A fresh install runs nothing.
+
+Upgrades keep your capture settings. If you want to pull in older sessions,
+you can import them with `agent-archive backfill`.
+
+To pin both the installer script and the published release, or to choose a
+directory, use this `v0.2.0` example:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/wangjohn/agent-archive/v0.2.0/install.sh | AGENT_ARCHIVE_VERSION=v0.2.0 AGENT_ARCHIVE_INSTALL_DIR="$HOME/bin" sh
@@ -181,6 +189,9 @@ setup or change hooks, data, credentials, or the background collector. Run
 setup from the development binary only when you intend to point hooks and the
 collector at it. Source builds do not test the release download, signature,
 or notarization.
+
+Replacing the binary keeps your capture settings. To pull in older sessions,
+run `agent-archive backfill` after setup using the installed binary.
 
 On macOS, a source build is signed ad hoc, which macOS treats as a new program after
 every rebuild, so it asks again for Keychain access to the R2 key each time,

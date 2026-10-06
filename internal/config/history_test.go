@@ -7,8 +7,7 @@ import (
 )
 
 func TestHistoryProtectionIsPermanentAndIndependentOfConsent(t *testing.T) {
-	c := Config{MachineID: "m"}
-	c.CodexHistoryProtection = true
+	c := Config{MachineID: "m", CodexHistoryProtection: true}
 	raw, err := json.Marshal(c)
 	if err != nil {
 		t.Fatal(err)

@@ -150,6 +150,18 @@ func (s *sessionScan) refreshedMetadata(last lastPublication, source archive.Sou
 		skip := state.RefreshSkip{ParserVersion: s.parserVersion(), SourceKey: prior.SourceBundle.Key, Reason: state.RefreshSkipUnderivable}
 		return nil, false, s.local.SaveRefreshSkip(s.id(), skip)
 	}
+	// Derivation/representation maintenance keeps every alternative and its age.
+	if prior.History != nil {
+		if err := s.validateAuthorityIdentity(prior); err != nil {
+			return nil, false, err
+		}
+		next.SchemaVersion = prior.SchemaVersion
+		next.History = prior.History
+		next.CapturedAt = prior.CapturedAt
+		if _, err := next.SourceReferences(); err != nil {
+			return nil, false, err
+		}
+	}
 	// Unchanged metadata over the same source needs no publication.
 	comparison := next
 	comparison.MetadataDerivedAt = prior.MetadataDerivedAt

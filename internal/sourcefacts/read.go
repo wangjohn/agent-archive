@@ -25,17 +25,20 @@ const (
 
 // Header is a content-free, bounded observation of one Codex source.
 type Header struct {
+	SourceInfo os.FileInfo `json:"-"`
 	// Identity survives understood history-pending outcomes as lookup evidence only.
 	Identity        *codexmeta.CodexIdentity
 	NativeCreatedAt time.Time
 	// FormatFacts are bounded metadata-only observations, never task evidence or permission.
-	FormatFacts *CodexMeta
-	Meta        CodexMeta
-	Started     time.Time
-	FirstTaskAt time.Time
-	Profile     CodexProfile
-	Outcome     string
-	Bytes       int64
+	FormatFacts          *CodexMeta
+	Meta                 CodexMeta
+	Started              time.Time
+	FirstTaskAt          time.Time
+	Profile              CodexProfile
+	Outcome              string
+	Bytes                int64
+	NativeReadBytes      int64
+	NativeReadOperations int64
 }
 
 // OpenRegular opens within an approved root without blocking on FIFOs or
@@ -74,11 +77,27 @@ func ReadHeader(ctx context.Context, root, path string) Header {
 		return Header{Outcome: "source_unavailable"}
 	}
 	defer func() { _ = snapshot.Close() }()
-	h := ReadCodexHeader(snapshot.Reader(ctx), path)
+	reader := &measuredHeaderReader{reader: snapshot.Reader(ctx)}
+	h := ReadCodexHeader(reader, path)
+	h.NativeReadBytes, h.NativeReadOperations = reader.bytes, reader.operations
 	if snapshot.Check() != nil || ctx.Err() != nil {
-		return Header{Outcome: "source_changed", Bytes: h.Bytes}
+		return Header{Outcome: "source_changed", Bytes: h.Bytes, NativeReadBytes: h.NativeReadBytes, NativeReadOperations: h.NativeReadOperations}
 	}
+	h.SourceInfo = snapshot.SourceInfo()
 	return h
+}
+
+type measuredHeaderReader struct {
+	reader     io.Reader
+	bytes      int64
+	operations int64
+}
+
+func (r *measuredHeaderReader) Read(buffer []byte) (int, error) {
+	n, err := r.reader.Read(buffer)
+	r.bytes += int64(n)
+	r.operations++
+	return n, err
 }
 
 // ReadCodexHeader inspects metadata and the FIRST task event, stopping before

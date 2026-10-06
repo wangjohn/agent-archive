@@ -97,3 +97,9 @@ type AdmissionEvidence struct {
 type SourceAdmissionEvidence interface {
 	AdmissionEvidence(context.Context, SourceAdmission) (AdmissionEvidence, error)
 }
+
+// RevisionEvidence identifies meaningful native evidence without teaching shared
+// orchestration native record vocabulary. Ownership is checked separately.
+type RevisionEvidence interface {
+	MeaningfulRevisionRecord(archive.SourceBundle, int) bool
+}

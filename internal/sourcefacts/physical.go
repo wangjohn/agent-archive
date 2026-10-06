@@ -243,3 +243,23 @@ func (r *ProjectResolver) canonical(path string) (string, error) {
 	}
 	return resolved, nil
 }
+
+// HasRepositoryEvidence blocks recorded recovery when an existing checkout owns
+// a missing descendant, including Git metadata that is currently unreadable.
+func (r *ProjectResolver) HasRepositoryEvidence(cwd string) bool {
+	if !filepath.IsAbs(cwd) {
+		return true
+	}
+	for p, depth := filepath.Clean(cwd), 0; depth < 64; depth++ {
+		_, err := r.lstat(filepath.Join(p, ".git"))
+		if !errors.Is(err, os.ErrNotExist) {
+			return true
+		}
+		parent := filepath.Dir(p)
+		if parent == p {
+			return false
+		}
+		p = parent
+	}
+	return true
+}

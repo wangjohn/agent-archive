@@ -136,3 +136,77 @@ retained format through the normal registry and shared consumer pipeline. Its
 synthetic success establishes extension coverage only; it creates no production
 agent or installed-version verification. The contributor recipe identifies the
 ports and capability-specific checks required for a new implementation.
+
+Changed Codex scans reconcile same-thread physical revisions only after the
+lookup certifies complete candidate coverage. Historical reads use the existing
+native admission and source-home checks, close each snapshot before the next
+read, and retain independent aggregate bounds for raw bytes, filtered records,
+filtered bytes and compressed stages. Current selection may remain available
+while historical coverage is pending, but that scan cannot acknowledge a request
+or settle its signature. Meaningful preservation compares owned logical ordinals
+through the native record comparator; file sizes and copied headers supply no
+coverage evidence. One physical revision receives one latest verified retained
+entry, including an outgoing append first seen during reconciliation. Newly
+observed historical evidence uses the reconciliation observation time; an existing
+verified candidate keeps its capture time. Publication, frozen journaling, all-reference maintenance and retention require
+complete supported authority; unknown identity/schema evidence remains pending.
+
+Ordinary retained source2 snapshots still supply privacy maintenance inputs when
+their stale filter version disagrees with the cached acknowledged sidecar. This
+compatibility path requires a supported ordinary sidecar and matching ownership,
+identity, capture time and acknowledged source reference; it does not certify
+complete history authority. A physical revision transition validates the complete
+remote source set before planning, and the exact predecessor/final metadata preflight still applies. Recovery must not replace a valid ordinary maintenance input merely to
+clear its stale privacy version.
+
+The collector now freezes reconciled Codex revisions into its existing pending
+journal before publication: the active source and new preserved sources are
+staged privately first, and the complete manifest retains per-input capture,
+filter and source-schema provenance plus the exact acknowledged predecessor SHA.
+Preparation consumes one retained input per pass and persists its cursor with
+`Attempted=false`. Restart uses those inputs even after native files disappear;
+newer requests cannot bypass the history journal. Policy changes retain the
+journal and stages pending complete all-reference successor preparation.
+Final publication verifies all references before exact predecessor preflight and
+metadata PUT, then verifies exact readback before recording cleanup, cache and
+token acknowledgement. Committed retries skip source and metadata PUT.
+
+Stage cleanup reads one bounded directory batch under collector ownership and
+protects live descriptor stages and preparation inputs. It refuses symlinks,
+unsafe names and nonregular stages; failures remain pending. Acknowledgement
+removes private stages before its journal, so failed stage cleanup retains a
+retry record. Missing frozen stages can be recovered only from the exact
+checksum-verified remote object, never from newer native bytes. Expected-SHA
+preflight and exact readback detect observed conflicts under the local collector
+lock; unconditional object-store PUT does not exclude an out-of-band writer
+racing between the preflight GET and PUT.
+
+Retained Codex privacy preparation now accepts validated source3 bundles through
+the adapter's retained-record port. It preserves physical spans, exclusive raw
+ordinal bounds, retained ordinal omissions, thread ownership, OwnStart and original
+capture times. Source2 alternatives keep their own format and per-reference
+provenance. Preparation loads original checksum stages independently of the final
+source list, so an earlier slice cannot make a replaced original unreadable.
+Supported complete acknowledged history can enter private sequential maintenance
+under the frozen journal; the complete final sidecar is derived only after
+all inputs finish. Retained maintenance uses the recorded repository key rather
+than the pass's current Git lookup. All references finish before metadata publication or request completion. A live
+request retains its native-read obligation after parser/privacy maintenance; frozen
+generations acknowledge their retained hook observations.
+
+A stronger-policy retry first resolves the exact remote predecessor or final
+sidecar. Unknown state retains the attempted journal. When the predecessor still
+exists, a stricter successor validates original pending inputs, final references
+and acknowledged references, stages all inputs and outputs before replacing the
+journal, and preserves capture facts and cleanup obligations. An exact committed
+final is identity-decoded across every reference and read back again; its journal
+records a maintenance obligation before exact acknowledgement. The stricter
+successor remains owed, without re-uploading broader source or metadata bytes.
+An unavailable original input keeps that obligation and can recover only from
+exact verified retained bytes. Generation recovery keeps the original whole set frozen and creates an independent
+self-contained successor. Compact summaries and signatures retain source-set digest,
+revision, schemas, completeness and meaningful capture age. Retention protects all
+references and rechecks the current set before deletion; whole-prefix deletion
+removes metadata first. Privacy/parser/link-only work preserves meaningful age.
+The native/index charged ledger does not bound process RSS: retained decode/filter/
+compression/comparison scratch and staged disk are separate performance evidence.

@@ -10,24 +10,51 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 )
 
 const currentSnapshotLimit int64 = 128 << 20
+
 const indexVerificationScratch int64 = 64 << 10
 
 var errIndexChanged = errors.New("native index changed during snapshot")
 
 // indexCopyMetrics accounts actual native reads and private writes, including
 // revalidation. Its buffer budget is not a claim about SQLite or process RSS.
-type indexCopyMetrics struct{ NativeBytes, PrivateBytes, PeakBuffers int64 }
-
-type privateIndex struct {
-	dir, path string
-	metrics   indexCopyMetrics
+type indexCopyMetrics struct {
+	NativeBytes   int64
+	PrivateBytes  int64
+	PeakBuffers   int64
+	NativeOpens   int64
+	NativeReads   int64
+	PrivateOpens  int64
+	PrivateWrites int64
 }
 
-func (p *privateIndex) close() error { return os.RemoveAll(p.dir) }
+type privateIndex struct {
+	dir     string
+	path    string
+	metrics indexCopyMetrics
+	lock    *os.File
+	proof   indexAppendProof
+	budget  *agentapi.NativeReadBudget
+	charge  int64
+}
+
+func (p *privateIndex) close() error {
+	if p.charge != 0 {
+		p.budget.Release(p.charge)
+		p.charge = 0
+	}
+	removeErr := os.RemoveAll(p.dir)
+	var closeErr error
+	if p.lock != nil {
+		closeErr = p.lock.Close()
+		p.lock = nil
+	}
+	return errors.Join(removeErr, closeErr)
+}
 
 // snapshotCurrentIndex never opens native files through SQLite. A WAL generation
 // is captured BEFORE the main copy; both main content and the committed prefix
@@ -35,7 +62,12 @@ func (p *privateIndex) close() error { return os.RemoveAll(p.dir) }
 // Checkpoint/reset/replacement or any ambiguous read refuses the projection.
 // The private immutable main file contains the replayed committed state, so
 // SQLite does not need a WAL, SHM, lock, or recovery operation beside native data.
-func snapshotCurrentIndex(ctx context.Context, root string, step func(string)) (*privateIndex, error) {
+func snapshotCurrentIndexBudget(ctx context.Context, root string, step func(string), budget *agentapi.NativeReadBudget) (*privateIndex, error) {
+	charge := indexVerificationScratch + 64
+	if !budget.Reserve(charge) {
+		return nil, agentapi.Wrap(agentapi.Limit, errors.New("shared index scratch budget exhausted"))
+	}
+	defer func() { budget.Release(charge) }()
 	mainPath := filepath.Join(root, "state_5.sqlite")
 	if _, err := os.Lstat(mainPath + "-journal"); !errors.Is(err, os.ErrNotExist) {
 		return nil, errIndexChanged
@@ -56,10 +88,19 @@ func snapshotCurrentIndex(ctx context.Context, root string, step func(string)) (
 	if wal != nil {
 		defer func() { _ = wal.Close() }()
 	}
+	extra, err := reserveIndexExtents(budget, before, walBefore)
+	if err != nil {
+		return nil, err
+	}
+	charge += extra
 	if step != nil {
 		step("generation")
 	}
-	metrics := indexCopyMetrics{NativeBytes: int64(len(header))}
+	metrics := indexCopyMetrics{NativeBytes: int64(len(header)), NativeOpens: 1}
+	if wal != nil {
+		metrics.NativeOpens++
+		metrics.NativeReads++
+	}
 	mainBytes, err := readIndexExtent(ctx, main, before.Size(), &metrics)
 	if err != nil {
 		return nil, err
@@ -67,15 +108,9 @@ func snapshotCurrentIndex(ctx context.Context, root string, step func(string)) (
 	if step != nil {
 		step("main")
 	}
-	var walBytes []byte
-	if wal != nil {
-		if before.Size()+walBefore.Size()+indexVerificationScratch > currentSnapshotLimit {
-			return nil, errIndexChanged
-		}
-		walBytes, err = readIndexExtent(ctx, wal, walBefore.Size(), &metrics)
-		if err != nil || len(walBytes) < 32 || !bytes.Equal(header, walBytes[:32]) {
-			return nil, errIndexChanged
-		}
+	walBytes, err := readCapturedWAL(ctx, wal, before, walBefore, header, &metrics)
+	if err != nil {
+		return nil, err
 	}
 	metrics.PeakBuffers = int64(len(mainBytes)+len(walBytes)) + indexVerificationScratch
 	committed, pages, pageSize, err := committedWAL(walBytes)
@@ -104,12 +139,17 @@ func snapshotCurrentIndex(ctx context.Context, root string, step func(string)) (
 	if err := verifyIndexGeneration(mainPath, before, wal, walBefore, header, &metrics); err != nil {
 		return nil, err
 	}
+	mainHash := sha256.Sum256(mainBytes)
 	projected := int64(pages) * int64(pageSize)
 	if projected > int64(len(mainBytes)) {
 		peak := projected + int64(len(mainBytes)+len(walBytes))
 		if peak > currentSnapshotLimit {
 			return nil, errIndexChanged
 		}
+		if !budget.Reserve(projected) {
+			return nil, agentapi.Wrap(agentapi.Limit, errors.New("shared native replay budget exhausted"))
+		}
+		charge += projected
 		metrics.PeakBuffers = max(metrics.PeakBuffers, peak)
 	}
 	if err := replayCommittedWAL(&mainBytes, walBytes[:committed], pages, pageSize); err != nil {
@@ -122,24 +162,42 @@ func snapshotCurrentIndex(ctx context.Context, root string, step func(string)) (
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return writePrivateIndex(mainBytes, metrics)
+	out, err := writePrivateIndex(mainBytes, metrics)
+	if err == nil {
+		// Transfer the already reserved header/proof allowance to the private
+		// view lifetime. Close returns it exactly once.
+		charge -= 64
+		out.budget, out.charge = budget, 64
+		out.proof = indexAppendProof{main: before, mainHash: mainHash, wal: walBefore, header: bytes.Clone(header), end: committed, prefixHash: sha256.Sum256(walBytes[:committed]), pageSize: pageSize}
+	}
+	return out, err
 }
 
 func writePrivateIndex(mainBytes []byte, metrics indexCopyMetrics) (_ *privateIndex, resultErr error) {
-	dir, err := os.MkdirTemp("", "agent-archive-codex-index-")
+	root, err := prepareIndexSnapshotRoot()
+	if err != nil {
+		return nil, err
+	}
+	dir, err := os.MkdirTemp(root, privateIndexPrefix)
 	if err != nil {
 		return nil, err
 	}
 	out := &privateIndex{dir: dir, path: filepath.Join(dir, "current.sqlite"), metrics: metrics}
 	defer func() {
 		if resultErr != nil {
-			_ = out.close()
+			resultErr = errors.Join(resultErr, out.close())
 		}
 	}()
+	out.lock, err = lockPrivateIndex(dir)
+	if err != nil {
+		return nil, err
+	}
 	if err := os.WriteFile(out.path, mainBytes, 0600); err != nil {
 		return nil, err
 	}
 	out.metrics.PrivateBytes = int64(len(mainBytes))
+	out.metrics.PrivateOpens++
+	out.metrics.PrivateWrites++
 	return out, nil
 }
 
@@ -148,14 +206,14 @@ func openSnapshotWAL(root, path string) (*os.File, []byte, os.FileInfo, error) {
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil, nil, nil
 	}
-	if err != nil || !info.Mode().IsRegular() || info.Size() < 32 || info.Size() > currentSnapshotLimit {
+	if err != nil || !info.Mode().IsRegular() || info.Size() != 0 && info.Size() < 32 || info.Size() > currentSnapshotLimit {
 		return nil, nil, nil, errIndexChanged
 	}
 	f, err := sourcefacts.OpenRegular(root, path)
 	if err != nil {
 		return nil, nil, nil, errIndexChanged
 	}
-	header := make([]byte, 32)
+	header := make([]byte, min(int64(32), info.Size()))
 	if _, err := f.ReadAt(header, 0); err != nil {
 		_ = f.Close()
 		return nil, nil, nil, errIndexChanged
@@ -180,6 +238,7 @@ func readIndexExtent(ctx context.Context, f *os.File, size int64, metrics *index
 		end := min(offset+64<<10, len(out))
 		n, err := f.ReadAt(out[offset:end], int64(offset))
 		metrics.NativeBytes += int64(n)
+		metrics.NativeReads++
 		if err != nil || n != end-offset {
 			return nil, errIndexChanged
 		}
@@ -219,6 +278,7 @@ func verifyIndexPrefix(ctx context.Context, f *os.File, path string, before os.F
 		end := min(offset+len(scratch), len(raw))
 		n, err := f.ReadAt(scratch[:end-offset], int64(offset))
 		metrics.NativeBytes += int64(n)
+		metrics.NativeReads++
 		if err != nil && !errors.Is(err, io.EOF) || n != end-offset {
 			return errIndexChanged
 		}
@@ -341,10 +401,11 @@ func verifyIndexGeneration(mainPath string, before os.FileInfo, wal *os.File, wa
 		return errIndexChanged
 	}
 	if wal != nil {
-		final := make([]byte, 32)
+		final := make([]byte, len(header))
 		n, readErr := wal.ReadAt(final, 0)
 		metrics.NativeBytes += int64(n)
-		if readErr != nil || !bytes.Equal(final, header) || !sameIndexFile(mainPath+"-wal", walBefore, false) {
+		metrics.NativeReads++
+		if readErr != nil || !bytes.Equal(final, header) || !sameIndexFile(mainPath+"-wal", walBefore, len(header) == 0) {
 			return errIndexChanged
 		}
 	}
@@ -352,4 +413,30 @@ func verifyIndexGeneration(mainPath string, before os.FileInfo, wal *os.File, wa
 		return errIndexChanged
 	}
 	return nil
+}
+
+func reserveIndexExtents(budget *agentapi.NativeReadBudget, main, wal os.FileInfo) (int64, error) {
+	bytes := main.Size()
+	if wal != nil {
+		bytes += wal.Size()
+	}
+	if !budget.Reserve(bytes) {
+		return 0, agentapi.Wrap(agentapi.Limit, errors.New("shared native copy budget exhausted"))
+	}
+	return bytes, nil
+}
+
+func readCapturedWAL(ctx context.Context, wal *os.File, before, walBefore os.FileInfo, header []byte, metrics *indexCopyMetrics) ([]byte, error) {
+	var walBytes []byte
+	var err error
+	if wal != nil {
+		if before.Size()+walBefore.Size()+indexVerificationScratch > currentSnapshotLimit {
+			return nil, errIndexChanged
+		}
+		walBytes, err = readIndexExtent(ctx, wal, walBefore.Size(), metrics)
+		if err != nil || len(walBytes) < len(header) || !bytes.Equal(header, walBytes[:len(header)]) {
+			return nil, errIndexChanged
+		}
+	}
+	return walBytes, nil
 }

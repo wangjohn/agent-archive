@@ -344,3 +344,8 @@ func TestMissingVersionDiscoveryIsUnknown(t *testing.T) {
 		t.Fatal("version output not bounded")
 	}
 }
+
+const (
+	versionKindCLI       = "cli"
+	versionKindAppBundle = "app_bundle"
+)

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent-archive.dev/schemas/machine-verification.schema.json",
-  "title": "Experimental provider verification observations",
+  "title": "Provider verification observations",
   "type": "object",
   "required": [
     "checked_at",

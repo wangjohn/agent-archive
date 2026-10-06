@@ -847,14 +847,20 @@ func (s *Store) HasPending(id string) (bool, error) {
 // RemovePending discards a session's publication transaction once it has
 // been published and acknowledged locally. A missing one is not an error.
 func (s *Store) RemovePending(id string) error {
+	if !safeFileComponent(id) {
+		return errors.New("archive session ID is not a safe file name component")
+	}
+	// Keep the journal until its private cleanup succeeds. After a crash, final
+	// remote bytes can restore any stage already removed by this cleanup.
+	if err := s.removePendingSources(id, nil); err != nil {
+		return err
+	}
 	err := os.Remove(s.pendingPath(id))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("remove pending publication %q: %w", id, err)
 	}
-	if safeFileComponent(id) {
-		if err := os.RemoveAll(filepath.Join(s.home, "sessions", id, "pending-sources")); err != nil {
-			return err
-		}
+	if err == nil {
+		return syncPendingDirectory(filepath.Dir(s.pendingPath(id)))
 	}
 	return nil
 }
@@ -1080,6 +1086,16 @@ func (s *Store) ScanPending(id string) (bool, error) {
 // Anything that invalidates the assertion removes the token (see
 // RemoveScanSignature's callers).
 type ScanSignature struct {
+	// A settled complete authority token carries only compact acknowledged facts.
+	SourceSetDigest       string    `json:"source_set_digest,omitempty"`
+	CurrentRevision       string    `json:"current_revision,omitempty"`
+	SourceSchemaVersion   int       `json:"source_schema_version,omitempty"`
+	MetadataSchemaVersion int       `json:"metadata_schema_version,omitempty"`
+	SourceSetComplete     bool      `json:"source_set_complete,omitempty"`
+	MeaningfulCapturedAt  time.Time `json:"meaningful_captured_at,omitzero"`
+
+	// SourceSetVersion invalidates earlier Codex signatures without decoding bundles.
+	SourceSetVersion int `json:"source_set_version,omitempty"`
 	// Frozen marks completed retained-history maintenance, independently of
 	// the live native source's stat. Ordinary capture never trusts this token.
 	Frozen          bool                      `json:"frozen,omitempty"`

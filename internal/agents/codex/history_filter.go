@@ -12,7 +12,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 )
 
-func filterHistory(ctx context.Context, in agentapi.RecordInput) (archive.FilteredTranscript, error) {
+func filterHistory(ctx context.Context, in agentapi.RecordInput, bounds ...archive.CaptureBoundary) (archive.FilteredTranscript, error) {
 	descriptor, more, err := in.Next(ctx)
 	if err != nil {
 		return archive.FilteredTranscript{}, err
@@ -68,7 +68,13 @@ func filterHistory(ctx context.Context, in agentapi.RecordInput) (archive.Filter
 			history.Spans[span].EndRecord++
 			kept++
 		}
-	})
+	}, func(kind string) bool {
+		physical := original[span]
+		if kind == "session_meta" {
+			return physical.RolloutID == history.ActiveRolloutID
+		}
+		return physical.ThreadID == history.ThreadID && (history.OwnStart == nil || pending.Ordinal >= *history.OwnStart)
+	}, bounds...)
 	if err != nil {
 		return archive.FilteredTranscript{}, errors.Join(streamErr, err)
 	}
@@ -85,6 +91,9 @@ func filterHistory(ctx context.Context, in agentapi.RecordInput) (archive.Filter
 	selected, e := (nativecodec.CodexAdapter{}).FilterJSONL(bytes.NewReader(descriptor.Raw))
 	if e != nil {
 		return archive.FilteredTranscript{}, e
+	}
+	if selected.LocalIdentity.ID != history.ThreadID {
+		return archive.FilteredTranscript{}, errors.New("selected retained history header disagrees with thread identity")
 	}
 	out.History = &history
 	out.Ordinals = ordinals

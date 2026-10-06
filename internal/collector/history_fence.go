@@ -17,12 +17,28 @@ func (s *sessionScan) checkRetainedHistory() error {
 			return err
 		}
 	}
-	return archive.CheckHistoryMutation(b, m)
+	if b.History == nil && m.History == nil {
+		return archive.CheckHistoryMutation(b, m)
+	}
+	if err := b.ValidateHistory(); err != nil {
+		return errors.Join(archive.ErrHistoryMutationPending, err)
+	}
+	if err := s.validateAuthorityIdentity(m); err != nil {
+		return errors.Join(archive.ErrHistoryMutationPending, err)
+	}
+	return nil
 }
 
 func (s *sessionScan) checkHistoryPublication(p state.PendingPublication) error {
 	var next archive.Metadata
 	if err := json.Unmarshal(p.MetadataBytes, &next); err != nil {
+		return err
+	}
+	if p.History != nil {
+		if p.History.Preparing {
+			return archive.ErrHistoryMutationPending
+		}
+		_, err := s.checkFrozenHistoryMetadata(p)
 		return err
 	}
 	if err := archive.CheckHistoryMutation(p.Bundle, next); err != nil {
@@ -32,7 +48,7 @@ func (s *sessionScan) checkHistoryPublication(p state.PendingPublication) error 
 		return nil
 	}
 	// Lost local state cannot authorize flattening a readable remote history sidecar.
-	raw, err := s.remote.Get(s.ctx, p.MetadataKey)
+	raw, err := historyLimitedGet(s.ctx, s.remote, p.MetadataKey, historyMetadataLimit)
 	if errors.Is(err, storage.ErrNotFound) {
 		return nil
 	}
@@ -43,5 +59,9 @@ func (s *sessionScan) checkHistoryPublication(p state.PendingPublication) error 
 	if err := json.Unmarshal(raw, &previous); err != nil {
 		return err
 	}
-	return archive.CheckHistoryMutation(archive.SourceBundle{}, previous)
+	if err := archive.CheckHistoryMutation(archive.SourceBundle{}, previous); err != nil {
+		return err
+	}
+	_, err = previous.SourceReferences()
+	return err
 }

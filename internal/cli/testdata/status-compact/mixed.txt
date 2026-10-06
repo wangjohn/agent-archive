@@ -5,12 +5,12 @@ Agent Archive  ● Needs attention
     To change credentials, run agent-archive setup and choose storage.
 
 Capture
-  ✓ Claude Code 2.1.283       hooks on          212 sessions (+40 subagents) · 48 imported · 3 uploading
+  ✓ Claude Code 2.1.283       hooks installed   212 sessions (+40 subagents) · 200 archived (1 verified) · 48 imported · 3 uploading
       ~/agent-archive   started 11:12   waiting for its first upload
       ~/agent-archive   started 11:04
       ~/styleprofile    started 09:24
     · 17 sessions have capture gaps
-  ✓ Cursor 3.21.13            hooks on          14 sessions · 27 imported · 1 uploading
+  ✓ Cursor 3.21.13            hooks installed   14 sessions · 14 archived (14 verified) · 27 imported · 1 uploading
       ~/personal_website   started 11:40
   ! Codex 0.155.0-alpha.9.2   hooks installed   no sessions yet
     Approve the archive hooks with /hooks in Codex.

@@ -3,6 +3,7 @@ package sourcefacts
 import (
 	"encoding/json"
 
+	"github.com/wangjohn/agent-archive/internal/codexmeta"
 	"github.com/wangjohn/agent-archive/internal/nativesessions"
 )
 

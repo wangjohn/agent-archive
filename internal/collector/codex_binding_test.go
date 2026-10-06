@@ -1,11 +1,14 @@
 package collector
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 )
@@ -62,5 +65,89 @@ func TestCodexBindingMigrationPreservesAllRegistrationOrigins(t *testing.T) {
 				t.Fatal("in-place immutable binding mutation accepted")
 			}
 		})
+	}
+}
+
+func TestRunUnknownHomeMigrationUsesConfiguredConfinementAndPreservesAdmission(t *testing.T) {
+	scan, lookup := reconciliationFixture(t)
+	root := scan.reg.ProjectRoot
+	if err := os.Mkdir(filepath.Join(root, "sessions"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	for id, refs := range lookup.refs {
+		for i := range refs {
+			old := refs[i].Path
+			refs[i].Path = filepath.Join(root, "sessions", filepath.Base(old))
+			if err := os.Rename(old, refs[i].Path); err != nil {
+				t.Fatal(err)
+			}
+		}
+		lookup.refs[id] = refs
+	}
+	lookup.set.Candidates = nil
+	for _, id := range []string{revisionThread, revisionB, revisionC} {
+		lookup.set.Candidates = append(lookup.set.Candidates, lookup.refs[id][0])
+	}
+	current := lookup.refs[revisionC][0]
+	lookup.set.Current = &current
+	scan.reg.TranscriptPath = lookup.refs[revisionThread][0].Path
+	scan.reg.CodexBinding.Path = scan.reg.TranscriptPath
+	scan.reg.CodexBinding.Home = ""
+	if err := scan.local.SaveRegistration(scan.reg); err != nil {
+		t.Fatal(err)
+	}
+	// Locator hints alone cannot read a related graph or confer home ownership.
+	result, err := Run(t.Context(), scan.local, scan.remote, scan.opts)
+	if err != nil || len(result.Errors) == 0 {
+		t.Fatal("lookup hints supplied source permission", result, err)
+	}
+	before := scan.reg
+	cfg, _, err := config.Load(scan.local.Home())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Discovery = &config.DiscoveryConfig{Enabled: false, CodexHomes: []string{root}}
+	if err := config.Save(scan.local.Home(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	opts := scan.opts
+	opts.ConfiguredCodexHomes = []string{root}
+	opts.RepoKey = func(string) string { return "" }
+	for range 4 {
+		result, err := Run(t.Context(), scan.local, scan.remote, opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, err := range result.Errors {
+			if !errors.Is(err, archive.ErrHistoryMutationPending) {
+				var source *agentapi.SourceError
+				errors.As(err, &source)
+				t.Fatal(result.Errors, source.Err)
+			}
+		}
+	}
+	after, found, err := scan.local.LoadRegistration(scan.id())
+	if err != nil || !found || after.CodexBinding.Home != root {
+		t.Fatal("actual configured home not migrated", err)
+	}
+	after.CodexBinding = before.CodexBinding
+	after.TranscriptPath = before.TranscriptPath
+	a, _ := json.Marshal(before)
+	b, _ := json.Marshal(after)
+	if !bytes.Equal(a, b) {
+		t.Fatal("home migration changed admission/provenance")
+	}
+	path := filepath.Join(scan.local.Home(), "registrations", scan.id()+".json")
+	stamp, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err = Run(t.Context(), scan.local, scan.remote, opts)
+	if err != nil || len(result.Errors) != 0 {
+		t.Fatal(result, err)
+	}
+	again, err := os.Stat(path)
+	if err != nil || !again.ModTime().Equal(stamp.ModTime()) {
+		t.Fatal("settled migration rewrote registration", err)
 	}
 }

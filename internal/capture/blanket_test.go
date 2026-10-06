@@ -356,7 +356,7 @@ func TestBlanketHookRetainsWorkingDirectoryCommitObservations(t *testing.T) {
 	home, root, _, at := blanketHookFixture(t)
 	git := &headLookup{sha: startCommit, dirty: new(true)}
 	payload := map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1", "cwd": root}
-	options := []Option{WithDecoders(testDecoders), WithGitHead(git.lookup)}
+	options := []any{WithDecoders(testDecoders), WithGitHead(git.lookup)}
 	if err := HandleEvent(home, "codex", payload, at.Add(time.Minute), options...); err != nil {
 		t.Fatal(err)
 	}
@@ -380,7 +380,7 @@ func TestBlanketHookRetainsWorkingDirectoryCommitObservations(t *testing.T) {
 func TestBlanketCommitObservationsRespectExclusionAndSurviveScopeReduction(t *testing.T) {
 	home, root, cfg, at := blanketHookFixture(t)
 	git := &headLookup{sha: startCommit}
-	options := []Option{WithDecoders(testDecoders), WithGitHead(git.lookup)}
+	options := []any{WithDecoders(testDecoders), WithGitHead(git.lookup)}
 	payload := map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1", "cwd": root}
 	if err := HandleEvent(home, "codex", payload, at.Add(time.Minute), options...); err != nil {
 		t.Fatal(err)

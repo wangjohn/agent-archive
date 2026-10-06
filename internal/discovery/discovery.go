@@ -21,6 +21,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 	"github.com/wangjohn/agent-archive/internal/state"
+	"github.com/wangjohn/agent-archive/internal/transcriptio"
 )
 
 const (
@@ -31,34 +32,41 @@ const (
 	// Reprobe older cached observations so they acquire explicit format profiles.
 	catalogVersion = 6
 	maxCatalog     = 8192
-	maxDirectories = 4096
-	maxRetries     = 256
+	// Keep disposable hints smaller than the accepted catalog limit. Coverage
+	// and requested proofs retain their independent capacity and continuation.
+	maxObservationCache = 2048
+	maxDirectories      = 4096
+	maxRetries          = 256
 )
 
 // Health separates scan coverage from upload and hook health. Codes never
 // include native IDs, paths or native operating-system errors.
 type Health struct {
-	Enabled                  bool                `json:"enabled"`
-	Supported                bool                `json:"supported"`
-	LastAttempt              time.Time           `json:"last_attempt,omitzero"`
-	LastReconciled           time.Time           `json:"last_reconciled,omitzero"`
-	Pending                  bool                `json:"pending"`
-	ProjectOperations        int                 `json:"project_metadata_operations"`
-	GitBytes                 int                 `json:"git_metadata_bytes"`
-	Probes                   int                 `json:"header_probes"`
-	Entries                  int                 `json:"directory_entries"`
-	IndexBytes               int64               `json:"index_bytes_read,omitempty"`
-	IndexQueries             int                 `json:"index_queries,omitempty"`
-	IndexLocators            int                 `json:"index_locators,omitempty"`
-	Bytes                    int64               `json:"bytes_read"`
-	NativeValidationBytes    int64               `json:"native_validation_bytes_read,omitempty"`
-	NativeValidationReads    int64               `json:"native_validation_reads,omitempty"`
-	NativeValidationAttempts int64               `json:"native_validation_attempts,omitempty"`
-	NativeValidationOpens    int64               `json:"native_validation_opens,omitempty"`
-	Registered               int                 `json:"registered"`
-	Outcomes                 map[string]int      `json:"outcomes,omitempty"`
-	Errors                   []string            `json:"errors,omitempty"`
-	Formats                  []FormatObservation `json:"observed_formats,omitempty"`
+	Enabled                      bool                `json:"enabled"`
+	Supported                    bool                `json:"supported"`
+	LastAttempt                  time.Time           `json:"last_attempt,omitzero"`
+	LastReconciled               time.Time           `json:"last_reconciled,omitzero"`
+	Pending                      bool                `json:"pending"`
+	ProjectOperations            int                 `json:"project_metadata_operations"`
+	GitBytes                     int                 `json:"git_metadata_bytes"`
+	Probes                       int                 `json:"header_probes"`
+	Entries                      int                 `json:"directory_entries"`
+	IndexBytes                   int64               `json:"index_bytes_read,omitempty"`
+	IndexQueries                 int                 `json:"index_queries,omitempty"`
+	IndexLocators                int                 `json:"index_locators,omitempty"`
+	Bytes                        int64               `json:"bytes_read"`
+	NativeValidationBytes        int64               `json:"native_validation_bytes_read,omitempty"`
+	NativeValidationReads        int64               `json:"native_validation_reads,omitempty"`
+	NativeValidationAttempts     int64               `json:"native_validation_attempts,omitempty"`
+	NativeValidationOpens        int64               `json:"native_validation_opens,omitempty"`
+	Registered                   int                 `json:"registered"`
+	Outcomes                     map[string]int      `json:"outcomes,omitempty"`
+	Errors                       []string            `json:"errors,omitempty"`
+	Formats                      []FormatObservation `json:"observed_formats,omitempty"`
+	NativeReadBytes              int64               `json:"native_read_bytes,omitempty"`
+	NativeReadOperations         int64               `json:"native_read_operations,omitempty"`
+	RepositoryMetadataOperations int                 `json:"repository_metadata_operations,omitempty"`
+	RepositoryLookups            int                 `json:"repository_lookups,omitempty"`
 }
 
 type directory struct {
@@ -76,14 +84,15 @@ type cached struct {
 }
 
 type catalog struct {
-	Coverage *coverageInventory `json:"native_coverage,omitempty"`
-	Version  int                `json:"version"`
-	Roots    []string           `json:"roots"`
-	Queue    []directory        `json:"queue"`
-	Cache    map[string]cached  `json:"cache"`
-	Health   Health             `json:"health"`
-	Priority map[string]int64   `json:"priority,omitempty"`
-	Retries  []SourceDescriptor `json:"retries,omitempty"`
+	Recovery sourcefacts.RecoveryInventory `json:"project_recovery,omitempty"`
+	Coverage *coverageInventory            `json:"native_coverage,omitempty"`
+	Version  int                           `json:"version"`
+	Roots    []string                      `json:"roots"`
+	Queue    []directory                   `json:"queue"`
+	Cache    map[string]cached             `json:"cache"`
+	Health   Health                        `json:"health"`
+	Priority map[string]int64              `json:"priority,omitempty"`
+	Retries  []SourceDescriptor            `json:"retries,omitempty"`
 }
 
 // Options contains injectable clocks and stop signals; it cannot override
@@ -94,7 +103,9 @@ type Options struct {
 	Now           func() time.Time
 	Stop          func() bool
 	// Rollouts receives the validated observations and bounded coverage state.
-	Rollouts *CodexRolloutLookup
+	RepositoryIdentity        sourcefacts.RepositoryLookup
+	RepositoryIdentityCurrent func(sourcefacts.RepositoryIdentity) bool
+	Rollouts                  *CodexRolloutLookup
 }
 
 // Run observes configured Codex homes under the caller's collector lock,
@@ -112,14 +123,19 @@ func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config,
 	if o.Now == nil {
 		o.Now = time.Now
 	}
-	if cfg.Discovery == nil || !cfg.Discovery.Enabled {
+	enabled := cfg.Discovery != nil && cfg.Discovery.Enabled
+	if !enabled && (o.Rollouts == nil || len(o.Rollouts.roots) == 0) {
 		return Health{}, nil
 	}
 	now := o.Now().UTC()
-	h := Health{Enabled: true, LastAttempt: now, Outcomes: map[string]int{}}
+	h := Health{Enabled: enabled, LastAttempt: now, Outcomes: map[string]int{}}
 	c, path, roots, err := prepareCatalog(store, cfg, o, adapter, &h)
 	if err != nil {
 		return h, err
+	}
+	if c.Coverage != nil && c.Coverage.Phase == coverageValidate {
+		h.Supported = c.Health.Supported
+		h.Formats = slices.Clone(c.Health.Formats)
 	}
 	allowance := Budget
 	if o.Rollouts != nil {
@@ -141,8 +157,15 @@ func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config,
 	proofs := &nativeProofPasses{sources: o.Sources, lookup: o.CodexRollouts, passes: map[string]agentapi.SourcePass{}}
 	defer func() { resultErr = errors.Join(resultErr, proofs.Close()) }()
 	resolver := sourcefacts.NewProjectResolver()
-	priority := scan{proofs: proofs, resolver: resolver, store: store, cfg: cfg, catalog: &c, health: &h, now: now, adapter: adapter, priority: true, ctx: ctx, rollouts: o.Rollouts}
-	priority.observeIndexHints(ctx, o, roots, deadline)
+	recovery := sourcefacts.NewRecoveryResolver(cfg.Archive.Projects, nil, canonicalProjectPath, o.RepositoryIdentity, &c.Recovery)
+	recovery.Validate = o.RepositoryIdentityCurrent
+	priority := scan{proofs: proofs, resolver: resolver, recovery: recovery, store: store, cfg: cfg, catalog: &c, health: &h, now: now, adapter: adapter, priority: true, ctx: ctx, rollouts: o.Rollouts}
+	// The shared lookup owns the only native index projection. Production
+	// observation uses the shared directory worker rather than opening native
+	// SQLite via the legacy settled-only scheduling hint adapter.
+	if o.Rollouts == nil {
+		priority.observeIndexHints(ctx, o, roots, deadline)
+	}
 	priority.observeActiveHints(ctx, o, roots, deadline)
 	priority.observeRetries(o)
 
@@ -150,8 +173,10 @@ func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config,
 	h.NativeValidationBytes, h.NativeValidationReads, h.NativeValidationOpens = proofs.bytes, proofs.reads, proofs.opens
 	h.NativeValidationAttempts = proofs.attempts
 	h.ProjectOperations = resolver.Operations
+	h.RepositoryMetadataOperations = recovery.MetadataOperations
+	h.RepositoryLookups = recovery.Operations
 	h.GitBytes = resolver.GitBytes
-	h.Pending = len(c.Queue) > 0 || len(c.Retries) > 0 || c.Coverage != nil && c.Coverage.Phase != "complete"
+	h.Pending = len(c.Queue) > 0 || len(c.Retries) > 0 || c.Coverage != nil && c.Coverage.Phase != coverageComplete
 	if !h.Pending && len(h.Errors) == 0 {
 		h.LastReconciled = now
 	}
@@ -162,8 +187,12 @@ func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config,
 			return h, err
 		}
 	}
-	if err := local.Write(path, c); err != nil {
+	if err := local.WriteCompact(path, c); err != nil {
 		return h, errors.New("discovery state write failed; retry next scan")
+	}
+	if o.Rollouts != nil {
+		o.Rollouts.catalog = &c
+		o.Rollouts.coverageDirty = false // checkpoint includes observation changes
 	}
 	if err := writeHealth(store.Home(), h); err != nil {
 		return h, err
@@ -220,6 +249,9 @@ func appendUnique(values []string, value string) []string {
 // moves, directory replacement and invalidation cannot silently lose coverage.
 func readBatch(d directory) ([]string, int64, bool, error) {
 	root, err := os.OpenRoot(d.Root)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, 0, true, nil
+	}
 	if err != nil {
 		return nil, 0, false, err
 	}
@@ -257,8 +289,8 @@ func resolveProject(cfg config.Config, cwd string) (string, bool) {
 		}
 		return facts.Root, true
 	}
-	resolved, err := filepath.EvalSymlinks(cwd)
-	if err != nil {
+	resolved := canonicalProjectPath(cwd)
+	if !filepath.IsAbs(cwd) {
 		return "", false
 	}
 	resolve := func(p string) string {
@@ -269,7 +301,8 @@ func resolveProject(cfg config.Config, cwd string) (string, bool) {
 		return r
 	}
 	if p, ok := sourcefacts.ConfiguredOwner(cfg.Archive.Projects, resolved, resolve); ok {
-		return p.Root, p.Included
+		info, err := os.Stat(p.Root)
+		return p.Root, p.Included && err == nil && info.IsDir()
 	}
 	for d, depth := resolved, 0; depth < 64; depth++ {
 		path := filepath.Join(d, ".git")
@@ -374,6 +407,9 @@ func admitSession(store *state.Store, candidate Candidate, project, generation s
 		err := store.RequestSessionIndexRecovery(sessionKey(candidate.Agent, candidate.NativeSessionID))
 		return false, errors.Join(state.ErrSessionIndexRecoveryRequired, err)
 	}
+	if candidate.ProjectResolution != nil && candidate.ProjectResolution.Method != "explicit_mapping" && candidate.ProjectResolution.Context != sourcefacts.RecoveryContext(cfg.Archive.Projects, nil, filepath.Clean) {
+		return false, errors.New("project recovery policy changed")
+	}
 	current, allowed := cfg.DiscoveryGeneration(candidate.Agent, project, candidate.StartedAt, now)
 	if cfg.EffectiveCodexCaptureScope() == config.CodexAllProjects {
 		if !factsOK || facts.Root != project || cfg.Discovery == nil || !cfg.Discovery.Enabled {
@@ -395,7 +431,7 @@ func admitSession(store *state.Store, candidate Candidate, project, generation s
 		if cfg.EffectiveCodexCaptureScope() == config.CodexAllProjects {
 			proof = &archive.CodexAdmissionProof{Generation: generation, Revision: cfg.CodexCapture.Revision, Cwd: facts.Cwd}
 		}
-		return archive.SessionRegistration{CodexAdmission: proof,
+		return archive.SessionRegistration{CodexAdmission: proof, ProjectResolution: candidate.ProjectResolution, RepoKey: candidate.RecordedRepoKey,
 			CodexBinding: candidate.Binding, NativeChild: candidate.NativeChild, ParentNativeSessionID: candidate.ParentNativeID, NativeRootSessionID: candidate.RootNativeID, NativeSourceHome: sourceRoot,
 			ArchiveSessionID: id, NativeSessionID: candidate.NativeSessionID, Harness: archive.Harness{Name: candidate.Agent, Version: candidate.HarnessVersion}, ProjectID: archive.ProjectID(project), ProjectRoot: project,
 			SourceKind: candidate.Source.Kind, SourceKey: candidate.Source.StableKey, TranscriptPath: locator, DiscoveryRoot: sourceRoot, DiscoveryCwd: candidate.WorkingDirectory, DiscoveryProducerOriginator: candidate.ProducerOriginator, DiscoveryProducerSource: candidate.ProducerSource, DiscoveryGeneration: generation, DiscoverySourcePriority: candidate.Source.Priority, SessionStartedAt: candidate.StartedAt, RegisteredAt: now, AdmittedAt: now,
@@ -489,6 +525,7 @@ type scan struct {
 	proofs              *nativeProofPasses
 	rollouts            *CodexRolloutLookup
 	resolver            *sourcefacts.ProjectResolver
+	recovery            *sourcefacts.RecoveryResolver
 	store               *state.Store
 	cfg                 config.Config
 	catalog             *catalog
@@ -520,16 +557,29 @@ func (s scan) visitEntry(d directory, source SourceEntry) (retry, stop bool) {
 	if entry.Observation.Outcome == outcomeIncomplete || entry.Observation.Outcome == outcomeUnavailable || entry.Observation.Outcome == outcomeChanged {
 		retryDelay = time.Minute
 	}
+	if hit && cachedObservationNeedsProbe(entry.Observation, source.Source) {
+		delete(c.Cache, loc)
+		hit = false
+	}
 	if !hit || entry.Size != source.Fingerprint.Size || entry.Mtime != source.Fingerprint.Mtime || now.Sub(entry.Checked) >= retryDelay || now.Before(entry.Checked) {
 		if !discoveryProbeAvailable(h, s.rollouts) {
 			return true, true
 		}
+		headerCharge := int64(sourcefacts.HeaderBytes + 128<<10)
+		if s.rollouts != nil && !s.rollouts.readBudget.Reserve(headerCharge) {
+			return true, true
+		}
 		observation := s.adapter.Inspect(s.ctx, source.Source)
+		if s.rollouts != nil {
+			s.rollouts.readBudget.Release(headerCharge)
+		}
 		h.Probes++
 		if s.rollouts != nil {
 			s.rollouts.probes++
 		}
 		h.Bytes += observation.Bytes
+		h.NativeReadBytes += observation.NativeReadBytes
+		h.NativeReadOperations += observation.NativeReadOperations
 		entry = cached{Size: source.Fingerprint.Size, Mtime: source.Fingerprint.Mtime, Checked: now, Observation: observation}
 		c.Cache[loc] = entry
 	}
@@ -539,6 +589,12 @@ func (s scan) visitEntry(d directory, source SourceEntry) (retry, stop bool) {
 	}
 	if s.rollouts != nil {
 		s.rollouts.Observe(source.Source, source.Fingerprint, entry.Observation.Identity)
+	}
+	if observedSourceChanged(entry.Observation, source.Source) {
+		delete(c.Cache, loc)
+		h.Outcomes[string(outcomeChanged)]++
+		s.retainRetry(source.Source)
+		return false, false
 	}
 	h.Outcomes[string(entry.Observation.Outcome)]++
 	if entry.Observation.Outcome != outcomeUsable {
@@ -563,6 +619,12 @@ func (s scan) visitEntry(d directory, source SourceEntry) (retry, stop bool) {
 	h.Supported = true
 	h.observeFormat(candidate)
 	if s.removalBlocks(candidate) {
+		return false, false
+	}
+	// Lookup homes may include hooks/import locations for already admitted
+	// sources. Their facts cannot expand discovery creation authority.
+	if s.cfg.Discovery == nil || !s.cfg.Discovery.Enabled || !slices.Contains(approvedRoots(s.cfg.Discovery.CodexHomes), candidate.Source.Root) {
+		h.Outcomes["source_not_authorized"]++
 		return false, false
 	}
 	return s.admitCandidate(candidate, loc)
@@ -633,7 +695,7 @@ func (s scan) removalBlocks(candidate Candidate) bool {
 }
 
 func pruneCatalog(c *catalog) {
-	if len(c.Cache) > maxCatalog {
+	if len(c.Cache) > maxObservationCache {
 		keys := make([]string, 0, len(c.Cache))
 		for key := range c.Cache {
 			keys = append(keys, key)
@@ -647,7 +709,7 @@ func pruneCatalog(c *catalog) {
 			}
 			return c.Cache[a].Checked.Compare(c.Cache[b].Checked)
 		})
-		for _, key := range keys[:len(keys)-maxCatalog] {
+		for _, key := range keys[:len(keys)-maxObservationCache] {
 			delete(c.Cache, key)
 		}
 	}
@@ -658,27 +720,34 @@ func (s scan) admitCandidate(candidate Candidate, loc string) (bool, bool) {
 	var facts sourcefacts.ProjectFacts
 	var root string
 	var ok bool
+	var ownedRoot string
 	physical := cfg.EffectiveCodexCaptureScope() == config.CodexAllProjects
-	if id, known, e := store.ArchiveSessionID(sessionKey(candidate.Agent, candidate.NativeSessionID)); e == nil && known {
-		if prior, found, e := store.LoadRegistration(id); e == nil && found {
-			if !cfg.AcceptSession(prior) {
+	if prior, blocked := s.retainedProject(candidate); blocked {
+		h.Outcomes["project_not_authorized"]++
+		return false, false
+	} else if prior != nil {
+		if prior.ProjectResolution != nil && prior.ProjectResolution.OriginalCwd == candidate.WorkingDirectory {
+			if p, matched := sourcefacts.ConfiguredOwner(cfg.Archive.Projects, canonicalProjectPath(candidate.WorkingDirectory), canonicalProjectPath); matched && !p.Included {
 				h.Outcomes["project_not_authorized"]++
 				return false, false
 			}
-			if prior.CodexAdmission != nil {
-				physical = true
-			}
-			// Continuing an already bound registration does not establish new
-			// admission. The collector validates every ongoing source read.
-			if prior.CodexBinding != nil {
-				candidate.SnapshotProven = true
-				candidate.Binding = prior.CodexBinding
-				candidate.StartedAt = prior.CodexBinding.NativeCreatedAt
-			}
+			ownedRoot = prior.ProjectRoot
+			candidate.ProjectResolution = prior.ProjectResolution
+		}
+		if prior.CodexAdmission != nil {
+			physical = true
+		}
+		if prior.CodexBinding != nil {
+			candidate.SnapshotProven = true
+			candidate.Binding = prior.CodexBinding
+			candidate.StartedAt = prior.CodexBinding.NativeCreatedAt
 		}
 	}
 
-	if physical {
+	if ownedRoot != "" {
+		root, ok = ownedRoot, true
+		facts = sourcefacts.ProjectFacts{Root: root, Cwd: canonicalProjectPath(candidate.WorkingDirectory)}
+	} else if physical {
 		facts, ok = s.resolver.Resolve(candidate.WorkingDirectory)
 		root = facts.Root
 		if !ok && s.resolver.Exhausted {
@@ -689,6 +758,24 @@ func (s scan) admitCandidate(candidate Candidate, loc string) (bool, bool) {
 	} else {
 		root, ok = resolveProject(cfg, candidate.WorkingDirectory)
 	}
+	if !ok {
+		if proof, outcome, attempted := s.recoverProject(candidate); attempted {
+			if s.rejectChangedRecoverySource(candidate, loc) {
+				return false, false
+			}
+			if outcome != "" {
+				h.Outcomes[string(outcome)]++
+				if outcome != sourcefacts.RecoveryExcluded {
+					s.retainRetry(candidate.Source)
+				}
+				return false, false
+			}
+			root, ok = proof.Root, true
+			candidate.ProjectResolution = &proof
+			facts = sourcefacts.ProjectFacts{Root: root, Cwd: canonicalProjectPath(candidate.WorkingDirectory)}
+		}
+	}
+
 	if !ok {
 		if physical {
 			h.Outcomes["project_facts_unavailable"]++
@@ -722,6 +809,16 @@ func (s scan) admitCandidate(candidate Candidate, loc string) (bool, bool) {
 		}
 		return s.admitCandidate(proven, loc)
 	}
+	if candidate.ProjectResolution != nil && ownedRoot == "" {
+		if outcome := s.recoveryEvidenceOutcome(candidate, loc); outcome != "" {
+			h.Outcomes[outcome]++
+			if outcome == string(outcomeChanged) {
+				delete(c.Cache, loc)
+			}
+			s.retainRetry(candidate.Source)
+			return false, false
+		}
+	}
 	var created bool
 	var e error
 	if physical {
@@ -748,10 +845,18 @@ func discoveryProbeAvailable(h *Health, rollouts *CodexRolloutLookup) bool {
 func prepareCatalog(store *state.Store, cfg config.Config, o Options, adapter SourceAdapter, h *Health) (catalog, string, []string, error) {
 	path := filepath.Join(store.Home(), "discovery-catalog.json")
 	var c catalog
-	if err := local.Read(path, &c); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if o.Rollouts != nil && o.Rollouts.catalog != nil {
+		c = *o.Rollouts.catalog
+	} else if err := local.Read(path, &c); err != nil && !errors.Is(err, os.ErrNotExist) {
 		h.Errors = append(h.Errors, "catalog_rebuilt")
 	}
-	roots := approvedRoots(cfg.Discovery.CodexHomes)
+	var roots []string
+	if cfg.Discovery != nil {
+		roots = approvedRoots(cfg.Discovery.CodexHomes)
+	}
+	if o.Rollouts != nil {
+		roots = slices.Clone(o.Rollouts.roots)
+	}
 	if c.Coverage != nil && c.Coverage.Version != 1 {
 		return c, path, roots, errors.New("native coverage requires a newer writer")
 	}
@@ -766,7 +871,7 @@ func prepareCatalog(store *state.Store, cfg config.Config, o Options, adapter So
 			c.Coverage = newCoverage(roots)
 		}
 		o.Rollouts.coverage = c.Coverage
-		if c.Coverage.Phase == "complete" {
+		if c.Coverage.Phase == coverageComplete {
 			c.Coverage.restart()
 			c.Queue = nil
 		}
@@ -777,7 +882,7 @@ func prepareCatalog(store *state.Store, cfg config.Config, o Options, adapter So
 		c.Cache = map[string]cached{}
 	}
 	h.LastReconciled = c.Health.LastReconciled
-	if len(c.Queue) == 0 && (c.Coverage == nil || c.Coverage.Phase == "observe") {
+	if len(c.Queue) == 0 && (c.Coverage == nil || c.Coverage.Phase == coverageObserve) {
 		for _, root := range roots {
 			for _, path := range adapter.InitialDirectories() {
 				c.Queue = append(c.Queue, directory{Root: root, Path: path})
@@ -792,7 +897,7 @@ func (s scan) observeDirectories(o Options, deadline time.Time) {
 	// Retry unavailable directories before the remaining backlog next pass,
 	// without revisiting them in this pass or consuming forward queue slots.
 	var unavailable []directory
-	for (c.Coverage == nil || c.Coverage.Phase == "observe") && len(c.Queue) > 0 && discoveryProbeAvailable(h, o.Rollouts) && h.Entries < 2048 && time.Now().Before(deadline) {
+	for (c.Coverage == nil || c.Coverage.Phase == coverageObserve) && len(c.Queue) > 0 && discoveryProbeAvailable(h, o.Rollouts) && h.Entries < 2048 && time.Now().Before(deadline) {
 		if scanStopped(s.ctx, o) {
 			break
 		}
@@ -809,7 +914,7 @@ func (s scan) observeDirectories(o Options, deadline time.Time) {
 			unavailable = append(unavailable, d)
 			continue
 		}
-		worker := scan{proofs: s.proofs, resolver: s.resolver, store: s.store, cfg: s.cfg, catalog: c, health: h, now: s.now, adapter: s.adapter, ctx: s.ctx, reservedDirectories: len(unavailable), rollouts: o.Rollouts}
+		worker := scan{proofs: s.proofs, resolver: s.resolver, recovery: s.recovery, store: s.store, cfg: s.cfg, catalog: c, health: h, now: s.now, adapter: s.adapter, ctx: s.ctx, reservedDirectories: len(unavailable), rollouts: o.Rollouts}
 		advanced := true
 		for _, source := range batch.Entries {
 			if scanStopped(s.ctx, o) || time.Now().After(deadline) {
@@ -843,9 +948,104 @@ func (s scan) observeDirectories(o Options, deadline time.Time) {
 	}
 	c.Queue = append(unavailable, c.Queue...)
 	if c.Coverage != nil {
-		if c.Coverage.Phase == "observe" && len(c.Queue) == 0 {
+		if c.Coverage.Phase == coverageObserve && len(c.Queue) == 0 {
 			c.Coverage.beginValidation()
 		}
 		advanceCoverageValidation(s.ctx, c, h, s.adapter, deadline, o)
 	}
+}
+
+func (s scan) recoverProject(candidate Candidate) (archive.ProjectResolution, sourcefacts.RecoveryOutcome, bool) {
+	if s.recovery == nil {
+		return archive.ProjectResolution{}, "", false
+	}
+	if s.resolver.HasRepositoryEvidence(candidate.WorkingDirectory) {
+		if s.resolver.Exhausted {
+			return archive.ProjectResolution{}, sourcefacts.RecoveryBudgetExhausted, true
+		}
+		return archive.ProjectResolution{}, "", false
+	}
+	if _, err := os.Stat(candidate.WorkingDirectory); !errors.Is(err, os.ErrNotExist) {
+		return archive.ProjectResolution{}, "", false
+	}
+	proof, outcome := s.recovery.Recover(s.ctx, candidate.WorkingDirectory, candidate.RecordedRepoKey)
+	if outcome == "" {
+		if info, err := os.Stat(proof.Root); err != nil || !info.IsDir() {
+			outcome = sourcefacts.RecoveryInventoryUnavailable
+		}
+	}
+	return proof, outcome, true
+}
+
+func (s scan) recoveryEvidenceOutcome(candidate Candidate, loc string) string {
+	observed, cached := s.catalog.Cache[loc]
+	if !cached || !sourceObservationCurrent(observed.Observation, loc) {
+		return string(outcomeChanged)
+	}
+	_, cwdErr := os.Stat(candidate.WorkingDirectory)
+	current := errors.Is(cwdErr, os.ErrNotExist) && s.recovery.Current(*candidate.ProjectResolution)
+	// Repository revalidation may itself observe external changes. Keep the
+	// accepted baseline until the last check before durable admission.
+	if !sourceObservationCurrent(observed.Observation, loc) {
+		return string(outcomeChanged)
+	}
+	if !current {
+		if s.recovery.MetadataExhausted {
+			return string(sourcefacts.RecoveryBudgetExhausted)
+		}
+		return string(sourcefacts.RecoveryInventoryUnavailable)
+	}
+	return ""
+}
+
+// Persisted hints schedule ordinary continuation, but cannot recreate the
+// identity behind recovered ownership. Live cached facts keep their baseline.
+func cachedObservationNeedsProbe(observed Observation, source SourceDescriptor) bool {
+	if observed.Outcome != outcomeUsable || source.Kind != archive.SourceKindFile {
+		return false
+	}
+	if observed.SourceInfo == nil {
+		return missingSourceCwd(observed.Candidate)
+	}
+	return !sourceObservationCurrent(observed, source.Locator)
+}
+
+func observedSourceChanged(observed Observation, source SourceDescriptor) bool {
+	return observed.Outcome == outcomeUsable && source.Kind == archive.SourceKindFile && observed.SourceInfo != nil && !sourceObservationCurrent(observed, source.Locator)
+}
+
+func (s scan) rejectChangedRecoverySource(candidate Candidate, loc string) bool {
+	observed, found := s.catalog.Cache[loc]
+	if found && sourceObservationCurrent(observed.Observation, loc) {
+		return false
+	}
+	delete(s.catalog.Cache, loc)
+	s.health.Outcomes[string(outcomeChanged)]++
+	s.retainRetry(candidate.Source)
+	return true
+}
+
+func missingSourceCwd(candidate Candidate) bool {
+	_, err := os.Stat(candidate.WorkingDirectory)
+	return errors.Is(err, os.ErrNotExist)
+}
+
+func sourceObservationCurrent(observed Observation, loc string) bool {
+	current, err := os.Lstat(loc)
+	return err == nil && transcriptio.SameObservation(observed.SourceInfo, current)
+}
+
+func (s scan) retainedProject(candidate Candidate) (*archive.SessionRegistration, bool) {
+	id, known, err := s.store.ArchiveSessionID(sessionKey(candidate.Agent, candidate.NativeSessionID))
+	if err != nil || !known {
+		return nil, false
+	}
+	prior, found, err := s.store.LoadRegistration(id)
+	if err != nil || !found {
+		return nil, false
+	}
+	if !s.cfg.AcceptSession(prior) {
+		return nil, true
+	}
+	return &prior, false
 }

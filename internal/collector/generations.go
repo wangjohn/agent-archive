@@ -51,7 +51,7 @@ func PrepareGenerationRecovery(ctx context.Context, reg archive.SessionRegistrat
 	if err != nil {
 		return nil, err
 	}
-	if err := archive.CheckHistoryMutation(preview, archive.Metadata{}); err != nil {
+	if err := preview.ValidateHistory(); err != nil {
 		return nil, err
 	}
 	if opts.RequireSkillUse {
@@ -83,7 +83,15 @@ func PrepareGenerationRecovery(ctx context.Context, reg archive.SessionRegistrat
 		if rendered.declined {
 			return latest, state.PendingPublication{}, errors.New("current transcript does not meet configured skill-use policy")
 		}
-		pending := state.PendingPublication{SkillEvidence: string(opts.skillEvidence()), Bundle: bundle, SourceKey: rendered.source.Key, SourceSHA256: rendered.source.SHA256, SourceBytes: rendered.sourceBytes, MetadataKey: rendered.metadataKey, MetadataBytes: rendered.metadata, ReadyAt: at, Attempted: true}
+		var history *state.PendingHistory
+		if bundle.History != nil {
+			// The original generation retains all alternatives under its prefix.
+			history = &state.PendingHistory{Version: 1, FilterVersion: bundle.Capture.FilterVersion, AdapterVersion: bundle.Capture.AdapterVersion, PreparedAt: at}
+		}
+		pending := state.PendingPublication{History: history, SkillEvidence: string(opts.skillEvidence()), Bundle: bundle, SourceKey: rendered.source.Key, SourceSHA256: rendered.source.SHA256, SourceBytes: rendered.sourceBytes, MetadataKey: rendered.metadataKey, MetadataBytes: rendered.metadata, ReadyAt: at, Attempted: true}
+		if err := pending.ValidateHistory(id); err != nil {
+			return latest, state.PendingPublication{}, err
+		}
 		return latest, pending, nil
 	}, nil
 }
@@ -102,6 +110,9 @@ func (s *sessionScan) maintainFrozen() (sessionOutcome, error) {
 	if pending, found, err := s.local.LoadPending(s.id()); err != nil {
 		return outcomeSkipped, err
 	} else if found {
+		if pending.History != nil {
+			return s.resumeHistory(pending)
+		}
 		if pending.Bundle.Capture.FilterVersion != archive.FilterVersion || pending.Bundle.Capture.AdapterVersion != adapter.Version() || !sourceEvidenceWithinPolicy(pending.Bundle.SupplementalEvidence, s.opts.skillEvidence()) {
 			// Stronger privacy supersedes a retained-history maintenance retry.
 			// Rebuild below from the last acknowledged publication, without native
@@ -174,7 +185,7 @@ func (p *pass) unchangedFrozenSinceLastScan(reg archive.SessionRegistration) (bo
 		return false, signature, err
 	}
 	signature, found, err := p.local.LoadScanSignature(reg.ArchiveSessionID)
-	if err != nil || !found || !signature.Frozen || signature.Failed {
+	if err != nil || !found || !signature.Frozen || signature.SourceSetVersion != sourceSetVersion(reg) || signature.Failed {
 		return false, signature, err
 	}
 	adapterVersion, known := harnessAdapterVersion(p.opts.Sources, reg.Harness.Name)
@@ -199,8 +210,13 @@ func (s *sessionScan) recordFrozenSignature() error {
 	if !known {
 		return nil
 	}
+	summary := s.published.Summary()
 	return s.local.SaveScanSignature(s.id(), state.ScanSignature{
-		Frozen: true, SkillEvidence: string(s.opts.skillEvidence()),
+		SourceSetDigest: summary.SourceSetDigest, CurrentRevision: summary.CurrentRevision,
+		SourceSchemaVersion: summary.SourceSchemaVersion, MetadataSchemaVersion: summary.MetadataSchemaVersion,
+		SourceSetComplete: summary.SourceSetComplete, MeaningfulCapturedAt: summary.MeaningfulCapturedAt,
+		SourceSetVersion: sourceSetVersion(s.reg),
+		Frozen:           true, SkillEvidence: string(s.opts.skillEvidence()),
 		ParserVersion: s.parserVersion(), FilterVersion: archive.FilterVersion,
 		AdapterVersion: adapterVersion, PublishedLastHead: s.publishedLastHead(),
 	})

@@ -35,6 +35,12 @@ import (
 type Options struct {
 	// CodexRollouts is one caller-owned bounded locator view shared by the pass.
 	CodexRollouts agentapi.CodexRolloutLookup
+	// ConfiguredCodexHomes supplies confined migration roots from configuration,
+	// independently of current-locator hints. Native evidence still validates identity.
+	ConfiguredCodexHomes []string
+	// ResolveCodexReadHomes revalidates trusted default/hook/import/config roots
+	// against current configuration; lookup observations never supply authority.
+	ResolveCodexReadHomes func(config.Config) ([]string, error)
 	// SkipSessionIndexRecovery is set after the CLI has already attempted its
 	// bounded local recovery stage. Direct collector callers recover once.
 	SkipSessionIndexRecovery bool

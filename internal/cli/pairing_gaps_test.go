@@ -32,13 +32,6 @@ func TestMachineRemoteFakeAcceptance(t *testing.T) {
 			source, sourceHome, cf, _, _ := ownKeyFixture(t)
 			store := storagetest.NewMemoryStore()
 			source.OpenStore = func(config.Config) (storage.ObjectStore, error) { return store, nil }
-			lookup := source.LookupEnv
-			source.LookupEnv = func(k string) (string, bool) {
-				if value, ok := map[string]string{"AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_REVOKE": "1", "AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_VERIFY": "1"}[k]; ok {
-					return value, true
-				}
-				return lookup(k)
-			}
 			run := func(env Env, input string, args ...string) string {
 				t.Helper()
 				var out, diagnostics bytes.Buffer

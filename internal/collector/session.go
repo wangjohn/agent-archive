@@ -88,6 +88,7 @@ type sessionScan struct {
 	// publishes the retained snapshot filtered again in its place (see
 	// refilter.go); once that is published, the rewrite is recorded as the
 	// gap it is, with this candidate cached as the state it was reached at.
+	revisions *revisionPlan
 	rewritten *archive.SourceBundle
 }
 
@@ -116,6 +117,12 @@ const (
 func (s *sessionScan) id() string { return s.reg.ArchiveSessionID }
 
 func (s *sessionScan) run() (sessionOutcome, error) {
+	if err := s.recoverReferenceAuthority(); err != nil {
+		return outcomeSkipped, err
+	}
+	if outcome, handled, err := s.prepareRetainedHistoryWork(); handled || err != nil {
+		return outcome, err
+	}
 	if err := s.checkRetainedHistory(); err != nil {
 		return outcomeSkipped, err
 	}
@@ -142,6 +149,19 @@ func (s *sessionScan) run() (sessionOutcome, error) {
 	candidate, supplemental, err := s.build(read)
 	if err != nil {
 		return outcomeSkipped, err
+	}
+	s.revisions, err = s.reconcileRevisions(read, candidate)
+	if err != nil {
+		return outcomeSkipped, err
+	}
+	if s.revisions != nil && (candidate.History != nil || len(s.revisions.Preserved) > 0) {
+		if err := s.guardRevisionCandidate(read, &candidate); err != nil {
+			return outcomeSkipped, err
+		}
+		if settled, err := s.settleRevisionCandidate(read, &candidate); settled || err != nil {
+			return outcomeSkipped, err
+		}
+		return s.publish(read, candidate)
 	}
 	if err := archive.CheckHistoryMutation(candidate, archive.Metadata{}); err != nil {
 		return outcomeSkipped, err
@@ -183,6 +203,10 @@ func (s *sessionScan) resume() (outcome sessionOutcome, handled bool, err error)
 			return outcomeSkipped, false, nil
 		}
 		return regenerateMetadata(s)
+	}
+	if pending.History != nil {
+		outcome, err := s.resumeHistory(pending)
+		return outcome, true, err
 	}
 	if pendingSkillMode(pending.SkillEvidence) != s.opts.skillEvidence() {
 		// An older pending file may contain broader evidence. Discard it
@@ -559,6 +583,9 @@ func (s *sessionScan) publish(read sourceRead, candidate archive.SourceBundle) (
 	}
 	_, lastPublishedAt, _ := s.published.LastPublished()
 	if rendered.declined {
+		if s.revisions != nil && (candidate.History != nil || len(s.revisions.Preserved) > 0) {
+			return outcomeSkipped, archive.ErrHistoryMutationPending
+		}
 		// Nothing was ever actually published, so this candidate carries no
 		// real publish history; a zero PublishedAt correctly signals that to
 		// the rate-limit check once this decline is reconsidered by a later
@@ -583,8 +610,16 @@ func (s *sessionScan) publish(read sourceRead, candidate archive.SourceBundle) (
 		SourceSHA256: rendered.source.SHA256, SourceBytes: rendered.sourceBytes, MetadataBytes: rendered.metadata,
 		RequestToken: s.req.Token, ReadyAt: readyAt, Attempted: !readyAt.After(s.now),
 	}
+	if s.revisions != nil && (candidate.History != nil || len(s.revisions.Preserved) > 0) {
+		if err := s.freezeRevisionPublication(&pending); err != nil {
+			return outcomeSkipped, err
+		}
+	}
 	if err := s.local.SavePending(s.id(), pending); err != nil {
 		return outcomeSkipped, fmt.Errorf("persist pending publication: %w", err)
+	}
+	if pending.History != nil {
+		return s.resumeHistory(pending)
 	}
 	if readyAt.After(s.now) {
 		if err := s.published.Save(candidate, lastPublishedAt, state.CacheStatusRateLimited); err != nil {

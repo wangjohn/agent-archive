@@ -34,6 +34,8 @@ type Candidate struct {
 	FirstTaskAt        time.Time
 	StartEvidence      string
 	WorkingDirectory   string
+	RecordedRepoKey    string
+	ProjectResolution  *archive.ProjectResolution
 	HarnessVersion     string
 	ProducerOriginator string
 	ProducerSource     string
@@ -60,18 +62,21 @@ const (
 
 // Observation is one bounded metadata probe and its typed outcome.
 type Observation struct {
+	SourceInfo os.FileInfo `json:"-"`
 	// Identity is validated native lookup evidence, independent of Candidate admission.
-	Identity        *codexmeta.CodexIdentity
-	NativeCreatedAt time.Time
-	Candidate       Candidate
-	Outcome         Outcome
-	Bytes           int64
+	Identity             *codexmeta.CodexIdentity
+	NativeCreatedAt      time.Time
+	Candidate            Candidate
+	Outcome              Outcome
+	Bytes                int64
+	NativeReadBytes      int64 `json:"-"`
+	NativeReadOperations int64 `json:"-"`
 }
 
 // Fingerprint is a retry/scheduling hint, never native start evidence.
 type Fingerprint struct {
-	Size  int64
-	Mtime int64
+	Size  int64 `json:"Size"`
+	Mtime int64 `json:"Mtime"`
 }
 
 // SourceEntry is a source or child directory in a bounded enumeration batch.
@@ -171,7 +176,7 @@ func (codexAdapter) Describe(root, path, name string) SourceEntry {
 
 func (a codexAdapter) Inspect(ctx context.Context, source SourceDescriptor) Observation {
 	h := sourcefacts.ReadHeader(ctx, source.Root, source.Locator)
-	o := Observation{Outcome: Outcome(h.Outcome), Bytes: h.Bytes, Identity: h.Identity, NativeCreatedAt: h.NativeCreatedAt}
+	o := Observation{SourceInfo: h.SourceInfo, Outcome: Outcome(h.Outcome), Bytes: h.Bytes, Identity: h.Identity, NativeCreatedAt: h.NativeCreatedAt, NativeReadBytes: h.NativeReadBytes, NativeReadOperations: h.NativeReadOperations}
 	if o.Outcome != outcomeUsable {
 		if h.FormatFacts != nil && h.Identity != nil {
 			h.Meta = *h.FormatFacts
@@ -190,7 +195,7 @@ func candidateFromHeader(h sourcefacts.Header, source SourceDescriptor) Candidat
 	if json.Unmarshal(h.Meta.Source, &producerSource) != nil {
 		producerSource = string(h.Meta.Source)
 	}
-	c := Candidate{Agent: "codex", NativeSessionID: h.Meta.ID, Source: source, StartedAt: h.Started, FirstTaskAt: h.FirstTaskAt, StartEvidence: "native_start", WorkingDirectory: h.Meta.Cwd, HarnessVersion: h.Meta.Version, ProducerOriginator: h.Meta.Originator, ProducerSource: producerSource, FormatProfile: h.Profile, Execution: "native"}
+	c := Candidate{Agent: "codex", NativeSessionID: h.Meta.ID, Source: source, StartedAt: h.Started, FirstTaskAt: h.FirstTaskAt, StartEvidence: "native_start", WorkingDirectory: h.Meta.Cwd, RecordedRepoKey: archive.RepoKey(h.Meta.Git.RepositoryURL), HarnessVersion: h.Meta.Version, ProducerOriginator: h.Meta.Originator, ProducerSource: producerSource, FormatProfile: h.Profile, Execution: "native"}
 	if h.Identity != nil {
 		c.NativeChild = h.Identity.Child
 		c.RootNativeID = h.Identity.RootID

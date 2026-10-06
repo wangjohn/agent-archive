@@ -37,9 +37,6 @@ func dedicatedFixture(t *testing.T) (Env, string, *cloudflaretest.Server, *fakeK
 	}
 	env.Pause = func(time.Duration) {}
 	env.LookupEnv = func(key string) (string, bool) {
-		if key == "AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_KEYS" {
-			return "1", true
-		}
 		return "", false
 	}
 	env.UnsetEnv = func(string) error { return nil }
@@ -160,9 +157,6 @@ func TestDedicatedAddFreshThenSpareAndUncertainDelivery(t *testing.T) {
 		if key == "CLOUDFLARE_API_TOKEN" {
 			return bootstrapCanary, true
 		}
-		if key == "AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_KEYS" {
-			return "1", true
-		}
 		return "", false
 	}
 	var out, errOut bytes.Buffer
@@ -178,7 +172,7 @@ func TestDedicatedAddFreshThenSpareAndUncertainDelivery(t *testing.T) {
 	if payload.Kind != config.MachineAssignmentR2Own || !pairing.ValidID(payload.SlotID) {
 		t.Fatal("dedicated provenance absent")
 	}
-	env.LookupEnv = func(key string) (string, bool) { return "1", key == "AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_KEYS" }
+	env.LookupEnv = func(string) (string, bool) { return "", false }
 	out.Reset()
 	errOut.Reset()
 	path := filepath.Join(t.TempDir(), "existing")
@@ -283,7 +277,7 @@ func TestDedicatedRefillFailureKeepsDeliveredBundleValid(t *testing.T) {
 		if key == "CLOUDFLARE_API_TOKEN" {
 			return bootstrapCanary, true
 		}
-		return "1", key == "AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_KEYS"
+		return "", false
 	}
 	var out, errOut bytes.Buffer
 	if Run([]string{"machines", "add", "--yes", "--name", "laptop"}, strings.NewReader(""), &out, &errOut, env) != 0 || !strings.Contains(errOut.String(), "Pairing remains valid") {
@@ -339,7 +333,7 @@ func TestDedicatedFreshRefusalFallsBackToExistingSpare(t *testing.T) {
 		if key == "CLOUDFLARE_API_TOKEN" {
 			return bootstrapCanary, true
 		}
-		return "1", key == "AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_KEYS"
+		return "", false
 	}
 	var out, errOut bytes.Buffer
 	if Run([]string{"machines", "add", "--yes", "--name", "laptop"}, strings.NewReader(""), &out, &errOut, env) != 0 {
@@ -363,7 +357,7 @@ func TestDedicatedSparesZeroAndFlagBounds(t *testing.T) {
 		if key == "CLOUDFLARE_API_TOKEN" {
 			return bootstrapCanary, true
 		}
-		return "1", key == "AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_KEYS"
+		return "", false
 	}
 	out.Reset()
 	if Run([]string{"machines", "add", "--yes", "--name", "laptop", "--spares=0"}, strings.NewReader(""), &out, &out, env) != 0 {
@@ -485,7 +479,7 @@ func TestDedicatedPairingReceiverCommitsSlotAndKeepsLocalIdentity(t *testing.T) 
 		if key == "CLOUDFLARE_API_TOKEN" {
 			return bootstrapCanary, true
 		}
-		return "1", key == "AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_KEYS"
+		return "", false
 	}
 	var out bytes.Buffer
 	if Run([]string{"machines", "add", "--yes", "--name", "laptop", "--spares=0"}, strings.NewReader(""), &out, &out, source) != 0 {
@@ -511,7 +505,7 @@ func TestDedicatedPairingReceiverCommitsSlotAndKeepsLocalIdentity(t *testing.T) 
 	if cfg.MachineID != existing.MachineID || cfg.MachineAssignment == nil || cfg.MachineAssignment.Kind != config.MachineAssignmentR2Own || cfg.MachineAssignment.SlotID != payload.SlotID || cfg.MachineAssignment.RecipientID != payload.RecipientID || cfg.MachineAssignment.SharedWith != "" {
 		t.Fatal("own-key provenance or local identity lost")
 	}
-	if !strings.Contains(out.String(), "Dedicated R2 key draft") || strings.Contains(out.String(), "Shared-key R2") {
+	if !strings.Contains(out.String(), "Dedicated R2 key") || strings.Contains(out.String(), "Shared-key R2") {
 		t.Fatal("dedicated receiver mislabeled shared")
 	}
 }

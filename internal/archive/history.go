@@ -119,6 +119,9 @@ type RevisionReference struct {
 	RevisionID string          `json:"revision_id"`
 	CapturedAt time.Time       `json:"captured_at"`
 	Source     SourceReference `json:"source"`
+	// Optional legacy-compatible provenance is checked against retained bytes.
+	SourceSchemaVersion int    `json:"source_schema_version,omitempty"`
+	FilterVersion       string `json:"filter_version,omitempty"`
 }
 
 // RevisionHistory identifies the active native revision and its preserved alternatives.
@@ -149,9 +152,10 @@ func (m *Metadata) SourceSetDigest() (string, error) {
 		return "", err
 	}
 	data, err := json.Marshal(struct {
-		Active  SourceReference  `json:"active"`
-		History *RevisionHistory `json:"history,omitempty"`
-	}{m.SourceBundle, m.History})
+		Active     SourceReference  `json:"active"`
+		CapturedAt time.Time        `json:"captured_at"`
+		History    *RevisionHistory `json:"history,omitempty"`
+	}{m.SourceBundle, m.CapturedAt, m.History})
 	if err != nil {
 		return "", err
 	}
@@ -174,7 +178,7 @@ func (m *Metadata) validateRevisionHistory() error {
 	keys := map[string]bool{}
 	refs := []SourceReference{m.SourceBundle}
 	for _, r := range h.Preserved {
-		if !historyID.MatchString(r.RevisionID) || seen[r.RevisionID] || r.CapturedAt.IsZero() {
+		if !historyID.MatchString(r.RevisionID) || seen[r.RevisionID] || r.CapturedAt.IsZero() || (r.SourceSchemaVersion != 0 && r.SourceSchemaVersion != SourceSchemaVersion && r.SourceSchemaVersion != HistorySourceSchemaVersion) {
 			return errors.New("invalid preserved revision")
 		}
 		seen[r.RevisionID] = true
@@ -188,6 +192,23 @@ func (m *Metadata) validateRevisionHistory() error {
 		keys[r.Key] = true
 	}
 	return nil
+}
+
+// MeaningfulCapturedAt returns the latest archive observation in the complete
+// retained source set. Derivation and native timestamps never contribute age.
+func (m *Metadata) MeaningfulCapturedAt() (time.Time, error) {
+	if _, err := m.SourceReferences(); err != nil {
+		return time.Time{}, err
+	}
+	at := m.CapturedAt
+	if m.History != nil {
+		for _, revision := range m.History.Preserved {
+			if revision.CapturedAt.After(at) {
+				at = revision.CapturedAt
+			}
+		}
+	}
+	return at, nil
 }
 
 // ErrHistoryMutationPending protects readable history until revision lifecycle support lands.

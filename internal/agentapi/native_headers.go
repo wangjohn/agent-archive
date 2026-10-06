@@ -23,6 +23,7 @@ type NativeHeader struct {
 	CodexIdentity    *codexmeta.CodexIdentity
 	NativeID         string
 	Directory        string
+	RepoKey          string // normalized recorded repository identity; never a remote URL
 	StartedAt        time.Time
 	IdentityMismatch bool
 	SubagentOnly     bool

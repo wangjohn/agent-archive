@@ -180,6 +180,11 @@ func (s *countedGets) Get(ctx context.Context, key string) ([]byte, error) {
 }
 
 // GetVersioned counts the response-bound metadata confirmation too.
+func (s *countedGets) GetLimited(ctx context.Context, key string, limit int64) ([]byte, error) {
+	s.gets++
+	return s.MemoryStore.GetLimited(ctx, key, limit)
+}
+
 func (s *countedGets) GetVersioned(ctx context.Context, key string) ([]byte, string, error) {
 	s.gets++
 	return s.MemoryStore.GetVersioned(ctx, key)

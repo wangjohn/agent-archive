@@ -16,7 +16,7 @@ moving a proposal.
 | [Cloud capture](cloud-capture.md) | Proposed; not implemented or scheduled. |
 | [Local session discovery](local-session-discovery.md) | Proposed; Codex first, with shared discovery and admission rules. |
 | [Archive listing at scale](listing-at-scale.md) | Phases 1–2 implemented; phase 3 planned; phase 4 needs a specification. |
-| [Adding a machine: pairing, per-machine keys, and revocation](machine-pairing.md) | Proposed; not implemented. |
+| [Adding a machine: pairing, per-machine keys, and revocation](machine-pairing.md) | Implemented; generally available by maintainer approval; further live coverage tracked. |
 | [First local handoff before bucket setup](local-handoff-before-setup.md) | Proposed; on-demand utility, no persistent local archive. |
 | [Coding-agent integration abstraction](agent-integration-abstraction.md) | Proposed; interfaces and migration plan for adding fully archived agents. |
 
@@ -27,8 +27,8 @@ remain the contract.
 
 | Proposal | Status |
 | --- | --- |
-| [Storage setup with default bucket creation](implemented/storage-setup-default-creation.md) | Implemented; R2 creation retains its experimental gate pending live acceptance. |
+| [Storage setup with default bucket creation](implemented/storage-setup-default-creation.md) | Implemented; R2 creation is generally available; remaining live coverage is tracked. |
 | [Git activity in metadata](implemented/git-activity.md) | Implemented in parser 0.15.0. |
 | [List and browse UX](implemented/list-browse-ux.md) | Implemented design record; see [list and show](../../docs/guides/list-and-show.md) for current behavior. |
 | [Platform abstraction](implemented/platform-abstraction.md) | Implemented; remaining follow-ups and verification gaps are recorded in the document. |
-| [Portable handoff, guided setup, and Linux](implemented/portable-handoff-and-onboarding.md) | Implemented; guided R2 creation remains experimental, with open items recorded in the document. |
+| [Portable handoff, guided setup, and Linux](implemented/portable-handoff-and-onboarding.md) | Implemented; guided R2 creation is generally available, with further coverage recorded in testing. |

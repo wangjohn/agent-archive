@@ -35,6 +35,11 @@ a child reset its counters. Independent own per-call usage remains useful.
 Each snapshot fixes a newline-complete prefix, validates its raw ordinals and
 hashes its bytes. Before returning filtered output, the provider hashes that
 same native prefix again and verifies both descriptor and locator identity.
+Headers used for selection, graph edges, ownership and preliminary admission
+are proven against their originally observed bytes, including dependencies
+that contribute zero captured bytes. Those header proofs retain descriptor
+leases and are checked before returning a snapshot, at admission and before
+returning filtered output, for ordinary and related captures.
 Appends beyond the captured prefix are allowed; replacements and prefix rewrites
 are retryable changes. This permits continuously active chats to make progress.
 
@@ -72,21 +77,26 @@ references. Every source key must be checksum-addressed under the same archive
 session prefix. Prior source-schema-2 references are permitted. Reader validation
 precedes derivation and selection; a malformed reference cannot widen reads.
 
-Until lifecycle support installs publication journaling and writer protection,
-collector capture, metadata refresh, privacy mutation, generation recovery and
-retention/deletion refuse history artifacts. The temporary Codex publication
-fence reads the previous remote metadata body once before a mutation, including
-metadata-only refreshes and pending-publication retries. Unchanged admission
-continues using the existing summary/signature path, without full published-state
-decodes or per-session writes. Explicit generation recovery separately checks
-local cached, published and metadata history before changing generation state.
-The next lifecycle stage replaces these temporary fences with validated
-source-set summaries, atomic publication and protected retention.
+The collector publishes related histories through its existing durable pending
+journal. Every final reference is verified before exact predecessor preflight and
+metadata replacement, and every reference plus exact metadata bytes is read back
+before acknowledgement. An exact committed retry performs no source or metadata
+PUT. Stronger privacy resolves predecessor/final state before replacing private
+work; unknown authority remains pending. Older config writers remain protected by
+the permanent config-v5 writer marker.
 
-The initial same-handle `SourceAdmission` check binds native ID and cwd only.
-Lifecycle integration must extend it with immutable creation, producer and
-relationship facts needed by the original admission; these two fields alone
-are not a complete ongoing authorization proof.
+Retained maintenance carries the complete source set and original captures.
+Frozen generations use retained bytes and recorded Git facts. Retention uses the
+latest meaningful archive capture across the set, with the existing clock clamp;
+parser, link, privacy and representation work do not manufacture activity. Cleanup
+protects all live references, rechecks metadata before source deletion and removes
+metadata before whole-prefix deletion. Unknown schemas and identities refuse.
+
+Capture admission independently validates immutable native creation, producer,
+relationship and project facts. A previously unknown native home can migrate only
+through a configured confined root containing the admitted locator, rechecked
+before binding persistence. Lookup hints never grant that permission. Read-only
+source interpretation remains separate from capture authority.
 
 Producer references: [ordinal writer](https://raw.githubusercontent.com/openai/codex/rust-v0.160.0/codex-rs/rollout/src/ordinal.rs)
 and [history materialization](https://raw.githubusercontent.com/openai/codex/rust-v0.160.0/codex-rs/thread-store/src/local/thread_history_materialization.rs).

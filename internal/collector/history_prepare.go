@@ -8,6 +8,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/state"
+	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
 // advanceHistoryPreparation filters one frozen historical input per slice.
@@ -23,53 +24,24 @@ func (s *sessionScan) advanceHistoryPreparation(p *state.PendingPublication) err
 	if err := p.ValidateHistory(s.id()); err != nil {
 		return err
 	}
+	adapter, err := sourceAdapter(s.opts.Sources, s.reg.Harness.Name)
+	if err != nil {
+		return err
+	}
+	if pendingSkillMode(p.SkillEvidence) != s.opts.skillEvidence() {
+		return errors.New("history preparation skill policy changed; frozen inputs remain pending")
+	}
+	if p.History.FilterVersion != "" && (p.History.FilterVersion != archive.FilterVersion || p.History.AdapterVersion != adapter.Version()) {
+		return errors.New("history preparation policy changed; frozen inputs remain pending")
+	}
 	var metadata archive.Metadata
 	if err := json.Unmarshal(p.MetadataBytes, &metadata); err != nil {
 		return err
 	}
 	if p.History.PrivacyCursor < len(p.History.Inputs) {
 		input := p.History.Inputs[p.History.PrivacyCursor]
-		bundle, err := s.loadHistoryInput(*p, metadata, input)
-		if err != nil {
+		if err := s.prepareHistoryInput(p, &metadata, input); err != nil {
 			return err
-		}
-		adapter, err := sourceAdapter(s.opts.Sources, s.reg.Harness.Name)
-		if err != nil {
-			return err
-		}
-		if bundle.Capture.FilterVersion != archive.FilterVersion || bundle.Capture.AdapterVersion != adapter.Version() || !sourceEvidenceWithinPolicy(bundle.SupplementalEvidence, s.opts.skillEvidence()) {
-			bundle.SupplementalEvidence = limitSkillEvidence(bundle.SupplementalEvidence, s.opts.skillEvidence())
-			filtered, err := refilterBundle(s.ctx, s.reg, adapter, bundle)
-			if err != nil {
-				return fmt.Errorf("filter preserved revision: %w", err)
-			}
-			compressed, err := archive.BuildCompressedSource(filtered)
-			if err != nil {
-				return err
-			}
-			key, err := archive.SourceObjectKey(filtered, compressed.SHA256)
-			if err != nil {
-				return err
-			}
-			next := archive.SourceReference{Key: key, SHA256: compressed.SHA256, CompressedBytes: len(compressed.Bytes)}
-			stage, err := s.local.StagePendingSource(s.id(), next, compressed.Bytes)
-			if err != nil {
-				return err
-			}
-			found := false
-			for i := range metadata.History.Preserved {
-				if metadata.History.Preserved[i].RevisionID == input.RevisionID && metadata.History.Preserved[i].Source == input.Reference {
-					metadata.History.Preserved[i].Source = next
-					found = true
-				}
-			}
-			if !found {
-				return errors.New("history preparation input no longer belongs to its frozen set")
-			}
-			if next != input.Reference {
-				p.History.Sources = append(p.History.Sources, stage)
-				p.History.Retired = append(p.History.Retired, state.RetiredSource{Reference: input.Reference, PrivacySensitive: bundle.Capture.FilterVersion != filtered.Capture.FilterVersion})
-			}
 		}
 		p.History.PrivacyCursor++
 		encoded, err := json.Marshal(metadata)
@@ -95,6 +67,9 @@ func (s *sessionScan) advanceHistoryPreparation(p *state.PendingPublication) err
 	}
 	p.History.Sources = stages
 	if !p.History.Preparing {
+		if err := s.derivePreparedHistory(p, metadata); err != nil {
+			return err
+		}
 		p.History.PreparedAt = s.now
 		for i := range p.History.Retired {
 			if p.History.Retired[i].RetiredAt.IsZero() {
@@ -105,28 +80,131 @@ func (s *sessionScan) advanceHistoryPreparation(p *state.PendingPublication) err
 	return s.local.SavePending(s.id(), *p)
 }
 
-func (s *sessionScan) loadHistoryInput(p state.PendingPublication, identity archive.Metadata, input state.HistoryInput) (archive.SourceBundle, error) {
+func (s *sessionScan) loadHistoryInput(identity archive.Metadata, input state.HistoryInput) (archive.SourceBundle, error) {
 	selected := identity
 	selected.SchemaVersion = archive.HistoryMetadataSchemaVersion
 	selected.History = &archive.RevisionHistory{CurrentRevision: input.RevisionID}
 	selected.SourceBundle = input.Reference
 	selected.CapturedAt = input.CapturedAt
 	selected.FilterVersion = input.FilterVersion
-	var data []byte
-	var err error
-	staged := false
-	for _, stage := range p.History.Sources {
-		if stage.Reference == input.Reference {
-			data, err = s.local.ReadPendingSource(s.id(), stage)
-			staged = true
-			break
-		}
-	}
-	if !staged {
-		data, err = s.remote.Get(s.ctx, input.Reference.Key)
-	}
+	// Original inputs remain live even after their stage leaves final Sources.
+	data, err := s.readRetainedInputBytes(input.Reference)
 	if err != nil {
 		return archive.SourceBundle{}, err
 	}
-	return reader.DecodeReferencedSource(s.ctx, selected, data, reader.Limits{})
+	bundle, err := reader.DecodeReferencedSource(s.ctx, selected, data, reader.Limits{})
+	if err == nil && input.SourceSchemaVersion != 0 && bundle.SchemaVersion != input.SourceSchemaVersion {
+		return archive.SourceBundle{}, errors.New("frozen input source schema differs from retained bytes")
+	}
+	return bundle, err
+}
+
+func replacePreparedReference(p *state.PendingPublication, metadata *archive.Metadata, input state.HistoryInput, filtered archive.SourceBundle, next archive.SourceReference, data []byte) error {
+	found := false
+	for i := range metadata.History.Preserved {
+		revision := &metadata.History.Preserved[i]
+		if revision.RevisionID == input.RevisionID && revision.Source == input.Reference {
+			revision.Source, revision.SourceSchemaVersion, revision.FilterVersion = next, filtered.SchemaVersion, filtered.Capture.FilterVersion
+			found = true
+		}
+	}
+	if metadata.SourceBundle == input.Reference && metadata.History.CurrentRevision == input.RevisionID {
+		metadata.SourceBundle, metadata.FilterVersion = next, filtered.Capture.FilterVersion
+		p.Bundle = filtered
+		p.SourceKey, p.SourceSHA256, p.SourceBytes = next.Key, next.SHA256, data
+		found = true
+	}
+	if !found {
+		return errors.New("history preparation input no longer belongs to its frozen set")
+	}
+	return nil
+}
+
+// readRetainedInputBytes prefers immutable owned stages, including originals
+// removed from Sources. Remote recovery must later pass exact input decoding.
+func (s *sessionScan) readRetainedInputBytes(ref archive.SourceReference) ([]byte, error) {
+	stage := state.PendingSource{Reference: ref, Name: ref.SHA256 + ".gz"}
+	data, err := s.local.ReadPendingSource(s.id(), stage)
+	if err == nil {
+		return data, nil
+	}
+	return historyLimitedGet(s.ctx, s.remote, ref.Key, int64(ref.CompressedBytes))
+}
+
+func (s *sessionScan) derivePreparedHistory(p *state.PendingPublication, metadata archive.Metadata) error {
+	maintenance := s.opts
+	maintenance.RequireSkillUse = false
+	maintenance.repoKeys = nil
+	maintenance.RepoKey = func(string) string { return metadata.RepoKey }
+	if maintenance.MachineID == "" {
+		maintenance.MachineID = metadata.MachineID
+	}
+	rendered, err := renderPublication(s.ctx, s.resolveParser(), s.parserVersion(), p.Bundle, s.reg, s.now, maintenance, func() string { return metadata.RepoKey })
+	if err != nil {
+		return err
+	}
+	var derived archive.Metadata
+	if err := json.Unmarshal(rendered.metadata, &derived); err != nil {
+		return err
+	}
+	derived.SchemaVersion, derived.History = archive.HistoryMetadataSchemaVersion, metadata.History
+	derived.SourceBundle = metadata.SourceBundle
+	p.MetadataBytes, err = json.Marshal(derived)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *sessionScan) prepareHistoryInput(p *state.PendingPublication, metadata *archive.Metadata, input state.HistoryInput) error {
+	adapter, err := sourceAdapter(s.opts.Sources, s.reg.Harness.Name)
+	if err != nil {
+		return err
+	}
+	bundle, err := s.loadHistoryInput(*metadata, input)
+	if err != nil {
+		return err
+	}
+	privacyChanged := bundle.Capture.FilterVersion != archive.FilterVersion || bundle.Capture.AdapterVersion != adapter.Version() || !sourceEvidenceWithinPolicy(bundle.SupplementalEvidence, s.opts.skillEvidence())
+	observationsChanged := false
+	if input.RevisionID == metadata.History.CurrentRevision {
+		observations := mergeSupplementalEvidence(bundle.SupplementalEvidence, p.Bundle.SupplementalEvidence)
+		same, err := jsonEncodingsEqual(observations, bundle.SupplementalEvidence)
+		if err != nil {
+			return err
+		}
+		observationsChanged = !same
+		bundle.SupplementalEvidence = observations
+	}
+	if observationsChanged || bundle.Capture.FilterVersion != archive.FilterVersion || bundle.Capture.AdapterVersion != adapter.Version() || !sourceEvidenceWithinPolicy(bundle.SupplementalEvidence, s.opts.skillEvidence()) {
+		bundle.SupplementalEvidence = limitSkillEvidence(bundle.SupplementalEvidence, s.opts.skillEvidence())
+		filtered, err := refilterBundle(s.ctx, s.reg, adapter, bundle)
+		if err != nil {
+			return fmt.Errorf("filter preserved revision: %w", err)
+		}
+		compressed, err := archive.BuildCompressedSource(filtered)
+		if err != nil {
+			return err
+		}
+		if int64(len(compressed.Bytes)) > historyCompressedLimit {
+			return storage.ErrObjectTooLarge
+		}
+		key, err := archive.SourceObjectKey(filtered, compressed.SHA256)
+		if err != nil {
+			return err
+		}
+		next := archive.SourceReference{Key: key, SHA256: compressed.SHA256, CompressedBytes: len(compressed.Bytes)}
+		stage, err := s.local.StagePendingSource(s.id(), next, compressed.Bytes)
+		if err != nil {
+			return err
+		}
+		if err := replacePreparedReference(p, metadata, input, filtered, next, compressed.Bytes); err != nil {
+			return err
+		}
+		if next != input.Reference {
+			p.History.Sources = append(p.History.Sources, stage)
+			p.History.Retired = append(p.History.Retired, state.RetiredSource{Reference: input.Reference, PrivacySensitive: privacyChanged})
+		}
+	}
+	return nil
 }

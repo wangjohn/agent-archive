@@ -35,16 +35,16 @@ type CodexHistoryPosition struct {
 // Empty optional IDs remain unknown; ordinal pointers distinguish absent and zero.
 // These source facts never grant admission or identify the active rollout.
 type CodexIdentity struct {
-	ThreadID        string
-	RootID          string
-	ParentID        string
-	ForkID          string
-	RolloutID       string
-	HistoryMode     HistoryMode `json:"history_mode,omitempty"`
-	ForkOrdinal     *uint64
-	SubagentOrdinal *uint64
-	HistoryBase     *CodexHistoryPosition
-	Child           bool
+	ThreadID        string                `json:"ThreadID"`
+	RootID          string                `json:"RootID"`
+	ParentID        string                `json:"ParentID"`
+	ForkID          string                `json:"ForkID"`
+	RolloutID       string                `json:"RolloutID"`
+	HistoryMode     HistoryMode           `json:"history_mode,omitempty"`
+	ForkOrdinal     *uint64               `json:"ForkOrdinal"`
+	SubagentOrdinal *uint64               `json:"SubagentOrdinal"`
+	HistoryBase     *CodexHistoryPosition `json:"HistoryBase"`
+	Child           bool                  `json:"Child"`
 }
 
 // Relationships validates understood metadata shapes and direct contradictions.

@@ -423,6 +423,8 @@
               "source"
             ],
             "properties": {
+              "source_schema_version": {"type": "integer", "enum": [2, 3]},
+              "filter_version": {"type": "string", "minLength": 1},
               "revision_id": {
                 "type": "string",
                 "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"

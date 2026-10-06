@@ -382,7 +382,7 @@ func (CursorAdapter) FilterText(r io.Reader, freshStartedAt time.Time) (archive.
 	return result, nil
 }
 
-func filterJSONL(r io.Reader, format string, knownTypes map[string]bool, lead map[string]any, validateMeta func([]byte) error) (archive.FilteredTranscript, error) {
+func filterJSONL(r io.Reader, format string, knownTypes map[string]bool, lead map[string]any, validateMeta func([]byte) error, bounds ...archive.CaptureBoundary) (archive.FilteredTranscript, error) {
 	scanner := bufio.NewScanner(r)
 	// Individual native JSONL records can contain tool output. A hard limit keeps
 	// filtering bounded; exceeding it is refused rather than silently
@@ -396,14 +396,15 @@ func filterJSONL(r io.Reader, format string, knownTypes map[string]bool, lead ma
 			return scanner.Bytes(), true
 		}
 		return nil, false
-	}, scanner.Err, validateMeta)
+	}, scanner.Err, validateMeta, bounds...)
 }
 
-func filterRecords(format string, knownTypes map[string]bool, lead map[string]any, next func() ([]byte, bool), readError func() error, validateMeta func([]byte) error) (archive.FilteredTranscript, error) {
-	return filterRecordsObserved(format, knownTypes, lead, next, readError, validateMeta, nil)
+func filterRecords(format string, knownTypes map[string]bool, lead map[string]any, next func() ([]byte, bool), readError func() error, validateMeta func([]byte) error, bounds ...archive.CaptureBoundary) (archive.FilteredTranscript, error) {
+	return filterRecordsObserved(format, knownTypes, lead, next, readError, validateMeta, nil, nil, bounds...)
 }
 
-func filterRecordsObserved(format string, knownTypes map[string]bool, lead map[string]any, next func() ([]byte, bool), readError func() error, validateMeta func([]byte) error, retained func(int)) (archive.FilteredTranscript, error) {
+func filterRecordsObserved(format string, knownTypes map[string]bool, lead map[string]any, next func() ([]byte, bool), readError func() error, validateMeta func([]byte) error, retained func(int), own func(string) bool, bounds ...archive.CaptureBoundary) (archive.FilteredTranscript, error) {
+	next, readError = boundRecordSource(next, readError, bounds)
 	result := archive.FilteredTranscript{Format: format, NativeStartComplete: true}
 	lineNo, recognized := 0, 0
 	gapSet := map[string]bool{}
@@ -451,8 +452,8 @@ func filterRecordsObserved(format string, knownTypes map[string]bool, lead map[s
 			addGap("incomplete_or_invalid_record", lineNo, "jsonl record omitted")
 			continue
 		}
-		noteNativeIdentity(&result, raw)
 		kind, _ := raw["type"].(string)
+		noteOwnedNativeIdentity(&result, raw, kind, own)
 		if err := validateMetadata(kind, line, validateMeta); err != nil {
 			return archive.FilteredTranscript{}, err
 		}
@@ -500,16 +501,13 @@ func filterRecordsObserved(format string, knownTypes map[string]bool, lead map[s
 		if err != nil {
 			return archive.FilteredTranscript{}, &archive.FilterError{Reason: "safe record cannot be encoded"}
 		}
-		retain(&result, encoded)
-	}
-	if err := readError(); err != nil {
-		if errors.Is(err, bufio.ErrTooLong) {
+		if bytesBoundReached(bounds, result.Boundary.RetainedBytes, len(encoded)) {
 			return archive.FilteredTranscript{}, archive.ErrRecordTooLarge
 		}
-		return archive.FilteredTranscript{}, &archive.FilterError{Reason: "transcript cannot be read"}
+		retain(&result, encoded)
 	}
-	if lineNo > 0 && recognized == 0 {
-		return archive.FilteredTranscript{}, archive.ErrUnsafeSourceFormat
+	if err := filteredReadComplete(readError(), lineNo, recognized); err != nil {
+		return archive.FilteredTranscript{}, err
 	}
 	filteredLead.writeTo(&result, addGap, omittedKeys.add)
 	if detail := omittedKeys.detail("omitted keys: "); detail != "" {
@@ -757,5 +755,53 @@ func retainSafeIdentityRecord(result *archive.FilteredTranscript, safe map[strin
 func observeRetained(observer func(int), count int) {
 	if observer != nil {
 		observer(count)
+	}
+}
+
+func boundRecordSource(next func() ([]byte, bool), readError func() error, bounds []archive.CaptureBoundary) (func() ([]byte, bool), func() error) {
+	if len(bounds) == 0 || bounds[0].RetainedRecords <= 0 {
+		return next, readError
+	}
+	left := bounds[0].RetainedRecords
+	exceeded := false
+	return func() ([]byte, bool) {
+			raw, more := next()
+			if !more {
+				return raw, more
+			}
+			if left <= 0 {
+				exceeded = true
+				return nil, false
+			}
+			left--
+			return raw, true
+		}, func() error {
+			if exceeded {
+				return errors.Join(bufio.ErrTooLong, readError())
+			}
+			return readError()
+		}
+}
+
+func bytesBoundReached(bounds []archive.CaptureBoundary, used, next int) bool {
+	return len(bounds) > 0 && bounds[0].RetainedBytes > 0 && next > bounds[0].RetainedBytes-used
+}
+
+func filteredReadComplete(err error, lines, recognized int) error {
+	if errors.Is(err, bufio.ErrTooLong) {
+		return archive.ErrRecordTooLarge
+	}
+	if err != nil {
+		return &archive.FilterError{Reason: "transcript cannot be read"}
+	}
+	if lines > 0 && recognized == 0 {
+		return archive.ErrUnsafeSourceFormat
+	}
+	return nil
+}
+
+func noteOwnedNativeIdentity(result *archive.FilteredTranscript, raw map[string]any, kind string, own func(string) bool) {
+	if own == nil || own(kind) {
+		noteNativeIdentity(result, raw)
 	}
 }

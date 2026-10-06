@@ -4,21 +4,32 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"syscall"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/codexmeta"
+	"github.com/wangjohn/agent-archive/internal/local"
 )
 
 const maxCoverageRequests = 256
+
 const maxCoverageRequestBytes = 1 << 20
+
 const maxCoverageBytes = 16 << 20
+
+type coveragePhase string
+
+const (
+	coverageObserve  coveragePhase = "observe"
+	coverageValidate coveragePhase = "validate"
+	coverageComplete coveragePhase = "complete"
+)
 
 // coverageInventory is bounded REQUESTED evidence, not a global native index.
 // Enumerating stores only directory digests and requested matching facts. A
@@ -28,20 +39,27 @@ const maxCoverageBytes = 16 << 20
 type coverageInventory struct {
 	Version     int                          `json:"version"`
 	Epoch       uint64                       `json:"epoch"`
-	Phase       string                       `json:"phase"`
+	Phase       coveragePhase                `json:"phase"`
 	Roots       []string                     `json:"roots"`
 	Requests    map[string]coverageRequest   `json:"requests"`
 	Directories map[string]coverageDirectory `json:"directories"`
 	Validation  []directory                  `json:"validation"`
+	Sequence    uint64                       `json:"sequence,omitempty"`
 	FinalOffset int                          `json:"final_offset,omitempty"`
-	Failed      bool                         `json:"failed,omitempty"`
+	hintBytes   int64
+	factBound   int64
+	proofEpoch  uint64
+	Failed      bool `json:"failed,omitempty"`
 }
 
 type coverageRequest struct {
-	TargetEpoch   uint64                       `json:"target_epoch"`
-	CompleteEpoch uint64                       `json:"complete_epoch,omitempty"`
-	Overflow      bool                         `json:"overflow,omitempty"`
-	Candidates    map[string]coverageCandidate `json:"candidates"`
+	Order          uint64                       `json:"order,omitempty"`
+	DeliveredEpoch uint64                       `json:"delivered_epoch,omitempty"`
+	AttemptEpoch   uint64                       `json:"attempt_epoch,omitempty"`
+	TargetEpoch    uint64                       `json:"target_epoch"`
+	CompleteEpoch  uint64                       `json:"complete_epoch,omitempty"`
+	Overflow       bool                         `json:"overflow,omitempty"`
+	Candidates     map[string]coverageCandidate `json:"candidates"`
 }
 
 type coverageCandidate struct {
@@ -49,6 +67,7 @@ type coverageCandidate struct {
 	Stamp    Fingerprint             `json:"stamp"`
 	Identity codexmeta.CodexIdentity `json:"identity"`
 }
+
 type coverageDirectory struct {
 	Directory        directory `json:"directory"`
 	Stamp            string    `json:"stamp"`
@@ -91,7 +110,7 @@ func appendCoverageDigest(prior string, entries []string) string {
 }
 
 func newCoverage(roots []string) *coverageInventory {
-	return &coverageInventory{Version: 1, Epoch: 1, Phase: "observe", Roots: slices.Clone(roots), Requests: map[string]coverageRequest{}, Directories: map[string]coverageDirectory{}}
+	return &coverageInventory{Version: 1, Epoch: 1, Phase: coverageObserve, Roots: slices.Clone(roots), Requests: map[string]coverageRequest{}, Directories: map[string]coverageDirectory{}}
 }
 
 func (c *coverageInventory) validate(roots []string) error {
@@ -101,16 +120,15 @@ func (c *coverageInventory) validate(roots []string) error {
 	if c.Version != 1 {
 		return errors.New("native coverage requires a newer writer")
 	}
-	if c.Epoch == 0 || !slices.Equal(c.Roots, roots) || (c.Phase != "observe" && c.Phase != "validate" && c.Phase != "complete") || len(c.Requests) > maxCoverageRequests || len(c.Directories) > maxDirectories || len(c.Validation) > maxDirectories || c.FinalOffset < 0 || c.FinalOffset > len(c.Directories) {
+	c.factBound = 0
+	if c.Epoch == 0 || !slices.Equal(c.Roots, roots) || (c.Phase != coverageObserve && c.Phase != coverageValidate && c.Phase != coverageComplete) || len(c.Requests) > maxCoverageRequests || len(c.Directories) > maxDirectories || len(c.Validation) > maxDirectories || c.FinalOffset < 0 || c.FinalOffset > len(c.Directories) {
 		return errors.New("invalid native coverage checkpoint")
 	}
-	data, err := json.Marshal(c)
-	if err != nil || len(data) > maxCoverageBytes {
+	if c.totalByteBound() > maxCoverageBytes {
 		return errors.New("native coverage byte limit")
 	}
 	for _, request := range c.Requests {
-		raw, err := json.Marshal(request)
-		if err != nil || len(raw) > maxCoverageRequestBytes || len(request.Candidates) > 64 {
+		if request.byteBound() > maxCoverageRequestBytes || len(request.Candidates) > 64 {
 			return errors.New("native coverage request limit")
 		}
 	}
@@ -119,6 +137,15 @@ func (c *coverageInventory) validate(roots []string) error {
 			return errors.New("invalid native coverage directory")
 		}
 	}
+	if err := c.validateCompleteRequests(); err != nil {
+		return err
+	}
+	if err := c.validateCompleteProof(); err != nil {
+		return err
+	}
+	if c.Phase == coverageComplete && !c.Failed {
+		c.proofEpoch = c.Epoch
+	}
 	return nil
 }
 
@@ -126,37 +153,72 @@ func (c *coverageInventory) request(id string) bool {
 	if _, present := c.Requests[id]; present {
 		return true
 	}
-	if len(c.Requests) >= maxCoverageRequests {
+	if len(id) > 4096 {
 		return false
 	}
+	if len(c.Requests) >= maxCoverageRequests {
+		// Retire only work that has finished a complete observation/validation
+		// attempt. Unfinished requests survive every capacity refusal.
+		victim := ""
+		for key, request := range c.Requests {
+			if request.AttemptEpoch == 0 || request.DeliveredEpoch != request.AttemptEpoch {
+				continue
+			}
+			if victim == "" || request.Order < c.Requests[victim].Order || request.Order == c.Requests[victim].Order && key < victim {
+				victim = key
+			}
+		}
+		if victim == "" {
+			return false
+		}
+		delete(c.Requests, victim)
+		c.factBound = 0
+	}
+	if c.totalByteBound()+6*int64(len(id))+512 > maxCoverageBytes {
+		return false
+	}
+	c.Sequence++
+	c.factBound = 0
 	// A request entering mid-round waits for an entire following epoch. Earlier
 	// observations cannot prove absence for something that was not requested yet.
 	target := c.Epoch + 1
-	if c.Phase == "observe" && len(c.Directories) == 0 {
+	if c.Phase == coverageObserve && len(c.Directories) == 0 {
 		target = c.Epoch
 	}
-	c.Requests[id] = coverageRequest{TargetEpoch: target, Candidates: map[string]coverageCandidate{}}
+	c.Requests[id] = coverageRequest{Order: c.Sequence, TargetEpoch: target, Candidates: map[string]coverageCandidate{}}
 	return true
 }
 
-func (c *coverageInventory) observe(source SourceDescriptor, stamp Fingerprint, id codexmeta.CodexIdentity) {
+func (c *coverageInventory) observe(source SourceDescriptor, stamp Fingerprint, id codexmeta.CodexIdentity) bool {
+	changed := false
 	for key, request := range c.Requests {
-		if key != id.ThreadID && key != id.RolloutID || c.Phase != "observe" || request.TargetEpoch > c.Epoch {
+		if key != id.ThreadID && key != id.RolloutID || c.Phase != coverageObserve || request.TargetEpoch > c.Epoch {
 			continue
 		}
 		if _, present := request.Candidates[source.Locator]; !present && len(request.Candidates) >= 64 {
+			changed = changed || !request.Overflow
 			request.Overflow = true
 			c.Requests[key] = request
 			continue
 		}
-		request.Candidates[source.Locator] = coverageCandidate{source, stamp, id}
-		raw, err := json.Marshal(request)
-		if err != nil || len(raw) > maxCoverageRequestBytes {
-			delete(request.Candidates, source.Locator)
+		candidate := coverageCandidate{source, stamp, id}
+		added := candidate.byteBound() + 6*int64(len(source.Locator)) + 16
+		prior := int64(0)
+		if old, found := request.Candidates[source.Locator]; found {
+			prior = old.byteBound() + 6*int64(len(source.Locator)) + 16
+		}
+		if request.byteBound()+added-prior > maxCoverageRequestBytes || c.totalByteBound()+added-prior > maxCoverageBytes {
+			changed = changed || !request.Overflow
 			request.Overflow = true
+		} else {
+			old, found := request.Candidates[source.Locator]
+			changed = changed || !found || old.Source != source || old.Stamp != stamp || !reflect.DeepEqual(old.Identity, id)
+			request.Candidates[source.Locator] = candidate
+			c.factBound += added - prior
 		}
 		c.Requests[key] = request
 	}
+	return changed
 }
 
 func coverageKey(d directory) string { return filepath.Join(d.Root, d.Path) }
@@ -164,7 +226,7 @@ func coverageKey(d directory) string { return filepath.Join(d.Root, d.Path) }
 // recordBatch advances only when the caller consumed the whole batch. Retried
 // getdents batches keep the old cookie and do not duplicate the digest chain.
 func (c *coverageInventory) recordBatch(d directory, b coverageBatch, next int64, complete, advanced bool) {
-	if c.Phase != "observe" || !advanced {
+	if c.Phase != coverageObserve || !advanced {
 		return
 	}
 	key := coverageKey(d)
@@ -174,11 +236,16 @@ func (c *coverageInventory) recordBatch(d directory, b coverageBatch, next int64
 		return
 	}
 	if !present {
+		if c.totalByteBound()+directoryByteBound(d)+1024 > maxCoverageBytes {
+			c.Failed = true
+			return
+		}
 		if d.Offset != 0 {
 			c.Failed = true
 			return
 		}
 		prior = coverageDirectory{Directory: d, Stamp: b.Stamp}
+		c.factBound = 0
 	}
 	if prior.Offset != d.Offset || prior.Stamp != b.Stamp {
 		c.Failed = true
@@ -191,10 +258,10 @@ func (c *coverageInventory) recordBatch(d directory, b coverageBatch, next int64
 }
 
 func (c *coverageInventory) beginValidation() {
-	if c.Phase != "observe" {
+	if c.Phase != coverageObserve {
 		return
 	}
-	c.Phase = "validate"
+	c.Phase = coverageValidate
 	c.Validation = nil
 	for _, entry := range c.Directories {
 		if !entry.Complete {
@@ -215,8 +282,8 @@ func (c *coverageInventory) beginValidation() {
 	})
 }
 
-func (c *coverageInventory) validateBatch(d directory, b coverageBatch, next int64, complete bool) {
-	if c.Phase != "validate" {
+func (c *coverageInventory) validateBatch(d directory, b coverageBatch, complete bool) {
+	if c.Phase != coverageValidate {
 		return
 	}
 	key := coverageKey(d)
@@ -236,7 +303,7 @@ func (c *coverageInventory) validateBatch(d directory, b coverageBatch, next int
 }
 
 func (c *coverageInventory) finishValidation() bool {
-	if c.Phase != "validate" || len(c.Validation) != 0 {
+	if c.Phase != coverageValidate || len(c.Validation) != 0 {
 		return false
 	}
 	for _, entry := range c.Directories {
@@ -244,8 +311,16 @@ func (c *coverageInventory) finishValidation() bool {
 			c.Failed = true
 		}
 	}
-	c.Phase = "complete"
+	c.Phase = coverageComplete
+	if err := c.validateCompleteProof(); err != nil {
+		c.Failed = true
+	} else if !c.Failed {
+		c.proofEpoch = c.Epoch
+	}
 	for key, request := range c.Requests {
+		if request.TargetEpoch <= c.Epoch && !c.Failed {
+			request.AttemptEpoch = c.Epoch
+		}
 		if request.TargetEpoch <= c.Epoch && !request.Overflow && !c.Failed {
 			request.CompleteEpoch = c.Epoch
 		} else {
@@ -257,8 +332,10 @@ func (c *coverageInventory) finishValidation() bool {
 }
 
 func (c *coverageInventory) restart() {
+	c.factBound = 0
 	c.Epoch++
-	c.Phase = "observe"
+	c.proofEpoch = 0
+	c.Phase = coverageObserve
 	c.Failed = false
 	c.Directories = map[string]coverageDirectory{}
 	c.Validation = nil
@@ -285,7 +362,7 @@ func directoryCoverageStamp(root, path string) string {
 
 func advanceCoverageValidation(ctx context.Context, c *catalog, h *Health, adapter SourceAdapter, deadline time.Time, o Options) {
 	coverage := c.Coverage
-	for coverage.Phase == "validate" && len(coverage.Validation) > 0 && h.Entries < 2048 && time.Now().Before(deadline) && !scanStopped(ctx, o) {
+	for coverage.Phase == coverageValidate && len(coverage.Validation) > 0 && h.Entries < 2048 && time.Now().Before(deadline) && !scanStopped(ctx, o) {
 		d := coverage.Validation[0]
 		batch, err := adapter.Enumerate(ctx, d.Root, d.Path, d.Offset)
 		if err != nil || batch.coverage == nil {
@@ -294,7 +371,7 @@ func advanceCoverageValidation(ctx context.Context, c *catalog, h *Health, adapt
 			continue
 		}
 		h.Entries += len(batch.Entries)
-		coverage.validateBatch(d, *batch.coverage, batch.Continuation, batch.Complete)
+		coverage.validateBatch(d, *batch.coverage, batch.Complete)
 		if batch.Complete {
 			coverage.Validation = coverage.Validation[1:]
 		} else {
@@ -302,7 +379,7 @@ func advanceCoverageValidation(ctx context.Context, c *catalog, h *Health, adapt
 			coverage.Validation[0] = d
 		}
 	}
-	if coverage.Phase == "validate" && len(coverage.Validation) == 0 {
+	if coverage.Phase == coverageValidate && len(coverage.Validation) == 0 {
 		finishCoverageDirectoryCheck(ctx, coverage, h, deadline, o)
 	}
 }
@@ -324,4 +401,55 @@ func finishCoverageDirectoryCheck(ctx context.Context, c *coverageInventory, h *
 	if c.FinalOffset == len(keys) {
 		c.finishValidation()
 	}
+}
+
+// validateCompleteProof cross-checks the persisted epoch structure. A phase
+// flag alone is never absence authority after damaged local state is restored.
+func (c *coverageInventory) validateCompleteProof() error {
+	if c.Failed {
+		return nil
+	}
+	if c.Phase != coverageComplete {
+		return nil
+	}
+	if len(c.Roots) == 0 || len(c.Directories) == 0 || len(c.Validation) != 0 || c.FinalOffset != len(c.Directories) {
+		return errors.New("incomplete native coverage proof")
+	}
+	for _, root := range c.Roots {
+		for _, path := range []string{"sessions", "archived_sessions"} {
+			if _, present := c.Directories[filepath.Join(root, path)]; !present {
+				return errors.New("native coverage root proof missing")
+			}
+		}
+	}
+	for key, entry := range c.Directories {
+		if key != coverageKey(entry.Directory) || !entry.Complete || !entry.Validated || entry.ValidationDigest != entry.Digest || len(entry.Stamp) != 64 || len(entry.Digest) != 64 {
+			return errors.New("native coverage directory proof inconsistent")
+		}
+		for _, value := range []string{entry.Stamp, entry.Digest} {
+			raw, err := hex.DecodeString(value)
+			if err != nil || len(raw) != sha256.Size {
+				return errors.New("native coverage digest invalid")
+			}
+		}
+	}
+	return c.validateCompleteRequests()
+
+}
+
+func (c *coverageInventory) validateCompleteRequests() error {
+	for id, request := range c.Requests {
+		if request.TargetEpoch == 0 || request.AttemptEpoch > c.Epoch || request.DeliveredEpoch > request.AttemptEpoch || request.Order > c.Sequence {
+			return errors.New("native coverage request scheduling inconsistent")
+		}
+		if request.CompleteEpoch != 0 && (request.CompleteEpoch != c.Epoch || request.TargetEpoch > c.Epoch || request.Overflow) {
+			return errors.New("native coverage request proof inconsistent")
+		}
+		for path, candidate := range request.Candidates {
+			if path != candidate.Source.Locator || candidate.Source.Kind != "" || !slices.Contains(c.Roots, candidate.Source.Root) || !filepath.IsAbs(path) || filepath.Clean(path) != path || (!local.PathWithin(path, filepath.Join(candidate.Source.Root, "sessions")) && !local.PathWithin(path, filepath.Join(candidate.Source.Root, "archived_sessions"))) || candidate.Identity.ThreadID != id && candidate.Identity.RolloutID != id {
+				return errors.New("native coverage candidate proof inconsistent")
+			}
+		}
+	}
+	return nil
 }
