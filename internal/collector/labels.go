@@ -16,14 +16,15 @@ import (
 	"github.com/wangjohn/agent-archive/internal/state"
 )
 
-func labelScope(reg archive.SessionRegistration, env agentapi.LabelEnvironment) string {
+func labelScope(reg archive.SessionRegistration, env agentapi.LabelEnvironment, machine string) string {
 	b, _ := json.Marshal(struct {
+		Machine     string                    `json:"machine"`
 		ID          string                    `json:"id"`
 		Path        string                    `json:"path"`
 		Root        string                    `json:"root"`
 		Destination string                    `json:"destination"`
 		Env         agentapi.LabelEnvironment `json:"env"`
-	}{reg.NativeSessionID, reg.TranscriptPath, reg.DiscoveryRoot, reg.DestinationID, env})
+	}{machine, reg.NativeSessionID, reg.TranscriptPath, reg.DiscoveryRoot, reg.DestinationID, env})
 	h := sha256.Sum256(b)
 	return hex.EncodeToString(h[:])
 }
@@ -63,11 +64,11 @@ func (p *pass) observeLabels(ctx context.Context) {
 	p.labelStates = map[string]*state.Published{}
 	for id, entry := range cache.Entries {
 		reg, ok := eligible[id]
-		if !ok || entry.Scope != labelScope(reg, p.opts.LabelEnvironment) {
+		if !ok || entry.Scope != labelScope(reg, p.opts.LabelEnvironment, p.opts.MachineID) {
 			delete(cache.Entries, id)
 			continue
 		}
-		if entry.Label.State != "" {
+		if entry.Label.State != "" && p.labelProofCurrent(id, entry) {
 			p.opts.labels[id] = entry
 		}
 	}
@@ -116,6 +117,13 @@ func (p *pass) observeLabels(ctx context.Context) {
 	}
 }
 
+// A cached label can owe publication during lookup backoff. Revalidate its
+// content-free state token before it may trigger any native or publication work.
+func (p *pass) labelProofCurrent(id string, entry state.LabelEntry) bool {
+	checksum, stamp, err := p.local.LabelRevision(id)
+	return err == nil && stamp == entry.SourceStamp && (checksum == "" || checksum == entry.SourceChecksum)
+}
+
 func (p *pass) prepareLabelRequests(ctx context.Context, providers map[string]agentapi.LabelProvider, cache *state.LabelCache, ids []string, eligible map[string]archive.SessionRegistration) []agentapi.LabelRequest {
 	requests := []agentapi.LabelRequest{}
 	start := sort.SearchStrings(ids, cache.Cursor)
@@ -141,7 +149,7 @@ func (p *pass) prepareLabelRequests(ctx context.Context, providers map[string]ag
 		}
 		revision := sha256.Sum256([]byte(interpretation + "/" + archive.FilterVersion + "/" + p.opts.parserVersionFor(reg.Harness.Name)))
 		contract := hex.EncodeToString(revision[:])
-		validContext := entry.Context.Contract == contract && entry.Context.NativeID == reg.NativeSessionID && ((checksum != "" && checksum == entry.SourceChecksum) || (checksum == "" && stamp == entry.SourceStamp))
+		validContext := entry.Context.Contract == contract && entry.Context.NativeID == reg.NativeSessionID && stamp == entry.SourceStamp && (checksum == "" || checksum == entry.SourceChecksum)
 		if !validContext {
 			published, n, err := p.local.LoadLabelPublication(id, (16<<20)-p.labelBytes)
 			p.labelBytes += n
@@ -153,7 +161,9 @@ func (p *pass) prepareLabelRequests(ctx context.Context, providers map[string]ag
 			}
 			p.labelStates[id] = published
 			bundle, _, found := published.LastPublished()
-			if !found || bundle.NativeSessionID != reg.NativeSessionID || bundle.Capture.Harness.Name != reg.Harness.Name {
+			if !found || !labelPublicationOwned(published, bundle, reg, p.opts.MachineID) {
+				delete(cache.Entries, id)
+				delete(p.opts.labels, id)
 				continue
 			}
 			if bundle.History != nil || bundle.SchemaVersion == archive.HistorySourceSchemaVersion {
@@ -180,10 +190,24 @@ func (p *pass) prepareLabelRequests(ctx context.Context, providers map[string]ag
 			}
 		}
 		requests = append(requests, agentapi.LabelRequest{Registration: reg, Context: entry.Context})
-		entry.Scope = labelScope(reg, p.opts.LabelEnvironment)
+		entry.Scope = labelScope(reg, p.opts.LabelEnvironment, p.opts.MachineID)
 		cache.Entries[id] = entry
 	}
 	return requests
+}
+
+// labelPublicationOwned checks retained ownership before native lookup or label debt.
+// Missing legacy metadata is unavailable until ordinary capture/refresh supplies it.
+func labelPublicationOwned(published *state.Published, bundle archive.SourceBundle, reg archive.SessionRegistration, machine string) bool {
+	if bundle.ArchiveSessionID != reg.ArchiveSessionID || bundle.NativeSessionID != reg.NativeSessionID || bundle.Capture.Harness.Name != reg.Harness.Name {
+		return false
+	}
+	var metadata archive.Metadata
+	if json.Unmarshal(published.Metadata(), &metadata) != nil || metadata.SessionID != reg.ArchiveSessionID || metadata.NativeSessionID != reg.NativeSessionID || metadata.MachineID != machine || metadata.Harness.Name != reg.Harness.Name || metadata.ValidateSourceReference() != nil {
+		return false
+	}
+	source, known := published.LastPublishedSource()
+	return known && metadata.SourceBundle == source
 }
 
 func (s *sessionScan) applyLabels(evidence []archive.SupplementalEvidence) []archive.SupplementalEvidence {

@@ -50,6 +50,12 @@ cursor rotation cannot make it fit. Its prior name and pending transaction
 remain intact. Real native content changes still use normal capture limits
 and may publish the latest resolved label alongside the new conversation.
 
+Lookup requires retained source and metadata to agree on the admitted session,
+native identity and current machine. Missing or malformed metadata keeps labels
+unavailable until ordinary capture or metadata refresh supplies ownership proof.
+The private cache is machine-scoped and rechecks a content-free state token even
+during lookup backoff; stale proof cannot trigger a name publication.
+
 Context cache entries store only IDs, filtered evidence, producer/contract,
 hashes, timestamps and scheduling counters. A name-only change publishes a
 new filtered source and metadata through normal durable pending publication,
