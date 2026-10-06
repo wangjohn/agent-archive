@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
+	"syscall"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/local"
@@ -147,5 +149,22 @@ func (s *Store) ReadPendingSource(id string, stage PendingSource) ([]byte, error
 	if !info.Mode().IsRegular() || info.Size() != int64(stage.Reference.CompressedBytes) || info.Size() > maxPendingHistoryBytes {
 		return nil, fmt.Errorf("invalid history stage size or type")
 	}
-	return os.ReadFile(path)
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	opened, err := f.Stat()
+	if err != nil || !os.SameFile(info, opened) {
+		return nil, errors.New("history stage changed while opening")
+	}
+	data, err := io.ReadAll(io.LimitReader(f, int64(stage.Reference.CompressedBytes)+1))
+	if err != nil {
+		return nil, err
+	}
+	sum := sha256.Sum256(data)
+	if len(data) != stage.Reference.CompressedBytes || hex.EncodeToString(sum[:]) != stage.Reference.SHA256 {
+		return nil, errors.New("history stage checksum mismatch")
+	}
+	return data, nil
 }

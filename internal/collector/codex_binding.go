@@ -3,6 +3,8 @@ package collector
 import (
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -20,6 +22,12 @@ func (s *sessionScan) persistCodexBinding(binding *archive.CodexSourceBinding) e
 	}
 	if err := binding.Validate(); err != nil {
 		return err
+	}
+	if s.reg.CodexBinding == nil && s.reg.CodexAdmission != nil {
+		cwd, err := canonicalBindingCwd(binding.Cwd)
+		if err != nil || cwd != s.reg.CodexAdmission.Cwd {
+			return errors.New("native cwd contradicts admitted project evidence")
+		}
 	}
 	if !binding.PreservesFacts(s.reg.CodexBinding) {
 		return errors.New("Codex native binding facts changed")
@@ -78,4 +86,30 @@ func (s *sessionScan) persistCodexBinding(binding *archive.CodexSourceBinding) e
 	}
 	s.reg = updated
 	return nil
+}
+
+// canonicalBindingCwd preserves the spelling below an existing ancestor when a
+// native worktree has vanished. It is used only during migration, outside locks.
+func canonicalBindingCwd(path string) (string, error) {
+	path = filepath.Clean(path)
+	var missing []string
+	for range 64 {
+		canonical, err := filepath.EvalSymlinks(path)
+		if err == nil {
+			for i := len(missing) - 1; i >= 0; i-- {
+				canonical = filepath.Join(canonical, missing[i])
+			}
+			return canonical, nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+		parent := filepath.Dir(path)
+		if parent == path {
+			return "", err
+		}
+		missing = append(missing, filepath.Base(path))
+		path = parent
+	}
+	return "", errors.New("native cwd ancestor limit exceeded")
 }

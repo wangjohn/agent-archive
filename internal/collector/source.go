@@ -192,7 +192,10 @@ func (r providerReader) Signature(ctx context.Context) (out sourceState, err err
 	defer func() { err = errors.Join(err, closePass()) }()
 	if validator, ok := p.(agentapi.SourceAdmissionSignature); ok && r.admission.NativeID != "" {
 		if err := validator.ValidateSourceAdmission(ctx, r.ref, r.admission); err != nil {
-			return out, err
+			legacy := r.discovery == nil && r.admission.Binding == nil && r.rollouts == nil && (agentapi.Failure(err) == agentapi.FormatMismatch || agentapi.Failure(err) == agentapi.Unavailable)
+			if !legacy {
+				return out, err
+			}
 		}
 	} else if r.discovery != nil {
 		return out, errors.New("confined source admission validator required")
@@ -522,7 +525,10 @@ func sourceAdmission(reg archive.SessionRegistration) agentapi.SourceAdmission {
 	if reg.Harness.Name != "codex" {
 		return agentapi.SourceAdmission{}
 	}
-	cwd := reg.DiscoveryCwd
+	cwd := ""
+	if reg.Origin == archive.SessionOriginDiscovery {
+		cwd = reg.DiscoveryCwd
+	}
 	if reg.CodexBinding != nil {
 		cwd = reg.CodexBinding.Cwd
 	}
