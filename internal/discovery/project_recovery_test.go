@@ -395,3 +395,82 @@ func TestCachedRecoveryObservationRejectsSameStampReplacement(t *testing.T) {
 		})
 	}
 }
+
+func TestPersistedMissingConfiguredCwdReprobesWithoutRepositoryKey(t *testing.T) {
+	for _, exhausted := range []bool{false, true} {
+		t.Run(map[bool]string{false: "reprobe", true: "probe_budget"}[exhausted], func(t *testing.T) {
+			store, cfg, at, root := fixture(t)
+			project := cfg.Archive.Projects[0].Root
+			gone, deny := filepath.Join(project, "gone"), filepath.Join(project, "deny")
+			if err := os.Mkdir(deny, 0700); err != nil {
+				t.Fatal(err)
+			}
+			cfg.Archive.Projects = append(cfg.Archive.Projects, archive.ProjectActivation{Root: deny, ProjectID: archive.ProjectID(deny), Included: false})
+			if err := config.Save(store.Home(), cfg); err != nil {
+				t.Fatal(err)
+			}
+			native := writeRollout(t, root, gone, at.Add(time.Minute), 47, "sessions")
+			if err := store.RequestSessionIndexRecovery(agentmeta.SessionKey{Agent: agentmeta.Codex, NativeID: native}); err != nil {
+				t.Fatal(err)
+			}
+			if err := recoverytest.Exhaust(t.Context(), store, state.SessionIndexRecoverySlice, false); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(root, "sessions", "rollout-2026-10-01T12-00-00-"+native+".jsonl")
+			adapter := codexAdapter{supported: syntheticSupport}
+			entry := adapter.Describe(root, "sessions", filepath.Base(path))
+			observation := adapter.Inspect(t.Context(), entry.Source)
+			if observation.Outcome != outcomeUsable || observation.Candidate.RecordedRepoKey != "" {
+				t.Fatalf("bad original %+v", observation)
+			}
+			prior := catalog{Version: catalogVersion, Roots: []string{root}, Cache: map[string]cached{path: {Size: entry.Fingerprint.Size, Mtime: entry.Fingerprint.Mtime, Checked: at.Add(2 * time.Minute), Observation: observation}}}
+			if err := local.Write(filepath.Join(store.Home(), "discovery-catalog.json"), prior); err != nil {
+				t.Fatal(err)
+			}
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			replacement := path + ".replacement"
+			if err := os.WriteFile(replacement, bytes.Replace(raw, []byte(gone), []byte(deny), 1), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chtimes(replacement, observation.SourceInfo.ModTime(), observation.SourceInfo.ModTime()); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Rename(replacement, path); err != nil {
+				t.Fatal(err)
+			}
+			current, err := os.Stat(path)
+			if err != nil || os.SameFile(observation.SourceInfo, current) || current.Size() != observation.SourceInfo.Size() || !current.ModTime().Equal(observation.SourceInfo.ModTime()) {
+				t.Fatal("bad replacement", err)
+			}
+			settled := observation
+			settled.SourceInfo = nil
+			settled.Candidate.WorkingDirectory = project
+			if cachedObservationNeedsProbe(settled, entry.Source) {
+				t.Fatal("present-cwd persisted compatibility unexpectedly needs a probe")
+			}
+			if exhausted {
+				var restored catalog
+				if err := local.Read(filepath.Join(store.Home(), "discovery-catalog.json"), &restored); err != nil {
+					t.Fatal(err)
+				}
+				h := Health{Outcomes: map[string]int{}, Probes: HeaderProbes}
+				scan := scan{resolver: sourcefacts.NewProjectResolver(), store: store, cfg: cfg, catalog: &restored, health: &h, now: at.Add(2 * time.Minute), adapter: adapter, ctx: t.Context()}
+				retry, stop := scan.visitEntry(directory{Root: root, Path: "sessions"}, entry)
+				if !retry || !stop || h.Registered != 0 || h.Probes != HeaderProbes || len(restored.Cache) != 0 {
+					t.Fatalf("probe exhaustion reused stale missing-cwd facts: %+v retry=%v stop=%v", h, retry, stop)
+				}
+			}
+			h, err := runWithAdapters(t.Context(), store, cfg, Options{Now: func() time.Time { return at.Add(2 * time.Minute) }}, []SourceAdapter{adapter})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if h.Registered != 0 || h.Probes != 1 || h.Outcomes["project_not_authorized"] != 1 {
+				t.Fatalf("persisted missing-cwd source with no key admitted stale included owner: %+v", h)
+			}
+
+		})
+	}
+}

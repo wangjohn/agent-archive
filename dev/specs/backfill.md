@@ -1080,7 +1080,8 @@ configured root and never overrides configured or live ownership.
 Recovery evidence is rechecked before admitting a new owner. Git dependency
 stamps include HEAD, worktree/common config paths, empty or absent included
 files, all candidate global/system config paths reported by Git, and scratch
-ancestors with no Git metadata. Unsupported Git path queries remain unavailable; a documented no-value result
+ancestors with no Git metadata and absent nearer checkout markers for configured
+Git subdirectories. Unsupported Git path queries remain unavailable; a documented no-value result
 establishes that no config path applies.
 New discovery checks the original source observation and original cwd again; imports validate each source and
 cwd and coalesce the common inventory check for each short registration hold.
@@ -1090,7 +1091,8 @@ header inspection and repository resolution. Imports also check after full filte
 registration hold for recovered attribution. A rewrite or replacement during those stages reports
 `source_changed`; a settled retry resolves current cwd/repository facts. Automatic
 discovery retains file identity only in memory; persisted scheduling hints must
-reprobe the header before recovering new ownership.
+reprobe the header whenever its cwd is missing, including configured descendants
+without a recorded repository key, before admitting new ownership.
 These checks run outside hooks.lock; current policy and consent still run under
 it. Already retained ownership continues without rerunning recovery evidence.
 

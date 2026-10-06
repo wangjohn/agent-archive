@@ -833,7 +833,7 @@ func cachedObservationNeedsProbe(observed Observation, source SourceDescriptor) 
 		return false
 	}
 	if observed.SourceInfo == nil {
-		return observed.Candidate.RecordedRepoKey != "" && missingSourceCwd(observed.Candidate)
+		return missingSourceCwd(observed.Candidate)
 	}
 	return !sourceObservationCurrent(observed, source.Locator)
 }

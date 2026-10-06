@@ -24,7 +24,7 @@ func ProjectIdentity(ctx context.Context, root string) sourcefacts.RepositoryIde
 		if !known {
 			return id
 		}
-		dependencies, ok := projectDependencies(ctx, root)
+		dependencies, ok := projectDependencies(ctx, root, top)
 		if !ok {
 			return sourcefacts.RepositoryIdentity{}
 		}
@@ -105,7 +105,7 @@ func repositoryStamp(path string) (string, bool) {
 	return hex.EncodeToString(digest[:]), true
 }
 
-func projectDependencies(ctx context.Context, root string) ([]sourcefacts.RepositoryDependency, bool) {
+func projectDependencies(ctx context.Context, root, top string) ([]sourcefacts.RepositoryDependency, bool) {
 	bounded, cancel := context.WithTimeout(ctx, Timeout)
 	defer cancel()
 	raw, err := ExecRunner(bounded, root, "-C", root, "config", "--show-origin", "--name-only", "-z", "--list")
@@ -117,6 +117,9 @@ func projectDependencies(ctx context.Context, root string) ([]sourcefacts.Reposi
 		return nil, false
 	}
 	paths := map[string]bool{root: true, filepath.Join(root, ".git"): true}
+	if !checkoutAncestorDependencies(root, top, paths) {
+		return nil, false
+	}
 	// HEAD controls onbranch includes; the worktree/common metadata controls
 	// which config Git reads. Ask Git for paths rather than interpreting it.
 	metadata, err := ExecRunner(bounded, root, "-C", root, "rev-parse", "--path-format=absolute", "--git-path", "HEAD", "--git-path", "config", "--git-path", "config.worktree", "--git-path", "commondir")
@@ -223,4 +226,26 @@ func topLevelConfigDependencies(ctx context.Context, root string, paths map[stri
 		}
 	}
 	return true
+}
+
+// A configured subtree inherits Git identity only while no nearer checkout
+// marker appears. Stamp every candidate through the observed top level so a
+// new nested repository invalidates the inventory before it can prove uniqueness.
+func checkoutAncestorDependencies(root, top string, paths map[string]bool) bool {
+	canonical, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return false
+	}
+	for path, depth := canonical, 0; depth < 64; depth++ {
+		paths[filepath.Join(path, ".git")] = true
+		if path == top {
+			return true
+		}
+		parent := filepath.Dir(path)
+		if parent == path {
+			return false
+		}
+		path = parent
+	}
+	return false
 }

@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -211,5 +213,54 @@ func TestTopLevelConfigDependenciesRespectGitPathQueryContract(t *testing.T) {
 				t.Fatal(got, paths)
 			}
 		})
+	}
+}
+
+func TestProjectIdentityTracksNewNestedRepositoryAncestor(t *testing.T) {
+	git := gitOrSkip(t)
+	target := initRepo(t, git, "https://example.test/acme/target")
+	outer := initRepo(t, git, "https://example.test/acme/outer")
+	nested := filepath.Join(outer, "nested")
+	configured := filepath.Join(nested, "configured")
+	if err := os.MkdirAll(configured, 0700); err != nil {
+		t.Fatal(err)
+	}
+	key := archive.RepoKey("https://example.test/acme/target")
+	projects := []archive.ProjectActivation{{Root: target, Included: true}, {Root: configured, Included: false}}
+	resolve := func(p string) string {
+		v, e := filepath.EvalSymlinks(p)
+		if e != nil {
+			return filepath.Clean(p)
+		}
+		return v
+	}
+	r := sourcefacts.NewRecoveryResolver(projects, nil, resolve, ProjectIdentity, nil)
+	r.Validate = ProjectIdentityCurrent
+	gone := filepath.Join(t.TempDir(), "gone")
+	proof, outcome := r.Recover(t.Context(), gone, key)
+	if outcome != "" || !r.Current(proof) {
+		t.Fatalf("initial %+v %s", proof, outcome)
+	}
+	for _, args := range [][]string{{"init", "-q"}, {"remote", "add", "origin", "https://example.test/acme/target"}} {
+		cmd := exec.CommandContext(t.Context(), git, append([]string{"-C", nested}, args...)...)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%v %s", err, output)
+		}
+	}
+	fresh := ProjectIdentity(t.Context(), configured)
+	if !fresh.Known || fresh.Key != key {
+		t.Fatalf("fresh nested clone invalid: %+v", fresh)
+	}
+	freshResolver := sourcefacts.NewRecoveryResolver(projects, nil, resolve, ProjectIdentity, nil)
+	freshResolver.Validate = ProjectIdentityCurrent
+	_, freshOutcome := freshResolver.Recover(t.Context(), gone, key)
+	if freshOutcome != sourcefacts.RecoverySubtreeUnavailable {
+		t.Fatalf("fresh outcome %s", freshOutcome)
+	}
+	if r.Current(proof) {
+		t.Fatalf("stale proof still certifies target %s despite newly excluded nested clone; fresh inventory yields %s", proof.Root, freshOutcome)
+	}
+	if _, outcome := r.Recover(t.Context(), gone, key); outcome != sourcefacts.RecoveryInventoryUnavailable {
+		t.Fatalf("stale cached uniqueness must stay pending: %s", outcome)
 	}
 }
