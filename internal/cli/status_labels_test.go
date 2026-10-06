@@ -53,7 +53,7 @@ func TestStatusCountsSessionsWithCaptureGapsNotGapEntries(t *testing.T) {
 		t.Fatalf("status exit=%d output=%s", code, out.String())
 	}
 	text := out.String()
-	if !strings.Contains(text, "included projects   1 session\n") {
+	if !strings.Contains(text, "included projects   1 session · 1 archived") {
 		t.Fatalf("app line counts gap entries as sessions:\n%s", text)
 	}
 	if want := "· 1 session has capture gaps\n"; !strings.Contains(text, want) {

@@ -1652,8 +1652,7 @@ func (sc statusScreen) appRow(app appStatus, limit int) statusRow {
 		if sc.verbose {
 			hint = fmt.Sprintf(hookApproval[app.Name], s.cmd("/hooks"))
 		}
-		// Installed, but whether they run is up to the app until a session
-		// shows they do: not yet "on".
+		// Installation alone does not establish hook execution or trust.
 		row.cells[1] = "hooks installed"
 	}
 	freshStart := app.Capabilities.FreshStart.State == capabilityUnavailable && !discoveryEnabled(app)
@@ -1673,6 +1672,9 @@ func (sc statusScreen) appRow(app appStatus, limit int) statusRow {
 		row.notes = append(row.notes, statusNote{s.warnMark(), "New sessions can't be captured yet: " + app.Capabilities.FreshStart.NextAction})
 	}
 	sc.addCodexDiscoveryRow(&row, app)
+	if discoveryEnabled(app) && app.Hooks != "installed" && !optionalCodexHooks(app) {
+		row.notes = append(row.notes, statusNote{s.warnMark(), "Capture hooks need attention: " + hooksLabel(app.Hooks) + "; run agent-archive status --verbose for details."})
+	}
 
 	if sc.verbose {
 		row.notes = append(row.notes, statusNote{sc.info(), appProgress(sc.now, app)})
@@ -1750,8 +1752,8 @@ func (sc statusScreen) gapNotes(app appStatus) []statusNote {
 	return notes
 }
 
-// appCounts words how many top-level sessions an app's hooks captured (and
-// their subagents), how many it imported, and how many it is uploading.
+// appCounts words how many sessions were found, archived, verified, imported,
+// and are uploading. Top-level sessions and subagents are counted separately.
 func appCounts(app appStatus) string {
 	sessions := app.Sessions - app.SubagentSessions
 	parts := []string{"no sessions yet"}
@@ -1763,6 +1765,13 @@ func appCounts(app appStatus) string {
 	}
 	if app.ReplaySessions > 0 {
 		parts[0] += fmt.Sprintf(", %d of them replays", app.ReplaySessions)
+	}
+	if app.PublishedSessions > 0 {
+		archived := fmt.Sprintf("%d archived", app.PublishedSessions)
+		if app.VerifiedSessions > 0 {
+			archived += fmt.Sprintf(" (%d verified)", app.VerifiedSessions)
+		}
+		parts = append(parts, archived)
 	}
 	if app.ImportedSessions > 0 {
 		parts = append(parts, fmt.Sprintf("%d imported", app.ImportedSessions))
@@ -1883,7 +1892,7 @@ func hooksLabel(state string) string {
 	case "unknown":
 		return "hooks not checked"
 	case "installed":
-		return "hooks on"
+		return "hooks installed"
 	}
 	return "hooks " + state
 }
@@ -2638,6 +2647,16 @@ func printAppDetails(out io.Writer, app appStatus) {
 		}
 	}
 
+	if app.Hooks == "installed" {
+		observation := "execution not yet observed"
+		if app.HookObserved {
+			observation = "execution observed"
+		}
+		terminal.Println(out, "    Hooks installed; "+observation+".")
+	}
+	if discoveryEnabled(app) {
+		terminal.Println(out, "    Hook approval is optional while automatic discovery is enabled.")
+	}
 	if app.Trust == "unknown" {
 		terminal.Println(out, "    Hook trust: unknown here; it is granted inside the app and is not observable from this machine's files.")
 	}
@@ -2796,12 +2815,28 @@ func (sc statusScreen) addCodexDiscoveryRow(row *statusRow, app appStatus) {
 	}
 	s := sc.style
 	row.cells[1] = discoveryLabel(app.Discovery)
+	if !sc.verbose && discoveryEnabled(app) {
+		switch {
+		case len(app.Discovery.Errors) > 0 || app.Discovery.Outcomes["source_unavailable"] > 0:
+			row.cells[1] = "capture status unknown"
+		case app.Discovery.LastAttempt.IsZero():
+			row.cells[1] = "waiting for first scan"
+		case app.Discovery.Pending:
+			row.cells[1] = "capture check pending"
+		case app.Sessions == 0 && !app.Discovery.Supported && app.Discovery.Outcomes["incomplete_metadata"] > 0:
+			row.cells[1] = "waiting for task metadata"
+		case app.Sessions == 0 && !app.Discovery.Supported:
+			row.cells[1] = "waiting for supported task"
+		default:
+			row.cells[1] = "automatic capture"
+		}
+	}
 	if app.CodexCaptureScope == string(config.CodexAllProjects) {
 		row.cells[1] += "; all current and future Codex projects"
 	} else {
 		row.cells[1] += "; included projects"
 	}
-	if discoveryEnabled(app) {
+	if sc.verbose && discoveryEnabled(app) {
 		row.notes = append(row.notes, statusNote{sc.info(), discoveryProgress(sc.now, app)})
 		if formats := discoveryFormats(app.Discovery); formats != "" {
 			row.notes = append(row.notes, statusNote{sc.info(), formats})
@@ -2818,15 +2853,6 @@ func (sc statusScreen) addCodexDiscoveryRow(row *statusRow, app appStatus) {
 			row.notes = append(row.notes, statusNote{sc.info(), "Project repository inventory pending. Restore configured checkout access if needed and ensure local Git supports config path queries, then run sync to advance bounded recovery."})
 		}
 	}
-	if optionalCodexHooks(app) {
-		row.notes = append(row.notes, statusNote{sc.info(), "Optional hooks: absent; supported automatic discovery does not require hook approval."})
-	} else {
-		label := "Hooks: "
-		if discoveryEnabled(app) {
-			label = "Optional hooks: "
-		}
-		row.notes = append(row.notes, statusNote{sc.info(), label + hooksLabel(app.Hooks) + "; actual hook observation is separate evidence."})
-	}
 	if discoveryEnabled(app) && (len(app.Discovery.Errors) > 0 || app.Discovery.Outcomes["source_unavailable"] > 0) {
 		row.mark = s.warnMark()
 		row.notes = append(row.notes, statusNote{s.warnMark(), "Discovery health is unknown or a source is unavailable. Restore source access if needed, then run agent-archive sync for a current bounded scan."})
@@ -2836,7 +2862,11 @@ func (sc statusScreen) addCodexDiscoveryRow(row *statusRow, app appStatus) {
 			row.notes = append(row.notes, statusNote{sc.info(), fmt.Sprintf("Last scan saw %d records waiting for complete task metadata. Start a supported new task, then run sync; capture is not yet established.", skipped)})
 		} else {
 			row.mark = s.warnMark()
-			row.notes = append(row.notes, statusNote{s.warnMark(), fmt.Sprintf("Last scan skipped %d unsupported, incomplete or malformed observations (%s). Update agent-archive for format support; use hooks or deliberate backfill only where that source format is supported.", skipped, reasons)})
+			text := fmt.Sprintf("Last scan skipped %d observations; run agent-archive status --verbose for details.", skipped)
+			if sc.verbose {
+				text = fmt.Sprintf("Last scan skipped %d unsupported, incomplete or malformed observations (%s). Update agent-archive for format support; use hooks or deliberate backfill only where that source format is supported.", skipped, reasons)
+			}
+			row.notes = append(row.notes, statusNote{s.warnMark(), text})
 		}
 	}
 }

@@ -70,10 +70,10 @@ func TestStatusReportsDiscoveredTaskBeforeLocalCapture(t *testing.T) {
 				t.Fatalf("status exit %d: %s", code, &out)
 			}
 			text := out.String()
-			if !strings.Contains(text, "1 registered") || strings.Contains(text, "waiting for first session") {
+			if !strings.Contains(text, "1 session") || strings.Contains(text, "waiting for first session") {
 				t.Errorf("rendered status contradicts discovered registration: %s", text)
 			}
-			if verbose && !strings.Contains(text, "session seen, not captured yet") {
+			if verbose && (!strings.Contains(text, "session seen, not captured yet") || !strings.Contains(text, "1 registered")) {
 				t.Errorf("verbose status lost pending capture progress: %s", text)
 			}
 		})
