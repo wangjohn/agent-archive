@@ -356,3 +356,62 @@ func TestHistoryRejectsActualPhysicalCycle(t *testing.T) {
 		t.Fatal("failed graph retained unused dependencies")
 	}
 }
+
+func TestRelatedPassPreservesCleanupFailure(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	leaf, _ := historyFile(t, dir, threadB, threadB, 0, map[string]any{"parent_thread_id": threadA}, "own")
+	fault := errors.New("synthetic close failure")
+	files := &historyIO{closeErr: fault}
+	lookup := &historyLookup{thread: agentapi.CodexRolloutSet{Current: &leaf}}
+	p, e := (SourceProvider{}).OpenPass(t.Context(), agentapi.SourceEnvironment{Files: files, CodexRollouts: lookup})
+	if e != nil {
+		t.Fatal(e)
+	}
+	historyRead(t, p, leaf)
+	for range 2 {
+		if e := p.Close(); !errors.Is(e, fault) || !agentapi.HasFailure(e, agentapi.Cleanup) {
+			t.Fatalf("lost terminal cleanup failure: %v", e)
+		}
+	}
+	if files.closes != 1 || p.(*relatedSourcePass).bytes != 0 {
+		t.Fatalf("cleanup retry/resource leak: %+v", files)
+	}
+}
+
+func TestRelatedRecordLimitIsTypedAndReleasesBudget(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	leaf, _ := historyFile(t, dir, threadB, threadB, 0, map[string]any{"parent_thread_id": threadA}, "own")
+	lookup := &historyLookup{thread: agentapi.CodexRolloutSet{Current: &leaf}}
+	p := historyPass(t, dir, lookup)
+	if _, e := p.Read(t.Context(), leaf, agentapi.ReadLimits{RecordBytes: 64}); agentapi.Failure(e) != agentapi.Limit || !errors.Is(e, archive.ErrRecordTooLarge) {
+		t.Fatalf("record limit classification: %v", e)
+	}
+	if p.(*relatedSourcePass).bytes != 0 {
+		t.Fatal("record failure retained budget")
+	}
+	historyRead(t, p, leaf)
+}
+
+func TestRelatedMillionRecordLimit(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	leaf, _ := historyFile(t, dir, threadB, threadB, 0, map[string]any{"parent_thread_id": threadA, "history_mode": "legacy"})
+	f, e := os.OpenFile(leaf.Path, os.O_APPEND|os.O_WRONLY, 0600)
+	if e != nil {
+		t.Fatal(e)
+	}
+	_, e = f.Write(bytes.Repeat([]byte("{\"type\":\"event_msg\"}\n"), archive.MaxHistoryRecords))
+	if e = errors.Join(e, f.Close()); e != nil {
+		t.Fatal(e)
+	}
+	lookup := &historyLookup{thread: agentapi.CodexRolloutSet{Current: &leaf}}
+	p := historyPass(t, dir, lookup)
+	if _, e := p.Read(t.Context(), leaf, agentapi.ReadLimits{}); agentapi.Failure(e) != agentapi.Limit {
+		t.Fatalf("aggregate record cap: %v", e)
+	}
+	if p.(*relatedSourcePass).bytes != 0 {
+		t.Fatal("record count failure retained budget")
+	}
+}

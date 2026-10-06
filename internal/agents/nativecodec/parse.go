@@ -36,18 +36,8 @@ func parse(ctx context.Context, bundle archive.SourceBundle, agent nativeProfile
 		if err := ctx.Err(); err != nil {
 			return archive.Analysis{}, err
 		}
-		if agent == profileCodex && bundle.History != nil {
-			if firstString(record, "type") == "turn_context" {
-				codexModel, codexReasoning = firstStringDeep(record, "model", "model_id"), firstStringDeep(record, "reasoning_effort")
-			}
-			span, _ := bundle.History.SpanAt(i)
-			if firstString(record, "type") == "session_meta" {
-				if span.RolloutID != bundle.History.ActiveRolloutID {
-					continue
-				}
-			} else if !bundle.OwnRecord(i) {
-				continue
-			}
+		if agent == profileCodex && !ownCodexRecord(bundle, i, record, &codexModel, &codexReasoning) {
+			continue
 		}
 		collectFacts(&analysis.Facts, bundle, record, agent)
 		collectExportFacts(&analysis.Facts, bundle, record, agent)
@@ -70,11 +60,7 @@ func parse(ctx context.Context, bundle archive.SourceBundle, agent nativeProfile
 			view.CompactBoundaries++
 			continue
 		}
-		if agent == profileCodex && bundle.History != nil && historyTokenScopeUnknown(bundle, record) {
-			analysis.Facts.TokenScopeUnknown = true
-		} else if !isPlaceholderModel(firstStringDeep(record, "model", "model_id")) {
-			accumulateTokens(record, tokenModel(agent, record, codexModel), &tokens)
-		}
+		observeRecordTokens(bundle, record, agent, codexModel, &analysis, &tokens)
 		calls, results, skillUses := toolActivity(record, i, codexModel, codexReasoning)
 		for j := range calls {
 			calls[j].Call.RecordedBranch = archive.ValidBranch(firstString(record, "gitBranch"))
@@ -347,4 +333,26 @@ func historyTokenScopeUnknown(bundle archive.SourceBundle, record map[string]any
 		}
 	}
 	return false
+}
+
+func ownCodexRecord(bundle archive.SourceBundle, index int, record map[string]any, model, reasoning *string) bool {
+	if bundle.History == nil {
+		return true
+	}
+	if firstString(record, "type") == "turn_context" {
+		*model, *reasoning = firstStringDeep(record, "model", "model_id"), firstStringDeep(record, "reasoning_effort")
+	}
+	if firstString(record, "type") == "session_meta" {
+		span, _ := bundle.History.SpanAt(index)
+		return span.RolloutID == bundle.History.ActiveRolloutID
+	}
+	return bundle.OwnRecord(index)
+}
+
+func observeRecordTokens(bundle archive.SourceBundle, record map[string]any, agent nativeProfile, codexModel string, analysis *archive.Analysis, tokens *archive.TokenAccumulator) {
+	if agent == profileCodex && bundle.History != nil && historyTokenScopeUnknown(bundle, record) {
+		analysis.Facts.TokenScopeUnknown = true
+	} else if !isPlaceholderModel(firstStringDeep(record, "model", "model_id")) {
+		accumulateTokens(record, tokenModel(agent, record, codexModel), tokens)
+	}
 }

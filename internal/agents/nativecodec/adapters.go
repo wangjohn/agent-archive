@@ -434,9 +434,7 @@ func filterRecordsObserved(format string, knownTypes map[string]bool, lead map[s
 		}
 	}
 	for {
-		if retained != nil {
-			retained(len(result.Records))
-		}
+		observeRetained(retained, len(result.Records))
 		line, more := next()
 		if !more {
 			break
@@ -754,4 +752,10 @@ func retainSafeIdentityRecord(result *archive.FilteredTranscript, safe map[strin
 	}
 	retain(result, encoded)
 	return nil
+}
+
+func observeRetained(observer func(int), count int) {
+	if observer != nil {
+		observer(count)
+	}
 }
