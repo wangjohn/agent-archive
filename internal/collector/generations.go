@@ -103,12 +103,7 @@ func (s *sessionScan) maintainFrozen() (sessionOutcome, error) {
 		return outcomeSkipped, err
 	} else if found {
 		if pending.Bundle.Capture.FilterVersion != archive.FilterVersion || pending.Bundle.Capture.AdapterVersion != adapter.Version() || !sourceEvidenceWithinPolicy(pending.Bundle.SupplementalEvidence, s.opts.skillEvidence()) {
-			// Stronger privacy supersedes a retained-history maintenance retry.
-			// Rebuild below from the last acknowledged publication, without native
-			// input and without carrying the discarded retry's newer age forward.
-			if err := s.local.RemovePending(s.id()); err != nil {
-				return outcomeSkipped, err
-			}
+			return outcomeSkipped, errors.New("frozen pending privacy policy changed; retain evidence for refilter and reconcile")
 		} else if _, err := s.publishPending(pending); err != nil {
 			return outcomeSkipped, err
 		}
@@ -146,7 +141,7 @@ func (s *sessionScan) maintainFrozen() (sessionOutcome, error) {
 			return outcomeSkipped, errors.New("frozen history maintenance cannot decline an existing publication")
 		}
 		pending := state.PendingPublication{SkillEvidence: string(s.opts.skillEvidence()), Bundle: filtered, SourceKey: rendered.source.Key, SourceSHA256: rendered.source.SHA256, SourceBytes: rendered.sourceBytes, MetadataKey: rendered.metadataKey, MetadataBytes: rendered.metadata, ReadyAt: s.now, Attempted: true}
-		if err := s.local.SavePending(s.id(), pending); err != nil {
+		if err := s.savePending(&pending); err != nil {
 			return outcomeSkipped, err
 		}
 		outcome, err := s.publishPending(pending)

@@ -131,8 +131,58 @@ metadata-only refreshes and pending-publication retries. Unchanged admission
 continues using the existing summary/signature path, without full published-state
 decodes or per-session writes. Explicit generation recovery separately checks
 local cached, published and metadata history before changing generation state.
-The next lifecycle stage replaces these temporary fences with validated
-source-set summaries, atomic publication and protected retention.
+The source-set publication journal extends ordinary capture with exact body
+verification and complete local reference sets. History entry fences remain until
+admission staging, all lifecycle mutators, compatibility and provider acceptance
+are complete; this journal does not enable related-history writers.
+
+Private pending state retains legacy active-source fields and adds a versioned
+commit identity plus up to 65 exact source payload references: one current and
+64 preserved revisions. The revision-reference limit is independent of the
+64 physical graph-span limit. Inline compressed replay payloads are capped at
+128 MiB in aggregate; the active payload is stored once. Ref-only remote sources
+may exceed that aggregate, but each is verified sequentially with a 128 MiB
+object bound and caller cancellation. No stage handles or durable import staging
+are shipped by this publication step. Malformed journals remain visible pending
+evidence and block replacement; older quarantined copies remain visible to status
+and retention. An obsolete adapter/filter/skill policy retains replay evidence
+for explicit refiltering rather than uploading or discarding it.
+
+The exact SHA-256 of metadata bytes binds retries. The semantic source-set digest
+uses deterministic JSON of all known metadata fields (including schema, ownership,
+selection, capture/filter/producer/relationship/generation facts), with preserved
+references sorted by revision ID, plus private destination, admission, policy and
+mutation purpose. Referenced revision IDs, timestamps, keys, checksums and sizes
+must be valid and unique. The raw digest also binds unknown fields and encoding.
+The predecessor is explicitly known absent, known present with its exact body
+digest, or unknown. A remote exact-next body permits local completion after every
+source verifies; an exact predecessor permits replacement. Any other body,
+unreadable remote evidence or unknown predecessor stays pending, without adopting
+the remote winner as replacement authority. Legacy state with neither exact
+metadata nor a recorded predecessor stays pending until its evidence is restored
+or reconciled. Existing checksum-addressed objects with different bytes are never
+overwritten. These operations rely on unsynced, single-owner local state; a
+GET/compare/PUT sequence is not a cross-machine atomic conditional write.
+
+A physical selection change preserves the exact prior current reference and all
+prior preserved references. Same-revision updates cannot accumulate append
+snapshots and require a provider-approved continuation bound to both source
+digests, plus consistent retained filtered ordinals, spans and record prefixes.
+Filtered equality alone cannot prove raw native prefix continuity or authorize
+using a filtered source as a raw dependency. Missing proof stays pending. Privacy
+full-set replacement requires revision validation and durable old-key retirement
+in the later maintenance milestone; selection-only publication cannot evict or
+rewrite preserved evidence. At capacity, preserve the committed archive and stop.
+
+Listing repair reads the authoritative remote winner, never stale pending bytes.
+The verified metadata and full local source set become durable before covered
+requests complete; pending removal is last. A later admission-stage port must
+resolve one immutable size/checksum-bound object at a time under aggregate disk
+quota (including temporary/pending copies), protect referenced handles and release
+staging only after that local commit and request completion. No native reread or
+Git reattribution may replace admitted evidence. Remote wire schemas and filter
+versions are unchanged; the additive private journal is not a writer downgrade
+fence. History-specific config compatibility protection remains a later gate.
 
 The initial same-handle `SourceAdmission` check binds native ID and cwd only.
 Lifecycle integration must extend it with immutable creation, producer and

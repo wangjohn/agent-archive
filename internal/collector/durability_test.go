@@ -32,6 +32,9 @@ func editPublishedState(t *testing.T, local *state.Store, edit func(state map[st
 	if err := json.Unmarshal(data, &state); err != nil {
 		t.Fatal(err)
 	}
+	// These fixtures model legacy published files, which had no source-set identity.
+	delete(state, "commit")
+	delete(state, "sources")
 	edit(state)
 	if data, err = json.Marshal(state); err != nil {
 		t.Fatal(err)
@@ -131,20 +134,29 @@ func TestPublishWithOlderStateReadsSupersededKeyFromCachedMetadata(t *testing.T)
 	assertRepublishedSuperseding(t, local, store, t0.Add(time.Hour), []string{firstKey})
 }
 
-// With neither record, the previous key is unknown: the publication still
-// completes, and nothing is guessed into the superseded ledger.
-func TestPublishWithUnknownPreviousSourceStillCompletes(t *testing.T) {
+// With neither record, the exact predecessor is unknown: retain the readable
+// remote publication and pending work instead of guessing replacement authority.
+func TestPublishWithUnknownPreviousSourceRetainsPending(t *testing.T) {
 	t.Parallel()
 	local := newTestStore(t)
 	store := storagetest.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
-	publishThenGrow(t, local, store, t0)
+	first := publishThenGrow(t, local, store, t0)
 	editPublishedState(t, local, func(state map[string]any) {
 		olderSourceSchema(state)
 		withoutRecordedSource(state)
 		delete(state, "metadata_bytes")
 	})
-	assertRepublishedSuperseding(t, local, store, t0.Add(time.Hour), nil)
+	result, err := Run(t.Context(), local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return t0.Add(time.Hour) }})
+	if err != nil || !errors.Is(result.Errors["session-1"], storage.ErrPublicationConflict) || len(result.Published) != 0 {
+		t.Fatal(result, err)
+	}
+	if pending, err := local.HasPending("session-1"); err != nil || !pending {
+		t.Fatal("unknown predecessor lost pending work", pending, err)
+	}
+	if got := fetchMetadata(t, store, "codex", "session-1").SourceBundle.Key; got != first {
+		t.Fatal("unknown predecessor overwrote authority", got)
+	}
 }
 
 // A parser upgrade over a cached bundle this build cannot reproduce skips the

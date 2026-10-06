@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -179,6 +180,11 @@ func (s *countedGets) Get(ctx context.Context, key string) ([]byte, error) {
 	return s.MemoryStore.Get(ctx, key)
 }
 
+func (s *countedGets) GetLimited(ctx context.Context, key string, limit int64) ([]byte, error) {
+	s.gets++
+	return s.MemoryStore.GetLimited(ctx, key, limit)
+}
+
 // GetVersioned counts the response-bound metadata confirmation too.
 func (s *countedGets) GetVersioned(ctx context.Context, key string) ([]byte, string, error) {
 	s.gets++
@@ -215,7 +221,7 @@ func putMetadata(t *testing.T, remote storage.ObjectStore, reg archive.SessionRe
 	}
 }
 
-func TestLegacyMetadataMigrationFailureNeverBlocksCapture(t *testing.T) {
+func TestLegacyMetadataMigrationFailureRetainsPendingWithoutReplacementAuthority(t *testing.T) {
 	t.Parallel()
 	cases := map[string]func(t *testing.T, remote *storagetest.MemoryStore, reg archive.SessionRegistration, published archive.Metadata){
 		"missing remote metadata": func(t *testing.T, remote *storagetest.MemoryStore, reg archive.SessionRegistration, published archive.Metadata) {
@@ -246,7 +252,7 @@ func TestLegacyMetadataMigrationFailureNeverBlocksCapture(t *testing.T) {
 			now := reg.RegisteredAt.Add(time.Hour)
 			opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "machine", ParserVersion: "one", Now: func() time.Time { return now }}
 			before := publishOnce(t, local, remote, reg, &opts)
-			// State written before metadata was cached locally.
+			// Missing local exact bytes cannot authorize replacement from a guessed body.
 			if err := statetest.CacheMetadata(local, reg.ArchiveSessionID, nil); err != nil {
 				t.Fatal(err)
 			}
@@ -255,18 +261,28 @@ func TestLegacyMetadataMigrationFailureNeverBlocksCapture(t *testing.T) {
 			writeTranscript(t, dir, "s.jsonl", grownCodexTranscript)
 			now = now.Add(time.Hour)
 			opts.ParserVersion = "two"
+			key, _ := archive.MetadataObjectKey("codex", reg.ArchiveSessionID)
+			winner, winnerErr := remote.Get(t.Context(), key)
 			result, err := Run(context.Background(), local, remote, opts)
-			if err != nil || len(result.Errors) != 0 || len(result.Published) != 1 {
-				t.Fatalf("new content was not captured: %#v %v", result, err)
+			if err != nil || !errors.Is(result.Errors[reg.ArchiveSessionID], storage.ErrPublicationConflict) || len(result.Published) != 0 {
+				t.Fatalf("unsafe legacy replacement: %#v %v", result, err)
 			}
-			after := fetchMetadata(t, remote, "codex", reg.ArchiveSessionID)
-			if after.SourceBundle.SHA256 == before.SourceBundle.SHA256 || after.Parser.Version != "two" {
-				t.Fatalf("capture did not publish the grown transcript with the current parser: %+v", after)
+			pending, found, err := local.LoadPending(reg.ArchiveSessionID)
+			if err != nil || !found || pending.Commit == nil || pending.Commit.Predecessor != state.PredecessorUnknown {
+				t.Fatal("new evidence not retained pending", found, err)
 			}
-			cached, err := local.PublishedMetadata(reg.ArchiveSessionID)
-			if err != nil || len(cached) == 0 {
-				t.Fatalf("publication did not cache its metadata: %v", err)
+			var next archive.Metadata
+			if err := json.Unmarshal(pending.MetadataBytes, &next); err != nil {
+				t.Fatal(err)
 			}
+			if next.SourceBundle.SHA256 == before.SourceBundle.SHA256 || next.Parser.Version != "two" {
+				t.Fatal("new filtered evidence lost")
+			}
+			after, afterErr := remote.Get(t.Context(), key)
+			if string(winner) != string(after) || !errors.Is(afterErr, winnerErr) {
+				t.Fatal("unknown or foreign winner overwritten", afterErr)
+			}
+
 		})
 	}
 }

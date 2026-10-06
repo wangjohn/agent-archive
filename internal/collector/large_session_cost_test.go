@@ -19,7 +19,7 @@ import (
 )
 
 // countingStore counts the bytes a pass moves to and from storage: egress
-// includes both Get and response-bound GetVersioned reads.
+// includes Get, bounded GetLimited and response-bound GetVersioned reads.
 type countingStore struct {
 	*storagetest.MemoryStore
 	getBytes       atomic.Int64
@@ -34,6 +34,12 @@ type countingStore struct {
 
 func (s *countingStore) Get(ctx context.Context, key string) ([]byte, error) {
 	b, err := s.MemoryStore.Get(ctx, key)
+	s.recordRead(key, b)
+	return b, err
+}
+
+func (s *countingStore) GetLimited(ctx context.Context, key string, limit int64) ([]byte, error) {
+	b, err := s.MemoryStore.GetLimited(ctx, key, limit)
 	s.recordRead(key, b)
 	return b, err
 }
@@ -215,13 +221,14 @@ func TestLargeGrowingSessionPassesStayFast(t *testing.T) {
 	}
 
 	// Source checksum verification must not download transcripts. Index
-	// publication confirms one metadata response; the temporary history fence
-	// reads the previous sidecar once before writing. Header-only
-	// cleanup downloads no auxiliary bodies or unrelated sessions.
+	// publication confirms one metadata response; the history fence reads once,
+	// storage compares twice and confirms once, and collector confirms twice.
+	// All seven sidecar reads are bounded. Header-only cleanup downloads no
+	// auxiliary bodies or unrelated sessions.
 	for name, cost := range map[string]largePassCost{"first publication": first, "republication": grown, "metadata refresh": refreshed} {
 		wantAux := int64(0)
-		if cost.sourceReads != 0 || cost.sourceBytes != 0 || cost.metadataReads != 2 || cost.auxiliaryReads != wantAux {
-			t.Errorf("%s: source reads/bytes=%d/%d metadata reads=%d auxiliary reads=%d; want 0/0, 2, %d", name, cost.sourceReads, cost.sourceBytes, cost.metadataReads, cost.auxiliaryReads, wantAux)
+		if cost.sourceReads != 0 || cost.sourceBytes != 0 || cost.metadataReads != 7 || cost.auxiliaryReads != wantAux {
+			t.Errorf("%s: source reads/bytes=%d/%d metadata reads=%d auxiliary reads=%d; want 0/0, 7, %d", name, cost.sourceReads, cost.sourceBytes, cost.metadataReads, cost.auxiliaryReads, wantAux)
 		}
 		if cost.auxiliaryBytes > wantAux*1024 || cost.metadataBytes <= 0 || cost.downloaded != cost.metadataBytes+cost.auxiliaryBytes+cost.sourceBytes {
 			t.Errorf("%s: unaccounted/unbounded bytes: total=%d metadata=%d auxiliary=%d source=%d", name, cost.downloaded, cost.metadataBytes, cost.auxiliaryBytes, cost.sourceBytes)

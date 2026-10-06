@@ -226,7 +226,7 @@ func TestRecoverFrozenFeedbackRetainsIdentityAgeAndRetry(t *testing.T) {
 	}
 	cfg, _, err := config.Load(home)
 	must(t, err)
-	opts := collector.Options{Sources: registryFor(env), Parsers: parsersFor(env), MachineID: cfg.MachineID, Now: env.Now, RepoKey: env.repoKey}
+	opts := collector.Options{Sources: registryFor(env), Parsers: parsersFor(env), MachineID: cfg.MachineID, Now: env.Now, RepoKey: env.repoKey, SkillEvidence: cfg.EffectiveSkillEvidence(), RequireSkillUse: cfg.RequireSkillUse}
 	result, err := collector.Run(t.Context(), store, failingPutStore{bucket}, opts)
 	if err != nil || result.Errors[id] == nil {
 		t.Fatalf("expected frozen upload retry: %#v %v", result, err)

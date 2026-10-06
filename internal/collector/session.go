@@ -185,12 +185,11 @@ func (s *sessionScan) resume() (outcome sessionOutcome, handled bool, err error)
 		return regenerateMetadata(s)
 	}
 	if pendingSkillMode(pending.SkillEvidence) != s.opts.skillEvidence() {
-		// An older pending file may contain broader evidence. Discard it
-		// before any retry; the next scan rebuilds under the active policy.
-		if err := s.local.RemovePending(s.id()); err != nil {
-			return outcomeSkipped, true, err
-		}
-		return outcomeSkipped, false, nil
+		return outcomeSkipped, true, errors.New("pending source privacy policy changed; retain evidence for refilter and reconcile")
+	}
+	// Validate policy and frozen context before a new request may replace replay evidence.
+	if err := s.sealPending(&pending); err != nil {
+		return outcomeSkipped, true, err
 	}
 	if !pending.Attempted && s.req.Token != "" && s.req.Token != pending.RequestToken {
 		// A stop/end request is a natural debounce flush. A merely rate-limited,
@@ -205,7 +204,7 @@ func (s *sessionScan) resume() (outcome sessionOutcome, handled bool, err error)
 	// each pass's now would keep moving away.
 	if latest := s.now.Add(s.opts.minUploadInterval()); pending.ReadyAt.After(latest) {
 		pending.ReadyAt = latest
-		if err := s.local.SavePending(s.id(), pending); err != nil {
+		if err := s.savePending(&pending); err != nil {
 			return outcomeSkipped, true, fmt.Errorf("cap pending publication time: %w", err)
 		}
 	}
@@ -580,7 +579,7 @@ func (s *sessionScan) publish(read sourceRead, candidate archive.SourceBundle) (
 		SourceSHA256: rendered.source.SHA256, SourceBytes: rendered.sourceBytes, MetadataBytes: rendered.metadata,
 		RequestToken: s.req.Token, ReadyAt: readyAt, Attempted: !readyAt.After(s.now),
 	}
-	if err := s.local.SavePending(s.id(), pending); err != nil {
+	if err := s.savePending(&pending); err != nil {
 		return outcomeSkipped, fmt.Errorf("persist pending publication: %w", err)
 	}
 	if readyAt.After(s.now) {

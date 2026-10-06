@@ -722,6 +722,8 @@ func (s *Store) CompleteRequest(archiveSessionID, coveredToken string) (bool, er
 // every retry uses the same hash and timestamps even after process restart.
 // Bundle remains available for change detection and future parser-only rebuilds.
 type PendingPublication struct {
+	Commit        *PublicationCommit   `json:"commit,omitempty"`
+	Sources       []PublicationSource  `json:"sources,omitempty"`
 	SkillEvidence string               `json:"skill_evidence,omitempty"`
 	MetadataOnly  bool                 `json:"metadata_only,omitempty"`
 	Bundle        archive.SourceBundle `json:"bundle"`
@@ -769,6 +771,11 @@ func (s *Store) SavePending(id string, pending PendingPublication) error {
 	if pending.SourceKey == "" || pending.MetadataKey == "" || pending.SourceSHA256 == "" || len(pending.MetadataBytes) == 0 || (len(pending.SourceBytes) == 0 && (!pending.MetadataOnly || pending.SourceSize <= 0)) {
 		return errors.New("pending publication is incomplete")
 	}
+	if pending.Commit != nil {
+		if err := pending.ValidatePublication(); err != nil {
+			return err
+		}
+	}
 	return local.WriteCompact(s.pendingPath(id), pending)
 }
 
@@ -776,17 +783,34 @@ func (s *Store) SavePending(id string, pending PendingPublication) error {
 // any. Decoding it reads the whole compressed source; HasPending answers
 // whether one exists without that cost.
 //
-// In a collector pass, a pending publication that no longer decodes is moved
-// aside (the error wraps ErrQuarantined, once) and the session carries on as
-// if it had none; see quarantineInPass.
+// An unreadable journal remains in place as actionable recovery evidence.
+// It may contain the only admitted bytes or describe metadata already uploaded;
+// scans must not treat it as absent, even under the collector lock.
 func (s *Store) LoadPending(id string) (PendingPublication, bool, error) {
 	if !safeFileComponent(id) {
 		return PendingPublication{}, false, errors.New("archive session ID is not a safe file name component")
 	}
+	// Bound the entire encoded journal before decoding bundle/base64 payloads.
+	// Inline compressed bytes have the separate 128 MiB limit; this ceiling
+	// includes the filtered comparison bundle, metadata and JSON encoding overhead.
+	if info, err := os.Stat(s.pendingPath(id)); err == nil && info.Size() > 512<<20 {
+		return PendingPublication{}, false, errors.New("pending publication exceeds 512 MiB encoded journal bound; retain evidence and reconcile")
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return PendingPublication{}, false, err
+	}
 	var pending PendingPublication
-	found, err := s.readOwned(s.pendingPath(id), &pending)
+	err := local.Read(s.pendingPath(id), &pending)
+	if errors.Is(err, os.ErrNotExist) {
+		return PendingPublication{}, false, nil
+	}
 	if err != nil {
-		return PendingPublication{}, false, fmt.Errorf("read pending publication %q: %w", id, s.afterLoss(id, err))
+		return PendingPublication{}, true, fmt.Errorf("read pending publication %q; retain evidence and reconcile: %w", id, err)
+	}
+	found := true
+	if found && pending.Commit != nil {
+		if err := pending.ValidatePublication(); err != nil {
+			return pending, true, err
+		}
 	}
 	return pending, found, nil
 }
