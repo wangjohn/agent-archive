@@ -68,6 +68,12 @@ func filterHistory(ctx context.Context, in agentapi.RecordInput) (archive.Filter
 			history.Spans[span].EndRecord++
 			kept++
 		}
+	}, func(kind string) bool {
+		physical := original[span]
+		if kind == "session_meta" {
+			return physical.RolloutID == history.ActiveRolloutID
+		}
+		return physical.ThreadID == history.ThreadID && (history.OwnStart == nil || pending.Ordinal >= *history.OwnStart)
 	})
 	if err != nil {
 		return archive.FilteredTranscript{}, errors.Join(streamErr, err)

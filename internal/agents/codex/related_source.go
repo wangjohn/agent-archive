@@ -358,7 +358,7 @@ func (p *relatedSourcePass) Signature(ctx context.Context, ref agentapi.SourceRe
 	}
 	selection, err := p.selectSource(ctx, ref)
 	if err != nil {
-		if p.env.CodexRollouts == nil && !agentapi.HasFailure(err, agentapi.Cleanup) && (agentapi.Failure(err) == agentapi.FormatMismatch || agentapi.Failure(err) == agentapi.Unavailable) {
+		if selection.leaf == nil && p.env.CodexRollouts == nil && !agentapi.HasFailure(err, agentapi.Cleanup) && (agentapi.Failure(err) == agentapi.FormatMismatch || agentapi.Failure(err) == agentapi.Unavailable) {
 			return p.legacy.Signature(ctx, ref)
 		}
 		return agentapi.SourceObservation{}, err
@@ -413,7 +413,7 @@ func (p *relatedSourcePass) Read(ctx context.Context, ref agentapi.SourceRef, li
 	fail := func(err error) (agentapi.SourceSnapshot, error) { return nil, errors.Join(err, p.evict()) }
 	selection, err := p.selectSource(ctx, ref)
 	if err != nil {
-		if p.env.CodexRollouts == nil && !agentapi.HasFailure(err, agentapi.Cleanup) && (agentapi.Failure(err) == agentapi.FormatMismatch || agentapi.Failure(err) == agentapi.Unavailable) {
+		if selection.leaf == nil && p.env.CodexRollouts == nil && !agentapi.HasFailure(err, agentapi.Cleanup) && (agentapi.Failure(err) == agentapi.FormatMismatch || agentapi.Failure(err) == agentapi.Unavailable) {
 			return p.legacy.Read(ctx, ref, limits)
 		}
 		return fail(err)
