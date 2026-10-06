@@ -1,6 +1,7 @@
 package nativecodec
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -118,6 +119,7 @@ func TestCodexOpenPageContextIsNotAPromptFallback(t *testing.T) {
 		{"quoted markup", "Why does `<external_codex_apps_open_page>...</external_codex_apps_open_page>` appear?", "Why does `<external_codex_apps_open_page>...</external_codex_apps_open_page>` appear?"},
 		{"indented code", "    <external_codex_apps_open_page>example</external_codex_apps_open_page>", "<external_codex_apps_open_page>example</external_codex_apps_open_page>"},
 		{"indented suffix", "<external_codex_apps_open_page>Context</external_codex_apps_open_page>\n    <external_codex_apps_open_page>example</external_codex_apps_open_page>", "<external_codex_apps_open_page>example</external_codex_apps_open_page>"},
+		{"indented example with other injected context", "    <external_codex_apps_open_page>example</external_codex_apps_open_page>\n<system-reminder>Injected</system-reminder>", "<external_codex_apps_open_page>example</external_codex_apps_open_page>"},
 		{"ordinary example", "Explain external_codex_apps_open_page with examples.", "Explain external_codex_apps_open_page with examples."},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -126,6 +128,11 @@ func TestCodexOpenPageContextIsNotAPromptFallback(t *testing.T) {
 			filtered, err := (CodexAdapter{}).FilterJSONL(strings.NewReader(string(record)))
 			if err != nil {
 				t.Fatal(err)
+			}
+			retained := bytes.Join(filtered.Records, []byte("\n"))
+			refiltered, err := (CodexAdapter{}).FilterJSONL(bytes.NewReader(retained))
+			if err != nil || !bytes.Equal(retained, bytes.Join(refiltered.Records, []byte("\n"))) {
+				t.Fatalf("filter did not preserve its output: %v", err)
 			}
 			bundle := parserTestBundle(t, "codex", CodexAdapter{}, filtered)
 			analysis, err := ParseCodex(context.Background(), bundle)

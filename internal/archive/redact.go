@@ -56,6 +56,17 @@ func stripInjectedInstructions(value string) (bool, string) {
 		}
 		safe = leading[end:]
 	}
+	if changed {
+		// Keep Markdown indentation through repeated sanitization passes.
+		// Removing a separate injected block must not turn a code example
+		// into a leading native context wrapper on the next pass.
+		line := strings.TrimLeft(safe, "\r\n")
+		if strings.HasPrefix(line, "    ") || strings.HasPrefix(line, "\t") {
+			safe = strings.TrimRight(safe, " \t\r\n")
+		} else {
+			safe = strings.TrimSpace(safe)
+		}
+	}
 	return changed, safe
 }
 
@@ -77,7 +88,7 @@ func stripKnownInjectedInstructions(value string) (bool, string) {
 		loc = injectedInstructionOpen.FindStringSubmatchIndex(rest)
 	}
 	out.WriteString(rest)
-	return true, strings.TrimSpace(out.String())
+	return true, out.String()
 }
 
 // injectedInstructionEnd returns the index just past the closing tag which

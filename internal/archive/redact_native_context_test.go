@@ -18,6 +18,7 @@ func TestOpenPageContextStrippingPreservesHumanText(t *testing.T) {
 		{"    <external_codex_apps_open_page>example</external_codex_apps_open_page>", "    <external_codex_apps_open_page>example</external_codex_apps_open_page>"},
 		{"<external_codex_apps_open_page>Context</external_codex_apps_open_page>\n    <external_codex_apps_open_page>example</external_codex_apps_open_page>", "\n    <external_codex_apps_open_page>example</external_codex_apps_open_page>"},
 		{"\t<external_codex_apps_open_page>example</external_codex_apps_open_page>", "\t<external_codex_apps_open_page>example</external_codex_apps_open_page>"},
+		{"    <external_codex_apps_open_page>example</external_codex_apps_open_page>\n<system-reminder>Injected</system-reminder>", "    <external_codex_apps_open_page>example</external_codex_apps_open_page>"},
 		{"Explain external_codex_apps_open_page in an example.", "Explain external_codex_apps_open_page in an example."},
 	} {
 		_, got := stripInjectedInstructions(tc.input)
