@@ -1469,7 +1469,7 @@ func promptR2Location(p *prompter, cfg *credentials.Config) (fromURL bool, err e
 				_, e = credentials.R2Endpoint(loc.Endpoint, loc.AccountID)
 			}
 			if e != nil {
-				return fmt.Errorf("That isn't an R2 account ID or bucket URL (%v). Paste the Account ID or a URL for only the bucket.", e)
+				return fmt.Errorf("That isn't an R2 account ID or bucket URL (%w). Paste the Account ID or a URL for only the bucket.", e)
 			}
 			return nil
 		}})
@@ -1765,13 +1765,9 @@ func lastUsed(at, now time.Time) string {
 	return fmt.Sprintf("%d days ago", days)
 }
 
-// knownProjectsOnce returns a function listing the projects the apps'
-// session history mentions that a configuration does not, most recent
-// first (backfill.KnownProjects). A scan reads every transcript's first
-// records, so it is kept for the rest of the run and repeated only for
-// another set of projects, which changes how sessions resolve. It is only an
-// offer, so a failure or a slow disk leaves the list empty, and that is kept
-// too.
+// knownProjectsOnce reuses bounded first-record evidence and coverage within a
+// setup run. Apps, source roots, and project rules form the cache key; explicit
+// Retry invalidates it. Partial usable roots remain available for consent.
 func knownProjectsOnce(env Env, userHome string, searches ...*setupProjectSearch) func(config.Config) []backfill.KnownProject {
 	search := &setupProjectSearch{env: env, home: userHome}
 	if len(searches) > 0 {

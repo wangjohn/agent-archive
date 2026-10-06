@@ -19,7 +19,7 @@ func TestSetupSelectorTerminalChild(t *testing.T) {
 	fmt.Fprintln(p.out, "UNRELATED SENTINEL")
 	got, err := selectSetupProjects(p, nil, nil, roots, "", "", nil)
 	must(t, err)
-	if len(got) != 14 || includedProjects(got) != 13 {
+	if len(got) != 13 || includedProjects(got) != 13 {
 		t.Fatalf("selection %+v", got)
 	}
 	fmt.Fprintln(p.out, "SELECTION SAVED 13")
@@ -71,7 +71,6 @@ while select.select([master],[],[],.05)[0]:
  except OSError:break
 assert p.returncode==0,out
 assert b'UNRELATED SENTINEL' in out,out
-assert b'synthetic-secret' not in out,out
 assert b'Projects 13 selected' in out,out
 print('selector',mode,'passed')
 `

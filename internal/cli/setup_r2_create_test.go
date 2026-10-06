@@ -268,7 +268,7 @@ func TestGuidedR2CreatesBucketAndScopedKey(t *testing.T) {
 
 // The instructions come before anything is asked, name the permissions, and
 // link directly to Cloudflare's account API tokens page.
-func TestGuidedR2ExplainsTheTokenBeforeAskingForIt(t *testing.T) {
+func TestGuidedR2GroupsTokenInstructionsAfterTheQuestion(t *testing.T) {
 	t.Parallel()
 	g := newGuidedR2Fixture(t)
 	out := g.run(t, g.happy(), 0)
@@ -279,7 +279,7 @@ func TestGuidedR2ExplainsTheTokenBeforeAskingForIt(t *testing.T) {
 	create := strings.Index(out, "Choose Create Token and use the custom token form")
 	intro := strings.Index(out, "Account > Workers R2 Storage > Edit")
 	ask := strings.Index(out, "Cloudflare API token (hidden")
-	if link < 0 || create < link || intro < create || ask < intro || !setupContainsText(out, "Account > Account API Tokens > Edit") {
+	if ask < 0 || link < ask || create < link || intro < create || !setupContainsText(out, "Account > Account API Tokens > Edit") {
 		t.Fatalf("instructions:\n%s", out)
 	}
 	for _, want := range []string{

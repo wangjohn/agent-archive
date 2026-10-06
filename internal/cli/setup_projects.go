@@ -214,27 +214,9 @@ func selectSetupProjects(p *prompter, result, existing []archive.ProjectActivati
 			page--
 			continue
 		case "all":
-			for i := range candidates {
-				candidates[i].selected = true
-			}
-			{
-				added := 0
-				for _, c := range candidates {
-					found := false
-					for _, old := range existing {
-						if local.CanonicalPath(old.Root) == c.evidence.Root && old.Included {
-							found = true
-						}
-					}
-					if !found {
-						added++
-					}
-				}
-				if len(existing) > 0 && added > 0 {
-					p.note(fmt.Sprintf("All adds or re-enables %d projects; review the expanded capture scope before saving.", added))
-				}
-				return applyProjectCandidates(candidates, existing, backfilled), nil
-			}
+			includeAllSetupProjects(p, candidates, existing)
+			return applyProjectCandidates(candidates, existing, backfilled), nil
+
 		}
 		return chooseSpecificSetupProjects(p, &candidates, existing, current, home, backfilled, &page, incomplete, refresh, addPath, validate)
 
@@ -424,5 +406,24 @@ func chooseSpecificSetupProjects(p *prompter, candidates *[]setupProjectCandidat
 				(*candidates)[n-1].selected = !(*candidates)[n-1].selected
 			}
 		}
+	}
+}
+
+func includeAllSetupProjects(p *prompter, candidates []setupProjectCandidate, existing []archive.ProjectActivation) {
+	included := map[string]bool{}
+	for _, rule := range existing {
+		if rule.Included {
+			included[local.CanonicalPath(rule.Root)] = true
+		}
+	}
+	added := 0
+	for i := range candidates {
+		candidates[i].selected = true
+		if !included[candidates[i].evidence.Root] {
+			added++
+		}
+	}
+	if len(existing) > 0 && added > 0 {
+		p.note(fmt.Sprintf("All adds or re-enables %d projects; review the expanded capture scope before saving.", added))
 	}
 }
