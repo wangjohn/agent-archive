@@ -218,7 +218,8 @@ Guide: [Multiple machines](../guides/multiple-machines.md).
 Usage: agent-archive machines [--json] [--verify] [--yes]
        agent-archive machines add [options]
 
-List or add machine records for this bucket. Records are informational and do not prove identity, current activity, or access removal.
+List or add machine records for this bucket. Records are informational and do
+not prove identity, current activity, or access removal.
 
 Pair another machine:
   agent-archive machines add    On this machine
