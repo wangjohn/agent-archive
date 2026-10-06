@@ -4,6 +4,11 @@ import (
 	"context"
 	"errors"
 	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -106,5 +111,80 @@ func TestGenerationPreviewCancellationAndInitialPressureRelease(t *testing.T) {
 	closePreview()
 	if used, _ := budget.Charged(); used != 0 {
 		t.Fatal("error cleanup leaked", used)
+	}
+}
+
+func TestRunGenerationReplayUsesSharedBudgetBeforeStartupRead(t *testing.T) {
+	s := newTestStore(t)
+	dir := filepath.Join(s.Home(), "generation-recovery")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "previous.json")
+	raw := []byte(`{"version":1,"key":{"Agent":"codex","NativeID":"synthetic"},"previous":"previous","next":"next","complete":true}`)
+	if err := os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	budget := agentapi.NewNativeReadBudget(128 << 20)
+	pressure := budget.Available()
+	if !budget.Reserve(pressure) {
+		t.Fatal("pressure")
+	}
+	opts := Options{MachineID: "machine", Sources: testSources, Parsers: testParsers, SkipSessionIndexRecovery: true, CodexRollouts: recoveryBudgetLookup{budget: budget}}
+	result, err := Run(t.Context(), s, storagetest.NewMemoryStore(), opts)
+	if err != nil || !errors.Is(result.Errors["generation-recovery"], agentapi.ErrReadBudget) {
+		t.Fatal("scheduled replay bypassed shared pressure", result.Errors, err)
+	}
+	budget.Release(pressure)
+	if used, _ := budget.Charged(); used != 0 {
+		t.Fatal("replay refusal leaked", used)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil || string(after) != string(raw) {
+		t.Fatal("refusal changed receipt", err)
+	}
+	if _, err := Run(t.Context(), s, storagetest.NewMemoryStore(), opts); err != nil {
+		t.Fatal("replay could not retry", err)
+	}
+	if used, _ := budget.Charged(); used != 0 {
+		t.Fatal("successful replay leaked", used)
+	}
+}
+
+func TestRunGenerationPressurePreservesJournalAndCapturesUnrelatedSource(t *testing.T) {
+	s := newTestStore(t)
+	dir := filepath.Join(s.Home(), "generation-recovery")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "pressure.json")
+	raw := []byte(`{"version":1,"key":{"Agent":"codex","NativeID":"synthetic"},"previous":"pressure","next":"next","complete":true,"padding":"` + strings.Repeat("x", 3<<20) + `"}`)
+	if err := os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	transcript := writeTranscript(t, t.TempDir(), "claude.jsonl", `{"type":"user","sessionId":"native-1","message":{"role":"user","content":"synthetic task"}}
+{"type":"assistant","sessionId":"native-1","message":{"role":"assistant","content":[{"type":"text","text":"synthetic answer"}]}}
+`)
+	reg := registration(t, transcript)
+	reg.Harness = archive.Harness{Name: "claude"}
+	if err := s.SaveRegistration(reg); err != nil {
+		t.Fatal(err)
+	}
+	budget := agentapi.NewNativeReadBudget(4 << 20)
+	opts := Options{MachineID: "machine", Sources: testSources, Parsers: testParsers, SkipSessionIndexRecovery: true, CodexRollouts: recoveryBudgetLookup{budget: budget}}
+	remote := storagetest.NewMemoryStore()
+	result, err := Run(t.Context(), s, remote, opts)
+	if err != nil || !errors.Is(result.Errors["generation-recovery"], agentapi.ErrReadBudget) {
+		t.Fatal("pressure was hidden", result, err)
+	}
+	if len(result.Published) != 1 || result.Published[0] != reg.ArchiveSessionID {
+		t.Fatal("pending generation starved independent capture", result)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil || string(after) != string(raw) {
+		t.Fatal("pressure changed journal", err)
+	}
+	if used, _ := budget.Charged(); used != 0 {
+		t.Fatal("pass leaked", used)
 	}
 }

@@ -222,3 +222,12 @@ retain their shared lease through confirmation; cleanup returns it on refusal,
 cancellation, error or completion. Confirmation charges full recovery-journal
 reads and encoding, and validates canonical source bytes by streaming their
 checksum rather than retaining another compressed source.
+
+Scheduled startup replays generation journals under the shared logical ledger,
+using a bounded local fallback before a native lookup exists. Each journal's
+initial view ends before its locked reread, and completed receipts release their
+input before the next journal. Resource refusal preserves that journal and
+reports pending recovery while smaller journals and unrelated captures continue.
+Malformed schemas and caller cancellation still stop recovery. Lookup revision
+digests reserve both encoded owners; a refused digest leaves the requested
+coverage attempt undelivered for retry.

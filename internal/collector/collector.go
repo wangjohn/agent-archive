@@ -212,8 +212,11 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	if opts.MachineID == "" {
 		return Result{}, errors.New("machine ID is required")
 	}
-	if err := local.ResumeGenerationRecoveries(ctx); err != nil {
-		return Result{}, err
+	recoveryLocal, closeRecovery := local.WithReadBudget(ctx, (&sessionScan{opts: opts}).readBudget())
+	generationRecoveryErr := recoveryLocal.ResumeGenerationRecoveries(ctx)
+	if generationRecoveryErr != nil && (!errors.Is(generationRecoveryErr, agentapi.ErrReadBudget) || errors.Is(generationRecoveryErr, context.Canceled) || errors.Is(generationRecoveryErr, context.DeadlineExceeded)) {
+		closeRecovery()
+		return Result{}, generationRecoveryErr
 	}
 	opts.parserCache = make(map[string]agentapi.TranscriptParser)
 	now := opts.now()
@@ -221,8 +224,9 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	// user's turn before scanning registrations for this pass.
 	var recoveryErr error
 	if ctx.Err() == nil && !opts.SkipSessionIndexRecovery {
-		_, recoveryErr = local.RecoverSessionIndexScheduled(ctx, state.SessionIndexRecoverySlice)
+		_, recoveryErr = recoveryLocal.RecoverSessionIndexScheduled(ctx, state.SessionIndexRecoverySlice)
 	}
+	closeRecovery()
 	if state.SessionIndexRecoveryInterrupted(recoveryErr) {
 		recoveryErr = nil
 	}
@@ -246,6 +250,9 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 		now:              now,
 		result:           Result{Errors: subagents.errors, WaitingSubagents: subagents.waiting, RejectedSubagents: subagents.rejected},
 		expiredSubagents: subagents.expired,
+	}
+	if generationRecoveryErr != nil {
+		p.result.Errors["generation-recovery"] = generationRecoveryErr
 	}
 	if recoveryErr != nil {
 		p.result.Errors["session-index"] = recoveryErr
