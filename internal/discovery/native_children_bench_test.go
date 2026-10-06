@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agents/builtin"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/state"
@@ -12,8 +13,11 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strconv"
 	"strings"
+	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -52,16 +56,39 @@ func BenchmarkNativeChildInitialAdmission(b *testing.B) {
 				}
 				nativeBytes := raw.Len()
 				raw.Reset()
-				options := Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(2 * time.Minute) }}
+				resources := &childBenchmarkResources{SourcesLookup: builtin.NewBuiltins()}
+				options := Options{Sources: resources, Now: func() time.Time { return at.Add(2 * time.Minute) }}
 				decodes := state.PublishedStateLoads()
+				runtime.GC()
+				var memoryBefore runtime.MemStats
+				runtime.ReadMemStats(&memoryBefore)
+				stopMemory := childBenchmarkMemory()
 				b.StartTimer()
 				health, err := runWithCensus(context.Background(), store, cfg, options, registeredAdapters())
 				if err != nil || health.Registered != 1 {
 					b.Fatalf("initial admission count=%d health=%+v err=%v", count, health, err)
 				}
 				cloud := storagetest.NewMemoryStore()
-				published, publishErr := collector.Run(context.Background(), store, cloud, collector.Options{Sources: builtin.NewBuiltins(), Parsers: builtin.NewBuiltins(), MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: options.Now})
+				published, publishErr := collector.Run(context.Background(), store, cloud, collector.Options{Sources: resources, Parsers: builtin.NewBuiltins(), MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: options.Now})
 				b.StopTimer()
+				peakHeap := stopMemory()
+				var memoryAfter runtime.MemStats
+				runtime.ReadMemStats(&memoryAfter)
+				b.ReportMetric(float64(peakHeap), "sampled-live-heap-bytes")
+				b.ReportMetric(float64(memoryAfter.TotalAlloc-memoryBefore.TotalAlloc), "operation-allocated-bytes")
+				var usage syscall.Rusage
+				if syscall.Getrusage(syscall.RUSAGE_SELF, &usage) == nil {
+					rss := usage.Maxrss
+					if runtime.GOOS == "linux" {
+						rss *= 1024
+					}
+					b.ReportMetric(float64(rss), "process-maxrss-bytes")
+				}
+				used, peak := resources.charged()
+				b.ReportMetric(float64(peak), "publication-charged-peak-bytes")
+				if used != 0 || peak > 128<<20 {
+					b.Fatalf("resource ownership leak/refusal: used=%d peak=%d", used, peak)
+				}
 				if publishErr != nil || len(published.Published) != 1 || len(published.Errors) != 0 {
 					b.Fatalf("publication count=%d result=%+v err=%v", count, published, publishErr)
 				}
@@ -79,7 +106,7 @@ func BenchmarkNativeChildInitialAdmission(b *testing.B) {
 					b.Fatal(err)
 				}
 				settledStart := time.Now()
-				settled, err := collector.Run(context.Background(), reopened, cloud, collector.Options{Sources: builtin.NewBuiltins(), Parsers: builtin.NewBuiltins(), MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: options.Now})
+				settled, err := collector.Run(context.Background(), reopened, cloud, collector.Options{Sources: resources, Parsers: builtin.NewBuiltins(), MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: options.Now})
 				b.ReportMetric(float64(time.Since(settledStart).Nanoseconds()), "settled-ns")
 				fullLoads := state.PublishedStateLoads() - settledLoads
 				b.ReportMetric(float64(fullLoads), "settled-full-decodes")
@@ -116,4 +143,67 @@ func childBenchmarkState(b *testing.B, home string) map[string]int64 {
 		}
 	}
 	return out
+}
+
+// This observer records the production pass ledger without replacing provider logic.
+type childBenchmarkResources struct {
+	agentapi.SourcesLookup
+	budgets []*agentapi.NativeReadBudget
+}
+
+func (s *childBenchmarkResources) LookupSources(name string) (agentapi.SourceProvider, agentapi.TranscriptFilter, bool) {
+	provider, filter, ok := s.SourcesLookup.LookupSources(name)
+	return childBenchmarkProvider{SourceProvider: provider, owner: s}, filter, ok
+}
+
+type childBenchmarkProvider struct {
+	agentapi.SourceProvider
+	owner *childBenchmarkResources
+}
+
+func (p childBenchmarkProvider) OpenPass(ctx context.Context, e agentapi.SourceEnvironment) (agentapi.SourcePass, error) {
+	if e.ReadBudget != nil {
+		p.owner.budgets = append(p.owner.budgets, e.ReadBudget)
+	}
+	return p.SourceProvider.OpenPass(ctx, e)
+}
+func (s *childBenchmarkResources) charged() (used, peak int64) {
+	seen := map[*agentapi.NativeReadBudget]bool{}
+	for _, budget := range s.budgets {
+		if !seen[budget] {
+			seen[budget] = true
+			u, p := budget.Charged()
+			used += u
+			peak = max(peak, p)
+		}
+	}
+	return used, peak
+}
+func childBenchmarkMemory() func() uint64 {
+	stop, done := make(chan struct{}), make(chan struct{})
+	var mu sync.Mutex
+	var peak uint64
+	sample := func() {
+		var m runtime.MemStats
+		runtime.ReadMemStats(&m)
+		mu.Lock()
+		peak = max(peak, m.HeapAlloc)
+		mu.Unlock()
+	}
+	sample()
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				sample()
+			case <-stop:
+				sample()
+				return
+			}
+		}
+	}()
+	return func() uint64 { close(stop); <-done; mu.Lock(); defer mu.Unlock(); return peak }
 }
