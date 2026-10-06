@@ -497,6 +497,7 @@ func (p *Published) SavePublication(bundle archive.SourceBundle, publishedAt tim
 		return errors.New("at most one committed source-set journal is permitted")
 	}
 	next := p.state.next(bundle, publishedAt, CacheStatusPublished, "", metadata, nil, &source)
+	next.PredecessorUnknown = false
 	if len(committed) == 1 {
 		pending := committed[0]
 		if pending.SourceReference() != source || !bytes.Equal(pending.MetadataBytes, metadata) || !reflect.DeepEqual(bundle, pending.Bundle) {
@@ -595,6 +596,10 @@ func (p *Published) SaveRepublishedMetadata(pending PendingPublication, at time.
 	next := p.state
 	next.MetadataBytes = pending.MetadataBytes
 	next.PublishedAt = at
+	// A legacy acknowledged publication replaces the old seal, not just its body.
+	// Its complete references remain readable from the exact cached metadata.
+	next.Commit, next.Sources = nil, nil
+	next.PredecessorUnknown = false
 	source := pending.SourceReference()
 	if next.Status == CacheStatusPublished {
 		// The current bundle is the republished one, so the snapshot shares it.
