@@ -97,12 +97,6 @@ func (s *sessionScan) recoverHistoryStages(p state.PendingPublication) error {
 	return nil
 }
 
-func decodeHistoryStage(ctx context.Context, metadata archive.Metadata, p state.PendingPublication, ref archive.SourceReference, raw []byte) (archive.SourceBundle, error) {
-	scan := &sessionScan{ctx: ctx}
-	defer scan.releaseRetained()
-	return scan.decodeHistoryStage(metadata, p, ref, raw)
-}
-
 func (s *sessionScan) decodeHistoryStage(metadata archive.Metadata, p state.PendingPublication, ref archive.SourceReference, raw []byte) (archive.SourceBundle, error) {
 	if _, err := metadata.SourceReferences(); err != nil {
 		return archive.SourceBundle{}, err
