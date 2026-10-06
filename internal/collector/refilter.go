@@ -105,7 +105,11 @@ func refilterBundleBounded(ctx context.Context, reg archive.SessionRegistration,
 	if err := refiltered.ValidateHistory(); err != nil {
 		return archive.SourceBundle{}, err
 	}
-	refiltered.Capture.Gaps = mergeCaptureGaps(bundle.Capture.Gaps, refiltered.Capture.Gaps)
+	originalGaps := bundle.Capture.Gaps
+	if nativeParentResolved(reg, bundle) {
+		originalGaps = withoutNativeParentPendingGap(originalGaps)
+	}
+	refiltered.Capture.Gaps = mergeCaptureGaps(originalGaps, refiltered.Capture.Gaps)
 	return refiltered, nil
 }
 
@@ -180,4 +184,9 @@ func (s *sessionScan) refilterRewritten(_ context.Context, read sourceRead, snap
 // parent remains a conflict.
 func retainedParentMatches(reg archive.SessionRegistration, bundle archive.SourceBundle) bool {
 	return bundle.ParentSessionID == reg.ParentSessionID || reg.NativeChild && bundle.NativeChild && bundle.ParentSessionID == ""
+}
+
+// Only positively identified native child evidence can acquire its first archive parent.
+func nativeParentResolved(reg archive.SessionRegistration, bundle archive.SourceBundle) bool {
+	return reg.NativeChild && bundle.NativeChild && bundle.ParentSessionID == "" && reg.ParentSessionID != ""
 }

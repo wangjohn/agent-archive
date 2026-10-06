@@ -130,3 +130,20 @@ func TestNativeParentRepairDoesNotHideOwnEvidenceOrConflictingLinks(t *testing.T
 		t.Fatal("ownership change hidden", err)
 	}
 }
+
+func TestNativeFrozenParentConflictPreservesJournal(t *testing.T) {
+	scan, p := privacyJournal(t)
+	scan.reg.NativeChild, scan.reg.ParentSessionID = true, "conflicting-parent"
+	p.Bundle.NativeChild, p.Bundle.ParentSessionID = true, "original-parent"
+	var metadata archive.Metadata
+	if err := json.Unmarshal(p.MetadataBytes, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	before := snapshotMtimes(t, scan.local.Home())
+	if err := scan.prepareHistoryInput(&p, &metadata, p.History.Inputs[0]); err == nil {
+		t.Fatal("different known frozen native parent accepted")
+	}
+	if !reflect.DeepEqual(before, snapshotMtimes(t, scan.local.Home())) {
+		t.Fatal("conflicting frozen parent changed journal or stages")
+	}
+}

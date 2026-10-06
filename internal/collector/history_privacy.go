@@ -298,7 +298,11 @@ func (s *sessionScan) prepareRetainedHistoryWork() (sessionOutcome, bool, error)
 	if err != nil {
 		return outcomeSkipped, true, err
 	}
-	needed := bundle.Capture.FilterVersion != archive.FilterVersion || bundle.Capture.AdapterVersion != adapter.Version() || !sourceEvidenceWithinPolicy(bundle.SupplementalEvidence, s.opts.skillEvidence()) || authority.Parser.Version != s.parserVersion() || s.reg.CaptureFrozen && s.req.Token != "" || headFingerprint(s.reg.LastHead) != s.publishedLastHead()
+	// A newly resolved native parent changes every retained source header. Reuse
+	// sequential maintenance against the original authority before native
+	// reconciliation can combine old-parent inputs with a new-parent sidecar.
+	parentResolved := nativeParentResolved(s.reg, bundle)
+	needed := parentResolved || bundle.Capture.FilterVersion != archive.FilterVersion || bundle.Capture.AdapterVersion != adapter.Version() || !sourceEvidenceWithinPolicy(bundle.SupplementalEvidence, s.opts.skillEvidence()) || authority.Parser.Version != s.parserVersion() || s.reg.CaptureFrozen && s.req.Token != "" || headFingerprint(s.reg.LastHead) != s.publishedLastHead()
 	for _, revision := range authority.History.Preserved {
 		needed = needed || revision.FilterVersion != archive.FilterVersion
 	}
@@ -422,6 +426,12 @@ func (s *sessionScan) freezeRetainedMaintenance(authority archive.Metadata, bund
 		}
 	}
 	bundle.SupplementalEvidence = mergeSupplementalEvidence(bundle.SupplementalEvidence, observations)
+	// Freeze the target relationship in the existing output envelope; inputs
+	// retain their original authority until every header has been prepared.
+	if nativeParentResolved(s.reg, bundle) {
+		bundle.ParentSessionID = s.reg.ParentSessionID
+		bundle.Capture.Gaps = withoutNativeParentPendingGap(bundle.Capture.Gaps)
+	}
 	// Live requests still owe native reads; frozen requests cover retained observations.
 	requestToken := ""
 	if s.reg.CaptureFrozen {

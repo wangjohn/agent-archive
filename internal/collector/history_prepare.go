@@ -168,6 +168,15 @@ func (s *sessionScan) derivePreparedHistory(p *state.PendingPublication, metadat
 }
 
 func (s *sessionScan) prepareHistoryInput(p *state.PendingPublication, metadata *archive.Metadata, input state.HistoryInput) error {
+	// An in-flight journal keeps one parent target across all preparation slices.
+	// A later link remains requested and is applied by a complete successor.
+	reg := s.reg
+	if reg.NativeChild && p.Bundle.NativeChild {
+		if reg.ParentSessionID != "" && p.Bundle.ParentSessionID != "" && reg.ParentSessionID != p.Bundle.ParentSessionID {
+			return errors.New("frozen native child parent conflicts")
+		}
+		reg.ParentSessionID = p.Bundle.ParentSessionID
+	}
 	adapter, err := sourceAdapter(s.opts.Sources, s.reg.Harness.Name)
 	if err != nil {
 		return err
@@ -187,9 +196,9 @@ func (s *sessionScan) prepareHistoryInput(p *state.PendingPublication, metadata 
 		observationsChanged = !same
 		bundle.SupplementalEvidence = observations
 	}
-	if observationsChanged || bundle.Capture.FilterVersion != archive.FilterVersion || bundle.Capture.AdapterVersion != adapter.Version() || !sourceEvidenceWithinPolicy(bundle.SupplementalEvidence, s.opts.skillEvidence()) {
+	if nativeParentResolved(reg, bundle) || observationsChanged || bundle.Capture.FilterVersion != archive.FilterVersion || bundle.Capture.AdapterVersion != adapter.Version() || !sourceEvidenceWithinPolicy(bundle.SupplementalEvidence, s.opts.skillEvidence()) {
 		bundle.SupplementalEvidence = limitSkillEvidence(bundle.SupplementalEvidence, s.opts.skillEvidence())
-		filtered, err := s.refilterRetained(adapter, bundle)
+		filtered, err := s.refilterRetainedFor(reg, adapter, bundle)
 		if err != nil {
 			return fmt.Errorf("filter preserved revision: %w", err)
 		}
