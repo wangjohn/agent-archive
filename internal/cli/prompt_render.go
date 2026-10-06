@@ -265,7 +265,7 @@ func (r *promptRenderer) resolve(region ownedPromptRegion, mark, receipt, echoed
 		// ReadString includes the newline; it moves the cursor to the next row.
 		rows += lineRows(strings.Repeat(" ", region.cursorColumns)+strings.TrimSuffix(echoed, "\n"), region.caps.Width) - lineRows(strings.Repeat(" ", region.cursorColumns), region.caps.Width)
 	}
-	safe := (secret || strings.HasSuffix(echoed, "\n")) && !strings.ContainsAny(echoed, "\r\x1b\t") && !ambiguousPromptWidth(echoed) && region.valid && c.Redraw && c.Width == region.caps.Width && c.Height == region.caps.Height && rows < c.Height && r.epoch.Load() == region.epoch && r.suspended == 0 && r.writer.generation.Load() == region.generation && !region.inputAlreadyEchoed && !typedAhead && !interrupted
+	safe := (secret || strings.HasSuffix(echoed, "\n")) && strings.IndexFunc(strings.TrimSuffix(echoed, "\n"), unicode.IsControl) < 0 && !ambiguousPromptWidth(echoed) && region.valid && c.Redraw && c.Width == region.caps.Width && c.Height == region.caps.Height && rows < c.Height && r.epoch.Load() == region.epoch && r.suspended == 0 && r.writer.generation.Load() == region.generation && !region.inputAlreadyEchoed && !typedAhead && !interrupted
 	// Hidden input has no echoed newline; redirected streams have no echo at all.
 	if secret || !region.caps.SharedTerminal || region.inputAlreadyEchoed {
 		terminal.Println(r.writer)
