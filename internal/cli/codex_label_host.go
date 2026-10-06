@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
-	"github.com/wangjohn/agent-archive/internal/agents/codex"
 	"github.com/wangjohn/agent-archive/internal/config"
 )
 
@@ -184,9 +183,15 @@ func (w *labelDiscard) Write(p []byte) (int, error) {
 }
 
 func (e Env) labelEnvironment(cfg config.Config, homes []string) agentapi.LabelEnvironment {
-	mode, contract := agentapi.LabelLookupFiles, codex.LabelContract
+	mode := agentapi.LabelLookupFiles
 	if cfg.CodexNameLookup == config.CodexNameLookupNative {
-		mode, contract = agentapi.LabelLookupNative, codex.LabelAPIContract
+		mode = agentapi.LabelLookupNative
+	}
+	contract := ""
+	if provider, ok := e.labelProviders(cfg).LookupLabels("codex"); ok {
+		if builder, ok := provider.(agentapi.LabelContextProvider); ok {
+			contract = builder.LabelContextVersion()
+		}
 	}
 	return agentapi.LabelEnvironment{Mode: mode, ProviderContract: contract, Homes: homes, ExternalSQLite: e.getenv("CODEX_SQLITE_HOME") != ""}
 }
