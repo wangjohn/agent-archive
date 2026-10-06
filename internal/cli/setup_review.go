@@ -1,8 +1,12 @@
 package cli
 
 import (
+	"bytes"
+	"context"
 	"fmt"
 	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"io"
+	"slices"
 	"strings"
 	"time"
 
@@ -92,6 +96,13 @@ func reviewRows(cfg config.Config, discoveries map[string]applicationDiscovery, 
 	if cfg.MachineAssignment != nil && cfg.MachineAssignment.Kind == config.MachineAssignmentR2Own {
 		rows = append(rows, reviewRow{label: "R2 keys", values: []string{fmt.Sprintf("Own dedicated key · %d unused spares (target %d)", len(cfg.SpareCredentialRefs), cfg.SpareTarget())}})
 	}
+	machine := cfg.MachineID
+	if cfg.MachineName != "" {
+		machine = cfg.MachineName + " · " + machine
+	}
+	if machine != "" {
+		rows = append(rows, reviewRow{label: "Machine", values: []string{machine}})
+	}
 	days := fmt.Sprintf("%d days", cfg.RetentionDays)
 	if cfg.RetentionDays == 1 {
 		days = "1 day"
@@ -144,22 +155,66 @@ func reviewDiscoveries(discoveries map[string]applicationDiscovery, detected []s
 // which blocks starting. When reconfiguring, a value that differs from the
 // active configuration is marked, with the old value beneath it, so only
 // those lines need checking.
-func showSetupReview(p *prompter, cfg config.Config, review setupReview) (blocked bool) {
-	title := "Ready to start"
+type setupReviewModel struct {
+	implications string
+	rows         []reviewRow
+	before       map[string]reviewRow
+	changed      map[string]bool
+	checks       []reviewCheck
+	cfg          config.Config
+	review       setupReview
+}
+
+func buildSetupReviewModel(cfg config.Config, review setupReview, at time.Time) *setupReviewModel {
+	m := &setupReviewModel{cfg: cfg, review: review, before: map[string]reviewRow{}, changed: map[string]bool{}}
+	showSessions := cfg.RequireSkillUse || review.reconfiguring && review.existing.RequireSkillUse
+	m.rows = reviewRows(cfg, review.discoveries, showSessions, review.userHome)
 	if review.reconfiguring {
-		title = "Review your changes"
+		for _, row := range reviewRows(review.existing, review.discoveries, showSessions, review.userHome) {
+			m.before[row.label] = row
+		}
 	}
-	p.step(3, title)
-	changed := printReviewRows(p, cfg, review)
-	if review.reconfiguring && changed == 0 {
-		terminal.Println(p.out, p.style.dim("\n  Nothing above differs from your current settings."))
-	} else if review.reconfiguring {
-		terminal.Println(p.out, p.style.dim("\n  * changed from your current settings"))
+	var exclusions []string
+	for _, rule := range cfg.Archive.Projects {
+		if !rule.Included {
+			exclusions = append(exclusions, displayPath(rule.Root, review.userHome))
+		}
 	}
-	terminal.Println(p.out, "")
-	checks := reviewChecklist(cfg, review, p.clock())
-	printReviewChecklist(p, checks)
-	for _, check := range checks {
+	if len(exclusions) > 0 {
+		m.rows = append(m.rows, reviewRow{label: "Excluded", values: exclusions, detail: "Nearest explicit project rule wins"})
+	}
+	var oldExclusions []string
+	for _, rule := range review.existing.Archive.Projects {
+		if !rule.Included {
+			oldExclusions = append(oldExclusions, displayPath(rule.Root, review.userHome))
+		}
+	}
+	if len(oldExclusions) > 0 {
+		m.before["Excluded"] = reviewRow{label: "Excluded", values: oldExclusions, detail: "Nearest explicit project rule wins"}
+		if len(exclusions) == 0 {
+			m.rows = append(m.rows, reviewRow{label: "Excluded", values: []string{"none"}})
+		}
+	}
+	for _, row := range m.rows {
+		m.changed[row.label] = review.reconfiguring && m.before[row.label].text() != row.text()
+	}
+	var sources []string
+	for _, app := range cfg.Harnesses {
+		if path := review.hookFiles[app]; path != "" {
+			sources = append(sources, appName(app)+": "+displayPath(path, review.userHome))
+		}
+	}
+	if len(sources) > 0 {
+		m.rows = append(m.rows, reviewRow{label: "Hook files", values: sources})
+	}
+	m.checks = reviewChecklist(cfg, review, at)
+	return m
+}
+
+func showSetupReview(p *prompter, cfg config.Config, review setupReview) (blocked bool) {
+	p.reviewModel = buildSetupReviewModel(cfg, review, p.clock())
+	renderSetupReview(p, p.reviewModel, false)
+	for _, check := range p.reviewModel.checks {
 		if check.mark == symbolFail {
 			blocked = true
 		}
@@ -167,26 +222,105 @@ func showSetupReview(p *prompter, cfg config.Config, review setupReview) (blocke
 	return blocked
 }
 
-// printReviewRows prints the summary rows and returns how many changed.
-// Only the change mark is colored; a label is dim, as is the old value.
-func printReviewRows(p *prompter, cfg config.Config, review setupReview) int {
-	existing := review.existing
-	// A change back to saving every session still shows, as a change.
-	showSessions := cfg.RequireSkillUse || review.reconfiguring && existing.RequireSkillUse
-	before := map[string]reviewRow{}
-	if review.reconfiguring {
-		for _, row := range reviewRows(existing, review.discoveries, showSessions, review.userHome) {
-			before[row.label] = row
+func compactReviewRows(m *setupReviewModel) []reviewRow {
+	var rows []reviewRow
+	for _, row := range m.rows {
+		switch row.label {
+		case "Destination", "Hook files":
+			continue
+		case "Machine":
+			if !m.changed[row.label] {
+				continue
+			}
+		case "Codex sources", "Starts", "History", "Copies", "Hooks", "Exceptions", "R2 keys", "Skipped", "Imported", "Codex capture":
+			if !m.changed[row.label] {
+				if row.label != "Imported" && row.label != "Skipped" && !(row.label == "Codex capture" && (m.cfg.Discovery == nil || !m.cfg.Discovery.Enabled)) {
+					continue
+				}
+			}
+		}
+		row.values = slices.Clone(row.values)
+		if !m.changed[row.label] {
+			switch row.label {
+			case "Apps":
+				row.values = []string{friendlyApps(m.cfg.Harnesses)}
+			case "Projects":
+				if len(row.values) >= 3 {
+					row.values = []string{fmt.Sprintf("%d included projects (paths in Details)", len(row.values))}
+				}
+			case "Skills":
+				row.values = []string{setupSkillScope(m.cfg)}
+				row.detail = ""
+			case "Storage":
+				row.detail = ""
+			}
+		}
+		if row.label == "Codex scope" && !m.changed[row.label] {
+			row.label = "Codex"
+		}
+		rows = append(rows, row)
+	}
+	return rows
+}
+
+func renderSetupReview(p *prompter, m *setupReviewModel, details bool) {
+	if details {
+		p.setupHeading("Full settings and privacy")
+	} else {
+		title := "Review and start"
+		if m.review.reconfiguring {
+			title = "Review your changes"
+		}
+		p.setupStep(3, title)
+	}
+	rows := m.rows
+	if !details {
+		rows = compactReviewRows(m)
+	}
+	printSetupReviewRows(p, rows, m)
+	if details {
+		printReviewChecklist(p, m.checks)
+		printReviewNotes(p)
+		p.renderer().block(m.implications)
+		return
+	}
+	for _, check := range m.checks {
+		if check.mark == symbolOK && check.label != "Storage connected" && check.label != "Bucket is private" {
+			continue
+		}
+		text := check.label
+		if check.mark != symbolOK && check.detail != "" {
+			text += " · " + check.detail
+		}
+		more := slices.Clone(check.more)
+		if check.link != "" {
+			more = append(more, check.link)
+		}
+		terminal.Println(p.out, p.style.hang("  "+check.mark+" ", text))
+		for _, line := range more {
+			terminal.Println(p.out, p.style.hang("    ", line))
 		}
 	}
+	p.warn("History import is separate.")
+	p.warn("Sensitive text may remain after filtering.")
+	p.renderer().block(m.implications)
+}
+
+func printSetupReviewRows(p *prompter, rows []reviewRow, m *setupReviewModel) int {
+	width := 0
+	for _, row := range rows {
+		width = max(width, visibleWidth(row.label))
+	}
+	cols := p.renderer().capabilities().Width
+	if cols <= 0 {
+		cols = 80
+	}
 	changed := 0
-	for _, row := range reviewRows(cfg, review.discoveries, showSessions, review.userHome) {
-		old, had := before[row.label]
-		isChanged := review.reconfiguring && old.text() != row.text()
+	for _, row := range rows {
 		mark := "  "
-		if isChanged {
+		if m.changed[row.label] {
 			changed++
-			mark = p.style.warn("*") + " "
+			mark = "* "
 		}
 		values := row.values
 		if len(values) == 0 {
@@ -197,21 +331,44 @@ func printReviewRows(p *prompter, cfg config.Config, review setupReview) int {
 			if i == 0 {
 				label = row.label
 				if row.detail != "" {
-					value += "  " + p.style.dim(row.detail)
+					value += " · " + row.detail
 				}
 			}
-			terminal.Printf(p.out, "%s%s %s\n", mark, p.style.dim(fmt.Sprintf("%-10s", label)), value)
+			prefix := mark + label + strings.Repeat(" ", width-visibleWidth(label)) + "  "
+			if cols < 60 || visibleWidth(prefix) > cols/2 {
+				if label != "" {
+					terminal.Println(p.out, mark+label)
+				}
+				prefix = "    "
+			}
+			terminal.Println(p.out, p.style.hang(prefix, value))
 			mark = "  "
 		}
-		if isChanged {
-			was := "not set"
-			if had && len(old.values) > 0 {
-				was = old.text()
+		if m.changed[row.label] {
+			was := m.before[row.label].text()
+			if was == "" {
+				was = "not set"
 			}
-			terminal.Printf(p.out, "  %10s %s\n", "", p.style.dim("was "+was))
+			terminal.Println(p.out, p.style.hang("    ", "was "+was))
 		}
 	}
 	return changed
+}
+
+func showSetupReviewDetails(p *prompter, env Env, errOut io.Writer) error {
+	if p.reviewModel == nil {
+		return nil
+	}
+	var out bytes.Buffer
+	details := newPrompter(strings.NewReader(""), &out)
+	defer details.close()
+	details.style = p.style
+	details.now = p.now
+	renderSetupReview(details, p.reviewModel, true)
+	release := p.suspendPrompts(true)
+	err := withPager(context.Background(), p.out, errOut, env, false, func(w io.Writer) error { _, e := w.Write(out.Bytes()); return e })
+	release()
+	return err
 }
 
 // reviewCheck is one line of the review's checklist: a ✓, ! or ✗, what was
@@ -426,24 +583,33 @@ func privacyReasonText(reason string) string {
 // (a row is ✗), starting is neither offered nor accepted: the first choice
 // checks again instead, returning check.
 func reviewAction(p *prompter, reconfiguring, blocked, offerName bool) (string, error) {
-	label, first := "Start archiving?", option{"yes", "Yes, start archiving"}
+	label, first := "Start archiving?", option{"start", "Start archiving"}
 	if reconfiguring {
-		label, first = "Save these changes?", option{"yes", "Yes, save"}
+		label, first = "Save these changes?", option{"start", "Save changes"}
 	}
 	if blocked {
-		label, first = "Fix what is marked ✗ above first.", option{"check", "Check again"}
+		label, first = "Fix the blocking checks first.", option{"check", "Check again"}
 	}
-	options := []option{first, {"edit", "Edit a setting"}, {"no", "Cancel (your setup draft is kept)"}}
+	secondary := []actionOption{{"details", "d", "Full settings and privacy"}, {"cancel", "q", "Cancel; keep draft"}}
 	if offerName {
-		options = append(options, option{"machine", "Name this machine (optional)"})
+		secondary = append(secondary, actionOption{"machine", "m", "Name this machine"})
 	}
-	choice, err := p.menu("\n"+label, first.Key, options...)
-	//lint:ignore LV1001 menu keys are the option keys listed just above
-	switch choice {
-	case "yes":
-		return "start", err
-	case "no":
-		return "cancel", err
+	aliases := []option{{"no", ""}}
+	if blocked {
+		aliases = append(aliases, option{"c", ""})
+	}
+	if !blocked {
+		aliases = append(aliases, option{"yes", ""})
+	}
+	choice, err := p.guidedChoice(promptModel{Question: label, Default: first.Key, Primary: []option{first, {"edit", "Edit a setting"}}, Secondary: secondary, Aliases: aliases})
+	if choice == "c" {
+		choice = "check"
+	}
+	if choice == "yes" {
+		choice = "start"
+	}
+	if choice == "no" {
+		choice = "cancel"
 	}
 	return choice, err
 }
@@ -459,7 +625,7 @@ func promptStopImported(p *prompter, draft *setupDraft) error {
 		if containsString(draft.Config.Harnesses, app) || containsString(draft.StopImported, app) {
 			continue
 		}
-		keep, err := p.yesNo(fmt.Sprintf("Keep publishing %s sessions imported by backfill?", appName(app)), true)
+		keep, err := p.setupYesNo(fmt.Sprintf("Keep publishing %s sessions imported by backfill?", appName(app)), true)
 		if err != nil {
 			return err
 		}
@@ -502,7 +668,7 @@ func editSetupReview(available []string, p *prompter, draft *setupDraft, userHom
 		}
 	}
 	choices = append(choices, option{"back", "Nothing, go back to the review"})
-	choice, err := p.menu("\nWhat would you like to change?", "back", choices...)
+	choice, err := p.setupMenu("What would you like to change?", "back", choices...)
 	if err != nil {
 		return err
 	}
@@ -514,7 +680,7 @@ func editSetupReview(available []string, p *prompter, draft *setupDraft, userHom
 		err = promptCodexCaptureScope(p, &draft.Config)
 	case "discovery":
 		enabled := draft.Config.Discovery != nil && draft.Config.Discovery.Enabled
-		enabled, err = p.yesNo("Enable automatic Codex discovery? Recent indistinguishable copies may be captured.", enabled)
+		enabled, err = p.setupYesNo("Enable automatic Codex discovery? Recent indistinguishable copies may be captured.", enabled)
 		if err == nil {
 			enableDiscovery(&draft.Config, enabled)
 			draft.DiscoveryReviewed = true
@@ -525,6 +691,11 @@ func editSetupReview(available []string, p *prompter, draft *setupDraft, userHom
 		}
 		err = promptStopImported(p, draft)
 	case "projects":
+		if codexOnlyAllProjects(draft.Config) {
+			p.note("Codex captures all current and future projects except explicit exceptions.")
+			return promptCodexExceptions(p, &draft.Config, userHome)
+		}
+		p.projectConfig = draft.Config
 		var offered []backfill.KnownProject
 		if known != nil {
 			offered = known(draft.Config)
@@ -535,13 +706,13 @@ func editSetupReview(available []string, p *prompter, draft *setupDraft, userHom
 		}
 		draft.Config.Archive.Projects = projects
 	case "sessions":
-		all, e := p.yesNo("Save sessions even when no skills are used?", !draft.Config.RequireSkillUse)
+		all, e := p.setupYesNo("Save sessions even when no skills are used?", !draft.Config.RequireSkillUse)
 		if e != nil {
 			return e
 		}
 		draft.Config.RequireSkillUse = !all
 	case "skills":
-		mode, e := p.menu("What skill evidence may be uploaded? User-level skill roots outside selected projects may be scanned.", string(draft.Config.EffectiveSkillEvidence()),
+		mode, e := p.setupMenu("What skill evidence may be uploaded? User-level skill roots outside selected projects may be scanned.", string(draft.Config.EffectiveSkillEvidence()),
 			option{"none", "None (skill use in transcripts can still be detected)"},
 			option{"metadata", "Names and filtered hashes; no SKILL.md body"},
 			option{"body", "Filtered SKILL.md snapshots"})
@@ -550,12 +721,12 @@ func editSetupReview(available []string, p *prompter, draft *setupDraft, userHom
 		}
 		config.SetSkillEvidence(&draft.Config, config.SkillEvidence(mode))
 	case "retention":
-		draft.Config.RetentionDays, err = p.retentionDays(draft.Config.RetentionDays)
+		draft.Config.RetentionDays, err = p.setupRetentionDays(draft.Config.RetentionDays)
 	case "storage":
 		draft.Step = 1
 	case "prefix":
 		for {
-			prefix, e := p.required("Folder inside the bucket", draft.Config.Storage.Prefix)
+			prefix, e := p.setupRequired("Folder inside the bucket", draft.Config.Storage.Prefix)
 			if e != nil {
 				return e
 			}
@@ -569,4 +740,15 @@ func editSetupReview(available []string, p *prompter, draft *setupDraft, userHom
 		draft.Config.Storage.Region, err = promptRegion(p, "Bucket region", draft.Config.Storage.Region)
 	}
 	return err
+}
+
+func setupSkillScope(cfg config.Config) string {
+	switch cfg.EffectiveSkillEvidence() {
+	case config.SkillEvidenceNone:
+		return "None"
+	case config.SkillEvidenceBody:
+		return "Filtered snapshots, including user folders"
+	default:
+		return "Metadata, including user folders"
+	}
 }

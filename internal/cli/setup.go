@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"cmp"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/wangjohn/agent-archive/internal/agentapi"
@@ -94,7 +93,7 @@ func offerUnusableDraft(p *prompter, home string) (saved setupDraft, have bool, 
 	p.warn(fmt.Sprintf("The saved setup in %s cannot be used: %s.", draftPath(home), problem),
 		"Moving it aside keeps it, renamed, for reference, and setup starts again from your current settings.",
 		stagedCredentialLeftNote(credentialOS, home))
-	move, err := p.yesNo("Move it aside and continue?", true)
+	move, err := p.setupYesNo("Move it aside and continue?", true)
 	if err != nil {
 		return setupDraft{}, false, err
 	}
@@ -264,7 +263,8 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env, verbose bool, skills
 	p.guidedSpacing = true
 	defer p.close()
 	p.now = env.now
-	known := knownProjectsOnce(env, userHome)
+	p.projectScan = &setupProjectSearch{env: env, home: userHome}
+	known := knownProjectsOnce(env, userHome, p.projectScan)
 	// Said before any question: setup will refuse to install an app's hooks
 	// beside another installation's (see applySetup).
 	for _, problem := range env.installation(home, userHome).otherInstallationProblems(env.hookFiles(userHome), env.setupNames()) {
@@ -415,7 +415,7 @@ func selectSetupDraft(p *prompter, home, userHome string, env Env, existing conf
 		return setupDraft{}, false, err
 	}
 	if haveDraft {
-		choice, e := p.menu("You have an unfinished setup. What would you like to do?", "continue",
+		choice, e := p.setupMenu("You have an unfinished setup. What would you like to do?", "continue",
 			option{"continue", "Continue where you left off"},
 			option{"capture", "Change apps and projects"},
 			option{"storage", "Change storage"},
@@ -455,7 +455,7 @@ func selectSetupDraft(p *prompter, home, userHome string, env Env, existing conf
 				if days <= 0 {
 					days = defaultRetentionDays
 				}
-				draft.Config.RetentionDays, e = p.retentionDays(days)
+				draft.Config.RetentionDays, e = p.setupRetentionDays(days)
 				if e != nil {
 					return setupDraft{}, false, e
 				}
@@ -466,7 +466,7 @@ func selectSetupDraft(p *prompter, home, userHome string, env Env, existing conf
 			}
 		}
 	} else if installed {
-		choice, e := p.menu("Agent Archive is already set up. What would you like to change?", "capture",
+		choice, e := p.setupMenu("Agent Archive is already set up. What would you like to change?", "capture",
 			option{"capture", "Apps and projects"},
 			option{"storage", "Storage (bucket and credentials)"},
 			option{"retention", "How long sessions are kept"},
@@ -487,7 +487,7 @@ func selectSetupDraft(p *prompter, home, userHome string, env Env, existing conf
 			draft.Step = 1
 		case "retention":
 			draft.Step = 2
-			draft.Config.RetentionDays, err = p.retentionDays(existing.RetentionDays)
+			draft.Config.RetentionDays, err = p.setupRetentionDays(existing.RetentionDays)
 			if err != nil {
 				return setupDraft{}, false, err
 			}
@@ -527,7 +527,7 @@ func advanceSetupDraft(p *prompter, draft *setupDraft, save func() error, savedP
 		return false, &otherInstallationError{problems: problems}
 	}
 	if draft.Step == 1 {
-		p.step(2, "Connect storage")
+		p.setupStep(2, "Connect storage")
 		active, installed, _ := config.Load(home)
 		offerKeep := installed && active.Storage == draft.Config.Storage && draft.FailedRegion == ""
 		cfg, secret, saveSecret, e := promptStorage(p, draft.Config.Storage, env, draft.FailedRegion, offerKeep)
@@ -654,18 +654,22 @@ func verifySetupDraftStorage(p *prompter, draft *setupDraft, save func() error, 
 }
 
 func recoverSetupStorageFailure(p *prompter, draft *setupDraft, save func() error, savedPath, userHome string, env Env, known func(config.Config) []backfill.KnownProject, checkErr error, verbose bool) (bool, error) {
-	d := printStorageFailure(p, draft.Config.Storage, checkErr, verbose, "agent-archive setup --verbose")
+	d := printStorageFailure(p, draft.Config.Storage, checkErr, verbose, "")
 	printGuidedLeftovers(p, draft.Config.Storage)
 	// Saved to ask the storage questions again, so that
 	// "Continue where you left off" never repeats a check that just failed.
 	if err := local.Write(savedPath, reopenStorage(*draft, d)); err != nil {
 		return false, err
 	}
-	choice, promptErr := p.menu("What next?", "fix",
-		option{"fix", storageFixLabel(draft.Config.Storage, d)},
-		option{"retry", "Retry the check"},
-		option{"edit", "Change other settings"},
-		option{"cancel", "Stop for now (your answers are kept)"})
+	var choice string
+	var promptErr error
+	for {
+		choice, promptErr = p.guidedChoice(promptModel{Question: "What next?", Default: "fix", Primary: []option{{"fix", storageFixLabel(draft.Config.Storage, d)}, {"retry", "Retry the check"}, {"edit", "Change other settings"}}, Secondary: []actionOption{{"details", "d", "Diagnostic details"}, {"cancel", "q", "Stop; keep your draft"}}})
+		if promptErr != nil || choice != "details" {
+			break
+		}
+		printStorageFailure(p, draft.Config.Storage, checkErr, true, "")
+	}
 	if promptErr != nil || choice == "cancel" {
 		return false, &storageCheckError{err: checkErr, outcome: "your answers are kept"}
 	}
@@ -704,19 +708,30 @@ func reviewAndCommitSetup(p *prompter, draft *setupDraft, save func() error, hom
 	}
 	hookFiles, installedHookFiles := env.hookFiles(userHome), env.installedHookFiles(userHome, existing)
 	blocked := showSetupReview(p, draft.Config, setupReview{existing: existing, reconfiguring: installed, discoveries: reviewed, hookFiles: hookFiles, installedHookFiles: installedHookFiles, userHome: userHome})
-	if err = reviewChanges(home, existing, draft.Config, p, env); err != nil {
+	var implications bytes.Buffer
+	notes := newPrompter(strings.NewReader(""), &implications)
+	defer notes.close()
+	notes.style = p.style
+	notes.now = p.now
+	if err = reviewChanges(home, existing, draft.Config, notes, env); err != nil {
 		return false, err
 	}
 	if existing.Paused {
-		p.note("Capture stays paused until you run agent-archive resume.")
+		notes.note("Capture stays paused until you run agent-archive resume.")
 	}
-	reviewHookFiles(env.agentRegistry(), p, draft.Config.Harnesses, hookFiles, installedHookFiles, existing.Harnesses, len(existing.HookFiles) > 0, userHome)
-	warnCollectorEnvironment(p, draft.Config.Storage, userHome, env)
-	printReviewNotes(p)
-	if existing.MachineID == "" {
-		p.note("Machine name: " + firstNonEmpty(draft.Config.MachineName, "unnamed (random ID suffix after save)") + ". Choose Name this machine to set a label; no hostname is read.")
-	}
+	reviewHookFiles(env.agentRegistry(), notes, draft.Config.Harnesses, hookFiles, installedHookFiles, existing.Harnesses, len(existing.HookFiles) > 0, userHome)
+	warnCollectorEnvironment(notes, draft.Config.Storage, userHome, env)
+
+	p.reviewModel.implications = implications.String()
+	p.renderer().block(implications.String())
 	action, e := reviewAction(p, installed, blocked, existing.MachineID == "")
+	for e == nil && action == "details" {
+		if e = showSetupReviewDetails(p, env, errOut); e != nil {
+			break
+		}
+		renderSetupReview(p, p.reviewModel, false)
+		action, e = reviewAction(p, installed, blocked, existing.MachineID == "")
+	}
 	if e != nil {
 		return false, e
 	}
@@ -789,7 +804,11 @@ func finishSetup(p *prompter, errOut io.Writer, home string, cfg config.Config, 
 	if e := capture.PruneAdmissionIntents(home, cfg); e != nil {
 		terminal.Printf(errOut, "Could not prune pending session starts after setup: %v\n", e)
 	}
-	terminal.Println(p.out, "\nConfiguration saved.")
+	completion := "Setup complete · Automatic capture is on"
+	if paused {
+		completion = "Setup complete · Capture stays paused"
+	}
+	p.renderer().block(p.style.okMark() + " " + completion + "\n")
 	if err := publishMachineAfterSetup(home, finish.env); err != nil {
 		p.warn("Machine registration pending; capture is configured and the collector will retry.")
 	}
@@ -801,7 +820,13 @@ func finishSetup(p *prompter, errOut io.Writer, home string, cfg config.Config, 
 	if finish.offerImport && !paused {
 		offerSetupImport(p, errOut, home, finish.userHome, finish.env)
 	}
-	printAnotherMachine(p, cfg, finish.userHome, finish.env)
+	p.note("Another machine: agent-archive machines pair")
+	if finish.offerImport {
+		choice, e := p.guidedChoice(promptModel{Question: "More next steps?", Default: "done", Primary: []option{{"done", "Finish setup"}}, Secondary: []actionOption{{"details", "d", "Machine transfer details"}}})
+		if e == nil && choice == "details" {
+			printAnotherMachine(p, cfg, finish.userHome, finish.env)
+		}
+	}
 	return nil
 }
 
@@ -1069,9 +1094,9 @@ var hookNextStep = map[string]string{
 // nothing, so it points at backfill for past sessions instead.
 func printNextSteps(p *prompter, cfg config.Config, paused, unattended bool) {
 	if paused {
-		terminal.Println(p.out, "\nNext: run "+p.style.cmd("agent-archive resume")+" when you’re ready to start archiving.")
+		p.renderer().block("Next: run " + p.style.cmd("agent-archive resume") + " when you’re ready to start archiving.\n")
 	} else {
-		terminal.Println(p.out, "\nNext, in each app:")
+		p.setupHeading("Next, in each app")
 		for _, app := range cfg.Harnesses {
 			if app == "codex" && cfg.Discovery != nil && cfg.Discovery.Enabled {
 				location := "an included project"
@@ -1252,25 +1277,17 @@ func chooseCapture(p *prompter, cfg *config.Config, userHome string, env Env, kn
 	if known == nil {
 		known = func(config.Config) []backfill.KnownProject { return nil }
 	}
-	p.step(1, "Choose what to capture")
+	p.setupStep(1, "Choose what to capture")
 	detected := env.detectHarnesses(userHome)
-	// In a Git repository with no projects yet, the repository heads the
-	// recent-projects list, already included.
 	p.reviewHint = ""
-	current := ""
-	if len(cfg.Archive.Projects) == 0 {
-		var refused string
-		if current, refused = currentProject(env, userHome); refused != "" {
-			terminal.Println(p.out, p.style.dim(refused))
-		}
+	current, refused := currentProject(env, userHome)
+	if refused != "" {
+		terminal.Println(p.out, p.style.dim(refused))
 	}
-	if done, e := offerFirstCapture(env.setupNames(), p, cfg, detected, current, userHome, known); e != nil || done {
-		if e == nil {
-			e = promptCodexCaptureScope(p, cfg)
-		}
-		return e
+	done, err := offerFirstCapture(env.setupNames(), p, cfg, detected, current, userHome, known)
+	if err == nil && !done {
+		err = chooseHarnesses(env.setupNames(), p, detected, cfg)
 	}
-	err := chooseHarnesses(env.setupNames(), p, detected, cfg)
 	if err != nil {
 		return err
 	}
@@ -1283,23 +1300,19 @@ func chooseCapture(p *prompter, cfg *config.Config, userHome string, env Env, kn
 		}
 	}
 	if codexOnlyAllProjects(*cfg) {
+		p.note("Codex captures all current and future projects except explicit exceptions.")
+		if err := promptCodexExceptions(p, cfg, userHome); err != nil {
+			return err
+		}
 		if cfg.RetentionDays <= 0 {
 			cfg.RetentionDays = defaultRetentionDays
 		}
 		return nil
 	}
-	// addProjects asks again while no project is included, so both paths
-	// end with at least one.
-	if current != "" {
-		// Scanned before the repository is configured, so the list can give
-		// its session count; foldInto then applies the nearest-configured-
-		// ancestor rule the scan skipped.
-		offered := foldInto(known(*cfg), current)
-		cfg.Archive.Projects = []archive.ProjectActivation{{ProjectID: archive.ProjectID(current), Root: current, Included: true}}
-		cfg.Archive.Projects, err = addProjects(p, cfg.Archive.Projects, nil, offered, current, userHome)
-	} else {
-		cfg.Archive.Projects, err = promptProjects(p, cfg.Archive.Projects, backfilledProjects(env), known(*cfg), userHome)
-	}
+	p.projectCurrent = current
+	p.projectConfig = *cfg
+	p.projectBackfilled = backfilledProjects(env)
+	cfg.Archive.Projects, err = selectSetupProjects(p, cfg.Archive.Projects, cfg.Archive.Projects, known(*cfg), current, userHome, p.projectBackfilled)
 	if err != nil {
 		return err
 	}
@@ -1309,19 +1322,10 @@ func chooseCapture(p *prompter, cfg *config.Config, userHome string, env Env, kn
 	return nil
 }
 
-// offerFirstCapture is the first setup's one question for what to capture,
-// when it can guess both halves: the apps found on this machine, and the Git
-// repository setup was run from. Yes takes both; the review step's "Edit a
-// setting" changes apps, projects, and retention (which stays at its
-// default), and on no chooseCapture asks for each in turn. It reports
-// whether the answer settled the choice. Anything but a first setup, or one
-// that cannot guess both, asks the longer questions. current is the
-// repository setup was run from, or "" (see currentProject). known lists the
-// projects the apps' history mentions, so the answer can say how many others
-// there are.
+// offerFirstCapture offers detected applications while leaving project consent
+// to the shared selector, inside and outside a repository.
 func offerFirstCapture(available []string, p *prompter, cfg *config.Config, detected []string, current, userHome string, known func(config.Config) []backfill.KnownProject) (bool, error) {
-	first := len(cfg.Harnesses) == 0 && len(cfg.DeclinedHarnesses) == 0
-	if !first || current == "" {
+	if len(cfg.Harnesses) > 0 || len(cfg.DeclinedHarnesses) > 0 {
 		return false, nil
 	}
 	var apps []string
@@ -1333,32 +1337,11 @@ func offerFirstCapture(available []string, p *prompter, cfg *config.Config, dete
 	if len(apps) == 0 {
 		return false, nil
 	}
-	yes, err := p.yesNo("Archive "+appList(apps)+" sessions in "+displayPath(current, userHome)+"?", true)
+	yes, err := p.setupYesNo("Capture sessions from "+appList(apps)+"?", true)
 	if err != nil || !yes {
 		return false, err
 	}
 	cfg.Harnesses = apps
-	cfg.Archive.Projects = []archive.ProjectActivation{{ProjectID: archive.ProjectID(current), Root: current, Included: true}}
-	hint := "Edit a setting adds projects, drops apps, and changes how long sessions are kept."
-	if known != nil {
-		// The scan reads the apps' history, which can take a while on a slow
-		// disk: say so, as for the check of installed applications. Its
-		// result, empty when it fails, is kept for the rest of setup.
-		stop := startAnnouncedActivity(p.out, "Looking for your other projects...")
-		found := known(*cfg)
-		stop()
-		others := 0
-		for _, project := range foldInto(found, current) {
-			if project.Root != current {
-				others++
-			}
-		}
-		if others > 0 {
-			hint = fmt.Sprintf("Your apps also have sessions in %s. Edit a setting adds them, drops apps, and changes how long sessions are kept.", countNoun(others, "other project"))
-		}
-	}
-	terminal.Println(p.out, "On the review screen: "+hint)
-	p.reviewHint = hint
 	return true, nil
 }
 
@@ -1473,13 +1456,28 @@ func storageMenuOptions() []option {
 // Cloudflare's dashboard shows fills in the bucket as well (see
 // credentials.ParseR2Location), and fromURL says it did.
 func promptR2Location(p *prompter, cfg *credentials.Config) (fromURL bool, err error) {
-	terminal.Println(p.out, "Find your Account ID or S3 API endpoint in Cloudflare Dashboard > Storage & databases > R2 > Overview:")
-	terminal.Println(p.out, "https://developers.cloudflare.com/r2/get-started/s3/")
-	terminal.Println(p.out, "Example bucket URL: https://<account-id>.r2.cloudflarestorage.com/<bucket>")
 	for {
-		answer, err := p.required("R2 account ID or bucket URL", firstNonEmpty(cfg.R2AccountID, cfg.R2Endpoint))
+		answer, err := p.guidedText(promptModel{Question: "R2 account ID or bucket URL", Helpers: []string{"Find the account ID or S3 endpoint in Cloudflare Dashboard > Storage & databases > R2 > Overview.", "Example: https://<account-id>.r2.cloudflarestorage.com/<bucket>", "[:back] Back to storage options"}, Default: firstNonEmpty(cfg.R2AccountID, cfg.R2Endpoint), Label: "Account", Validate: func(value string) error {
+			if value == "" {
+				return fmt.Errorf("this value is required")
+			}
+			if value == ":back" {
+				return nil
+			}
+			loc, e := credentials.ParseR2Location(value)
+			if e == nil {
+				_, e = credentials.R2Endpoint(loc.Endpoint, loc.AccountID)
+			}
+			if e != nil {
+				return fmt.Errorf("That isn't an R2 account ID or bucket URL (%v). Paste the Account ID or a URL for only the bucket.", e)
+			}
+			return nil
+		}})
 		if err != nil {
 			return false, err
+		}
+		if answer == ":back" {
+			return false, errChooseStorageAgain
 		}
 		loc, err := credentials.ParseR2Location(answer)
 		if err == nil {
@@ -1563,7 +1561,7 @@ func promptHarnesses(available []string, p *prompter, detected, existing []strin
 			// their own, defaulting to yes. Declining still allows other
 			// changes below.
 			terminal.Printf(p.out, "Included: %s.\nAlso found on this computer: %s.\n", appList(suggested), appList(found))
-			add, err := p.yesNo(addPrompt(found), true)
+			add, err := p.setupYesNo(addPrompt(found), true)
 			if err != nil {
 				return nil, err
 			}
@@ -1581,7 +1579,7 @@ func promptHarnesses(available []string, p *prompter, detected, existing []strin
 			// reads as if declining would remove X.
 			terminal.Printf(p.out, "Included: %s. Not included: %s.\n", appList(suggested), appList(others))
 		}
-		change, err := p.yesNo("Change which apps are included?", false)
+		change, err := p.setupYesNo("Change which apps are included?", false)
 		if err != nil {
 			return nil, err
 		}
@@ -1593,7 +1591,7 @@ func promptHarnesses(available []string, p *prompter, detected, existing []strin
 		if len(existing) > 0 {
 			verb = "Keep "
 		}
-		yes, err := p.yesNo(verb+appList(suggested)+"?", true)
+		yes, err := p.setupYesNo(verb+appList(suggested)+"?", true)
 		if err != nil {
 			return nil, err
 		}
@@ -1605,7 +1603,7 @@ func promptHarnesses(available []string, p *prompter, detected, existing []strin
 	for {
 		var result []string
 		for _, app := range available {
-			yes, err := p.yesNo("Include "+appName(app)+"?", containsString(suggested, app))
+			yes, err := p.setupYesNo("Include "+appName(app)+"?", containsString(suggested, app))
 			if err != nil {
 				return nil, err
 			}
@@ -1652,47 +1650,14 @@ func appList(apps []string) string {
 // A project that was not imported and is not kept is dropped, as before.
 // known are the projects the apps' history mentions, offered by number.
 func promptProjects(p *prompter, existing []archive.ProjectActivation, backfilled map[string]bool, known []backfill.KnownProject, userHomes ...string) ([]archive.ProjectActivation, error) {
-	result := []archive.ProjectActivation{}
-	imported := 0
-	for _, project := range existing {
-		if project.Included && backfilled[project.ProjectID] {
-			imported++
-		}
+	home := ""
+	if len(userHomes) > 0 {
+		home = userHomes[0]
 	}
-	keepImported := true
-	if imported > 1 {
-		var err error
-		keepImported, err = p.yesNo(fmt.Sprintf("Keep the %d projects added by backfill? If not, their imported sessions stop uploading and later backfills skip them.", imported), true)
-		if err != nil {
-			return nil, err
-		}
-	}
-	for _, project := range existing {
-		if !project.Included {
-			// Exclusions, including those undo leaves, carry through.
-			result = append(result, project)
-			continue
-		}
-		keep := keepImported
-		if imported <= 1 || !backfilled[project.ProjectID] {
-			var err error
-			if keep, err = p.yesNo("Keep project "+project.Root+"?", true); err != nil {
-				return nil, err
-			}
-		}
-		switch {
-		case keep:
-			result = append(result, project)
-		case backfilled[project.ProjectID]:
-			project.Included = false
-			result = append(result, project)
-		}
-	}
-	return addProjects(p, result, existing, known, "", userHomes...)
+	return selectSetupProjects(p, existing, existing, known, p.projectCurrent, home, backfilled)
 }
 
-// maxKnownProjects caps how many projects from the apps' history setup
-// lists, most recent first; any other can still be typed.
+// maxKnownProjects limits each display page; selection includes every candidate.
 const maxKnownProjects = 12
 
 // addProjects asks for projects to add to result: by number from known,
@@ -1702,259 +1667,11 @@ const maxKnownProjects = 12
 // project in or out. a includes every listed project. A project in existing
 // keeps its activation time.
 func addProjects(p *prompter, result, existing []archive.ProjectActivation, known []backfill.KnownProject, current string, userHomes ...string) ([]archive.ProjectActivation, error) {
-	picker := newProjectPicker(p, result, existing, userHomes...)
-	offered := picker.offer(known, current)
-	defaultAll := current == "" && len(existing) == 0 && len(result) == 0 && len(offered) > 0
-	for {
-		label := "Project path: "
-		if len(offered) > 0 {
-			label = "Projects: "
-			if defaultAll {
-				label = "Projects [A]: "
-			}
-		}
-		answer, err := p.line(p.labelText(label))
-		if err != nil {
-			return nil, err
-		}
-		if answer == "" {
-			if defaultAll {
-				for _, project := range offered {
-					picker.include(project.Root)
-				}
-				if includedProjects(picker.result) > 0 {
-					picker.printSelection()
-					return picker.result, nil
-				}
-			}
-			if includedProjects(picker.result) > 0 {
-				return picker.result, nil
-			}
-			// Leaving every project out asks again rather than ending
-			// setup, offering again the projects this answer dropped.
-			terminal.Println(p.out, p.style.warnMark()+" Choose at least one project: only sessions in included projects are archived.")
-			offered = picker.offer(picker.dropped(known), current)
-			defaultAll = false
-			continue
-		}
-		if len(offered) > 0 && (strings.EqualFold(answer, "a") || strings.EqualFold(answer, "all")) {
-			defaultAll = false
-			for _, project := range offered {
-				if !picker.seen[project.Root] {
-					picker.include(project.Root)
-				}
-			}
-			picker.printSelection()
-			continue
-		}
-		if numbers, ok, inRange := parseNumbers(answer, len(offered)); ok && len(offered) > 0 {
-			if !inRange {
-				terminal.Printf(p.out, "Enter numbers from 1 to %d, a for all, or a project path.\n", len(offered))
-				continue
-			}
-			// A number given twice is one choice, never a switch back.
-			slices.Sort(numbers)
-			for _, n := range slices.Compact(numbers) {
-				switch root := offered[n-1].Root; {
-				case !picker.seen[root]:
-					picker.include(root)
-				case current != "":
-					picker.leaveOut(root)
-				}
-			}
-			picker.printSelection()
-			if includedProjects(picker.result) > 0 {
-				defaultAll = false
-			}
-			continue
-		}
-		picker.include(answer)
-		if includedProjects(picker.result) > 0 {
-			defaultAll = false
-		}
-	}
-}
-
-// projectPicker holds the projects addProjects is choosing.
-type projectPicker struct {
-	p        *prompter
-	home     string
-	result   []archive.ProjectActivation
-	existing []archive.ProjectActivation
-	// seen are the included projects.
-	seen map[string]bool
-	// excluded are the projects result held as exclusions, which leaving
-	// them out again restores.
-	excluded map[string]bool
-}
-
-// newProjectPicker starts from result, the projects chosen so far.
-func newProjectPicker(p *prompter, result, existing []archive.ProjectActivation, userHomes ...string) *projectPicker {
-	var home string
+	home := ""
 	if len(userHomes) > 0 {
 		home = userHomes[0]
 	}
-	picker := &projectPicker{
-		p:    p,
-		home: home,
-		// result is edited in place; existing may share its array.
-		result:   slices.Clone(result),
-		existing: existing,
-		seen:     map[string]bool{},
-		excluded: map[string]bool{},
-	}
-	for _, project := range result {
-		if project.Included {
-			picker.seen[project.Root] = true
-		} else {
-			picker.excluded[project.Root] = true
-		}
-	}
-	return picker
-}
-
-// offer prints the projects to choose from, current first, and how to
-// answer, and returns the listed projects in their numbered order.
-func (k *projectPicker) offer(known []backfill.KnownProject, current string) []backfill.KnownProject {
-	var offered []backfill.KnownProject
-	if current != "" {
-		entry := backfill.KnownProject{Root: current}
-		for _, project := range known {
-			if project.Root == current {
-				entry = project
-			}
-		}
-		offered = append(offered, entry)
-	}
-	for _, project := range known {
-		if !k.seen[project.Root] && project.Root != current && len(offered) < maxKnownProjects {
-			offered = append(offered, project)
-		}
-	}
-	out := k.p.out
-	switch {
-	case len(offered) == 0:
-		terminal.Println(out, "Add project directories, one per line. Enter a blank line when finished.")
-		return nil
-	case current != "":
-		terminal.Println(out, "Projects to archive (✓ included):")
-	default:
-		terminal.Println(out, "Projects with recent sessions:")
-	}
-	width := 0
-	for _, project := range offered {
-		width = max(width, visibleWidth(displayPath(project.Root, k.home)))
-	}
-	for i, project := range offered {
-		// Only a list that starts with a project included marks one.
-		mark := ""
-		switch {
-		case k.seen[project.Root]:
-			mark = k.p.style.okMark() + " "
-		case current != "":
-			mark = "  "
-		}
-		path := displayPath(project.Root, k.home)
-		terminal.Printf(out, "  %d) %s%s%s  %s\n", i+1, mark, path, strings.Repeat(" ", width-visibleWidth(path)), k.p.style.dim(projectDetails(project, current, k.p.clock())))
-	}
-	hint := "a includes all listed projects (the default). Or enter numbers (for example 1 3) or a project path."
-	switch {
-	case current != "" && len(offered) == 1:
-		hint = "a includes all listed projects. Or enter 1 to include or leave it out, or a path to add a project."
-	case current != "":
-		hint = "a includes all listed projects. Or enter numbers to include or leave out (such as 2 3), or a path."
-	case len(k.existing) > 0 || len(k.result) > 0:
-		hint = "a includes all listed projects. Or enter numbers (for example 1 3) or a project path."
-	}
-	terminal.Println(out, k.p.style.hang("", hint))
-	if current == "" && len(k.existing) == 0 && len(k.result) == 0 {
-		terminal.Println(out, "Press Enter to include all, or enter a blank line after a selection to finish.")
-	} else {
-		terminal.Println(out, "Enter a blank line when finished.")
-	}
-	return offered
-}
-
-// dropped returns known headed by the projects existing included that
-// are not included now, so they can be chosen again by number.
-func (k *projectPicker) dropped(known []backfill.KnownProject) []backfill.KnownProject {
-	var out []backfill.KnownProject
-	listed := map[string]bool{}
-	for _, project := range known {
-		listed[project.Root] = true
-	}
-	for _, old := range k.existing {
-		if old.Included && !k.seen[old.Root] && !listed[old.Root] {
-			listed[old.Root] = true
-			out = append(out, backfill.KnownProject{Root: old.Root})
-		}
-	}
-	return append(out, known...)
-}
-
-// include adds the project at path, as typed or listed.
-func (k *projectPicker) include(path string) {
-	root, err := projectDir(path, k.home)
-	if err != nil {
-		terminal.Println(k.p.out, err.Error()+". Enter an existing project directory.")
-		return
-	}
-	if k.seen[root] {
-		terminal.Println(k.p.out, "That project is already included.")
-		return
-	}
-	k.seen[root] = true
-	for i := range k.result {
-		if k.result[i].Root == root {
-			k.result[i].Included = true
-			return
-		}
-	}
-	// ActivatedAt is left zero here; setup stamps it when it commits.
-	project := archive.ProjectActivation{ProjectID: archive.ProjectID(root), Root: root, Included: true}
-	for _, old := range k.existing {
-		if old.Root == root {
-			project.ActivatedAt = old.ActivatedAt
-		}
-	}
-	k.result = append(k.result, project)
-}
-
-// leaveOut undoes including root: a project result held as an exclusion is
-// excluded again, and any other is dropped.
-func (k *projectPicker) leaveOut(root string) {
-	delete(k.seen, root)
-	for i := range k.result {
-		if k.result[i].Root != root {
-			continue
-		}
-		if k.excluded[root] {
-			k.result[i].Included = false
-		} else {
-			k.result = slices.Delete(k.result, i, i+1)
-		}
-		return
-	}
-}
-
-// printSelection says which projects are included now.
-func (k *projectPicker) printSelection() {
-	var names []string
-	for _, project := range k.result {
-		if project.Included {
-			names = append(names, displayPath(project.Root, k.home))
-		}
-	}
-	switch {
-	case len(names) == 0:
-		terminal.Println(k.p.out, "No project included yet.")
-		return
-	case len(names) > maxKnownProjects:
-		// A reconfigure can hold hundreds that backfill added.
-		terminal.Printf(k.p.out, "Included: %d projects.\n", len(names))
-		return
-	}
-	terminal.Println(k.p.out, k.p.style.hang("Included: ", strings.Join(names, ", ")))
+	return selectSetupProjects(p, result, existing, known, current, home, p.projectBackfilled)
 }
 
 // projectDetails describes a listed project: whether it is the folder setup
@@ -2055,26 +1772,12 @@ func lastUsed(at, now time.Time) string {
 // another set of projects, which changes how sessions resolve. It is only an
 // offer, so a failure or a slow disk leaves the list empty, and that is kept
 // too.
-func knownProjectsOnce(env Env, userHome string) func(config.Config) []backfill.KnownProject {
-	var scannedFor string
-	var projects []backfill.KnownProject
-	scanned := false
-	return func(cfg config.Config) []backfill.KnownProject {
-		key, _ := json.Marshal(cfg.Archive.Projects)
-		if scanned && string(key) == scannedFor {
-			return projects
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		found, err := backfill.KnownProjects(ctx, env.backfillEnvironment(userHome, cfg), cfg)
-		if err != nil {
-			// A failed or timed-out scan is kept as empty, so a later
-			// question does not wait for another.
-			found = nil
-		}
-		scanned, scannedFor, projects = true, string(key), found
-		return projects
+func knownProjectsOnce(env Env, userHome string, searches ...*setupProjectSearch) func(config.Config) []backfill.KnownProject {
+	search := &setupProjectSearch{env: env, home: userHome}
+	if len(searches) > 0 {
+		search = searches[0]
 	}
+	return search.projects
 }
 
 // includedProjects counts the projects capture is on for.

@@ -68,7 +68,7 @@ func TestStorageR2CreationAvailableWithoutFlags(t *testing.T) {
 func TestGuidedR2DefaultProviderFlowSkipsCustomization(t *testing.T) {
 	t.Parallel()
 	g := newGuidedR2Fixture(t)
-	out := g.run(t, strings.Join([]string{"", "1", "", bootstrapCanary, "", ""}, "\n")+"\n", 0)
+	out := g.run(t, strings.Join([]string{"", "", "1", "", bootstrapCanary, "", ""}, "\n")+"\n", 0)
 	if strings.Contains(out, "Bucket name [") || strings.Contains(out, "Customize storage location?") || strings.Count(out, "Your archive storage") != 1 {
 		t.Fatalf("default path asks for settings:\n%s", out)
 	}

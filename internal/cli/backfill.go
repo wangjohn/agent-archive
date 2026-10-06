@@ -416,7 +416,9 @@ func offerSetupImport(p *prompter, errOut io.Writer, home, userHome string, env 
 		return
 	}
 	filters := backfill.Filters{Harnesses: cfg.Harnesses, Projects: roots}
-	later := "Import them later with " + p.style.cmd("agent-archive backfill") + "."
+	later := "Setup is complete. Import them later with " + p.style.cmd("agent-archive backfill") + "."
+	p.setupHeading("Optional · Import past sessions")
+	releasePrompts := p.suspendPrompts()
 	var stopLooking func()
 	if p.style.live {
 		terminal.Print(p.out, "\n")
@@ -430,6 +432,7 @@ func offerSetupImport(p *prompter, errOut io.Writer, home, userHome string, env 
 	interrupted := planCtx.Err() != nil
 	stopPlanning()
 	stopLooking()
+	releasePrompts()
 	switch {
 	case interrupted:
 		if p.style.live {
@@ -460,7 +463,8 @@ func offerSetupImport(p *prompter, errOut io.Writer, home, userHome string, env 
 	} else {
 		terminal.Printf(p.out, "%d found.\n", len(plan.Imported()))
 	}
-	yes, err := p.yesNo(fmt.Sprintf("Import the %s from these projects?", countNoun(len(plan.Imported()), "past session")), true)
+	choice, err := p.guidedChoice(promptModel{Question: "Import these sessions?", Helpers: []string{fmt.Sprintf("Found %d sessions in %d selected projects.", len(plan.Imported()), len(plan.Projects())), fmt.Sprintf("%d-day retention applies.", cfg.RetentionDays)}, Default: "import", Primary: []option{{"import", fmt.Sprintf("Import %d sessions", len(plan.Imported()))}, {"skip", "Skip for now"}}, Aliases: []option{{"yes", ""}, {"y", ""}, {"no", ""}, {"n", ""}}})
+	yes := choice == "import" || choice == "yes" || choice == "y"
 	if err != nil || !yes {
 		terminal.Println(p.out, "Not imported. "+later)
 		return

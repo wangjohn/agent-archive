@@ -26,8 +26,8 @@ storage prompt for a link to the [bucket guide](bucket.md). Setup asks questions
 stops before asking anything and changes nothing. Its prompt sequence is not
 a scripting API; to script it, use [`setup --yes`](#set-up-without-questions).
 
-Storage selection groups its question, choices and shortcuts together. On a
-supported terminal, the answered provider menu becomes a short receipt.
+Setup groups each question, explanation, choices and shortcuts together. On a
+supported terminal, the answered question becomes a short receipt.
 `NO_COLOR` removes color while keeping the same structure and interaction;
 dumb terminals and redirected streams retain the expanded question. R2 secret
 fields hide input and show a fixed credential receipt.
@@ -66,36 +66,37 @@ backfill`](../guides/backfill.md) afterwards.
 
 ## 1. Apps and projects
 
-The first time, when you run setup inside a Git project and it finds apps,
-it asks one question for both: "Archive Codex and Claude Code sessions in
-~/src/web-app?" Accept to continue: the apps and that project are chosen, and
-retention is the default 90 days. If your apps have sessions in other
-projects, setup says how many; the review at the end repeats that "Edit a
-setting" adds projects, drops apps, or changes retention. Decline to answer
-the questions below instead. A repository that is your home folder or holds
-it (a dotfiles checkout, say), or that is one of the temporary folders
-backfill skips (`/tmp`, `/private/tmp`, `/var/folders`, `$TMPDIR`) or holds
-one, is too broad to archive on one Enter: setup says so in one line, offers
-no project, pre-selects none below either, and asks for the projects. A
-repository inside a temporary folder, such as `/tmp/x`, is an ordinary project.
-While it reads your apps' history for the count of other projects, setup
-shows "Looking for your other projects...".
+Setup first offers detected apps together, then asks **Which projects?** in
+one shared selector. Inside a repository, the current folder heads the list and
+is labeled `this folder`; it still uses the same All versus Specific decision.
+A home folder, a folder containing it, or a temporary root is too broad to offer
+automatically. A repository inside a temporary folder remains an ordinary project.
 
-Otherwise setup offers the apps it finds together: "Include Codex and Claude
-Code?" Accept to continue, or decline to choose apps individually. If no apps are
-found, it opens the individual choices immediately. On reconfiguration, it
-lists the apps included and not included, then asks "Change which apps are
-included? [y/N]".
+**All N found projects** is choice 1 and the visible default. Enter includes every
+validated candidate, including projects on later pages. Candidates combine the
+current repository, saved project rules and eligible history from your chosen
+apps. All applies to that found set; it does not approve future directories.
+Codex's all-current-and-future-projects setting remains a separate explicit choice.
 
-Setup then lists projects to archive: the ones Claude Code and Codex
-sessions on this machine ran in, most recent first, with how many sessions each
-has and when one was last used. Enter their numbers (`1 3`, or a range such
-as `2-4`), `a` for all of them, or type a project path; a blank line
-finishes. With no history to offer, it asks for paths.
+**Choose specific projects** starts with all candidates checked in fresh setup,
+and your actual choices checked when editing an installed or saved selection.
+Enter numbers or ranges to toggle each project once, `a` to select all pages,
+`p` to add a path, then Enter to confirm. Lists show twelve projects per page,
+with stable numbers and Next/Previous actions. Adding a path preserves the page,
+selection and existing activation times. An unavailable selected directory must
+be repaired or explicitly left out before confirmation.
 
-If you run setup inside a Git project, that project heads the list, marked
-✓ as already included, so a blank line archives just it. Here a number
-switches a project in or out: enter `1` to leave the current project out.
+Discovery is bounded. When it cannot finish, setup reports **search incomplete**,
+explains why, and offers Retry or Add a path. Partial session counts are labeled
+as observed lower bounds. Rendering and paging reuse the result. With no valid
+candidates, setup opens Add a path rather than offering All 0 projects.
+
+Apps and projects, All settings, and Projects in the review editor use this same
+selector. Continuing a draft whose project step is complete keeps its choices;
+storage-only and retention-only edits leave projects alone. Selecting All in an
+edit can re-enable exclusions in the candidate set; setup reports the expanded
+scope before Save. Specific retains explicit excluded roots and imported-project
+exclusions, with the nearest explicit project rule still taking precedence.
 
 In included-project mode, include each project explicitly; nothing outside
 an included project is captured, and setup asks again if none are included.
@@ -110,7 +111,7 @@ Setup suggests S3 when your shell sets `AWS_PROFILE` or your AWS settings
 already have a profile with credentials, and R2 otherwise.
 
 The menu has two numbered choices: **Cloudflare R2** and **Amazon S3**.
-After choosing a provider, press Enter to continue with bucket creation, or
+After choosing a provider, press Enter for **Create a new bucket**, or
 choose **Use an existing bucket** before supplying creation credentials.
 
 For R2 creation, supply a temporary setup token. Setup checks archive-key
@@ -190,32 +191,34 @@ falling back to visible keystrokes.
 
 ## 3. Review and start
 
-The review lists what setup will save, then a checklist of what it found:
+The compact review shows apps, selected project paths or count, Codex scope,
+full storage destination including its prefix, retention, and skill evidence
+scope. Nondefault capture restrictions, exclusions and meaningful changes stay
+visible, with old/new values for a reconfiguration. Storage is shown once.
 
-```
-Step 3 of 3 · Ready to start
+```text
+Step 3 of 3 · Review and start
 
-  Apps       Codex 0.159.3 · Claude Code 2.1.90
-  Projects   ~/src/web-app
-  Skills     metadata  User skill roots outside selected projects may be scanned
-  Storage    s3://team-archive/agent-archive/  us-east-1 · profile work
+  Apps       Codex, Claude Code, Cursor
+  Projects   3 included projects (paths in Details)
+  Codex      Included projects only
+  Skills     Metadata, including user folders
+  Storage    s3://team-archive/agent-archive/
   Keep for   90 days
 
-  ✓ Storage connected       write, read, list, delete
-  ✓ Bucket is private       all public access blocked
-  ✓ Hook files are valid    ~/.codex/hooks.json, ~/.claude/settings.json
-  ✓ Codex discovery        supported new tasks do not require hook approval
+  ✓ Storage connected
+  ✓ Bucket is private
+  ! History import is separate.
+  ! Sensitive text may remain after filtering.
 ```
 
-The summary shows the apps with their versions ("version not detected"
-when setup could not read one), the projects, the storage address with its
-region and profile (or R2 account), and the deletion period. The session
-scope shows when it is not the default (every new session). An app you left
-out is listed as skipped: setup does not offer it again, but you can add it
-back under "Apps and projects" in a later `agent-archive setup`. The
-deletion period is 90 days by default; older sessions are deleted from the
-bucket automatically. When you reconfigure, each changed value is marked `*`
-with its old value beneath it.
+Choose **Full settings and privacy** (`d`) for app versions, source roots, exact
+project paths and exceptions, discovery/copy behavior, hook status, credential
+ownership, storage checks and privacy documentation. Longer details use the
+pager and return to the same draft and decision. **Name this machine** (`m`) and
+**Cancel; keep draft** (`q`) are separate shortcuts. Narrow displays wrap values
+and warnings without dropping them. The default retention is 90 days; older
+sessions are deleted from the bucket automatically.
 
 The Skills row controls filesystem skill evidence. Fresh setup uses
 `metadata` (names and filtered hashes, no body). Choose Edit a setting to
@@ -623,7 +626,8 @@ instead.
 
 Setup's storage check and installed hooks establish configuration, not a captured session. After `agent-archive sync` or the next background pass, check that the app's Capture row says **archived, verified**, then confirm the session appears in `agent-archive list` and `agent-archive show SESSION_ID`. An overall `Ready` state alone does not establish that this app published a new session and had it read back. For a short route through the check, see [first successful capture](../README.md#first-successful-capture).
 
-Setup's last line, after the import offer, is the command that sets up another machine with the same
+After setup, a short hint points to machine pairing. Choose **Machine transfer details**
+under More next steps for a command that sets up another machine with the same
 storage, capture rules, agent skill installation policy, apps and projects
 ([without questions](#set-up-without-questions)),
 ready to copy:
@@ -667,8 +671,7 @@ before transfer; missing excluded directories remain supported.
 
 Interactive setup offers Codex capture scope, defaulting to **Included projects
 only**. Choosing **All current and future projects (Codex only)** approves supported
-new Codex tasks in unlisted repositories and directories without another project
-prompt. Claude Code and Cursor still need explicitly included projects. Codex-only
+new Codex tasks in unlisted repositories and directories without a list selection; setup explains the scope and opens the exceptions editor. Claude Code and Cursor still need explicitly included projects. Codex-only
 all-projects setup can have zero explicitly included projects.
 
 Scope and automatic discovery are separate choices. Fresh scripted Codex setup
@@ -693,8 +696,9 @@ Project exception rules are shared. If Claude Code or Cursor is also selected,
 setup asks for separate confirmation naming those apps before changing their
 capture permission. The default is No; declining leaves the rule and capture
 permissions unchanged. Codex-only setup does not need that additional choice.
-The final review separates capture mechanism, scope, exceptions, approved Codex
-homes, destination, start boundary, history, copies and optional hooks.
+The final review keeps scope and nondefault restrictions visible; Details separates
+capture mechanism, exceptions, approved Codex homes, start boundary, history,
+copies and optional hooks.
 
 Consent uses the session's original native creation time, not its file modification
 time, copy time, first prompt, or discovery time. Existing history and sessions

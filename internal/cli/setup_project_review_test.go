@@ -66,7 +66,7 @@ func TestSetupReviewRequiresProjectsAfterZeroProjectScopeOrAppEdit(t *testing.T)
 			before := setupCaptureFiles(t, env, home, userHome, cfg)
 			// A save answer is rejected in the real review loop, then cancel.
 			out := setupRun(t, env, "retention\n90\nedit\n"+edit.answers+"yes\nno\n", 0)
-			if !strings.Contains(out, "Project required") || !strings.Contains(out, "Fix what is marked") || strings.Contains(out, "Configuration saved.") {
+			if !strings.Contains(out, "Project required") || !strings.Contains(out, "Fix the blocking checks first") || strings.Contains(out, "Setup complete") {
 				t.Fatalf("invalid review edit committed or lacked correction: %s", out)
 			}
 			if !reflect.DeepEqual(before, setupCaptureFiles(t, env, home, userHome, cfg)) {
@@ -86,7 +86,7 @@ func TestSetupReviewProjectEditRepairsZeroProjectScopeOrAppChange(t *testing.T) 
 			must(t, err)
 			out := setupRun(t, env, "retention\n90\nedit\n"+edit.answers+"edit\nprojects\n"+project+"\n\nyes\n", 0)
 			cfg := mustLoadConfig(t, home)
-			if !strings.Contains(out, "Configuration saved.") || includedProjects(cfg.Archive.Projects) != 1 || cfg.Archive.Projects[0].Root != project {
+			if !strings.Contains(out, "Setup complete") || includedProjects(cfg.Archive.Projects) != 1 || cfg.Archive.Projects[0].Root != project {
 				t.Fatalf("project correction did not commit: %+v %s", cfg.Archive.Projects, out)
 			}
 			if edit.name == "included-scope" && cfg.EffectiveCodexCaptureScope() != config.CodexIncludedProjects {
