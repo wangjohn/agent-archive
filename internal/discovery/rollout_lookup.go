@@ -86,19 +86,19 @@ func NewCodexRolloutLookup(ctx context.Context, store *state.Store, homes []stri
 	var prior catalog
 	if err := lookup.readCatalog(ctx, filepath.Join(store.Home(), "discovery-catalog.json"), &prior); err != nil && !errors.Is(err, os.ErrNotExist) {
 		if errors.Is(err, agentapi.ErrReadBudget) || ctx.Err() != nil {
-			return nil, errors.Join(err, lookup.Close())
+			return nil, errors.Join(err, lookup.closeWithContext(ctx))
 		}
 		return lookup, nil
 	}
 	if prior.Coverage != nil && prior.Coverage.Version != 1 {
-		return nil, errors.Join(errors.New("native coverage requires a newer writer"), lookup.Close())
+		return nil, errors.Join(errors.New("native coverage requires a newer writer"), lookup.closeWithContext(ctx))
 	}
 	if catalogNeedsReset(prior, roots) {
 		return lookup, nil
 	}
 	if prior.Coverage != nil {
 		if err := prior.Coverage.validate(roots); err != nil {
-			return nil, errors.Join(err, lookup.Close())
+			return nil, errors.Join(err, lookup.closeWithContext(ctx))
 		}
 		lookup.coverage = prior.Coverage
 	} else {
@@ -739,6 +739,12 @@ func currentLocator(ctx context.Context, db *sql.DB, id string) (string, bool, e
 
 // Close releases all private databases and snapshots; it never changes natives.
 func (l *CodexRolloutLookup) Close() error {
+	// Normal pass cleanup must checkpoint bounded durable coverage even if the
+	// pass deadline expired. Constructor failure uses its inherited context.
+	return l.closeWithContext(context.Background())
+}
+
+func (l *CodexRolloutLookup) closeWithContext(ctx context.Context) error {
 	if l.closed {
 		return nil
 	}
@@ -770,7 +776,7 @@ func (l *CodexRolloutLookup) Close() error {
 		if l.catalog != nil {
 			current = *l.catalog
 		} else {
-			err = l.readCatalog(context.Background(), filepath.Join(l.store.Home(), "discovery-catalog.json"), &current)
+			err = l.readCatalog(ctx, filepath.Join(l.store.Home(), "discovery-catalog.json"), &current)
 		}
 		if err == nil || errors.Is(err, os.ErrNotExist) {
 			if current.Coverage != nil && current.Coverage.Version != 1 {
@@ -779,7 +785,7 @@ func (l *CodexRolloutLookup) Close() error {
 				current.Version = catalogVersion
 				current.Roots = slices.Clone(l.roots)
 				current.Coverage = l.coverage
-				errs = append(errs, l.writeCatalog(context.Background(), filepath.Join(l.store.Home(), "discovery-catalog.json"), current))
+				errs = append(errs, l.writeCatalog(ctx, filepath.Join(l.store.Home(), "discovery-catalog.json"), current))
 			}
 		} else {
 			errs = append(errs, err)

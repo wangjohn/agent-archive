@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/local"
 )
@@ -67,6 +68,20 @@ type RetiredSource struct {
 	RetiredAt        time.Time               `json:"retired_at"`
 	Reference        archive.SourceReference `json:"reference"`
 	PrivacySensitive bool                    `json:"privacy_sensitive,omitempty"`
+}
+
+// ValidateHistoryBudgeted reserves the independent ephemeral metadata view used
+// by journal validation. The input bytes retain their original caller ownership.
+func (p PendingPublication) ValidateHistoryBudgeted(id string, budget *agentapi.NativeReadBudget) error {
+	if p.History == nil {
+		return nil
+	}
+	n := int64(len(p.MetadataBytes))
+	if !budget.Reserve(n) {
+		return errStateBudget
+	}
+	defer budget.Release(n)
+	return p.ValidateHistory(id)
 }
 
 // ValidateHistory refuses future journals and references outside this session.

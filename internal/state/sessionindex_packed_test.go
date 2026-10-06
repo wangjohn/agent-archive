@@ -350,5 +350,14 @@ func TestPackedCandidateParentRemovalAndSnapshotRace(t *testing.T) {
 }
 
 func (s *Store) recoverPackedShard(ctx context.Context, shard string, marker sessionIndexMarker, owners map[agentmeta.SessionKey][]string, candidates []SubagentCandidate) error {
-	return s.recoverPackedShardSlice(ctx, shard, marker, owners, candidates, time.Time{})
+	data, err := s.preparePackedShardSlice(ctx, marker, owners, candidates, time.Time{})
+	if err != nil {
+		return err
+	}
+	path := packedIndexPath(s.home, shard)
+	before, err := readSnapshot(path)
+	if err != nil {
+		return err
+	}
+	return s.publishPackedBatch(ctx, marker, []packedPublication{{path: path, before: before, data: data}})[0]
 }

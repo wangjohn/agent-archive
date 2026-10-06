@@ -603,7 +603,7 @@ func LoadSource(ctx context.Context, store storage.ObjectStore, metadata archive
 // selected metadata pointer before decoding. Private publication stages reuse
 // this reader without pretending to be a second object-store implementation.
 func DecodeReferencedSource(ctx context.Context, metadata archive.Metadata, data []byte, limits Limits) (archive.SourceBundle, error) {
-	return decodeReferencedSource(ctx, metadata, data, limits, &metadata.FilterVersion, 0)
+	return decodeReferencedSource(ctx, metadata, data, limits, &metadata.FilterVersion, 0, false)
 }
 
 // DecodeRevisionSource verifies a retained revision using its own provenance.
@@ -613,7 +613,7 @@ func DecodeRevisionSource(ctx context.Context, metadata archive.Metadata, revisi
 	if err != nil {
 		return archive.SourceBundle{}, err
 	}
-	return decodeReferencedSource(ctx, selected, data, limits, filter, schema)
+	return decodeReferencedSource(ctx, selected, data, limits, filter, schema, revisionID != metadata.History.CurrentRevision)
 }
 
 func revisionSourceMetadata(metadata archive.Metadata, revisionID string) (archive.Metadata, *string, int, error) {
@@ -642,7 +642,7 @@ func revisionSourceMetadata(metadata archive.Metadata, revisionID string) (archi
 	return archive.Metadata{}, nil, 0, errors.New("revision is not referenced by this session")
 }
 
-func decodeReferencedSource(ctx context.Context, metadata archive.Metadata, data []byte, limits Limits, filter *string, schema int) (archive.SourceBundle, error) {
+func decodeReferencedSource(ctx context.Context, metadata archive.Metadata, data []byte, limits Limits, filter *string, schema int, preserved bool) (archive.SourceBundle, error) {
 	if err := ctx.Err(); err != nil {
 		return archive.SourceBundle{}, err
 	}
@@ -668,7 +668,7 @@ func decodeReferencedSource(ctx context.Context, metadata archive.Metadata, data
 	if bundle.History != nil && (metadata.History == nil || metadata.History.CurrentRevision != bundle.History.ActiveRolloutID) {
 		return archive.SourceBundle{}, errors.New("source revision disagrees with metadata")
 	}
-	if (bundle.SchemaVersion != archive.SourceSchemaVersion && bundle.SchemaVersion != archive.HistorySourceSchemaVersion) || bundle.ArchiveSessionID != metadata.SessionID || bundle.NativeSessionID != metadata.NativeSessionID || bundle.ProjectID != metadata.ProjectID || bundle.ParentSessionID != metadata.ParentSessionID || bundle.Capture.Harness != metadata.Harness || !bundle.Capture.CapturedAt.Equal(metadata.CapturedAt) || (filter != nil && bundle.Capture.FilterVersion != *filter) || (schema != 0 && bundle.SchemaVersion != schema) {
+	if (bundle.SchemaVersion != archive.SourceSchemaVersion && bundle.SchemaVersion != archive.HistorySourceSchemaVersion) || bundle.ArchiveSessionID != metadata.SessionID || bundle.NativeSessionID != metadata.NativeSessionID || bundle.ProjectID != metadata.ProjectID || bundle.ParentSessionID != metadata.ParentSessionID || !sourceHarnessMatches(bundle.Capture.Harness, metadata.Harness, preserved) || !bundle.Capture.CapturedAt.Equal(metadata.CapturedAt) || (filter != nil && bundle.Capture.FilterVersion != *filter) || (schema != 0 && bundle.SchemaVersion != schema) {
 		return archive.SourceBundle{}, errors.New("source identity does not match metadata")
 	}
 	key, err := archive.SourceObjectKey(bundle, metadata.SourceBundle.SHA256)
@@ -676,6 +676,16 @@ func decodeReferencedSource(ctx context.Context, metadata archive.Metadata, data
 		return archive.SourceBundle{}, errors.New("source key does not match metadata identity")
 	}
 	return bundle, nil
+}
+
+// A preserved physical revision has its own producer version and mode, bound
+// by the immutable source checksum. The active sidecar cannot supply those
+// observations, while the harness name remains part of stable source identity.
+func sourceHarnessMatches(source, active archive.Harness, preserved bool) bool {
+	if preserved {
+		return source.Name == active.Name
+	}
+	return source == active
 }
 
 // RefreshAndLoad retries once after rereading metadata, covering the normal

@@ -126,6 +126,8 @@ func TestLoadRevisionUsesIndependentFormatAndFilterProvenance(t *testing.T) {
 			bundle.NativeSessionID = thread
 			bundle.Capture.CapturedAt = bundle.Capture.CapturedAt.Add(-time.Hour)
 			bundle.Capture.FilterVersion = "14"
+			bundle.Capture.Harness.Version = "0.150.0"
+			bundle.Capture.Harness.Mode = "older-mode"
 			bundle.SchemaVersion = schema
 			if schema == archive.HistorySourceSchemaVersion {
 				bundle.Ordinals = []uint64{0, 1}
@@ -145,6 +147,8 @@ func TestLoadRevisionUsesIndependentFormatAndFilterProvenance(t *testing.T) {
 			metadata.SchemaVersion = archive.HistoryMetadataSchemaVersion
 			metadata.NativeSessionID = thread
 			metadata.FilterVersion = "15"
+			metadata.Harness.Version = "0.160.0"
+			metadata.Harness.Mode = "current-mode"
 			metadata.History = &archive.RevisionHistory{CurrentRevision: active, Preserved: []archive.RevisionReference{{RevisionID: preserved, CapturedAt: bundle.Capture.CapturedAt, Source: archive.SourceReference{Key: key, SHA256: packed.SHA256, CompressedBytes: len(packed.Bytes)}}}}
 			for _, explicit := range []bool{false, true} {
 				if explicit {
@@ -165,6 +169,19 @@ func TestLoadRevisionUsesIndependentFormatAndFilterProvenance(t *testing.T) {
 			if _, err := LoadRevision(t.Context(), store, metadata, preserved, Limits{}); err == nil {
 				t.Fatal("false format provenance accepted")
 			}
+			current := metadata
+			current.History = &archive.RevisionHistory{CurrentRevision: preserved}
+			current.SourceBundle = metadata.History.Preserved[0].Source
+			current.CapturedAt = bundle.Capture.CapturedAt
+			current.FilterVersion = bundle.Capture.FilterVersion
+			if _, err := DecodeReferencedSource(t.Context(), current, packed.Bytes, Limits{}); err == nil {
+				t.Fatal("active producer mismatch accepted")
+			}
+			current.Harness = bundle.Capture.Harness
+			if _, err := DecodeReferencedSource(t.Context(), current, packed.Bytes, Limits{}); err != nil {
+				t.Fatal("matching active producer refused", err)
+			}
+
 		})
 	}
 }

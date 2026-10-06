@@ -291,6 +291,7 @@ func (s *sessionScan) liveTranscriptChanged(lastPublished archive.SourceBundle) 
 	if err != nil {
 		return false
 	}
+	filterMark := len(s.retainedReleases)
 	filtered, observed, err := source.Filter(s.ctx, adapter, s.opts.maxTranscriptBytes())
 	if err != nil {
 		// Native input is optional for a retained-source refresh, but an owned
@@ -302,11 +303,14 @@ func (s *sessionScan) liveTranscriptChanged(lastPublished archive.SourceBundle) 
 	}
 	// Normal capture reads this same source next unless the refresh ends the
 	// scan, so it keeps what was read here.
-	s.filtered = &filteredSource{adapter: adapter, transcript: filtered, observed: observed}
+	s.filtered = &filteredSource{filterLease: s.nativeFilterLease(filterMark), adapter: adapter, transcript: filtered, observed: observed}
+	candidateOwner := len(s.retainedReleases)
 	candidate, err := s.newSourceBundle(s.reg, adapter, filtered, s.now, cached.SupplementalEvidence)
 	if err != nil {
 		return false
 	}
+	// This probe returns only a decision; its independent decoded rows end here.
+	defer s.releaseRetainedIndex(candidateOwner)
 	same, err := s.bundleEvidenceEqual(cached, candidate)
 	if err != nil || same {
 		return false

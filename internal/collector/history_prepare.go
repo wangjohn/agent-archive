@@ -19,7 +19,7 @@ func (s *sessionScan) advanceHistoryPreparation(p *state.PendingPublication) err
 	if p.Attempted {
 		return errors.New("attempted history publication cannot be prepared again")
 	}
-	if err := p.ValidateHistory(s.id()); err != nil {
+	if err := p.ValidateHistoryBudgeted(s.id(), s.readBudget()); err != nil {
 		return err
 	}
 	adapter, err := sourceAdapter(s.opts.Sources, s.reg.Harness.Name)
@@ -91,7 +91,17 @@ func (s *sessionScan) loadHistoryInput(identity archive.Metadata, input state.Hi
 	if err != nil {
 		return archive.SourceBundle{}, err
 	}
-	bundle, err := s.decodeReferenced(selected, data)
+	var bundle archive.SourceBundle
+	if identity.History != nil && input.RevisionID != identity.History.CurrentRevision {
+		selected.History = &archive.RevisionHistory{CurrentRevision: identity.History.CurrentRevision, Preserved: []archive.RevisionReference{{RevisionID: input.RevisionID, CapturedAt: input.CapturedAt, Source: input.Reference, FilterVersion: input.FilterVersion, SourceSchemaVersion: input.SourceSchemaVersion}}}
+		// Keep the original active pointer separate from the frozen preserved
+		// input so the reader uses that physical revision's producer observations.
+		selected.SourceBundle = identity.SourceBundle
+		selected.CapturedAt = identity.CapturedAt
+		bundle, err = s.decodeRevision(selected, input.RevisionID, data)
+	} else {
+		bundle, err = s.decodeReferenced(selected, data)
+	}
 	// Decode owns independent records; compressed input is no longer used.
 	s.releaseRetainedIndex(mark)
 	if err == nil && input.SourceSchemaVersion != 0 && bundle.SchemaVersion != input.SourceSchemaVersion {

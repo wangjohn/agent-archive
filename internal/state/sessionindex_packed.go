@@ -448,32 +448,32 @@ func (s *Store) preparePackedSessionIndex(ctx context.Context, revision, invento
 
 var errPackedSlicePending = errors.New("packed application slice pending")
 
-func (s *Store) recoverPackedShardSlice(ctx context.Context, shard string, marker sessionIndexMarker, owners map[agentmeta.SessionKey][]string, candidates []SubagentCandidate, deadline time.Time) error {
+func (s *Store) preparePackedShardSlice(ctx context.Context, marker sessionIndexMarker, owners map[agentmeta.SessionKey][]string, candidates []SubagentCandidate, deadline time.Time) ([]byte, error) {
 
 	sizing, oversized, err := packedShardSizing(marker, owners, candidates)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	if oversized {
 		sizing.Fallback = true
 		empty, err := encodePackedIndex(sizing)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		return s.publishPackedIndex(ctx, shard, marker, empty, true)
+		return empty, nil
 	}
 	entries := make(map[string]qualifiedSessionIndexEntry, len(owners)+len(candidates))
 	if err := s.packedShardOwners(ctx, owners, entries, deadline); err != nil {
-		return fmt.Errorf("packed shard %s owners: %w", shard, err)
+		return nil, fmt.Errorf("owners: %w", err)
 	}
 	if err := s.packedShardCandidates(ctx, candidates, entries, marker, deadline); err != nil {
-		return err
+		return nil, err
 	}
 	index := packedSessionIndex{Version: 1, Epoch: marker.PackedEpoch, Revision: marker.PackedRevision, Inventory: marker.PackedInventory, Entries: entries}
 	data, err := encodePackedIndex(index)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if len(entries) > packedSessionIndexMaxEntries || len(data) > packedSessionIndexMaxBytes {
 		// Large/skewed existing identities remain supported by the ordinary durable
@@ -486,18 +486,14 @@ func (s *Store) recoverPackedShardSlice(ctx context.Context, shard string, marke
 		index.Fallback = true
 		empty, err := encodePackedIndex(index)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		if err := s.publishPackedIndex(ctx, shard, marker, empty, true); err != nil {
-			return err
-		}
-
-		return nil
+		return empty, nil
 	}
 	if err := ctx.Err(); err != nil {
-		return err
+		return nil, err
 	}
-	return s.publishPackedIndex(ctx, shard, marker, data, true)
+	return data, nil
 }
 
 func (s *Store) packedShardOwners(ctx context.Context, owners map[agentmeta.SessionKey][]string, entries map[string]qualifiedSessionIndexEntry, deadline time.Time) error {
@@ -846,19 +842,6 @@ func (s *Store) writePackedOverlayState(marker sessionIndexMarker, value string,
 
 // Stage and directory durability happen outside all locks. The membership
 // lock serializes shard renames with expiry and fences stale census publication.
-func (s *Store) publishPackedIndex(ctx context.Context, shard string, marker sessionIndexMarker, data []byte, census bool) error {
-	path := packedIndexPath(s.home, shard)
-	before, err := readSnapshot(path)
-	if err != nil {
-		return err
-	}
-	return s.commitPackedIndex(ctx, path, marker, before, data, census)
-}
-
-func (s *Store) commitPackedIndex(ctx context.Context, path string, marker sessionIndexMarker, before fileSnapshot, data []byte, census bool) error {
-	return s.commitPackedIndexGuarded(ctx, path, marker, before, data, census, nil)
-}
-
 func (s *Store) commitPackedIndexGuarded(ctx context.Context, path string, marker sessionIndexMarker, before fileSnapshot, data []byte, census bool, guard func() (func() error, error)) error {
 	staged, err := local.StageBytes(path, data)
 	if err != nil {
@@ -866,8 +849,19 @@ func (s *Store) commitPackedIndexGuarded(ctx context.Context, path string, marke
 	}
 	defer staged.Discard()
 	s.writeSynced()
+	committed, err := s.commitStagedPackedIndex(ctx, path, marker, before, staged, census, guard)
+	if !committed {
+		return err
+	}
+	s.writeSynced()
+	return errors.Join(err, staged.SyncDir())
+}
+
+// commitStagedPackedIndex applies the original publication fences to a synced
+// temporary file. Its caller must sync the directory after a successful rename.
+func (s *Store) commitStagedPackedIndex(ctx context.Context, path string, marker sessionIndexMarker, before fileSnapshot, staged *local.Staged, census bool, guard func() (func() error, error)) (bool, error) {
 	committed := false
-	err = func() (err error) {
+	err := func() (err error) {
 		if guard != nil {
 			unlock, err := guard()
 			if err != nil {
@@ -904,11 +898,7 @@ func (s *Store) commitPackedIndexGuarded(ctx context.Context, path string, marke
 		committed = err == nil
 		return err
 	}()
-	if !committed {
-		return err
-	}
-	s.writeSynced()
-	return errors.Join(err, staged.SyncDir())
+	return committed, err
 }
 
 // Capture linked archive IDs before candidate deletion; cleanup does not need
@@ -1316,4 +1306,96 @@ func (s *Store) reconcilePackedExpiryProofs(marker sessionIndexMarker) error {
 		return dir.Sync()
 	}
 	return nil
+}
+
+// packedPublication holds one shard's bounded bytes and pre-staging snapshot.
+type packedPublication struct {
+	path   string
+	before fileSnapshot
+	data   []byte
+}
+
+// publishPackedBatch overlaps only disk durability for at most two shards.
+// Authority preparation, commit fences, and test seams stay on the caller.
+// Every started operation is joined before returning, including failures.
+func (s *Store) publishPackedBatch(ctx context.Context, marker sessionIndexMarker, batch []packedPublication) []error {
+	if len(batch) > 2 {
+		panic("packed publication batch exceeds two shards")
+	}
+	type stagedResult struct {
+		staged *local.Staged
+		err    error
+	}
+	stages := make([]chan stagedResult, len(batch))
+	for i, publication := range batch {
+		stages[i] = make(chan stagedResult, 1)
+		go func() {
+			staged, err := local.StageBytes(publication.path, publication.data)
+			stages[i] <- stagedResult{staged, err}
+		}()
+	}
+	results := make([]stagedResult, len(batch))
+	for i := range batch {
+		results[i] = <-stages[i]
+		defer results[i].staged.Discard()
+	}
+	errs := make([]error, len(batch))
+	committedStages := make([]*local.Staged, len(batch))
+	for i, publication := range batch {
+		result := results[i]
+		if result.err != nil {
+			errs[i] = result.err
+			continue
+		}
+		s.writeSynced()
+		committed, err := s.commitStagedPackedIndex(ctx, publication.path, marker, publication.before, result.staged, true, nil)
+		errs[i] = err
+		if !committed {
+			continue
+		}
+		s.writeSynced()
+		committedStages[i] = result.staged
+	}
+	syncPackedParents(batch, committedStages, errs, (*local.Staged).SyncDir)
+	return errs
+}
+
+// syncPackedParents runs native directory durability after every guarded rename.
+// One sync covers all committed members of the same parent; its error belongs
+// to every such member, so none can advance the durable checkpoint prefix.
+// Mixed parents remain independent and every started sync is joined.
+func syncPackedParents(batch []packedPublication, committed []*local.Staged, errs []error, syncDir func(*local.Staged) error) {
+	type parentSync struct {
+		parent  string
+		members []int
+		result  chan error
+	}
+	groups := make([]parentSync, 0, len(batch))
+	for i, staged := range committed {
+		if staged == nil {
+			continue
+		}
+		parent := filepath.Dir(batch[i].path)
+		group := -1
+		for j := range groups {
+			if groups[j].parent == parent {
+				group = j
+				break
+			}
+		}
+		if group < 0 {
+			groups = append(groups, parentSync{parent: parent, result: make(chan error, 1)})
+			group = len(groups) - 1
+		}
+		groups[group].members = append(groups[group].members, i)
+	}
+	for _, group := range groups {
+		go func() { group.result <- syncDir(committed[group.members[0]]) }()
+	}
+	for _, group := range groups {
+		err := <-group.result
+		for _, i := range group.members {
+			errs[i] = errors.Join(errs[i], err)
+		}
+	}
 }

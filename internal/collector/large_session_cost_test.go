@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
@@ -200,7 +202,7 @@ func TestLargeGrowingSessionPassesStayFast(t *testing.T) {
 	}
 	result, grown := measureLargePass(t, local, remote, opts)
 	if len(result.Published) != 1 || len(result.Errors) != 0 {
-		t.Fatalf("growing pass: %#v", result)
+		t.Fatalf("growing pass: %#v; errors: %v", result, result.Errors)
 	}
 	stateInfo, err := os.Stat(filepath.Join(home, "published", "session-1.json"))
 	if err != nil {
@@ -294,5 +296,48 @@ func appendRecord(t *testing.T, path, line string) {
 	}
 	if err := f.Close(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestLargeNativeGrowingSessionRetainsBudgetProgress(t *testing.T) {
+	records := 200
+	if os.Getenv(perfEnv) != "" {
+		records = 15000
+	}
+	nativeHome := t.TempDir()
+	project := filepath.Join(nativeHome, "sessions")
+	if err := os.MkdirAll(project, 0700); err != nil {
+		t.Fatal(err)
+	}
+	body := fmt.Sprintf(`{"type":"session_meta","payload":{"id":%q,"cwd":%q,"timestamp":"2026-01-01T00:00:00Z","source":"cli","originator":"codex_cli_rs","cli_version":"0.160.0"}}`+"\n", revisionThread, project) + variedTranscript(records)
+	path := writeTranscript(t, project, "rollout-2026-01-01T00-00-00-"+revisionThread+".jsonl", body)
+	local := newTestStore(t)
+	reg := registration(t, path)
+	reg.NativeSessionID, reg.ProjectRoot, reg.Origin = revisionThread, project, archive.SessionOriginHook
+	if err := local.SaveRegistration(reg); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Config{Discovery: &config.DiscoveryConfig{Enabled: false, CodexHomes: []string{nativeHome}}, MachineID: "m", Harnesses: []string{"codex"}, Archive: archive.Config{Enabled: true, Projects: []archive.ProjectActivation{{Root: project, ProjectID: reg.ProjectID, Included: true, ActivatedAt: reg.SessionStartedAt}}}}
+	if err := config.Save(local.Home(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	remote := storagetest.NewMemoryStore()
+	now := reg.SessionStartedAt.Add(time.Hour)
+	opts := Options{Sources: testSources, Parsers: testParsers, ConfiguredCodexHomes: []string{nativeHome}, MachineID: "m", Now: func() time.Time { return now }, SupplementalEvidence: func(_ archive.SessionRegistration, at time.Time) ([]archive.SupplementalEvidence, error) {
+		return []archive.SupplementalEvidence{{Kind: archive.EvidenceKindExplicitFeedback, ObservedAt: at, Provenance: "synthetic:large", Payload: map[string]any{"text": "synthetic feedback"}}}, nil
+	}}
+	for phase := range 3 {
+		result, err := Run(t.Context(), local, remote, opts)
+		if err != nil || len(result.Errors) != 0 || len(result.Published) != 1 {
+			t.Fatalf("native phase %d errors=%v run=%v published=%v", phase, result.Errors, err, result.Published)
+		}
+		appendRecord(t, path, `{"type":"response_item","payload":{"type":"message","role":"assistant","content":"more"}}`)
+		now = now.Add(time.Hour)
+		if phase == 1 {
+			opts.ParserVersion = "synthetic-native-growing-parser"
+		}
+		if err := local.SaveRequest(reg.ArchiveSessionID, "stop", now); err != nil {
+			t.Fatal(err)
+		}
 	}
 }

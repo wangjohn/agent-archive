@@ -688,3 +688,93 @@ func TestRunNativeHistoryPublicationSettlesAcrossResumeAndRestart(t *testing.T) 
 		t.Fatalf("unchanged restart decoded or rewrote state %#v %#v", next, cost)
 	}
 }
+
+// Physical rollouts keep their own producer observations across upgrades.
+func TestRunHistoryPreservesIndependentProducerVersions(t *testing.T) {
+	scan, lookup := reconciliationFixture(t)
+	defer scan.releaseRetained()
+	for id, version := range map[string]string{revisionThread: "0.150.0", revisionB: "0.155.0"} {
+		path := lookup.refs[id][0].Path
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw = bytes.ReplaceAll(raw, []byte("0.160.0"), []byte(version))
+		if err := os.WriteFile(path, raw, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := scan.local.SaveRequest(scan.id(), "stop", scan.now); err != nil {
+		t.Fatal(err)
+	}
+	published := false
+	for range 8 {
+		reopened, err := state.Open(scan.local.Home())
+		if err != nil {
+			t.Fatal(err)
+		}
+		scan.local = reopened
+		result, err := Run(t.Context(), reopened, scan.remote, scan.opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, issue := range result.Errors {
+			if !errors.Is(issue, archive.ErrHistoryMutationPending) {
+				t.Fatal(issue)
+			}
+		}
+		if len(result.Published) > 0 {
+			published = true
+			break
+		}
+	}
+	if !published {
+		t.Fatal("upgraded history publication did not converge")
+	}
+	metadata := fetchMetadata(t, scan.remote, "codex", scan.id())
+	if metadata.Harness.Version != "0.160.0" {
+		t.Fatal("active producer version lost")
+	}
+	for id, version := range map[string]string{revisionThread: "0.150.0", revisionB: "0.155.0"} {
+		bundle, err := reader.LoadRevision(t.Context(), scan.remote, metadata, id, reader.Limits{})
+		if err != nil || bundle.Capture.Harness.Version != version {
+			t.Fatalf("preserved %s producer: %+v %v", id, bundle.Capture.Harness, err)
+		}
+	}
+	// Retained parser maintenance must also read each producer independently,
+	// preserve every capture time and converge after the native files disappear.
+	if err := os.RemoveAll(scan.reg.ProjectRoot); err != nil {
+		t.Fatal(err)
+	}
+	scan.opts.ParserVersion = "synthetic-producer-upgrade-maintenance"
+	maintained := false
+	for range 8 {
+		result := runHistoryRetry(t, scan, scan.remote)
+		for _, issue := range result.Errors {
+			if !errors.Is(issue, archive.ErrHistoryMutationPending) {
+				t.Fatal(issue)
+			}
+		}
+		if len(result.Published) > 0 {
+			maintained = true
+			break
+		}
+	}
+	if !maintained {
+		t.Fatal("upgraded retained maintenance did not converge")
+	}
+	final := fetchMetadata(t, scan.remote, "codex", scan.id())
+	if !final.CapturedAt.Equal(metadata.CapturedAt) {
+		t.Fatal("maintenance changed active age")
+	}
+	for i, revision := range final.History.Preserved {
+		if !revision.CapturedAt.Equal(metadata.History.Preserved[i].CapturedAt) {
+			t.Fatal("maintenance changed preserved age")
+		}
+		bundle, err := reader.LoadRevision(t.Context(), scan.remote, final, revision.RevisionID, reader.Limits{})
+		if err != nil || bundle.Capture.Harness.Version != map[string]string{revisionThread: "0.150.0", revisionB: "0.155.0"}[revision.RevisionID] {
+			t.Fatal("maintenance lost producer", err)
+		}
+	}
+
+}

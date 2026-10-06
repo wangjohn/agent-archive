@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
@@ -104,6 +105,9 @@ func (s *sessionScan) validateAuthorityIdentity(metadata archive.Metadata) error
 
 func (s *sessionScan) requiresReferenceRecovery() (bool, error) {
 	metadata, found, err := s.published.LastPublishedMetadata()
+	if errors.Is(err, agentapi.ErrReadBudget) {
+		return false, err
+	}
 	if err == nil && found {
 		return false, s.validateAuthorityIdentity(metadata)
 	}

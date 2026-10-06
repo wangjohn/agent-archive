@@ -789,7 +789,7 @@ func (s *Store) SavePending(id string, pending PendingPublication) error {
 	if pending.SourceKey == "" || pending.MetadataKey == "" || pending.SourceSHA256 == "" || len(pending.MetadataBytes) == 0 || (len(pending.SourceBytes) == 0 && (!pending.MetadataOnly || pending.SourceSize <= 0)) {
 		return errors.New("pending publication is incomplete")
 	}
-	if err := pending.ValidateHistory(id); err != nil {
+	if err := pending.ValidateHistoryBudgeted(id, s.resourceBudget); err != nil {
 		return err
 	}
 	return s.writeCompact(s.pendingPath(id), pending)
@@ -815,7 +815,7 @@ func (s *Store) LoadPending(id string) (PendingPublication, bool, error) {
 		return PendingPublication{}, false, fmt.Errorf("read pending publication %q: %w", id, s.afterLoss(id, err))
 	}
 	if found {
-		if err := pending.ValidateHistory(id); err != nil {
+		if err := pending.ValidateHistoryBudgeted(id, s.resourceBudget); err != nil {
 			return PendingPublication{}, false, err
 		}
 	}

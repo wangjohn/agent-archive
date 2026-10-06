@@ -108,7 +108,7 @@ func (s *sessionScan) freezeRevisionPublication(p *state.PendingPublication) err
 		return err
 	}
 	p.History, p.Attempted = history, false
-	return p.ValidateHistory(s.id())
+	return p.ValidateHistoryBudgeted(s.id(), s.readBudget())
 }
 
 // resumeHistory never bypasses retained work for a newer request or policy.
