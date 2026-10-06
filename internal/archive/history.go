@@ -170,7 +170,7 @@ func (m *Metadata) validateRevisionHistory() error {
 }
 
 // ErrHistoryMutationPending protects readable history until revision lifecycle support lands.
-var ErrHistoryMutationPending = errors.New("Codex history mutation requires revision lifecycle support")
+var ErrHistoryMutationPending = errors.New("codex history mutation requires revision lifecycle support")
 
 // CheckHistoryMutation is the temporary reader-before-writer publication fence.
 func CheckHistoryMutation(b SourceBundle, m Metadata) error {

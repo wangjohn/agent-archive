@@ -714,7 +714,8 @@
             "unknown_record_type",
             "unsupported_value_omitted",
             "discovered_without_hook_evidence",
-            "recovered_generation"
+            "recovered_generation",
+            "history_cumulative_tokens_unavailable"
           ]
         },
         {

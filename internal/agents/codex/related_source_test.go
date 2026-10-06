@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"testing"
@@ -18,8 +19,11 @@ import (
 )
 
 const threadA = "11111111-1111-4111-8111-111111111111"
+
 const threadB = "22222222-2222-4222-8222-222222222222"
+
 const rolloutC = "33333333-3333-4333-8333-333333333333"
+
 const rolloutD = "44444444-4444-4444-8444-444444444444"
 
 type historyLookup struct {
@@ -29,13 +33,41 @@ type historyLookup struct {
 	reads    int
 }
 
+type ownershipScenario string
+
+type failureScenario string
+
+type mutationScenario string
+
+const (
+	historyScenarioFork            ownershipScenario = "fork"
+	historyScenarioRevert          ownershipScenario = "revert"
+	historyScenarioChildAbsent     ownershipScenario = "child_absent"
+	historyScenarioChildZero       ownershipScenario = "child_zero"
+	historyScenarioChildCopied     ownershipScenario = "child_copied"
+	historyScenarioIncomplete      failureScenario   = "incomplete"
+	historyScenarioCompeting       failureScenario   = "competing"
+	historyScenarioMissingBase     failureScenario   = "missing_base"
+	historyScenarioSplitPrefix     failureScenario   = "split_prefix"
+	historyScenarioOrdinalMismatch failureScenario   = "ordinal_mismatch"
+	historyScenarioCycle           failureScenario   = "cycle"
+	historyScenarioOutside         failureScenario   = "outside"
+	historyScenarioStaleCurrent    failureScenario   = "stale_current"
+	historyScenarioAppend          mutationScenario  = "append"
+	historyScenarioRewrite         mutationScenario  = "rewrite"
+	historyScenarioReplace         mutationScenario  = "replace"
+	historyScenarioLocatorChange   mutationScenario  = "locator_change"
+)
+
 func (l *historyLookup) Thread(context.Context, string) (agentapi.CodexRolloutSet, error) {
 	l.reads++
 	return l.thread, nil
 }
+
 func (l *historyLookup) Rollout(_ context.Context, id string) ([]agentapi.SourceRef, error) {
 	return l.rollouts[id], nil
 }
+
 func (l *historyLookup) Check(context.Context, string, string) error {
 	if l.changed {
 		return agentapi.Wrap(agentapi.Changed, transcriptio.ErrChanged)
@@ -43,92 +75,92 @@ func (l *historyLookup) Check(context.Context, string, string) error {
 	return nil
 }
 
-func historyFile(t testing.TB, dir, id, thread string, start uint64, extra map[string]any, texts ...string) (agentapi.SourceRef, []byte) {
-	t.Helper()
+func historyFile(tb testing.TB, dir, id, thread string, start uint64, extra map[string]any, texts ...string) (agentapi.SourceRef, []byte) {
+	tb.Helper()
 	meta := map[string]any{"id": thread, "cwd": dir, "timestamp": "2026-10-01T12:00:00Z", "cli_version": "0.160.0", "originator": "codex_cli_rs", "source": "cli", "history_mode": "paginated"}
-	for k, v := range extra {
-		meta[k] = v
-	}
+	maps.Copy(meta, extra)
 	var out bytes.Buffer
 	enc := json.NewEncoder(&out)
 	if err := enc.Encode(map[string]any{"type": "session_meta", "ordinal": start, "payload": meta}); err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	for i, text := range texts {
 		if err := enc.Encode(map[string]any{"type": "response_item", "ordinal": start + uint64(i) + 1, "timestamp": "2026-10-01T12:01:00Z", "payload": map[string]any{"type": "message", "role": "user", "content": []any{map[string]any{"type": "input_text", "text": text}}}}); err != nil {
-			t.Fatal(err)
+			tb.Fatal(err)
 		}
 	}
 	ref := agentapi.SourceRef{Path: filepath.Join(dir, "rollout-2026-10-01T12-00-00-"+id+".jsonl")}
 	if err := os.WriteFile(ref.Path, out.Bytes(), 0600); err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	return ref, out.Bytes()
 }
-func historyPass(t testing.TB, root string, l *historyLookup) agentapi.SourcePass {
-	t.Helper()
+
+func historyPass(tb testing.TB, root string, l *historyLookup) agentapi.SourcePass {
+	tb.Helper()
 	p, e := (SourceProvider{}).OpenPass(context.Background(), agentapi.SourceEnvironment{CodexRollouts: l, Policy: transcriptio.OpenPolicy{Root: root, RejectSymlinks: true}})
 	if e != nil {
-		t.Fatal(e)
+		tb.Fatal(e)
 	}
-	t.Cleanup(func() {
+	tb.Cleanup(func() {
 		if e := p.Close(); e != nil {
-			t.Error(e)
+			tb.Error(e)
 		}
 	})
 	return p
 }
-func historyRead(t testing.TB, p agentapi.SourcePass, ref agentapi.SourceRef) archive.SourceBundle {
-	t.Helper()
+
+func historyRead(tb testing.TB, p agentapi.SourcePass, ref agentapi.SourceRef) archive.SourceBundle {
+	tb.Helper()
 	s, e := p.Read(context.Background(), ref, agentapi.ReadLimits{})
 	if e != nil {
-		t.Fatal(e)
+		tb.Fatal(e)
 	}
 	defer func() {
 		if e := s.Close(); e != nil {
-			t.Error(e)
+			tb.Error(e)
 		}
 	}()
 	f, e := (Filter{}).Filter(context.Background(), s.Input(), agentapi.FilterContext{})
 	if e != nil {
-		t.Fatal(e)
+		tb.Fatal(e)
 	}
 	at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
 	reg := archive.SessionRegistration{ArchiveSessionID: "synthetic", NativeSessionID: f.History.ThreadID, ProjectID: "project", ProjectRoot: "/synthetic", Harness: archive.Harness{Name: "codex"}, TranscriptPath: ref.Path, SessionStartedAt: at, RegisteredAt: at}
 	b, e := archive.NewSourceBundle(reg, Filter{}, f, at, nil)
 	if e != nil {
-		t.Fatal(e)
+		tb.Fatal(e)
 	}
 	if e := b.ValidateHistory(); e != nil {
-		t.Fatal(e)
+		tb.Fatal(e)
 	}
 	return b
 }
 
 func TestRelatedHistoryOwnershipAndRoundTrip(t *testing.T) {
 	t.Parallel()
-	for _, kind := range []string{"fork", "revert", "child_absent", "child_zero", "child_copied"} {
-		t.Run(kind, func(t *testing.T) {
+	for _, kind := range []ownershipScenario{historyScenarioFork, historyScenarioRevert, historyScenarioChildAbsent, historyScenarioChildZero, historyScenarioChildCopied} {
+		t.Run(string(kind), func(t *testing.T) {
 			t.Parallel()
 			dir := t.TempDir()
 			base, raw := historyFile(t, dir, threadA, threadA, 0, nil, "ancestor")
 			ownThread := threadB
 			extra := map[string]any{}
 			switch kind {
-			case "fork":
+			case historyScenarioFork:
 				extra["forked_from_id"] = threadA
 				extra["forked_from_ordinal_exclusive"] = 2
-			case "revert":
+			case historyScenarioRevert:
 				ownThread = threadA
-			default:
+			case historyScenarioChildAbsent, historyScenarioChildZero, historyScenarioChildCopied:
 				extra["parent_thread_id"] = threadA
 			}
 			var leaf agentapi.SourceRef
-			if kind == "child_absent" || kind == "child_zero" || kind == "child_copied" {
-				if kind == "child_zero" {
+			if kind == historyScenarioChildAbsent || kind == historyScenarioChildZero || kind == historyScenarioChildCopied {
+				if kind == historyScenarioChildZero {
 					extra["subagent_history_start_ordinal"] = 0
 				}
-				if kind == "child_copied" {
+				if kind == historyScenarioChildCopied {
 					extra["subagent_history_start_ordinal"] = 2
 				}
 				leaf, _ = historyFile(t, dir, rolloutC, ownThread, 0, extra, "copied-or-owned", "own")
@@ -143,7 +175,7 @@ func TestRelatedHistoryOwnershipAndRoundTrip(t *testing.T) {
 				t.Fatal(e)
 			}
 			want := 1
-			if kind == "revert" || kind == "child_absent" || kind == "child_zero" {
+			if kind == historyScenarioRevert || kind == historyScenarioChildAbsent || kind == historyScenarioChildZero {
 				want = 2
 			}
 			if len(parsed.View.Turns) != want {
@@ -170,41 +202,43 @@ func TestRelatedHistoryOwnershipAndRoundTrip(t *testing.T) {
 
 func TestRelatedSelectionAndDependencyFailures(t *testing.T) {
 	t.Parallel()
-	for _, kind := range []string{"incomplete", "competing", "missing_base", "split_prefix", "ordinal_mismatch", "cycle", "outside", "stale_current"} {
-		t.Run(kind, func(t *testing.T) {
+	for _, kind := range []failureScenario{historyScenarioIncomplete, historyScenarioCompeting, historyScenarioMissingBase, historyScenarioSplitPrefix, historyScenarioOrdinalMismatch, historyScenarioCycle, historyScenarioOutside, historyScenarioStaleCurrent} {
+		t.Run(string(kind), func(t *testing.T) {
 			t.Parallel()
 			dir := t.TempDir()
 			base, raw := historyFile(t, dir, threadA, threadA, 0, nil, "before")
 			boundary := uint64(len(raw))
 			ordinal := uint64(2)
 			baseID := threadA
-			if kind == "split_prefix" {
+			if kind == historyScenarioSplitPrefix {
 				boundary--
 			}
-			if kind == "ordinal_mismatch" {
+			if kind == historyScenarioOrdinalMismatch {
 				ordinal = 3
 			}
-			if kind == "cycle" {
+			if kind == historyScenarioCycle {
 				baseID = rolloutC
 			}
 			leaf, _ := historyFile(t, dir, rolloutC, threadA, ordinal, map[string]any{"history_base": codexmeta.CodexHistoryPosition{RolloutID: baseID, EndOrdinal: ordinal, EndByteOffset: boundary}}, "after")
 			l := &historyLookup{thread: agentapi.CodexRolloutSet{Current: &leaf, Revision: "one"}, rollouts: map[string][]agentapi.SourceRef{threadA: {base}}}
+			p := historyPass(t, dir, l)
 			switch kind {
-			case "incomplete":
+			case historyScenarioIncomplete:
 				l.thread.Current = nil
-			case "competing":
+			case historyScenarioCompeting:
 				other, _ := historyFile(t, dir, rolloutD, threadA, 0, nil, "other")
 				l.thread = agentapi.CodexRolloutSet{Candidates: []agentapi.SourceRef{leaf, other}, Complete: true}
-			case "missing_base":
+			case historyScenarioMissingBase:
 				l.rollouts = nil
-			case "outside":
+			case historyScenarioOutside:
 				outside, _ := historyFile(t, t.TempDir(), rolloutD, threadA, 0, nil, "outside")
 				l.thread.Current = &outside
-			case "stale_current":
+			case historyScenarioStaleCurrent:
 				other, _ := historyFile(t, dir, rolloutD, threadB, 0, nil, "wrong")
 				l.thread.Current = &other
+			case historyScenarioSplitPrefix, historyScenarioOrdinalMismatch, historyScenarioCycle:
+				// These cases already alter the physical history above.
 			}
-			p := historyPass(t, dir, l)
 			s, e := p.Read(t.Context(), leaf, agentapi.ReadLimits{})
 			if e == nil {
 				_ = s.Close()
@@ -253,8 +287,8 @@ func TestRelatedSignatureChangesWithAncestorAndCurrentLocator(t *testing.T) {
 
 func TestRelatedCapturedPrefixAcceptsAppendAndRejectsRewrite(t *testing.T) {
 	t.Parallel()
-	for _, kind := range []string{"append", "rewrite", "replace", "locator_change"} {
-		t.Run(kind, func(t *testing.T) {
+	for _, kind := range []mutationScenario{historyScenarioAppend, historyScenarioRewrite, historyScenarioReplace, historyScenarioLocatorChange} {
+		t.Run(string(kind), func(t *testing.T) {
 			t.Parallel()
 			dir := t.TempDir()
 			leaf, raw := historyFile(t, dir, threadB, threadB, 0, map[string]any{"parent_thread_id": threadA}, "own")
@@ -266,7 +300,7 @@ func TestRelatedCapturedPrefixAcceptsAppendAndRejectsRewrite(t *testing.T) {
 			}
 			defer func() { _ = s.Close() }()
 			switch kind {
-			case "append":
+			case historyScenarioAppend:
 				f, e := os.OpenFile(leaf.Path, os.O_APPEND|os.O_WRONLY, 0600)
 				if e != nil {
 					t.Fatal(e)
@@ -275,22 +309,22 @@ func TestRelatedCapturedPrefixAcceptsAppendAndRejectsRewrite(t *testing.T) {
 				if e = errors.Join(e, f.Close()); e != nil {
 					t.Fatal(e)
 				}
-			case "rewrite":
+			case historyScenarioRewrite:
 				if e := os.WriteFile(leaf.Path, bytes.Replace(raw, []byte("own"), []byte("new"), 1), 0600); e != nil {
 					t.Fatal(e)
 				}
-			case "replace":
+			case historyScenarioReplace:
 				if e := os.Remove(leaf.Path); e != nil {
 					t.Fatal(e)
 				}
 				if e := os.WriteFile(leaf.Path, raw, 0600); e != nil {
 					t.Fatal(e)
 				}
-			case "locator_change":
+			case historyScenarioLocatorChange:
 				l.changed = true
 			}
 			out, e := (Filter{}).Filter(t.Context(), s.Input(), agentapi.FilterContext{})
-			if kind == "append" {
+			if kind == historyScenarioAppend {
 				if e != nil || len(out.Records) != 2 {
 					t.Fatalf("append prefix %d %v", len(out.Records), e)
 				}
@@ -321,38 +355,6 @@ func TestRelatedLimitsAndCleanup(t *testing.T) {
 	owned := p.(*relatedSourcePass)
 	if owned.bytes != 0 || len(owned.files) != 0 || len(owned.live) != 0 {
 		t.Fatal("pass retained resources")
-	}
-}
-
-func BenchmarkRelatedHistoryRecords(b *testing.B) {
-	for _, n := range []int{1000, 10000, 100000} {
-		b.Run(fmt.Sprint(n), func(b *testing.B) {
-			dir := b.TempDir()
-			texts := make([]string, n)
-			for i := range texts {
-				texts[i] = "synthetic prompt"
-			}
-			leaf, raw := historyFile(b, dir, threadB, threadB, 0, map[string]any{"parent_thread_id": threadA}, texts...)
-			l := &historyLookup{thread: agentapi.CodexRolloutSet{Current: &leaf, Revision: "one"}}
-			b.ReportAllocs()
-			b.SetBytes(int64(len(raw)))
-			b.ResetTimer()
-			for range b.N {
-				p, _ := (SourceProvider{}).OpenPass(context.Background(), agentapi.SourceEnvironment{CodexRollouts: l})
-				s, e := p.Read(context.Background(), leaf, agentapi.ReadLimits{})
-				if e != nil {
-					b.Fatal(e)
-				}
-				_, e = (Filter{}).Filter(context.Background(), s.Input(), agentapi.FilterContext{})
-				if e != nil {
-					b.Fatal(e)
-				}
-				_ = s.Close()
-				_ = p.Close()
-			}
-			b.ReportMetric(float64(len(raw)*3), "native_bytes/op")
-			b.ReportMetric(0, "writes/op")
-		})
 	}
 }
 

@@ -24,11 +24,13 @@ import (
 const relatedRawBudget int64 = 128 << 20
 
 // Describe retains ordinary append protection; revision publication is separately fenced.
+
 func (SourceProvider) Describe(ref agentapi.SourceRef) (agentapi.SourceSemantics, error) {
 	return (sourceio.FileProvider{}).Describe(ref)
 }
 
 // OpenPass owns a bounded shared dependency cache and every descriptor it opens.
+
 func (SourceProvider) OpenPass(ctx context.Context, e agentapi.SourceEnvironment) (agentapi.SourcePass, error) {
 	legacy, err := (sourceio.FileProvider{}).OpenPass(ctx, e)
 	if err != nil {
@@ -41,26 +43,31 @@ func (SourceProvider) OpenPass(ctx context.Context, e agentapi.SourceEnvironment
 }
 
 // Activities preserves cheap file ordering independently of history selection.
+
 func (SourceProvider) Activities(ctx context.Context, e agentapi.SourceEnvironment, refs []agentapi.SourceRef) (map[agentapi.SourceRef]time.Time, error) {
 	return (sourceio.FileProvider{}).Activities(ctx, e, refs)
 }
 
 type rolloutFile struct {
-	ref      agentapi.SourceRef
-	file     *transcriptio.Snapshot
-	meta     codexmeta.CodexMeta
-	identity codexmeta.CodexIdentity
-	header   []byte
-	boundary int64
-	refs     int
+	ref       agentapi.SourceRef
+	file      *transcriptio.Snapshot
+	meta      codexmeta.CodexMeta
+	identity  codexmeta.CodexIdentity
+	header    []byte
+	boundary  int64
+	refs      int
+	prefix    []byte
+	validated *prefixValidation
 }
+
 type relatedSourcePass struct {
-	env    agentapi.SourceEnvironment
-	legacy agentapi.SourcePass
-	files  map[string]*rolloutFile
-	live   map[*historySnapshot]bool
-	bytes  int64
-	closed bool
+	env       agentapi.SourceEnvironment
+	legacy    agentapi.SourcePass
+	files     map[string]*rolloutFile
+	live      map[*historySnapshot]bool
+	bytes     int64
+	cacheHits int64
+	closed    bool
 }
 
 func sourceFailure(kind agentapi.FailureKind, message string) error {
@@ -74,6 +81,9 @@ func (p *relatedSourcePass) open(ctx context.Context, ref agentapi.SourceRef) (*
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	if len(ref.Path) > 8192 || len(ref.Key) > 4096 {
+		return nil, sourceFailure(agentapi.Limit, "rollout locator limit")
+	}
 	if ref.Kind != archive.SourceKindFile {
 		return nil, sourceFailure(agentapi.Unsafe, "invalid rollout kind")
 	}
@@ -84,7 +94,7 @@ func (p *relatedSourcePass) open(ctx context.Context, ref agentapi.SourceRef) (*
 		if old.refs > 0 {
 			return nil, sourceFailure(agentapi.Changed, "rollout dependency changed")
 		}
-		p.bytes -= old.file.Length()
+		p.bytes -= old.charge()
 		delete(p.files, ref.Path)
 		if err := old.file.Close(); err != nil {
 			return nil, err
@@ -134,17 +144,19 @@ func (p *relatedSourcePass) open(ctx context.Context, ref agentapi.SourceRef) (*
 	p.bytes += f.Length()
 	return out, nil
 }
+
 func (p *relatedSourcePass) evict() error {
 	var err error
 	for path, f := range p.files {
 		if f.refs == 0 {
 			err = errors.Join(err, f.file.Close())
-			p.bytes -= f.file.Length()
+			p.bytes -= f.charge()
 			delete(p.files, path)
 		}
 	}
 	return err
 }
+
 func (p *relatedSourcePass) Close() error {
 	if p.closed {
 		return nil
@@ -156,6 +168,8 @@ func (p *relatedSourcePass) Close() error {
 	}
 	for _, f := range p.files {
 		err = errors.Join(err, f.file.Close())
+		f.prefix = nil
+		f.validated = nil
 	}
 	p.files = nil
 	p.bytes = 0
@@ -191,6 +205,11 @@ func (p *relatedSourcePass) selectSource(ctx context.Context, ref agentapi.Sourc
 	}
 	if len(set.Revision) > 4096 || len(set.Candidates) > archive.MaxHistorySpans {
 		return selected, sourceFailure(agentapi.Limit, "rollout candidate limit")
+	}
+	for _, candidate := range set.Candidates {
+		if len(candidate.Path) > 8192 || len(candidate.Key) > 4096 || candidate.Kind != archive.SourceKindFile {
+			return selected, sourceFailure(agentapi.Unsafe, "invalid rollout candidate locator")
+		}
 	}
 	selected.set = set
 	if set.Current != nil {
@@ -318,6 +337,7 @@ func (p *relatedSourcePass) graph(ctx context.Context, leaf *rolloutFile) ([]phy
 	slices.Reverse(reversed)
 	return reversed, nil
 }
+
 func hasRelated(f *rolloutFile) bool {
 	id := f.identity
 	return id.Child || id.ForkID != "" || id.HistoryBase != nil || id.RolloutID != id.ThreadID
@@ -343,6 +363,7 @@ func (p *relatedSourcePass) Signature(ctx context.Context, ref agentapi.SourceRe
 	}
 	return p.observation(ctx, selection, spans)
 }
+
 func (p *relatedSourcePass) observation(ctx context.Context, selection sourceSelection, spans []physicalSpan) (agentapi.SourceObservation, error) {
 	h := sha256.New()
 	_, _ = fmt.Fprint(h, "codex-history-v1\x00", selection.set.Revision, "\x00", selection.leaf.ref.Path)
@@ -361,7 +382,7 @@ func (p *relatedSourcePass) observation(ctx context.Context, selection sourceSel
 		if stamp.ModifiedAt.After(out.Activity) {
 			out.Activity = stamp.ModifiedAt
 		}
-		_, _ = fmt.Fprintf(h, "\x00%s:%d:%d:%d:%d", span.file.ref.Path, stamp.Size, stamp.ModifiedAt.UnixNano(), span.end, span.startOrdinal)
+		_, _ = fmt.Fprintf(h, "\x00%s:%d:%d:%d:%d:%x", span.file.ref.Path, stamp.Size, stamp.ModifiedAt.UnixNano(), span.end, span.startOrdinal, sha256.Sum256(span.file.header))
 	}
 	if p.env.CodexRollouts != nil {
 		if err := p.env.CodexRollouts.Check(ctx, selection.thread, selection.set.Revision); err != nil {
@@ -377,58 +398,73 @@ func (p *relatedSourcePass) Read(ctx context.Context, ref agentapi.SourceRef, li
 	if p.env.CodexRollouts == nil && codexmeta.RolloutID(ref.Path) == "" {
 		return p.legacy.Read(ctx, ref, limits)
 	}
+	fail := func(err error) (agentapi.SourceSnapshot, error) { return nil, errors.Join(err, p.evict()) }
 	selection, err := p.selectSource(ctx, ref)
 	if err != nil {
 		if p.env.CodexRollouts == nil && !agentapi.HasFailure(err, agentapi.Cleanup) && (agentapi.Failure(err) == agentapi.FormatMismatch || agentapi.Failure(err) == agentapi.Unavailable) {
 			return p.legacy.Read(ctx, ref, limits)
 		}
-		return nil, err
+		return fail(err)
 	}
 	if !hasRelated(selection.leaf) && p.env.CodexRollouts == nil {
 		return p.ordinary(ctx, ref, limits, selection.leaf)
 	}
 	spans, err := p.graph(ctx, selection.leaf)
 	if err != nil {
-		return nil, err
+		return fail(err)
 	}
 	var size int64
 	for _, span := range spans {
 		size += span.end
 	}
 	if size > relatedRawBudget || limits.RawBytes > 0 && size > limits.RawBytes {
-		return nil, sourceFailure(agentapi.Limit, "aggregate history byte limit")
+		return fail(sourceFailure(agentapi.Limit, "aggregate history byte limit"))
 	}
 	limit := limits.RecordBytes
 	if limit <= 0 || limit > archive.MaxRecordBytes {
 		limit = archive.MaxRecordBytes
 	}
-	s := &historySnapshot{owner: p, selection: selection, spans: spans, recordLimit: limit}
+	var largest int64
+	for _, span := range spans {
+		largest = max(largest, span.end)
+	}
+	bufferCharge := min(max(int64(4096), min(largest+1, limit+1)), relatedRawBudget-p.bytes)
+	if bufferCharge < 4096 {
+		return fail(sourceFailure(agentapi.Limit, "shared record buffer budget exhausted"))
+	}
+	limit = min(limit, bufferCharge-1)
+	s := &historySnapshot{owner: p, selection: selection, spans: spans, recordLimit: limit, bufferCharge: bufferCharge}
+	p.bytes += bufferCharge
 	for _, span := range spans {
 		span.file.refs++
 	}
 	p.live[s] = true
+	if err = p.cachePrefixes(ctx, spans); err != nil {
+		return fail(errors.Join(err, s.Close()))
+	}
 	if err = s.validate(ctx); err != nil {
-		return nil, errors.Join(err, s.Close())
+		return fail(errors.Join(err, s.Close()))
 	}
 	s.observed, err = p.observation(ctx, selection, spans)
 	if err != nil {
-		return nil, errors.Join(err, s.Close())
+		return fail(errors.Join(err, s.Close()))
 	}
 	return s, nil
 }
 
 type historySnapshot struct {
-	owner       *relatedSourcePass
-	selection   sourceSelection
-	spans       []physicalSpan
-	history     archive.SourceHistory
-	observed    agentapi.SourceObservation
-	recordLimit int64
-	span        int
-	scanner     *bufio.Scanner
-	nextOrdinal uint64
-	headerSent  bool
-	closed      bool
+	owner        *relatedSourcePass
+	selection    sourceSelection
+	spans        []physicalSpan
+	history      archive.SourceHistory
+	observed     agentapi.SourceObservation
+	recordLimit  int64
+	bufferCharge int64
+	span         int
+	scanner      *bufio.Scanner
+	nextOrdinal  uint64
+	headerSent   bool
+	closed       bool
 }
 
 func (s *historySnapshot) validate(ctx context.Context) error {
@@ -452,45 +488,17 @@ func (s *historySnapshot) validate(ctx context.Context) error {
 	count := 0
 	for i := range s.spans {
 		span := &s.spans[i]
-		h := sha256.New()
-		scanner := bufio.NewScanner(io.TeeReader(io.NewSectionReader(span.file.file, 0, span.end), h))
-		scanner.Buffer(make([]byte, 4096), int(s.recordLimit)+1)
-		next := span.startOrdinal
 		first := count
-		for scanner.Scan() {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			line := bytes.TrimSpace(scanner.Bytes())
-			if len(line) == 0 {
-				continue
-			}
-			var record struct {
-				Ordinal *uint64 `json:"ordinal"`
-			}
-			if json.Unmarshal(line, &record) != nil {
-				return sourceFailure(agentapi.FormatMismatch, "invalid history record")
-			}
-			if span.file.identity.HistoryMode == codexmeta.CodexHistoryPaginated && record.Ordinal == nil {
-				return sourceFailure(agentapi.Unsafe, "missing history ordinal")
-			}
-			if record.Ordinal != nil && *record.Ordinal != next {
-				return sourceFailure(agentapi.Unsafe, "noncontiguous history ordinal")
-			}
-			if next == math.MaxUint64 {
-				return sourceFailure(agentapi.Limit, "history ordinal overflow")
-			}
-			next++
-			count++
-			if count > archive.MaxHistoryRecords {
-				return sourceFailure(agentapi.Limit, "history record limit")
-			}
+		facts, err := s.validateSpan(ctx, span)
+		if err != nil {
+			return err
 		}
-		if err := scanner.Err(); err != nil {
-			return sourceio.Classify(err)
+		count += facts.records
+		if count > archive.MaxHistoryRecords {
+			return sourceFailure(agentapi.Limit, "history record limit")
 		}
-		copy(span.digest[:], h.Sum(nil))
-		span.endOrdinal = next
+		span.digest, span.endOrdinal = facts.digest, facts.endOrdinal
+		next := facts.endOrdinal
 		if i+1 < len(s.spans) && next != s.spans[i+1].startOrdinal {
 			return sourceFailure(agentapi.Unsafe, "history prefix ordinal mismatch")
 		}
@@ -498,26 +506,38 @@ func (s *historySnapshot) validate(ctx context.Context) error {
 	}
 	return s.history.Validate(id.ThreadID, count)
 }
+
 func (s *historySnapshot) Observation() agentapi.SourceObservation { return s.observed }
-func (s *historySnapshot) Input() agentapi.NativeInput             { return agentapi.NativeInput{Records: s} }
+
+func (s *historySnapshot) Input() agentapi.NativeInput { return agentapi.NativeInput{Records: s} }
+
 func (s *historySnapshot) Close() error {
 	if s.closed {
 		return nil
 	}
 	s.closed = true
 	delete(s.owner.live, s)
+	s.owner.bytes -= s.bufferCharge
+	s.bufferCharge = 0
 	for _, span := range s.spans {
 		span.file.refs--
 	}
 	s.scanner = nil
+	s.spans = nil
+	s.selection = sourceSelection{}
 	return nil
 }
+
 func (s *historySnapshot) ValidateAdmission(ctx context.Context, a agentapi.SourceAdmission) error {
+	if s.closed || s.owner.closed {
+		return agentapi.ErrClosed
+	}
 	if a.NativeID != s.selection.thread || a.Cwd != "" && a.Cwd != s.selection.leaf.meta.Cwd {
 		return sourceFailure(agentapi.Unsafe, "source admission identity changed")
 	}
 	return s.check(ctx)
 }
+
 func (s *historySnapshot) check(ctx context.Context) error {
 	for _, span := range s.spans {
 		if err := span.file.file.CheckPrefix(ctx, span.end, span.digest); err != nil {
@@ -529,6 +549,7 @@ func (s *historySnapshot) check(ctx context.Context) error {
 	}
 	return ctx.Err()
 }
+
 func (s *historySnapshot) Next(ctx context.Context) (agentapi.NativeRecord, bool, error) {
 	if s.closed || s.owner.closed {
 		return agentapi.NativeRecord{}, false, agentapi.ErrClosed
@@ -543,7 +564,7 @@ func (s *historySnapshot) Next(ctx context.Context) (agentapi.NativeRecord, bool
 	for s.span < len(s.spans) {
 		span := s.spans[s.span]
 		if s.scanner == nil {
-			s.scanner = bufio.NewScanner(io.NewSectionReader(span.file.file, 0, span.end))
+			s.scanner = bufio.NewScanner(io.NewSectionReader(span.reader(), 0, span.end))
 			s.scanner.Buffer(make([]byte, 4096), int(s.recordLimit)+1)
 			s.nextOrdinal = span.startOrdinal
 		}
@@ -566,6 +587,7 @@ func (s *historySnapshot) Next(ctx context.Context) (agentapi.NativeRecord, bool
 }
 
 // ordinarySnapshot retains file framing while accepting verified later appends.
+
 type ordinarySnapshot struct {
 	owner    *relatedSourcePass
 	source   *rolloutFile
@@ -590,10 +612,13 @@ func (p *relatedSourcePass) ordinary(ctx context.Context, _ agentapi.SourceRef, 
 	f.refs++
 	return out, nil
 }
+
 func (s *ordinarySnapshot) Observation() agentapi.SourceObservation { return s.observed }
+
 func (s *ordinarySnapshot) Input() agentapi.NativeInput {
 	return agentapi.NativeInput{File: ordinaryFile{FileInput: s.source.file, s: s}}
 }
+
 func (s *ordinarySnapshot) Close() error {
 	if !s.closed {
 		s.closed = true
@@ -608,12 +633,14 @@ type ordinaryFile struct {
 }
 
 func (f ordinaryFile) Length() int64 { return f.s.length }
+
 func (f ordinaryFile) ReadAt(b []byte, off int64) (int, error) {
 	if f.s.closed || f.s.owner.closed {
 		return 0, agentapi.ErrClosed
 	}
 	return f.FileInput.ReadAt(b, off)
 }
+
 func (f ordinaryFile) Check() error {
 	if f.s.closed || f.s.owner.closed {
 		return agentapi.ErrClosed
@@ -622,6 +649,7 @@ func (f ordinaryFile) Check() error {
 }
 
 // newlineBoundary excludes even valid JSON until its producer commits the newline.
+
 func newlineBoundary(file io.ReaderAt, size int64) (int64, error) {
 	if size == 0 {
 		return 0, nil
@@ -664,4 +692,102 @@ func (s *ordinarySnapshot) ValidateAdmission(ctx context.Context, a agentapi.Sou
 		return sourceFailure(agentapi.Unsafe, "source admission identity changed")
 	}
 	return sourceio.Classify(s.source.file.CheckPrefix(ctx, s.length, s.digest))
+}
+
+// prefixValidation is cached only for one immutable, fully captured ancestor prefix.
+type prefixValidation struct {
+	startOrdinal   uint64
+	endOrdinal     uint64
+	records        int
+	maxRecordBytes int64
+	digest         [32]byte
+}
+
+const prefixSummaryCharge int64 = 128
+
+func (f *rolloutFile) charge() int64 {
+	charge := f.file.Length()
+	if f.prefix != nil {
+		charge += int64(len(f.prefix)) + prefixSummaryCharge
+	}
+	return charge
+}
+
+func (span physicalSpan) reader() io.ReaderAt {
+	if int64(len(span.file.prefix)) >= span.end {
+		return bytes.NewReader(span.file.prefix[:span.end])
+	}
+	return span.file.file
+}
+
+func (p *relatedSourcePass) cachePrefixes(ctx context.Context, spans []physicalSpan) error {
+	for _, span := range spans[:len(spans)-1] {
+		f := span.file
+		if f.prefix != nil || span.end > relatedRawBudget/4 || p.bytes+span.end+prefixSummaryCharge > relatedRawBudget {
+			continue
+		}
+		// The one bounded immutable copy is shared by descendants; never replace it
+		// while a snapshot might hold a borrowed scanner over its bytes.
+		raw := make([]byte, span.end)
+		reader := sourceio.Reader(ctx, f.file, span.end)
+		if _, err := io.ReadFull(reader, raw); err != nil {
+			return sourceio.Classify(err)
+		}
+		f.prefix = raw
+		p.bytes += span.end + prefixSummaryCharge
+	}
+	return nil
+}
+
+func (s *historySnapshot) validateSpan(ctx context.Context, span *physicalSpan) (prefixValidation, error) {
+	cached := span.file.validated
+	if cached != nil && int64(len(span.file.prefix)) == span.end && cached.startOrdinal == span.startOrdinal {
+		if cached.maxRecordBytes > s.recordLimit {
+			return prefixValidation{}, agentapi.Wrap(agentapi.Limit, archive.ErrRecordTooLarge)
+		}
+		s.owner.cacheHits++
+		return *cached, ctx.Err()
+	}
+	facts := prefixValidation{startOrdinal: span.startOrdinal, endOrdinal: span.startOrdinal}
+	h := sha256.New()
+	scanner := bufio.NewScanner(io.TeeReader(io.NewSectionReader(span.reader(), 0, span.end), h))
+	scanner.Buffer(make([]byte, 4096), int(s.recordLimit)+1)
+	for scanner.Scan() {
+		if err := ctx.Err(); err != nil {
+			return facts, err
+		}
+		facts.maxRecordBytes = max(facts.maxRecordBytes, int64(len(scanner.Bytes())))
+		line := bytes.TrimSpace(scanner.Bytes())
+		if len(line) == 0 {
+			continue
+		}
+		var record struct {
+			Ordinal *uint64 `json:"ordinal"`
+		}
+		if json.Unmarshal(line, &record) != nil {
+			return facts, sourceFailure(agentapi.FormatMismatch, "invalid history record")
+		}
+		if span.file.identity.HistoryMode == codexmeta.CodexHistoryPaginated && record.Ordinal == nil {
+			return facts, sourceFailure(agentapi.Unsafe, "missing history ordinal")
+		}
+		if record.Ordinal != nil && *record.Ordinal != facts.endOrdinal {
+			return facts, sourceFailure(agentapi.Unsafe, "noncontiguous history ordinal")
+		}
+		if facts.endOrdinal == math.MaxUint64 {
+			return facts, sourceFailure(agentapi.Limit, "history ordinal overflow")
+		}
+		facts.endOrdinal++
+		facts.records++
+		if facts.records > archive.MaxHistoryRecords {
+			return facts, sourceFailure(agentapi.Limit, "history record limit")
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return facts, sourceio.Classify(err)
+	}
+	copy(facts.digest[:], h.Sum(nil))
+	if int64(len(span.file.prefix)) == span.end {
+		span.file.validated = &facts
+	}
+	return facts, nil
 }

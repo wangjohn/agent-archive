@@ -3,9 +3,24 @@ package archive
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/santhosh-tekuri/jsonschema/v6"
 	"strings"
 	"testing"
 	"time"
+)
+
+type manifestScenario string
+
+const (
+	manifestScenarioGap             manifestScenario = "gap"
+	manifestScenarioOverlap         manifestScenario = "overlap"
+	manifestScenarioWrongThread     manifestScenario = "wrong_thread"
+	manifestScenarioWrongActive     manifestScenario = "wrong_active"
+	manifestScenarioOrdinalOutside  manifestScenario = "ordinal_outside"
+	manifestScenarioOrdinalRepeat   manifestScenario = "ordinal_repeat"
+	manifestScenarioLegacyManifest  manifestScenario = "legacy_manifest"
+	manifestScenarioMissingManifest manifestScenario = "missing_manifest"
+	manifestScenarioText            manifestScenario = "text"
 )
 
 func retainedHistoryFixture() SourceBundle {
@@ -13,6 +28,7 @@ func retainedHistoryFixture() SourceBundle {
 	start := uint64(1<<53) + 1
 	return SourceBundle{SchemaVersion: HistorySourceSchemaVersion, ArchiveSessionID: "synthetic", NativeSessionID: id, ProjectID: "project", Capture: SourceCapture{Harness: Harness{Name: "codex"}, AdapterName: "codex", CapturedAt: time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)}, NativeRecords: []map[string]any{{"type": "session_meta", "payload": map[string]any{"id": id}}, {"type": "event_msg", "payload": map[string]any{"type": "task_started"}}}, Ordinals: []uint64{start, start + 2}, History: &SourceHistory{ActiveRolloutID: id, ThreadID: id, Spans: []HistorySpan{{RolloutID: id, ThreadID: id, EndRecord: 2, StartOrdinal: start, EndOrdinal: start + 3}}}}
 }
+
 func TestHistorySourcePreservesUnsignedOrdinalPrecision(t *testing.T) {
 	t.Parallel()
 	b := retainedHistoryFixture()
@@ -35,30 +51,31 @@ func TestHistorySourcePreservesUnsignedOrdinalPrecision(t *testing.T) {
 		t.Fatal(wire.String())
 	}
 }
+
 func TestHistoryManifestRejectsInvalidCoverageAndOwnership(t *testing.T) {
 	t.Parallel()
-	for _, kind := range []string{"gap", "overlap", "wrong_thread", "wrong_active", "ordinal_outside", "ordinal_repeat", "legacy_manifest", "missing_manifest", "text"} {
-		t.Run(kind, func(t *testing.T) {
+	for _, kind := range []manifestScenario{manifestScenarioGap, manifestScenarioOverlap, manifestScenarioWrongThread, manifestScenarioWrongActive, manifestScenarioOrdinalOutside, manifestScenarioOrdinalRepeat, manifestScenarioLegacyManifest, manifestScenarioMissingManifest, manifestScenarioText} {
+		t.Run(string(kind), func(t *testing.T) {
 			t.Parallel()
 			b := retainedHistoryFixture()
 			switch kind {
-			case "gap":
+			case manifestScenarioGap:
 				b.History.Spans[0].FirstRecord = 1
-			case "overlap":
+			case manifestScenarioOverlap:
 				b.History.Spans = append(b.History.Spans, b.History.Spans[0])
-			case "wrong_thread":
+			case manifestScenarioWrongThread:
 				b.History.ThreadID = "22222222-2222-4222-8222-222222222222"
-			case "wrong_active":
+			case manifestScenarioWrongActive:
 				b.History.ActiveRolloutID = "22222222-2222-4222-8222-222222222222"
-			case "ordinal_outside":
+			case manifestScenarioOrdinalOutside:
 				b.Ordinals[1] = 0
-			case "ordinal_repeat":
+			case manifestScenarioOrdinalRepeat:
 				b.Ordinals[1] = b.Ordinals[0]
-			case "legacy_manifest":
+			case manifestScenarioLegacyManifest:
 				b.SchemaVersion = SourceSchemaVersion
-			case "missing_manifest":
+			case manifestScenarioMissingManifest:
 				b.History = nil
-			case "text":
+			case manifestScenarioText:
 				b.NativeText = []TextTranscript{{Content: "unsafe"}}
 			}
 			if _, e := BuildCompressedSource(b); e == nil {
@@ -67,6 +84,7 @@ func TestHistoryManifestRejectsInvalidCoverageAndOwnership(t *testing.T) {
 		})
 	}
 }
+
 func TestHistoryMetadataReferencesStayWithinTheirSession(t *testing.T) {
 	t.Parallel()
 	b := retainedHistoryFixture()
@@ -95,6 +113,7 @@ func TestHistoryMetadataReferencesStayWithinTheirSession(t *testing.T) {
 		t.Fatal("schema2 without history accepted")
 	}
 }
+
 func FuzzHistoryManifest(f *testing.F) {
 	raw, _ := json.Marshal(retainedHistoryFixture().History)
 	f.Add(raw)
@@ -119,4 +138,50 @@ func FuzzHistoryManifest(f *testing.F) {
 			t.Fatal(e)
 		}
 	})
+}
+
+func TestHistoryOutputMatchesPublishedSchemas(t *testing.T) {
+	t.Parallel()
+	sourceSchema := compileSchema(t, "source-bundle.schema.json")
+	metadataSchema := compileSchema(t, "metadata.schema.json")
+	b := retainedHistoryFixture()
+	b.Capture.AdapterVersion = "0.15.0"
+	b.Capture.FilterVersion = FilterVersion
+	b.Capture.SourceFormat = "codex-jsonl"
+	var wire bytes.Buffer
+	if e := EncodeSource(&wire, b); e != nil {
+		t.Fatal(e)
+	}
+	for line := range bytes.SplitSeq(bytes.TrimSpace(wire.Bytes()), []byte{'\n'}) {
+		value, e := jsonschema.UnmarshalJSON(bytes.NewReader(line))
+		if e != nil {
+			t.Fatal(e)
+		}
+		if e := sourceSchema.Validate(value); e != nil {
+			t.Fatal(e)
+		}
+	}
+	compressed, e := BuildCompressedSource(b)
+	if e != nil {
+		t.Fatal(e)
+	}
+	key, e := SourceObjectKey(b, compressed.SHA256)
+	if e != nil {
+		t.Fatal(e)
+	}
+	metadata, e := BuildMetadataWithAnalysis(b, Analysis{}, nil, "synthetic-machine", b.Capture.CapturedAt, b.Capture.CapturedAt, SourceReference{Key: key, SHA256: compressed.SHA256, CompressedBytes: len(compressed.Bytes)}, ParserInfo{Name: "codex", Version: "0.22.0"})
+	if e != nil {
+		t.Fatal(e)
+	}
+	encoded, e := json.Marshal(metadata)
+	if e != nil {
+		t.Fatal(e)
+	}
+	value, e := jsonschema.UnmarshalJSON(bytes.NewReader(encoded))
+	if e != nil {
+		t.Fatal(e)
+	}
+	if e := metadataSchema.Validate(value); e != nil {
+		t.Fatal(e)
+	}
 }
