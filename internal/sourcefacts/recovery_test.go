@@ -398,8 +398,13 @@ func TestSemanticRecoveryRechecksWholeInventoryOncePerSlice(t *testing.T) {
 	if r.CurrentSlice(proof) {
 		t.Fatal("new excluded clone did not invalidate unique match")
 	}
+	for range 100 {
+		if r.CurrentSlice(proof) {
+			t.Fatal("changed epoch was admitted")
+		}
+	}
 	if calls != 6 {
-		t.Fatal(calls)
+		t.Fatal("failed sweep was repeated per candidate", calls)
 	}
 }
 

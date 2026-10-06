@@ -62,27 +62,29 @@ type RecoveryInventory struct {
 // RecoveryResolver only recovers absent checkouts into existing configured roots.
 // Live ownership and explicit configured rules must be evaluated before calling Recover.
 type RecoveryResolver struct {
-	Projects           []archive.ProjectActivation
-	Mappings           map[string]string
-	ResolvePath        func(string) string
-	Lookup             RepositoryLookup
-	Validate           func(RepositoryIdentity) bool
-	rawResolve         func(string) string
-	pathContext        string
-	mappedIdentities   map[string]RepositoryIdentity
-	MetadataOperations int
-	MetadataExhausted  bool
-	sliceValidated     map[string]bool
-	observationContext context.Context
-	semanticValidated  bool
-	semanticOperations int
-	digest             string
-	results            map[string]recoveryDecision
-	Inventory          *RecoveryInventory
-	Context            string
-	PolicyContext      string
-	Operations         int
-	MaxOperations      int
+	Projects             []archive.ProjectActivation
+	Mappings             map[string]string
+	ResolvePath          func(string) string
+	Lookup               RepositoryLookup
+	Validate             func(RepositoryIdentity) bool
+	rawResolve           func(string) string
+	pathContext          string
+	mappedIdentities     map[string]RepositoryIdentity
+	MetadataOperations   int
+	MetadataExhausted    bool
+	sliceValidated       map[string]bool
+	observationContext   context.Context
+	semanticValidated    bool
+	semanticChecked      bool
+	semanticObservations map[string]RepositoryIdentity
+	semanticOperations   int
+	digest               string
+	results              map[string]recoveryDecision
+	Inventory            *RecoveryInventory
+	Context              string
+	PolicyContext        string
+	Operations           int
+	MaxOperations        int
 }
 
 type recoveryDecision struct {
@@ -409,6 +411,8 @@ func (r *RecoveryResolver) ResetValidation() {
 	r.MetadataExhausted = false
 	r.sliceValidated = nil
 	r.semanticValidated = false
+	r.semanticChecked = false
+	r.semanticObservations = nil
 	r.semanticOperations = 0
 }
 
@@ -449,8 +453,8 @@ func validRecoveryPath(path string) bool {
 // semanticCurrent performs the second complete semantic sweep once per slice.
 // Every configured entry participates, including excluded roots and scratch roots.
 func (r *RecoveryResolver) semanticCurrent() bool {
-	if r.semanticValidated {
-		return true
+	if r.semanticChecked {
+		return r.semanticValidated
 	}
 	semantic := false
 	for _, id := range r.Inventory.Entries {
@@ -459,6 +463,7 @@ func (r *RecoveryResolver) semanticCurrent() bool {
 	if !semantic {
 		return true
 	}
+	r.semanticChecked = true
 	for i, id := range r.Inventory.Entries {
 		if !r.semanticLookupCurrent(id, r.Projects[i].Root) {
 			return false
@@ -474,6 +479,9 @@ func (r *RecoveryResolver) semanticIdentityCurrent(id RepositoryIdentity) bool {
 	return r.semanticLookupCurrent(id, id.ObservedRoot)
 }
 func (r *RecoveryResolver) semanticLookupCurrent(id RepositoryIdentity, root string) bool {
+	if fresh, ok := r.semanticObservations[root]; ok {
+		return semanticIdentityAgrees(id, fresh)
+	}
 	ctx := r.observationContext
 	if ctx == nil || ctx.Err() != nil || r.semanticOperations >= 1024 {
 		r.MetadataExhausted = true
@@ -481,14 +489,22 @@ func (r *RecoveryResolver) semanticLookupCurrent(id RepositoryIdentity, root str
 	}
 	r.semanticOperations++
 	fresh := safeRepositoryIdentity(r.Lookup(ctx, root))
+	if r.semanticObservations == nil {
+		r.semanticObservations = map[string]RepositoryIdentity{}
+	}
+	r.semanticObservations[root] = fresh
 	if fresh.BudgetExhausted || ctx.Err() != nil {
 		r.MetadataExhausted = true
 	}
-	return ctx.Err() == nil && fresh.Known && fresh.Root == id.Root && fresh.Key == id.Key && fresh.Validation == id.Validation
+	return ctx.Err() == nil && semanticIdentityAgrees(id, fresh)
 }
 
 // ResetValidationContext renews the consumer context after planning ends.
 func (r *RecoveryResolver) ResetValidationContext(ctx context.Context) {
 	r.ResetValidation()
 	r.observationContext = ctx
+}
+
+func semanticIdentityAgrees(planned, fresh RepositoryIdentity) bool {
+	return fresh.Known && !fresh.BudgetExhausted && fresh.Root == planned.Root && fresh.Key == planned.Key && fresh.Validation == planned.Validation
 }
