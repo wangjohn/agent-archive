@@ -273,7 +273,8 @@ func preparePlanWork(ctx context.Context, env Environment, cfg config.Config, fi
 	}
 	var items []*work
 	var err error
-	unread, err = enumerateDiscovery(ctx, env, agentapi.DiscoveryImport, func(c agentapi.DiscoveryCandidate) error {
+	inventory := newRecoverySourceInventory(env)
+	unread, err = enumerateDiscovery(ctx, inventory.environment(), agentapi.DiscoveryImport, func(c agentapi.DiscoveryCandidate) error {
 		t := &transcript{harness: harness(c.Session.Agent), path: c.Source.Path, size: c.Bytes, nativeID: c.Session.NativeID, cwd: c.Header.Directory, repoKey: c.Header.RepoKey, metaStart: c.Header.StartedAt, identityMismatch: c.Header.IdentityMismatch, capturePending: c.Header.CapturePending != "", cursorSlug: c.WorkspaceKey, sourcePriority: c.SourcePriority, sourceInfo: c.SourceInfo}
 		w := &work{t: t, c: Candidate{Harness: string(c.Session.Agent), TranscriptPath: t.path, SourceKind: c.Source.Kind, SourceKey: c.Source.Key, Bytes: t.size, NativeSessionID: t.nativeID}, unsafe: c.IdentityError != nil}
 		w.checkSource(env)
@@ -290,6 +291,7 @@ func preparePlanWork(ctx context.Context, env Environment, cfg config.Config, fi
 		return nil, nil, unread, workers, err
 	}
 	r := newResolver(env, cfg, filters)
+	r.inventoryCurrent = inventory.current
 	var cursorCandidates []string
 	for _, p := range cfg.Archive.Projects {
 		cursorCandidates = append(cursorCandidates, p.Root)

@@ -492,6 +492,12 @@ matching rule wins.
    renew without rereading chats; changed observations require a new plan.
    Unsettled sources can renew at most eight bounded evidence epochs per plan;
    exhausted renewal leaves admission pending with the instruction to rerun.
+   File membership/header observations renew through at most 65,536 observed
+   native paths per slice, including directory and absent-store stamps; changed
+   or larger inventories require a new plan and keep automatic recovery pending.
+   Known plain-folder and absent-cwd ownership is also renewed, so a newly
+   created checkout cannot evade clone evidence. This is an observation boundary,
+   not an atomic filesystem snapshot.
    Selected file witnesses pass the full native filter/import inspector even
    when archive state or output filters hide their sessions.
    Pending or oversized sources cannot

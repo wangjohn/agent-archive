@@ -261,6 +261,17 @@ func TestFirstRunRecoveryArchivedEmptyCodexCannotProposeDestination(t *testing.T
 	}
 }
 
+func TestFirstRunRecoveryNewCloneRequiresNewPlan(t *testing.T) {
+	tr, env, cfg, _, _ := firstRunRecoveryFixture(t, false)
+	p := plan(t, env, nil, cfg, Filters{})
+	clone := tr.repo("home/clone")
+	id := "00000000-0000-0000-0000-000000000022"
+	tr.write(filepath.Join("home", codexFile(id)), codexTranscript(id, id, clone, fixedNow.Add(-time.Hour)))
+	if err := p.CheckRecovery(t.Context()); err == nil {
+		t.Fatal("new live clone escaped inventory renewal")
+	}
+}
+
 func TestFirstRunRecoveryFilteredClaudeLocatorCannotProposeDestination(t *testing.T) {
 	tr, env, cfg, root, goneID := firstRunRecoveryFixture(t, false)
 	removeFirstRunFileWitness(t, tr)
@@ -316,5 +327,17 @@ func TestFirstRunRecoveryPolicyIncludesFinalNestedDecisions(t *testing.T) {
 	}
 	if c.ProjectResolution == nil || c.ProjectResolution.PolicyContext != sourcefacts.RecoveryContext(cfg.Archive.Projects, nil, filepath.Clean) {
 		t.Fatal("policy omitted final nested decisions", c.ProjectResolution)
+	}
+}
+
+func TestFirstRunRecoveryPlainFolderBecomingCloneRequiresNewPlan(t *testing.T) {
+	tr, env, cfg, _, _ := firstRunRecoveryFixture(t, false)
+	folder := tr.mkdir("home/future-clone")
+	id := "00000000-0000-0000-0000-000000000022"
+	tr.write(filepath.Join("home", codexFile(id)), codexTranscript(id, id, folder, fixedNow.Add(-48*time.Hour)))
+	p := plan(t, env, nil, cfg, Filters{Since: fixedNow.Add(-24 * time.Hour).Format(dateLayout)})
+	tr.mkdir("home/future-clone/.git")
+	if err := p.CheckRecovery(t.Context()); err == nil {
+		t.Fatal("known plain folder acquired clone ownership without renewing union")
 	}
 }
