@@ -14,6 +14,7 @@ import (
 	"testing/synctest"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
+	_ "github.com/wangjohn/agent-archive/internal/testutil/golden" // registers -update for go test ./... -update
 	"github.com/wangjohn/agent-archive/internal/transcriptio"
 )
 

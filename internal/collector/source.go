@@ -270,7 +270,7 @@ func (r providerReader) Filter(ctx context.Context, adapter archive.Adapter, max
 
 // observePendingHistory is a diagnostic-only route behind the existing fence.
 // It never supplies the catalog to the active capture pass or filters ancestors.
-func (r providerReader) observePendingHistory(ctx context.Context, original error) error {
+func (r providerReader) observePendingHistory(ctx context.Context, original error) (out error) {
 	if r.harness != "codex" || r.pendingRollouts == nil || !errors.Is(original, archive.ErrRelatedHistory) {
 		return original
 	}
@@ -286,7 +286,11 @@ func (r providerReader) observePendingHistory(ctx context.Context, original erro
 		if err != nil {
 			return errors.Join(original, errors.New("pending Codex history: locator evidence unavailable"))
 		}
-		defer slice.Close()
+		defer func() {
+			if err := slice.Close(); err != nil {
+				out = errors.Join(out, errors.New("pending Codex history: locator evidence unavailable"))
+			}
+		}()
 		lookup = slice
 	}
 	refs, err := lookup.Rollout(bounded, sourcefacts.RolloutID(r.ref.Path))

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -84,11 +85,13 @@ func TestPendingCatalogPreservesTypedFailureAndReportsOnlyCounts(t *testing.T) {
 		calls := 0
 		r := providerReader{harness: "codex", ref: agentapi.SourceRef{Path: path}, pendingRollouts: func() agentapi.CodexRolloutLookup { calls++; return c }}
 		ordinaryError := agentapi.Wrap(agentapi.Unavailable, errors.New("synthetic refusal"))
-		if err := r.observePendingHistory(t.Context(), ordinaryError); err != ordinaryError || calls != 0 {
+		err := r.observePendingHistory(t.Context(), ordinaryError)
+		var gotOriginal, wantOriginal *agentapi.SourceError
+		if !errors.As(err, &gotOriginal) || !errors.As(ordinaryError, &wantOriginal) || gotOriginal != wantOriginal || reflect.TypeOf(err) != reflect.TypeOf(ordinaryError) || calls != 0 {
 			t.Fatal("ordinary source error constructed a catalog")
 		}
 		original := errors.Join(ordinaryError, archive.ErrRelatedHistory)
-		err := r.observePendingHistory(t.Context(), original)
+		err = r.observePendingHistory(t.Context(), original)
 		var got, want *agentapi.SourceError
 		if !errors.As(ordinaryError, &want) || !errors.As(err, &got) || got != want || !errors.Is(err, archive.ErrRelatedHistory) {
 			t.Fatalf("original typed refusal lost: %v", err)
@@ -102,4 +105,38 @@ func TestPendingCatalogPreservesTypedFailureAndReportsOnlyCounts(t *testing.T) {
 			t.Fatalf("metadata-only diagnostic failed: %v %#v", err, c.Counters())
 		}
 	})
+}
+
+func TestPendingCatalogCloseFailurePreservesPrivateRefusal(t *testing.T) {
+	t.Parallel()
+	lookup := &failingCloseCatalog{Catalog: rolloutcatalog.New([]string{t.TempDir()}, rolloutcatalog.Limits{})}
+	r := providerReader{harness: "codex", pendingRollouts: func() agentapi.CodexRolloutLookup { return lookup }}
+	original := errors.Join(agentapi.Wrap(agentapi.Unavailable, errors.New("synthetic refusal")), archive.ErrRelatedHistory)
+	err := r.observePendingHistory(t.Context(), original)
+	if lookup.closes != 1 || !errors.Is(err, original) || !strings.Contains(err.Error(), "locator evidence unavailable") || strings.Contains(err.Error(), "private-close-locator") {
+		t.Fatalf("cleanup failure lost refusal or disclosed native evidence: %v", err)
+	}
+}
+
+type failingCloseCatalog struct {
+	*rolloutcatalog.Catalog
+	closes int
+}
+
+func (c *failingCloseCatalog) BeginValidationSlice(ctx context.Context, limits agentapi.CodexValidationLimits) (agentapi.CodexRolloutSlice, error) {
+	slice, err := c.Catalog.BeginValidationSlice(ctx, limits)
+	if err != nil {
+		return nil, err
+	}
+	return failingCloseSlice{CodexRolloutSlice: slice, owner: c}, nil
+}
+
+type failingCloseSlice struct {
+	agentapi.CodexRolloutSlice
+	owner *failingCloseCatalog
+}
+
+func (s failingCloseSlice) Close() error {
+	s.owner.closes++
+	return errors.Join(s.CodexRolloutSlice.Close(), errors.New("private-close-locator"))
 }

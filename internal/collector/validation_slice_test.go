@@ -108,7 +108,11 @@ func TestOrdinaryCollectorPassDoesNotCreateValidationSlice(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer pass.Close()
+	defer func() {
+		if err := pass.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	if set.slice != nil || provider.bound != nil {
 		t.Fatal("ordinary capture acquired history evidence")
 	}
@@ -162,10 +166,14 @@ func TestExplicitCatalogDefaultReadDeadlineFailsClosed(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer slice.Close()
+		defer func() {
+			if err := slice.Close(); err != nil {
+				t.Error(err)
+			}
+		}()
 		time.Sleep(30 * time.Second)
 		synctest.Wait()
-		if err := slice.Valid(bounded); err != context.DeadlineExceeded {
+		if err := slice.Valid(bounded); !errors.Is(err, context.DeadlineExceeded) {
 			t.Fatal("default context ignored deadline", err)
 		}
 		if c.Counters().Headers != 0 {

@@ -15,9 +15,19 @@ import (
 	"github.com/wangjohn/agent-archive/internal/transcriptio"
 )
 
+type providerScenario string
+
+const (
+	providerConnected    providerScenario = "connected"
+	providerRewrite      providerScenario = "rewrite_after_open"
+	providerMissingBase  providerScenario = "missing_base"
+	providerDisconnected providerScenario = "disconnected"
+	providerOutsideRoot  providerScenario = "outside_root"
+)
+
 func TestProviderUsesSharedCatalogForCrossHomeLineage(t *testing.T) {
-	for _, scenario := range []string{"connected", "rewrite_after_open", "missing_base", "disconnected", "outside_root"} {
-		t.Run(scenario, func(t *testing.T) {
+	for _, scenario := range []providerScenario{providerConnected, providerRewrite, providerMissingBase, providerDisconnected, providerOutsideRoot} {
+		t.Run(string(scenario), func(t *testing.T) {
 			a, b := t.TempDir(), t.TempDir()
 			body := `{"type":"response_item","ordinal":1,"payload":{"type":"message","role":"user","content":"synthetic"}}` + "\n"
 			base := fixture(t, a, "archived_sessions/deep", thread, thread, nil, body)
@@ -26,7 +36,7 @@ func TestProviderUsesSharedCatalogForCrossHomeLineage(t *testing.T) {
 				t.Fatal(err)
 			}
 			baseID := thread
-			if scenario == "missing_base" {
+			if scenario == providerMissingBase {
 				baseID = "33333333-3333-4333-8333-333333333333"
 			}
 			leaf := fixture(t, b, "sessions", revision, thread, map[string]any{"history_base": codexmeta.CodexHistoryPosition{RolloutID: baseID, EndOrdinal: 2, EndByteOffset: uint64(len(raw))}}, "")
@@ -48,11 +58,11 @@ func TestProviderUsesSharedCatalogForCrossHomeLineage(t *testing.T) {
 			if err := os.WriteFile(leaf, bytes, 0600); err != nil {
 				t.Fatal(err)
 			}
-			if scenario == "disconnected" {
+			if scenario == providerDisconnected {
 				fixture(t, b, "sessions", "33333333-3333-4333-8333-333333333333", thread, nil, "")
 			}
 			homes := []string{a, b}
-			if scenario == "outside_root" {
+			if scenario == providerOutsideRoot {
 				homes = []string{b}
 			}
 			c := New(homes, Limits{})
@@ -64,7 +74,11 @@ func TestProviderUsesSharedCatalogForCrossHomeLineage(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer bound.Close()
+			defer func() {
+				if err := bound.Close(); err != nil {
+					t.Error(err)
+				}
+			}()
 			before := c.Counters()
 			pass, err := (codex.SourceProvider{}).OpenPass(t.Context(), agentapi.SourceEnvironment{Files: sourcefacts.RootOpener{Root: canonicalHome}, Policy: transcriptio.OpenPolicy{Root: canonicalHome, RejectSymlinks: true}, CodexRollouts: bound})
 			if err != nil {
@@ -76,7 +90,7 @@ func TestProviderUsesSharedCatalogForCrossHomeLineage(t *testing.T) {
 				}
 			}()
 			snapshot, err := pass.Read(t.Context(), agentapi.SourceRef{Path: leaf}, agentapi.ReadLimits{})
-			if scenario != "connected" && scenario != "rewrite_after_open" {
+			if scenario != providerConnected && scenario != providerRewrite {
 				if err == nil {
 					_ = snapshot.Close()
 					t.Fatal("unproved lineage read")
@@ -91,7 +105,7 @@ func TestProviderUsesSharedCatalogForCrossHomeLineage(t *testing.T) {
 					t.Error(err)
 				}
 			}()
-			if scenario == "rewrite_after_open" {
+			if scenario == providerRewrite {
 				if err := os.WriteFile(base, []byte(strings.Replace(string(raw), "synthetic", "rewritten", 1)), 0600); err != nil {
 					t.Fatal(err)
 				}
@@ -104,7 +118,7 @@ func TestProviderUsesSharedCatalogForCrossHomeLineage(t *testing.T) {
 			for {
 				_, ok, err := input.Next(t.Context())
 				if err != nil {
-					if scenario == "rewrite_after_open" && agentapi.Failure(err) == agentapi.Changed {
+					if scenario == providerRewrite && agentapi.Failure(err) == agentapi.Changed {
 						return
 					}
 					t.Fatal(err)
@@ -114,7 +128,7 @@ func TestProviderUsesSharedCatalogForCrossHomeLineage(t *testing.T) {
 				}
 				count++
 			}
-			if scenario == "rewrite_after_open" {
+			if scenario == providerRewrite {
 				t.Fatal("cached slice bypassed selected-handle prefix checks")
 			}
 			if count != 5 {

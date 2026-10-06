@@ -636,11 +636,7 @@ func (c *Catalog) validate(ctx context.Context, boundedSlice bool) error {
 		return nil
 	}
 	c.counters.ValidationSweeps++
-	changed := func() error {
-		c.invalid = true
-		c.fail("epoch_changed")
-		return agentapi.Wrap(agentapi.Changed, errors.New("rollout evidence changed; renew the catalog"))
-	}
+
 	for _, approved := range c.authorities {
 		if err := operation(); err != nil {
 			return err
@@ -648,12 +644,12 @@ func (c *Catalog) validate(ctx context.Context, boundedSlice bool) error {
 		measureResolution(&c.counters)
 		resolved, err := filepath.EvalSymlinks(approved.home)
 		if err != nil || resolved != approved.root {
-			return changed()
+			return c.changed()
 		}
 		measureStat(&c.counters)
 		info, err := os.Lstat(approved.root)
 		if err != nil || !info.IsDir() || !os.SameFile(approved.info, info) {
-			return changed()
+			return c.changed()
 		}
 	}
 	for _, d := range c.dirs {
@@ -663,68 +659,21 @@ func (c *Catalog) validate(ctx context.Context, boundedSlice bool) error {
 		info, err := measuredLstat(&c.counters, d.root, d.path)
 		if d.missing {
 			if !errors.Is(err, fs.ErrNotExist) {
-				return changed()
+				return c.changed()
 			}
 			continue
 		}
 		if err != nil || !sameDirectory(d.info, info) {
-			return changed()
+			return c.changed()
 		}
 	}
 	for _, e := range c.files {
 		if err := operation(); err != nil {
 			return err
 		}
-		if err := ctx.Err(); err != nil {
-			if !boundedSlice {
-				c.invalid = true
-				c.fail("cancelled")
-			}
+		if err := c.validateEntry(ctx, e, startBytes, boundedSlice); err != nil {
 			return err
 		}
-		info, err := measuredLstat(&c.counters, e.root, e.ref.Path)
-		if err != nil || !os.SameFile(e.info, info) || info.Size() < e.info.Size() {
-			return changed()
-		}
-		if e.duplicate && info.Size() != e.info.Size() {
-			return changed()
-		}
-		if transcriptio.SameObservation(e.info, info) {
-			continue
-		}
-		charge := e.headerLen + e.prefixLen
-		usedBytes := c.counters.CheckBytes
-		if boundedSlice {
-			usedBytes -= startBytes
-		}
-		if charge > c.limits.PrefixBytes-usedBytes {
-			if !boundedSlice {
-				c.invalid = true
-				c.fail("check_budget")
-			}
-			return agentapi.Wrap(agentapi.Limit, errors.New("catalog prefix revalidation budget exhausted"))
-		}
-		c.counters.CheckBytes += charge
-		f, err := transcriptio.Open(c.Files(), e.ref.Path, transcriptio.OpenPolicy{RejectSymlinks: true})
-		if err != nil {
-			return changed()
-		}
-		if !transcriptio.SameObservation(info, f.SourceInfo()) {
-			_ = f.Close()
-			return changed()
-		}
-		err = f.CheckPrefix(ctx, e.headerLen, e.header)
-		if err == nil && e.prefixLen > 0 {
-			err = f.CheckPrefix(ctx, e.prefixLen, e.prefix)
-		}
-		err = errors.Join(err, f.Check(), f.Close())
-		if err != nil {
-			if ctx.Err() != nil && boundedSlice {
-				return ctx.Err()
-			}
-			return changed()
-		}
-		e.info = info
 	}
 
 	for _, n := range c.native {
@@ -732,7 +681,7 @@ func (c *Catalog) validate(ctx context.Context, boundedSlice bool) error {
 			return err
 		}
 		if !n.check() {
-			return changed()
+			return c.changed()
 		}
 	}
 	if err := ctx.Err(); err != nil {
@@ -742,6 +691,68 @@ func (c *Catalog) validate(ctx context.Context, boundedSlice bool) error {
 		}
 		return err
 	}
+	return nil
+}
+
+// changed makes an observed evidence change terminal for the catalog epoch.
+func (c *Catalog) changed() error {
+	c.invalid = true
+	c.fail("epoch_changed")
+	return agentapi.Wrap(agentapi.Changed, errors.New("rollout evidence changed; renew the catalog"))
+}
+
+// validateEntry preserves the captured header and duplicate prefix on changed files.
+func (c *Catalog) validateEntry(ctx context.Context, e *entry, startBytes int64, boundedSlice bool) error {
+	if err := ctx.Err(); err != nil {
+		if !boundedSlice {
+			c.invalid = true
+			c.fail("cancelled")
+		}
+		return err
+	}
+	info, err := measuredLstat(&c.counters, e.root, e.ref.Path)
+	if err != nil || !os.SameFile(e.info, info) || info.Size() < e.info.Size() {
+		return c.changed()
+	}
+	if e.duplicate && info.Size() != e.info.Size() {
+		return c.changed()
+	}
+	if transcriptio.SameObservation(e.info, info) {
+		return nil
+	}
+	charge := e.headerLen + e.prefixLen
+	usedBytes := c.counters.CheckBytes
+	if boundedSlice {
+		usedBytes -= startBytes
+	}
+	if charge > c.limits.PrefixBytes-usedBytes {
+		if !boundedSlice {
+			c.invalid = true
+			c.fail("check_budget")
+		}
+		return agentapi.Wrap(agentapi.Limit, errors.New("catalog prefix revalidation budget exhausted"))
+	}
+	c.counters.CheckBytes += charge
+	f, err := transcriptio.Open(c.Files(), e.ref.Path, transcriptio.OpenPolicy{RejectSymlinks: true})
+	if err != nil {
+		return c.changed()
+	}
+	if !transcriptio.SameObservation(info, f.SourceInfo()) {
+		_ = f.Close()
+		return c.changed()
+	}
+	err = f.CheckPrefix(ctx, e.headerLen, e.header)
+	if err == nil && e.prefixLen > 0 {
+		err = f.CheckPrefix(ctx, e.prefixLen, e.prefix)
+	}
+	err = errors.Join(err, f.Check(), f.Close())
+	if err != nil {
+		if ctx.Err() != nil && boundedSlice {
+			return ctx.Err()
+		}
+		return c.changed()
+	}
+	e.info = info
 	return nil
 }
 
@@ -885,7 +896,7 @@ func openAuthorityRegular(o authority, p string) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	if relative == "." || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+	if relative == "." || !local.PathWithin(p, o.root) {
 		return nil, fs.ErrPermission
 	}
 	// Bind each directory descriptor without following component symlinks. A

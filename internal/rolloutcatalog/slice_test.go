@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -104,7 +105,11 @@ func TestValidationSliceCancellationAndExhaustionAllowFairRenewal(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer next.Close()
+	defer func() {
+		if err := next.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	if err := next.Valid(t.Context()); err != nil || c.invalid {
 		t.Fatalf("renewal poisoned: %v", err)
 	}
@@ -133,7 +138,11 @@ func TestValidationSliceFailedSweepCachedOnlyWithinSlice(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer next.Close()
+	defer func() {
+		if err := next.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	if c.Counters().ValidationSweeps != 2 || agentapi.Failure(next.Valid(t.Context())) != agentapi.Limit {
 		t.Fatal("renewal did not get fresh validation budget")
 	}
@@ -146,7 +155,11 @@ func TestValidationSliceExpiresAfterCompletedSweep(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer bound.Close()
+		defer func() {
+			if err := bound.Close(); err != nil {
+				t.Error(err)
+			}
+		}()
 		time.Sleep(30 * time.Second)
 		if err := bound.Valid(t.Context()); agentapi.Failure(err) != agentapi.Limit {
 			t.Fatal(err)
@@ -187,7 +200,11 @@ func TestRenewedSliceAndLegacyCheckObserveMembershipChanges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer renewed.Close()
+	defer func() {
+		if err := renewed.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	if err := renewed.Valid(t.Context()); err == nil {
 		t.Fatal("changed epoch reused")
 	}
@@ -196,7 +213,7 @@ func TestRenewedSliceAndLegacyCheckObserveMembershipChanges(t *testing.T) {
 func TestRenewedSliceRevalidatesHeaderAndNativeCurrentEvidence(t *testing.T) {
 	t.Parallel()
 	for _, native := range []bool{false, true} {
-		t.Run(fmt.Sprint(native), func(t *testing.T) {
+		t.Run(strconv.FormatBool(native), func(t *testing.T) {
 			t.Parallel()
 			home := t.TempDir()
 			fixture(t, home, "sessions", thread, thread, nil, "")
@@ -217,7 +234,11 @@ func TestRenewedSliceRevalidatesHeaderAndNativeCurrentEvidence(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer renewed.Close()
+			defer func() {
+				if err := renewed.Close(); err != nil {
+					t.Error(err)
+				}
+			}()
 			if err := renewed.Valid(t.Context()); err == nil {
 				t.Fatal("changed header/current accepted")
 			}
@@ -247,7 +268,11 @@ func TestRenewedSliceRejectsApprovedHomeReplacement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer next.Close()
+	defer func() {
+		if err := next.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	if err := next.Valid(t.Context()); err == nil || !c.invalid {
 		t.Fatal("replacement reused existing proof")
 	}
