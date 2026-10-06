@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/agents/codex"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
@@ -77,7 +78,7 @@ func TestExternalRenamePublishesRetainedSourceWithoutReadingTranscript(t *testin
 				}
 			}
 			now = now.Add(time.Hour)
-			provider.label = archive.SessionLabel{State: archive.SessionLabelPresent, Name: "Invented native rename", Source: archive.SessionLabelDatabase, Contract: archive.SessionLabelContract}
+			provider.label = archive.SessionLabel{State: archive.SessionLabelPresent, Name: "Invented native rename", Source: archive.SessionLabelDatabase, Contract: codex.LabelContract}
 			filter.calls = 0
 			remote.keys = nil
 			result, err = Run(context.Background(), local, remote, opts)
@@ -124,7 +125,7 @@ func TestExternalRenameKeepsAttemptedPendingBytesAcrossNewerName(t *testing.T) {
 	if result, err := Run(context.Background(), local, remote, opts); err != nil || len(result.Errors) > 0 {
 		t.Fatalf("%+v %v", result, err)
 	}
-	provider.label = archive.SessionLabel{State: archive.SessionLabelPresent, Name: "First rename", Source: archive.SessionLabelDatabase, Contract: archive.SessionLabelContract}
+	provider.label = archive.SessionLabel{State: archive.SessionLabelPresent, Name: "First rename", Source: archive.SessionLabelDatabase, Contract: codex.LabelContract}
 	now = now.Add(time.Hour)
 	remote.failMetadata = true
 	result, err := Run(context.Background(), local, remote, opts)
@@ -152,5 +153,76 @@ func TestExternalRenameKeepsAttemptedPendingBytesAcrossNewerName(t *testing.T) {
 	}
 	if got := fetchMetadata(t, remote, "codex", reg.ArchiveSessionID); got.Name != "Second rename" {
 		t.Fatalf("newer fingerprint lost after retry: %q", got.Name)
+	}
+}
+
+func TestExternalRenameCombinesChangedConversationWithCurrentName(t *testing.T) {
+	local := newTestStore(t)
+	path := writeTranscript(t, t.TempDir(), "session.jsonl", codexTranscript)
+	reg := registration(t, path)
+	reg.NativeSessionID = "01900000-0000-7000-8000-000000000001"
+	if err := local.SaveRegistration(reg); err != nil {
+		t.Fatal(err)
+	}
+	remote := storagetest.NewMemoryStore()
+	now := reg.RegisteredAt.Add(time.Hour)
+	provider := &mutableLabels{}
+	filter := &operationFilter{}
+	bindings := &operationBindings{parser: &operationParser{version: "0.1.0"}, filter: filter}
+	opts := Options{Sources: bindings, Parsers: bindings, Labels: mutableLabelLookup{provider}, MachineID: "machine", Now: func() time.Time { return now }}
+	if result, err := Run(context.Background(), local, remote, opts); err != nil || len(result.Errors) > 0 {
+		t.Fatalf("%+v %v", result, err)
+	}
+	before := fetchMetadata(t, remote, "codex", reg.ArchiveSessionID)
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = file.WriteString("\n{\"type\":\"event_msg\",\"timestamp\":\"2026-09-22T12:00:00Z\",\"payload\":{\"type\":\"user_message\",\"message\":\"Fresh conversation content\"}}\n")
+	_ = file.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider.label = archive.SessionLabel{State: archive.SessionLabelPresent, Name: "Current rename", Source: archive.SessionLabelDatabase, Contract: codex.LabelContract}
+	filter.calls = 0
+	now = now.Add(time.Hour)
+	if result, err := Run(context.Background(), local, remote, opts); err != nil || len(result.Errors) > 0 {
+		t.Fatalf("%+v %v", result, err)
+	}
+	after := fetchMetadata(t, remote, "codex", reg.ArchiveSessionID)
+	if filter.calls != 1 || after.Name != "Current rename" || len(fetchBundle(t, remote, after).NativeRecords) <= len(fetchBundle(t, remote, before).NativeRecords) || !after.CapturedAt.Equal(now) {
+		t.Fatalf("changed source replaced by old retained source: filtered=%d before=%+v after=%+v", filter.calls, before, after)
+	}
+}
+
+func TestLabelCapabilityUsesRegistrationHarnessAndGenericContext(t *testing.T) {
+	local := newTestStore(t)
+	path := writeTranscript(t, t.TempDir(), "session.jsonl", `{"type":"user","uuid":"message-1","message":{"role":"user","content":"Invented prompt"}}`)
+	reg := registration(t, path)
+	reg.Harness = archive.Harness{Name: "claude", Version: "2.1.0"}
+	if err := local.SaveRegistration(reg); err != nil {
+		t.Fatal(err)
+	}
+	remote := storagetest.NewMemoryStore()
+	now := reg.RegisteredAt.Add(time.Hour)
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "machine", Now: func() time.Time { return now }}
+	if result, err := Run(context.Background(), local, remote, opts); err != nil || len(result.Errors) > 0 {
+		t.Fatalf("%+v %v", result, err)
+	}
+	provider := &fairLabels{requested: map[string]bool{}}
+	opts.Labels = provider
+	now = now.Add(time.Hour)
+	if result, err := Run(context.Background(), local, remote, opts); err != nil || len(result.Errors) > 0 {
+		t.Fatalf("%+v %v", result, err)
+	}
+	if !provider.requested[reg.ArchiveSessionID] {
+		t.Fatal("non-Codex injected label capability was not selected")
+	}
+	cache, err := local.LoadLabels()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entry, ok := cache.Entries[reg.ArchiveSessionID]; !ok || entry.Context.Producer != "2.1.0" {
+		t.Fatalf("generic producer/context not durable: %+v", cache)
 	}
 }

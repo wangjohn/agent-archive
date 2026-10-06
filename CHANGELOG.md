@@ -12,7 +12,7 @@ follow [Semantic Versioning](https://semver.org/).
 - Remove injected Codex open-page context from prompt fallback while preserving
   the human request outside it.
 - Refresh Codex names for already admitted ordinary sessions from verified
-  0.159.2 settled storage and guarded legacy indexes. Changes publish filtered
+  0.159.2 settled storage, including verified legacy database/index fallback. Changes publish filtered
   source evidence without renewing activity or retention; unavailable live-WAL
   storage preserves the last verified name. No native process is started.
 

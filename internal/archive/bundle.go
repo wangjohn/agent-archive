@@ -70,7 +70,7 @@ func NewSourceBundle(reg SessionRegistration, adapter Adapter, transcript Filter
 	for _, evidence := range supplemental {
 		if evidence.Kind == EvidenceKindSessionLabels {
 			label, ok := labelFromEvidence(evidence)
-			if !ok || reg.Harness.Name != "codex" || label.NativeID != reg.NativeSessionID || transcript.History != nil {
+			if !ok || evidence.Provenance != labelProvenance(reg.Harness.Name) || label.NativeID != reg.NativeSessionID || transcript.History != nil {
 				return SourceBundle{}, errors.New("session label does not match its owning source")
 			}
 		}
@@ -193,7 +193,7 @@ func FilterSupplementalEvidence(in []SupplementalEvidence) ([]SupplementalEviden
 			if !ok {
 				return nil, nil, errors.New("invalid session label evidence")
 			}
-			out = append(out, label.Evidence(evidence.ObservedAt.UTC()))
+			out = append(out, label.Evidence(evidence.ObservedAt.UTC(), labelEvidenceHarness(evidence)))
 			continue
 		}
 		var extraAllowed map[string]bool

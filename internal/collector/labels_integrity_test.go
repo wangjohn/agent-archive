@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agents/codex"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
@@ -28,7 +29,7 @@ func TestExternalRenameVerifiesWholeRetainedSourceBeforePublication(t *testing.T
 	file := readPublishedStateFile(t, local, reg.ArchiveSessionID)
 	file.Bundle.NativeRecords = append(file.Bundle.NativeRecords, map[string]any{"type": "event_msg", "payload": map[string]any{"type": "user_message", "message": "Uncommitted retained bytes"}})
 	writePublishedStateFile(t, local, reg.ArchiveSessionID, file)
-	provider.label = archive.SessionLabel{State: archive.SessionLabelPresent, Name: "New name", Source: archive.SessionLabelDatabase, Contract: archive.SessionLabelContract}
+	provider.label = archive.SessionLabel{State: archive.SessionLabelPresent, Name: "New name", Source: archive.SessionLabelDatabase, Contract: codex.LabelContract}
 	now = now.Add(time.Hour)
 	remote.keys = nil
 	result, err := Run(context.Background(), local, remote, opts)

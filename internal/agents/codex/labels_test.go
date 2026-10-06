@@ -1,6 +1,7 @@
 package codex
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -63,7 +64,7 @@ func labelDB(t *testing.T, root string, request agentapi.LabelRequest, mode code
 }
 
 func lookupLabel(root string, request agentapi.LabelRequest) (archive.SessionLabel, bool) {
-	m := (LabelProvider{}).LookupLabels(context.Background(), agentapi.LabelEnvironment{Homes: []string{root}}, []agentapi.LabelRequest{request})
+	m := (LabelProvider{}).LookupLabels(context.Background(), agentapi.LabelEnvironment{Homes: []string{root}, VerifiedLegacyStorageHomes: []string{root}}, []agentapi.LabelRequest{request})
 	l, ok := m[request.Registration.ArchiveSessionID]
 	return l, ok
 }
@@ -243,5 +244,174 @@ func TestLabelsRejectUnknownProducerRelocationAndHome(t *testing.T) {
 	request.Registration.TranscriptPath = "/outside/session.jsonl"
 	if _, ok := lookupLabel(root, request); ok {
 		t.Fatal("foreign home accepted")
+	}
+}
+
+func TestLabelsCanonicalDatabaseRequiresRetainedSupportedProducer(t *testing.T) {
+	t.Parallel()
+	root, request := labelFixture(t)
+	db := labelDB(t, root, request, codexmeta.CodexHistoryPaginated, "Canonical name", "")
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	request.Bundle.Capture.Harness.Version = "0.160.0"
+	if label, ok := lookupLabel(root, request); ok {
+		t.Fatalf("unknown retained producer accepted: %+v", label)
+	}
+}
+
+func TestLabelsCanonicalDatabaseRejectsUnknownValueShape(t *testing.T) {
+	t.Parallel()
+	root, request := labelFixture(t)
+	db := labelDB(t, root, request, codexmeta.CodexHistoryPaginated, "Canonical name", "")
+	if _, err := db.ExecContext(context.Background(), "UPDATE threads SET name=CAST(name AS BLOB)"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if label, ok := lookupLabel(root, request); ok {
+		t.Fatalf("unknown database name shape accepted: %+v", label)
+	}
+}
+
+func TestLabelsHomeBudgetFollowsPersistentTargetOrder(t *testing.T) {
+	t.Parallel()
+	firstRoot, first := labelFixture(t)
+	secondRoot, second := labelFixture(t)
+	second.Registration.ArchiveSessionID = "second"
+	env := agentapi.LabelEnvironment{Homes: []string{firstRoot, secondRoot}}
+	for _, requests := range [][]agentapi.LabelRequest{{first, second}, {second, first}} {
+		ctx, cancel := context.WithCancel(context.Background())
+		var homes []string
+		provider := LabelProvider{homeLookup: func(_ context.Context, root string, _ []agentapi.LabelRequest) map[string]archive.SessionLabel {
+			homes = append(homes, root)
+			cancel()
+			return nil
+		}}
+		provider.LookupLabels(ctx, env, requests)
+		cancel()
+		want := firstRoot
+		if requests[0].Registration.ArchiveSessionID == "second" {
+			want = secondRoot
+		}
+		if len(homes) != 1 || homes[0] != want {
+			t.Fatalf("budget selected %v, expected first target home %s", homes, want)
+		}
+	}
+}
+
+func TestLabelsAbsentDatabaseRequiresPositiveProducingStorageProof(t *testing.T) {
+	t.Parallel()
+	root, request := labelFixture(t)
+	labelIndex(t, root, "Stale index name")
+	env := agentapi.LabelEnvironment{Homes: []string{root}}
+	if labels := (LabelProvider{}).LookupLabels(context.Background(), env, []agentapi.LabelRequest{request}); len(labels) != 0 {
+		t.Fatalf("local absence inferred producing placement: %+v", labels)
+	}
+	env.VerifiedLegacyStorageHomes = []string{t.TempDir()}
+	if labels := (LabelProvider{}).LookupLabels(context.Background(), env, []agentapi.LabelRequest{request}); len(labels) != 0 {
+		t.Fatal("another home's proof authorized this home")
+	}
+	env.VerifiedLegacyStorageHomes = []string{root}
+	if labels := (LabelProvider{}).LookupLabels(context.Background(), env, []agentapi.LabelRequest{request}); labels[request.Registration.ArchiveSessionID].Name != "Stale index name" {
+		t.Fatalf("positive producing proof unavailable: %+v", labels)
+	}
+}
+
+func TestLabelsUnknownFilteredHistoryModeCannotProveLegacyAbsence(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []any{"unsupported", nil, true} {
+		root, request := labelFixture(t)
+		labelIndex(t, root, "Index name")
+		request.Bundle.NativeRecords[0]["payload"].(map[string]any)["history_mode"] = mode
+		var native bytes.Buffer
+		for _, record := range request.Bundle.NativeRecords {
+			if err := json.NewEncoder(&native).Encode(record); err != nil {
+				t.Fatal(err)
+			}
+		}
+		filtered, err := (Filter{}).FilterJSONL(&native)
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.Bundle.Capture.Gaps = filtered.Gaps
+		request.Bundle.NativeRecords = nil
+		for _, raw := range filtered.Records {
+			var record map[string]any
+			if err := json.Unmarshal(raw, &record); err != nil {
+				t.Fatal(err)
+			}
+			request.Bundle.NativeRecords = append(request.Bundle.NativeRecords, record)
+		}
+		if _, ok := lookupLabel(root, request); ok {
+			t.Fatalf("omitted mode %v authorized index-only label", mode)
+		}
+	}
+}
+
+func TestLabelsCanonicalDatabaseRequiresPinnedColumnAffinity(t *testing.T) {
+	t.Parallel()
+	root, request := labelFixture(t)
+	db := labelDB(t, root, request, codexmeta.CodexHistoryPaginated, "Canonical name", "")
+	if _, err := db.ExecContext(context.Background(), "ALTER TABLE threads RENAME TO old_threads"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(context.Background(), "CREATE TABLE threads(id TEXT PRIMARY KEY,history_mode TEXT,name BLOB,title TEXT,first_user_message TEXT,preview TEXT,source TEXT,cli_version TEXT,rollout_path TEXT)"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(context.Background(), "INSERT INTO threads SELECT * FROM old_threads"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if label, ok := lookupLabel(root, request); ok {
+		t.Fatalf("unknown declared name schema accepted: %+v", label)
+	}
+}
+
+func TestLabelsCodexInterpreterRejectsNonNativeOwnerAndUnknownContract(t *testing.T) {
+	t.Parallel()
+	root, request := labelFixture(t)
+	request.Registration.NativeSessionID = "generic-thread"
+	request.Bundle.NativeSessionID = "generic-thread"
+	request.Bundle.NativeRecords[0]["payload"].(map[string]any)["id"] = "generic-thread"
+	if _, ok := lookupLabel(root, request); ok {
+		t.Fatal("generic ID elevated to native UUID")
+	}
+	label := archive.SessionLabel{NativeID: labelTestID, State: archive.SessionLabelPresent, Name: "Unsupported native interpretation", Source: archive.SessionLabelDatabase, Contract: "unknown-provider-v1"}
+	_, request = labelFixture(t)
+	request.Bundle.SupplementalEvidence = []archive.SupplementalEvidence{label.Evidence(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), "codex")}
+	analysis, err := (Parser{}).Parse(context.Background(), request.Bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if analysis.Facts.Name == label.Name {
+		t.Fatal("opaque generic contract elevated to known Codex semantics")
+	}
+}
+
+func TestLabelsGroupPriorityUsesVerifiedHomeWithoutNativeIO(t *testing.T) {
+	t.Parallel()
+	root, first := labelFixture(t)
+	otherRoot, other := labelFixture(t)
+	env := agentapi.LabelEnvironment{Homes: []string{root, otherRoot}}
+	provider := LabelProvider{}
+	firstGroup := provider.LabelRequestGroup(env, first)
+	if len(firstGroup) != 64 {
+		t.Fatal("verified home supplied no content-free group")
+	}
+	second := first
+	second.Registration.ArchiveSessionID = "other-admitted-id"
+	if provider.LabelRequestGroup(env, second) != firstGroup {
+		t.Fatal("one home's requests did not share priority")
+	}
+	if group := provider.LabelRequestGroup(env, other); group == "" || group == firstGroup {
+		t.Fatal("separate approved homes shared priority")
+	}
+	first.Registration.TranscriptPath = "/outside/transcript.jsonl"
+	if provider.LabelRequestGroup(env, first) != "" {
+		t.Fatal("unverified home supplied native priority")
 	}
 }

@@ -12,10 +12,14 @@ import (
 	"unicode/utf8"
 )
 
+// SessionLabelState distinguishes a verified name from verified absence.
 type SessionLabelState string
 
+// SessionLabelSource identifies the fixed class of a naming observation.
 type SessionLabelSource string
 
+// SessionLabelPresent and SessionLabelAbsent distinguish a verified name
+// from verified absence; the fixed source classes record observation authority.
 const (
 	SessionLabelPresent  SessionLabelState  = "present"
 	SessionLabelAbsent   SessionLabelState  = "confirmed_absent"
@@ -32,22 +36,10 @@ type SessionLabel struct {
 	Contract string             `json:"contract"`
 }
 
-// SessionLabelContract identifies the verified Codex file resolution semantics.
-const SessionLabelContract = "codex-files-159.2-v1"
-
 // FilterSessionLabel validates the narrow shape and filters before any persistence.
 func FilterSessionLabel(label SessionLabel) (SessionLabel, bool) {
-	if label.Contract != SessionLabelContract || (label.Source != SessionLabelIndex && label.Source != SessionLabelDatabase) || (label.State != SessionLabelPresent && label.State != SessionLabelAbsent) || len(label.NativeID) != 36 {
+	if !safeLabelToken(label.Contract, 64) || !safeLabelToken(label.NativeID, 256) || (label.Source != SessionLabelIndex && label.Source != SessionLabelDatabase) || (label.State != SessionLabelPresent && label.State != SessionLabelAbsent) {
 		return SessionLabel{}, false
-	}
-	for i, c := range label.NativeID {
-		if i == 8 || i == 13 || i == 18 || i == 23 {
-			if c != '-' {
-				return SessionLabel{}, false
-			}
-		} else if !strings.ContainsRune("0123456789abcdefABCDEF", c) {
-			return SessionLabel{}, false
-		}
 	}
 	if label.State == SessionLabelAbsent {
 		return label, label.Name == ""
@@ -93,16 +85,16 @@ func (label SessionLabel) Fingerprint() string {
 }
 
 // Evidence retains the current native label without native paths or response data.
-func (label SessionLabel) Evidence(at time.Time) SupplementalEvidence {
+func (label SessionLabel) Evidence(at time.Time, harness string) SupplementalEvidence {
 	payload := map[string]any{"native_session_id": label.NativeID, "state": string(label.State), "source": string(label.Source), "contract": label.Contract}
 	if label.State == SessionLabelPresent {
 		payload["name"] = label.Name
 	}
-	return SupplementalEvidence{Kind: EvidenceKindSessionLabels, ObservedAt: at, Provenance: "native:codex:session_labels", Payload: payload}
+	return SupplementalEvidence{Kind: EvidenceKindSessionLabels, ObservedAt: at, Provenance: labelProvenance(harness), Payload: payload}
 }
 
 func labelFromEvidence(e SupplementalEvidence) (SessionLabel, bool) {
-	if e.Kind != EvidenceKindSessionLabels || e.Provenance != "native:codex:session_labels" {
+	if e.Kind != EvidenceKindSessionLabels || !safeLabelToken(labelEvidenceHarness(e), 64) {
 		return SessionLabel{}, false
 	}
 	for key := range e.Payload {
@@ -134,14 +126,14 @@ func labelFromEvidence(e SupplementalEvidence) (SessionLabel, bool) {
 	return FilterSessionLabel(l)
 }
 
-// CurrentSessionLabel returns only evidence matching its owning Codex bundle.
+// CurrentSessionLabel returns only evidence matching its owning bundle.
 func CurrentSessionLabel(bundle SourceBundle) (SessionLabel, time.Time, bool) {
-	if bundle.Capture.Harness.Name != "codex" {
+	if !safeLabelToken(bundle.Capture.Harness.Name, 64) {
 		return SessionLabel{}, time.Time{}, false
 	}
 	for i := len(bundle.SupplementalEvidence) - 1; i >= 0; i-- {
 		e := bundle.SupplementalEvidence[i]
-		if l, ok := labelFromEvidence(e); ok && l.NativeID == bundle.NativeSessionID {
+		if l, ok := labelFromEvidence(e); ok && l.NativeID == bundle.NativeSessionID && e.Provenance == labelProvenance(bundle.Capture.Harness.Name) {
 			return l, e.ObservedAt, true
 		}
 	}
@@ -156,10 +148,32 @@ func ValidateSessionLabels(bundle SourceBundle) error {
 			continue
 		}
 		l, ok := labelFromEvidence(e)
-		if seen || !ok || !reflect.DeepEqual(l.Evidence(e.ObservedAt).Payload, e.Payload) || bundle.Capture.Harness.Name != "codex" || l.NativeID != bundle.NativeSessionID || bundle.History != nil || bundle.SchemaVersion != SourceSchemaVersion {
-			return errors.New("session label does not match its owning ordinary Codex source")
+		if seen || !ok || !reflect.DeepEqual(l.Evidence(e.ObservedAt, bundle.Capture.Harness.Name).Payload, e.Payload) || e.Provenance != labelProvenance(bundle.Capture.Harness.Name) || l.NativeID != bundle.NativeSessionID || bundle.History != nil || bundle.SchemaVersion != SourceSchemaVersion {
+			return errors.New("session label does not match its owning ordinary source")
 		}
 		seen = true
 	}
 	return nil
+}
+
+func safeLabelToken(value string, limit int) bool {
+	if value == "" || len(value) > limit {
+		return false
+	}
+	for _, c := range value {
+		if !(c >= 'a' && c <= 'z') && !(c >= 'A' && c <= 'Z') && !(c >= '0' && c <= '9') && c != '-' && c != '_' && c != '.' {
+			return false
+		}
+	}
+	filtered, keep := SanitizeValue(value, &PrivacyState{AddGap: func(string, int, string) {}})
+	return keep && filtered == value
+}
+
+func labelProvenance(harness string) string { return "native:" + harness + ":session_labels" }
+
+func labelEvidenceHarness(e SupplementalEvidence) string {
+	if !strings.HasPrefix(e.Provenance, "native:") || !strings.HasSuffix(e.Provenance, ":session_labels") {
+		return ""
+	}
+	return strings.TrimSuffix(strings.TrimPrefix(e.Provenance, "native:"), ":session_labels")
 }

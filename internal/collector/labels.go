@@ -31,10 +31,7 @@ func (p *pass) observeLabels(ctx context.Context) {
 	if p.opts.Labels == nil {
 		return
 	}
-	provider, ok := p.opts.Labels.LookupLabels("codex")
-	if !ok {
-		return
-	}
+	providers := map[string]agentapi.LabelProvider{}
 	cache, err := p.local.LoadLabels()
 	if err != nil {
 		addError(p.result.Errors, "session-labels", err)
@@ -43,11 +40,19 @@ func (p *pass) observeLabels(ctx context.Context) {
 	eligible := map[string]archive.SessionRegistration{}
 	ids := []string{}
 	for _, reg := range p.registrations {
-		if reg.Harness.Name != "codex" || reg.CaptureFrozen || reg.Imported() || p.unreadable[reg.ArchiveSessionID] || (p.opts.AcceptSession != nil && !p.opts.AcceptSession(reg)) {
+		if reg.CaptureFrozen || reg.Imported() || p.unreadable[reg.ArchiveSessionID] || (p.opts.AcceptSession != nil && !p.opts.AcceptSession(reg)) {
 			continue
 		}
 		if p.local.GenerationCaptureAllowed(reg) != nil {
 			continue
+		}
+		provider, ok := providers[reg.Harness.Name]
+		if !ok {
+			provider, ok = p.opts.Labels.LookupLabels(reg.Harness.Name)
+			if !ok {
+				continue
+			}
+			providers[reg.Harness.Name] = provider
 		}
 		eligible[reg.ArchiveSessionID] = reg
 		ids = append(ids, reg.ArchiveSessionID)
@@ -67,8 +72,26 @@ func (p *pass) observeLabels(ctx context.Context) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	requests := p.prepareLabelRequests(ctx, provider, &cache, ids, eligible)
-	results := provider.LookupLabels(ctx, p.opts.LabelEnvironment, requests)
+	requests := p.prepareLabelRequests(ctx, providers, &cache, ids, eligible)
+	requests = prioritizeLabelRequests(requests, providers, p.opts.LabelEnvironment, &cache)
+	results := map[string]archive.SessionLabel{}
+	groups := map[string][]agentapi.LabelRequest{}
+	harnesses := []string{}
+	for _, request := range requests {
+		name := request.Registration.Harness.Name
+		if len(groups[name]) == 0 {
+			harnesses = append(harnesses, name)
+		}
+		groups[name] = append(groups[name], request)
+	}
+	for _, name := range harnesses {
+		if ctx.Err() != nil {
+			break
+		}
+		for id, label := range providers[name].LookupLabels(ctx, p.opts.LabelEnvironment, groups[name]) {
+			results[id] = label
+		}
+	}
 	for _, request := range requests {
 		id := request.Registration.ArchiveSessionID
 		entry := cache.Entries[id]
@@ -109,7 +132,7 @@ func (p *pass) observeLabels(ctx context.Context) {
 	}
 }
 
-func (p *pass) prepareLabelRequests(ctx context.Context, provider agentapi.LabelProvider, cache *state.LabelCache, ids []string, eligible map[string]archive.SessionRegistration) []agentapi.LabelRequest {
+func (p *pass) prepareLabelRequests(ctx context.Context, providers map[string]agentapi.LabelProvider, cache *state.LabelCache, ids []string, eligible map[string]archive.SessionRegistration) []agentapi.LabelRequest {
 	requests := []agentapi.LabelRequest{}
 	start := sort.SearchStrings(ids, cache.Cursor)
 	if start < len(ids) && ids[start] == cache.Cursor {
@@ -127,7 +150,13 @@ func (p *pass) prepareLabelRequests(ctx context.Context, provider agentapi.Label
 		if err != nil {
 			continue
 		}
-		contract := archive.SessionLabelContract + "/" + archive.FilterVersion + "/" + p.opts.parserVersionFor("codex")
+		provider := providers[reg.Harness.Name]
+		interpretation := "generic-label-context-v1"
+		if builder, ok := provider.(agentapi.LabelContextProvider); ok {
+			interpretation = builder.LabelContextVersion()
+		}
+		revision := sha256.Sum256([]byte(interpretation + "/" + archive.FilterVersion + "/" + p.opts.parserVersionFor(reg.Harness.Name)))
+		contract := hex.EncodeToString(revision[:])
 		validContext := entry.Context.Contract == contract && entry.Context.NativeID == reg.NativeSessionID && ((checksum != "" && checksum == entry.SourceChecksum) || (checksum == "" && stamp == entry.SourceStamp))
 		if !validContext {
 			published, n, err := p.local.LoadLabelPublication(id, (16<<20)-p.labelBytes)
@@ -140,7 +169,7 @@ func (p *pass) prepareLabelRequests(ctx context.Context, provider agentapi.Label
 			}
 			p.labelStates[id] = published
 			bundle, _, found := published.LastPublished()
-			if !found {
+			if !found || bundle.NativeSessionID != reg.NativeSessionID || bundle.Capture.Harness.Name != reg.Harness.Name {
 				continue
 			}
 			if bundle.History != nil || bundle.SchemaVersion == archive.HistorySourceSchemaVersion {
@@ -158,9 +187,6 @@ func (p *pass) prepareLabelRequests(ctx context.Context, provider agentapi.Label
 				entry.Context = agentapi.LabelContext{NativeID: bundle.NativeSessionID, Ordinary: bundle.History == nil && bundle.SchemaVersion == archive.SourceSchemaVersion, Producer: bundle.Capture.Harness.Version}
 			}
 			entry.Context.Contract = contract
-			if entry.Context.Producer != "0.159.2" {
-				entry.Context.Producer = ""
-			}
 			entry.SourceChecksum = source.SHA256
 			entry.SourceStamp = stamp
 			if entry.Label.State == "" {
@@ -181,7 +207,7 @@ func (s *sessionScan) applyLabels(evidence []archive.SupplementalEvidence) []arc
 	if !ok {
 		return evidence
 	}
-	return archive.MergeSupplementalEvidence(evidence, []archive.SupplementalEvidence{entry.Label.Evidence(entry.ObservedAt)})
+	return archive.MergeSupplementalEvidence(evidence, []archive.SupplementalEvidence{entry.Label.Evidence(entry.ObservedAt, s.reg.Harness.Name)})
 }
 
 func labelFingerprint(bundle archive.SourceBundle) string {
@@ -251,4 +277,44 @@ func (s *sessionScan) refreshLabels() (sessionOutcome, bool, error) {
 func (s *sessionScan) publishedLabel() string {
 	bundle, _, _ := s.published.LastPublished()
 	return labelFingerprint(bundle)
+}
+
+func prioritizeLabelRequests(requests []agentapi.LabelRequest, providers map[string]agentapi.LabelProvider, env agentapi.LabelEnvironment, cache *state.LabelCache) []agentapi.LabelRequest {
+	if len(requests) == 0 {
+		return requests
+	}
+	start := 0
+	for i, request := range requests {
+		if request.Registration.ArchiveSessionID != cache.PriorityCursor {
+			continue
+		}
+		start = (i + 1) % len(requests)
+		previousGroup := labelRequestGroup(providers, env, request)
+		if previousGroup != "" {
+			for n := 1; n < len(requests); n++ {
+				candidate := (i + n) % len(requests)
+				if labelRequestGroup(providers, env, requests[candidate]) != previousGroup {
+					start = candidate
+					break
+				}
+			}
+		}
+		break
+	}
+	ordered := append(append(make([]agentapi.LabelRequest, 0, len(requests)), requests[start:]...), requests[:start]...)
+	cache.PriorityCursor = ordered[0].Registration.ArchiveSessionID
+	return ordered
+}
+
+func labelRequestGroup(providers map[string]agentapi.LabelProvider, env agentapi.LabelEnvironment, request agentapi.LabelRequest) string {
+	provider, ok := providers[request.Registration.Harness.Name].(agentapi.LabelRequestGrouper)
+	if !ok {
+		return ""
+	}
+	key := provider.LabelRequestGroup(env, request)
+	decoded, err := hex.DecodeString(key)
+	if err != nil || len(decoded) != sha256.Size {
+		return ""
+	}
+	return request.Registration.Harness.Name + "/" + key
 }

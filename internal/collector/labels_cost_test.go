@@ -2,6 +2,8 @@ package collector
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"testing"
 	"time"
@@ -111,4 +113,69 @@ func TestLabelLookupCursorDefersFairlyAcrossRestart(t *testing.T) {
 	if provider.max > 64 || len(provider.requested) != 130 {
 		t.Fatalf("max batch %d covered %d", provider.max, len(provider.requested))
 	}
+}
+
+type firstTargetLabels struct {
+	attempted []string
+	groups    map[string]string
+}
+type firstTargetProvider struct{ *firstTargetLabels }
+
+func (p firstTargetProvider) LookupLabels(_ context.Context, _ agentapi.LabelEnvironment, requests []agentapi.LabelRequest) map[string]archive.SessionLabel {
+	if len(requests) > 0 {
+		p.attempted = append(p.attempted, requests[0].Registration.ArchiveSessionID)
+	}
+	// The first target exhausted the provider's work budget before later targets.
+	return nil
+}
+
+func (p *firstTargetLabels) LookupLabels(string) (agentapi.LabelProvider, bool) {
+	return firstTargetProvider{p}, true
+}
+
+func TestLabelBudgetPriorityRotatesSmallBatchesAcrossRestart(t *testing.T) {
+	local := newTestStore(t)
+	path := writeTranscript(t, t.TempDir(), "session.jsonl", codexTranscript)
+	base := registration(t, path)
+	groups := map[string]string{"a": "home-one", "c": "home-one", "f": "home-one", "b": "home-two", "d": "home-two", "e": "home-two"}
+	for _, id := range []string{"a", "b", "c", "d", "e", "f"} {
+		reg := base
+		reg.ArchiveSessionID = id
+		reg.NativeSessionID = "native-" + id
+		if err := local.SaveRegistration(reg); err != nil {
+			t.Fatal(err)
+		}
+	}
+	now := base.RegisteredAt.Add(time.Hour)
+	remote := storagetest.NewMemoryStore()
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "machine", Now: func() time.Time { return now }}
+	if result, err := Run(context.Background(), local, remote, opts); err != nil || len(result.Errors) > 0 {
+		t.Fatalf("%+v %v", result, err)
+	}
+	provider := &firstTargetLabels{groups: groups}
+	opts.Labels = provider
+	for range 4 {
+		now = now.Add(time.Hour)
+		var err error
+		local, err = state.Open(local.Home())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result, err := Run(context.Background(), local, remote, opts); err != nil || len(result.Errors) > 0 {
+			t.Fatalf("%+v %v", result, err)
+		}
+	}
+	if len(provider.attempted) != 4 {
+		t.Fatalf("unexpected attempts %v", provider.attempted)
+	}
+	for i := 1; i < len(provider.attempted); i++ {
+		if groups[provider.attempted[i]] == groups[provider.attempted[i-1]] {
+			t.Fatalf("budget starved later home across restart: %v", provider.attempted)
+		}
+	}
+}
+
+func (p firstTargetProvider) LabelRequestGroup(_ agentapi.LabelEnvironment, request agentapi.LabelRequest) string {
+	sum := sha256.Sum256([]byte(p.groups[request.Registration.ArchiveSessionID]))
+	return hex.EncodeToString(sum[:])
 }

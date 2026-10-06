@@ -86,16 +86,16 @@ func labelHash(value string) bool {
 	return err == nil && len(decoded) == sha256.Size && value == strings.ToLower(value)
 }
 
-var labelContextContract = regexp.MustCompile(`^codex-files-159\.2-v1/[0-9]{1,3}/[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$`)
+var labelProducerVersion = regexp.MustCompile(`^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}([-+][a-zA-Z0-9.-]{1,32})?$`)
 
 func validLabelContext(entry LabelEntry) bool {
 	proof := entry.Context
-	// Only pinned producer identity and hashes may enter durable context.
-	if proof.Producer != "" && proof.Producer != "0.159.2" {
+	// Only bounded producer versions and content-free hashes enter durable context.
+	if proof.Producer != "" && !labelProducerVersion.MatchString(proof.Producer) {
 		return false
 	}
 	if proof.NativeID != "" {
-		_, ok := archive.FilterSessionLabel(archive.SessionLabel{NativeID: proof.NativeID, State: archive.SessionLabelAbsent, Source: archive.SessionLabelIndex, Contract: archive.SessionLabelContract})
+		_, ok := archive.FilterSessionLabel(archive.SessionLabel{NativeID: proof.NativeID, State: archive.SessionLabelAbsent, Source: archive.SessionLabelIndex, Contract: "label-context"})
 		if !ok {
 			return false
 		}
@@ -103,14 +103,16 @@ func validLabelContext(entry LabelEntry) bool {
 	return labelHash(entry.Scope) && (entry.SourceChecksum == "" || labelHash(entry.SourceChecksum)) &&
 		(entry.SourceStamp == "" || labelHash(entry.SourceStamp)) &&
 		(proof.PreviewDigest == "" || labelHash(proof.PreviewDigest)) &&
-		labelContextContract.MatchString(proof.Contract) && entry.Failures <= 6
+		labelHash(proof.Contract) && entry.Failures <= 6
 }
 
 // LabelCache is collector-owned, bounded, and independent of publication retries.
 type LabelCache struct {
-	Version int                   `json:"version"`
-	Cursor  string                `json:"cursor,omitempty"`
-	Entries map[string]LabelEntry `json:"entries"`
+	Version int `json:"version"`
+	// PriorityCursor rotates the first provider work group separately from batch coverage.
+	PriorityCursor string                `json:"priority_cursor,omitempty"`
+	Cursor         string                `json:"cursor,omitempty"`
+	Entries        map[string]LabelEntry `json:"entries"`
 }
 
 // MaxLabelCacheEntries bounds persisted observations independently of admission.
@@ -128,7 +130,7 @@ func (s *Store) LoadLabels() (LabelCache, error) {
 	}
 	defer func() { _ = f.Close() }()
 	reader := io.LimitReader(f, 4<<20)
-	if json.NewDecoder(reader).Decode(&cache) != nil || cache.Version != 1 || len(cache.Entries) > MaxLabelCacheEntries || len(cache.Cursor) > 256 {
+	if json.NewDecoder(reader).Decode(&cache) != nil || cache.Version != 1 || len(cache.Entries) > MaxLabelCacheEntries || (len(cache.Cursor) > 256 || len(cache.PriorityCursor) > 256) {
 		return LabelCache{}, errors.New("invalid session label cache")
 	}
 	if cache.Entries == nil {
@@ -155,7 +157,7 @@ func (s *Store) LoadLabels() (LabelCache, error) {
 
 // SaveLabels atomically persists already-filtered observations under the collector lock.
 func (s *Store) SaveLabels(cache LabelCache) error {
-	if cache.Version != 1 || len(cache.Entries) > MaxLabelCacheEntries || len(cache.Cursor) > 256 {
+	if cache.Version != 1 || len(cache.Entries) > MaxLabelCacheEntries || (len(cache.Cursor) > 256 || len(cache.PriorityCursor) > 256) {
 		return errors.New("invalid session label cache")
 	}
 	for id, entry := range cache.Entries {

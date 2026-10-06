@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
-	"github.com/wangjohn/agent-archive/internal/archive"
 )
 
 func TestLabelCacheRejectsUnfilteredContext(t *testing.T) {
@@ -14,7 +13,7 @@ func TestLabelCacheRejectsUnfilteredContext(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	entry := LabelEntry{Scope: strings.Repeat("a", 64), SourceChecksum: strings.Repeat("b", 64), Context: agentapi.LabelContext{NativeID: "01900000-0000-7000-8000-000000000001", Producer: "0.159.2", Contract: archive.SessionLabelContract + "/17/0.24.0"}}
+	entry := LabelEntry{Scope: strings.Repeat("a", 64), SourceChecksum: strings.Repeat("b", 64), Context: agentapi.LabelContext{NativeID: "01900000-0000-7000-8000-000000000001", Producer: "0.159.2", Contract: strings.Repeat("c", 64)}}
 	cache := LabelCache{Version: 1, Entries: map[string]LabelEntry{"synthetic": entry}}
 	if err := store.SaveLabels(cache); err != nil {
 		t.Fatal(err)

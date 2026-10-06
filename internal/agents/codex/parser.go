@@ -15,7 +15,7 @@ func (Parser) Version() string { return "0.24.0" }
 // Parse derives facts once from retained safe evidence.
 func (Parser) Parse(ctx context.Context, bundle archive.SourceBundle) (archive.Analysis, error) {
 	analysis, err := nativecodec.ParseCodex(ctx, bundle)
-	if label, _, ok := archive.CurrentSessionLabel(bundle); ok {
+	if label, _, ok := archive.CurrentSessionLabel(bundle); ok && supportedLabelContract(label.Contract) {
 		analysis.Facts.Name = label.Name
 	}
 	return analysis, err

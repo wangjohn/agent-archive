@@ -297,17 +297,17 @@
           "if": {"properties": {"kind": {"const": "session_labels"}}, "required": ["kind"]},
           "then": {
             "properties": {
-              "provenance": {"const": "native:codex:session_labels"},
+              "provenance": {"type": "string", "pattern": "^native:[A-Za-z0-9_.-]{1,64}:session_labels$"},
               "payload": {
                 "type": "object",
                 "additionalProperties": false,
                 "required": ["native_session_id", "state", "source", "contract"],
                 "properties": {
-                  "native_session_id": {"type": "string", "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"},
+                  "native_session_id": {"type": "string", "pattern": "^[A-Za-z0-9_.-]{1,256}$"},
                   "state": {"enum": ["present", "confirmed_absent"]},
                   "name": {"type": "string", "minLength": 1, "maxLength": 512},
                   "source": {"enum": ["index", "database"]},
-                  "contract": {"const": "codex-files-159.2-v1"}
+                  "contract": {"type": "string", "pattern": "^[A-Za-z0-9_.-]{1,64}$"}
                 },
                 "allOf": [{"if": {"properties": {"state": {"const": "present"}}}, "then": {"required": ["name"]}, "else": {"not": {"required": ["name"]}}}]
               }
@@ -424,11 +424,11 @@
       "properties": {
         "rollout_id": {
           "type": "string",
-          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+          "pattern": "^[A-Za-z0-9_.-]{1,256}$"
         },
         "thread_id": {
           "type": "string",
-          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+          "pattern": "^[A-Za-z0-9_.-]{1,256}$"
         },
         "first_record": {
           "type": "integer",
@@ -463,11 +463,11 @@
       "properties": {
         "active_rollout_id": {
           "type": "string",
-          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+          "pattern": "^[A-Za-z0-9_.-]{1,256}$"
         },
         "thread_id": {
           "type": "string",
-          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+          "pattern": "^[A-Za-z0-9_.-]{1,256}$"
         },
         "own_start_ordinal": {
           "type": "integer",

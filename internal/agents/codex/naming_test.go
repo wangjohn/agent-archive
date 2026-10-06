@@ -18,8 +18,8 @@ func TestNamingOnlyChangePreservesRealEvidenceAcrossCodecUpgrade(t *testing.T) {
 	if (Filter{}).NamingOnlyChange(old, next) {
 		t.Fatal("codec change without a changed name claimed naming-only proof")
 	}
-	label := archive.SessionLabel{NativeID: labelTestID, State: archive.SessionLabelPresent, Name: "Renamed", Source: archive.SessionLabelDatabase, Contract: archive.SessionLabelContract}
-	next.SupplementalEvidence = []archive.SupplementalEvidence{label.Evidence(next.Capture.CapturedAt)}
+	label := archive.SessionLabel{NativeID: labelTestID, State: archive.SessionLabelPresent, Name: "Renamed", Source: archive.SessionLabelDatabase, Contract: LabelContract}
+	next.SupplementalEvidence = []archive.SupplementalEvidence{label.Evidence(next.Capture.CapturedAt, "codex")}
 	if !(Filter{}).NamingOnlyChange(old, next) {
 		t.Fatal("bookkeeping upgrade and owning label was treated as activity")
 	}
