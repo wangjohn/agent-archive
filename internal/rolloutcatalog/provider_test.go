@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
@@ -14,7 +15,7 @@ import (
 )
 
 func TestProviderUsesSharedCatalogForCrossHomeLineage(t *testing.T) {
-	for _, scenario := range []string{"connected", "missing_base", "disconnected", "outside_root"} {
+	for _, scenario := range []string{"connected", "rewrite_after_open", "missing_base", "disconnected", "outside_root"} {
 		t.Run(scenario, func(t *testing.T) {
 			a, b := t.TempDir(), t.TempDir()
 			body := `{"type":"response_item","ordinal":1,"payload":{"type":"message","role":"user","content":"synthetic"}}` + "\n"
@@ -58,7 +59,13 @@ func TestProviderUsesSharedCatalogForCrossHomeLineage(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			pass, err := (codex.SourceProvider{}).OpenPass(t.Context(), agentapi.SourceEnvironment{Files: sourcefacts.RootOpener{Root: canonicalHome}, Policy: transcriptio.OpenPolicy{Root: canonicalHome, RejectSymlinks: true}, CodexRollouts: c})
+			bound, err := c.BeginValidationSlice(t.Context(), agentapi.CodexValidationLimits{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer bound.Close()
+			before := c.Counters()
+			pass, err := (codex.SourceProvider{}).OpenPass(t.Context(), agentapi.SourceEnvironment{Files: sourcefacts.RootOpener{Root: canonicalHome}, Policy: transcriptio.OpenPolicy{Root: canonicalHome, RejectSymlinks: true}, CodexRollouts: bound})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -68,7 +75,7 @@ func TestProviderUsesSharedCatalogForCrossHomeLineage(t *testing.T) {
 				}
 			}()
 			snapshot, err := pass.Read(t.Context(), agentapi.SourceRef{Path: leaf}, agentapi.ReadLimits{})
-			if scenario != "connected" {
+			if scenario != "connected" && scenario != "rewrite_after_open" {
 				if err == nil {
 					_ = snapshot.Close()
 					t.Fatal("unproved lineage read")
@@ -83,6 +90,11 @@ func TestProviderUsesSharedCatalogForCrossHomeLineage(t *testing.T) {
 					t.Error(err)
 				}
 			}()
+			if scenario == "rewrite_after_open" {
+				if err := os.WriteFile(base, []byte(strings.Replace(string(raw), "synthetic", "rewritten", 1)), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
 			input := snapshot.Input().Records
 			if input == nil {
 				t.Fatal("history record input missing")
@@ -91,6 +103,9 @@ func TestProviderUsesSharedCatalogForCrossHomeLineage(t *testing.T) {
 			for {
 				_, ok, err := input.Next(t.Context())
 				if err != nil {
+					if scenario == "rewrite_after_open" && agentapi.Failure(err) == agentapi.Changed {
+						return
+					}
 					t.Fatal(err)
 				}
 				if !ok {
@@ -98,11 +113,14 @@ func TestProviderUsesSharedCatalogForCrossHomeLineage(t *testing.T) {
 				}
 				count++
 			}
+			if scenario == "rewrite_after_open" {
+				t.Fatal("cached slice bypassed selected-handle prefix checks")
+			}
 			if count != 5 {
 				t.Fatalf("history frames: %d", count)
 			}
 			counters := c.Counters()
-			if counters.Headers != 2 || counters.Directories != 3 || counters.PrefixBytes != 0 {
+			if counters.Headers != 2 || counters.Directories != 3 || counters.PrefixBytes != 0 || counters.ValidationSweeps != 1 || counters.FileBytes <= before.FileBytes || counters.FileOpens <= before.FileOpens {
 				t.Fatalf("unexpected shared epoch cost %#v", counters)
 			}
 		})

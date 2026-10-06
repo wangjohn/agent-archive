@@ -147,7 +147,11 @@ func (r providerReader) binding() (agentapi.SourceProvider, agentapi.TranscriptF
 func (r providerReader) pass(ctx context.Context, p agentapi.SourceProvider, key string) (agentapi.SourcePass, func() error, error) {
 	if r.passes != nil {
 		pass, err := r.passes.get(ctx, sourcePassKey{name: key, root: r.discoveryRoot(), discovery: r.discovery != nil}, p)
-		return pass, func() error { return nil }, err
+		if err != nil {
+			return nil, nil, err
+		}
+		r.passes.active++
+		return pass, func() error { r.passes.active--; return nil }, nil
 	}
 	env := sourceEnvironment(r.discovery, r.database)
 	env.CodexRollouts = r.rollouts
@@ -165,7 +169,24 @@ func (r providerReader) discoveryRoot() string {
 	return ""
 }
 
+// validationContext bounds explicit historical source reads as well as their sweep.
+// Ordinary captures retain their caller's existing context and filesystem costs.
+func (r providerReader) validationContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	lookup := r.rollouts
+	if r.passes != nil {
+		lookup = r.passes.env.CodexRollouts
+	}
+	if _, ok := lookup.(agentapi.CodexRolloutSliceProvider); ok {
+		if _, bounded := ctx.Deadline(); !bounded {
+			return context.WithTimeout(ctx, 30*time.Second)
+		}
+	}
+	return ctx, func() {}
+}
+
 func (r providerReader) Signature(ctx context.Context) (out sourceState, err error) {
+	ctx, cancel := r.validationContext(ctx)
+	defer cancel()
 	provider, filter, err := r.binding()
 	if err != nil {
 		return out, err
@@ -200,6 +221,8 @@ func (r providerReader) Signature(ctx context.Context) (out sourceState, err err
 }
 
 func (r providerReader) Filter(ctx context.Context, adapter archive.Adapter, maxBytes int64) (out archive.FilteredTranscript, observed sourceState, err error) {
+	ctx, cancel := r.validationContext(ctx)
+	defer cancel()
 	provider, _, err := r.binding()
 	if err != nil {
 		return out, observed, err
@@ -255,14 +278,23 @@ func (r providerReader) observePendingHistory(ctx context.Context, original erro
 	if lookup == nil {
 		return original
 	}
+	observedLookup := lookup
 	bounded, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
 	defer cancel()
+	if provider, ok := lookup.(agentapi.CodexRolloutSliceProvider); ok {
+		slice, err := provider.BeginValidationSlice(bounded, agentapi.CodexValidationLimits{Steps: 8, Duration: 100 * time.Millisecond})
+		if err != nil {
+			return errors.Join(original, errors.New("pending Codex history: locator evidence unavailable"))
+		}
+		defer slice.Close()
+		lookup = slice
+	}
 	refs, err := lookup.Rollout(bounded, sourcefacts.RolloutID(r.ref.Path))
 	if err != nil {
 		return errors.Join(original, errors.New("pending Codex history: locator evidence unavailable"))
 	}
 	detail := fmt.Sprintf("%d candidate rollout locators", len(refs))
-	if observed, ok := lookup.(interface {
+	if observed, ok := observedLookup.(interface {
 		Counters() rolloutcatalog.Counters
 		Issues() map[string]int
 	}); ok {
@@ -383,15 +415,50 @@ type sourcePassKey struct {
 }
 
 type sourcePassSet struct {
+	slice  agentapi.CodexRolloutSlice
+	active int
 	env    agentapi.SourceEnvironment
 	passes map[sourcePassKey]agentapi.SourcePass
 }
 
 func (s *sourcePassSet) get(ctx context.Context, key sourcePassKey, p agentapi.SourceProvider) (agentapi.SourcePass, error) {
+	if key.name == "codex" {
+		if provider, ok := s.env.CodexRollouts.(agentapi.CodexRolloutSliceProvider); ok {
+			if s.slice == nil || s.slice.Valid(ctx) != nil {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
+				if s.active != 0 {
+					return nil, agentapi.Wrap(agentapi.Limit, errors.New("close active source snapshots before renewing catalog validation"))
+				}
+				for k, pass := range s.passes {
+					if k.name == "codex" {
+						if err := pass.Close(); err != nil {
+							return nil, err
+						}
+						delete(s.passes, k)
+					}
+				}
+				if s.slice != nil {
+					if err := s.slice.Close(); err != nil {
+						return nil, err
+					}
+				}
+				slice, err := provider.BeginValidationSlice(ctx, agentapi.CodexValidationLimits{})
+				if err != nil {
+					return nil, err
+				}
+				s.slice = slice
+			}
+		}
+	}
 	if pass := s.passes[key]; pass != nil {
 		return pass, nil
 	}
 	e := s.env
+	if key.name == "codex" && s.slice != nil {
+		e.CodexRollouts = s.slice
+	}
 	if key.discovery {
 		e.Files = sourcefacts.RootOpener{Root: key.root}
 		e.Policy = transcriptio.OpenPolicy{Root: key.root, RejectSymlinks: true}
@@ -412,6 +479,9 @@ func openCursorPass(_ []archive.SessionRegistration, opts *Options) func() error
 				opts.afterCursorPass(counter.Snapshots())
 			}
 			err = errors.Join(err, p.Close())
+		}
+		if opts.sourcePasses.slice != nil {
+			err = errors.Join(err, opts.sourcePasses.slice.Close())
 		}
 		return err
 	}

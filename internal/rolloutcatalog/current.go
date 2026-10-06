@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
-	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 	"github.com/wangjohn/agent-archive/internal/transcriptio"
 	"modernc.org/sqlite"
 	sqlite3 "modernc.org/sqlite/lib"
@@ -20,11 +19,14 @@ import (
 )
 
 type nativeObservation struct {
-	root, path string
-	info       fs.FileInfo
-	missing    bool
-	sides      []nativeSide
+	counters *Counters
+	root     string
+	path     string
+	info     fs.FileInfo
+	missing  bool
+	sides    []nativeSide
 }
+
 type nativeSide struct {
 	path    string
 	info    fs.FileInfo
@@ -32,7 +34,7 @@ type nativeSide struct {
 }
 
 func (n nativeObservation) check() bool {
-	info, err := (sourcefacts.RootOpener{Root: n.root}).Lstat(n.path)
+	info, err := measuredLstat(n.counters, n.root, n.path)
 	if n.missing {
 		if !errors.Is(err, fs.ErrNotExist) {
 			return false
@@ -41,7 +43,7 @@ func (n nativeObservation) check() bool {
 		return false
 	}
 	for _, side := range n.sides {
-		info, err := (sourcefacts.RootOpener{Root: n.root}).Lstat(side.path)
+		info, err := measuredLstat(n.counters, n.root, side.path)
 		if side.missing {
 			if !errors.Is(err, fs.ErrNotExist) {
 				return false
@@ -58,15 +60,15 @@ func (n nativeObservation) check() bool {
 // current evidence unavailable, while exhaustive file lineage remains usable.
 func (c *Catalog) observeCurrent(parent context.Context, root string) {
 	path := filepath.Join(root, "state_5.sqlite")
-	info, err := (sourcefacts.RootOpener{Root: root}).Lstat(path)
-	n := nativeObservation{root: root, path: path, info: info, missing: errors.Is(err, fs.ErrNotExist)}
+	info, err := measuredLstat(&c.counters, root, path)
+	n := nativeObservation{counters: &c.counters, root: root, path: path, info: info, missing: errors.Is(err, fs.ErrNotExist)}
 	for _, suffix := range []string{"-wal", "-shm", "-journal"} {
 		sidePath := path + suffix
-		sideInfo, sideErr := (sourcefacts.RootOpener{Root: root}).Lstat(sidePath)
+		sideInfo, sideErr := measuredLstat(&c.counters, root, sidePath)
 		n.sides = append(n.sides, nativeSide{path: sidePath, info: sideInfo, missing: errors.Is(sideErr, fs.ErrNotExist)})
 	}
 	c.native = append(c.native, n)
-	if err != nil || !info.Mode().IsRegular() || indexHasSides(path) {
+	if err != nil || !info.Mode().IsRegular() || indexHasSides(path, &c.counters) {
 		c.issues["current_unavailable"]++
 		return
 	}
@@ -81,7 +83,7 @@ func (c *Catalog) observeCurrent(parent context.Context, root string) {
 			break
 		}
 	}
-	fsys := &indexFS{home: home, root: root, info: rootInfo, ctx: ctx}
+	fsys := &indexFS{counters: &c.counters, home: home, root: root, info: rootInfo, ctx: ctx}
 	name, registered, err := vfs.New(fsys)
 	if err != nil {
 		c.issues["current_unavailable"]++
@@ -99,6 +101,7 @@ func (c *Catalog) observeCurrent(parent context.Context, root string) {
 	hints := map[string]agentapi.SourceRef{}
 	entriesByPath := map[string]*entry{}
 	for _, e := range c.files {
+		c.counters.MetadataJoins++
 		if e.root == root {
 			entriesByPath[e.ref.Path] = e
 		}
@@ -109,7 +112,10 @@ func (c *Catalog) observeCurrent(parent context.Context, root string) {
 			return err
 		}
 		defer func() { _ = conn.Close() }()
-		for _, limit := range []struct{ id, value int }{{sqlite3.SQLITE_LIMIT_LENGTH, 1 << 20}, {sqlite3.SQLITE_LIMIT_SQL_LENGTH, 16384}, {sqlite3.SQLITE_LIMIT_ATTACHED, 0}, {sqlite3.SQLITE_LIMIT_VDBE_OP, 20000}} {
+		for _, limit := range []struct {
+			id    int
+			value int
+		}{{sqlite3.SQLITE_LIMIT_LENGTH, 1 << 20}, {sqlite3.SQLITE_LIMIT_SQL_LENGTH, 16384}, {sqlite3.SQLITE_LIMIT_ATTACHED, 0}, {sqlite3.SQLITE_LIMIT_VDBE_OP, 20000}} {
 			if _, err := sqlite.Limit(conn, limit.id, limit.value); err != nil {
 				return err
 			}
@@ -165,8 +171,8 @@ func (c *Catalog) observeCurrent(parent context.Context, root string) {
 			c.fail("current_conflict")
 			continue
 		}
-		copy := ref
-		c.current[id] = &copy
+		cloned := ref
+		c.current[id] = &cloned
 	}
 }
 
@@ -174,18 +180,19 @@ func (c *Catalog) observeCurrent(parent context.Context, root string) {
 // filesystem opens only the expected confined regular DB, never arbitrary
 // SQLite filenames. Reads are context-aware and have a separate page-I/O cap.
 type indexFS struct {
-	home  string
-	root  string
-	info  fs.FileInfo
-	ctx   context.Context
-	bytes int64
+	counters *Counters
+	home     string
+	root     string
+	info     fs.FileInfo
+	ctx      context.Context
+	bytes    int64
 }
 
 func (f *indexFS) Open(name string) (fs.File, error) {
 	if name != "state_5.sqlite" {
 		return nil, fs.ErrNotExist
 	}
-	opened, err := openAuthorityRegular(authority{home: f.home, root: f.root, info: f.info}, filepath.Join(f.root, name))
+	opened, err := openAuthorityRegular(authority{counters: f.counters, home: f.home, root: f.root, info: f.info}, filepath.Join(f.root, name))
 	if err != nil {
 		return nil, err
 	}
@@ -196,6 +203,8 @@ type indexFile struct {
 	*os.File
 	owner *indexFS
 }
+
+func (f *indexFile) Stat() (fs.FileInfo, error) { measureStat(f.owner.counters); return f.File.Stat() }
 
 func (f *indexFile) Read(p []byte) (int, error) {
 	if err := f.owner.ctx.Err(); err != nil {
@@ -213,8 +222,9 @@ func (f *indexFile) Read(p []byte) (int, error) {
 	return n, err
 }
 
-func indexHasSides(path string) bool {
+func indexHasSides(path string, counts *Counters) bool {
 	for _, suffix := range []string{"-wal", "-shm", "-journal"} {
+		measureStat(counts)
 		if _, err := os.Lstat(path + suffix); !errors.Is(err, os.ErrNotExist) {
 			return true
 		}
@@ -222,12 +232,13 @@ func indexHasSides(path string) bool {
 	return false
 }
 
-func (c *Catalog) probeSchema(ctx context.Context, tx *sql.Tx) error {
+func (c *Catalog) probeSchema(ctx context.Context, tx *sql.Tx) (err error) {
 	c.counters.NativeQueries++
 	columns, err := tx.QueryContext(ctx, "PRAGMA table_info(threads)")
 	if err != nil {
 		return err
 	}
+	defer func() { err = errors.Join(err, columns.Close()) }()
 	idOK, pathOK := false, false
 	columnCount := 0
 	for columns.Next() {
@@ -235,16 +246,13 @@ func (c *Catalog) probeSchema(ctx context.Context, tx *sql.Tx) error {
 		var name, kind string
 		var defaultValue any
 		if err := columns.Scan(&position, &name, &kind, &notnull, &defaultValue, &pk); err != nil {
-			_ = columns.Close()
 			return err
 		}
 		columnCount++
 		if columnCount > 128 || len(name) > 512 || len(kind) > 128 {
-			_ = columns.Close()
 			return errors.New("native schema limit")
 		}
 		if pk > 1 {
-			_ = columns.Close()
 			return errors.New("unsupported native compound identity")
 		}
 		if name == "id" && strings.EqualFold(kind, "TEXT") && pk == 1 {
@@ -254,7 +262,7 @@ func (c *Catalog) probeSchema(ctx context.Context, tx *sql.Tx) error {
 			pathOK = true
 		}
 	}
-	err = errors.Join(columns.Err(), columns.Close())
+	err = columns.Err()
 	if err != nil {
 		return err
 	}
@@ -264,58 +272,62 @@ func (c *Catalog) probeSchema(ctx context.Context, tx *sql.Tx) error {
 	return nil
 }
 
-func (c *Catalog) currentPath(ctx context.Context, tx *sql.Tx, id string) (string, error) {
+func (c *Catalog) currentPath(ctx context.Context, tx *sql.Tx, id string) (path string, err error) {
 	const query = "SELECT substr(rollout_path,1,8193) FROM threads WHERE id = ? LIMIT 2"
-	c.counters.NativeQueries++
-	rows, err := tx.QueryContext(ctx, "EXPLAIN QUERY PLAN "+query, id)
-	if err != nil {
+	if err = c.currentPlan(ctx, tx, query, id); err != nil {
 		return "", err
-	}
-	indexed := false
-	count := 0
-	for rows.Next() {
-		var a, b, d int
-		var detail string
-		if err := rows.Scan(&a, &b, &d, &detail); err != nil {
-			_ = rows.Close()
-			return "", err
-		}
-		count++
-		if count > 16 || len(detail) > 2048 {
-			_ = rows.Close()
-			return "", errors.New("native locator plan limit")
-		}
-		if strings.Contains(detail, "SEARCH threads") && strings.Contains(detail, "(id=?)") {
-			indexed = true
-		}
-	}
-	err = errors.Join(rows.Err(), rows.Close())
-	if err != nil {
-		return "", err
-	}
-	if !indexed {
-		return "", errors.New("native id index unavailable")
 	}
 	c.counters.NativeQueries++
-	rows, err = tx.QueryContext(ctx, query, id)
+	rows, err := tx.QueryContext(ctx, query, id)
 	if err != nil {
 		return "", err
 	}
+	defer func() { err = errors.Join(err, rows.Close()) }()
 	var paths []string
 	for rows.Next() {
-		var path string
-		if err := rows.Scan(&path); err != nil {
-			_ = rows.Close()
+		var p string
+		if err := rows.Scan(&p); err != nil {
 			return "", err
 		}
-		paths = append(paths, path)
+		paths = append(paths, p)
 	}
-	err = errors.Join(rows.Err(), rows.Close())
-	if err != nil {
+	if err := rows.Err(); err != nil {
 		return "", err
 	}
 	if len(paths) != 1 || len(paths[0]) > 8192 {
 		return "", nil
 	}
 	return paths[0], nil
+}
+
+func (c *Catalog) currentPlan(ctx context.Context, tx *sql.Tx, query, id string) (err error) {
+	c.counters.NativeQueries++
+	rows, err := tx.QueryContext(ctx, "EXPLAIN QUERY PLAN "+query, id)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, rows.Close()) }()
+	indexed := false
+	count := 0
+	for rows.Next() {
+		var a, b, d int
+		var detail string
+		if err := rows.Scan(&a, &b, &d, &detail); err != nil {
+			return err
+		}
+		count++
+		if count > 16 || len(detail) > 2048 {
+			return errors.New("native locator plan limit")
+		}
+		if strings.Contains(detail, "SEARCH threads") && strings.Contains(detail, "(id=?)") {
+			indexed = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if !indexed {
+		return errors.New("native id index unavailable")
+	}
+	return nil
 }

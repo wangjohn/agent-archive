@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +18,7 @@ import (
 )
 
 const thread = "11111111-1111-4111-8111-111111111111"
+
 const revision = "22222222-2222-4222-8222-222222222222"
 
 func fixture(t *testing.T, home, store, rid, tid string, extra map[string]any, body string) string {
@@ -26,9 +28,7 @@ func fixture(t *testing.T, home, store, rid, tid string, extra map[string]any, b
 		t.Fatal(err)
 	}
 	meta := map[string]any{"id": tid, "cwd": "/synthetic/project", "timestamp": "2026-10-01T12:00:00Z", "source": "cli", "originator": "codex_cli_rs", "cli_version": "0.160.0", "history_mode": "paginated"}
-	for k, v := range extra {
-		meta[k] = v
-	}
+	maps.Copy(meta, extra)
 	raw, err := json.Marshal(map[string]any{"type": "session_meta", "ordinal": 0, "payload": meta})
 	if err != nil {
 		t.Fatal(err)
@@ -43,6 +43,7 @@ func fixture(t *testing.T, home, store, rid, tid string, extra map[string]any, b
 	}
 	return canonical
 }
+
 func catalogSet(t *testing.T, c *Catalog, id string) agentapi.CodexRolloutSet {
 	t.Helper()
 	s, err := c.Thread(t.Context(), id)
@@ -51,6 +52,7 @@ func catalogSet(t *testing.T, c *Catalog, id string) agentapi.CodexRolloutSet {
 	}
 	return s
 }
+
 func TestInventoryAcrossApprovedHomesAndNestedArchives(t *testing.T) {
 	parent := t.TempDir()
 	a := filepath.Join(parent, "custom home 日本語")
@@ -92,6 +94,7 @@ func TestInventoryAcrossApprovedHomesAndNestedArchives(t *testing.T) {
 		t.Fatalf("repeated thread enumeration: before=%#v after=%#v", before, after)
 	}
 }
+
 func TestDuplicatePrefixAgreementAndConflicts(t *testing.T) {
 	for _, scenario := range []string{"identical", "append", "body_conflict", "ownership_conflict"} {
 		t.Run(scenario, func(t *testing.T) {
@@ -145,6 +148,7 @@ func TestDuplicatePrefixAgreementAndConflicts(t *testing.T) {
 		})
 	}
 }
+
 func TestIncompleteInventoryNeverClaimsComplete(t *testing.T) {
 	for _, scenario := range []string{"unknown_mode", "malformed", "entry_budget", "header_budget", "cancelled", "missing_root", "symlink_store"} {
 		t.Run(scenario, func(t *testing.T) {
@@ -154,18 +158,19 @@ func TestIncompleteInventoryNeverClaimsComplete(t *testing.T) {
 				extra["history_mode"] = "future"
 			}
 			path := fixture(t, home, "sessions", thread, thread, extra, "")
-			limits := Limits{}
+			entryLimit := 0
+			var headerLimit int64
 			if scenario == "malformed" {
 				if err := os.WriteFile(path, []byte("{bad}\n"), 0600); err != nil {
 					t.Fatal(err)
 				}
 			}
 			if scenario == "entry_budget" {
-				limits.Entries = 1
+				entryLimit = 1
 				fixture(t, home, "sessions", revision, thread, nil, "")
 			}
 			if scenario == "header_budget" {
-				limits.HeaderBytes = 8
+				headerLimit = 8
 			}
 			if scenario == "missing_root" {
 				home = filepath.Join(home, "missing")
@@ -175,7 +180,7 @@ func TestIncompleteInventoryNeverClaimsComplete(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			c := New([]string{home}, limits)
+			c := New([]string{home}, Limits{Entries: entryLimit, HeaderBytes: headerLimit})
 			ctx := t.Context()
 			if scenario == "cancelled" {
 				cancelled, cancel := context.WithCancel(ctx)
@@ -198,16 +203,28 @@ func TestIncompleteInventoryNeverClaimsComplete(t *testing.T) {
 		})
 	}
 }
+
+type epochMutation string
+
+const (
+	mutationAppend        epochMutation = "append"
+	mutationHeaderRewrite epochMutation = "header_rewrite"
+	mutationNewNestedFile epochMutation = "new_nested_file"
+	mutationNewStore      epochMutation = "new_store"
+	mutationReplace       epochMutation = "replace"
+	mutationCancel        epochMutation = "cancel"
+)
+
 func TestEpochFencesMembershipAndHeadersWhileAllowingAppend(t *testing.T) {
-	for _, scenario := range []string{"append", "header_rewrite", "new_nested_file", "new_store", "replace", "cancel"} {
-		t.Run(scenario, func(t *testing.T) {
+	for _, scenario := range []epochMutation{mutationAppend, mutationHeaderRewrite, mutationNewNestedFile, mutationNewStore, mutationReplace, mutationCancel} {
+		t.Run(string(scenario), func(t *testing.T) {
 			home := t.TempDir()
 			path := fixture(t, home, "sessions/nested", thread, thread, nil, "{\"ordinal\":1}\n")
 			c := New([]string{home}, Limits{})
 			s := catalogSet(t, c, thread)
 			ctx := t.Context()
 			switch scenario {
-			case "append":
+			case mutationAppend:
 				f, e := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
 				if e != nil {
 					t.Fatal(e)
@@ -217,24 +234,24 @@ func TestEpochFencesMembershipAndHeadersWhileAllowingAppend(t *testing.T) {
 					t.Fatal(e)
 				}
 				_ = f.Close()
-			case "header_rewrite":
+			case mutationHeaderRewrite:
 				fixture(t, home, "sessions/nested", thread, thread, map[string]any{"cwd": "/changed"}, "{\"ordinal\":1}\n")
-			case "new_nested_file":
+			case mutationNewNestedFile:
 				fixture(t, home, "sessions/nested", revision, thread, nil, "")
-			case "new_store":
+			case mutationNewStore:
 				fixture(t, home, "archived_sessions", revision, thread, nil, "")
-			case "replace":
+			case mutationReplace:
 				if err := os.Remove(path); err != nil {
 					t.Fatal(err)
 				}
 				fixture(t, home, "sessions/nested", thread, thread, nil, "{\"ordinal\":1}\n")
-			case "cancel":
+			case mutationCancel:
 				cancelled, cancel := context.WithCancel(ctx)
 				cancel()
 				ctx = cancelled
 			}
 			err := c.Check(ctx, thread, s.Revision)
-			if scenario == "append" {
+			if scenario == mutationAppend {
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -244,6 +261,7 @@ func TestEpochFencesMembershipAndHeadersWhileAllowingAppend(t *testing.T) {
 		})
 	}
 }
+
 func TestApprovedOpenersRejectEscapesAndSymlinkComponents(t *testing.T) {
 	home, outside := t.TempDir(), t.TempDir()
 	path := fixture(t, home, "sessions", thread, thread, nil, "")
@@ -264,6 +282,7 @@ func TestApprovedOpenersRejectEscapesAndSymlinkComponents(t *testing.T) {
 		_ = f.Close()
 	}
 }
+
 func nativeDB(t *testing.T, home, path, schema string) {
 	t.Helper()
 	db, err := sql.Open("sqlite", filepath.Join(home, "state_5.sqlite"))
@@ -271,13 +290,14 @@ func nativeDB(t *testing.T, home, path, schema string) {
 		t.Fatal(err)
 	}
 	defer func() { _ = db.Close() }()
-	if _, err := db.Exec(schema); err != nil {
+	if _, err := db.ExecContext(t.Context(), schema); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec("INSERT INTO threads(id,rollout_path) VALUES(?,?)", thread, path); err != nil {
+	if _, err := db.ExecContext(t.Context(), "INSERT INTO threads(id,rollout_path) VALUES(?,?)", thread, path); err != nil {
 		t.Fatal(err)
 	}
 }
+
 func TestNativeCurrentIsIndexedReadOnlyValidatedHint(t *testing.T) {
 	for _, scenario := range []string{"current", "stale", "outside", "schema", "unindexed", "wal", "lock", "db_absent"} {
 		t.Run(scenario, func(t *testing.T) {
@@ -315,10 +335,10 @@ func TestNativeCurrentIsIndexedReadOnlyValidatedHint(t *testing.T) {
 						t.Fatal(err)
 					}
 					defer func() { _ = locked.Close() }()
-					if _, err := locked.Exec("BEGIN EXCLUSIVE; UPDATE threads SET rollout_path = ? WHERE id = ?", one, thread); err != nil {
+					if _, err := locked.ExecContext(t.Context(), "BEGIN EXCLUSIVE; UPDATE threads SET rollout_path = ? WHERE id = ?", one, thread); err != nil {
 						t.Fatal(err)
 					}
-					defer func() { _, _ = locked.Exec("ROLLBACK") }()
+					defer func() { _, _ = locked.ExecContext(t.Context(), "ROLLBACK") }()
 				}
 				c := New([]string{home}, Limits{})
 				s := catalogSet(t, c, thread)
@@ -341,7 +361,7 @@ func TestNativeCurrentIsIndexedReadOnlyValidatedHint(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					_, err = db.Exec("UPDATE threads SET rollout_path = ? WHERE id = ?", one, thread)
+					_, err = db.ExecContext(t.Context(), "UPDATE threads SET rollout_path = ? WHERE id = ?", one, thread)
 					_ = db.Close()
 					if err != nil {
 						t.Fatal(err)
@@ -377,6 +397,7 @@ func TestSharedEpochCostsStayBoundedAcrossManyThreads(t *testing.T) {
 		t.Fatalf("shared evidence work unbounded %#v", n)
 	}
 }
+
 func TestPrefixAndValidationBudgetsFailClosed(t *testing.T) {
 	a, b := t.TempDir(), t.TempDir()
 	fixture(t, a, "sessions", thread, thread, nil, "{\"ordinal\":1}\n")
@@ -397,6 +418,7 @@ func TestPrefixAndValidationBudgetsFailClosed(t *testing.T) {
 		t.Fatal("exhausted epoch still usable")
 	}
 }
+
 func TestUnreadableArchivedSubtreeInvalidatesCoverage(t *testing.T) {
 	home := t.TempDir()
 	fixture(t, home, "sessions", thread, thread, nil, "")
@@ -416,6 +438,7 @@ func TestUnreadableArchivedSubtreeInvalidatesCoverage(t *testing.T) {
 		t.Fatal("permission failure claimed complete")
 	}
 }
+
 func TestRevisionBindsHeaderIdentityOnRenewal(t *testing.T) {
 	home := t.TempDir()
 	fixture(t, home, "sessions", thread, thread, nil, "")

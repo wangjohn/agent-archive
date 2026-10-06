@@ -11,6 +11,7 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -22,22 +23,48 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/codexmeta"
 	"github.com/wangjohn/agent-archive/internal/local"
-	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 	"github.com/wangjohn/agent-archive/internal/transcriptio"
 )
 
 // Limits bounds inventory independently of the reader's graph and raw budgets.
 // Zero values select conservative defaults; a catalog is serial and single-owner.
 type Limits struct {
-	Roots, Entries, Directories, CheckOperations int
-	HeaderBytes, PrefixBytes                     int64
-	Records                                      int
+	Roots           int
+	Entries         int
+	Directories     int
+	CheckOperations int
+	HeaderBytes     int64
+	PrefixBytes     int64
+	Records         int
 }
 
 // Counters reports operations without native paths or identities.
 type Counters struct {
-	Entries, Directories, Headers, Checks, NativeQueries, CheckOperations, PrefixRecords int
-	HeaderBytes, PrefixBytes, NativeBytes, CheckBytes                                    int64
+	// Stats counts explicit filesystem stat calls, including descriptor stats.
+	Stats int
+	// RootOpens counts attempts to open confined directory descriptors.
+	RootOpens int
+	// FileOpens counts attempts to open regular files or inventory directories.
+	FileOpens int
+	// Resolutions counts EvalSymlinks calls, whose internal syscalls are not counted.
+	Resolutions int
+	// MetadataJoins counts entry visits for identity and thread/native indexes.
+	MetadataJoins int
+	// FileBytes counts bytes actually returned by transcript file ReadAt calls.
+	FileBytes int64
+
+	ValidationSweeps int
+	Entries          int
+	Directories      int
+	Headers          int
+	Checks           int
+	NativeQueries    int
+	CheckOperations  int
+	PrefixRecords    int
+	HeaderBytes      int64
+	PrefixBytes      int64
+	NativeBytes      int64
+	CheckBytes       int64
 }
 
 // Catalog implements one immutable observation epoch. Renew it after interruption.
@@ -61,11 +88,14 @@ type Catalog struct {
 	authorityReady    bool
 	authorityFailures int
 }
+
 type directory struct {
-	root, path string
-	info       fs.FileInfo
-	missing    bool
+	root    string
+	path    string
+	info    fs.FileInfo
+	missing bool
 }
+
 type entry struct {
 	root      string
 	ref       agentapi.SourceRef
@@ -78,6 +108,13 @@ type entry struct {
 	prefix    [32]byte
 	duplicate bool
 }
+
+type threadOrigin string
+
+const (
+	threadUser     threadOrigin = "user"
+	threadSubagent threadOrigin = "subagent"
+)
 
 // New creates a lazy catalog from explicitly approved homes, without reading HOME.
 // Homes are source authority, not a namespace for logical thread IDs.
@@ -112,13 +149,13 @@ func (c *Catalog) Counters() Counters { return c.counters }
 // Issues returns fixed-vocabulary uncertainty counts without native locators.
 func (c *Catalog) Issues() map[string]int {
 	out := map[string]int{}
-	for k, v := range c.issues {
-		out[k] = v
-	}
+	maps.Copy(out, c.issues)
 	return out
 }
+
 func (c *Catalog) fail(code string) { c.complete = false; c.issues[code]++ }
-func failure(message string) error  { return agentapi.Wrap(agentapi.Unavailable, errors.New(message)) }
+
+func failure(message string) error { return agentapi.Wrap(agentapi.Unavailable, errors.New(message)) }
 
 // Thread returns stable thread evidence across all approved homes.
 func (c *Catalog) Thread(ctx context.Context, id string) (agentapi.CodexRolloutSet, error) {
@@ -135,12 +172,13 @@ func (c *Catalog) Thread(ctx context.Context, id string) (agentapi.CodexRolloutS
 	}
 	return agentapi.CodexRolloutSet{Current: cloneRef(current), Candidates: slices.Clone(c.threads[key]), Revision: c.revisions[key], Complete: c.complete}, nil
 }
+
 func cloneRef(ref *agentapi.SourceRef) *agentapi.SourceRef {
 	if ref == nil {
 		return nil
 	}
-	copy := *ref
-	return &copy
+	cloned := *ref
+	return &cloned
 }
 
 // Rollout returns all conflicting physical copies, coalescing only verified prefixes.
@@ -185,6 +223,7 @@ func (c *Catalog) ensure(ctx context.Context) error {
 			c.fail("root_unavailable")
 			continue
 		}
+		measureResolution(&c.counters)
 		root, err := filepath.EvalSymlinks(home)
 		if err != nil {
 			c.fail("root_unavailable")
@@ -198,11 +237,13 @@ func (c *Catalog) ensure(ctx context.Context) error {
 			continue
 		}
 		roots[root] = true
+		measureRootOpen(&c.counters)
 		opened, err := os.OpenRoot(root)
 		if err != nil {
 			c.fail("root_unavailable")
 			continue
 		}
+		measureStat(&c.counters)
 		info, err := opened.Stat(".")
 		if err != nil || !info.IsDir() || !os.SameFile(info, approved.info) {
 			c.fail("root_unavailable")
@@ -222,7 +263,7 @@ func (c *Catalog) ensure(ctx context.Context) error {
 	// Completion includes a final membership fence across every visited directory,
 	// rather than merely successful individual subtree walks.
 	for _, d := range c.dirs {
-		info, err := (sourcefacts.RootOpener{Root: d.root}).Lstat(d.path)
+		info, err := measuredLstat(&c.counters, d.root, d.path)
 		if d.missing {
 			if !errors.Is(err, fs.ErrNotExist) {
 				c.fail("membership_changed")
@@ -233,6 +274,7 @@ func (c *Catalog) ensure(ctx context.Context) error {
 	}
 	evidenceByThread := map[string][]string{}
 	for _, e := range c.files {
+		c.counters.MetadataJoins++
 		id := strings.ToLower(e.identity.ThreadID)
 		evidenceByThread[id] = append(evidenceByThread[id], e.ref.Path+":"+hex.EncodeToString(e.header[:])+":"+hex.EncodeToString(e.prefix[:]))
 	}
@@ -240,10 +282,10 @@ func (c *Catalog) ensure(ctx context.Context) error {
 		evidence := evidenceByThread[id]
 		slices.Sort(evidence)
 		raw, _ := json.Marshal(struct {
-			Refs     []agentapi.SourceRef
-			Current  *agentapi.SourceRef
-			Complete bool
-			Evidence []string
+			Refs     []agentapi.SourceRef `json:"Refs"`
+			Current  *agentapi.SourceRef  `json:"Current"`
+			Complete bool                 `json:"Complete"`
+			Evidence []string             `json:"Evidence"`
 		}{refs, c.current[id], c.complete, evidence})
 		digest := sha256.Sum256(raw)
 		c.revisions[id] = hex.EncodeToString(digest[:])
@@ -255,6 +297,7 @@ func (c *Catalog) ensure(ctx context.Context) error {
 	}
 	return nil
 }
+
 func sortedKeys(m map[string]bool) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
@@ -263,6 +306,7 @@ func sortedKeys(m map[string]bool) []string {
 	slices.Sort(out)
 	return out
 }
+
 func (c *Catalog) walk(ctx context.Context, opened *os.Root, root, relative string, depth int) {
 	if ctx.Err() != nil {
 		c.fail("cancelled")
@@ -273,6 +317,7 @@ func (c *Catalog) walk(ctx context.Context, opened *os.Root, root, relative stri
 		return
 	}
 	path := filepath.Join(root, relative)
+	measureStat(&c.counters)
 	info, err := opened.Lstat(relative)
 	if errors.Is(err, fs.ErrNotExist) {
 		c.dirs = append(c.dirs, directory{root: root, path: path, missing: true})
@@ -284,6 +329,7 @@ func (c *Catalog) walk(ctx context.Context, opened *os.Root, root, relative stri
 	}
 	c.counters.Directories++
 	c.dirs = append(c.dirs, directory{root: root, path: path, info: info})
+	measureFileOpen(&c.counters)
 	dir, err := opened.Open(relative)
 	if err != nil {
 		c.fail("store_unavailable")
@@ -324,14 +370,17 @@ func (c *Catalog) walk(ctx context.Context, opened *os.Root, root, relative stri
 			break
 		}
 	}
+	measureStat(&c.counters)
 	after, err := opened.Lstat(relative)
 	if err != nil || !sameDirectory(info, after) {
 		c.fail("membership_changed")
 	}
 }
+
 func sameDirectory(a, b fs.FileInfo) bool {
 	return a != nil && b != nil && os.SameFile(a, b) && a.Mode() == b.Mode() && a.Size() == b.Size() && a.ModTime().Equal(b.ModTime())
 }
+
 func (c *Catalog) readHeader(ctx context.Context, root, path string) {
 	if c.counters.HeaderBytes >= c.limits.HeaderBytes {
 		c.fail("header_budget")
@@ -366,7 +415,7 @@ func (c *Catalog) readHeader(ctx context.Context, root, path string) {
 		return
 	}
 	var threadSource string
-	if len(meta.ThreadSource) > 0 && (json.Unmarshal(meta.ThreadSource, &threadSource) != nil || (threadSource != "user" && threadSource != "subagent")) {
+	if len(meta.ThreadSource) > 0 && (json.Unmarshal(meta.ThreadSource, &threadSource) != nil || (threadOrigin(threadSource) != threadUser && threadOrigin(threadSource) != threadSubagent)) {
 		c.fail("unknown_identity")
 		return
 	}
@@ -384,6 +433,7 @@ func (c *Catalog) readHeader(ctx context.Context, root, path string) {
 	}
 	c.files = append(c.files, &entry{root: root, ref: agentapi.SourceRef{Kind: archive.SourceKindFile, Path: path}, info: f.SourceInfo(), identity: identity, meta: meta, headerLen: int64(len(line)), header: sha256.Sum256(line)})
 }
+
 func stableFacts(e *entry, physical bool) string {
 	id := e.identity
 	if !physical {
@@ -392,17 +442,22 @@ func stableFacts(e *entry, physical bool) string {
 		id.HistoryMode = ""
 	}
 	b, _ := json.Marshal(struct {
-		Identity                        codexmeta.CodexIdentity
-		Created, Cwd, Producer, Version string
-		Source                          json.RawMessage
-		Git                             codexmeta.GitInfo
+		Identity codexmeta.CodexIdentity `json:"Identity"`
+		Created  string                  `json:"Created"`
+		Cwd      string                  `json:"Cwd"`
+		Producer string                  `json:"Producer"`
+		Version  string                  `json:"Version"`
+		Source   json.RawMessage         `json:"Source"`
+		Git      codexmeta.GitInfo       `json:"Git"`
 	}{id, e.meta.Timestamp, e.meta.Cwd, e.meta.Originator, e.meta.Version, e.meta.Source, e.meta.Git})
 	return string(b)
 }
+
 func (c *Catalog) coalesce(ctx context.Context) {
 	groups := map[string][]*entry{}
 	threadFacts := map[string]string{}
 	for _, e := range c.files {
+		c.counters.MetadataJoins++
 		rid := strings.ToLower(e.identity.RolloutID)
 		groups[rid] = append(groups[rid], e)
 		tid := strings.ToLower(e.identity.ThreadID)
@@ -450,6 +505,7 @@ func (c *Catalog) coalesce(ctx context.Context) {
 		slices.SortFunc(c.threads[id], func(a, b agentapi.SourceRef) int { return strings.Compare(a.Path, b.Path) })
 	}
 }
+
 func sortedEntryKeys(m map[string][]*entry) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
@@ -458,6 +514,7 @@ func sortedEntryKeys(m map[string][]*entry) []string {
 	slices.Sort(keys)
 	return keys
 }
+
 func (c *Catalog) prefix(ctx context.Context, e *entry, n int64) ([32]byte, bool) {
 	if n <= 0 || n > c.limits.PrefixBytes-c.counters.PrefixBytes {
 		c.fail("prefix_budget")
@@ -559,29 +616,51 @@ func (c *Catalog) Check(ctx context.Context, id, revision string) error {
 	if c.invalid || revision == "" || c.revisions[strings.ToLower(id)] != revision {
 		return failure("rollout selection epoch unavailable")
 	}
+	return c.validate(ctx, false)
+}
+
+func (c *Catalog) validate(ctx context.Context, boundedSlice bool) error {
+	startOperations := c.counters.CheckOperations
+	startBytes := c.counters.CheckBytes
+	operation := func() error {
+		if !boundedSlice {
+			return c.checkOperation(ctx)
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if c.counters.CheckOperations-startOperations >= c.limits.CheckOperations {
+			return agentapi.Wrap(agentapi.Limit, errors.New("catalog slice validation operation budget exhausted"))
+		}
+		c.counters.CheckOperations++
+		return nil
+	}
+	c.counters.ValidationSweeps++
 	changed := func() error {
 		c.invalid = true
 		c.fail("epoch_changed")
 		return agentapi.Wrap(agentapi.Changed, errors.New("rollout evidence changed; renew the catalog"))
 	}
 	for _, approved := range c.authorities {
-		if err := c.checkOperation(ctx); err != nil {
+		if err := operation(); err != nil {
 			return err
 		}
+		measureResolution(&c.counters)
 		resolved, err := filepath.EvalSymlinks(approved.home)
 		if err != nil || resolved != approved.root {
 			return changed()
 		}
+		measureStat(&c.counters)
 		info, err := os.Lstat(approved.root)
 		if err != nil || !info.IsDir() || !os.SameFile(approved.info, info) {
 			return changed()
 		}
 	}
 	for _, d := range c.dirs {
-		if err := c.checkOperation(ctx); err != nil {
+		if err := operation(); err != nil {
 			return err
 		}
-		info, err := (sourcefacts.RootOpener{Root: d.root}).Lstat(d.path)
+		info, err := measuredLstat(&c.counters, d.root, d.path)
 		if d.missing {
 			if !errors.Is(err, fs.ErrNotExist) {
 				return changed()
@@ -593,15 +672,17 @@ func (c *Catalog) Check(ctx context.Context, id, revision string) error {
 		}
 	}
 	for _, e := range c.files {
-		if err := c.checkOperation(ctx); err != nil {
+		if err := operation(); err != nil {
 			return err
 		}
 		if err := ctx.Err(); err != nil {
-			c.invalid = true
-			c.fail("cancelled")
+			if !boundedSlice {
+				c.invalid = true
+				c.fail("cancelled")
+			}
 			return err
 		}
-		info, err := (sourcefacts.RootOpener{Root: e.root}).Lstat(e.ref.Path)
+		info, err := measuredLstat(&c.counters, e.root, e.ref.Path)
 		if err != nil || !os.SameFile(e.info, info) || info.Size() < e.info.Size() {
 			return changed()
 		}
@@ -612,9 +693,15 @@ func (c *Catalog) Check(ctx context.Context, id, revision string) error {
 			continue
 		}
 		charge := e.headerLen + e.prefixLen
-		if charge > c.limits.PrefixBytes-c.counters.CheckBytes {
-			c.invalid = true
-			c.fail("check_budget")
+		usedBytes := c.counters.CheckBytes
+		if boundedSlice {
+			usedBytes -= startBytes
+		}
+		if charge > c.limits.PrefixBytes-usedBytes {
+			if !boundedSlice {
+				c.invalid = true
+				c.fail("check_budget")
+			}
 			return agentapi.Wrap(agentapi.Limit, errors.New("catalog prefix revalidation budget exhausted"))
 		}
 		c.counters.CheckBytes += charge
@@ -632,13 +719,16 @@ func (c *Catalog) Check(ctx context.Context, id, revision string) error {
 		}
 		err = errors.Join(err, f.Check(), f.Close())
 		if err != nil {
+			if ctx.Err() != nil && boundedSlice {
+				return ctx.Err()
+			}
 			return changed()
 		}
 		e.info = info
 	}
 
 	for _, n := range c.native {
-		if err := c.checkOperation(ctx); err != nil {
+		if err := operation(); err != nil {
 			return err
 		}
 		if !n.check() {
@@ -646,8 +736,10 @@ func (c *Catalog) Check(ctx context.Context, id, revision string) error {
 		}
 	}
 	if err := ctx.Err(); err != nil {
-		c.invalid = true
-		c.fail("cancelled")
+		if !boundedSlice {
+			c.invalid = true
+			c.fail("cancelled")
+		}
 		return err
 	}
 	return nil
@@ -676,9 +768,12 @@ func (c *Catalog) Files() transcriptio.Opener {
 }
 
 type authority struct {
-	home, root string
-	info       fs.FileInfo
+	counters *Counters
+	home     string
+	root     string
+	info     fs.FileInfo
 }
+
 type approvedFiles struct{ roots []authority }
 
 func (c *Catalog) initializeAuthority() {
@@ -694,29 +789,34 @@ func (c *Catalog) initializeAuthority() {
 			c.authorityFailures++
 			continue
 		}
+		measureResolution(&c.counters)
 		root, err := filepath.EvalSymlinks(home)
 		if err != nil {
 			c.authorityFailures++
 			continue
 		}
+		measureStat(&c.counters)
 		info, err := os.Lstat(root)
 		if err != nil || !info.IsDir() {
 			c.authorityFailures++
 			continue
 		}
-		c.authorities = append(c.authorities, authority{home: home, root: root, info: info})
+		c.authorities = append(c.authorities, authority{home: home, root: root, info: info, counters: &c.counters})
 	}
 }
+
 func (a approvedFiles) opener(path string) (authority, string, error) {
 	if !filepath.IsAbs(path) {
 		return authority{}, "", fs.ErrPermission
 	}
 	for _, approved := range a.roots {
 		home, root := approved.home, approved.root
+		measureResolution(approved.counters)
 		resolved, err := filepath.EvalSymlinks(home)
 		if err != nil || resolved != root {
 			continue
 		}
+		measureStat(approved.counters)
 		info, err := os.Lstat(root)
 		if err != nil || !os.SameFile(approved.info, info) || !info.IsDir() {
 			continue
@@ -731,6 +831,7 @@ func (a approvedFiles) opener(path string) (authority, string, error) {
 					continue
 				}
 				expected := filepath.Join(root, relative)
+				measureResolution(approved.counters)
 				canonical, err := filepath.EvalSymlinks(path)
 				if err == nil && canonical == expected {
 					return approved, canonical, nil
@@ -740,33 +841,42 @@ func (a approvedFiles) opener(path string) (authority, string, error) {
 	}
 	return authority{}, "", fs.ErrPermission
 }
+
 func (a approvedFiles) Lstat(path string) (fs.FileInfo, error) {
 	o, p, e := a.opener(path)
 	if e != nil {
 		return nil, e
 	}
-	return (sourcefacts.RootOpener{Root: o.root}).Lstat(p)
+	return measuredLstat(o.counters, o.root, p)
 }
+
 func (a approvedFiles) EvalSymlinks(path string) (string, error) {
 	_, p, e := a.opener(path)
 	return p, e
 }
+
 func (a approvedFiles) OpenRegular(path string) (transcriptio.File, error) {
 	o, p, e := a.opener(path)
 	if e != nil {
 		return nil, e
 	}
-	return openAuthorityRegular(o, p)
+	f, err := openAuthorityRegular(o, p)
+	if err != nil {
+		return nil, err
+	}
+	return measuredFile{File: f, counters: o.counters}, nil
 }
 
 // openAuthorityRegular binds the opened root descriptor to its original directory
 // identity before opening any data, so replacing an approved home cannot widen it.
 func openAuthorityRegular(o authority, p string) (*os.File, error) {
+	measureRootOpen(o.counters)
 	opened, err := os.OpenRoot(o.root)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = opened.Close() }()
+	measureStat(o.counters)
 	info, err := opened.Stat(".")
 	if err != nil || !os.SameFile(o.info, info) {
 		return nil, transcriptio.ErrChanged
@@ -783,16 +893,20 @@ func openAuthorityRegular(o authority, p string) (*os.File, error) {
 	parts := strings.Split(relative, string(filepath.Separator))
 	parent := opened
 	for _, part := range parts[:len(parts)-1] {
+		measureStat(o.counters)
 		before, err := parent.Lstat(part)
 		if err != nil || !before.IsDir() || before.Mode()&os.ModeSymlink != 0 {
 			return nil, transcriptio.ErrChanged
 		}
+		measureRootOpen(o.counters)
 		next, err := parent.OpenRoot(part)
 		if err != nil {
 			return nil, err
 		}
 		defer func() { _ = next.Close() }()
+		measureStat(o.counters)
 		after, err := next.Stat(".")
+		measureStat(o.counters)
 		named, namedErr := parent.Lstat(part)
 		if err != nil || namedErr != nil || !sameDirectory(before, after) || !sameDirectory(before, named) {
 			return nil, transcriptio.ErrChanged
@@ -800,25 +914,31 @@ func openAuthorityRegular(o authority, p string) (*os.File, error) {
 		parent = next
 	}
 	name := parts[len(parts)-1]
+	measureStat(o.counters)
 	before, err := parent.Lstat(name)
 	if err != nil || !before.Mode().IsRegular() {
 		return nil, transcriptio.ErrNotRegularFile
 	}
+	measureFileOpen(o.counters)
 	f, err := parent.OpenFile(name, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return nil, err
 	}
+	measureStat(o.counters)
 	after, err := f.Stat()
+	measureStat(o.counters)
 	named, namedErr := parent.Lstat(name)
 	if err != nil || namedErr != nil || !transcriptio.SameObservation(before, after) || !transcriptio.SameObservation(before, named) {
 		_ = f.Close()
 		return nil, transcriptio.ErrChanged
 	}
+	measureStat(o.counters)
 	rootInfo, err := os.Lstat(o.root)
 	home := o.home
 	if home == "" {
 		home = o.root
 	}
+	measureResolution(o.counters)
 	resolved, resolveErr := filepath.EvalSymlinks(home)
 	if err != nil || !rootInfo.IsDir() || !os.SameFile(o.info, rootInfo) || resolveErr != nil || resolved != o.root {
 		_ = f.Close()
