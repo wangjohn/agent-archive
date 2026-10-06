@@ -5,6 +5,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -179,4 +182,72 @@ func TestLabelBudgetPriorityRotatesSmallBatchesAcrossRestart(t *testing.T) {
 func (p firstTargetProvider) LabelRequestGroup(_ agentapi.LabelEnvironment, request agentapi.LabelRequest) string {
 	sum := sha256.Sum256([]byte(p.groups[request.Registration.ArchiveSessionID]))
 	return hex.EncodeToString(sum[:])
+}
+
+type rawTargetProvider struct{ firstTargetProvider }
+
+func (p rawTargetProvider) LabelRequestGroup(_ agentapi.LabelEnvironment, request agentapi.LabelRequest) string {
+	return p.groups[request.Registration.ArchiveSessionID]
+}
+
+func TestLabelBudgetPriorityRotatesDeferredTargetsWithinHomes(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		ids    []string
+		groups map[string]string
+		passes int
+	}{
+		{"contiguous", []string{"a1", "a2", "b1", "b2"}, map[string]string{"a1": "/private/home-one", "a2": "/private/home-one", "b1": "/private/home-two", "b2": "/private/home-two"}, 4},
+		{"interleaved", []string{"a1", "b1", "a2", "b2"}, map[string]string{"a1": "one", "a2": "one", "b1": "two", "b2": "two"}, 4},
+		{"unequal", []string{"a1", "a2", "b1", "b2", "b3"}, map[string]string{"a1": "one", "a2": "one", "b1": "two", "b2": "two", "b3": "two"}, 6},
+		{"single", []string{"a1", "a2", "a3"}, map[string]string{"a1": "one", "a2": "one", "a3": "one"}, 3},
+		{"unknown", []string{"a1", "a2", "a3"}, map[string]string{}, 3},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			local := newTestStore(t)
+			provider := &firstTargetLabels{groups: tc.groups}
+			providers := map[string]agentapi.LabelProvider{"codex": rawTargetProvider{firstTargetProvider{provider}}}
+			requests := []agentapi.LabelRequest{}
+			for _, id := range tc.ids {
+				requests = append(requests, agentapi.LabelRequest{Registration: archive.SessionRegistration{ArchiveSessionID: id, Harness: archive.Harness{Name: "codex"}}})
+			}
+			cache := state.LabelCache{Version: 1, Entries: map[string]state.LabelEntry{}}
+			seen := map[string]bool{}
+			for range tc.passes {
+				// Every lookup backoff has expired; coverage selects the complete eligible batch.
+				ordered := prioritizeLabelRequests(requests, providers, agentapi.LabelEnvironment{}, &cache)
+				providers["codex"].LookupLabels(context.Background(), agentapi.LabelEnvironment{}, ordered)
+				seen[ordered[0].Registration.ArchiveSessionID] = true
+				if err := local.SaveLabels(cache); err != nil {
+					t.Fatal(err)
+				}
+				bytes, err := os.ReadFile(filepath.Join(local.Home(), "session-labels.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if strings.Contains(string(bytes), "/private/home") {
+					t.Fatal("raw group persisted")
+				}
+				local, err = state.Open(local.Home())
+				if err != nil {
+					t.Fatal(err)
+				}
+				cache, err = local.LoadLabels()
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			if len(seen) != len(requests) {
+				t.Fatalf("available deferred targets starved: attempts=%v", provider.attempted)
+			}
+		})
+	}
+}
+
+func TestLabelTargetCursorPrunesRemovedTargetsAndKeepsBackoffProgress(t *testing.T) {
+	cache := state.LabelCache{Entries: map[string]state.LabelEntry{"backoff": {NextAt: time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)}}, TargetCursors: map[string]string{"present": "backoff", "removed": "gone"}}
+	pruneLabelTargetCursors(&cache)
+	if len(cache.TargetCursors) != 1 || cache.TargetCursors["present"] != "backoff" {
+		t.Fatal("removed cursor survived or deferred progress was lost")
+	}
 }

@@ -108,7 +108,9 @@ func validLabelContext(entry LabelEntry) bool {
 
 // LabelCache is collector-owned, bounded, and independent of publication retries.
 type LabelCache struct {
-	Version int `json:"version"`
+	// TargetCursors retain only hashed group identities and admitted archive IDs.
+	TargetCursors map[string]string `json:"target_cursors,omitempty"`
+	Version       int               `json:"version"`
 	// PriorityCursor rotates the first provider work group separately from batch coverage.
 	PriorityCursor string                `json:"priority_cursor,omitempty"`
 	Cursor         string                `json:"cursor,omitempty"`
@@ -117,6 +119,21 @@ type LabelCache struct {
 
 // MaxLabelCacheEntries bounds persisted observations independently of admission.
 const MaxLabelCacheEntries = 2048
+
+// MaxLabelTargetCursors bounds independent within-group scheduling progress.
+const MaxLabelTargetCursors = 64
+
+func validLabelTargetCursors(cursors map[string]string) bool {
+	if len(cursors) > MaxLabelTargetCursors {
+		return false
+	}
+	for key, id := range cursors {
+		if !labelHash(key) || !safeFileComponent(id) || len(id) > 256 {
+			return false
+		}
+	}
+	return true
+}
 
 // LoadLabels reads safe lookup state without native source access.
 func (s *Store) LoadLabels() (LabelCache, error) {
@@ -130,7 +147,7 @@ func (s *Store) LoadLabels() (LabelCache, error) {
 	}
 	defer func() { _ = f.Close() }()
 	reader := io.LimitReader(f, 4<<20)
-	if json.NewDecoder(reader).Decode(&cache) != nil || cache.Version != 1 || len(cache.Entries) > MaxLabelCacheEntries || (len(cache.Cursor) > 256 || len(cache.PriorityCursor) > 256) {
+	if json.NewDecoder(reader).Decode(&cache) != nil || cache.Version != 1 || !validLabelTargetCursors(cache.TargetCursors) || len(cache.Entries) > MaxLabelCacheEntries || (len(cache.Cursor) > 256 || len(cache.PriorityCursor) > 256) {
 		return LabelCache{}, errors.New("invalid session label cache")
 	}
 	if cache.Entries == nil {
@@ -157,7 +174,7 @@ func (s *Store) LoadLabels() (LabelCache, error) {
 
 // SaveLabels atomically persists already-filtered observations under the collector lock.
 func (s *Store) SaveLabels(cache LabelCache) error {
-	if cache.Version != 1 || len(cache.Entries) > MaxLabelCacheEntries || (len(cache.Cursor) > 256 || len(cache.PriorityCursor) > 256) {
+	if cache.Version != 1 || !validLabelTargetCursors(cache.TargetCursors) || len(cache.Entries) > MaxLabelCacheEntries || (len(cache.Cursor) > 256 || len(cache.PriorityCursor) > 256) {
 		return errors.New("invalid session label cache")
 	}
 	for id, entry := range cache.Entries {

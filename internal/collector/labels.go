@@ -112,6 +112,7 @@ func (p *pass) observeLabels(ctx context.Context) {
 			delete(cache.Entries, id)
 		}
 	}
+	pruneLabelTargetCursors(&cache)
 	if err := p.local.SaveLabels(cache); err != nil {
 		addError(p.result.Errors, "session-labels", err)
 	}
@@ -310,6 +311,7 @@ func prioritizeLabelRequests(requests []agentapi.LabelRequest, providers map[str
 		break
 	}
 	ordered := append(append(make([]agentapi.LabelRequest, 0, len(requests)), requests[start:]...), requests[:start]...)
+	rotateLabelGroupTargets(ordered, providers, env, cache)
 	cache.PriorityCursor = ordered[0].Registration.ArchiveSessionID
 	return ordered
 }
@@ -320,11 +322,11 @@ func labelRequestGroup(providers map[string]agentapi.LabelProvider, env agentapi
 		return ""
 	}
 	key := provider.LabelRequestGroup(env, request)
-	decoded, err := hex.DecodeString(key)
-	if err != nil || len(decoded) != sha256.Size {
+	if key == "" || len(key) > 256 {
 		return ""
 	}
-	return request.Registration.Harness.Name + "/" + key
+	sum := sha256.Sum256([]byte(request.Registration.Harness.Name + "\x00" + key))
+	return hex.EncodeToString(sum[:])
 }
 
 func weakerLabelAbsence(next, previous archive.SessionLabel) bool {
@@ -352,4 +354,55 @@ func lookupLabelRequests(ctx context.Context, providers map[string]agentapi.Labe
 		maps.Copy(results, providers[name].LookupLabels(ctx, env, groups[name]))
 	}
 	return results
+}
+
+// Each first group receives the next member's scheduling opportunity, even
+// when unavailable-target backoff has expired before the following pass.
+func rotateLabelGroupTargets(requests []agentapi.LabelRequest, providers map[string]agentapi.LabelProvider, env agentapi.LabelEnvironment, cache *state.LabelCache) {
+	positions := map[string][]int{}
+	for i, request := range requests {
+		if key := labelRequestGroup(providers, env, request); key != "" {
+			positions[key] = append(positions[key], i)
+		}
+	}
+	for key, indices := range positions {
+		start := 0
+		for i, index := range indices {
+			if requests[index].Registration.ArchiveSessionID == cache.TargetCursors[key] {
+				start = (i + 1) % len(indices)
+				break
+			}
+		}
+		members := make([]agentapi.LabelRequest, len(indices))
+		for i, index := range indices {
+			members[i] = requests[index]
+		}
+		for i, index := range indices {
+			requests[index] = members[(start+i)%len(members)]
+		}
+	}
+	key := labelRequestGroup(providers, env, requests[0])
+	if key == "" {
+		return
+	}
+	if cache.TargetCursors == nil {
+		cache.TargetCursors = map[string]string{}
+	}
+	if _, found := cache.TargetCursors[key]; !found && len(cache.TargetCursors) >= state.MaxLabelTargetCursors {
+		keys := make([]string, 0, len(cache.TargetCursors))
+		for existing := range cache.TargetCursors {
+			keys = append(keys, existing)
+		}
+		sort.Strings(keys)
+		delete(cache.TargetCursors, keys[0])
+	}
+	cache.TargetCursors[key] = requests[0].Registration.ArchiveSessionID
+}
+
+func pruneLabelTargetCursors(cache *state.LabelCache) {
+	for key, id := range cache.TargetCursors {
+		if _, ok := cache.Entries[id]; !ok {
+			delete(cache.TargetCursors, key)
+		}
+	}
 }
