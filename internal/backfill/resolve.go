@@ -54,6 +54,7 @@ type resolver struct {
 	recoverySourcesReset    func(context.Context)
 	databaseRecoveryCurrent func(context.Context) bool
 	recoveryInventoryBudget bool
+	inventoryCurrent        func(context.Context) bool
 	mappingRecovery         *sourcefacts.RecoveryResolver
 	workspaceReset          func()
 	requireWitnessFormats   func(string)

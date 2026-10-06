@@ -14,7 +14,7 @@ import (
 // prepareRecoveryInventory separates observed repository membership from
 // committed capture policy. Discovery has finished; output filters have not run.
 func prepareRecoveryInventory(ctx context.Context, r *resolver, items []*work, unread unreadable, dbIncomplete bool) {
-	projects, witnesses, incomplete := recoveryWitnessInventory(r, items)
+	projects, witnesses, incomplete := recoveryWitnessInventory(ctx, r, items)
 	incomplete = incomplete || dbIncomplete || unread.folders > 0 || len(unread.stores) > 0
 	selectedRoots := map[string]bool{}
 	r.requireWitnessFormats = func(root string) {
@@ -31,6 +31,7 @@ func prepareRecoveryInventory(ctx context.Context, r *resolver, items []*work, u
 		}
 		return false
 	}
+	ownershipCurrent := recoveryOwnershipCurrent(r, items)
 	validation := &recoveryWitnessValidation{ctx: ctx}
 	r.recoverySourcesReset = func(ctx context.Context) {
 		validation.ctx = ctx
@@ -42,7 +43,7 @@ func prepareRecoveryInventory(ctx context.Context, r *resolver, items []*work, u
 	r.recoverySourcesCurrent = func() bool {
 		if !validation.checked {
 			validation.checked = true
-			validation.current = recoveryWitnessesCurrent(validation.ctx, r, witnesses, selectedRoots)
+			validation.current = recoveryWitnessesCurrent(validation.ctx, r, witnesses, selectedRoots) && ownershipCurrent(validation.ctx)
 		}
 		return validation.current
 	}
@@ -67,7 +68,7 @@ type recoveryWitnessValidation struct {
 	current bool
 }
 
-func recoveryWitnessInventory(r *resolver, items []*work) ([]archive.ProjectActivation, map[string][]*work, bool) {
+func recoveryWitnessInventory(ctx context.Context, r *resolver, items []*work) ([]archive.ProjectActivation, map[string][]*work, bool) {
 	projects := slices.Clone(r.cfg.Archive.Projects)
 	configured := map[string]bool{}
 	for _, p := range projects {
@@ -76,6 +77,9 @@ func recoveryWitnessInventory(r *resolver, items []*work) ([]archive.ProjectActi
 	observed := map[string]bool{}
 	witnesses := map[string][]*work{}
 	incomplete := false
+	if r.inventoryCurrent != nil && !r.inventoryCurrent(ctx) {
+		incomplete = true
+	}
 	for _, w := range items {
 		if w.vanished || w.sourceChanged || w.unsafe || w.t.identityMismatch {
 			incomplete = true
@@ -105,6 +109,9 @@ func recoveryWitnessInventory(r *resolver, items []*work) ([]archive.ProjectActi
 }
 
 func recoveryWitnessesCurrent(ctx context.Context, r *resolver, witnesses map[string][]*work, selectedRoots map[string]bool) bool {
+	if r.inventoryCurrent != nil && !r.inventoryCurrent(ctx) {
+		return false
+	}
 	if r.databaseRecoveryCurrent != nil && !r.databaseRecoveryCurrent(ctx) {
 		return false
 	}
