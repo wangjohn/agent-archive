@@ -45,6 +45,21 @@ func (p *pass) skipUnchanged(reg archive.SessionRegistration, req state.Request)
 		p.fail(id, unchangedSinceFailureError{message: failure, cursor: reg.SourceKind == archive.SourceKindCursorSQLite})
 		return true
 	}
+	if entry, ok := p.opts.labels[id]; ok && entry.Label.Fingerprint() != signature.PublishedLabel && (signature.Blocked == "" || signature.Blocked == state.BlockedReasonTranscriptMissing) {
+		if p.labelStates[id] != nil {
+			return false
+		}
+		// A warm context avoids conversation decoding until a changed label
+		// needs publication. Apply the same aggregate cap to that decode.
+		published, n, err := p.local.LoadLabelPublication(id, (16<<20)-p.labelBytes)
+		p.labelBytes += n
+		if err == nil {
+			p.labelStates[id] = published
+			return false
+		}
+		// Keep the durable observation owed, without blocking normal capture.
+		delete(p.opts.labels, id)
+	}
 	// Settled, or a recorded gap at the same state. A request on the gap is
 	// completed without a read, as a block completes it: the chat is still
 	// over the limit, and the gap stands until the chat changes.
@@ -249,6 +264,7 @@ func (s *sessionScan) recordScanSignature(observed sourceState, bundle archive.S
 		CursorHeaderCount: observed.cursor.HeaderCount, CursorLastBubbleID: observed.cursor.LastBubbleID,
 		CursorMessageRows: observed.cursor.MessageRows, CursorLastMessageHash: observed.cursor.LastMessageHash,
 		PublishedLastHead: s.publishedLastHead(),
+		PublishedLabel:    labelFingerprint(bundle),
 	})
 }
 
@@ -271,6 +287,7 @@ func (s *sessionScan) recordBlockedSignature(reason state.BlockedReason, observe
 		CursorMessageRows: observed.cursor.MessageRows, CursorLastMessageHash: observed.cursor.LastMessageHash,
 		FailedMaxBytes: s.opts.maxTranscriptBytes(), FailedRecordLimit: recordLimit,
 		Blocked: reason, PublishedLastHead: s.publishedLastHead(),
+		PublishedLabel: s.publishedLabel(),
 	})
 }
 

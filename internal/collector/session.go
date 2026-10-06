@@ -182,6 +182,9 @@ func (s *sessionScan) resume() (outcome sessionOutcome, handled bool, err error)
 		} else if found && pendingSkillMode(signature.SkillEvidence) != s.opts.skillEvidence() {
 			return outcomeSkipped, false, nil
 		}
+		if outcome, handled, err := s.refreshLabels(); handled || err != nil {
+			return outcome, handled, err
+		}
 		return regenerateMetadata(s)
 	}
 	if pendingSkillMode(pending.SkillEvidence) != s.opts.skillEvidence() {
@@ -353,7 +356,7 @@ func (s *sessionScan) build(read sourceRead) (archive.SourceBundle, []archive.Su
 	if haveCached {
 		baseEvidence = cached.SupplementalEvidence
 	}
-	baseEvidence = limitSkillEvidence(baseEvidence, s.opts.skillEvidence())
+	baseEvidence = s.applyLabels(limitSkillEvidence(baseEvidence, s.opts.skillEvidence()))
 	supplemental := limitSkillEvidence(mergeSupplementalEvidence(baseEvidence, s.req.HookEvidence), s.opts.skillEvidence())
 
 	// now is a placeholder here; bundleEvidenceEqual ignores CapturedAt, so

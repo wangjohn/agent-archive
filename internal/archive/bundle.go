@@ -67,6 +67,14 @@ func NewSourceBundle(reg SessionRegistration, adapter Adapter, transcript Filter
 	if transcript.ObservedHarness.Mode != "" {
 		harness.Mode = transcript.ObservedHarness.Mode
 	}
+	for _, evidence := range supplemental {
+		if evidence.Kind == EvidenceKindSessionLabels {
+			label, ok := labelFromEvidence(evidence)
+			if !ok || reg.Harness.Name != "codex" || label.NativeID != reg.NativeSessionID || transcript.History != nil {
+				return SourceBundle{}, errors.New("session label does not match its owning source")
+			}
+		}
+	}
 	filteredSupplemental, gaps, err := FilterSupplementalEvidence(supplemental)
 	if err != nil {
 		return SourceBundle{}, err
@@ -180,6 +188,14 @@ func FilterSupplementalEvidence(in []SupplementalEvidence) ([]SupplementalEviden
 		if strings.TrimSpace(string(evidence.Kind)) == "" || strings.TrimSpace(evidence.Provenance) == "" || evidence.ObservedAt.IsZero() {
 			return nil, nil, errors.New("supplemental evidence requires kind, provenance, and observation time")
 		}
+		if evidence.Kind == EvidenceKindSessionLabels {
+			label, ok := labelFromEvidence(evidence)
+			if !ok {
+				return nil, nil, errors.New("invalid session label evidence")
+			}
+			out = append(out, label.Evidence(evidence.ObservedAt.UTC()))
+			continue
+		}
 		var extraAllowed map[string]bool
 		if evidence.Kind == EvidenceKindCaptureGap {
 			extraAllowed = captureGapKeys
@@ -247,6 +263,20 @@ func MergeSupplementalEvidence(previous, fresh []SupplementalEvidence) []Supplem
 	out := append([]SupplementalEvidence(nil), previous...)
 	for _, candidate := range fresh {
 		switch candidate.Kind {
+		case EvidenceKindSessionLabels:
+			replaced := false
+			for i := range out {
+				if out[i].Kind == EvidenceKindSessionLabels && firstString(out[i].Payload, "native_session_id") == firstString(candidate.Payload, "native_session_id") {
+					if !supplementalPayloadEqual(out[i].Payload, candidate.Payload) {
+						out[i] = candidate
+					}
+					replaced = true
+					break
+				}
+			}
+			if !replaced {
+				out = append(out, candidate)
+			}
 		case EvidenceKindSkillInventory:
 			identity := supplementalIdentity(candidate)
 			unchanged := false
@@ -349,6 +379,9 @@ func BuildCompressedSource(bundle SourceBundle) (CompressedSource, error) {
 }
 
 func validateBundle(bundle SourceBundle) error {
+	if err := ValidateSessionLabels(bundle); err != nil {
+		return err
+	}
 	if err := bundle.ValidateHistory(); err != nil {
 		return err
 	}

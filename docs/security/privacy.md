@@ -628,3 +628,11 @@ exclude another session’s title. Names alone never admit a session or extend
 activity/retention. Injected Codex `external_codex_apps_open_page` context
 wrappers at the start of a message are omitted; quoted markup and examples in
 human prose/code remain intact. Text outside context remains prompt text.
+
+Codex name refresh reads bounded metadata only for already admitted ordinary
+sessions in approved homes. It retains the filtered current name and typed
+owning-ID evidence, with the same credential redaction as prompt text. Native
+paths, raw index/database rows and unrelated session names are not uploaded.
+Name changes publish new source evidence but preserve conversation activity,
+capture time and retention. Collection never starts a native Codex process to
+retrieve a name; live WAL storage is unavailable to the safe file reader.

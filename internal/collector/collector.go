@@ -33,6 +33,10 @@ import (
 // local.Lock(home) around Run; Run itself does not acquire it, so it stays
 // simple to call directly from tests.
 type Options struct {
+	// Labels supplies optional bounded native metadata for existing retained sessions.
+	Labels           agentapi.LabelsLookup
+	LabelEnvironment agentapi.LabelEnvironment
+	labels           map[string]state.LabelEntry
 	// CodexRollouts is one caller-owned bounded locator view shared by the pass.
 	CodexRollouts agentapi.CodexRolloutLookup
 	// SkipSessionIndexRecovery is set after the CLI has already attempted its
@@ -247,6 +251,7 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	if err := p.loadWork(); err != nil {
 		return Result{}, err
 	}
+	p.observeLabels()
 	p.repairListingIndex()
 	orderOldestRequestsFirst(p.registrations, p.requests)
 	closeCursorPass := openCursorPass(p.registrations, &p.opts)
@@ -273,11 +278,13 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 
 // pass is one Run: its inputs, what it has found so far, and its result.
 type pass struct {
-	ctx    context.Context
-	local  *state.Store
-	remote storage.ObjectStore
-	opts   Options
-	now    time.Time
+	labelStates map[string]*state.Published
+	labelBytes  int64
+	ctx         context.Context
+	local       *state.Store
+	remote      storage.ObjectStore
+	opts        Options
+	now         time.Time
 
 	registrations []archive.SessionRegistration
 	requests      map[string]state.Request
@@ -393,7 +400,11 @@ func (p *pass) scan(reg archive.SessionRegistration) {
 		return
 	}
 	// The session's published state, read once for the whole scan.
-	published, err := p.local.LoadPublishedState(id)
+	published := p.labelStates[id]
+	var err error
+	if published == nil {
+		published, err = p.local.LoadPublishedState(id)
+	}
 	if err != nil {
 		p.fail(id, fmt.Errorf("load published cache: %w", err))
 		return

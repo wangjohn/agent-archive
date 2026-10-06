@@ -184,7 +184,20 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 	if previous, err := localStore.LoadStatus(); err == nil {
 		previousScanAt = previous.LastScanAt
 	}
+	labelHomes := []string{}
+	if cfg.Discovery != nil {
+		labelHomes = append(labelHomes, cfg.Discovery.CodexHomes...)
+	}
+	if len(labelHomes) == 0 {
+		if userHome, err := env.userHomeDir(); err == nil {
+			if file := env.hookFiles(userHome)["codex"]; file != "" {
+				labelHomes = append(labelHomes, filepath.Dir(file))
+			}
+		}
+	}
 	result, err := collector.Run(ctx, localStore, objectStore, collector.Options{
+		Labels:                   env.agentRegistry(),
+		LabelEnvironment:         agentapi.LabelEnvironment{Homes: labelHomes, ExternalSQLite: env.getenv("CODEX_SQLITE_HOME") != ""},
 		SkipSessionIndexRecovery: true,
 		Parsers:                  parsersFor(env),
 		Sources:                  registryFor(env),

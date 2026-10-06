@@ -1047,6 +1047,8 @@ func (s *Store) ScanPending(id string) (bool, error) {
 // Anything that invalidates the assertion removes the token (see
 // RemoveScanSignature's callers).
 type ScanSignature struct {
+	// PublishedLabel identifies retained safe native name evidence, independently of lookup time.
+	PublishedLabel string `json:"published_label,omitempty"`
 	// Frozen marks completed retained-history maintenance, independently of
 	// the live native source's stat. Ordinary capture never trusts this token.
 	Frozen          bool                      `json:"frozen,omitempty"`

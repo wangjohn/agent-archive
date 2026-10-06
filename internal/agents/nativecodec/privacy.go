@@ -138,6 +138,13 @@ func sanitizeObject(in map[string]any, state *archive.PrivacyState) (map[string]
 				state.PrivacyOmit(key)
 				continue
 			}
+		case lower == "history_mode":
+			// Only the native representation enum is retained for guarded
+			// Codex index resolution; arbitrary metadata strings stay omitted.
+			if value != "legacy" && value != "paginated" {
+				state.PrivacyOmit(key)
+				continue
+			}
 		case booleanFlagKeys[lower]:
 			// Filter 4 admits isMeta, and filter 5 isCompactSummary and
 			// isVisibleInTranscriptOnly, only as the boolean flag Claude Code

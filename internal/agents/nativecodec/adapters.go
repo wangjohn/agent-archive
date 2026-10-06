@@ -490,6 +490,9 @@ func filterRecordsObserved(format string, knownTypes map[string]bool, lead map[s
 			addGap("hidden_instruction_omitted", lineNo, "meta record text omitted")
 		}
 		state := archive.PrivacyState{Record: lineNo, AddGap: addGap, OmittedKey: omittedKeys.add, DeniedKey: deniedKeys.add}
+		if format == "codex-jsonl" && kind == "session_meta" {
+			state.ExtraAllowed = map[string]bool{"history_mode": true}
+		}
 		safe, keep := sanitizeObject(raw, &state)
 		if !keep {
 			continue
@@ -701,7 +704,7 @@ func recordCarriesConversation(record map[string]any) bool {
 	return conversationRecordTypes[strings.ToLower(strings.TrimSpace(kind))]
 }
 
-const adapterVersion = "0.16.0"
+const adapterVersion = "0.17.0"
 
 var maxRecordBytes = archive.MaxRecordBytes
 

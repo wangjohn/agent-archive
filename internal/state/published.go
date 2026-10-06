@@ -127,6 +127,8 @@ func (p publishedState) ageClampFor(bundle archive.SourceBundle) *ageClamp {
 // session without its source bundles: enough for retention, for a subagent
 // looking for its link in its parent, and for status.
 type PublishedSummary struct {
+	// LabelSourceChecksum invalidates narrow naming context without decoding source records.
+	LabelSourceChecksum string `json:"label_source_checksum,omitempty"`
 	// Harness is the cached bundle's harness: the one its objects are under.
 	Harness string `json:"harness,omitempty"`
 	// Status is the cached bundle's status, and BlockedReason why it is
@@ -162,6 +164,7 @@ func (s PublishedSummary) LinksPublished(child string) bool {
 
 // summary derives the state's PublishedSummary.
 func (p publishedState) summary() PublishedSummary {
+	source, _ := p.lastPublishedSource()
 	_, lastPublishedAt, published := p.resolveLastPublished()
 	var ageFrom time.Time
 	if clamp := p.ageClampFor(p.Bundle); clamp != nil {
@@ -174,8 +177,9 @@ func (p publishedState) summary() PublishedSummary {
 		}
 	}
 	return PublishedSummary{
-		Harness: p.Bundle.Capture.Harness.Name,
-		Status:  p.Status, BlockedReason: p.BlockedReason, CapturedAt: p.Bundle.Capture.CapturedAt, AgeFrom: ageFrom,
+		LabelSourceChecksum: source.SHA256,
+		Harness:             p.Bundle.Capture.Harness.Name,
+		Status:              p.Status, BlockedReason: p.BlockedReason, CapturedAt: p.Bundle.Capture.CapturedAt, AgeFrom: ageFrom,
 		Published: published, LastPublishedAt: lastPublishedAt, LinkedPublished: linked,
 	}
 }
