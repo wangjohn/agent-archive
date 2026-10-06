@@ -127,6 +127,23 @@ type pairingAddOptions struct {
 	file        string
 }
 
+func (o *pairingAddOptions) chooseDelivery(p *prompter) error {
+	if o.yes || o.printBundle || o.file != "" {
+		return nil
+	}
+	return choosePairingDelivery(p, o)
+}
+
+func printPairingAccessReady(out io.Writer, cfg config.Config, slot issuance.Slot) {
+	if slot.SlotID != "" {
+		terminal.Println(out, "✓ Separate access ready. You can revoke this machine independently.")
+	} else if cfg.Storage.Provider == credentials.ProviderR2 {
+		terminal.Println(out, "✓ Shared access ready. Revoking it affects every machine using this key.")
+	} else {
+		terminal.Println(out, "✓ Archive settings ready.")
+	}
+}
+
 func executePairingAdd(home string, cfg config.Config, payload pairing.Payload, p *prompter, env Env, out, errOut io.Writer, opts pairingAddOptions) int {
 	release, err := local.NamedLock(home, "issued.lock")
 	if err != nil {
@@ -180,17 +197,11 @@ func executePairingAdd(home string, cfg config.Config, payload pairing.Payload, 
 				terminal.Println(errOut, "Could not update saved spare-key status; key records are preserved.")
 			}
 		}()
-		terminal.Println(out, "✓ Separate access ready. You can revoke this machine independently.")
-	} else if cfg.Storage.Provider == credentials.ProviderR2 {
-		terminal.Println(out, "✓ Shared access ready. Revoking it affects every machine using this key.")
-	} else {
-		terminal.Println(out, "✓ Archive settings ready.")
 	}
-	if !opts.yes && !opts.printBundle && opts.file == "" {
-		if err := choosePairingDelivery(p, &opts); err != nil {
-			terminal.Println(errOut, err.Error())
-			return 1
-		}
+	printPairingAccessReady(out, cfg, slot)
+	if err := opts.chooseDelivery(p); err != nil {
+		terminal.Println(errOut, err.Error())
+		return 1
 	}
 	code, err := pairing.NewCode()
 	if err != nil {
