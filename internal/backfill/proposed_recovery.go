@@ -43,7 +43,9 @@ func prepareRecoveryInventory(ctx context.Context, r *resolver, items []*work, u
 	for root, eligible := range observed {
 		projects = append(projects, archive.ProjectActivation{Root: root, ProjectID: archive.ProjectID(root), Included: eligible})
 	}
+	selectedRoots := map[string]bool{}
 	r.requireWitnessFormats = func(root string) {
+		selectedRoots[root] = true
 		for _, w := range witnesses[root] {
 			if w.t.cursorSlug != "" {
 				w.proposedWitness = true
@@ -73,9 +75,12 @@ func prepareRecoveryInventory(ctx context.Context, r *resolver, items []*work, u
 		}
 		checkedSources = true
 		checks := 0
-		for _, group := range witnesses {
+		for root, group := range witnesses {
 			found := false
 			for _, w := range group {
+				if selectedRoots[root] && !w.importable() {
+					continue
+				}
 				if checks >= 1024 || validationCtx.Err() != nil {
 					return false
 				}

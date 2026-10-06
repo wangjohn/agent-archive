@@ -231,3 +231,20 @@ func TestFirstRunRecoveryFilteredMalformedCursorCannotProposeDestination(t *test
 		t.Fatal(p.Imported())
 	}
 }
+
+func TestFirstRunRecoveryPendingWitnessCannotReplaceLostEligibleSource(t *testing.T) {
+	tr, env, cfg, root, _ := firstRunRecoveryFixture(t, false)
+	id := "00000000-0000-0000-0000-000000000022"
+	body := strings.Replace(codexTranscript(id, id, root, fixedNow.Add(-time.Hour)), `"source":"cli"`, `"source":"cli","forked_from_id":"00000000-0000-0000-0000-000000000055"`, 1)
+	tr.write(filepath.Join("home", codexFile(id)), body)
+	p := plan(t, env, nil, cfg, Filters{})
+	if len(p.Imported()) != 2 {
+		t.Fatal(p.Candidates)
+	}
+	if err := os.Remove(tr.path(filepath.Join("home", codexFile("00000000-0000-0000-0000-000000000011")))); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.CheckRecovery(t.Context()); err == nil {
+		t.Fatal("pending witness replaced vanished eligible destination source")
+	}
+}
