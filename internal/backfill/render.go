@@ -487,7 +487,7 @@ var skipLabels = map[SkipReason]string{
 	SkipAboveHome:             "run from / or /Users, above the home folder",
 	SkipTemporaryDirectory:    "run from temporary directories",
 	SkipProjectUnknown:        "%s whose project could not be determined",
-	SkipWorktreeUnresolved:    "from worktrees that no longer exist",
+	SkipWorktreeUnresolved:    "with unresolved worktree project ownership",
 	SkipIdentityMismatch:      "with conflicting or invalid session IDs",
 	SkipSourceChanged:         "that changed while being read; retry backfill",
 	SkipRelatedHistory:        "awaiting support for child, fork or revised history",
