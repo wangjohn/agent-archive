@@ -5,7 +5,6 @@ import (
 	"errors"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
@@ -31,7 +30,7 @@ func (s *sessionScan) freezeRevisionPublication(p *state.PendingPublication) err
 		predecessor = metadataSHA(s.published.Metadata())
 	} else {
 		// Absence must be observed, never inferred from missing local state.
-		if _, err := historyLimitedGet(s.ctx, s.remote, p.MetadataKey, historyMetadataLimit); !errors.Is(err, storage.ErrNotFound) {
+		if _, err := s.historyGet(p.MetadataKey, historyMetadataLimit); !errors.Is(err, storage.ErrNotFound) {
 			if err != nil {
 				return err
 			}
@@ -73,11 +72,11 @@ func (s *sessionScan) freezeRevisionPublication(p *state.PendingPublication) err
 	for i := range final.History.Preserved {
 		revision := &final.History.Preserved[i]
 		if revision.FilterVersion == "" || revision.SourceSchemaVersion == 0 {
-			raw, err := historyLimitedGet(s.ctx, s.remote, revision.Source.Key, int64(revision.Source.CompressedBytes))
+			raw, err := s.historyGet(revision.Source.Key, int64(revision.Source.CompressedBytes))
 			if err != nil {
 				return err
 			}
-			bundle, err := reader.DecodeRevisionSource(s.ctx, final, revision.RevisionID, raw, reader.Limits{})
+			bundle, err := s.decodeRevision(final, revision.RevisionID, raw)
 			if err != nil {
 				return err
 			}

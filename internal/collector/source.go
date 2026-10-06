@@ -430,7 +430,11 @@ func (s *sourcePassSet) get(ctx context.Context, key sourcePassKey, p agentapi.S
 }
 
 func openCursorPass(_ []archive.SessionRegistration, opts *Options) func() error {
-	opts.sourcePasses = &sourcePassSet{env: agentapi.SourceEnvironment{RequireConfinedHistory: true, Database: opts.cursorDatabase(), CodexRollouts: opts.CodexRollouts}, passes: map[sourcePassKey]agentapi.SourcePass{}}
+	budget := agentapi.NewNativeReadBudget(128 << 20)
+	if shared, ok := opts.CodexRollouts.(agentapi.CodexRolloutResourceBudget); ok && shared.NativeReadBudget() != nil {
+		budget = shared.NativeReadBudget()
+	}
+	opts.sourcePasses = &sourcePassSet{env: agentapi.SourceEnvironment{ReadBudget: budget, RequireConfinedHistory: true, Database: opts.cursorDatabase(), CodexRollouts: opts.CodexRollouts}, passes: map[sourcePassKey]agentapi.SourcePass{}}
 	return func() error {
 		var err error
 		for _, p := range opts.sourcePasses.passes {

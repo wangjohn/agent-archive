@@ -9,7 +9,6 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
-	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
@@ -32,11 +31,11 @@ func (s *sessionScan) resumeStricterHistory(p state.PendingPublication) (session
 		if err != nil {
 			return outcomeSkipped, err
 		}
-		data, err := historyLimitedGet(s.ctx, s.remote, metadata.SourceBundle.Key, int64(metadata.SourceBundle.CompressedBytes))
+		data, err := s.historyGet(metadata.SourceBundle.Key, int64(metadata.SourceBundle.CompressedBytes))
 		if err != nil {
 			return outcomeSkipped, err
 		}
-		p.Bundle, err = reader.DecodeReferencedSource(s.ctx, metadata, data, reader.Limits{})
+		p.Bundle, err = s.decodeReferenced(metadata, data)
 		if err != nil {
 			return outcomeSkipped, err
 		}
@@ -102,7 +101,7 @@ func (s *sessionScan) stricterHistorySuccessor(p state.PendingPublication, commi
 		expected = metadataSHA(p.MetadataBytes)
 		acknowledged = metadata
 	} else if expected != "" {
-		raw, err := historyLimitedGet(s.ctx, s.remote, p.MetadataKey, historyMetadataLimit)
+		raw, err := s.historyGet(p.MetadataKey, historyMetadataLimit)
 		if err != nil {
 			return state.PendingPublication{}, err
 		}
@@ -162,7 +161,7 @@ func (s *sessionScan) stricterHistorySuccessor(p state.PendingPublication, commi
 				}
 			}
 		}
-		data, err := s.local.ReadPendingSource(s.id(), stage)
+		data, err := s.historyStage(stage)
 		if err != nil {
 			return state.PendingPublication{}, err
 		}
@@ -220,18 +219,18 @@ func (s *sessionScan) retainedManifestInputs(metadata archive.Metadata) ([]state
 		if i > 0 {
 			id = metadata.History.Preserved[i-1].RevisionID
 		}
-		data, err := s.local.ReadPendingSource(s.id(), state.PendingSource{Reference: ref, Name: ref.SHA256 + ".gz"})
+		data, err := s.historyStage(state.PendingSource{Reference: ref, Name: ref.SHA256 + ".gz"})
 		if err != nil {
-			data, err = historyLimitedGet(s.ctx, s.remote, ref.Key, int64(ref.CompressedBytes))
+			data, err = s.historyGet(ref.Key, int64(ref.CompressedBytes))
 		}
 		if err != nil {
 			return nil, err
 		}
 		var bundle archive.SourceBundle
 		if metadata.History == nil {
-			bundle, err = reader.DecodeReferencedSource(s.ctx, metadata, data, reader.Limits{})
+			bundle, err = s.decodeReferenced(metadata, data)
 		} else {
-			bundle, err = reader.DecodeRevisionSource(s.ctx, metadata, id, data, reader.Limits{})
+			bundle, err = s.decodeRevision(metadata, id, data)
 		}
 		if err != nil {
 			return nil, fmt.Errorf("validate retained successor input: %w", err)

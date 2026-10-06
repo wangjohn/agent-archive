@@ -7,7 +7,6 @@ import (
 	"fmt"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -32,7 +31,7 @@ func (s *sessionScan) restoreReferenceAuthority() error {
 	if err != nil {
 		return err
 	}
-	raw, err := historyLimitedGet(s.ctx, s.remote, key, historyMetadataLimit)
+	raw, err := s.historyGet(key, historyMetadataLimit)
 	if errors.Is(err, storage.ErrNotFound) {
 		if _, _, acknowledged := s.published.LastPublished(); acknowledged {
 			return errors.New("acknowledged remote source authority is missing")
@@ -63,24 +62,24 @@ func (s *sessionScan) restoreReferenceAuthority() error {
 	// Decode and release preserved alternatives before retaining the active view.
 	if metadata.History != nil {
 		for _, revision := range metadata.History.Preserved {
-			data, err := historyLimitedGet(s.ctx, s.remote, revision.Source.Key, int64(revision.Source.CompressedBytes))
+			data, err := s.historyGet(revision.Source.Key, int64(revision.Source.CompressedBytes))
 			if err != nil {
 				return err
 			}
-			if _, err := reader.DecodeRevisionSource(s.ctx, metadata, revision.RevisionID, data, reader.Limits{}); err != nil {
+			if _, err := s.decodeRevision(metadata, revision.RevisionID, data); err != nil {
 				return err
 			}
 		}
 	}
-	data, err := historyLimitedGet(s.ctx, s.remote, metadata.SourceBundle.Key, int64(metadata.SourceBundle.CompressedBytes))
+	data, err := s.historyGet(metadata.SourceBundle.Key, int64(metadata.SourceBundle.CompressedBytes))
 	if err != nil {
 		return err
 	}
-	bundle, err := reader.DecodeReferencedSource(s.ctx, metadata, data, reader.Limits{})
+	bundle, err := s.decodeReferenced(metadata, data)
 	if err != nil {
 		return err
 	}
-	current, err := historyLimitedGet(s.ctx, s.remote, key, historyMetadataLimit)
+	current, err := s.historyGet(key, historyMetadataLimit)
 	if err != nil {
 		return err
 	}

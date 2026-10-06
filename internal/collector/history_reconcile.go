@@ -7,7 +7,6 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/state"
 )
 
@@ -275,11 +274,11 @@ func (s *sessionScan) addNativeRevision(planner *revisionPlanner, filtered archi
 			if ref.Source.CompressedBytes <= 0 || int64(ref.Source.CompressedBytes) > historyCompressedLimit {
 				return agentapi.Wrap(agentapi.Limit, errors.New("preserved revision exceeds read budget"))
 			}
-			data, err := historyLimitedGet(s.ctx, s.remote, ref.Source.Key, int64(ref.Source.CompressedBytes))
+			data, err := s.historyGet(ref.Source.Key, int64(ref.Source.CompressedBytes))
 			if err != nil {
 				return err
 			}
-			prior, err := reader.DecodeRevisionSource(s.ctx, metadata, id, data, reader.Limits{})
+			prior, err := s.decodeRevision(metadata, id, data)
 			if err != nil {
 				return err
 			}
@@ -309,7 +308,7 @@ func (s *sessionScan) addPendingRevision(planner *revisionPlanner) error {
 		if document.SourceBundle != pending.SourceReference() {
 			return errors.New("pending candidate reference disagrees")
 		}
-		bundle, err := reader.DecodeReferencedSource(s.ctx, document, pending.SourceBytes, reader.Limits{})
+		bundle, err := s.decodeReferenced(document, pending.SourceBytes)
 		if err != nil {
 			return err
 		}

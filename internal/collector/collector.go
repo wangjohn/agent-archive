@@ -409,6 +409,7 @@ func (p *pass) scan(reg archive.SessionRegistration) {
 		p.pending++
 	}
 	scan := newSessionScan(p.ctx, p.local, p.remote, reg, req, published, p.now, p.opts)
+	defer scan.releaseRetained()
 	outcome, err := scan.run()
 	for _, warning := range scan.warnings {
 		addError(p.result.Errors, id, warning)

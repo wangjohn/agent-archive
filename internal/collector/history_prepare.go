@@ -6,7 +6,6 @@ import (
 	"fmt"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
@@ -92,7 +91,7 @@ func (s *sessionScan) loadHistoryInput(identity archive.Metadata, input state.Hi
 	if err != nil {
 		return archive.SourceBundle{}, err
 	}
-	bundle, err := reader.DecodeReferencedSource(s.ctx, selected, data, reader.Limits{})
+	bundle, err := s.decodeReferenced(selected, data)
 	if err == nil && input.SourceSchemaVersion != 0 && bundle.SchemaVersion != input.SourceSchemaVersion {
 		return archive.SourceBundle{}, errors.New("frozen input source schema differs from retained bytes")
 	}
@@ -124,11 +123,11 @@ func replacePreparedReference(p *state.PendingPublication, metadata *archive.Met
 // removed from Sources. Remote recovery must later pass exact input decoding.
 func (s *sessionScan) readRetainedInputBytes(ref archive.SourceReference) ([]byte, error) {
 	stage := state.PendingSource{Reference: ref, Name: ref.SHA256 + ".gz"}
-	data, err := s.local.ReadPendingSource(s.id(), stage)
+	data, err := s.historyStage(stage)
 	if err == nil {
 		return data, nil
 	}
-	return historyLimitedGet(s.ctx, s.remote, ref.Key, int64(ref.CompressedBytes))
+	return s.historyGet(ref.Key, int64(ref.CompressedBytes))
 }
 
 func (s *sessionScan) derivePreparedHistory(p *state.PendingPublication, metadata archive.Metadata) error {

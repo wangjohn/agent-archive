@@ -88,8 +88,10 @@ type sessionScan struct {
 	// publishes the retained snapshot filtered again in its place (see
 	// refilter.go); once that is published, the rewrite is recorded as the
 	// gap it is, with this candidate cached as the state it was reached at.
-	revisions *revisionPlan
-	rewritten *archive.SourceBundle
+	retainedBudget   *agentapi.NativeReadBudget
+	retainedReleases []func()
+	revisions        *revisionPlan
+	rewritten        *archive.SourceBundle
 }
 
 // filteredSource is a source read and filtered once in a scan.

@@ -30,7 +30,7 @@ func (s *sessionScan) checkFrozenHistoryMetadata(p state.PendingPublication) (bo
 	if _, err := s.frozenHistoryMetadata(p); err != nil {
 		return false, err
 	}
-	raw, err := historyLimitedGet(s.ctx, s.remote, p.MetadataKey, historyMetadataLimit)
+	raw, err := s.historyGet(p.MetadataKey, historyMetadataLimit)
 	if errors.Is(err, storage.ErrNotFound) {
 		if p.History.ExpectedMetadataSHA256 == "" {
 			return false, nil
@@ -71,10 +71,10 @@ func (s *sessionScan) recoverHistoryStages(p state.PendingPublication) error {
 		return err
 	}
 	for _, stage := range p.History.Sources {
-		if _, err := s.local.ReadPendingSource(s.id(), stage); err == nil {
+		if _, err := s.historyStage(stage); err == nil {
 			continue
 		}
-		raw, err := historyLimitedGet(s.ctx, s.remote, stage.Reference.Key, int64(stage.Reference.CompressedBytes))
+		raw, err := s.historyGet(stage.Reference.Key, int64(stage.Reference.CompressedBytes))
 		if err != nil {
 			return fmt.Errorf("recover frozen revision source: %w", err)
 		}
@@ -127,7 +127,7 @@ func (s *sessionScan) verifyHistoryReadback(p state.PendingPublication) error {
 	if _, err := s.frozenHistoryMetadata(p); err != nil {
 		return err
 	}
-	raw, err := historyLimitedGet(s.ctx, s.remote, p.MetadataKey, historyMetadataLimit)
+	raw, err := s.historyGet(p.MetadataKey, historyMetadataLimit)
 	if err != nil {
 		return err
 	}
@@ -141,7 +141,7 @@ func (s *sessionScan) verifyHistoryReadback(p state.PendingPublication) error {
 	if err := s.verifyHistoryReferences(p, metadata); err != nil {
 		return err
 	}
-	current, err := historyLimitedGet(s.ctx, s.remote, p.MetadataKey, historyMetadataLimit)
+	current, err := s.historyGet(p.MetadataKey, historyMetadataLimit)
 	if err != nil {
 		return err
 	}
@@ -204,7 +204,7 @@ func (s *sessionScan) verifyHistoryReferences(p state.PendingPublication, metada
 		return err
 	}
 	for _, ref := range refs {
-		data, err := historyLimitedGet(s.ctx, s.remote, ref.Key, int64(ref.CompressedBytes))
+		data, err := s.historyGet(ref.Key, int64(ref.CompressedBytes))
 		if err != nil {
 			return err
 		}
