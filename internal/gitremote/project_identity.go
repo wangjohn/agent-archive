@@ -133,7 +133,7 @@ func projectDependencies(ctx context.Context, root string) ([]sourcefacts.Reposi
 		}
 		paths[filepath.Clean(path)] = true
 	}
-	if !includeDependencies(bounded, root, paths) {
+	if !topLevelConfigDependencies(bounded, root, paths) || !includeDependencies(bounded, root, paths) {
 		return nil, false
 	}
 	for i := 0; i < len(parts); i += 2 {
@@ -191,6 +191,24 @@ func includeDependencies(ctx context.Context, root string, paths map[string]bool
 			}
 			if !filepath.IsAbs(path) {
 				path = filepath.Join(filepath.Dir(origin), path)
+			}
+			paths[filepath.Clean(path)] = true
+		}
+	}
+	return true
+}
+
+// Git reports all candidate top-level config paths, including absent files.
+// Origins from --list alone omit absent/empty global and system configuration.
+func topLevelConfigDependencies(ctx context.Context, root string, paths map[string]bool) bool {
+	for _, variable := range []string{"GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM"} {
+		raw, err := ExecRunner(ctx, root, "-C", root, "var", variable)
+		if err != nil || ctx.Err() != nil {
+			return false
+		}
+		for path := range strings.SplitSeq(strings.TrimSuffix(string(raw), "\n"), "\n") {
+			if !filepath.IsAbs(path) || strings.ContainsAny(path, "\x00\r\n") {
+				return false
 			}
 			paths[filepath.Clean(path)] = true
 		}

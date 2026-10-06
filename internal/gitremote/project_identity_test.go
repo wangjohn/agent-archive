@@ -3,6 +3,7 @@ package gitremote
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"os"
 	"path/filepath"
@@ -137,5 +138,43 @@ func TestProjectIdentityTracksScratchAncestor(t *testing.T) {
 	}
 	if ProjectIdentityCurrent(id) {
 		t.Fatal("scratch gained a Git ancestor without invalidating known absence")
+	}
+}
+
+// A newly created top-level config can change origin even when it contributed
+// no keys to Git's original --show-origin inventory.
+func TestProjectIdentityTracksAbsentGlobalConfiguration(t *testing.T) {
+	for _, path := range []string{".gitconfig", ".config/git/config"} {
+		for _, empty := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/empty=%v", path, empty), func(t *testing.T) {
+				git := gitOrSkip(t)
+				home := t.TempDir()
+				t.Setenv("HOME", home)
+				t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+				configPath := filepath.Join(home, path)
+				if err := os.MkdirAll(filepath.Dir(configPath), 0700); err != nil {
+					t.Fatal(err)
+				}
+				if empty {
+					if err := os.WriteFile(configPath, nil, 0600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				root := initRepo(t, git, "")
+				id := ProjectIdentity(t.Context(), root)
+				if !id.Known || id.Key != "" || !ProjectIdentityCurrent(id) {
+					t.Fatalf("initial identity unavailable: %+v", id)
+				}
+				if err := os.WriteFile(configPath, []byte("[remote \"origin\"]\n url = https://example.test/acme/new\n"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				if ProjectIdentityCurrent(id) {
+					t.Fatal("new global configuration did not invalidate known absence")
+				}
+				if changed := ProjectIdentity(t.Context(), root); !changed.Known || changed.Key != archive.RepoKey("https://example.test/acme/new") {
+					t.Fatalf("changed identity: %+v", changed)
+				}
+			})
+		}
 	}
 }
