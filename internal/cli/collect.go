@@ -19,6 +19,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/gitremote"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/retention"
+	"github.com/wangjohn/agent-archive/internal/rolloutcatalog"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -184,8 +185,22 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 	if previous, err := localStore.LoadStatus(); err == nil {
 		previousScanAt = previous.LastScanAt
 	}
+	// Approved discovery homes authorize bounded metadata observation only.
+	// Ordinary capture leaves this pass-local catalog unopened. Pending diagnostics
+	// disallow transcript prefix reads; duplicate proofs remain unavailable here.
+	var pendingCatalog *rolloutcatalog.Catalog
+	pendingRollouts := func() agentapi.CodexRolloutLookup {
+		if cfg.Discovery == nil || !cfg.Discovery.Enabled || len(cfg.Discovery.CodexHomes) == 0 {
+			return nil
+		}
+		if pendingCatalog == nil {
+			pendingCatalog = rolloutcatalog.New(cfg.Discovery.CodexHomes, rolloutcatalog.Limits{PrefixBytes: 1})
+		}
+		return pendingCatalog
+	}
 	result, err := collector.Run(ctx, localStore, objectStore, collector.Options{
 		SkipSessionIndexRecovery: true,
+		PendingCodexRollouts:     pendingRollouts,
 		Parsers:                  parsersFor(env),
 		Sources:                  registryFor(env),
 		Decoders:                 env.agentRegistry(),

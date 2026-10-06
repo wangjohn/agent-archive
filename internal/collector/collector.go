@@ -35,6 +35,9 @@ import (
 type Options struct {
 	// CodexRollouts is one caller-owned bounded locator view shared by the pass.
 	CodexRollouts agentapi.CodexRolloutLookup
+	// PendingCodexRollouts observes locator evidence only after a history fence.
+	// The caller shares one lazy catalog; it must not grant publication authority.
+	PendingCodexRollouts func() agentapi.CodexRolloutLookup
 	// SkipSessionIndexRecovery is set after the CLI has already attempted its
 	// bounded local recovery stage. Direct collector callers recover once.
 	SkipSessionIndexRecovery bool

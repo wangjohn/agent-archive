@@ -74,6 +74,27 @@ func sourceFailure(kind agentapi.FailureKind, message string) error {
 }
 
 func (p *relatedSourcePass) open(ctx context.Context, ref agentapi.SourceRef) (*rolloutFile, error) {
+	return p.openWith(ctx, ref, p.env.Files, p.env.Policy)
+}
+
+// openRelated uses each catalog dependency's independently approved native root.
+// The seed remains governed by the caller's original admission read policy.
+func (p *relatedSourcePass) openRelated(ctx context.Context, ref agentapi.SourceRef) (*rolloutFile, error) {
+	if rooted, ok := p.env.CodexRollouts.(interface{ Files() transcriptio.Opener }); ok {
+		files := rooted.Files()
+		// A cached seed does not bypass a dependency's independent root authority.
+		if _, err := files.Lstat(ref.Path); err != nil {
+			return nil, sourceio.Classify(err)
+		}
+		if _, err := files.EvalSymlinks(ref.Path); err != nil {
+			return nil, sourceio.Classify(err)
+		}
+		return p.openWith(ctx, ref, files, transcriptio.OpenPolicy{RejectSymlinks: true})
+	}
+	return p.open(ctx, ref)
+}
+
+func (p *relatedSourcePass) openWith(ctx context.Context, ref agentapi.SourceRef, files transcriptio.Opener, policy transcriptio.OpenPolicy) (*rolloutFile, error) {
 	if p.closed {
 		return nil, agentapi.ErrClosed
 	}
@@ -102,7 +123,7 @@ func (p *relatedSourcePass) open(ctx context.Context, ref agentapi.SourceRef) (*
 	if len(p.files) >= archive.MaxHistorySpans {
 		return nil, sourceFailure(agentapi.Limit, "shared rollout file limit")
 	}
-	f, err := transcriptio.Open(p.env.Files, ref.Path, p.env.Policy)
+	f, err := transcriptio.Open(files, ref.Path, policy)
 	if err != nil {
 		return nil, sourceio.Classify(err)
 	}
@@ -202,7 +223,7 @@ func (p *relatedSourcePass) selectSource(ctx context.Context, ref agentapi.Sourc
 	selected := sourceSelection{leaf: seed, thread: seed.identity.ThreadID, headers: []*rolloutFile{seed}}
 	if p.env.CodexRollouts == nil {
 		if seed.identity.RolloutID != seed.identity.ThreadID || seed.identity.HistoryBase != nil {
-			return selected, sourceFailure(agentapi.Unavailable, "current rollout evidence unavailable")
+			return selected, errors.Join(sourceFailure(agentapi.Unavailable, "current rollout evidence unavailable"), archive.ErrRelatedHistory)
 		}
 		return selected, nil
 	}
@@ -220,7 +241,7 @@ func (p *relatedSourcePass) selectSource(ctx context.Context, ref agentapi.Sourc
 	}
 	selected.set = set
 	if set.Current != nil {
-		current, e := p.open(ctx, *set.Current)
+		current, e := p.openRelated(ctx, *set.Current)
 		if e != nil {
 			return selected, e
 		}
@@ -242,7 +263,7 @@ func (p *relatedSourcePass) selectLineage(ctx context.Context, selected sourceSe
 	candidates := map[string]*rolloutFile{}
 	bases := map[string]bool{}
 	for _, candidate := range set.Candidates {
-		f, e := p.open(ctx, candidate)
+		f, e := p.openRelated(ctx, candidate)
 		if e != nil {
 			return selected, e
 		}
@@ -322,7 +343,7 @@ func (p *relatedSourcePass) graph(ctx context.Context, leaf *rolloutFile) ([]phy
 			break
 		}
 		if p.env.CodexRollouts == nil {
-			return nil, sourceFailure(agentapi.Unavailable, "history dependency unavailable")
+			return nil, errors.Join(sourceFailure(agentapi.Unavailable, "history dependency unavailable"), archive.ErrRelatedHistory)
 		}
 		refs, err := p.env.CodexRollouts.Rollout(ctx, id.HistoryBase.RolloutID)
 		if err != nil {
@@ -331,7 +352,7 @@ func (p *relatedSourcePass) graph(ctx context.Context, leaf *rolloutFile) ([]phy
 		if len(refs) != 1 {
 			return nil, sourceFailure(agentapi.Unavailable, "history dependency missing or ambiguous")
 		}
-		base, err := p.open(ctx, refs[0])
+		base, err := p.openRelated(ctx, refs[0])
 		if err != nil {
 			return nil, err
 		}

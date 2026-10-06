@@ -11,6 +11,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/cursorstore"
+	"github.com/wangjohn/agent-archive/internal/rolloutcatalog"
 	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 	"github.com/wangjohn/agent-archive/internal/sourceio"
 	"github.com/wangjohn/agent-archive/internal/state"
@@ -87,7 +88,7 @@ func newSourceReader(reg archive.SessionRegistration, opts Options) (sourceReade
 	return providerReader{
 		ref: sourceRef(reg), harness: reg.Harness.Name, startedAt: reg.SessionStartedAt,
 		subagentMetadata: reg.ParentSessionID != "", sources: opts.Sources,
-		passes: opts.sourcePasses, database: opts.CursorDatabase, rollouts: opts.CodexRollouts,
+		passes: opts.sourcePasses, database: opts.CursorDatabase, rollouts: opts.CodexRollouts, pendingRollouts: opts.PendingCodexRollouts,
 		discovery: discoveryRegistration(reg),
 	}, true
 }
@@ -95,6 +96,7 @@ func newSourceReader(reg archive.SessionRegistration, opts Options) (sourceReade
 // providerReader keeps only read dependencies; boxing whole registrations and
 // collector options would allocate their unrelated policy fields per source.
 type providerReader struct {
+	pendingRollouts  func() agentapi.CodexRolloutLookup
 	rollouts         agentapi.CodexRolloutLookup
 	ref              agentapi.SourceRef
 	harness          string
@@ -177,7 +179,7 @@ func (r providerReader) Signature(ctx context.Context) (out sourceState, err err
 		// A stat-only provider signature would skip component symlink checks.
 		snap, readErr := p.Read(ctx, r.ref, agentapi.ReadLimits{})
 		if readErr != nil {
-			return out, translateSourceError(readErr)
+			return out, translateSourceError(r.observePendingHistory(ctx, readErr))
 		}
 		defer func() { err = errors.Join(err, snap.Close()) }()
 		file := snap.Input().File
@@ -194,7 +196,7 @@ func (r providerReader) Signature(ctx context.Context) (out sourceState, err err
 	if err == nil {
 		err = r.validateObservation(provider, o)
 	}
-	return observe(r.ref.Kind, o), err
+	return observe(r.ref.Kind, o), r.observePendingHistory(ctx, err)
 }
 
 func (r providerReader) Filter(ctx context.Context, adapter archive.Adapter, maxBytes int64) (out archive.FilteredTranscript, observed sourceState, err error) {
@@ -220,7 +222,7 @@ func (r providerReader) Filter(ctx context.Context, adapter archive.Adapter, max
 			}
 			observed = observe(r.ref.Kind, o)
 		}
-		return out, observed, translateSourceError(err)
+		return out, observed, translateSourceError(r.observePendingHistory(ctx, err))
 	}
 	defer func() { err = errors.Join(err, snap.Close()) }()
 	observed = observe(r.ref.Kind, snap.Observation())
@@ -238,9 +240,36 @@ func (r providerReader) Filter(ctx context.Context, adapter archive.Adapter, max
 	}
 	out, err = f.Filter(ctx, in, agentapi.FilterContext{Filename: filepath.Base(r.ref.Path), StartedAt: r.startedAt, Limits: limits})
 	if err != nil {
-		return out, observed, translateSourceError(err)
+		return out, observed, translateSourceError(r.observePendingHistory(ctx, err))
 	}
 	return out, observed, checkFilteredSize(out, maxBytes)
+}
+
+// observePendingHistory is a diagnostic-only route behind the existing fence.
+// It never supplies the catalog to the active capture pass or filters ancestors.
+func (r providerReader) observePendingHistory(ctx context.Context, original error) error {
+	if r.harness != "codex" || r.pendingRollouts == nil || !errors.Is(original, archive.ErrRelatedHistory) {
+		return original
+	}
+	lookup := r.pendingRollouts()
+	if lookup == nil {
+		return original
+	}
+	bounded, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+	defer cancel()
+	refs, err := lookup.Rollout(bounded, sourcefacts.RolloutID(r.ref.Path))
+	if err != nil {
+		return errors.Join(original, errors.New("pending Codex history: locator evidence unavailable"))
+	}
+	detail := fmt.Sprintf("%d candidate rollout locators", len(refs))
+	if observed, ok := lookup.(interface {
+		Counters() rolloutcatalog.Counters
+		Issues() map[string]int
+	}); ok {
+		counts := observed.Counters()
+		detail += fmt.Sprintf("; %d bounded headers observed; %d catalog uncertainty reasons", counts.Headers, len(observed.Issues()))
+	}
+	return errors.Join(original, fmt.Errorf("pending Codex history: %s; history writes remain disabled", detail))
 }
 
 func (r providerReader) validateObservation(provider agentapi.SourceProvider, o agentapi.SourceObservation) error {
