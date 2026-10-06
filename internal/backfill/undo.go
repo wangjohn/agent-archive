@@ -2,6 +2,7 @@ package backfill
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
@@ -276,7 +277,7 @@ func loadUndoSessions(env Environment, store *state.Store, cfg config.Config, b 
 			parents = append(parents, s)
 		}
 	}
-	return slices.Concat(children, parents), nil
+	return orderUndoChildrenFirst(slices.Concat(children, parents))
 }
 
 // undoAppsToRemove is the configuration decision after session selection.
@@ -632,7 +633,7 @@ type UndoCounts struct {
 func (p UndoPlan) Counts() UndoCounts {
 	var c UndoCounts
 	for _, s := range p.Sessions {
-		parent := s.Registration.ParentSessionID == ""
+		parent := !s.Registration.IsChild()
 		if parent {
 			c.Sessions++
 			if s.Resumed {
@@ -1035,4 +1036,53 @@ func themIt(n int) string {
 		return "it"
 	}
 	return "them"
+}
+
+// Delete descendants before selected ancestors. Only exact batch membership
+// supplied by selection participates; external parents are never pulled in.
+func orderUndoChildrenFirst(sessions []UndoSession) ([]UndoSession, error) {
+	index := make(map[string]int, len(sessions))
+	for i, s := range sessions {
+		index[s.Registration.ArchiveSessionID] = i
+	}
+	depth := map[string]int{}
+	visiting := map[string]bool{}
+	var walk func(string, int) (int, error)
+	walk = func(id string, level int) (int, error) {
+		if level > 64 || visiting[id] {
+			return 0, errors.New("invalid nested child relationship")
+		}
+		if d, ok := depth[id]; ok {
+			return d, nil
+		}
+		i, found := index[id]
+		if !found {
+			return 0, nil
+		}
+		visiting[id] = true
+		reg := sessions[i].Registration
+		d := 0
+		if reg.IsChild() {
+			d = 1
+		}
+		if _, found := index[reg.ParentSessionID]; found {
+			parent, err := walk(reg.ParentSessionID, level+1)
+			if err != nil {
+				return 0, err
+			}
+			d = parent + 1
+		}
+		delete(visiting, id)
+		depth[id] = d
+		return d, nil
+	}
+	for id := range index {
+		if _, err := walk(id, 0); err != nil {
+			return nil, err
+		}
+	}
+	slices.SortStableFunc(sessions, func(a, b UndoSession) int {
+		return depth[b.Registration.ArchiveSessionID] - depth[a.Registration.ArchiveSessionID]
+	})
+	return sessions, nil
 }

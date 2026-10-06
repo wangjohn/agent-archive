@@ -36,6 +36,7 @@ var CaptureGapCodes = []string{
 	"cursor_tool_argument_omitted",
 	// Supplemental evidence, filtered by FilterSupplementalEvidence.
 	"subagent_final_not_reconciled",
+	"native_parent_link_pending",
 	"supplemental_evidence_omitted",
 	// Capture-gap evidence recorded outside the filter: the collector's
 	// rewritten Cursor database chat, the hook's unidentifiable subagent, and

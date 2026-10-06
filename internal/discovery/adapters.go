@@ -39,6 +39,9 @@ type Candidate struct {
 	ProducerSource     string
 	FormatProfile      sourcefacts.CodexProfile
 	Execution          string
+	NativeChild        bool
+	RootNativeID       string
+	OwnStart           *uint64
 	ParentNativeID     string
 	ForkNativeID       string
 }
@@ -166,8 +169,18 @@ func (a codexAdapter) Inspect(ctx context.Context, source SourceDescriptor) Obse
 
 func candidateFromHeader(h sourcefacts.Header, source SourceDescriptor) Candidate {
 	var producerSource string
-	_ = json.Unmarshal(h.Meta.Source, &producerSource)
-	return Candidate{Agent: "codex", NativeSessionID: h.Meta.ID, Source: source, StartedAt: h.Started, FirstTaskAt: h.FirstTaskAt, StartEvidence: "native_start", WorkingDirectory: h.Meta.Cwd, HarnessVersion: h.Meta.Version, ProducerOriginator: h.Meta.Originator, ProducerSource: producerSource, FormatProfile: h.Profile, Execution: "native"}
+	if json.Unmarshal(h.Meta.Source, &producerSource) != nil {
+		producerSource = string(h.Meta.Source)
+	}
+	c := Candidate{Agent: "codex", NativeSessionID: h.Meta.ID, Source: source, StartedAt: h.Started, FirstTaskAt: h.FirstTaskAt, StartEvidence: "native_start", WorkingDirectory: h.Meta.Cwd, HarnessVersion: h.Meta.Version, ProducerOriginator: h.Meta.Originator, ProducerSource: producerSource, FormatProfile: h.Profile, Execution: "native"}
+	if h.Identity != nil {
+		c.NativeChild = h.Identity.Child
+		c.RootNativeID = h.Identity.RootID
+		c.ParentNativeID = h.Identity.ParentID
+		c.ForkNativeID = h.Identity.ForkID
+		c.OwnStart = h.Identity.SubagentOrdinal
+	}
+	return c
 }
 
 func (codexAdapter) PriorityDirectories(now time.Time) []string {
@@ -187,5 +200,8 @@ func (a codexAdapter) Supported(c Candidate) bool {
 		supported = sourcefacts.SupportedCodexProducer
 	}
 	source, _ := json.Marshal(c.ProducerSource)
+	if strings.HasPrefix(c.ProducerSource, "{") {
+		source = json.RawMessage(c.ProducerSource)
+	}
 	return supported(sourcefacts.CodexMeta{Version: c.HarnessVersion, Originator: c.ProducerOriginator, Source: source})
 }

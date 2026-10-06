@@ -1,6 +1,9 @@
 package agentapi
 
-import "time"
+import (
+	"github.com/wangjohn/agent-archive/internal/codexmeta"
+	"time"
+)
 
 // DiscoveryPurpose separates compatibility import headers from verified native selection.
 type DiscoveryPurpose uint8
@@ -16,6 +19,8 @@ const (
 
 // NativeHeader contains only inspected native identity and checkout evidence.
 type NativeHeader struct {
+	// CodexIdentity records native relationships independently of capture permission.
+	CodexIdentity    *codexmeta.CodexIdentity
 	NativeID         string
 	Directory        string
 	StartedAt        time.Time

@@ -134,6 +134,11 @@ const (
 type Candidate struct {
 	Harness         string
 	NativeSessionID string
+	// NativeChild and native relationship IDs describe Codex ownership, not admission.
+	NativeChild    bool
+	ParentNativeID string
+	RootNativeID   string
+	NativeHome     string
 	// TranscriptPath is the session's transcript file. A Cursor chat found
 	// only in Cursor's database has none: its SourceKind is
 	// archive.SourceKindCursorSQLite and SourceKey its chat ID.

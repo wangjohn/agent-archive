@@ -23,7 +23,7 @@ func TestNativeHeaderUnderstandsRelatedIdentitiesWithoutAdmittingCapture(t *test
 		data := []byte(`{"type":"session_meta","payload":{"id":"` + id + `","cwd":"/synthetic/project"` + tc.fields + `}}`)
 		for _, purpose := range []agentapi.DiscoveryPurpose{agentapi.DiscoveryImport, agentapi.DiscoveryHandoff} {
 			h, err := (NativeHeaders{}).InspectHeader(agentapi.NativeHeaderRequest{Purpose: purpose, Path: "rollout-" + tc.rollout + ".jsonl", Scan: func(visit func([]byte) bool) error { visit(data); return nil }})
-			if err != nil || h.IdentityMismatch || h.NativeID != id || h.CapturePending != tc.want {
+			if err != nil || h.IdentityMismatch || h.NativeID != id || h.CapturePending != expectedHeaderPending(tc.want, purpose) {
 				t.Fatalf("header=%+v err=%v", h, err)
 			}
 			if purpose == agentapi.DiscoveryHandoff && tc.want == "child_history_pending" && !h.SubagentOnly {
@@ -31,4 +31,11 @@ func TestNativeHeaderUnderstandsRelatedIdentitiesWithoutAdmittingCapture(t *test
 			}
 		}
 	}
+}
+
+func expectedHeaderPending(want string, purpose agentapi.DiscoveryPurpose) string {
+	if want == "child_history_pending" && purpose == agentapi.DiscoveryImport {
+		return ""
+	}
+	return want
 }

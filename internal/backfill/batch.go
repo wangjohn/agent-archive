@@ -121,7 +121,7 @@ func (b *Batch) Reconcile(store *state.Store) error {
 		if !reg.InBatch(b.ID) {
 			continue
 		}
-		if reg.ParentSessionID != "" {
+		if reg.IsChild() {
 			b.Subagents = addUnique(b.Subagents, reg.ArchiveSessionID)
 		} else {
 			b.Sessions = addUnique(b.Sessions, reg.ArchiveSessionID)

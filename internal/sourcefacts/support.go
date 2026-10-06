@@ -20,7 +20,7 @@ const (
 // ReadCodexHeader first-task validation, identity and original-creation consent.
 // Unknown additive fields are tolerated; unknown history/source forms are not.
 func CodexFormatProfile(m CodexMeta) CodexProfile {
-	if m.Classification() != "native_format" {
+	if m.FormatOutcome() != "native_format" {
 		return ""
 	}
 	switch m.HistoryMode {

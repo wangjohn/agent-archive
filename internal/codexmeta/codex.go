@@ -146,10 +146,20 @@ func (m CodexMeta) Classification() Outcome {
 	if facts.HistoryBase != nil {
 		return RelatedHistoryPending
 	}
+	return m.FormatOutcome()
+}
+
+// FormatOutcome validates a native execution format independently of relationships
+// and consent. Complete readers still validate all physical dependencies.
+func (m CodexMeta) FormatOutcome() Outcome {
+	facts, outcome := m.Relationships()
+	if outcome != "" {
+		return outcome
+	}
 	if present(m.ThreadSource) {
 		var thread string
 		_ = json.Unmarshal(m.ThreadSource, &thread)
-		if thread != "user" {
+		if thread != "user" && !(thread == "subagent" && facts.Child) {
 			return UnsupportedExecution
 		}
 	}
@@ -183,7 +193,31 @@ func ValidCodexVersion(version string) bool {
 // it does not establish local originating execution or producer support.
 func (m CodexMeta) LocalExecutionSource() bool {
 	var source string
-	return json.Unmarshal(m.Source, &source) == nil && ValidCodexExecutionSource(source)
+	if json.Unmarshal(m.Source, &source) == nil {
+		return ValidCodexExecutionSource(source)
+	}
+	facts, outcome := m.Relationships()
+	if outcome != "" || !facts.Child {
+		return false
+	}
+	var object map[string]json.RawMessage
+	if json.Unmarshal(m.Source, &object) != nil {
+		return false
+	}
+	sub, ok := object["subagent"]
+	if !ok {
+		return false
+	}
+	var kind codexSubagentKind
+	if json.Unmarshal(sub, &kind) == nil {
+		return kind == subagentReview || kind == subagentCompact || kind == subagentMemory
+	}
+	var child map[string]json.RawMessage
+	if json.Unmarshal(sub, &child) != nil {
+		return false
+	}
+	_, ok = child["thread_spawn"]
+	return ok
 }
 
 // ValidCodexExecutionSource recognizes supported local source format tags.

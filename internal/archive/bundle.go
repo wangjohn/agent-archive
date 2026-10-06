@@ -85,6 +85,9 @@ func NewSourceBundle(reg SessionRegistration, adapter Adapter, transcript Filter
 			}
 		}
 	}
+	if reg.NativeChild && reg.ParentSessionID == "" {
+		allGaps = append(allGaps, CaptureGap{Code: "native_parent_link_pending", Detail: "Native child captured independently; parent archive link is unresolved"})
+	}
 	schema := SourceSchemaVersion
 	if transcript.History != nil {
 		schema = HistorySourceSchemaVersion
@@ -102,7 +105,7 @@ func NewSourceBundle(reg SessionRegistration, adapter Adapter, transcript Filter
 			FilterVersion: FilterVersion, CapturedAt: capturedAt.UTC(), Gaps: allGaps,
 		},
 		NativeRecords: records, NativeText: nativeText, SupplementalEvidence: filteredSupplemental,
-		PreviousGenerationID: reg.PreviousGenerationID, ParentSessionID: reg.ParentSessionID, LinkedSessions: deriveLinkedSessions(filteredSupplemental),
+		PreviousGenerationID: reg.PreviousGenerationID, NativeChild: reg.NativeChild, ParentSessionID: reg.ParentSessionID, LinkedSessions: deriveLinkedSessions(filteredSupplemental),
 	}, nil
 }
 

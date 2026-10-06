@@ -260,6 +260,16 @@ func preparePlanWork(ctx context.Context, env Environment, cfg config.Config, fi
 	unread, err = enumerateDiscovery(ctx, env, agentapi.DiscoveryImport, func(c agentapi.DiscoveryCandidate) error {
 		t := &transcript{harness: harness(c.Session.Agent), path: c.Source.Path, size: c.Bytes, nativeID: c.Session.NativeID, cwd: c.Header.Directory, metaStart: c.Header.StartedAt, identityMismatch: c.Header.IdentityMismatch, capturePending: c.Header.CapturePending != "", cursorSlug: c.WorkspaceKey, sourcePriority: c.SourcePriority}
 		w := &work{t: t, c: Candidate{Harness: string(c.Session.Agent), TranscriptPath: t.path, SourceKind: c.Source.Kind, SourceKey: c.Source.Key, Bytes: t.size, NativeSessionID: t.nativeID}, unsafe: c.IdentityError != nil}
+		if identity := c.Header.CodexIdentity; identity != nil {
+			w.c.NativeChild = identity.Child
+			w.c.ParentNativeID = identity.ParentID
+			w.c.RootNativeID = identity.RootID
+			w.c.NativeHome = c.Root
+			if base := filepath.Base(c.Root); base == "sessions" || base == "archived_sessions" {
+				w.c.NativeHome = filepath.Dir(c.Root)
+			}
+			w.c.SourceKey = identity.ThreadID
+		}
 		items = append(items, w)
 		return nil
 	})

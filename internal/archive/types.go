@@ -354,11 +354,15 @@ type SessionRegistration struct {
 	LastHead *GitHead `json:"last_head,omitempty"`
 	// LastHeadSeenAt fences delayed stop observations without changing the
 	// first-seen time published in LastHead. Local only; absent on older state.
-	LastHeadSeenAt        *time.Time `json:"last_head_seen_at,omitempty"`
-	ParentSessionID       string     `json:"parent_session_id,omitempty"`
-	ParentNativeSessionID string     `json:"parent_native_session_id,omitempty"`
-	SubagentID            string     `json:"subagent_id,omitempty"`
-	SubagentObservedAt    time.Time  `json:"subagent_observed_at,omitempty"`
+	LastHeadSeenAt *time.Time `json:"last_head_seen_at,omitempty"`
+	// NativeChild identifies independently admitted native Codex children, including unresolved links.
+	NativeChild           bool      `json:"native_child,omitempty"`
+	NativeRootSessionID   string    `json:"native_root_session_id,omitempty"`
+	NativeSourceHome      string    `json:"native_source_home,omitempty"`
+	ParentSessionID       string    `json:"parent_session_id,omitempty"`
+	ParentNativeSessionID string    `json:"parent_native_session_id,omitempty"`
+	SubagentID            string    `json:"subagent_id,omitempty"`
+	SubagentObservedAt    time.Time `json:"subagent_observed_at,omitempty"`
 	// AdmittedAt is when this machine took ownership of the session: the
 	// boundary for project activation and storage destination. Hooks set it at
 	// registration and backfill sets it to the import time. Empty on older
@@ -418,7 +422,13 @@ func (r SessionRegistration) Imported() bool {
 // Validate reports the first problem that makes the registration unusable:
 // a missing session ID, project, harness name, or start time, or source
 // fields (SourceKind, SourceKey, TranscriptPath) that do not fit together.
+// IsChild reports child ownership independently of whether the parent link resolved.
+func (r SessionRegistration) IsChild() bool { return r.NativeChild || r.ParentSessionID != "" }
+
 func (r SessionRegistration) Validate() error {
+	if r.NativeChild && (r.Harness.Name != "codex" || r.NativeSourceHome != "" && !filepath.IsAbs(r.NativeSourceHome)) {
+		return errors.New("invalid native child ownership")
+	}
 	if r.CodexBinding != nil {
 		if r.Harness.Name != "codex" || r.CodexBinding.NativeThreadID != r.NativeSessionID {
 			return errors.New("Codex binding requires matching Codex registration")
@@ -534,6 +544,7 @@ type SourceBundle struct {
 	NativeText           []TextTranscript         `json:"native_text,omitempty"`
 	SupplementalEvidence []SupplementalEvidence   `json:"supplemental_evidence,omitempty"`
 	PreviousGenerationID string                   `json:"previous_generation_id,omitempty"`
+	NativeChild          bool                     `json:"native_child,omitempty"`
 	ParentSessionID      string                   `json:"parent_session_id,omitempty"`
 	LinkedSessions       []LinkedSessionReference `json:"linked_sessions,omitempty"`
 }
@@ -785,6 +796,7 @@ type Metadata struct {
 	GitActivity     []GitEvent               `json:"git_activity,omitempty"`
 	CaptureGaps     []CaptureGap             `json:"capture_gaps,omitempty"`
 	SourceBundle    SourceReference          `json:"source_bundle"`
+	NativeChild     bool                     `json:"native_child,omitempty"`
 	ParentSessionID string                   `json:"parent_session_id,omitempty"`
 	LinkedSessions  []LinkedSessionReference `json:"linked_sessions,omitempty"`
 	// Origin, ImportedAt, and StartedAtSource describe a session backfill

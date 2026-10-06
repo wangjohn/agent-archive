@@ -247,6 +247,9 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	if err := p.loadWork(); err != nil {
 		return Result{}, err
 	}
+	if err := p.reconcileNativeLinks(); err != nil {
+		return Result{}, err
+	}
 	p.repairListingIndex()
 	orderOldestRequestsFirst(p.registrations, p.requests)
 	closeCursorPass := openCursorPass(p.registrations, &p.opts)

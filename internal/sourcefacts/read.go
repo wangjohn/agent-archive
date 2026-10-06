@@ -129,11 +129,31 @@ func ReadCodexHeader(reader io.Reader, path string) (h Header) {
 				h.Identity = &identity
 				h.NativeCreatedAt = start
 			}
-			if outcome := meta.CaptureOutcome(path); outcome != "native_format" {
+			if identityOutcome != "" {
+				h.Outcome = string(identityOutcome)
+				return h
+			}
+			h.Profile = CodexFormatProfile(meta)
+			if outcome := meta.FormatOutcome(); outcome != "native_format" {
 				h.Outcome = string(outcome)
 				return h
 			}
 			continue
+		}
+		// Raw physical ordinals include every record, even records privacy later drops.
+		// An absent boundary excludes nothing; explicit zero is preserved.
+		if h.Identity != nil {
+			own := h.Identity.SubagentOrdinal
+			if fork := h.Identity.ForkOrdinal; fork != nil && (own == nil || *fork > *own) {
+				own = fork
+			}
+			if own != nil && uint64(i) < *own {
+				continue
+			}
+			if h.Identity.HistoryBase != nil || h.Identity.RolloutID != h.Identity.ThreadID {
+				h.Outcome = "related_history_pending"
+				return h
+			}
 		}
 		if seen, native := NativeFirstTask(line); seen {
 			h.FirstTaskAt = FirstTaskAt(line)
@@ -141,7 +161,6 @@ func ReadCodexHeader(reader io.Reader, path string) (h Header) {
 				h.Outcome = "inherited_history"
 			} else {
 				h.Outcome = "native_format"
-				h.Profile = CodexFormatProfile(h.Meta)
 			}
 			return h
 		}
@@ -151,21 +170,19 @@ func ReadCodexHeader(reader io.Reader, path string) (h Header) {
 
 func safeMeta(m CodexMeta) CodexMeta {
 	var source string
-	if json.Unmarshal(m.Source, &source) == nil && m.LocalExecutionSource() {
-		m.Source, _ = json.Marshal(source)
+	if m.LocalExecutionSource() {
+		if json.Unmarshal(m.Source, &source) != nil {
+			var v any
+			_ = json.Unmarshal(m.Source, &v)
+			m.Source, _ = json.Marshal(v)
+		} else {
+			m.Source, _ = json.Marshal(source)
+		}
 	} else {
 		m.Source = nil
 	}
-	flag := func(raw json.RawMessage) json.RawMessage {
-		if present(raw) {
-			return json.RawMessage("true")
-		}
-		return nil
-	}
-	m.ForkedFrom = flag(m.ForkedFrom)
-	m.ForkOrdinal = flag(m.ForkOrdinal)
-	m.Parent = flag(m.Parent)
-	m.HistoryBase = flag(m.HistoryBase)
-	m.SubagentOrdinal = flag(m.SubagentOrdinal)
+	// Relationships live in the separately validated typed identity. Format
+	// projections must not substitute booleans for native relationship fields.
+	m.ForkedFrom, m.ForkOrdinal, m.Parent, m.HistoryBase, m.SubagentOrdinal = nil, nil, nil, nil, nil
 	return m
 }

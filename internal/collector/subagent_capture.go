@@ -361,7 +361,9 @@ func CheckImportedSubagent(filtered archive.FilteredTranscript, parentNativeSess
 // validateSubagentTranscript is called before registration and on every later
 // scan, judged at now, because the hook-provided path is mutable local state.
 func validateSubagentTranscript(reg archive.SessionRegistration, filtered archive.FilteredTranscript, now time.Time) error {
-	if reg.ParentSessionID == "" {
+	if reg.NativeChild || reg.ParentSessionID == "" {
+		// Native providers validate their own stable identity, source snapshot and ownership.
+		// They remain capturable while running and have no synthetic stop bound.
 		return nil
 	}
 	err := checkSubagentProvenance(filtered, reg.ParentNativeSessionID, reg.SubagentID, reg.SessionStartedAt, subagentEndBound(filtered, reg.SubagentObservedAt, now))
@@ -486,6 +488,9 @@ func announceSubagent(local *state.Store, reg archive.SessionRegistration, child
 		return nil
 	}
 	evidence, err := archive.NewLinkedSessionEvidence(reg.ArchiveSessionID, archive.LinkedSessionPublished, publishedAt)
+	if reg.NativeChild {
+		evidence.Provenance = "native:relationship"
+	}
 	if err != nil {
 		return err
 	}

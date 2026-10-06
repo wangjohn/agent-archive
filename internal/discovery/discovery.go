@@ -28,7 +28,7 @@ const (
 	// HeaderProbes caps metadata reads in one pass.
 	HeaderProbes = 256
 	// Reprobe older cached observations so they acquire explicit format profiles.
-	catalogVersion = 5
+	catalogVersion = 6
 	maxCatalog     = 8192
 	maxDirectories = 4096
 	maxRetries     = 256
@@ -207,7 +207,7 @@ func validSource(source SourceDescriptor, root string) bool {
 }
 
 func validCandidate(candidate Candidate, source SourceDescriptor, agent string, now time.Time) bool {
-	return candidate.Agent == agent && candidate.Source == source && candidate.NativeSessionID != "" && len(candidate.NativeSessionID) <= 4096 && filepath.IsAbs(candidate.WorkingDirectory) && len(candidate.WorkingDirectory) <= 4096 && !candidate.StartedAt.IsZero() && !candidate.FirstTaskAt.IsZero() && !candidate.FirstTaskAt.Before(candidate.StartedAt.Add(-time.Second)) && !candidate.FirstTaskAt.After(now.Add(2*time.Minute)) && candidate.StartEvidence == "native_start" && candidate.Execution == "native" && candidate.ParentNativeID == "" && candidate.ForkNativeID == ""
+	return candidate.Agent == agent && candidate.Source == source && candidate.NativeSessionID != "" && len(candidate.NativeSessionID) <= 4096 && filepath.IsAbs(candidate.WorkingDirectory) && len(candidate.WorkingDirectory) <= 4096 && !candidate.StartedAt.IsZero() && !candidate.FirstTaskAt.IsZero() && !candidate.FirstTaskAt.Before(candidate.StartedAt.Add(-time.Second)) && !candidate.FirstTaskAt.After(now.Add(2*time.Minute)) && candidate.StartEvidence == "native_start" && candidate.Execution == "native" && (candidate.ParentNativeID == "" || candidate.NativeChild && sourcefacts.RolloutID(candidate.ParentNativeID+".jsonl") == candidate.ParentNativeID) && (candidate.ForkNativeID == "" || sourcefacts.RolloutID(candidate.ForkNativeID+".jsonl") == candidate.ForkNativeID)
 }
 
 func scanStopped(ctx context.Context, o Options) bool {
@@ -411,6 +411,7 @@ func admitSession(store *state.Store, candidate Candidate, project, generation s
 			proof = &archive.CodexAdmissionProof{Generation: generation, Revision: cfg.CodexCapture.Revision, Cwd: facts.Cwd}
 		}
 		return archive.SessionRegistration{CodexAdmission: proof,
+			NativeChild: candidate.NativeChild, ParentNativeSessionID: candidate.ParentNativeID, NativeRootSessionID: candidate.RootNativeID, NativeSourceHome: sourceRoot,
 			ArchiveSessionID: id, NativeSessionID: candidate.NativeSessionID, Harness: archive.Harness{Name: candidate.Agent, Version: candidate.HarnessVersion}, ProjectID: archive.ProjectID(project), ProjectRoot: project,
 			SourceKind: candidate.Source.Kind, SourceKey: candidate.Source.StableKey, TranscriptPath: locator, DiscoveryRoot: sourceRoot, DiscoveryCwd: candidate.WorkingDirectory, DiscoveryProducerOriginator: candidate.ProducerOriginator, DiscoveryProducerSource: candidate.ProducerSource, DiscoveryGeneration: generation, DiscoverySourcePriority: candidate.Source.Priority, SessionStartedAt: candidate.StartedAt, RegisteredAt: now, AdmittedAt: now,
 			Origin: archive.SessionOriginDiscovery, StartedAtSource: archive.StartedAtSourceTranscript, DestinationID: cfg.DestinationID(),
