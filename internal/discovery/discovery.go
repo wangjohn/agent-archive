@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
@@ -37,23 +38,26 @@ const (
 // Health separates scan coverage from upload and hook health. Codes never
 // include native IDs, paths or native operating-system errors.
 type Health struct {
-	Enabled           bool                `json:"enabled"`
-	Supported         bool                `json:"supported"`
-	LastAttempt       time.Time           `json:"last_attempt,omitzero"`
-	LastReconciled    time.Time           `json:"last_reconciled,omitzero"`
-	Pending           bool                `json:"pending"`
-	ProjectOperations int                 `json:"project_metadata_operations"`
-	GitBytes          int                 `json:"git_metadata_bytes"`
-	Probes            int                 `json:"header_probes"`
-	Entries           int                 `json:"directory_entries"`
-	IndexBytes        int64               `json:"index_bytes_read,omitempty"`
-	IndexQueries      int                 `json:"index_queries,omitempty"`
-	IndexLocators     int                 `json:"index_locators,omitempty"`
-	Bytes             int64               `json:"bytes_read"`
-	Registered        int                 `json:"registered"`
-	Outcomes          map[string]int      `json:"outcomes,omitempty"`
-	Errors            []string            `json:"errors,omitempty"`
-	Formats           []FormatObservation `json:"observed_formats,omitempty"`
+	Enabled               bool                `json:"enabled"`
+	Supported             bool                `json:"supported"`
+	LastAttempt           time.Time           `json:"last_attempt,omitzero"`
+	LastReconciled        time.Time           `json:"last_reconciled,omitzero"`
+	Pending               bool                `json:"pending"`
+	ProjectOperations     int                 `json:"project_metadata_operations"`
+	GitBytes              int                 `json:"git_metadata_bytes"`
+	Probes                int                 `json:"header_probes"`
+	Entries               int                 `json:"directory_entries"`
+	IndexBytes            int64               `json:"index_bytes_read,omitempty"`
+	IndexQueries          int                 `json:"index_queries,omitempty"`
+	IndexLocators         int                 `json:"index_locators,omitempty"`
+	Bytes                 int64               `json:"bytes_read"`
+	NativeValidationBytes int64               `json:"native_validation_bytes_read,omitempty"`
+	NativeValidationReads int64               `json:"native_validation_reads,omitempty"`
+	NativeValidationOpens int64               `json:"native_validation_opens,omitempty"`
+	Registered            int                 `json:"registered"`
+	Outcomes              map[string]int      `json:"outcomes,omitempty"`
+	Errors                []string            `json:"errors,omitempty"`
+	Formats               []FormatObservation `json:"observed_formats,omitempty"`
 }
 
 type directory struct {
@@ -83,8 +87,10 @@ type catalog struct {
 // Options contains injectable clocks and stop signals; it cannot override
 // source format support or authorize capture.
 type Options struct {
-	Now  func() time.Time
-	Stop func() bool
+	Sources       agentapi.SourcesLookup
+	CodexRollouts agentapi.CodexRolloutLookup
+	Now           func() time.Time
+	Stop          func() bool
 }
 
 // Run observes configured Codex homes under the caller's collector lock,
@@ -94,7 +100,7 @@ func Run(ctx context.Context, store *state.Store, cfg config.Config, o Options) 
 	return runWithAdapters(ctx, store, cfg, o, registeredAdapters())
 }
 
-func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config, o Options, adapters []SourceAdapter) (Health, error) {
+func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config, o Options, adapters []SourceAdapter) (result Health, resultErr error) {
 	adapter := findAdapter(adapters, "codex")
 	if adapter == nil {
 		return Health{}, nil
@@ -132,8 +138,10 @@ func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config,
 	deadline := time.Now().Add(Budget)
 	ctx, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
+	proofs := &nativeProofPasses{sources: o.Sources, lookup: o.CodexRollouts, passes: map[string]agentapi.SourcePass{}}
+	defer func() { resultErr = errors.Join(resultErr, proofs.Close()) }()
 	resolver := sourcefacts.NewProjectResolver()
-	priority := scan{resolver: resolver, store: store, cfg: cfg, catalog: &c, health: &h, now: now, adapter: adapter, priority: true, ctx: ctx}
+	priority := scan{proofs: proofs, resolver: resolver, store: store, cfg: cfg, catalog: &c, health: &h, now: now, adapter: adapter, priority: true, ctx: ctx}
 	priority.observeIndexHints(ctx, o, roots, deadline)
 	priority.observeActiveHints(ctx, o, roots, deadline)
 	priority.observeRetries(o)
@@ -158,7 +166,7 @@ func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config,
 			unavailable = append(unavailable, d)
 			continue
 		}
-		worker := scan{resolver: resolver, store: store, cfg: cfg, catalog: &c, health: &h, now: now, adapter: adapter, ctx: ctx, reservedDirectories: len(unavailable)}
+		worker := scan{proofs: proofs, resolver: resolver, store: store, cfg: cfg, catalog: &c, health: &h, now: now, adapter: adapter, ctx: ctx, reservedDirectories: len(unavailable)}
 		for _, source := range batch.Entries {
 			if scanStopped(ctx, o) || time.Now().After(deadline) {
 				finished = false
@@ -181,6 +189,7 @@ func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config,
 		}
 	}
 	c.Queue = append(unavailable, c.Queue...)
+	h.NativeValidationBytes, h.NativeValidationReads, h.NativeValidationOpens = proofs.bytes, proofs.reads, proofs.opens
 	h.ProjectOperations = resolver.Operations
 	h.GitBytes = resolver.GitBytes
 	h.Pending = len(c.Queue) > 0 || len(c.Retries) > 0
@@ -208,6 +217,12 @@ func validSource(source SourceDescriptor, root string) bool {
 
 func validCandidate(candidate Candidate, source SourceDescriptor, agent string, now time.Time) bool {
 	return candidate.Agent == agent && candidate.Source == source && candidate.NativeSessionID != "" && len(candidate.NativeSessionID) <= 4096 && filepath.IsAbs(candidate.WorkingDirectory) && len(candidate.WorkingDirectory) <= 4096 && !candidate.StartedAt.IsZero() && !candidate.FirstTaskAt.IsZero() && !candidate.FirstTaskAt.Before(candidate.StartedAt.Add(-time.Second)) && !candidate.FirstTaskAt.After(now.Add(2*time.Minute)) && candidate.StartEvidence == "native_start" && candidate.Execution == "native" && (candidate.ParentNativeID == "" || candidate.NativeChild && sourcefacts.RolloutID(candidate.ParentNativeID+".jsonl") == candidate.ParentNativeID) && (candidate.ForkNativeID == "" || sourcefacts.RolloutID(candidate.ForkNativeID+".jsonl") == candidate.ForkNativeID)
+}
+
+func validCandidateMetadata(candidate Candidate, source SourceDescriptor, agent string) bool {
+	copy := candidate
+	copy.FirstTaskAt = copy.StartedAt
+	return validCandidate(copy, source, agent, copy.StartedAt)
 }
 
 func scanStopped(ctx context.Context, o Options) bool {
@@ -405,13 +420,19 @@ func admitSession(store *state.Store, candidate Candidate, project, generation s
 	if !allowed || current != generation {
 		return false, errors.New("authorization changed")
 	}
+	if candidate.Binding != nil && !cfg.CodexHistoryProtection {
+		cfg.CodexHistoryProtection = true
+		if err := config.Save(store.Home(), cfg); err != nil {
+			return false, err
+		}
+	}
 	reg, err := store.RegisterOrMerge(sessionKey(candidate.Agent, candidate.NativeSessionID), func(id string) archive.SessionRegistration {
 		var proof *archive.CodexAdmissionProof
 		if cfg.EffectiveCodexCaptureScope() == config.CodexAllProjects {
 			proof = &archive.CodexAdmissionProof{Generation: generation, Revision: cfg.CodexCapture.Revision, Cwd: facts.Cwd}
 		}
 		return archive.SessionRegistration{CodexAdmission: proof,
-			NativeChild: candidate.NativeChild, ParentNativeSessionID: candidate.ParentNativeID, NativeRootSessionID: candidate.RootNativeID, NativeSourceHome: sourceRoot,
+			CodexBinding: candidate.Binding, NativeChild: candidate.NativeChild, ParentNativeSessionID: candidate.ParentNativeID, NativeRootSessionID: candidate.RootNativeID, NativeSourceHome: sourceRoot,
 			ArchiveSessionID: id, NativeSessionID: candidate.NativeSessionID, Harness: archive.Harness{Name: candidate.Agent, Version: candidate.HarnessVersion}, ProjectID: archive.ProjectID(project), ProjectRoot: project,
 			SourceKind: candidate.Source.Kind, SourceKey: candidate.Source.StableKey, TranscriptPath: locator, DiscoveryRoot: sourceRoot, DiscoveryCwd: candidate.WorkingDirectory, DiscoveryProducerOriginator: candidate.ProducerOriginator, DiscoveryProducerSource: candidate.ProducerSource, DiscoveryGeneration: generation, DiscoverySourcePriority: candidate.Source.Priority, SessionStartedAt: candidate.StartedAt, RegisteredAt: now, AdmittedAt: now,
 			Origin: archive.SessionOriginDiscovery, StartedAtSource: archive.StartedAtSourceTranscript, DestinationID: cfg.DestinationID(),
@@ -501,6 +522,7 @@ func continuationLocator(store *state.Store, agent, native string, source Source
 }
 
 type scan struct {
+	proofs              *nativeProofPasses
 	resolver            *sourcefacts.ProjectResolver
 	store               *state.Store
 	cfg                 config.Config
@@ -549,12 +571,17 @@ func (s scan) visitEntry(d directory, source SourceEntry) (retry, stop bool) {
 	}
 	h.Outcomes[string(entry.Observation.Outcome)]++
 	if entry.Observation.Outcome != outcomeUsable {
-		return false, false
+		if entry.Observation.Outcome != outcomeIncomplete && entry.Observation.Outcome != "related_history_pending" {
+			return false, false
+		}
+		if entry.Observation.Candidate.NativeSessionID == "" {
+			return false, false
+		}
 	}
 	candidate := entry.Observation.Candidate
 	// Shared structural checks do not trust an adapter to select another source
 	// or authorize inherited/unknown evidence. Project/destination policy stays here.
-	if !validCandidate(candidate, source.Source, s.adapter.Agent(), now) {
+	if !validCandidateMetadata(candidate, source.Source, s.adapter.Agent()) || (!candidate.FirstTaskAt.IsZero() && !validCandidate(candidate, source.Source, s.adapter.Agent(), now)) {
 		h.Outcomes["invalid_candidate"]++
 		return false, false
 	}
@@ -702,6 +729,20 @@ func (s scan) admitCandidate(candidate Candidate, loc string) (bool, bool) {
 			h.Outcomes["start_not_authorized"]++
 			return false, false
 		}
+	}
+	if !candidate.SnapshotProven {
+		proven, err := s.proofs.Prove(s.ctx, candidate)
+		if err != nil {
+			h.Outcomes[nativeProofOutcome(err)]++
+			s.retainRetry(candidate.Source)
+			return false, false
+		}
+		if !validCandidate(proven, proven.Source, s.adapter.Agent(), now) {
+			h.Outcomes["own_task_unavailable"]++
+			s.retainRetry(candidate.Source)
+			return false, false
+		}
+		return s.admitCandidate(proven, loc)
 	}
 	var created bool
 	var e error

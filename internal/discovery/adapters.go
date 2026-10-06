@@ -39,6 +39,8 @@ type Candidate struct {
 	ProducerSource     string
 	FormatProfile      sourcefacts.CodexProfile
 	Execution          string
+	Binding            *archive.CodexSourceBinding
+	SnapshotProven     bool
 	NativeChild        bool
 	RootNativeID       string
 	OwnStart           *uint64
@@ -161,6 +163,12 @@ func (a codexAdapter) Inspect(ctx context.Context, source SourceDescriptor) Obse
 	h := sourcefacts.ReadHeader(ctx, source.Root, source.Locator)
 	o := Observation{Outcome: Outcome(h.Outcome), Bytes: h.Bytes, Identity: h.Identity, NativeCreatedAt: h.NativeCreatedAt}
 	if o.Outcome != outcomeUsable {
+		if h.FormatFacts != nil && h.Identity != nil {
+			h.Meta = *h.FormatFacts
+			h.Started = h.NativeCreatedAt
+			h.Profile = sourcefacts.CodexFormatProfile(h.Meta)
+			o.Candidate = candidateFromHeader(h, source)
+		}
 		return o
 	}
 	o.Candidate = candidateFromHeader(h, source)
@@ -203,5 +211,5 @@ func (a codexAdapter) Supported(c Candidate) bool {
 	if strings.HasPrefix(c.ProducerSource, "{") {
 		source = json.RawMessage(c.ProducerSource)
 	}
-	return supported(sourcefacts.CodexMeta{Version: c.HarnessVersion, Originator: c.ProducerOriginator, Source: source})
+	return supported(sourcefacts.CodexMeta{ID: c.NativeSessionID, SessionID: c.RootNativeID, Version: c.HarnessVersion, Originator: c.ProducerOriginator, Source: source})
 }

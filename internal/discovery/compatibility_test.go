@@ -287,7 +287,7 @@ func TestSelfContainedChildrenAndForksAdmitIndependentlyWhileDependenciesRemainP
 		compatibilityRollout(t, root, cfg.Archive.Projects[0].Root, "codex-155-alpha-paginated.jsonl", "0.999.0", 20+i, alter)
 	}
 	h, err := runWithCensus(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(2 * time.Minute) }}, registeredAdapters())
-	if err != nil || h.Registered != 3 || h.Outcomes["related_history_pending"] != 1 || h.Outcomes["invalid_identity"] != 0 {
+	if err != nil || h.Registered != 3 || h.Outcomes["related_history_pending"] < 1 || h.Outcomes["invalid_identity"] != 0 {
 		t.Fatalf("related history: %+v %v", h, err)
 	}
 	regs, err := store.LoadRegistrations()

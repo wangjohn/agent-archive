@@ -28,12 +28,14 @@ type Header struct {
 	// Identity survives understood history-pending outcomes as lookup evidence only.
 	Identity        *codexmeta.CodexIdentity
 	NativeCreatedAt time.Time
-	Meta            CodexMeta
-	Started         time.Time
-	FirstTaskAt     time.Time
-	Profile         CodexProfile
-	Outcome         string
-	Bytes           int64
+	// FormatFacts are bounded metadata-only observations, never task evidence or permission.
+	FormatFacts *CodexMeta
+	Meta        CodexMeta
+	Started     time.Time
+	FirstTaskAt time.Time
+	Profile     CodexProfile
+	Outcome     string
+	Bytes       int64
 }
 
 // OpenRegular opens within an approved root without blocking on FIFOs or
@@ -138,23 +140,20 @@ func ReadCodexHeader(reader io.Reader, path string) (h Header) {
 				h.Outcome = string(outcome)
 				return h
 			}
+			facts := h.Meta
+			h.FormatFacts = &facts
 			continue
 		}
 		// Raw physical ordinals include every record, even records privacy later drops.
 		// An absent boundary excludes nothing; explicit zero is preserved.
-		if h.Identity != nil {
-			own := h.Identity.SubagentOrdinal
-			if fork := h.Identity.ForkOrdinal; fork != nil && (own == nil || *fork > *own) {
-				own = fork
-			}
-			if own != nil && uint64(i) < *own {
-				continue
-			}
-			if h.Identity.HistoryBase != nil || h.Identity.RolloutID != h.Identity.ThreadID {
-				h.Outcome = "related_history_pending"
-				return h
-			}
+		if beforeOwnBoundary(h.Identity, uint64(i)) {
+			continue
 		}
+		if needsRelatedReader(h.Identity) {
+			h.Outcome = "related_history_pending"
+			return h
+		}
+
 		if seen, native := NativeFirstTask(line); seen {
 			h.FirstTaskAt = FirstTaskAt(line)
 			if !native || h.FirstTaskAt.Before(h.Started.Add(-time.Second)) {
@@ -185,4 +184,19 @@ func safeMeta(m CodexMeta) CodexMeta {
 	// projections must not substitute booleans for native relationship fields.
 	m.ForkedFrom, m.ForkOrdinal, m.Parent, m.HistoryBase, m.SubagentOrdinal = nil, nil, nil, nil, nil
 	return m
+}
+
+func beforeOwnBoundary(identity *codexmeta.CodexIdentity, ordinal uint64) bool {
+	if identity == nil {
+		return false
+	}
+	own := identity.SubagentOrdinal
+	if fork := identity.ForkOrdinal; fork != nil && (own == nil || *fork > *own) {
+		own = fork
+	}
+	return own != nil && ordinal < *own
+}
+
+func needsRelatedReader(identity *codexmeta.CodexIdentity) bool {
+	return identity != nil && (identity.HistoryBase != nil || identity.RolloutID != identity.ThreadID)
 }

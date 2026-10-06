@@ -419,16 +419,16 @@ func (r SessionRegistration) Imported() bool {
 	return r.Origin == SessionOriginImport
 }
 
-// Validate reports the first problem that makes the registration unusable:
-// a missing session ID, project, harness name, or start time, or source
-// fields (SourceKind, SourceKey, TranscriptPath) that do not fit together.
 // IsChild reports child ownership independently of whether the parent link resolved.
 func (r SessionRegistration) IsChild() bool { return r.NativeChild || r.ParentSessionID != "" }
 
+// Validate reports the first problem that makes the registration unusable:
+// a missing session ID, project, harness name, start time or incompatible source.
 func (r SessionRegistration) Validate() error {
-	if r.NativeChild && (r.Harness.Name != "codex" || r.NativeSourceHome != "" && !filepath.IsAbs(r.NativeSourceHome)) {
-		return errors.New("invalid native child ownership")
+	if err := r.validateNativeChild(); err != nil {
+		return err
 	}
+
 	if r.CodexBinding != nil {
 		if r.Harness.Name != "codex" || r.CodexBinding.NativeThreadID != r.NativeSessionID {
 			return errors.New("Codex binding requires matching Codex registration")
@@ -851,3 +851,13 @@ func (m *Metadata) ApplyRegistrationProvenance(r SessionRegistration) {
 // importedGapDetail is about the time before the import only: a hook that
 // resumes an imported session records its lifecycle from then on.
 const importedGapDetail = "No hook observed this session before it was imported (imported_at): activity before then has no hook lifecycle events, final-response text, or skill inventory."
+
+func (r SessionRegistration) validateNativeChild() error {
+	if !r.NativeChild {
+		return nil
+	}
+	if r.Harness.Name != "codex" || r.NativeSourceHome != "" && !filepath.IsAbs(r.NativeSourceHome) {
+		return errors.New("invalid native child ownership")
+	}
+	return nil
+}

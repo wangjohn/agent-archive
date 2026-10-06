@@ -54,12 +54,20 @@ homes. Original native session creation must fall within the current Codex scope
 source and destination authorization and an unpaused interval. Included-project
 scope requires an included project; all-projects scope permits unlisted current
 and future Codex projects subject to explicit exceptions. Other apps retain their
-included-project permissions. Unsupported producer
-versions, recognizable imports, forks, children and referenced histories do not
-qualify. Partial first-task metadata is retried rather than guessed.
+included-project permissions. Native children and forks qualify under their own project, creation and current
+permission checks. A child can be captured while running, even before its parent
+archive link resolves. Copied context below a recorded own-history boundary does
+not count as its first task or activity; an absent boundary excludes nothing.
+Unknown execution/history formats and incomplete dependencies stay pending with
+a specific reason. Partial first-own-task metadata is retried rather than guessed.
 
 A native task can wait before its first prompt; that does not reset its original
 creation time. Moving a known session to archived history or copying the same
 native identity does not create another archive. An otherwise qualifying recent
 copy with indistinguishable metadata can be admitted. File presence and rebuilt
 Codex database rows are source facts, not proof of originating local execution.
+
+A child first imported by a new backfill run belongs to that new import batch,
+even if its parent came from an older batch. Undo removes only that batch’s
+members, with nested children removed before their selected parents. Children
+keep their own source, so removing a parent does not break child readback.

@@ -261,6 +261,12 @@ func (r Registration) step(cfg config.Config, w *parentWork, result *Registratio
 			result.Invalid++
 			return true, nil
 		}
+		if c.NativeChild && !cfg.CodexHistoryProtection {
+			cfg.CodexHistoryProtection = true
+			if err := config.Save(r.Home, cfg); err != nil {
+				return true, err
+			}
+		}
 		w.id, _, err = r.Store.EnsureArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(c.Harness)), NativeID: c.NativeSessionID})
 		return false, err
 	}

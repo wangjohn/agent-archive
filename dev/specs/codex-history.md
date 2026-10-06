@@ -92,3 +92,31 @@ Producer references: [ordinal writer](https://raw.githubusercontent.com/openai/c
 and [history materialization](https://raw.githubusercontent.com/openai/codex/rust-v0.160.0/codex-rs/thread-store/src/local/thread_history_materialization.rs).
 Synthetic tests model the pinned producer contracts; no private transcript is a
 fixture or an acceptance claim.
+
+## Native child admission and reconciliation
+
+The global native candidate stream projects the stable thread, root and immediate
+parent from shared Codex metadata. It never creates Claude composite subagent IDs
+or enumerates a native home for each parent. Child root absence remains unknown.
+A validated source snapshot supplies original same-thread creation and the first
+OWN task. The inherited prefix may exceed the bounded catalog header window;
+metadata-only identity/creation/format facts do not authorize capture.
+
+Each native child carries its own origin, admission, destination and import batch.
+Missing parent links do not prevent independently admissible capture. Relationship
+repair uses the existing registration inventory, scoped to the same native source
+home, project and destination; ambiguous owners and removal tombstones remain
+unresolved. Parent hooks and admission are never substituted for child consent.
+Native discovery and import do not fabricate SubagentStop observations.
+
+`native_child` in retained source and metadata records ownership independently of
+`parent_session_id`. A captured child with an unresolved archive parent includes
+`native_parent_link_pending`. Source-history dependencies remain distinct from
+these conversational relationships. Parent deletion does not remove a child's
+self-contained retained history. Undo uses exact batch membership and orders only
+selected descendants before selected ancestors.
+
+Initial discovery shares one serial native source pass for the active authorized
+home. Switching homes closes the previous pass, preserving the aggregate 128 MiB
+provider data charge. Actual source read calls/bytes/opens are counted separately
+from bounded metadata probes; this is not an RSS or heap cap.

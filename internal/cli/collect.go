@@ -165,7 +165,7 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 		recordPreflightError(localStore, recoveryErr)
 	}
 	recoveryCancel()
-	_, discoveryErr := discovery.Run(ctx, localStore, cfg, discovery.Options{Now: env.Now, Stop: stop})
+	_, discoveryErr := discovery.Run(ctx, localStore, cfg, discovery.Options{Sources: registryFor(env), Now: env.Now, Stop: stop})
 	if discoveryErr != nil {
 		recordPreflightError(localStore, errors.Join(recoveryErr, discoveryErr))
 	}

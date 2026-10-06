@@ -676,7 +676,7 @@ func (s statusSessions) appStatus(name string, cfg config.Config, home string, i
 			// the session. Actual subsequent hook observation is recorded above.
 			// Imports only count toward imports and uploads, not verification.
 			// Subagents go with their parent.
-			if !reg.IsChild() || reg.NativeChild {
+			if independentImportedSession(reg) {
 				if reg.NativeChild {
 					app.ImportedChildSessions++
 				}
@@ -2842,4 +2842,8 @@ func discoveryFormats(d *discovery.Health) string {
 		return ""
 	}
 	return "Recorded session formats: " + strings.Join(formats, "; ") + ". Compatibility permits discovery; capture still requires consent and publication/read-back."
+}
+
+func independentImportedSession(reg archive.SessionRegistration) bool {
+	return !reg.IsChild() || reg.NativeChild
 }
