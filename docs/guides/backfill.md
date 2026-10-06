@@ -170,7 +170,13 @@ Dry-run JSON includes optional `diagnostics` summaries with `skip`, `detail`,
 unique candidate transcript files into one disposition each and reports
 database-only candidates separately. These counts cover enumerated candidates,
 not unreadable stores. Duplicate candidates are not proof of identical bytes.
+A repeated observation of a selected file does not make that file a discarded duplicate. Known recovery
+exclusions count as excluded while preserving the primary skip code.
 `logical_history_pending` is true: dependencies, logical sessions, and retained
 revisions have not been reconciled. Related histories keep their existing pending
 skip; backfill has not inspected their current selection or missing dependencies.
 Summaries contain no transcript paths, native IDs, remote URLs, or content.
+
+File and database-only candidates receive the same diagnostic details. For
+`unsafe_format`, the `source_inspection_unavailable` detail asks you to review
+source access and format support; the skip alone cannot prove which is missing.

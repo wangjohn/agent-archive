@@ -20,6 +20,7 @@ const (
 	ActionReviewProject DiagnosticAction = "review_project"
 	ActionReviewMapping DiagnosticAction = "review_mapping"
 	ActionAwaitSupport  DiagnosticAction = "await_support"
+	ActionReviewSource  DiagnosticAction = "review_source"
 )
 
 // Diagnostic is a content-free explanation subordinate to the primary skip code.
@@ -54,7 +55,7 @@ var diagnosticDescriptions = map[DiagnosticDetail]diagnosticDescription{
 	"worktree_evidence_unavailable":                             {ActionReviewProject, "The worktree cannot be followed to its repository; review the checkout and project."},
 	"history_lookup_pending":                                    {ActionAwaitSupport, "Related history remains pending; current selection and dependencies have not been inspected by backfill."},
 	"source_changed":                                            {ActionRetry, "The source changed during planning; retry after it settles."},
-	"unsupported_format":                                        {ActionAwaitSupport, "The privacy filter cannot safely read this format; support is required before import."},
+	"source_inspection_unavailable":                             {ActionReviewSource, "The source could not be safely inspected or filtered; check source access and format support."},
 	"source_size_limit":                                         {ActionAwaitSupport, "The source exceeds the supported size limit."},
 }
 
@@ -71,7 +72,7 @@ func candidateDiagnostic(skip SkipReason, outcome sourcefacts.RecoveryOutcome) *
 	case SkipSourceChanged:
 		detail = "source_changed"
 	case SkipUnsafeFormat:
-		detail = "unsupported_format"
+		detail = "source_inspection_unavailable"
 	case SkipTooLarge:
 		detail = "source_size_limit"
 	}
@@ -131,29 +132,57 @@ type InventoryAccounting struct {
 // disposition. Duplicate candidates are not claimed to be identical copies.
 func (p Plan) InventoryAccounting() InventoryAccounting {
 	out := InventoryAccounting{Dispositions: map[string]int{}, LogicalHistoryPending: true}
-	seen := map[string]bool{}
+	files := map[string]map[string]bool{}
 	for _, c := range p.Candidates {
 		if c.TranscriptPath == "" {
 			out.DatabaseCandidates++
 			continue
 		}
-		if seen[c.TranscriptPath] {
-			continue
+		if files[c.TranscriptPath] == nil {
+			files[c.TranscriptPath] = map[string]bool{}
 		}
-		seen[c.TranscriptPath] = true
-		out.UniqueCandidateFiles++
+		files[c.TranscriptPath][candidateDisposition(c)] = true
+	}
+	out.UniqueCandidateFiles = len(files)
+	for _, dispositions := range files {
+		// A repeated observation discarded as a duplicate does not make the
+		// selected physical file a discarded copy. Prefer actual selection;
+		// conflicting nonselected observations remain unresolved.
 		disposition := "unresolved"
-		switch c.Skip {
-		case "":
+		switch {
+		case dispositions["planned_import"]:
 			disposition = "planned_import"
-		case SkipDuplicateSession:
-			disposition = "duplicate_candidate"
-		case SkipAlreadyArchived:
+		case dispositions["already_archived"]:
 			disposition = "already_archived"
-		case SkipExcludedProject, SkipFilteredOut, SkipHomeDirectory, SkipAboveHome, SkipTemporaryDirectory, SkipRemovedByUndo, SkipRemovedByRetention:
-			disposition = "excluded"
+		default:
+			if len(dispositions) > 1 {
+				delete(dispositions, "duplicate_candidate")
+			}
+			if len(dispositions) == 1 {
+				for value := range dispositions {
+					disposition = value
+				}
+			}
 		}
 		out.Dispositions[disposition]++
 	}
 	return out
+}
+
+func candidateDisposition(c Candidate) string {
+	switch c.Skip {
+	case "":
+		return "planned_import"
+	case SkipDuplicateSession:
+		return "duplicate_candidate"
+	case SkipAlreadyArchived:
+		return "already_archived"
+	case SkipExcludedProject, SkipFilteredOut, SkipHomeDirectory, SkipAboveHome, SkipTemporaryDirectory, SkipRemovedByUndo, SkipRemovedByRetention:
+		return "excluded"
+	case SkipWorktreeUnresolved:
+		if c.Diagnostic != nil && c.Diagnostic.Detail == DiagnosticDetail(sourcefacts.RecoveryExcluded) {
+			return "excluded"
+		}
+	}
+	return "unresolved"
 }

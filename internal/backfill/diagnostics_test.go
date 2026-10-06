@@ -119,3 +119,96 @@ func TestInventoryCountsPhysicalCandidatesWithoutOverlappingRoles(t *testing.T) 
 		t.Fatal(d)
 	}
 }
+
+// Database-only candidates use the same subordinate diagnostics as file candidates.
+func TestDatabaseCandidateDiagnosticsFollowWinningSkip(t *testing.T) {
+	t.Parallel()
+	tr := newTree(t)
+	env := tr.env()
+	r := newResolver(env, config.Config{}, Filters{})
+	repo := tr.repo("home/repo")
+	for _, skip := range []SkipReason{SkipUnsafeFormat, SkipTooLarge, SkipWorktreeUnresolved} {
+		t.Run(string(skip), func(t *testing.T) {
+			w := &work{t: &transcript{harness: harnessCursor}, c: Candidate{StartedAt: fixedNow.Add(-time.Hour)}, chat: CursorDatabaseChat{Folder: repo}}
+			switch skip {
+			case SkipUnsafeFormat:
+				w.unsafe = true
+			case SkipTooLarge:
+				w.tooLarge = true
+			case SkipWorktreeUnresolved:
+				w.chat.Folder = tr.path("home/.cursor/worktrees/gone")
+			}
+			p := Plan{GeneratedAt: fixedNow, Filters: Filters{Harnesses: []string{"cursor"}}, CursorDatabaseChecked: true}
+			appendCursorDatabaseChats(env, r, nil, []*work{w}, &p)
+			if len(p.Candidates) != 1 || p.Candidates[0].Skip != skip || p.Candidates[0].Diagnostic == nil || len(p.Diagnostics()) != 1 {
+				t.Fatalf("missing database diagnostic: %+v", p.Candidates)
+			}
+			var output bytes.Buffer
+			if err := RenderJSON(&output, p); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(output.String(), `"database_candidates": 1`) || !strings.Contains(output.String(), `"unique_candidate_files": 0`) {
+				t.Fatal(output.String())
+			}
+			w.state = SkipAlreadyArchived
+			p.Candidates = nil
+			appendCursorDatabaseChats(env, r, nil, []*work{w}, &p)
+			if p.Candidates[0].Skip != SkipAlreadyArchived || p.Candidates[0].Diagnostic != nil {
+				t.Fatalf("precedence changed: %+v", p.Candidates)
+			}
+		})
+	}
+}
+
+// Recorded exclusion evidence must be reflected without changing the primary skip.
+func TestInventoryRetainsRecoveryExclusion(t *testing.T) {
+	t.Parallel()
+	c := Candidate{TranscriptPath: "/synthetic/excluded", Skip: SkipWorktreeUnresolved, Diagnostic: candidateDiagnostic(SkipWorktreeUnresolved, sourcefacts.RecoveryExcluded)}
+	p := Plan{Candidates: []Candidate{c}}
+	a := p.InventoryAccounting()
+	if a.UniqueCandidateFiles != 1 || a.Dispositions["excluded"] != 1 || a.Dispositions["unresolved"] != 0 || p.Candidates[0].Skip != SkipWorktreeUnresolved {
+		t.Fatalf("%+v", a)
+	}
+}
+
+// Observing a selected file more than once does not make that file a discarded copy.
+func TestInventoryRepeatedPathUsesSelectedDisposition(t *testing.T) {
+	t.Parallel()
+	for _, selected := range []SkipReason{"", SkipAlreadyArchived, SkipExcludedProject, SkipRelatedHistory} {
+		for _, reverse := range []bool{false, true} {
+			rows := []Candidate{{TranscriptPath: "/synthetic/repeated", Skip: SkipDuplicateSession}, {TranscriptPath: "/synthetic/repeated", Skip: selected}}
+			if reverse {
+				rows[0], rows[1] = rows[1], rows[0]
+			}
+			a := (Plan{Candidates: rows}).InventoryAccounting()
+			want := (Plan{Candidates: []Candidate{rows[0]}}).InventoryAccounting()
+			if !reverse {
+				want = (Plan{Candidates: []Candidate{rows[1]}}).InventoryAccounting()
+			}
+			if a.UniqueCandidateFiles != 1 || a.Dispositions["duplicate_candidate"] != 0 || len(a.Dispositions) != 1 {
+				t.Fatalf("selected %q reverse %v: %+v", selected, reverse, a)
+			}
+			for key, count := range want.Dispositions {
+				if a.Dispositions[key] != count {
+					t.Fatalf("got %+v want %+v", a, want)
+				}
+			}
+		}
+	}
+}
+
+// An unavailable inspector is not evidence that adding format support is required.
+func TestUnsafeDiagnosticDoesNotInventUnsupportedFormat(t *testing.T) {
+	t.Parallel()
+	w := &work{t: &transcript{}, c: Candidate{StartedAt: fixedNow.Add(-time.Hour)}}
+	runAdapter(t.Context(), Environment{}, w)
+	decidePlanCandidates([]*work{w}, time.Time{}, time.Time{}, fixedNow)
+	if w.c.Skip != SkipUnsafeFormat || w.c.Diagnostic == nil || w.c.Diagnostic.Detail != "source_inspection_unavailable" || w.c.Diagnostic.Action != "review_source" {
+		t.Fatalf("%+v", w.c)
+	}
+	var output bytes.Buffer
+	RenderText(&output, Plan{Candidates: []Candidate{w.c}, Filters: Filters{Harnesses: []string{"codex"}}})
+	if strings.Contains(output.String(), "support is required") || !strings.Contains(output.String(), "check source access and format support") {
+		t.Fatal(output.String())
+	}
+}
