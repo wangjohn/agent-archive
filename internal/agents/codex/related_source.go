@@ -697,8 +697,12 @@ func (s *historySnapshot) Close() error {
 
 func (s *historySnapshot) ValidateAdmission(ctx context.Context, a agentapi.SourceAdmission) error {
 	s.admission = a.Binding
-	if s.history.OwnStart == nil && a.Binding != nil {
+	if s.history.OwnStart == nil && a.Binding != nil && a.Binding.OwnStart != nil {
 		s.history.OwnStart = a.Binding.OwnStart
+		// Validation may have cached a task before retained admission supplied
+		// its owned boundary. Historical reads validate admission before their
+		// consumer gathers evidence, so that earlier result must be recomputed.
+		s.firstOwnTask = nil
 	}
 	facts, err := s.AdmissionFacts(ctx)
 	if err != nil {
