@@ -301,7 +301,7 @@ func TestPairingStandaloneAndUnmappableExclusions(t *testing.T) {
 
 func TestPairingClipboardUnavailableDeliberateFallback(t *testing.T) {
 	t.Parallel()
-	for _, choice := range []string{"print", "retry", "cancel"} {
+	for _, choice := range []string{"print", "retry", "file-retry", "cancel"} {
 		t.Run(choice, func(t *testing.T) {
 			t.Parallel()
 			env, home, _ := pairingSourceFixture(t)
@@ -312,12 +312,16 @@ func TestPairingClipboardUnavailableDeliberateFallback(t *testing.T) {
 			calls := 0
 			env.Clipboard = func([]byte) error {
 				calls++
-				if choice == "retry" && calls > 1 {
+				if (choice == "retry" || choice == "file-retry") && calls > 1 {
 					return nil
 				}
 				return errors.New("clipboard unavailable")
 			}
-			p := newPrompter(strings.NewReader(choice+"\n"), &output)
+			input := choice + "\n"
+			if choice == "file-retry" {
+				input = "file\n" + filepath.Join(t.TempDir(), "missing", "pairing.txt") + "\n"
+			}
+			p := newPrompter(strings.NewReader(input), &output)
 			code := deliverPairingBundle(home, "aa-pair1:SYNTHETIC", &ledger, &issuance.Slot{}, env, &output, &output, pairingAddOptions{prompt: p})
 			if choice == "cancel" {
 				if code != 1 || ledger.State != pairingDeliveryIntent {
@@ -333,6 +337,9 @@ func TestPairingClipboardUnavailableDeliberateFallback(t *testing.T) {
 			}
 			if choice == "print" && strings.Contains(output.String(), "bundle copied") {
 				t.Fatal("file/print claimed clipboard delivery")
+			}
+			if choice == "file-retry" && (strings.Contains(output.String(), "Saved to:") || !strings.Contains(output.String(), "Copied to this machine's clipboard")) {
+				t.Fatal("clipboard retry claimed the failed file delivery")
 			}
 		})
 	}

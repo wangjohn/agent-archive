@@ -654,7 +654,12 @@ func deliverPairingBundle(home, bundle string, ledger *pairingLedger, slot *issu
 	} else {
 		for {
 			err = env.pairClipboardWrite([]byte(bundle))
-			if err == nil || opts.prompt == nil {
+			if err == nil {
+				savedPath = ""
+				printed = false
+				break
+			}
+			if opts.prompt == nil {
 				break
 			}
 			terminal.Println(errOut, "Clipboard unavailable. The key remains tracked; choose deliberate delivery or retry.")
@@ -666,6 +671,7 @@ func deliverPairingBundle(home, bundle string, ledger *pairingLedger, slot *issu
 				continue
 			}
 			if choice == "print" {
+				savedPath = ""
 				printed = true
 				_, err = fmt.Fprintln(out, bundle)
 				break
