@@ -19,10 +19,10 @@ type Filter struct{ nativecodec.CodexAdapter }
 // Filter consumes verified native input under shared collection limits.
 func (f Filter) Filter(ctx context.Context, in agentapi.NativeInput, c agentapi.FilterContext) (archive.FilteredTranscript, error) {
 	if in.Records != nil {
-		return filterHistory(ctx, in.Records)
+		return filterHistory(ctx, in.Records, archive.CaptureBoundary{RetainedRecords: c.Limits.Records, RetainedBytes: int(c.Limits.FilteredBytes)})
 	}
 	return sourceio.FilterJSONL(ctx, in, c, func(r io.Reader) (archive.FilteredTranscript, error) {
-		return nativecodec.FilterCodexCaptureJSONL(r, c.Filename)
+		return nativecodec.FilterCodexCaptureJSONL(r, c.Filename, archive.CaptureBoundary{RetainedRecords: c.Limits.Records, RetainedBytes: int(c.Limits.FilteredBytes)})
 	})
 }
 
@@ -43,4 +43,13 @@ func (Filter) EvidenceExtends(previous, candidate archive.SourceBundle) bool {
 		return false
 	}
 	return nativecodec.EvidenceExtends(previous, candidate)
+}
+
+// MeaningfulRevisionRecord excludes physical headers from revision activity.
+func (Filter) MeaningfulRevisionRecord(b archive.SourceBundle, i int) bool {
+	if i < 0 || i >= len(b.NativeRecords) {
+		return false
+	}
+	kind, _ := b.NativeRecords[i]["type"].(string)
+	return kind != "session_meta"
 }

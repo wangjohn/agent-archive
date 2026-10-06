@@ -12,7 +12,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 )
 
-func filterHistory(ctx context.Context, in agentapi.RecordInput) (archive.FilteredTranscript, error) {
+func filterHistory(ctx context.Context, in agentapi.RecordInput, bounds ...archive.CaptureBoundary) (archive.FilteredTranscript, error) {
 	descriptor, more, err := in.Next(ctx)
 	if err != nil {
 		return archive.FilteredTranscript{}, err
@@ -68,7 +68,7 @@ func filterHistory(ctx context.Context, in agentapi.RecordInput) (archive.Filter
 			history.Spans[span].EndRecord++
 			kept++
 		}
-	})
+	}, bounds...)
 	if err != nil {
 		return archive.FilteredTranscript{}, errors.Join(streamErr, err)
 	}

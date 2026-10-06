@@ -502,6 +502,11 @@ func (p *relatedSourcePass) readSelection(ctx context.Context, ref agentapi.Sour
 		}
 		return snapshot, nil
 	}
+	return p.readHistorySelection(ctx, limits, selection)
+}
+
+func (p *relatedSourcePass) readHistorySelection(ctx context.Context, limits agentapi.ReadLimits, selection sourceSelection) (agentapi.SourceSnapshot, error) {
+	fail := func(err error) (agentapi.SourceSnapshot, error) { return nil, errors.Join(err, p.evict()) }
 	spans, err := p.graph(ctx, selection.leaf)
 	if err != nil {
 		return fail(err)
@@ -1103,7 +1108,7 @@ func (p *relatedSourcePass) ReadRevision(ctx context.Context, ref agentapi.Sourc
 			return nil, err
 		}
 	}
-	snapshot, err := p.readSelection(ctx, ref, limits, selection)
+	snapshot, err := p.readHistorySelection(ctx, limits, selection)
 	if err != nil {
 		return nil, err
 	}
@@ -1124,7 +1129,10 @@ func (s *historySnapshot) RevisionCandidates(ctx context.Context) ([]agentapi.So
 	if err := s.check(ctx); err != nil {
 		return nil, err
 	}
-	out := make([]agentapi.SourceRef, 0, len(s.spans)+len(s.selection.set.Candidates))
+	if s.owner.env.CodexRollouts != nil && !s.selection.set.Complete {
+		return nil, sourceFailure(agentapi.Unavailable, "historical candidate coverage incomplete")
+	}
+	out := make([]agentapi.SourceRef, 0, archive.MaxHistorySpans)
 	seen := map[string]bool{}
 	add := func(ref agentapi.SourceRef) error {
 		if seen[ref.Path] {
@@ -1155,6 +1163,9 @@ func (s *historySnapshot) RevisionCandidates(ctx context.Context) ([]agentapi.So
 func (s *ordinarySnapshot) RevisionCandidates(ctx context.Context) ([]agentapi.SourceRef, error) {
 	if _, err := s.AdmissionFacts(ctx); err != nil {
 		return nil, err
+	}
+	if s.owner.env.CodexRollouts != nil && !s.selection.set.Complete {
+		return nil, sourceFailure(agentapi.Unavailable, "historical candidate coverage incomplete")
 	}
 	out := []agentapi.SourceRef{s.source.ref}
 	seen := map[string]bool{s.source.ref.Path: true}

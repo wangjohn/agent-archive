@@ -39,6 +39,9 @@ type SourceEnvironment struct {
 
 // ReadLimits bounds raw values and each native record before filtering.
 type ReadLimits struct {
+	// Records and FilteredBytes optionally bound changed-history preparation.
+	Records          int
+	FilteredBytes    int64
 	RawBytes         int64
 	RecordBytes      int64
 	SubagentMetadata bool

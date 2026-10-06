@@ -88,6 +88,7 @@ type sessionScan struct {
 	// publishes the retained snapshot filtered again in its place (see
 	// refilter.go); once that is published, the rewrite is recorded as the
 	// gap it is, with this candidate cached as the state it was reached at.
+	revisions *revisionPlan
 	rewritten *archive.SourceBundle
 }
 
@@ -145,6 +146,13 @@ func (s *sessionScan) run() (sessionOutcome, error) {
 	candidate, supplemental, err := s.build(read)
 	if err != nil {
 		return outcomeSkipped, err
+	}
+	s.revisions, err = s.reconcileRevisions(read, candidate)
+	if err != nil {
+		return outcomeSkipped, err
+	}
+	if s.revisions != nil && len(s.revisions.Preserved) > 0 {
+		return outcomeSkipped, archive.ErrHistoryMutationPending
 	}
 	if err := archive.CheckHistoryMutation(candidate, archive.Metadata{}); err != nil {
 		return outcomeSkipped, err

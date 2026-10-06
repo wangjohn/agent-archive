@@ -22,6 +22,11 @@ func (s *sessionScan) recoverReferenceAuthority() error {
 	if err != nil || !recover {
 		return err
 	}
+	return s.restoreReferenceAuthority()
+}
+
+// restoreReferenceAuthority bypasses only the ordinary compatibility shortcut.
+func (s *sessionScan) restoreReferenceAuthority() error {
 	var metadata archive.Metadata
 	key, err := archive.MetadataObjectKey(s.reg.Harness.Name, s.id())
 	if err != nil {
@@ -29,6 +34,9 @@ func (s *sessionScan) recoverReferenceAuthority() error {
 	}
 	raw, err := historyLimitedGet(s.ctx, s.remote, key, historyMetadataLimit)
 	if errors.Is(err, storage.ErrNotFound) {
+		if _, _, acknowledged := s.published.LastPublished(); acknowledged {
+			return errors.New("acknowledged remote source authority is missing")
+		}
 		return nil
 	}
 	if err != nil {

@@ -136,3 +136,18 @@ retained format through the normal registry and shared consumer pipeline. Its
 synthetic success establishes extension coverage only; it creates no production
 agent or installed-version verification. The contributor recipe identifies the
 ports and capability-specific checks required for a new implementation.
+
+Changed Codex scans reconcile same-thread physical revisions only after the
+lookup certifies complete candidate coverage. Historical reads use the existing
+native admission and source-home checks, close each snapshot before the next
+read, and retain independent aggregate bounds for raw bytes, filtered records,
+filtered bytes and compressed stages. Current selection may remain available
+while historical coverage is pending, but that scan cannot acknowledge a request
+or settle its signature. Meaningful preservation compares owned logical ordinals
+through the native record comparator; file sizes and copied headers supply no
+coverage evidence. One physical revision receives one latest verified retained
+entry, including an outgoing append first seen during reconciliation. Newly
+observed historical evidence uses the reconciliation observation time; an existing
+verified candidate keeps its capture time. Publication, frozen journaling,
+all-reference maintenance and retention remain fenced until the complete lifecycle
+is integrated and verified.

@@ -11,11 +11,11 @@ import (
 
 // FilterCodexCaptureJSONL refuses partial related histories before privacy
 // filtering drops their metadata. Refiltering retained sources stays separate.
-func FilterCodexCaptureJSONL(r io.Reader, filename string) (archive.FilteredTranscript, error) {
+func FilterCodexCaptureJSONL(r io.Reader, filename string, bounds ...archive.CaptureBoundary) (archive.FilteredTranscript, error) {
 	return filterJSONL(r, "codex-jsonl", map[string]bool{
 		"session_meta": true, "turn_context": true, "response_item": true,
 		"event_msg": true, "message": true, "token_usage_record": true,
-	}, nil, func(line []byte) error { return codexCaptureMetadata(line, filename) })
+	}, nil, func(line []byte) error { return codexCaptureMetadata(line, filename) }, bounds...)
 }
 
 func codexCaptureMetadata(line []byte, filename string) error {
