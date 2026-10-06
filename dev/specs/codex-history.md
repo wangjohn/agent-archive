@@ -35,6 +35,11 @@ a child reset its counters. Independent own per-call usage remains useful.
 Each snapshot fixes a newline-complete prefix, validates its raw ordinals and
 hashes its bytes. Before returning filtered output, the provider hashes that
 same native prefix again and verifies both descriptor and locator identity.
+Headers used for selection, graph edges, ownership and preliminary admission
+are proven against their originally observed bytes, including dependencies
+that contribute zero captured bytes. Those header proofs retain descriptor
+leases and are checked before returning a snapshot, at admission and before
+returning filtered output, for ordinary and related captures.
 Appends beyond the captured prefix are allowed; replacements and prefix rewrites
 are retryable changes. This permits continuously active chats to make progress.
 

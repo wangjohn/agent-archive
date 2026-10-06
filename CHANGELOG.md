@@ -12,6 +12,8 @@ follow [Semantic Versioning](https://semver.org/).
   preserve exact raw ordinal boundaries and count only the chat's own activity.
   Related-history writes and cleanup remain protected pending revision-aware
   lifecycle support. Active captures can finish while a chat keeps appending.
+  Concurrent header rewrites defer capture for retry, including ordinary
+  admission headers and dependencies with empty captured prefixes.
 
 - Complete non-live experimental pairing/revocation handling: committed retired
   dedicated-key history, healthy issuer labels and private operator bindings,
