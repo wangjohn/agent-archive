@@ -193,15 +193,18 @@ func setupPairing(opts setupOptions, stdin io.Reader, out, errOut io.Writer, env
 	if err = applySetup(home, userHome, exe, existing, &cfg, nil, env); err != nil {
 		return fmt.Errorf("pairing setup did not commit: %w; retry the same pairing or finish/discard the saved setup", err)
 	}
-	terminal.Printf(out, "✓ %s is connected.\n", cfg.MachineName)
-	terminal.Printf(out, "Paired with %s. This machine is %s. %s.\n", payload.IssuerName, payload.Name, pairingCredentialDescription(payload))
-	if !opts.yes {
-		terminal.Println(out, "You can finish on the source machine and delete the pairing file.")
-	}
+	printPairingConnected(out, cfg.MachineName, payload, opts.yes)
 	if err = finishSetup(p, errOut, home, cfg, existing.Paused, discoveries, env.now(), setupFinish{env: env, userHome: userHome, offerImport: !opts.yes, skills: skills}); err != nil {
 		return err
 	}
 	return nil
+}
+
+func printPairingConnected(out io.Writer, name string, payload pairing.Payload, yes bool) {
+	terminal.Printf(out, "✓ %s is connected. Paired with %s.\n%s.\n", name, payload.IssuerName, pairingCredentialDescription(payload))
+	if !yes {
+		terminal.Println(out, "You can finish on the source machine and delete the pairing file.")
+	}
 }
 
 func readPairingCode(opts setupOptions, p *prompter, env Env) (string, error) {
