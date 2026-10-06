@@ -82,6 +82,10 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Installers point to `agent-archive backfill` for importing older sessions.
+  Installation docs include preview guidance and explain that upgrades keep
+  your capture settings.
+
 - Codex setup offers included-project or all-current-and-future-project scope,
   independent of supported-source discovery. Fresh scripts explicitly choose
   both source and scope; omitted reconfiguration preserves consent. Codex-only
