@@ -59,7 +59,8 @@ func TestNativeChildBurstKeepsFreshWorkMovingAcrossBoundedPasses(t *testing.T) {
 	health, found, e := discovery.ReadHealth(home)
 	must(t, e)
 	if !found || health.Probes > discovery.HeaderProbes {
-		t.Fatal("burst did not make bounded progress", health, first)
+		status, statusErr := local.LoadStatus()
+		t.Fatal("burst did not make bounded progress", health, first, status, statusErr)
 	}
 	// A fresh store has no absence proof yet. The real collector must finish
 	// authoritative index recovery; discovery may not bypass that protection.
