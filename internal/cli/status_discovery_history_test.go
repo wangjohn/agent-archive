@@ -54,3 +54,21 @@ func TestStatusReportsUnsupportedHistoryAlongsideSupportedDiscovery(t *testing.T
 		})
 	}
 }
+
+func TestStatusReportsActionableProjectRecoveryWithoutPrivatePaths(t *testing.T) {
+	t.Parallel()
+	at := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
+	health := discovery.Health{Enabled: true, Supported: true, LastAttempt: at, Outcomes: map[string]int{string(sourcefacts.RecoveryAmbiguous): 2, string(sourcefacts.RecoveryInventoryUnavailable): 1}}
+	app := appStatus{Name: "codex", Hooks: "installed", Discovery: &health}
+	view := statusView{configured: true, State: "Waiting for capture", Background: "loaded", Apps: []appStatus{app}}
+	for _, verbose := range []bool{false, true} {
+		var out bytes.Buffer
+		printStatus(&out, view, statusScreen{style: styleFor(&out), now: at, verbose: verbose})
+		text := out.String()
+		for _, want := range []string{"Project attribution pending for 2 observations", "--map-project OLD_CWD=CONFIGURED_ROOT", "start future chats in a configured checkout", "Project repository inventory pending", "ensure local Git supports config path queries"} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("missing %q in %s", want, text)
+			}
+		}
+	}
+}

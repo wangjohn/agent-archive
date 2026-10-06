@@ -1046,3 +1046,64 @@ transcript.
 3. **Keeping sessions forever.** A "never delete" retention setting is more
    useful once imports exist. Recommendation: propose it separately, after
    B3.
+
+## Recorded project recovery
+
+The optional bounded Codex `git.repository_url` supplies a normalized repository
+key through native metadata; malformed optional Git evidence does not invalidate
+thread identity. Shared `sourcefacts.RecoveryResolver` evaluates all configured
+roots, including exclusions, through an injected bounded local Git identity port.
+SSH and HTTPS spellings use the existing archive normalizer. Different physical
+clones remain ambiguous; aliases of the same checkout coalesce only with equal
+scope decisions. Inherited repository identity does not identify a missing
+subtree. Descendant exclusions therefore require an exact reviewed import
+mapping. Live filesystem ownership and nearest configured rules take precedence.
+
+The discovery catalog checkpoints an incomplete configured-root sweep. Each
+pass allows at most 128 identity lookups; completed sweeps refresh next pass,
+and cached prefix metadata is validated before a resumed sweep. Unavailable
+entries cannot certify uniqueness. Bounded Git config origin names identify
+metadata dependencies; no partial Git configuration parser interprets remotes.
+Source and Git reads run outside admission locks. Under-lock scope digests and
+permission generations reject configuration changes.
+
+`--map-project OLD_CWD=CONFIGURED_ROOT` is exact and invocation-local, with at
+most 128 mappings and 4,096 bytes per absolute path. The first equals sign is
+the delimiter. Its canonical sorted digest participates in `BatchFilters`
+equality. Local registrations retain original cwd, method, normalized key and
+policy/inventory context and bounded canonical cwd evidence, independently of
+timestamps and destination. Canonical cwd evidence travels with each proof; the
+4096-entry decision cache does not limit the number of distinct import candidates.
+No raw repository URL enters durable evidence. A mapping targets an existing included
+configured root and never overrides configured or live ownership.
+
+Recovery evidence is rechecked before admitting a new owner. Git dependency
+stamps include HEAD, worktree/common config paths, empty or absent included
+files, all candidate global/system config paths reported by Git, and scratch
+ancestors with no Git metadata and absent nearer checkout markers for configured
+Git subdirectories. Unsupported Git path queries remain unavailable; a documented no-value result
+establishes that no config path applies.
+New discovery checks the original source observation and original cwd again; imports validate each source and
+cwd and coalesce the common inventory check for each short registration hold.
+Import and recovered discovery attribution retain the file identity, size and modification time sampled
+before bounded native header inspection. It checks that same observation after
+header inspection and repository resolution. Imports also check after full filtering, and before each
+registration hold for recovered attribution. A rewrite or replacement during those stages reports
+`source_changed`; a settled retry resolves current cwd/repository facts. Automatic
+discovery retains file identity only in memory; persisted scheduling hints must
+reprobe the header whenever its cwd is missing, including configured descendants
+without a recorded repository key, before admitting new ownership.
+These checks run outside hooks.lock; current policy and consent still run under
+it. Already retained ownership continues without rerunning recovery evidence.
+
+Repository metadata validation has a separate finite allowance from physical
+project resolution: at most `max(1024, 2 * configured_roots * 129)` dependency
+rechecks and canonical-path resolver invocations per discovery pass (at most
+1024 roots). Two maximum-sized inventories leave room to validate a resumed
+prefix and admit a recovered source. Further candidates remain retryable.
+`repository_metadata_operations` reports those invocation units; a canonical
+path invocation may perform multiple filesystem probes. Import resets this
+allowance per short hold, with one common inventory check for its candidates.
+Git identity lookup limits remain unchanged. Filesystem proof checks cannot
+prevent a change after their final observation; the next admission slice or
+pass refreshes the evidence.

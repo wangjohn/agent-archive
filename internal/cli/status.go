@@ -30,6 +30,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/scheduler"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
+	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/terminal"
@@ -2804,6 +2805,17 @@ func (sc statusScreen) addCodexDiscoveryRow(row *statusRow, app appStatus) {
 		row.notes = append(row.notes, statusNote{sc.info(), discoveryProgress(sc.now, app)})
 		if formats := discoveryFormats(app.Discovery); formats != "" {
 			row.notes = append(row.notes, statusNote{sc.info(), formats})
+		}
+	}
+
+	if discoveryEnabled(app) {
+		pending := app.Discovery.Outcomes[string(sourcefacts.RecoveryAmbiguous)] + app.Discovery.Outcomes[string(sourcefacts.RecoverySubtreeUnavailable)]
+		if pending > 0 {
+			row.mark = s.warnMark()
+			row.notes = append(row.notes, statusNote{s.warnMark(), fmt.Sprintf("Project attribution pending for %d observations: multiple checkouts or unproved subtree scope. Review historical imports with backfill --dry-run --map-project OLD_CWD=CONFIGURED_ROOT; start future chats in a configured checkout.", pending)})
+		}
+		if app.Discovery.Outcomes[string(sourcefacts.RecoveryInventoryUnavailable)] > 0 || app.Discovery.Outcomes[string(sourcefacts.RecoveryBudgetExhausted)] > 0 {
+			row.notes = append(row.notes, statusNote{sc.info(), "Project repository inventory pending. Restore configured checkout access if needed and ensure local Git supports config path queries, then run sync to advance bounded recovery."})
 		}
 	}
 	if optionalCodexHooks(app) {

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/codexmeta"
 	"github.com/wangjohn/agent-archive/internal/discoveryio"
 	"path/filepath"
@@ -29,12 +30,14 @@ func (NativeHeaders) InspectHeader(r agentapi.NativeHeaderRequest) (agentapi.Nat
 			var v struct {
 				Type    string `json:"type"`
 				Payload struct {
-					Cwd string `json:"cwd"`
+					Cwd string            `json:"cwd"`
+					Git codexmeta.GitInfo `json:"git"`
 				} `json:"payload"`
 			}
 			decodeErr = json.Unmarshal(line, &v)
 			if v.Type == "session_meta" {
 				h.Directory = v.Payload.Cwd
+				h.RepoKey = archive.RepoKey(v.Payload.Git.RepositoryURL)
 			}
 			return false
 		})
@@ -60,6 +63,7 @@ func (NativeHeaders) InspectHeader(r agentapi.NativeHeaderRequest) (agentapi.Nat
 			return false
 		}
 		h.NativeID, h.Directory = meta.ID, meta.Cwd
+		h.RepoKey = archive.RepoKey(meta.Git.RepositoryURL)
 		facts, outcome := meta.Identity(r.Path)
 		h.IdentityMismatch = outcome == codexmeta.InvalidIdentity || outcome == codexmeta.InvalidRelationship || outcome == codexmeta.InvalidMetadata
 		// Import has older producer/start compatibility than automatic discovery,

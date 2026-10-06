@@ -18,6 +18,16 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Deleted Codex worktrees can recover an existing configured project from a
+  unique recorded repository identity, or an exact historical backfill mapping.
+  Excluded clones, ambiguous scope and damaged live checkouts remain pending;
+  recovery preserves original creation consent and retained ownership.
+  Backfill and automatic discovery retry a source rewritten or replaced during
+  header inspection or repository recovery instead of admitting earlier project
+  facts. Cached discovery facts for missing directories are reprobed before
+  admitting new ownership, including headers without recorded repository keys.
+  Configured subdirectory identities invalidate when a nearer repository appears.
+
 - Pairing recovery preserves exclusions on other clones and accepts home-prefixed
   manual project paths. Retired keys with exact local deletion confirmations no
   longer block revoking a replacement key after re-pairing; unverified absence
