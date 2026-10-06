@@ -761,7 +761,13 @@ func (s scan) admitCandidate(candidate Candidate, loc string) (bool, bool) {
 }
 
 func (s scan) recoverProject(candidate Candidate) (archive.ProjectResolution, sourcefacts.RecoveryOutcome, bool) {
-	if s.recovery == nil || s.resolver.HasRepositoryEvidence(candidate.WorkingDirectory) {
+	if s.recovery == nil {
+		return archive.ProjectResolution{}, "", false
+	}
+	if s.resolver.HasRepositoryEvidence(candidate.WorkingDirectory) {
+		if s.resolver.Exhausted {
+			return archive.ProjectResolution{}, sourcefacts.RecoveryBudgetExhausted, true
+		}
 		return archive.ProjectResolution{}, "", false
 	}
 	if _, err := os.Stat(candidate.WorkingDirectory); !errors.Is(err, os.ErrNotExist) {

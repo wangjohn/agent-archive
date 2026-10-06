@@ -125,3 +125,13 @@ func TestDeletedWorktreeImportContinuesWithoutRemapping(t *testing.T) {
 		t.Fatal(h, err)
 	}
 }
+
+func TestProjectRecoveryMetadataBudgetStaysRetryable(t *testing.T) {
+	resolver := sourcefacts.NewProjectResolver()
+	resolver.Operations = 1024
+	s := scan{resolver: resolver, recovery: sourcefacts.NewRecoveryResolver(nil, nil, filepath.Clean, nil, nil)}
+	_, outcome, attempted := s.recoverProject(Candidate{WorkingDirectory: filepath.Join(t.TempDir(), "gone")})
+	if !attempted || outcome != sourcefacts.RecoveryBudgetExhausted {
+		t.Fatal(outcome, attempted)
+	}
+}
