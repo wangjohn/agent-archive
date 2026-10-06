@@ -46,9 +46,9 @@ func (p *pass) observeLabels(ctx context.Context) {
 		if p.local.GenerationCaptureAllowed(reg) != nil {
 			continue
 		}
-		provider, ok := providers[reg.Harness.Name]
+		_, ok := providers[reg.Harness.Name]
 		if !ok {
-			provider, ok = p.opts.Labels.LookupLabels(reg.Harness.Name)
+			provider, ok := p.opts.Labels.LookupLabels(reg.Harness.Name)
 			if !ok {
 				continue
 			}
@@ -74,24 +74,7 @@ func (p *pass) observeLabels(ctx context.Context) {
 	defer cancel()
 	requests := p.prepareLabelRequests(ctx, providers, &cache, ids, eligible)
 	requests = prioritizeLabelRequests(requests, providers, p.opts.LabelEnvironment, &cache)
-	results := map[string]archive.SessionLabel{}
-	groups := map[string][]agentapi.LabelRequest{}
-	harnesses := []string{}
-	for _, request := range requests {
-		name := request.Registration.Harness.Name
-		if len(groups[name]) == 0 {
-			harnesses = append(harnesses, name)
-		}
-		groups[name] = append(groups[name], request)
-	}
-	for _, name := range harnesses {
-		if ctx.Err() != nil {
-			break
-		}
-		for id, label := range providers[name].LookupLabels(ctx, p.opts.LabelEnvironment, groups[name]) {
-			results[id] = label
-		}
-	}
+	results := lookupLabelRequests(ctx, providers, p.opts.LabelEnvironment, requests)
 	for _, request := range requests {
 		id := request.Registration.ArchiveSessionID
 		entry := cache.Entries[id]
@@ -317,4 +300,26 @@ func labelRequestGroup(providers map[string]agentapi.LabelProvider, env agentapi
 		return ""
 	}
 	return request.Registration.Harness.Name + "/" + key
+}
+
+func lookupLabelRequests(ctx context.Context, providers map[string]agentapi.LabelProvider, env agentapi.LabelEnvironment, requests []agentapi.LabelRequest) map[string]archive.SessionLabel {
+	results := map[string]archive.SessionLabel{}
+	groups := map[string][]agentapi.LabelRequest{}
+	harnesses := []string{}
+	for _, request := range requests {
+		name := request.Registration.Harness.Name
+		if len(groups[name]) == 0 {
+			harnesses = append(harnesses, name)
+		}
+		groups[name] = append(groups[name], request)
+	}
+	for _, name := range harnesses {
+		if ctx.Err() != nil {
+			break
+		}
+		for id, label := range providers[name].LookupLabels(ctx, env, groups[name]) {
+			results[id] = label
+		}
+	}
+	return results
 }
