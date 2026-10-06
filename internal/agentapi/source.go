@@ -175,6 +175,17 @@ type TemporaryByteBudget interface {
 	Release(int64)
 }
 
+// TemporaryWorkspaceBudget owns a confined scratch root and durable capacity.
+// Root allocates nothing. Call Reserve before creating any scratch file; Close
+// removes only owned scratch and releases capacity only after verified cleanup.
+// Err reports retained cleanup/accounting obligations from the void Release port.
+type TemporaryWorkspaceBudget interface {
+	TemporaryByteBudget
+	Root() string
+	Err() error
+	Close() error
+}
+
 // AdmissionCatalogSnapshot retains compact identity/eligibility facts decoded
 // from the same immutable native input used by the privacy filter.
 type AdmissionCatalogSnapshot interface{ AdmissionChat() DatabaseChat }
