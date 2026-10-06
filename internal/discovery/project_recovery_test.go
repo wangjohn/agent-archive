@@ -135,3 +135,33 @@ func TestProjectRecoveryMetadataBudgetStaysRetryable(t *testing.T) {
 		t.Fatal(outcome, attempted)
 	}
 }
+
+func TestRecoveredDiscoveryRechecksEvidenceBeforeAdmission(t *testing.T) {
+	for _, changeSource := range []bool{false, true} {
+		store, cfg, at, root := fixture(t)
+		gone := filepath.Join(t.TempDir(), "gone")
+		native := writeRollout(t, root, gone, at.Add(time.Minute), 33, "sessions")
+		path := filepath.Join(root, "sessions", "rollout-2026-10-01T12-00-00-"+native+".jsonl")
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw = bytes.Replace(raw, []byte(`"source":"cli"`), []byte(`"git":{"repository_url":"https://example.test/acme/repo"},"source":"cli"`), 1)
+		if err := os.WriteFile(path, raw, 0600); err != nil {
+			t.Fatal(err)
+		}
+		key := archive.RepoKey("https://example.test/acme/repo")
+		opts := Options{Now: func() time.Time { return at.Add(2 * time.Minute) }, RepositoryIdentity: func(_ context.Context, rootPath string) sourcefacts.RepositoryIdentity {
+			if changeSource {
+				if err := os.WriteFile(path, append(raw, '\n'), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			return sourcefacts.RepositoryIdentity{Root: rootPath, Key: key, Known: true}
+		}, RepositoryIdentityCurrent: func(sourcefacts.RepositoryIdentity) bool { return changeSource }}
+		h, err := run(t.Context(), store, cfg, opts, syntheticSupport)
+		if err != nil || h.Registered != 0 || (h.Outcomes[string(sourcefacts.RecoveryInventoryUnavailable)] == 0 && h.Outcomes[string(outcomeChanged)] == 0) {
+			t.Fatal(h, err)
+		}
+	}
+}

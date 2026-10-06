@@ -145,9 +145,11 @@ type Candidate struct {
 	// registered under: a configured project's own spelling, or the resolved
 	// path. It is set for a skip that has a would-be root (home, temporary,
 	// excluded) and empty when no project could be determined.
-	ProjectRoot       string
-	ProjectResolution *archive.ProjectResolution
-	ProjectKind       ProjectKind
+	ProjectRoot              string
+	ProjectResolution        *archive.ProjectResolution
+	projectResolutionCurrent func() bool
+	projectResolutionReset   func()
+	ProjectKind              ProjectKind
 	// ProjectIncluded is set when the root is a configured, included
 	// project; otherwise importing adds it.
 	ProjectIncluded bool
@@ -265,15 +267,16 @@ const (
 // through collector.FilterTranscriptFile, the collector's own filter, which
 // reads transcripts from the real file system whatever is injected here.
 type Environment struct {
-	RepositoryIdentity sourcefacts.RepositoryLookup
-	Discovery          agentapi.DiscoveryLookup
-	DatabaseCatalogs   agentapi.DatabaseCatalogLookup
-	NativePaths        agentapi.NativePathsLookup
-	Worktrees          agentapi.WorktreeLookup
-	Workspaces         agentapi.WorkspaceLookup
-	Children           agentapi.ChildrenLookup
-	Imports            agentapi.ImportsLookup
-	Sources            agentapi.SourcesLookup
+	RepositoryIdentity        sourcefacts.RepositoryLookup
+	RepositoryIdentityCurrent func(sourcefacts.RepositoryIdentity) bool
+	Discovery                 agentapi.DiscoveryLookup
+	DatabaseCatalogs          agentapi.DatabaseCatalogLookup
+	NativePaths               agentapi.NativePathsLookup
+	Worktrees                 agentapi.WorktreeLookup
+	Workspaces                agentapi.WorkspaceLookup
+	Children                  agentapi.ChildrenLookup
+	Imports                   agentapi.ImportsLookup
+	Sources                   agentapi.SourcesLookup
 	// Home is the user's home directory, where the apps keep their stores.
 	Home string
 	// NativeDirectories are observed current and previously configured native locations.

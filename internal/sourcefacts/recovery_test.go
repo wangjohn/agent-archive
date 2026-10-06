@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -201,5 +202,116 @@ func TestRecoveryCancellationKeepsFairCursor(t *testing.T) {
 	}, inv)
 	if proof, outcome := second.Recover(context.Background(), "/gone", key); outcome != "" || proof.Root != "/b" || calls != 3 {
 		t.Fatal(proof, outcome, calls)
+	}
+}
+
+func TestRecoveryCachedProofRejectsChangedRepository(t *testing.T) {
+	key := archive.RepoKey("https://example.test/acme/repo")
+	for _, mapped := range []bool{false, true} {
+		mappings := map[string]string(nil)
+		if mapped {
+			mappings = map[string]string{"/gone": "/a"}
+		}
+		r := NewRecoveryResolver([]archive.ProjectActivation{{Root: "/a", Included: true}}, mappings, filepath.Clean, func(context.Context, string) RepositoryIdentity {
+			return RepositoryIdentity{Root: "/a", Key: key, Known: true}
+		}, nil)
+		current := true
+		r.Validate = func(RepositoryIdentity) bool { return current }
+		proof, outcome := r.Recover(t.Context(), "/gone", key)
+		if outcome != "" || !r.Current(proof) {
+			t.Fatal(proof, outcome)
+		}
+		current = false
+		if _, outcome := r.Recover(t.Context(), "/gone", key); outcome != RecoveryInventoryUnavailable {
+			t.Fatal("stale cached proof reused", outcome)
+		}
+	}
+}
+
+func TestRecoveryLargeStampedInventoryMakesProgress(t *testing.T) {
+	key := archive.RepoKey("https://example.test/acme/repo")
+	var projects []archive.ProjectActivation
+	for i := range 300 {
+		projects = append(projects, archive.ProjectActivation{Root: fmt.Sprintf("/p%03d", i), Included: true})
+	}
+	inv := &RecoveryInventory{}
+	calls := 0
+	for pass := range 3 {
+		r := NewRecoveryResolver(projects, nil, filepath.Clean, func(_ context.Context, path string) RepositoryIdentity {
+			calls++
+			k := ""
+			if path == "/p299" {
+				k = key
+			}
+			deps := make([]RepositoryDependency, 128)
+			for j := range deps {
+				deps[j] = RepositoryDependency{Path: fmt.Sprintf("/metadata/%d", j), Stamp: "synthetic"}
+			}
+			return RepositoryIdentity{Root: path, Key: k, Known: true, Dependencies: deps}
+		}, inv)
+		r.Validate = func(RepositoryIdentity) bool { return true }
+		proof, outcome := r.Recover(t.Context(), "/gone", key)
+		if pass < 2 && outcome != RecoveryBudgetExhausted {
+			t.Fatal(outcome)
+		}
+		if pass == 2 && (outcome != "" || !r.Current(proof)) {
+			t.Fatal("completed inventory cannot admit", outcome, r.MetadataOperations)
+		}
+	}
+	if calls != 300 {
+		t.Fatal("Git work restarted", calls)
+	}
+}
+
+func BenchmarkRecoveryImportSlicesWithStampedEvidence(b *testing.B) {
+	for _, roots := range []int{1, 10, 128} {
+		for _, records := range []int{1000, 10000, 100000} {
+			b.Run(fmt.Sprintf("roots%d/sessions%d", roots, records), func(b *testing.B) {
+				metadata := filepath.Join(b.TempDir(), "config")
+				if err := os.WriteFile(metadata, []byte("synthetic"), 0600); err != nil {
+					b.Fatal(err)
+				}
+				info, err := os.Stat(metadata)
+				if err != nil {
+					b.Fatal(err)
+				}
+				var projects []archive.ProjectActivation
+				for i := range roots {
+					projects = append(projects, archive.ProjectActivation{Root: fmt.Sprintf("/p%03d", i), Included: true})
+				}
+				key := archive.RepoKey("https://example.test/acme/repo")
+				calls, stats := 0, 0
+				b.ResetTimer()
+				for range b.N {
+					r := NewRecoveryResolver(projects, nil, filepath.Clean, func(_ context.Context, path string) RepositoryIdentity {
+						calls++
+						k := ""
+						if path == projects[len(projects)-1].Root {
+							k = key
+						}
+						return RepositoryIdentity{Root: path, Key: k, Known: true, Dependencies: []RepositoryDependency{{Path: metadata, Stamp: "synthetic"}}}
+					}, nil)
+					r.Validate = func(RepositoryIdentity) bool {
+						stats++
+						current, e := os.Stat(metadata)
+						return e == nil && os.SameFile(info, current) && info.ModTime().Equal(current.ModTime())
+					}
+					proof, outcome := r.Recover(b.Context(), "/gone", key)
+					if outcome != "" {
+						b.Fatal(outcome)
+					}
+					for i := range records {
+						if i%50 == 0 {
+							r.ResetValidation()
+						}
+						if !r.CurrentSlice(proof) {
+							b.Fatal("slice failed freshness")
+						}
+					}
+				}
+				b.ReportMetric(float64(calls)/float64(b.N), "lookups/op")
+				b.ReportMetric(float64(stats)/float64(b.N), "stats/op")
+			})
+		}
 	}
 }

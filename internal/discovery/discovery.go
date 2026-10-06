@@ -37,24 +37,25 @@ const (
 // Health separates scan coverage from upload and hook health. Codes never
 // include native IDs, paths or native operating-system errors.
 type Health struct {
-	Enabled           bool                `json:"enabled"`
-	Supported         bool                `json:"supported"`
-	LastAttempt       time.Time           `json:"last_attempt,omitzero"`
-	LastReconciled    time.Time           `json:"last_reconciled,omitzero"`
-	Pending           bool                `json:"pending"`
-	RepositoryLookups int                 `json:"repository_lookups,omitempty"`
-	ProjectOperations int                 `json:"project_metadata_operations"`
-	GitBytes          int                 `json:"git_metadata_bytes"`
-	Probes            int                 `json:"header_probes"`
-	Entries           int                 `json:"directory_entries"`
-	IndexBytes        int64               `json:"index_bytes_read,omitempty"`
-	IndexQueries      int                 `json:"index_queries,omitempty"`
-	IndexLocators     int                 `json:"index_locators,omitempty"`
-	Bytes             int64               `json:"bytes_read"`
-	Registered        int                 `json:"registered"`
-	Outcomes          map[string]int      `json:"outcomes,omitempty"`
-	Errors            []string            `json:"errors,omitempty"`
-	Formats           []FormatObservation `json:"observed_formats,omitempty"`
+	Enabled                      bool                `json:"enabled"`
+	Supported                    bool                `json:"supported"`
+	LastAttempt                  time.Time           `json:"last_attempt,omitzero"`
+	LastReconciled               time.Time           `json:"last_reconciled,omitzero"`
+	Pending                      bool                `json:"pending"`
+	RepositoryMetadataOperations int                 `json:"repository_metadata_operations,omitempty"`
+	RepositoryLookups            int                 `json:"repository_lookups,omitempty"`
+	ProjectOperations            int                 `json:"project_metadata_operations"`
+	GitBytes                     int                 `json:"git_metadata_bytes"`
+	Probes                       int                 `json:"header_probes"`
+	Entries                      int                 `json:"directory_entries"`
+	IndexBytes                   int64               `json:"index_bytes_read,omitempty"`
+	IndexQueries                 int                 `json:"index_queries,omitempty"`
+	IndexLocators                int                 `json:"index_locators,omitempty"`
+	Bytes                        int64               `json:"bytes_read"`
+	Registered                   int                 `json:"registered"`
+	Outcomes                     map[string]int      `json:"outcomes,omitempty"`
+	Errors                       []string            `json:"errors,omitempty"`
+	Formats                      []FormatObservation `json:"observed_formats,omitempty"`
 }
 
 type directory struct {
@@ -188,6 +189,7 @@ func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config,
 	}
 	c.Queue = append(unavailable, c.Queue...)
 	h.ProjectOperations = resolver.Operations
+	h.RepositoryMetadataOperations = recovery.MetadataOperations
 	h.RepositoryLookups = recovery.Operations
 	h.GitBytes = resolver.GitBytes
 	h.Pending = len(c.Queue) > 0 || len(c.Retries) > 0
@@ -673,23 +675,20 @@ func (s scan) admitCandidate(candidate Candidate, loc string) (bool, bool) {
 	var ok bool
 	var ownedRoot string
 	physical := cfg.EffectiveCodexCaptureScope() == config.CodexAllProjects
-	if id, known, e := store.ArchiveSessionID(sessionKey(candidate.Agent, candidate.NativeSessionID)); e == nil && known {
-		if prior, found, e := store.LoadRegistration(id); e == nil && found {
-			if !cfg.AcceptSession(prior) {
+	if prior, blocked := s.retainedProject(candidate); blocked {
+		h.Outcomes["project_not_authorized"]++
+		return false, false
+	} else if prior != nil {
+		if prior.ProjectResolution != nil && prior.ProjectResolution.OriginalCwd == candidate.WorkingDirectory {
+			if p, matched := sourcefacts.ConfiguredOwner(cfg.Archive.Projects, canonicalProjectPath(candidate.WorkingDirectory), canonicalProjectPath); matched && !p.Included {
 				h.Outcomes["project_not_authorized"]++
 				return false, false
 			}
-			if prior.ProjectResolution != nil && prior.ProjectResolution.OriginalCwd == candidate.WorkingDirectory {
-				if p, matched := sourcefacts.ConfiguredOwner(cfg.Archive.Projects, canonicalProjectPath(candidate.WorkingDirectory), canonicalProjectPath); matched && !p.Included {
-					h.Outcomes["project_not_authorized"]++
-					return false, false
-				}
-				ownedRoot = prior.ProjectRoot
-				candidate.ProjectResolution = prior.ProjectResolution
-			}
-			if prior.CodexAdmission != nil {
-				physical = true
-			}
+			ownedRoot = prior.ProjectRoot
+			candidate.ProjectResolution = prior.ProjectResolution
+		}
+		if prior.CodexAdmission != nil {
+			physical = true
 		}
 	}
 
@@ -741,6 +740,16 @@ func (s scan) admitCandidate(candidate Candidate, loc string) (bool, bool) {
 			return false, false
 		}
 	}
+	if candidate.ProjectResolution != nil && ownedRoot == "" {
+		if outcome := s.recoveryEvidenceOutcome(candidate, loc); outcome != "" {
+			h.Outcomes[outcome]++
+			if outcome == string(outcomeChanged) {
+				delete(c.Cache, loc)
+			}
+			s.retainRetry(candidate.Source)
+			return false, false
+		}
+	}
 	var created bool
 	var e error
 	if physical {
@@ -780,4 +789,36 @@ func (s scan) recoverProject(candidate Candidate) (archive.ProjectResolution, so
 		}
 	}
 	return proof, outcome, true
+}
+
+func (s scan) recoveryEvidenceOutcome(candidate Candidate, loc string) string {
+	observed, cached := s.catalog.Cache[loc]
+	relative, err := filepath.Rel(candidate.Source.Root, filepath.Dir(candidate.Source.Locator))
+	current := s.adapter.Describe(candidate.Source.Root, relative, filepath.Base(candidate.Source.Locator))
+	if err != nil || !cached || current.Fingerprint.Size != observed.Size || current.Fingerprint.Mtime != observed.Mtime {
+		return string(outcomeChanged)
+	}
+	_, cwdErr := os.Stat(candidate.WorkingDirectory)
+	if !errors.Is(cwdErr, os.ErrNotExist) || !s.recovery.Current(*candidate.ProjectResolution) {
+		if s.recovery.MetadataExhausted {
+			return string(sourcefacts.RecoveryBudgetExhausted)
+		}
+		return string(sourcefacts.RecoveryInventoryUnavailable)
+	}
+	return ""
+}
+
+func (s scan) retainedProject(candidate Candidate) (*archive.SessionRegistration, bool) {
+	id, known, err := s.store.ArchiveSessionID(sessionKey(candidate.Agent, candidate.NativeSessionID))
+	if err != nil || !known {
+		return nil, false
+	}
+	prior, found, err := s.store.LoadRegistration(id)
+	if err != nil || !found {
+		return nil, false
+	}
+	if !s.cfg.AcceptSession(prior) {
+		return nil, true
+	}
+	return &prior, false
 }

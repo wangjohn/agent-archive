@@ -1074,3 +1074,23 @@ equality. Local registrations retain original cwd, method, normalized key and
 policy/inventory context, independently of timestamps and destination. No raw
 repository URL enters durable evidence. A mapping targets an existing included
 configured root and never overrides configured or live ownership.
+
+Recovery evidence is rechecked before admitting a new owner. Git dependency
+stamps include HEAD, worktree/common config paths, empty or absent included
+files, and scratch ancestors with no Git metadata. New discovery checks the
+source fingerprint and original cwd again; imports validate each source and
+cwd and coalesce the common inventory check for each short registration hold.
+These checks run outside hooks.lock; current policy and consent still run under
+it. Already retained ownership continues without rerunning recovery evidence.
+
+Repository metadata validation has a separate finite allowance from physical
+project resolution: at most `max(1024, 2 * configured_roots * 129)` dependency
+rechecks and canonical-path resolver invocations per discovery pass (at most
+1024 roots). Two maximum-sized inventories leave room to validate a resumed
+prefix and admit a recovered source. Further candidates remain retryable.
+`repository_metadata_operations` reports those invocation units; a canonical
+path invocation may perform multiple filesystem probes. Import resets this
+allowance per short hold, with one common inventory check for its candidates.
+Git identity lookup limits remain unchanged. Filesystem proof checks cannot
+prevent a change after their final observation; the next admission slice or
+pass refreshes the evidence.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 	"os"
@@ -23,42 +24,11 @@ func ProjectIdentity(ctx context.Context, root string) sourcefacts.RepositoryIde
 		if !known {
 			return id
 		}
-		bounded, cancel := context.WithTimeout(ctx, Timeout)
-		defer cancel()
-		raw, err := ExecRunner(bounded, root, "-C", root, "config", "--show-origin", "--name-only", "-z", "--list")
-		if err != nil || bounded.Err() != nil {
+		dependencies, ok := projectDependencies(ctx, root)
+		if !ok {
 			return sourcefacts.RepositoryIdentity{}
 		}
-		parts := strings.Split(strings.TrimSuffix(string(raw), "\x00"), "\x00")
-		if len(parts)%2 != 0 {
-			return sourcefacts.RepositoryIdentity{}
-		}
-		paths := map[string]bool{root: true, filepath.Join(root, ".git"): true}
-		for i := 0; i < len(parts); i += 2 {
-			path, ok := strings.CutPrefix(parts[i], "file:")
-			if !ok {
-				return sourcefacts.RepositoryIdentity{}
-			}
-			if !filepath.IsAbs(path) {
-				path = filepath.Join(root, path)
-			}
-			paths[filepath.Clean(path)] = true
-		}
-		if len(paths) > 128 {
-			return sourcefacts.RepositoryIdentity{}
-		}
-		ordered := make([]string, 0, len(paths))
-		for path := range paths {
-			ordered = append(ordered, path)
-		}
-		sort.Strings(ordered)
-		for _, path := range ordered {
-			stamp, ok := repositoryStamp(path)
-			if !ok {
-				return sourcefacts.RepositoryIdentity{}
-			}
-			id.Dependencies = append(id.Dependencies, sourcefacts.RepositoryDependency{Path: path, Stamp: stamp})
-		}
+		id.Dependencies = dependencies
 		// The final reads must agree with the earlier identity under unchanged metadata.
 		verifiedRoot := ProjectRoot(ctx, root, nil)
 		verifiedKey, verifiedKnown := ProjectKey(ctx, root, nil)
@@ -80,15 +50,22 @@ func ProjectIdentity(ctx context.Context, root string) sourcefacts.RepositoryIde
 			return sourcefacts.RepositoryIdentity{}
 		}
 	}
+	var dependencies []sourcefacts.RepositoryDependency
 	for p, depth := filepath.Clean(root), 0; depth < 64; depth++ {
 		_, err := os.Lstat(filepath.Join(p, ".git"))
 		if err == nil || !os.IsNotExist(err) {
 			return sourcefacts.RepositoryIdentity{}
 		}
+		stamp, ok := repositoryStamp(filepath.Join(p, ".git"))
+		if !ok {
+			return sourcefacts.RepositoryIdentity{}
+		}
+		dependencies = append(dependencies, sourcefacts.RepositoryDependency{Path: filepath.Join(p, ".git"), Stamp: stamp})
 		parent := filepath.Dir(p)
 		if parent == p {
 			stamp, ok := repositoryStamp(root)
-			return sourcefacts.RepositoryIdentity{Known: ok, Dependencies: []sourcefacts.RepositoryDependency{{Path: root, Stamp: stamp}}}
+			dependencies = append(dependencies, sourcefacts.RepositoryDependency{Path: root, Stamp: stamp})
+			return sourcefacts.RepositoryIdentity{Known: ok, Dependencies: dependencies}
 		}
 		p = parent
 	}
@@ -111,6 +88,10 @@ func ProjectIdentityCurrent(id sourcefacts.RepositoryIdentity) bool {
 
 func repositoryStamp(path string) (string, bool) {
 	info, err := os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		digest := sha256.Sum256([]byte("missing:" + path))
+		return hex.EncodeToString(digest[:]), true
+	}
 	if err != nil {
 		return "", false
 	}
@@ -122,4 +103,97 @@ func repositoryStamp(path string) (string, bool) {
 	raw := fmt.Sprintf("%s:%d:%d:%d:%d:%d", path, info.Size(), info.Mode(), info.ModTime().UnixNano(), stat.Dev, stat.Ino)
 	digest := sha256.Sum256([]byte(raw))
 	return hex.EncodeToString(digest[:]), true
+}
+
+func projectDependencies(ctx context.Context, root string) ([]sourcefacts.RepositoryDependency, bool) {
+	bounded, cancel := context.WithTimeout(ctx, Timeout)
+	defer cancel()
+	raw, err := ExecRunner(bounded, root, "-C", root, "config", "--show-origin", "--name-only", "-z", "--list")
+	if err != nil || bounded.Err() != nil {
+		return nil, false
+	}
+	parts := strings.Split(strings.TrimSuffix(string(raw), "\x00"), "\x00")
+	if len(parts)%2 != 0 {
+		return nil, false
+	}
+	paths := map[string]bool{root: true, filepath.Join(root, ".git"): true}
+	// HEAD controls onbranch includes; the worktree/common metadata controls
+	// which config Git reads. Ask Git for paths rather than interpreting it.
+	metadata, err := ExecRunner(bounded, root, "-C", root, "rev-parse", "--path-format=absolute", "--git-path", "HEAD", "--git-path", "config", "--git-path", "config.worktree", "--git-path", "commondir")
+	if err != nil || bounded.Err() != nil {
+		return nil, false
+	}
+	names := strings.Split(strings.TrimSuffix(string(metadata), "\n"), "\n")
+	if len(names) != 4 {
+		return nil, false
+	}
+	for _, path := range names {
+		if !filepath.IsAbs(path) || strings.ContainsAny(path, "\x00\r\n") {
+			return nil, false
+		}
+		paths[filepath.Clean(path)] = true
+	}
+	if !includeDependencies(bounded, root, paths) {
+		return nil, false
+	}
+	for i := 0; i < len(parts); i += 2 {
+		path, ok := strings.CutPrefix(parts[i], "file:")
+		if !ok {
+			return nil, false
+		}
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(root, path)
+		}
+		paths[filepath.Clean(path)] = true
+	}
+	if len(paths) > 128 {
+		return nil, false
+	}
+	ordered := make([]string, 0, len(paths))
+	for path := range paths {
+		ordered = append(ordered, path)
+	}
+	sort.Strings(ordered)
+	var dependencies []sourcefacts.RepositoryDependency
+	for _, path := range ordered {
+		stamp, ok := repositoryStamp(path)
+		if !ok {
+			return nil, false
+		}
+		dependencies = append(dependencies, sourcefacts.RepositoryDependency{Path: path, Stamp: stamp})
+	}
+	return dependencies, true
+}
+
+func includeDependencies(ctx context.Context, root string, paths map[string]bool) bool {
+	// An empty or absent include contributes no origin-name entry. Git's
+	// typed path query expands home/prefix syntax; relative values use the
+	// containing config's directory, as Git does.
+	includes, err := ExecRunner(ctx, root, "-C", root, "config", "--show-origin", "--type=path", "-z", "--get-regexp", `^(include|includeif\..*)\.path$`)
+	var status interface{ ExitCode() int }
+	absent := errors.As(err, &status) && status.ExitCode() == 1 && len(includes) == 0
+	if (err != nil && !absent) || ctx.Err() != nil {
+		return false
+	}
+	if len(includes) != 0 {
+		entries := strings.Split(strings.TrimSuffix(string(includes), "\x00"), "\x00")
+		if len(entries)%2 != 0 {
+			return false
+		}
+		for i := 0; i < len(entries); i += 2 {
+			origin, ok := strings.CutPrefix(entries[i], "file:")
+			_, path, valueOK := strings.Cut(entries[i+1], "\n")
+			if !ok || !valueOK || path == "" || strings.ContainsAny(path, "\x00\r\n") {
+				return false
+			}
+			if !filepath.IsAbs(origin) {
+				origin = filepath.Join(root, origin)
+			}
+			if !filepath.IsAbs(path) {
+				path = filepath.Join(filepath.Dir(origin), path)
+			}
+			paths[filepath.Clean(path)] = true
+		}
+	}
+	return true
 }

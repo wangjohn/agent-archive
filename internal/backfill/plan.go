@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -285,6 +286,15 @@ func preparePlanWork(ctx context.Context, env Environment, cfg config.Config, fi
 			continue
 		}
 		w.res = r.resolveEvidence(ctx, w.t.cwd, w.t.repoKey)
+		if w.res.current != nil {
+			original, statErr := env.lstat(w.t.path)
+			base := w.res.current
+			path := w.t.path
+			w.res.current = &resolutionCheck{reset: base.reset, valid: func() bool {
+				current, err := env.lstat(path)
+				return statErr == nil && err == nil && os.SameFile(original, current) && original.Size() == current.Size() && original.ModTime().Equal(current.ModTime()) && base.valid()
+			}}
+		}
 		if w.t.cwd != "" {
 			cursorCandidates = append(cursorCandidates, w.t.cwd)
 		}
@@ -486,6 +496,10 @@ func decidePlanCandidates(items []*work, since, until, now time.Time) []*work {
 		}
 		w.c.ProjectRoot, w.c.ProjectKind, w.c.ProjectIncluded = w.res.root, w.res.kind, w.res.included
 		w.c.ProjectResolution = w.res.proof
+		if w.res.current != nil {
+			w.c.projectResolutionCurrent = w.res.current.valid
+			w.c.projectResolutionReset = w.res.current.reset
+		}
 		w.c.Skip = w.reason(now)
 		if w.c.Skip == "" {
 			parents = append(parents, w)

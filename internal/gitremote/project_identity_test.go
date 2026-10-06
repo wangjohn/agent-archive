@@ -63,3 +63,79 @@ func TestProjectIdentitySeparatesScratchAndUnreadableClone(t *testing.T) {
 		t.Fatal("cancelled Git observation became evidence")
 	}
 }
+
+func TestProjectIdentityTracksBranchConditionalConfiguration(t *testing.T) {
+	git := gitOrSkip(t)
+	root := initRepo(t, git, "https://example.test/acme/original")
+	include := filepath.Join(t.TempDir(), "branch.cfg")
+	if err := os.WriteFile(include, []byte("[remote \"origin\"]\n url = https://example.test/acme/branch\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.OpenFile(filepath.Join(root, ".git", "config"), os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = f.WriteString("\n[includeIf \"onbranch:selected\"]\n path = " + include + "\n")
+	if closeErr := f.Close(); err != nil || closeErr != nil {
+		t.Fatal(err, closeErr)
+	}
+	id := ProjectIdentity(t.Context(), root)
+	if !id.Known || !ProjectIdentityCurrent(id) {
+		t.Fatalf("initial identity unavailable: %+v", id)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".git", "HEAD"), []byte("ref: refs/heads/selected\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if ProjectIdentityCurrent(id) {
+		t.Fatal("branch conditional origin changed without invalidating cached identity")
+	}
+	if changed := ProjectIdentity(t.Context(), root); !changed.Known || changed.Key != archive.RepoKey("https://example.test/acme/branch") {
+		t.Fatalf("changed identity: %+v", changed)
+	}
+}
+
+func TestProjectIdentityTracksEmptyIncludeConfiguration(t *testing.T) {
+	git := gitOrSkip(t)
+	root := initRepo(t, git, "https://example.test/acme/original")
+	include := filepath.Join(t.TempDir(), "empty.cfg")
+	if err := os.WriteFile(include, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.OpenFile(filepath.Join(root, ".git", "config"), os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = f.WriteString("\n[include]\n path = " + include + "\n")
+	if closeErr := f.Close(); err != nil || closeErr != nil {
+		t.Fatal(err, closeErr)
+	}
+	id := ProjectIdentity(t.Context(), root)
+	if !id.Known || !ProjectIdentityCurrent(id) {
+		t.Fatalf("initial identity unavailable: %+v", id)
+	}
+	if err := os.WriteFile(include, []byte("[remote \"origin\"]\n url = https://example.test/acme/changed\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if ProjectIdentityCurrent(id) {
+		t.Fatal("empty included file changed without invalidating cached identity")
+	}
+}
+
+func TestProjectIdentityTracksScratchAncestor(t *testing.T) {
+	gitOrSkip(t)
+	parent := t.TempDir()
+	root := filepath.Join(parent, "scratch")
+	if err := os.Mkdir(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	id := ProjectIdentity(t.Context(), root)
+	if !id.Known || !ProjectIdentityCurrent(id) {
+		t.Fatal(id)
+	}
+	if err := os.Mkdir(filepath.Join(parent, ".git"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if ProjectIdentityCurrent(id) {
+		t.Fatal("scratch gained a Git ancestor without invalidating known absence")
+	}
+}

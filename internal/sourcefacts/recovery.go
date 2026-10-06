@@ -57,18 +57,25 @@ type RecoveryInventory struct {
 // RecoveryResolver only recovers absent checkouts into existing configured roots.
 // Live ownership and explicit configured rules must be evaluated before calling Recover.
 type RecoveryResolver struct {
-	Projects      []archive.ProjectActivation
-	Mappings      map[string]string
-	ResolvePath   func(string) string
-	Lookup        RepositoryLookup
-	Validate      func(RepositoryIdentity) bool
-	digest        string
-	results       map[string]recoveryDecision
-	Inventory     *RecoveryInventory
-	Context       string
-	PolicyContext string
-	Operations    int
-	MaxOperations int
+	Projects           []archive.ProjectActivation
+	Mappings           map[string]string
+	ResolvePath        func(string) string
+	Lookup             RepositoryLookup
+	Validate           func(RepositoryIdentity) bool
+	rawResolve         func(string) string
+	pathContext        string
+	mappedIdentities   map[string]RepositoryIdentity
+	MetadataOperations int
+	MetadataExhausted  bool
+	sliceValidated     map[string]bool
+	cwdSnapshots       map[string]string
+	digest             string
+	results            map[string]recoveryDecision
+	Inventory          *RecoveryInventory
+	Context            string
+	PolicyContext      string
+	Operations         int
+	MaxOperations      int
 }
 
 type recoveryDecision struct {
@@ -83,6 +90,8 @@ func NewRecoveryResolver(projects []archive.ProjectActivation, mappings map[stri
 	}
 	r := &RecoveryResolver{Projects: append([]archive.ProjectActivation(nil), projects...), Mappings: maps.Clone(mappings), ResolvePath: resolve, Lookup: lookup, Inventory: inventory, MaxOperations: 128}
 	sort.Slice(r.Projects, func(i, j int) bool { return r.Projects[i].Root < r.Projects[j].Root })
+	r.rawResolve = resolve
+	r.pathContext = RecoveryContext(projects, nil, resolve)
 	r.Context = RecoveryContext(projects, mappings, filepath.Clean)
 	r.PolicyContext = RecoveryContext(projects, nil, filepath.Clean)
 	knownPaths := map[string]string{}
@@ -127,6 +136,9 @@ func RecoveryContext(projects []archive.ProjectActivation, mappings map[string]s
 func (r *RecoveryResolver) Recover(ctx context.Context, cwd, key string) (proof archive.ProjectResolution, outcome RecoveryOutcome) {
 	cacheKey := cwd + "\x00" + key + "\x00" + r.Context
 	if decision, ok := r.results[cacheKey]; ok {
+		if !r.Current(decision.Proof) {
+			return decision.Proof, r.staleOutcome()
+		}
 		return decision.Proof, decision.Outcome
 	}
 	defer func() {
@@ -140,6 +152,9 @@ func (r *RecoveryResolver) Recover(ctx context.Context, cwd, key string) (proof 
 	proof = archive.ProjectResolution{OriginalCwd: cwd, RecordedRepoKey: key, Context: r.Context, PolicyContext: r.PolicyContext}
 	if len(cwd) > 4096 || !filepath.IsAbs(cwd) || strings.ContainsAny(cwd, "\x00\r\n") {
 		return proof, RecoveryUnavailable
+	}
+	if !r.rememberCwd(cwd) {
+		return proof, RecoveryBudgetExhausted
 	}
 	cwd = filepath.Clean(cwd)
 	if p, ok := ConfiguredOwner(r.Projects, r.ResolvePath(cwd), r.ResolvePath); ok {
@@ -221,6 +236,10 @@ func (r *RecoveryResolver) recoverMapped(ctx context.Context, key, target string
 		if key != "" && id.Key != key {
 			return proof, RecoveryMappingConflict
 		}
+		if r.mappedIdentities == nil {
+			r.mappedIdentities = map[string]RepositoryIdentity{}
+		}
+		r.mappedIdentities[p.Root] = id
 		proof.Root = p.Root
 		proof.Method = "explicit_mapping"
 		return proof, ""
@@ -235,13 +254,17 @@ func (r *RecoveryResolver) prepareInventory(ctx context.Context) RecoveryOutcome
 	inv := r.Inventory
 	if r.Validate != nil {
 		for i, id := range inv.Entries {
-			if !r.Validate(id) {
+			if id.Known && !r.identityCurrent(id) {
+				if r.MetadataExhausted {
+					return RecoveryBudgetExhausted
+				}
+				r.digest = ""
+				r.results = nil
 				inv.Cursor = i
 				inv.Entries = inv.Entries[:i]
 				break
 			}
 		}
-		r.Validate = nil
 	}
 	for inv.Cursor < len(r.Projects) {
 		if ctx.Err() != nil || r.Operations >= r.MaxOperations {
@@ -286,4 +309,107 @@ func safeRepositoryIdentity(id RepositoryIdentity) RepositoryIdentity {
 		}
 	}
 	return id
+}
+
+// Current rechecks content-free proof dependencies outside admission locks.
+// Stale evidence stays pending until the next pass; it never triggers extra Git.
+func (r *RecoveryResolver) Current(proof archive.ProjectResolution) bool {
+	if r.Validate == nil {
+		return true
+	}
+	if r.MetadataOperations+len(r.Projects)+1 > r.metadataLimit() {
+		r.MetadataExhausted = true
+		return false
+	}
+	r.MetadataOperations += len(r.Projects)
+	r.MetadataOperations++
+	if canonical, ok := r.cwdSnapshots[proof.OriginalCwd]; ok && r.rawResolve(proof.OriginalCwd) != canonical {
+		return false
+	}
+	if RecoveryContext(r.Projects, nil, r.rawResolve) != r.pathContext {
+		return false
+	}
+	if proof.Method == "explicit_mapping" {
+		id, ok := r.mappedIdentities[proof.Root]
+		return ok && r.identityCurrent(id)
+	}
+	for _, id := range r.Inventory.Entries {
+		if !r.identityCurrent(id) {
+			return false
+		}
+	}
+	return true
+}
+
+func (r *RecoveryResolver) identityCurrent(id RepositoryIdentity) bool {
+	if r.MetadataOperations+len(id.Dependencies) > r.metadataLimit() {
+		r.MetadataExhausted = true
+		return false
+	}
+	r.MetadataOperations += len(id.Dependencies)
+	return r.Validate(id)
+}
+
+func (r *RecoveryResolver) staleOutcome() RecoveryOutcome {
+	if r.MetadataExhausted {
+		return RecoveryBudgetExhausted
+	}
+	return RecoveryInventoryUnavailable
+}
+
+// Two maximum-size inventories fit so a resumed complete sweep can both
+// validate its prefix and admit at least one source. Further work stays pending.
+func (r *RecoveryResolver) metadataLimit() int {
+	return max(1024, 2*min(len(r.Projects), 1024)*129)
+}
+
+// ResetValidation starts a new bounded consumer admission slice. It does not
+// discard identity evidence or extend the Git lookup allowance.
+func (r *RecoveryResolver) ResetValidation() {
+	r.MetadataOperations = 0
+	r.MetadataExhausted = false
+	r.sliceValidated = nil
+}
+
+// CurrentSlice coalesces common inventory validation for one short import hold.
+// Call ResetValidation before assembling each slice, outside admission locks.
+func (r *RecoveryResolver) CurrentSlice(proof archive.ProjectResolution) bool {
+	if r.Validate != nil {
+		if r.MetadataOperations >= r.metadataLimit() {
+			r.MetadataExhausted = true
+			return false
+		}
+		r.MetadataOperations++
+		if canonical, ok := r.cwdSnapshots[proof.OriginalCwd]; ok && r.rawResolve(proof.OriginalCwd) != canonical {
+			return false
+		}
+	}
+	key := proof.Method
+	if proof.Method == "explicit_mapping" {
+		key += "\x00" + proof.Root
+	}
+	if r.sliceValidated[key] {
+		return true
+	}
+	if !r.Current(proof) {
+		return false
+	}
+	if r.sliceValidated == nil {
+		r.sliceValidated = map[string]bool{}
+	}
+	r.sliceValidated[key] = true
+	return true
+}
+
+func (r *RecoveryResolver) rememberCwd(cwd string) bool {
+	if r.cwdSnapshots == nil {
+		r.cwdSnapshots = map[string]string{}
+	}
+	if _, exists := r.cwdSnapshots[cwd]; !exists {
+		if len(r.cwdSnapshots) >= 4096 {
+			return false
+		}
+		r.cwdSnapshots[cwd] = r.rawResolve(cwd)
+	}
+	return true
 }

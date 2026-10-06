@@ -6,6 +6,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 	"github.com/wangjohn/agent-archive/internal/state"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -131,5 +132,69 @@ func TestRecordedRecoveryCannotOverrideLiveUnconfiguredAncestor(t *testing.T) {
 	res := r.resolveEvidence(context.Background(), filepath.Join(live, "deleted-subtree"), key)
 	if res.root != live || calls != 0 {
 		t.Fatal(res, calls)
+	}
+}
+
+func TestRecoveredImportRechecksEvidenceBeforeRegistration(t *testing.T) {
+	for _, changeSource := range []bool{false, true} {
+		tr := newTree(t)
+		root := tr.repo("home/repo")
+		gone := tr.path("home/.codex/worktrees/gone/repo")
+		id := "00000000-0000-0000-0000-000000000099"
+		body := strings.Replace(codexTranscript(id, id, gone, fixedNow.Add(-time.Hour)), `"source":"cli"`, `"git":{"repository_url":"https://example.test/acme/repo"},"source":"cli"`, 1)
+		tr.write(filepath.Join("home", codexFile(id)), body)
+		key := archive.RepoKey("https://example.test/acme/repo")
+		env := tr.env()
+		env.RepositoryIdentity = func(_ context.Context, path string) sourcefacts.RepositoryIdentity {
+			return sourcefacts.RepositoryIdentity{Root: path, Key: key, Known: true}
+		}
+		current := true
+		env.RepositoryIdentityCurrent = func(sourcefacts.RepositoryIdentity) bool { return current }
+		cfg := config.Config{Archive: archive.Config{Enabled: true, Projects: []archive.ProjectActivation{project(root, true)}}}
+		p := plan(t, env, nil, cfg, Filters{})
+		if len(p.Imported()) != 1 {
+			t.Fatal(p.Imported())
+		}
+		if changeSource {
+			source := tr.path(filepath.Join("home", codexFile(id)))
+			if err := os.WriteFile(source, []byte(body+"\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+		} else {
+			current = false
+		}
+		home := t.TempDir()
+		if err := config.Save(home, cfg); err != nil {
+			t.Fatal(err)
+		}
+		store, err := state.Open(home)
+		if err != nil {
+			t.Fatal(err)
+		}
+		result, err := (Registration{Home: home, Store: store, AdmittedAt: fixedNow, Batch: "synthetic"}).Run(p.Imported())
+		if err != nil || len(result.Sessions) != 0 || result.NotAdmitted != 1 {
+			t.Fatal(result, err)
+		}
+	}
+}
+
+func TestRecordedRecoveryKeepsBrokenWorktreePending(t *testing.T) {
+	tr := newTree(t)
+	target := tr.repo("home/target")
+	broken := tr.path("home/.codex/worktrees/broken/repo")
+	tr.write("home/.codex/worktrees/broken/repo/.git", "gitdir: /synthetic/missing/gitdir\n")
+	key := archive.RepoKey("https://example.test/acme/target")
+	env := tr.env()
+	calls := 0
+	env.RepositoryIdentity = func(_ context.Context, path string) sourcefacts.RepositoryIdentity {
+		calls++
+		return sourcefacts.RepositoryIdentity{Root: path, Key: key, Known: true}
+	}
+	r := newResolver(env, config.Config{Archive: archive.Config{Projects: []archive.ProjectActivation{project(target, true)}}}, Filters{})
+	for _, cwd := range []string{broken, filepath.Join(broken, "deleted-subtree")} {
+		result := r.resolveEvidence(t.Context(), cwd, key)
+		if result.skip != SkipWorktreeUnresolved || result.root == target || calls != 0 {
+			t.Fatal(result, calls)
+		}
 	}
 }

@@ -108,8 +108,9 @@ type parentWork struct {
 	chatGone    bool
 	// repoKey is the project's repository key, and repoKeyChecked whether it
 	// was asked for (see resolveRepoKeys).
-	repoKey        string
-	repoKeyChecked bool
+	repoKey              string
+	repoKeyChecked       bool
+	projectEvidenceStale bool
 }
 
 // Run registers every candidate, in order.
@@ -137,6 +138,21 @@ func (r Registration) Run(candidates []Candidate) (RegistrationResult, error) {
 			return result, err
 		}
 		r.resolveRepoKeys(works[i:], repoKeys)
+		// Filesystem/Git proof validation belongs before the short lock hold.
+		limit := maxHoldSteps
+		if r.MaxHoldSteps > 0 {
+			limit = r.MaxHoldSteps
+		}
+		for _, w := range works[i : i+min(limit, len(works)-i)] {
+			if w.c.projectResolutionReset != nil {
+				w.c.projectResolutionReset()
+			}
+		}
+		for _, w := range works[i : i+min(limit, len(works)-i)] {
+			if w.c.projectResolutionCurrent != nil {
+				w.projectEvidenceStale = !w.c.projectResolutionCurrent()
+			}
+		}
 		err := r.hold(works, &i, &result)
 		if flushErr := flush(); err == nil {
 			err = flushErr
@@ -303,6 +319,10 @@ func (r Registration) step(cfg config.Config, w *parentWork, result *Registratio
 // last is a backstop: no registration ever starts after its admission.
 func (r Registration) skip(cfg config.Config, w *parentWork, result *RegistrationResult) (bool, error) {
 	c := w.c
+	if w.projectEvidenceStale {
+		result.NotAdmitted++
+		return true, nil
+	}
 	if c.ProjectResolution != nil && c.ProjectResolution.PolicyContext != sourcefacts.RecoveryContext(cfg.Archive.Projects, nil, filepath.Clean) {
 		result.NotAdmitted++
 		return true, nil

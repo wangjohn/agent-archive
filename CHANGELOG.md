@@ -18,6 +18,11 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Deleted Codex worktrees can recover an existing configured project from a
+  unique recorded repository identity, or an exact historical backfill mapping.
+  Excluded clones, ambiguous scope and damaged live checkouts remain pending;
+  recovery preserves original creation consent and retained ownership.
+
 - Pairing recovery preserves exclusions on other clones and accepts home-prefixed
   manual project paths. Retired keys with exact local deletion confirmations no
   longer block revoking a replacement key after re-pairing; unverified absence
