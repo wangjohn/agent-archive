@@ -21,15 +21,22 @@ var errIndexChanged = errors.New("native index changed during snapshot")
 
 // indexCopyMetrics accounts actual native reads and private writes, including
 // revalidation. Its buffer budget is not a claim about SQLite or process RSS.
-type indexCopyMetrics struct{ NativeBytes, PrivateBytes, PeakBuffers int64 }
+type indexCopyMetrics struct{ NativeBytes, PrivateBytes, PeakBuffers, NativeOpens, NativeReads, PrivateOpens, PrivateWrites int64 }
 
 type privateIndex struct {
 	dir, path string
 	metrics   indexCopyMetrics
 	lock      *os.File
+	proof     indexAppendProof
+	budget    *agentapi.NativeReadBudget
+	charge    int64
 }
 
 func (p *privateIndex) close() error {
+	if p.charge != 0 {
+		p.budget.Release(p.charge)
+		p.charge = 0
+	}
 	removeErr := os.RemoveAll(p.dir)
 	var closeErr error
 	if p.lock != nil {
@@ -83,7 +90,11 @@ func snapshotCurrentIndexBudget(ctx context.Context, root string, step func(stri
 	if step != nil {
 		step("generation")
 	}
-	metrics := indexCopyMetrics{NativeBytes: int64(len(header))}
+	metrics := indexCopyMetrics{NativeBytes: int64(len(header)), NativeOpens: 1}
+	if wal != nil {
+		metrics.NativeOpens++
+		metrics.NativeReads++
+	}
 	mainBytes, err := readIndexExtent(ctx, main, before.Size(), &metrics)
 	if err != nil {
 		return nil, err
@@ -122,6 +133,7 @@ func snapshotCurrentIndexBudget(ctx context.Context, root string, step func(stri
 	if err := verifyIndexGeneration(mainPath, before, wal, walBefore, header, &metrics); err != nil {
 		return nil, err
 	}
+	mainHash := sha256.Sum256(mainBytes)
 	projected := int64(pages) * int64(pageSize)
 	if projected > int64(len(mainBytes)) {
 		peak := projected + int64(len(mainBytes)+len(walBytes))
@@ -144,7 +156,15 @@ func snapshotCurrentIndexBudget(ctx context.Context, root string, step func(stri
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return writePrivateIndex(mainBytes, metrics)
+	out, err := writePrivateIndex(mainBytes, metrics)
+	if err == nil {
+		// Transfer the already reserved header/proof allowance to the private
+		// view lifetime. Close returns it exactly once.
+		charge -= 64
+		out.budget, out.charge = budget, 64
+		out.proof = indexAppendProof{main: before, mainHash: mainHash, wal: walBefore, header: bytes.Clone(header), end: committed, prefixHash: sha256.Sum256(walBytes[:committed]), pageSize: pageSize}
+	}
+	return out, err
 }
 
 func writePrivateIndex(mainBytes []byte, metrics indexCopyMetrics) (_ *privateIndex, resultErr error) {
@@ -170,6 +190,8 @@ func writePrivateIndex(mainBytes []byte, metrics indexCopyMetrics) (_ *privateIn
 		return nil, err
 	}
 	out.metrics.PrivateBytes = int64(len(mainBytes))
+	out.metrics.PrivateOpens++
+	out.metrics.PrivateWrites++
 	return out, nil
 }
 
@@ -178,14 +200,14 @@ func openSnapshotWAL(root, path string) (*os.File, []byte, os.FileInfo, error) {
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil, nil, nil
 	}
-	if err != nil || !info.Mode().IsRegular() || info.Size() < 32 || info.Size() > currentSnapshotLimit {
+	if err != nil || !info.Mode().IsRegular() || info.Size() != 0 && info.Size() < 32 || info.Size() > currentSnapshotLimit {
 		return nil, nil, nil, errIndexChanged
 	}
 	f, err := sourcefacts.OpenRegular(root, path)
 	if err != nil {
 		return nil, nil, nil, errIndexChanged
 	}
-	header := make([]byte, 32)
+	header := make([]byte, min(int64(32), info.Size()))
 	if _, err := f.ReadAt(header, 0); err != nil {
 		_ = f.Close()
 		return nil, nil, nil, errIndexChanged
@@ -210,6 +232,7 @@ func readIndexExtent(ctx context.Context, f *os.File, size int64, metrics *index
 		end := min(offset+64<<10, len(out))
 		n, err := f.ReadAt(out[offset:end], int64(offset))
 		metrics.NativeBytes += int64(n)
+		metrics.NativeReads++
 		if err != nil || n != end-offset {
 			return nil, errIndexChanged
 		}
@@ -249,6 +272,7 @@ func verifyIndexPrefix(ctx context.Context, f *os.File, path string, before os.F
 		end := min(offset+len(scratch), len(raw))
 		n, err := f.ReadAt(scratch[:end-offset], int64(offset))
 		metrics.NativeBytes += int64(n)
+		metrics.NativeReads++
 		if err != nil && !errors.Is(err, io.EOF) || n != end-offset {
 			return errIndexChanged
 		}
@@ -371,10 +395,11 @@ func verifyIndexGeneration(mainPath string, before os.FileInfo, wal *os.File, wa
 		return errIndexChanged
 	}
 	if wal != nil {
-		final := make([]byte, 32)
+		final := make([]byte, len(header))
 		n, readErr := wal.ReadAt(final, 0)
 		metrics.NativeBytes += int64(n)
-		if readErr != nil || !bytes.Equal(final, header) || !sameIndexFile(mainPath+"-wal", walBefore, false) {
+		metrics.NativeReads++
+		if readErr != nil || !bytes.Equal(final, header) || !sameIndexFile(mainPath+"-wal", walBefore, len(header) == 0) {
 			return errIndexChanged
 		}
 	}
@@ -403,7 +428,7 @@ func readCapturedWAL(ctx context.Context, wal *os.File, before, walBefore os.Fil
 			return nil, errIndexChanged
 		}
 		walBytes, err = readIndexExtent(ctx, wal, walBefore.Size(), metrics)
-		if err != nil || len(walBytes) < 32 || !bytes.Equal(header, walBytes[:32]) {
+		if err != nil || len(walBytes) < len(header) || !bytes.Equal(header, walBytes[:len(header)]) {
 			return nil, errIndexChanged
 		}
 	}

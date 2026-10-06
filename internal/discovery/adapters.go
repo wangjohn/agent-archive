@@ -56,11 +56,13 @@ const (
 // Observation is one bounded metadata probe and its typed outcome.
 type Observation struct {
 	// Identity is validated native lookup evidence, independent of Candidate admission.
-	Identity        *codexmeta.CodexIdentity
-	NativeCreatedAt time.Time
-	Candidate       Candidate
-	Outcome         Outcome
-	Bytes           int64
+	Identity             *codexmeta.CodexIdentity
+	NativeCreatedAt      time.Time
+	Candidate            Candidate
+	Outcome              Outcome
+	Bytes                int64
+	NativeReadBytes      int64 `json:"-"`
+	NativeReadOperations int64 `json:"-"`
 }
 
 // Fingerprint is a retry/scheduling hint, never native start evidence.
@@ -166,7 +168,7 @@ func (codexAdapter) Describe(root, path, name string) SourceEntry {
 
 func (a codexAdapter) Inspect(ctx context.Context, source SourceDescriptor) Observation {
 	h := sourcefacts.ReadHeader(ctx, source.Root, source.Locator)
-	o := Observation{Outcome: Outcome(h.Outcome), Bytes: h.Bytes, Identity: h.Identity, NativeCreatedAt: h.NativeCreatedAt}
+	o := Observation{Outcome: Outcome(h.Outcome), Bytes: h.Bytes, Identity: h.Identity, NativeCreatedAt: h.NativeCreatedAt, NativeReadBytes: h.NativeReadBytes, NativeReadOperations: h.NativeReadOperations}
 	if o.Outcome != outcomeUsable {
 		return o
 	}

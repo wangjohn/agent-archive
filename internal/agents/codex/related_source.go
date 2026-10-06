@@ -201,9 +201,10 @@ func (p *relatedSourcePass) Close() error {
 }
 
 type sourceSelection struct {
-	leaf   *rolloutFile
-	set    agentapi.CodexRolloutSet
-	thread string
+	legacyOrdinary bool
+	leaf           *rolloutFile
+	set            agentapi.CodexRolloutSet
+	thread         string
 }
 
 func (p *relatedSourcePass) selectSource(ctx context.Context, ref agentapi.SourceRef) (sourceSelection, error) {
@@ -218,18 +219,7 @@ func (p *relatedSourcePass) selectSource(ctx context.Context, ref agentapi.Sourc
 		return sourceSelection{}, err
 	}
 
-	seed, err := p.open(ctx, ref)
-	if errors.Is(err, os.ErrNotExist) && p.env.CodexRollouts != nil && codexmeta.RolloutID(ref.Key+".jsonl") == ref.Key && ref.Key != "" {
-		set, lookupErr := p.env.CodexRollouts.Thread(ctx, ref.Key)
-		if lookupErr != nil {
-			return sourceSelection{}, lookupErr
-		}
-		if set.Current != nil {
-			seed, err = p.open(ctx, *set.Current)
-		} else if set.Complete && len(set.Candidates) > 0 && len(set.Candidates) <= archive.MaxHistorySpans {
-			seed, err = p.open(ctx, set.Candidates[0])
-		}
-	}
+	seed, err := p.openSelectedSeed(ctx, ref)
 	if err != nil {
 		return sourceSelection{}, err
 	}
@@ -267,7 +257,35 @@ func (p *relatedSourcePass) selectSource(ctx context.Context, ref agentapi.Sourc
 		selected.leaf = current
 		return selected, nil
 	}
+	if p.legacyOrdinarySeed(seed) {
+		// An existing ordinary legacy registration retains its anchored source
+		// semantics. The real lookup token still rejects a later current row.
+		selected.legacyOrdinary = true
+		return selected, nil
+	}
 	return p.selectLineage(ctx, selected)
+}
+
+func (p *relatedSourcePass) openSelectedSeed(ctx context.Context, ref agentapi.SourceRef) (*rolloutFile, error) {
+	seed, err := p.open(ctx, ref)
+	if errors.Is(err, os.ErrNotExist) && p.env.CodexRollouts != nil && codexmeta.RolloutID(ref.Key+".jsonl") == ref.Key && ref.Key != "" {
+		set, lookupErr := p.env.CodexRollouts.Thread(ctx, ref.Key)
+		if lookupErr != nil {
+			return nil, lookupErr
+		}
+		if set.Current != nil {
+			return p.open(ctx, *set.Current)
+		}
+		if set.Complete && len(set.Candidates) > 0 && len(set.Candidates) <= archive.MaxHistorySpans {
+			return p.open(ctx, set.Candidates[0])
+		}
+	}
+	return seed, err
+}
+
+func (p *relatedSourcePass) legacyOrdinarySeed(seed *rolloutFile) bool {
+	id := seed.identity
+	return p.env.LegacyUnboundRegistration && seed.meta.HistoryMode == "" && seed.meta.LocalExecutionSource() && !hasRelated(seed) && id.ParentID == "" && id.ForkOrdinal == nil && id.SubagentOrdinal == nil && (id.RootID == "" || id.RootID == id.ThreadID)
 }
 
 func (p *relatedSourcePass) selectLineage(ctx context.Context, selected sourceSelection) (sourceSelection, error) {
@@ -398,6 +416,9 @@ func hasRelated(f *rolloutFile) bool {
 }
 
 func (p *relatedSourcePass) Signature(ctx context.Context, ref agentapi.SourceRef) (agentapi.SourceObservation, error) {
+	if p.env.CodexRollouts != nil && p.genericLegacy(ref) {
+		return p.genericLegacySignature(ctx, ref)
+	}
 	if p.env.CodexRollouts == nil && codexmeta.RolloutID(ref.Path) == "" {
 		return p.legacy.Signature(ctx, ref)
 	}
@@ -452,6 +473,9 @@ func (p *relatedSourcePass) observation(ctx context.Context, selection sourceSel
 }
 
 func (p *relatedSourcePass) Read(ctx context.Context, ref agentapi.SourceRef, limits agentapi.ReadLimits) (agentapi.SourceSnapshot, error) {
+	if p.env.CodexRollouts != nil && p.genericLegacy(ref) {
+		return p.genericLegacyRead(ctx, ref, limits)
+	}
 	if p.env.CodexRollouts == nil && codexmeta.RolloutID(ref.Path) == "" {
 		return p.legacy.Read(ctx, ref, limits)
 	}
@@ -472,6 +496,9 @@ func (p *relatedSourcePass) readSelection(ctx context.Context, ref agentapi.Sour
 		snapshot, err := p.ordinary(ctx, limits, selection)
 		if err != nil {
 			return fail(err)
+		}
+		if selection.legacyOrdinary {
+			return legacyOrdinarySnapshot{SourceSnapshot: snapshot}, nil
 		}
 		return snapshot, nil
 	}
@@ -875,9 +902,22 @@ func (s *historySnapshot) AdmissionFacts(ctx context.Context) (archive.CodexSour
 }
 
 func (p *relatedSourcePass) ValidateSourceAdmission(ctx context.Context, ref agentapi.SourceRef, admission agentapi.SourceAdmission) error {
+	if p.env.CodexRollouts != nil && p.genericLegacy(ref) && admission.Binding == nil && admission.NativeCreatedAt.IsZero() {
+		if admission.NativeID != ref.Key {
+			return sourceFailure(agentapi.Unsafe, "legacy admission identity mismatch")
+		}
+		set, err := p.registeredLegacySet(ctx, ref)
+		if err != nil {
+			return err
+		}
+		return p.env.CodexRollouts.Check(ctx, ref.Key, set.Revision)
+	}
 	selection, err := p.selectSource(ctx, ref)
 	if err != nil {
 		return err
+	}
+	if selection.legacyOrdinary && (admission.Binding != nil || !admission.NativeCreatedAt.IsZero()) {
+		return sourceFailure(agentapi.Unavailable, "legacy compatibility requires unbound admission")
 	}
 	spans, err := p.graph(ctx, selection.leaf)
 	if err != nil {

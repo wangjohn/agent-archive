@@ -158,11 +158,12 @@ func (r providerReader) binding() (agentapi.SourceProvider, agentapi.TranscriptF
 
 func (r providerReader) pass(ctx context.Context, p agentapi.SourceProvider, key string) (agentapi.SourcePass, func() error, error) {
 	if r.passes != nil {
-		pass, err := r.passes.get(ctx, sourcePassKey{name: key, root: r.discoveryRoot(), discovery: r.discovery != nil}, p)
+		pass, err := r.passes.get(ctx, sourcePassKey{name: key, root: r.discoveryRoot(), discovery: r.discovery != nil, legacy: r.harness == archive.HarnessCodex && r.discovery == nil && r.admission.Binding == nil}, p)
 		return pass, func() error { return nil }, err
 	}
 	env := sourceEnvironment(r.discovery, r.database)
 	env.CodexRollouts = r.rollouts
+	env.LegacyUnboundRegistration = r.harness == archive.HarnessCodex && r.discovery == nil && r.admission.Binding == nil
 	pass, err := p.OpenPass(ctx, env)
 	if err != nil {
 		return nil, nil, err
@@ -362,6 +363,7 @@ type sourcePassKey struct {
 	name      string
 	root      string
 	discovery bool
+	legacy    bool
 }
 
 type sourcePassSet struct {
@@ -374,6 +376,7 @@ func (s *sourcePassSet) get(ctx context.Context, key sourcePassKey, p agentapi.S
 		return pass, nil
 	}
 	e := s.env
+	e.LegacyUnboundRegistration = key.legacy
 	if key.discovery {
 		e.Files = sourcefacts.RootOpener{Root: key.root}
 		e.Policy = transcriptio.OpenPolicy{Root: key.root, RejectSymlinks: true}

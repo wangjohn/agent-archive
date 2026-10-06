@@ -26,11 +26,15 @@ type SourceSemantics struct {
 
 // SourceEnvironment supplies narrow read dependencies and local database location.
 type SourceEnvironment struct {
-	ReadBudget    *NativeReadBudget
-	CodexRollouts CodexRolloutLookup
-	Files         transcriptio.Opener
-	Policy        transcriptio.OpenPolicy
-	Database      string
+	// LegacyUnboundRegistration is set only for an already admitted ordinary
+	// registration without a binding or discovery origin. It grants no creation
+	// permission; the provider retains its narrow legacy compatibility checks.
+	LegacyUnboundRegistration bool
+	ReadBudget                *NativeReadBudget
+	CodexRollouts             CodexRolloutLookup
+	Files                     transcriptio.Opener
+	Policy                    transcriptio.OpenPolicy
+	Database                  string
 }
 
 // ReadLimits bounds raw values and each native record before filtering.
@@ -144,4 +148,11 @@ type SourceSweeper interface{ SweepSources() }
 // ActivityProvider batches cheap ordering observations without snapshotting or filtering.
 type ActivityProvider interface {
 	Activities(context.Context, SourceEnvironment, []SourceRef) (map[SourceRef]time.Time, error)
+}
+
+// CodexRegisteredRolloutLookup observes a legacy registered ID that does not
+// have modern native UUID layout. The implementation checks existing ownership;
+// this port never creates or authorizes a registration.
+type CodexRegisteredRolloutLookup interface {
+	RegisteredThread(context.Context, string) (CodexRolloutSet, error)
 }

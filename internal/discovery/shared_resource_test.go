@@ -133,8 +133,14 @@ func TestCurrentHeaderRequiresSharedScratchBeforeProbe(t *testing.T) {
 	if _, err := lookup.inspect(t.Context(), path, id); err != nil {
 		t.Fatal(err)
 	}
+	if used, _ := lookup.readBudget.Charged(); used != lookup.observationBytes || used == 0 {
+		t.Fatal("header scratch not released to retained fact charge", used, lookup.observationBytes)
+	}
+	if err := lookup.Close(); err != nil {
+		t.Fatal(err)
+	}
 	if used, _ := lookup.readBudget.Charged(); used != 0 {
-		t.Fatal("header scratch leaked", used)
+		t.Fatal("fact charge leaked on close", used)
 	}
 }
 

@@ -37,23 +37,25 @@ const (
 // Health separates scan coverage from upload and hook health. Codes never
 // include native IDs, paths or native operating-system errors.
 type Health struct {
-	Enabled           bool                `json:"enabled"`
-	Supported         bool                `json:"supported"`
-	LastAttempt       time.Time           `json:"last_attempt,omitzero"`
-	LastReconciled    time.Time           `json:"last_reconciled,omitzero"`
-	Pending           bool                `json:"pending"`
-	ProjectOperations int                 `json:"project_metadata_operations"`
-	GitBytes          int                 `json:"git_metadata_bytes"`
-	Probes            int                 `json:"header_probes"`
-	Entries           int                 `json:"directory_entries"`
-	IndexBytes        int64               `json:"index_bytes_read,omitempty"`
-	IndexQueries      int                 `json:"index_queries,omitempty"`
-	IndexLocators     int                 `json:"index_locators,omitempty"`
-	Bytes             int64               `json:"bytes_read"`
-	Registered        int                 `json:"registered"`
-	Outcomes          map[string]int      `json:"outcomes,omitempty"`
-	Errors            []string            `json:"errors,omitempty"`
-	Formats           []FormatObservation `json:"observed_formats,omitempty"`
+	Enabled              bool                `json:"enabled"`
+	Supported            bool                `json:"supported"`
+	LastAttempt          time.Time           `json:"last_attempt,omitzero"`
+	LastReconciled       time.Time           `json:"last_reconciled,omitzero"`
+	Pending              bool                `json:"pending"`
+	ProjectOperations    int                 `json:"project_metadata_operations"`
+	GitBytes             int                 `json:"git_metadata_bytes"`
+	Probes               int                 `json:"header_probes"`
+	Entries              int                 `json:"directory_entries"`
+	IndexBytes           int64               `json:"index_bytes_read,omitempty"`
+	IndexQueries         int                 `json:"index_queries,omitempty"`
+	IndexLocators        int                 `json:"index_locators,omitempty"`
+	NativeReadBytes      int64               `json:"native_read_bytes,omitempty"`
+	NativeReadOperations int64               `json:"native_read_operations,omitempty"`
+	Bytes                int64               `json:"bytes_read"`
+	Registered           int                 `json:"registered"`
+	Outcomes             map[string]int      `json:"outcomes,omitempty"`
+	Errors               []string            `json:"errors,omitempty"`
+	Formats              []FormatObservation `json:"observed_formats,omitempty"`
 }
 
 type directory struct {
@@ -105,14 +107,19 @@ func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config,
 	if o.Now == nil {
 		o.Now = time.Now
 	}
-	if cfg.Discovery == nil || !cfg.Discovery.Enabled {
+	enabled := cfg.Discovery != nil && cfg.Discovery.Enabled
+	if !enabled && (o.Rollouts == nil || len(o.Rollouts.roots) == 0) {
 		return Health{}, nil
 	}
 	now := o.Now().UTC()
-	h := Health{Enabled: true, LastAttempt: now, Outcomes: map[string]int{}}
+	h := Health{Enabled: enabled, LastAttempt: now, Outcomes: map[string]int{}}
 	c, path, roots, err := prepareCatalog(store, cfg, o, adapter, &h)
 	if err != nil {
 		return h, err
+	}
+	if c.Coverage != nil && c.Coverage.Phase == "validate" {
+		h.Supported = c.Health.Supported
+		h.Formats = slices.Clone(c.Health.Formats)
 	}
 	allowance := Budget
 	if o.Rollouts != nil {
@@ -130,7 +137,12 @@ func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config,
 	defer cancel()
 	resolver := sourcefacts.NewProjectResolver()
 	priority := scan{resolver: resolver, store: store, cfg: cfg, catalog: &c, health: &h, now: now, adapter: adapter, priority: true, ctx: ctx, rollouts: o.Rollouts}
-	priority.observeIndexHints(ctx, o, roots, deadline)
+	// The shared lookup owns the only native index projection. Production
+	// observation uses the shared directory worker rather than opening native
+	// SQLite via the legacy settled-only scheduling hint adapter.
+	if o.Rollouts == nil {
+		priority.observeIndexHints(ctx, o, roots, deadline)
+	}
 	priority.observeActiveHints(ctx, o, roots, deadline)
 	priority.observeRetries(o)
 
@@ -148,8 +160,12 @@ func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config,
 			return h, err
 		}
 	}
-	if err := local.Write(path, c); err != nil {
+	if err := local.WriteCompact(path, c); err != nil {
 		return h, errors.New("discovery state write failed; retry next scan")
+	}
+	if o.Rollouts != nil {
+		o.Rollouts.catalog = &c
+		o.Rollouts.coverageDirty = false // checkpoint includes observation changes
 	}
 	if err := writeHealth(store.Home(), h); err != nil {
 		return h, err
@@ -200,6 +216,9 @@ func appendUnique(values []string, value string) []string {
 // moves, directory replacement and invalidation cannot silently lose coverage.
 func readBatch(d directory) ([]string, int64, bool, error) {
 	root, err := os.OpenRoot(d.Root)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, 0, true, nil
+	}
 	if err != nil {
 		return nil, 0, false, err
 	}
@@ -509,6 +528,8 @@ func (s scan) visitEntry(d directory, source SourceEntry) (retry, stop bool) {
 			s.rollouts.probes++
 		}
 		h.Bytes += observation.Bytes
+		h.NativeReadBytes += observation.NativeReadBytes
+		h.NativeReadOperations += observation.NativeReadOperations
 		entry = cached{Size: source.Fingerprint.Size, Mtime: source.Fingerprint.Mtime, Checked: now, Observation: observation}
 		c.Cache[loc] = entry
 	}
@@ -537,6 +558,12 @@ func (s scan) visitEntry(d directory, source SourceEntry) (retry, stop bool) {
 	h.Supported = true
 	h.observeFormat(candidate)
 	if s.removalBlocks(candidate) {
+		return false, false
+	}
+	// Lookup homes may include hooks/import locations for already admitted
+	// sources. Their facts cannot expand discovery creation authority.
+	if s.cfg.Discovery == nil || !s.cfg.Discovery.Enabled || !slices.Contains(approvedRoots(s.cfg.Discovery.CodexHomes), candidate.Source.Root) {
+		h.Outcomes["source_not_authorized"]++
 		return false, false
 	}
 	return s.admitCandidate(candidate, loc)
@@ -701,10 +728,18 @@ func discoveryProbeAvailable(h *Health, rollouts *CodexRolloutLookup) bool {
 func prepareCatalog(store *state.Store, cfg config.Config, o Options, adapter SourceAdapter, h *Health) (catalog, string, []string, error) {
 	path := filepath.Join(store.Home(), "discovery-catalog.json")
 	var c catalog
-	if err := local.Read(path, &c); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if o.Rollouts != nil && o.Rollouts.catalog != nil {
+		c = *o.Rollouts.catalog
+	} else if err := local.Read(path, &c); err != nil && !errors.Is(err, os.ErrNotExist) {
 		h.Errors = append(h.Errors, "catalog_rebuilt")
 	}
-	roots := approvedRoots(cfg.Discovery.CodexHomes)
+	var roots []string
+	if cfg.Discovery != nil {
+		roots = approvedRoots(cfg.Discovery.CodexHomes)
+	}
+	if o.Rollouts != nil {
+		roots = slices.Clone(o.Rollouts.roots)
+	}
 	if c.Coverage != nil && c.Coverage.Version != 1 {
 		return c, path, roots, errors.New("native coverage requires a newer writer")
 	}

@@ -12,6 +12,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/codexmeta"
 	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 )
 
@@ -49,7 +50,19 @@ func TestRolloutLookupCurrentWALIdentityRefreshAndPrivateCleanup(t *testing.T) {
 	if err := lookup.Check(t.Context(), id, set.Revision); err != nil {
 		t.Fatal(err)
 	}
-	// One refresh is already consumed. A later changed selection stays pending.
+	// Later unrelated commits revalidate and replay into the same private view.
+	privatePath := lookup.indexes[root].snapshot.path
+	for n := 0; n < 8; n++ {
+		addHint(t, db, fmt.Sprintf("unrelated-%d", n), "unused", at.Add(time.Minute))
+		if err := lookup.Check(t.Context(), id, set.Revision); err != nil {
+			t.Fatal(err)
+		}
+		if lookup.indexes[root].snapshot.path != privatePath {
+			t.Fatal("second whole refresh")
+		}
+	}
+	// The actual changed selection is read from the incrementally replayed SQL.
+
 	if _, err := db.ExecContext(t.Context(), "UPDATE threads SET rollout_path=? WHERE id=?", otherPath, id); err != nil {
 		t.Fatal(err)
 	}
@@ -168,5 +181,25 @@ func TestRolloutLookupBoundsCurrentIDsAndCancellation(t *testing.T) {
 	cancel()
 	if _, err := lookup.Thread(ctx, "11111111-1111-1111-1111-111111111111"); !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
+	}
+}
+
+func TestRolloutLookupTypedCopyOwnsOptionalIdentityValues(t *testing.T) {
+	t.Parallel()
+	store, _, _, root := fixture(t)
+	l, err := NewCodexRolloutLookup(t.Context(), store, []string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = l.Close() }()
+	ordinal := uint64(7)
+	identity := codexmeta.CodexIdentity{ThreadID: "thread", RolloutID: "physical", ForkOrdinal: &ordinal, HistoryBase: &codexmeta.CodexHistoryPosition{RolloutID: "base", EndOrdinal: 7}}
+	path := filepath.Join(root, "sessions", "ordinary.jsonl")
+	l.Observe(SourceDescriptor{Root: root, Locator: path}, Fingerprint{}, &identity)
+	ordinal = 9
+	identity.HistoryBase.EndOrdinal = 9
+	got := l.observations[path].identity
+	if *got.ForkOrdinal != 7 || got.HistoryBase.EndOrdinal != 7 {
+		t.Fatal("caller altered pass evidence")
 	}
 }

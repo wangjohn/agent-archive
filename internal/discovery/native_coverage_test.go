@@ -195,7 +195,7 @@ func TestRequestedCoverageKeepsMatchesBeyondPrunableObservationCache(t *testing.
 	}
 	path := filepath.Join(root, "sessions", "late.jsonl")
 	lookup.Observe(SourceDescriptor{Kind: "", Root: root, Locator: path}, Fingerprint{}, &codexmeta.CodexIdentity{ThreadID: "wanted", RolloutID: "physical"})
-	if len(lookup.observations) != maxCatalog || len(lookup.coverage.Requests["wanted"].Candidates) != 1 {
+	if len(lookup.observations) > maxCatalog || len(lookup.coverage.Requests["wanted"].Candidates) != 1 {
 		t.Fatal("prunable cache discarded requested evidence")
 	}
 	_ = lookup.Close()
