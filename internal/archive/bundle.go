@@ -85,8 +85,13 @@ func NewSourceBundle(reg SessionRegistration, adapter Adapter, transcript Filter
 			}
 		}
 	}
+	schema := SourceSchemaVersion
+	if transcript.History != nil {
+		schema = HistorySourceSchemaVersion
+	}
 	return SourceBundle{
-		SchemaVersion:    SourceSchemaVersion,
+		History: transcript.History, Ordinals: transcript.Ordinals,
+		SchemaVersion:    schema,
 		ArchiveSessionID: reg.ArchiveSessionID,
 		NativeSessionID:  reg.NativeSessionID,
 		ProjectID:        reg.ProjectID,
@@ -344,7 +349,10 @@ func BuildCompressedSource(bundle SourceBundle) (CompressedSource, error) {
 }
 
 func validateBundle(bundle SourceBundle) error {
-	if bundle.SchemaVersion != SourceSchemaVersion {
+	if err := bundle.ValidateHistory(); err != nil {
+		return err
+	}
+	if bundle.SchemaVersion != SourceSchemaVersion && bundle.SchemaVersion != HistorySourceSchemaVersion {
 		return fmt.Errorf("unsupported source schema version %d", bundle.SchemaVersion)
 	}
 	if strings.TrimSpace(bundle.ArchiveSessionID) == "" || strings.TrimSpace(bundle.NativeSessionID) == "" || strings.TrimSpace(bundle.ProjectID) == "" {

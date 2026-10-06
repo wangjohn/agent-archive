@@ -122,6 +122,8 @@ func CursorDatabaseReaderFor(env Environment) func(context.Context) (CursorDatab
 					switch r.Kind {
 					case agentapi.ComposerRecord:
 						c.Composer = r.Raw
+					case agentapi.CodexHistoryHeader, agentapi.CodexHistoryRecord:
+						return c, nil, errors.Join(errors.New("unexpected Codex history record in Cursor source"), snap.Close())
 					case agentapi.BubbleRecord:
 						c.Bubbles = append(c.Bubbles, cursorstore.Bubble{ID: r.Key, Value: r.Raw, Missing: r.Missing})
 					}

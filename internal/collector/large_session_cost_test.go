@@ -215,12 +215,13 @@ func TestLargeGrowingSessionPassesStayFast(t *testing.T) {
 	}
 
 	// Source checksum verification must not download transcripts. Index
-	// publication separately confirms one metadata response. Header-only
+	// publication confirms one metadata response; the temporary history fence
+	// reads the previous sidecar once before writing. Header-only
 	// cleanup downloads no auxiliary bodies or unrelated sessions.
 	for name, cost := range map[string]largePassCost{"first publication": first, "republication": grown, "metadata refresh": refreshed} {
 		wantAux := int64(0)
-		if cost.sourceReads != 0 || cost.sourceBytes != 0 || cost.metadataReads != 1 || cost.auxiliaryReads != wantAux {
-			t.Errorf("%s: source reads/bytes=%d/%d metadata reads=%d auxiliary reads=%d; want 0/0, 1, %d", name, cost.sourceReads, cost.sourceBytes, cost.metadataReads, cost.auxiliaryReads, wantAux)
+		if cost.sourceReads != 0 || cost.sourceBytes != 0 || cost.metadataReads != 2 || cost.auxiliaryReads != wantAux {
+			t.Errorf("%s: source reads/bytes=%d/%d metadata reads=%d auxiliary reads=%d; want 0/0, 2, %d", name, cost.sourceReads, cost.sourceBytes, cost.metadataReads, cost.auxiliaryReads, wantAux)
 		}
 		if cost.auxiliaryBytes > wantAux*1024 || cost.metadataBytes <= 0 || cost.downloaded != cost.metadataBytes+cost.auxiliaryBytes+cost.sourceBytes {
 			t.Errorf("%s: unaccounted/unbounded bytes: total=%d metadata=%d auxiliary=%d source=%d", name, cost.downloaded, cost.metadataBytes, cost.auxiliaryBytes, cost.sourceBytes)

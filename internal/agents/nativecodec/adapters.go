@@ -400,6 +400,10 @@ func filterJSONL(r io.Reader, format string, knownTypes map[string]bool, lead ma
 }
 
 func filterRecords(format string, knownTypes map[string]bool, lead map[string]any, next func() ([]byte, bool), readError func() error, validateMeta func([]byte) error) (archive.FilteredTranscript, error) {
+	return filterRecordsObserved(format, knownTypes, lead, next, readError, validateMeta, nil, nil)
+}
+
+func filterRecordsObserved(format string, knownTypes map[string]bool, lead map[string]any, next func() ([]byte, bool), readError func() error, validateMeta func([]byte) error, retained func(int), own func(string) bool) (archive.FilteredTranscript, error) {
 	result := archive.FilteredTranscript{Format: format, NativeStartComplete: true}
 	lineNo, recognized := 0, 0
 	gapSet := map[string]bool{}
@@ -430,6 +434,7 @@ func filterRecords(format string, knownTypes map[string]bool, lead map[string]an
 		}
 	}
 	for {
+		observeRetained(retained, len(result.Records))
 		line, more := next()
 		if !more {
 			break
@@ -446,8 +451,8 @@ func filterRecords(format string, knownTypes map[string]bool, lead map[string]an
 			addGap("incomplete_or_invalid_record", lineNo, "jsonl record omitted")
 			continue
 		}
-		noteNativeIdentity(&result, raw)
 		kind, _ := raw["type"].(string)
+		noteOwnedNativeIdentity(&result, raw, kind, own)
 		if err := validateMetadata(kind, line, validateMeta); err != nil {
 			return archive.FilteredTranscript{}, err
 		}
@@ -747,4 +752,16 @@ func retainSafeIdentityRecord(result *archive.FilteredTranscript, safe map[strin
 	}
 	retain(result, encoded)
 	return nil
+}
+
+func observeRetained(observer func(int), count int) {
+	if observer != nil {
+		observer(count)
+	}
+}
+
+func noteOwnedNativeIdentity(result *archive.FilteredTranscript, raw map[string]any, kind string, own func(string) bool) {
+	if own == nil || own(kind) {
+		noteNativeIdentity(result, raw)
+	}
 }

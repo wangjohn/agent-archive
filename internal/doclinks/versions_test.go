@@ -2,6 +2,7 @@ package doclinks
 
 import (
 	"github.com/wangjohn/agent-archive/internal/agents/claude"
+	"github.com/wangjohn/agent-archive/internal/agents/codex"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -30,12 +31,15 @@ func TestVersionsDocMatchesCode(t *testing.T) {
 		current[strings.TrimSpace(cells[1])] = strings.TrimSpace(cells[4])
 	}
 	want := map[string]string{
-		"Filter":          archive.FilterVersion,
-		"Adapter":         claude.Filter{}.Version(),
-		"Parser":          archive.DefaultParserVersion,
-		"Source schema":   strconv.Itoa(archive.SourceSchemaVersion),
-		"Metadata schema": strconv.Itoa(archive.MetadataSchemaVersion),
-		"Configuration":   strconv.Itoa(config.SchemaVersion),
+		"Filter":                  archive.FilterVersion,
+		"Adapter":                 claude.Filter{}.Version(),
+		"Parser":                  archive.DefaultParserVersion,
+		"Source schema":           strconv.Itoa(archive.SourceSchemaVersion),
+		"Metadata schema":         strconv.Itoa(archive.MetadataSchemaVersion),
+		"Configuration":           strconv.Itoa(config.SchemaVersion),
+		"Codex parser":            codex.Parser{}.Version(),
+		"History source schema":   strconv.Itoa(archive.HistorySourceSchemaVersion),
+		"History metadata schema": strconv.Itoa(archive.HistoryMetadataSchemaVersion),
 	}
 	for row, value := range want {
 		if got, ok := current[row]; !ok || got != value {

@@ -33,6 +33,8 @@ import (
 // local.Lock(home) around Run; Run itself does not acquire it, so it stays
 // simple to call directly from tests.
 type Options struct {
+	// CodexRollouts is one caller-owned bounded locator view shared by the pass.
+	CodexRollouts agentapi.CodexRolloutLookup
 	// SkipSessionIndexRecovery is set after the CLI has already attempted its
 	// bounded local recovery stage. Direct collector callers recover once.
 	SkipSessionIndexRecovery bool

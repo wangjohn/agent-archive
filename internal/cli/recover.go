@@ -85,6 +85,9 @@ type generationPreview struct {
 }
 
 func loadGenerationPreview(store *state.Store, cfg config.Config, id string, env Env) (generationPreview, error) {
+	if err := store.CheckHistoryRecovery(id); err != nil {
+		return generationPreview{}, err
+	}
 	reg, found, err := store.LoadRegistration(id)
 	if err != nil {
 		return generationPreview{}, err

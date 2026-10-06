@@ -8,6 +8,13 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Readers understand self-contained Codex fork, child and revised histories,
+  preserve exact raw ordinal boundaries and count only the chat's own activity.
+  Related-history writes and cleanup remain protected pending revision-aware
+  lifecycle support. Active captures can finish while a chat keeps appending.
+  Concurrent header rewrites defer capture for retry, including ordinary
+  admission headers and dependencies with empty captured prefixes.
+
 - Make machine pairing, dedicated R2 keys, provider verification, revocation,
   and guided R2 bucket creation generally available without experimental flags.
   First setup offers pairing from another machine.

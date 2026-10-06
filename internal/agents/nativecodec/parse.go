@@ -36,6 +36,9 @@ func parse(ctx context.Context, bundle archive.SourceBundle, agent nativeProfile
 		if err := ctx.Err(); err != nil {
 			return archive.Analysis{}, err
 		}
+		if agent == profileCodex && !ownCodexRecord(bundle, i, record, &codexModel, &codexReasoning) {
+			continue
+		}
 		collectFacts(&analysis.Facts, bundle, record, agent)
 		collectExportFacts(&analysis.Facts, bundle, record, agent)
 		if isParentBundle && isSidechainRecord(record) {
@@ -57,9 +60,7 @@ func parse(ctx context.Context, bundle archive.SourceBundle, agent nativeProfile
 			view.CompactBoundaries++
 			continue
 		}
-		if !isPlaceholderModel(firstStringDeep(record, "model", "model_id")) {
-			accumulateTokens(record, tokenModel(agent, record, codexModel), &tokens)
-		}
+		observeRecordTokens(bundle, record, agent, codexModel, &analysis, &tokens)
 		calls, results, skillUses := toolActivity(record, i, codexModel, codexReasoning)
 		for j := range calls {
 			calls[j].Call.RecordedBranch = archive.ValidBranch(firstString(record, "gitBranch"))
@@ -306,5 +307,52 @@ func collectExportFacts(f *archive.NativeFacts, b archive.SourceBundle, r map[st
 			}
 			f.NativeStartedAt = at
 		}
+	}
+}
+
+// A cumulative counter is not proof that a child reset it or carried its parent.
+// Independently recorded per-call usage remains useful even beside such counters.
+func historyTokenScopeUnknown(bundle archive.SourceBundle, record map[string]any) bool {
+	if usage, _ := firstMapDeepOwner(record, "usage"); usage != nil {
+		return false
+	}
+	if turn, _ := firstMapDeepOwner(record, "turn_token_usage"); turn != nil {
+		if bundle.History.OwnStart != nil && *bundle.History.OwnStart > 0 {
+			return true
+		}
+		for _, span := range bundle.History.Spans {
+			if span.ThreadID != bundle.NativeSessionID {
+				return true
+			}
+		}
+		return false
+	}
+	for _, key := range []string{"total_token_usage", "thread_token_usage", "last_token_usage"} {
+		if value, _ := firstMapDeepOwner(record, key); value != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func ownCodexRecord(bundle archive.SourceBundle, index int, record map[string]any, model, reasoning *string) bool {
+	if bundle.History == nil {
+		return true
+	}
+	if firstString(record, "type") == "turn_context" {
+		*model, *reasoning = firstStringDeep(record, "model", "model_id"), firstStringDeep(record, "reasoning_effort")
+	}
+	if firstString(record, "type") == "session_meta" {
+		span, _ := bundle.History.SpanAt(index)
+		return span.RolloutID == bundle.History.ActiveRolloutID
+	}
+	return bundle.OwnRecord(index)
+}
+
+func observeRecordTokens(bundle archive.SourceBundle, record map[string]any, agent nativeProfile, codexModel string, analysis *archive.Analysis, tokens *archive.TokenAccumulator) {
+	if agent == profileCodex && bundle.History != nil && historyTokenScopeUnknown(bundle, record) {
+		analysis.Facts.TokenScopeUnknown = true
+	} else if !isPlaceholderModel(firstStringDeep(record, "model", "model_id")) {
+		accumulateTokens(record, tokenModel(agent, record, codexModel), tokens)
 	}
 }
