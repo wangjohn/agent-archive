@@ -5,6 +5,29 @@ rules, as a whole, are in the [filter specification](privacy-filter.md);
 version numbers and bump rules are in [versions](../maintainers/versions.md). Each archived session
 records the filter version that produced it (`filter_version`).
 
+## Source filter version 16
+
+Adapter version 0.16.0 goes with it. Claude/common parser 0.21.0 and Codex
+parser 0.23.0 derive the corrected labels and prompt fallback.
+
+- **Claude native generated names.** Typed `ai-title` records retain a nonempty
+  string `aiTitle`, string `sessionId`/`timestamp`, and boolean `isSidechain`.
+  Custom titles preserve the same sidechain flag. Other fields are omitted;
+  names receive prompt redaction. Neither title class establishes source
+  identity, activity, native start/end, or archive eligibility.
+- The latest matching custom title wins over every generated title; otherwise
+  the latest matching generated title wins. A present session ID must match
+  the owning bundle/verified preview candidate. Legacy records without an ID
+  remain usable from that source. Malformed or sanitizer-rewritten ownership
+  fields are rejected; inlined sidechain titles are excluded. Title-only
+  source publications keep the original capture time and retention basis.
+- **Codex open-page context.** The injected `external_codex_apps_open_page`
+  leading XML context wrapper is stripped with nested/unclosed-block rules.
+  Quoted markup, fenced and indented code examples and mentions in human prose remain intact. Human
+  text outside the block remains a prompt; context-only text is omitted.
+- Head/tail previews keep name class precedence and report partial coverage
+  when records between their bounded windows were not read.
+
 ## Source filter version 15
 
 Adapter version 0.15.0 goes with it; the parser version is unchanged.

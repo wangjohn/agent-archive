@@ -6,6 +6,13 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Capture Claude Code native generated session names and prefer the latest
+  explicit rename. Validate title ownership, preserve partial preview coverage,
+  and keep naming bookkeeping out of activity and capture eligibility.
+- Remove injected Codex open-page context from prompt fallback while preserving
+  the human request outside it. External Codex sidebar names remain pending.
+
+
 ### Added
 
 - Readers understand self-contained Codex fork, child and revised histories,
