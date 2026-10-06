@@ -540,7 +540,7 @@ const usage = `Agent Archive — archive coding-agent sessions to your private s
 
 Get started
   agent-archive setup       Configure apps, projects, and storage
-  agent-archive machines    List machine records and rename this machine
+  agent-archive machines    List, rename, or pair machines
   agent-archive status      Check capture and see what to do next
 
 Manage capture
