@@ -577,15 +577,15 @@ is tested against a fake Cloudflare (`internal/cloudflare/cloudflaretest`). Its
 request and response shapes come from Cloudflare's API reference, read on
 2026-09-29, and the fake cannot confirm the points the documentation leaves
 open. A partial real-account provider run on 2026-10-05 is recorded below.
-**The feature stays experimental, hidden behind `AGENT_ARCHIVE_EXPERIMENTAL_R2_CREATE=1`
-(`experimentalR2Create` in `internal/cli/setup_r2_create.go`), until each is
-checked.** Remove the gate (that function and its one use in `storageMenuFor`,
-and the switch's mentions in the docs and CHANGELOG) once every box is ticked. Use a scratch
+The maintainer approved general availability on 2026-10-05 after additional
+acceptance testing. Guided creation and machine pairing/key management now need
+no experimental environment switches. The checklist below tracks remaining
+provider coverage; approval does not turn unrecorded cases into passes.
+Use a scratch
 Cloudflare account (never one with real archives), and the sandbox recipe
 below, so nothing touches your real Mac; create the bootstrap token with
 exactly the two permissions setup prints, then run `agent-archive setup` and
-choose "Cloudflare R2", then "Continue" (with
-`AGENT_ARCHIVE_EXPERIMENTAL_R2_CREATE=1`). Record the result of each item in the
+choose "Cloudflare R2", then "Continue". Record the result of each item in the
 open-source acceptance record.
 
 The [2026-10-05 provider evidence](../maintainers/acceptance/cloudflare/2026-10-05-provider.json)
@@ -624,7 +624,7 @@ not stop the remaining cleanup attempts, and are reported as failures. It does
 not exercise the CLI pairing transaction. Exact management-token permissions have
 not yet been confirmed by the operator, so account/domain reads with precisely
 the advertised two permissions remain open. The unchecked items below remain
-release gates; a partial provider observation does not close a whole item.
+coverage gaps; a partial provider observation does not close a whole item.
 
 - [ ] **Secret encoding (blocker).** The derived key
       (`cloudflare.DeriveS3Credentials`: Access Key ID = the token's `id`,
@@ -818,5 +818,6 @@ interrupted reservations, uncertain delivery and cancelled execution budgets;
 bounded discovery/listing suites cover partial reads, shared deadlines, caps and
 worker limits. Fake results do not establish live token permissions, account
 inventory visibility, absence semantics, propagation or macOS/Linux timings.
-Keep the first-run pairing and experimental default gates disabled until the
-separate live and platform acceptance record satisfies those requirements.
+First-run pairing and guided creation are generally available by maintainer
+approval. Record separate live and platform acceptance results for the final
+release candidate; fake tests do not establish that evidence.

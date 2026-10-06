@@ -36,9 +36,6 @@ func runMachinesRevoke(args []string, stdin io.Reader, out, errOut io.Writer, en
 		return code
 	}
 	selector := opts.Selector
-	if env.getenv("AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_REVOKE") != "1" {
-		return machineCommandError(errOut, errors.New("revocation is experimental; set AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_REVOKE=1"))
-	}
 	home, err := env.readHome()
 	if err != nil {
 		return machineCommandError(errOut, err)

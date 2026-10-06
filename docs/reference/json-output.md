@@ -477,7 +477,7 @@ person reads.
 The document has `schema_version: 1` and contains `records` (each with `schema_version: 1` as defined by the
 [machine record schema](../../schemas/machine.schema.json)), `unreadable`
 (object key and a bounded safe reason), `partial`, and `provider_verified`
-(false for ordinary listing; see the explicit experimental provider check below). Unreadable
+(false for ordinary listing; see the explicit provider check below). Unreadable
 records and partial listings exit with code 1 while preserving readable records.
 Records are untrusted bucket claims. Heartbeats are at most daily, not current
 activity; credential kinds do not establish provider-verified ownership.

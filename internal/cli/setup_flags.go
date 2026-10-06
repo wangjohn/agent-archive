@@ -35,6 +35,9 @@ const (
 
 // setupOptions are setup's answers given as flags, for setup --yes.
 type setupOptions struct {
+	// pairingInput preserves answers buffered by first-run onboarding. The original
+	// stdin remains the terminal identity used for private code entry.
+	pairingInput             io.Reader
 	codexDiscovery           string
 	codexCaptureScope        string
 	pair                     bool
@@ -128,7 +131,7 @@ func (l *projectList) Set(value string) error {
 // setupFlags adds setup's answer flags to fs and parses args.
 func setupFlags(fs *commandFlags, args []string) (setupOptions, bool) {
 	var opts setupOptions
-	fs.BoolVar(&opts.pair, "pair", false, "import an encrypted shared-key beta pairing")
+	fs.BoolVar(&opts.pair, "pair", false, "import an encrypted pairing bundle")
 	fs.StringVar(&opts.pairFile, "pair-file", "", "read a pairing bundle from PATH, or - for stdin")
 	var projects, projectRepos projectList
 	fs.StringVar(&opts.prefix, "prefix", "", "folder inside the bucket")

@@ -52,7 +52,7 @@ func runPairingAdd(args []string, stdin io.Reader, out, errOut io.Writer, env En
 	fs := env.newCommandFlags("machines add", errOut)
 	spares := fs.Int("spares", 2, "save target unused dedicated R2 keys, 0..5 (default 2)")
 	name := fs.String("name", "", "new machine name")
-	share := fs.Bool("share-key", false, "explicitly share this R2 key (beta; cannot revoke the recipient independently)")
+	share := fs.Bool("share-key", false, "explicitly share this R2 key (cannot revoke the recipient independently)")
 	expires := fs.Duration("expires", 15*time.Minute, "pairing expiry, 5m through 24h")
 	printBundle := fs.Bool("print", false, "print the encrypted bundle instead of using the clipboard")
 	file := fs.String("file", "", "write a new private bundle file, refusing overwrite")
@@ -176,7 +176,7 @@ func executePairingAdd(home string, cfg config.Config, payload pairing.Payload, 
 			}
 		}
 	} else if cfg.Storage.Provider == credentials.ProviderR2 {
-		terminal.Println(out, "Shared-key beta: no independent R2 revocation.")
+		terminal.Println(out, "Shared-key pairing: no independent R2 revocation.")
 	}
 	code, err := pairing.NewCode()
 	if err != nil {

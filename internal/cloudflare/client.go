@@ -2,15 +2,15 @@
 // guided R2 setup needs: find the account, create a bucket, mint a
 // bucket-scoped API token, and check the bucket's public-access settings.
 //
-// It is used only at setup time, with a bootstrap token the person pastes
-// once. That token lives in a Client, is never written anywhere, and is
+// Setup and explicit key-management commands use a temporary management
+// token. That token lives in a Client, is never written anywhere, and is
 // dropped with Discard. The runtime credentials the archive stores are
 // different values that are used against the S3 endpoint, never against this
 // API.
 //
 // A default-jurisdiction provider acceptance run passed on 2026-10-05.
 // Guided setup and the remaining release checks are listed under "Live
-// acceptance" in dev/contributing/testing.md; the feature remains gated.
+// acceptance" in dev/contributing/testing.md; these track provider coverage.
 package cloudflare
 
 import (

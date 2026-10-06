@@ -103,13 +103,13 @@ var terminalPackageUses = classifiedCalls{
 var promptSites = classifiedCalls{
 	"machines_revoke.go":  {"newPrompter": 1},                  // confirmation and token prompt require Env.interactive; --yes/--json never prompt
 	"machines_own_key.go": {"newPrompter": 1},                  // own-key confirmation/token require Env.interactive; --yes uses environment only
-	"pairing_rollout.go":  {"newPrompter": 1},                  // first-run question requires the default-off GA gate and Env.interactive
+	"pairing_rollout.go":  {"newPrompter": 1},                  // first-run question requires terminal input/output, fresh setup, and Env.interactive
 	"machines_verify.go":  {"newPrompter": 1},                  // readManagementToken prompts only with env.interactive(stdin), without --yes or --json.
 	"issuance.go":         {"newPrompter": 1},                  // reserveSpare builds a nil-input/discard-output prompter for checkKey diagnostics only; it never reads or asks a question. Selection questions use the caller's source prompter behind its interactive gate.
 	"pairing_source.go":   {"newPrompter": 1},                  // source requires interactive input/output unless deliberate --yes; the scripted path never prompts
 	"pairing_receive.go":  {"newPrompter": 2},                  // receiver refuses prompts-off unless --yes; redirected bundle input switches code and review to a checked private terminal
 	"prompt.go":           {"newPrompter": 2, "prompter{}": 1}, // the definition, and typedInput.prompter, which handoff's picker and ambiguous-title chooser ask through (both behind browseInteractive: see handoff_select.go and handoff_title.go)
-	"setup.go":            {"newPrompter": 1},                  // interactive setup: runSetupCommand refuses unless env.interactive(stdin) or --yes
+	"setup.go":            {"newPrompter": 2},                  // interactive setup plus buffered-input handoff; runSetupCommand requires Env.interactive
 	"setup_flags.go":      {"newPrompter": 1, "prompter{}": 1}, // setup --yes: only reads a secret, guarded in readR2Secret; the literal has no input, it only prints
 	"uninstall.go":        {"newPrompter": 1},                  // runUninstallCommand refuses unless env.interactive(stdin) or --yes
 	"backfill.go":         {"newPrompter": 1},                  // runBackfillCommand refuses unless env.interactive(stdin) or --yes
@@ -127,7 +127,7 @@ var promptSites = classifiedCalls{
 // be refused when interaction is off; a read of a file need not be.
 var inputReads = classifiedCalls{
 	"setup_project_scope.go": {"json.NewDecoder": 1, "io.ReadAll": 1}, // explicit JSON or --yes file/stdin scope, never an implicit prompt
-	"pairing_receive.go":     {"io.ReadAll": 1},                       // bounded bundle file or explicitly requested --pair-file - stream; code/review use a checked terminal
+	"pairing_receive.go":     {"io.ReadAll": 1, "bufio.NewReader": 1}, // bounded bundle input and buffered first-run answers; code/review preserve the checked terminal
 	"pairing_ledger.go":      {"io.ReadAll": 1},                       // bounded local ledger files, never input
 	"machines_revoke.go":     {"io.ReadAll": 1, "json.NewDecoder": 1}, // explicitly selected bounded operator binding file, never stdin
 

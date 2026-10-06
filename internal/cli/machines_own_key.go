@@ -34,9 +34,6 @@ func runMachinesOwnKey(args []string, stdin io.Reader, out, errOut io.Writer, en
 	if !fs.parseFlagsOnly(args) {
 		return 2
 	}
-	if env.getenv("AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_KEYS") != "1" {
-		return machineCommandError(errOut, errors.New("own-key is experimental; set AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_KEYS=1"))
-	}
 	if err := pairingAgentRefusal(env); err != nil {
 		return machineCommandError(errOut, err)
 	}

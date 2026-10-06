@@ -19,7 +19,7 @@ import (
 	"golang.org/x/crypto/chacha20poly1305"
 )
 
-// Prefix identifies the encrypted beta wire format recognized by redaction.
+// Prefix identifies the encrypted pairing wire format recognized by redaction.
 const Prefix = "aa-pair1:"
 
 // MaxBundle bounds encoded input before allocation or derivation.

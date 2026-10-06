@@ -1,4 +1,4 @@
-// Package pairing implements the bounded, authenticated shared-key beta wire
+// Package pairing implements the bounded, authenticated encrypted pairing wire
 // protocol. It performs no filesystem, credential-store, or network operations.
 package pairing
 

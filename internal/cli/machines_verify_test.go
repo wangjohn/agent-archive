@@ -54,7 +54,7 @@ func TestMachinesVerifyConsumerPreservesUnknownVisibilityAndLocalTrust(t *testin
 		return cloudflare.New(token, cloudflare.Options{BaseURL: server.URL + "/client/v4"})
 	}
 	env.LookupEnv = func(k string) (string, bool) {
-		values := map[string]string{"AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_VERIFY": "1", "CLOUDFLARE_API_TOKEN": "MANAGEMENT-CANARY"}
+		values := map[string]string{"CLOUDFLARE_API_TOKEN": "MANAGEMENT-CANARY"}
 		value, ok := values[k]
 		return value, ok
 	}
@@ -169,7 +169,7 @@ func TestMachinesVerifyRunsTokenCommandOnlyForInteractiveConsumer(t *testing.T) 
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			home := t.TempDir()
-			vars := map[string]string{"AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_VERIFY": "1"}
+			vars := map[string]string{}
 			maps.Copy(vars, tc.vars)
 			env := withEnvironment(testEnv(t, home, time.Now()), vars)
 			env.IsTerminal = func(any) bool { return tc.terminal }
