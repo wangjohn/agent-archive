@@ -3,6 +3,7 @@ package cli
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -84,6 +85,11 @@ func TestNativeChildBurstKeepsFreshWorkMovingAcrossBoundedPasses(t *testing.T) {
 				// Background receipts have a separate five-readback cap. Assert
 				// publication fairness directly through the real reader/store.
 				metadataBytes, e := local.PublishedMetadata(reg.ArchiveSessionID)
+				if errors.Is(e, os.ErrNotExist) {
+					// Admission can precede publication; retain the same eight-pass
+					// deadline for its actual remote metadata and source readback.
+					continue
+				}
 				must(t, e)
 				if len(metadataBytes) > 0 && freshPass < 0 {
 					key, e := archive.MetadataObjectKey(reg.Harness.Name, reg.ArchiveSessionID)
