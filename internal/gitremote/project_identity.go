@@ -14,12 +14,6 @@ import (
 	"syscall"
 )
 
-// ProjectIdentity supplies bounded, local checkout evidence for configured-root recovery.
-// Existing non-Git scratch roots are known absent; unreadable/missing roots stay unknown.
-func ProjectIdentity(ctx context.Context, root string) sourcefacts.RepositoryIdentity {
-	return (&IdentityObserver{}).Lookup(ctx, root)
-}
-
 // IdentityObserver scopes optional command capability results to one observation pass.
 // A change of executable or effective environment discards the cached capability.
 type IdentityObserver struct {
@@ -48,19 +42,20 @@ func (o *IdentityObserver) Lookup(ctx context.Context, root string) sourcefacts.
 	}
 	if top != "" {
 		key, known := ProjectKey(ctx, root, o.shortRunner())
-		id := sourcefacts.RepositoryIdentity{Root: top, Key: key, Known: known, ObservationScope: scope}
 		if !known {
-			id.BudgetExhausted = o.budget
-			return id
+			return sourcefacts.RepositoryIdentity{Root: top, Key: key, Known: known, ObservationScope: scope, BudgetExhausted: o.budget}
 		}
 		dependencies, semantic, ok := o.projectDependencies(ctx, root, top)
 		if !ok {
 			return sourcefacts.RepositoryIdentity{BudgetExhausted: o.budget}
 		}
-		id.Dependencies = dependencies
-		id.ObservedRoot = root
+		var validation string
 		if semantic {
-			id.Validation = "semantic"
+			validation = "semantic"
+		}
+		id := sourcefacts.RepositoryIdentity{
+			Root: top, Key: key, Known: known, ObservationScope: scope,
+			Dependencies: dependencies, ObservedRoot: root, Validation: validation,
 		}
 		// The final reads must agree with the earlier identity under unchanged metadata.
 		verifiedRoot := ProjectRoot(ctx, root, o.shortRunner())
@@ -332,6 +327,7 @@ func (o *IdentityObserver) shortRunner() Runner {
 	}
 	return o.budgetRunner(run)
 }
+
 func (o *IdentityObserver) configRunner() Runner {
 	run := o.ConfigRun
 	if run == nil {
@@ -339,6 +335,7 @@ func (o *IdentityObserver) configRunner() Runner {
 	}
 	return o.budgetRunner(run)
 }
+
 func (o *IdentityObserver) budgetRunner(run Runner) Runner {
 	return func(ctx context.Context, dir string, args ...string) ([]byte, error) {
 		raw, err := run(ctx, dir, args...)

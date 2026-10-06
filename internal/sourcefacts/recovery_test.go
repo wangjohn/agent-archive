@@ -385,7 +385,7 @@ func TestSemanticRecoveryRechecksWholeInventoryOncePerSlice(t *testing.T) {
 		t.Fatal(proof, outcome)
 	}
 	r.ResetValidation()
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		if !r.CurrentSlice(proof) {
 			t.Fatal("stable inventory rejected")
 		}

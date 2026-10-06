@@ -3,6 +3,7 @@ package gitremote
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/sourcefacts"
@@ -12,6 +13,12 @@ import (
 	"strings"
 	"testing"
 )
+
+// observeProjectIdentity gives each standalone fixture a fresh observation pass.
+// Production callers share an IdentityObserver across their recovery pass.
+func observeProjectIdentity(ctx context.Context, root string) sourcefacts.RepositoryIdentity {
+	return (&IdentityObserver{}).Lookup(ctx, root)
+}
 
 func TestProjectIdentityTracksIncludedConfiguration(t *testing.T) {
 	git := gitOrSkip(t)
@@ -24,7 +31,7 @@ func TestProjectIdentityTracksIncludedConfiguration(t *testing.T) {
 	if err := os.WriteFile(config, []byte("[core]\n repositoryformatversion = 0\n bare = false\n[include]\n path = "+include+"\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	id := ProjectIdentity(context.Background(), root)
+	id := observeProjectIdentity(context.Background(), root)
 	if !id.Known || id.Key != archive.RepoKey("git@example.test:acme/repo.git") || !identityEvidenceCurrent(id) {
 		t.Fatalf("%+v", id)
 	}
@@ -38,7 +45,7 @@ func TestProjectIdentityTracksIncludedConfiguration(t *testing.T) {
 	if identityEvidenceCurrent(id) {
 		t.Fatal("included remote change left stale identity")
 	}
-	changed := ProjectIdentity(context.Background(), root)
+	changed := observeProjectIdentity(context.Background(), root)
 	if !changed.Known || changed.Key == id.Key {
 		t.Fatal(changed)
 	}
@@ -47,22 +54,22 @@ func TestProjectIdentityTracksIncludedConfiguration(t *testing.T) {
 func TestProjectIdentitySeparatesScratchAndUnreadableClone(t *testing.T) {
 	gitOrSkip(t)
 	scratch := t.TempDir()
-	if id := ProjectIdentity(context.Background(), scratch); !id.Known || id.Root != "" {
+	if id := observeProjectIdentity(context.Background(), scratch); !id.Known || id.Root != "" {
 		t.Fatal(id)
 	}
-	if id := ProjectIdentity(context.Background(), filepath.Join(t.TempDir(), "gone")); id.Known {
+	if id := observeProjectIdentity(context.Background(), filepath.Join(t.TempDir(), "gone")); id.Known {
 		t.Fatal("missing clone classified as scratch")
 	}
 	broken := t.TempDir()
 	if err := os.WriteFile(filepath.Join(broken, ".git"), []byte("gitdir: /synthetic/deleted-gitdir\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if id := ProjectIdentity(context.Background(), broken); id.Known {
+	if id := observeProjectIdentity(context.Background(), broken); id.Known {
 		t.Fatal("broken clone classified as scratch")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if id := ProjectIdentity(ctx, scratch); id.Known {
+	if id := observeProjectIdentity(ctx, scratch); id.Known {
 		t.Fatal("cancelled Git observation became evidence")
 	}
 }
@@ -82,7 +89,7 @@ func TestProjectIdentityTracksBranchConditionalConfiguration(t *testing.T) {
 	if closeErr := f.Close(); err != nil || closeErr != nil {
 		t.Fatal(err, closeErr)
 	}
-	id := ProjectIdentity(t.Context(), root)
+	id := observeProjectIdentity(t.Context(), root)
 	if !id.Known || !identityEvidenceCurrent(id) {
 		t.Fatalf("initial identity unavailable: %+v", id)
 	}
@@ -92,7 +99,7 @@ func TestProjectIdentityTracksBranchConditionalConfiguration(t *testing.T) {
 	if identityEvidenceCurrent(id) {
 		t.Fatal("branch conditional origin changed without invalidating cached identity")
 	}
-	if changed := ProjectIdentity(t.Context(), root); !changed.Known || changed.Key != archive.RepoKey("https://example.test/acme/branch") {
+	if changed := observeProjectIdentity(t.Context(), root); !changed.Known || changed.Key != archive.RepoKey("https://example.test/acme/branch") {
 		t.Fatalf("changed identity: %+v", changed)
 	}
 }
@@ -112,7 +119,7 @@ func TestProjectIdentityTracksEmptyIncludeConfiguration(t *testing.T) {
 	if closeErr := f.Close(); err != nil || closeErr != nil {
 		t.Fatal(err, closeErr)
 	}
-	id := ProjectIdentity(t.Context(), root)
+	id := observeProjectIdentity(t.Context(), root)
 	if !id.Known || !identityEvidenceCurrent(id) {
 		t.Fatalf("initial identity unavailable: %+v", id)
 	}
@@ -131,7 +138,7 @@ func TestProjectIdentityTracksScratchAncestor(t *testing.T) {
 	if err := os.Mkdir(root, 0700); err != nil {
 		t.Fatal(err)
 	}
-	id := ProjectIdentity(t.Context(), root)
+	id := observeProjectIdentity(t.Context(), root)
 	if !id.Known || !identityEvidenceCurrent(id) {
 		t.Fatal(id)
 	}
@@ -163,7 +170,7 @@ func TestProjectIdentityTracksAbsentGlobalConfiguration(t *testing.T) {
 					}
 				}
 				root := initRepo(t, git, "")
-				id := ProjectIdentity(t.Context(), root)
+				id := observeProjectIdentity(t.Context(), root)
 				if !id.Known || id.Key != "" || !identityEvidenceCurrent(id) {
 					t.Fatalf("initial identity unavailable: %+v", id)
 				}
@@ -173,7 +180,7 @@ func TestProjectIdentityTracksAbsentGlobalConfiguration(t *testing.T) {
 				if identityEvidenceCurrent(id) {
 					t.Fatal("new global configuration did not invalidate known absence")
 				}
-				if changed := ProjectIdentity(t.Context(), root); !changed.Known || changed.Key != archive.RepoKey("https://example.test/acme/new") {
+				if changed := observeProjectIdentity(t.Context(), root); !changed.Known || changed.Key != archive.RepoKey("https://example.test/acme/new") {
 					t.Fatalf("changed identity: %+v", changed)
 				}
 			})
@@ -234,7 +241,7 @@ func TestProjectIdentityTracksNewNestedRepositoryAncestor(t *testing.T) {
 		}
 		return v
 	}
-	r := sourcefacts.NewRecoveryResolver(projects, nil, resolve, ProjectIdentity, nil)
+	r := sourcefacts.NewRecoveryResolver(projects, nil, resolve, observeProjectIdentity, nil)
 	r.Validate = ProjectIdentityCurrent
 	gone := filepath.Join(t.TempDir(), "gone")
 	proof, outcome := r.Recover(t.Context(), gone, key)
@@ -247,11 +254,11 @@ func TestProjectIdentityTracksNewNestedRepositoryAncestor(t *testing.T) {
 			t.Fatalf("%v %s", err, output)
 		}
 	}
-	fresh := ProjectIdentity(t.Context(), configured)
+	fresh := observeProjectIdentity(t.Context(), configured)
 	if !fresh.Known || fresh.Key != key {
 		t.Fatalf("fresh nested clone invalid: %+v", fresh)
 	}
-	freshResolver := sourcefacts.NewRecoveryResolver(projects, nil, resolve, ProjectIdentity, nil)
+	freshResolver := sourcefacts.NewRecoveryResolver(projects, nil, resolve, observeProjectIdentity, nil)
 	freshResolver.Validate = ProjectIdentityCurrent
 	_, freshOutcome := freshResolver.Recover(t.Context(), gone, key)
 	if freshOutcome != sourcefacts.RecoverySubtreeUnavailable {
@@ -274,7 +281,7 @@ func identityEvidenceCurrent(id sourcefacts.RepositoryIdentity) bool {
 	if id.Validation != "semantic" {
 		return true
 	}
-	fresh := ProjectIdentity(context.Background(), id.ObservedRoot)
+	fresh := observeProjectIdentity(context.Background(), id.ObservedRoot)
 	return fresh.Known && fresh.Root == id.Root && fresh.Key == id.Key
 }
 
@@ -286,14 +293,12 @@ func TestLegacyGitIdentityUsesSemanticProofWithoutInventedConfigPaths(t *testing
 	}
 	t.Log(strings.TrimSpace(string(version)))
 	root := initRepo(t, git, "https://example.test/acme/repo")
-	observer := &IdentityObserver{}
 	// Force the capability result to the legacy path independent of CI's Git.
 	scope, ok := identityObservationScope()
 	if !ok {
 		t.Fatal("observer scope")
 	}
-	observer.scope = scope
-	observer.probed, observer.legacy = true, true
+	observer := &IdentityObserver{scope: scope, probed: true, legacy: true}
 	id := observer.Lookup(t.Context(), root)
 	if !id.Known || id.Validation != "semantic" || id.Key != archive.RepoKey("https://example.test/acme/repo") {
 		t.Fatal(id)
@@ -313,7 +318,7 @@ func TestConfigurationInventoryHasItsOwnBoundedOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i < 200; i++ {
+	for i := range 200 {
 		if _, err := fmt.Fprintf(f, "\n[synthetic]\n key%d = ignored\n", i); err != nil {
 			t.Fatal(err)
 		}
@@ -321,10 +326,10 @@ func TestConfigurationInventoryHasItsOwnBoundedOutput(t *testing.T) {
 	if err := f.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ExecRunner(t.Context(), root, "-C", root, "config", "--show-origin", "--name-only", "-z", "--list"); err != ErrOutputLimit {
+	if _, err := ExecRunner(t.Context(), root, "-C", root, "config", "--show-origin", "--name-only", "-z", "--list"); !errors.Is(err, ErrOutputLimit) {
 		t.Fatal("short query cap", err)
 	}
-	if id := ProjectIdentity(t.Context(), root); !id.Known {
+	if id := observeProjectIdentity(t.Context(), root); !id.Known {
 		t.Fatal("large name inventory lost identity", id)
 	}
 	f, err = os.OpenFile(config, os.O_WRONLY|os.O_APPEND, 0600)
@@ -408,7 +413,7 @@ func TestProjectIdentityRejectsChangedObserverEnvironment(t *testing.T) {
 func TestProjectIdentityRejectsChangedObserverExecutable(t *testing.T) {
 	git := gitOrSkip(t)
 	root := initRepo(t, git, "https://example.test/acme/repo")
-	id := ProjectIdentity(t.Context(), root)
+	id := observeProjectIdentity(t.Context(), root)
 	if !id.Known {
 		t.Fatal(id)
 	}
