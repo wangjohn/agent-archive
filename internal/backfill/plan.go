@@ -275,18 +275,7 @@ func preparePlanWork(ctx context.Context, env Environment, cfg config.Config, fi
 	var err error
 	unread, err = enumerateDiscovery(ctx, env, agentapi.DiscoveryImport, func(c agentapi.DiscoveryCandidate) error {
 		t := &transcript{harness: harness(c.Session.Agent), path: c.Source.Path, size: c.Bytes, nativeID: c.Session.NativeID, cwd: c.Header.Directory, repoKey: c.Header.RepoKey, metaStart: c.Header.StartedAt, identityMismatch: c.Header.IdentityMismatch, capturePending: c.Header.CapturePending != "" && env.CodexRollouts == nil, cursorSlug: c.WorkspaceKey, sourcePriority: c.SourcePriority, sourceInfo: c.SourceInfo}
-		w := &work{t: t, c: Candidate{Harness: string(c.Session.Agent), TranscriptPath: t.path, SourceKind: c.Source.Kind, SourceKey: c.Source.Key, Bytes: t.size, NativeSessionID: t.nativeID}, unsafe: c.IdentityError != nil}
-		if identity := c.Header.CodexIdentity; identity != nil {
-			w.c.NativeChild = identity.Child
-			w.c.RelatedHistory = identity.ForkID != "" || identity.HistoryBase != nil || identity.RolloutID != identity.ThreadID
-			w.c.ParentNativeID = identity.ParentID
-			w.c.RootNativeID = identity.RootID
-			w.c.NativeHome = c.Root
-			if base := filepath.Base(c.Root); base == "sessions" || base == "archived_sessions" {
-				w.c.NativeHome = filepath.Dir(c.Root)
-			}
-			w.c.SourceKey = identity.ThreadID
-		}
+		w := &work{t: t, c: importNativeCandidate(c, t), unsafe: c.IdentityError != nil}
 		w.checkSource(env)
 		items = append(items, w)
 		return nil
@@ -806,4 +795,27 @@ func (b *byteBudget) release(n int64) {
 	b.used -= n
 	b.mu.Unlock()
 	b.available.Broadcast()
+}
+
+type codexStoreDirectory string
+
+const (
+	codexSessionsDirectory codexStoreDirectory = "sessions"
+	codexArchivedDirectory codexStoreDirectory = "archived_sessions"
+)
+
+// importNativeCandidate retains scheduling identity without granting admission.
+func importNativeCandidate(source agentapi.DiscoveryCandidate, t *transcript) Candidate {
+	home, key := "", source.Source.Key
+	var child, related bool
+	var parent, root string
+	if id := source.Header.CodexIdentity; id != nil {
+		child, related = id.Child, id.ForkID != "" || id.HistoryBase != nil || id.RolloutID != id.ThreadID
+		parent, root = id.ParentID, id.RootID
+		home, key = source.Root, id.ThreadID
+		if base := codexStoreDirectory(filepath.Base(home)); base == codexSessionsDirectory || base == codexArchivedDirectory {
+			home = filepath.Dir(home)
+		}
+	}
+	return Candidate{Harness: string(source.Session.Agent), TranscriptPath: t.path, SourceKind: source.Source.Kind, SourceKey: key, Bytes: t.size, NativeSessionID: t.nativeID, NativeChild: child, RelatedHistory: related, ParentNativeID: parent, RootNativeID: root, NativeHome: home}
 }

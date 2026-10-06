@@ -883,4 +883,4 @@ func (r SessionRegistration) validateNativeChild() error {
 func (b SourceBundle) IsChild() bool { return b.NativeChild || b.ParentSessionID != "" }
 
 // IsChild reports metadata child ownership independently of parent-link availability.
-func (m Metadata) IsChild() bool { return m.NativeChild || m.ParentSessionID != "" }
+func (m *Metadata) IsChild() bool { return m.NativeChild || m.ParentSessionID != "" }

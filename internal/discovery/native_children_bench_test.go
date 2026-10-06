@@ -27,7 +27,7 @@ import (
 func BenchmarkNativeChildInitialAdmission(b *testing.B) {
 	for _, count := range []int{1000, 10000, 100000} {
 		b.Run(strconv.Itoa(count), func(b *testing.B) {
-			for iteration := 0; iteration < b.N; iteration++ {
+			for iteration := range b.N {
 				b.StopTimer()
 				store, cfg, at, home := fixture(b)
 				id := fmt.Sprintf("00000000-0000-0000-0000-%012d", iteration+100)
@@ -167,6 +167,7 @@ func (p childBenchmarkProvider) OpenPass(ctx context.Context, e agentapi.SourceE
 	}
 	return p.SourceProvider.OpenPass(ctx, e)
 }
+
 func (s *childBenchmarkResources) charged() (used, peak int64) {
 	seen := map[*agentapi.NativeReadBudget]bool{}
 	for _, budget := range s.budgets {
@@ -179,6 +180,7 @@ func (s *childBenchmarkResources) charged() (used, peak int64) {
 	}
 	return used, peak
 }
+
 func childBenchmarkMemory() func() uint64 {
 	stop, done := make(chan struct{}), make(chan struct{})
 	var mu sync.Mutex

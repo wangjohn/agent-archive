@@ -8,7 +8,13 @@ import (
 // Native links are derived from this pass's registration inventory. They do
 // not enumerate native files or read published transcript state. Missing links
 // never prevent independently admitted children from publishing.
-type nativeLinkKey struct{ native, project, root, destination, home string }
+type nativeLinkKey struct {
+	native      string
+	project     string
+	root        string
+	destination string
+	home        string
+}
 
 func nativeRegistrationHome(reg archive.SessionRegistration) string {
 	if reg.CodexBinding != nil && reg.CodexBinding.Home != "" {
@@ -24,7 +30,7 @@ func nativeParentKey(reg archive.SessionRegistration, native string) nativeLinkK
 	return nativeLinkKey{native, reg.ProjectID, reg.ProjectRoot, reg.DestinationID, nativeRegistrationHome(reg)}
 }
 
-func (p *pass) reconcileNativeLinks() error {
+func (p *pass) reconcileNativeLinks() {
 	parents := make(map[nativeLinkKey]archive.SessionRegistration, len(p.registrations))
 	ambiguous := map[nativeLinkKey]bool{}
 	for _, reg := range p.registrations {
@@ -41,7 +47,6 @@ func (p *pass) reconcileNativeLinks() error {
 		p.reconcileNativeLink(i, reg, parents, ambiguous)
 	}
 
-	return nil
 }
 
 func (p *pass) nativeLinkPending(reason string) {

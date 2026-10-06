@@ -228,9 +228,9 @@ func validCandidate(candidate Candidate, source SourceDescriptor, agent string, 
 }
 
 func validCandidateMetadata(candidate Candidate, source SourceDescriptor, agent string) bool {
-	copy := candidate
-	copy.FirstTaskAt = copy.StartedAt
-	return validCandidate(copy, source, agent, copy.StartedAt)
+	metadata := candidate
+	metadata.FirstTaskAt = metadata.StartedAt
+	return validCandidate(metadata, source, agent, metadata.StartedAt)
 }
 
 func scanStopped(ctx context.Context, o Options) bool {
@@ -614,7 +614,7 @@ func (s scan) admitObservation(source SourceEntry, entry cached) (bool, bool) {
 	}
 	h.Outcomes[string(entry.Observation.Outcome)]++
 	if entry.Observation.Outcome != outcomeUsable {
-		if entry.Observation.Outcome != outcomeIncomplete && entry.Observation.Outcome != "related_history_pending" {
+		if entry.Observation.Outcome != outcomeIncomplete && entry.Observation.Outcome != outcomeRelatedHistory {
 			return false, false
 		}
 		if entry.Observation.Candidate.NativeSessionID == "" {
@@ -1091,6 +1091,7 @@ func validateAdmissionGeneration(cfg config.Config, candidate Candidate, project
 func hasValidatedCoverage(coverage *coverageInventory) bool {
 	return coverage != nil && coverage.Phase == coverageComplete && coverage.proofEpoch == coverage.Epoch
 }
+
 func catalogPending(c catalog, nativeOnly bool) bool {
 	return len(c.Queue) > 0 || !nativeOnly && len(c.Retries) > 0 || c.Coverage != nil && c.Coverage.Phase != coverageComplete
 }

@@ -160,7 +160,7 @@ func (m CodexMeta) FormatOutcome() Outcome {
 	if present(m.ThreadSource) {
 		var thread string
 		_ = json.Unmarshal(m.ThreadSource, &thread)
-		if thread != "user" && !(thread == "subagent" && facts.Child) {
+		if thread != "user" && (thread != "subagent" || !facts.Child) {
 			return UnsupportedExecution
 		}
 	}

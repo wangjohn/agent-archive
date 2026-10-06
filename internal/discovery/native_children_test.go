@@ -31,20 +31,21 @@ func TestNativeChildAdmissionUsesOwnTaskBeyondHeaderWindowWithoutParent(t *testi
 				t.Fatal(err)
 			}
 			lines := strings.Split(string(data), "\n")
-			raw := lines[0] + "\n" + `{"type":"event_msg","payload":{"type":"task_started","turn_id":"` + parent + `","started_at":"2026-10-01T12:01:00Z"}}` + "\n"
+			var builder strings.Builder
+			builder.WriteString(lines[0] + "\n" + `{"type":"event_msg","payload":{"type":"task_started","turn_id":"` + parent + `","started_at":"2026-10-01T12:01:00Z"}}` + "\n")
 			for range 1023 {
-				raw += `{"type":"turn_context","payload":{"model":"synthetic inherited model","synthetic_padding":"` + strings.Repeat("x", 512) + `"}}` + "\n"
+				builder.WriteString(`{"type":"turn_context","payload":{"model":"synthetic inherited model","synthetic_padding":"` + strings.Repeat("x", 512) + `"}}` + "\n")
 			}
-			firstOwnByte := len(raw)
+			firstOwnByte := builder.Len()
 			if firstOwnByte <= sourcefacts.HeaderBytes {
 				t.Fatalf("fixture does not exceed header byte window: %d", firstOwnByte)
 			}
 			t.Logf("first own task starts after %d bytes and 1025 raw records; header limits %d bytes/%d records", firstOwnByte, sourcefacts.HeaderBytes, sourcefacts.HeaderRecords)
-			raw += strings.Join(lines[1:], "\n")
+			builder.WriteString(strings.Join(lines[1:], "\n"))
 			if invalid {
-				raw += `{"type":"event_msg","payload":{"type":"task_started","turn_id":"` + id + `","started_at":"2026-10-01T12:01:00Z"}}` + "\n"
+				builder.WriteString(`{"type":"event_msg","payload":{"type":"task_started","turn_id":"` + id + `","started_at":"2026-10-01T12:01:00Z"}}` + "\n")
 			}
-			if err := os.WriteFile(path, []byte(raw), 0600); err != nil {
+			if err := os.WriteFile(path, []byte(builder.String()), 0600); err != nil {
 				t.Fatal(err)
 			}
 			h, err := runWithCensus(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(2 * time.Minute) }}, registeredAdapters())

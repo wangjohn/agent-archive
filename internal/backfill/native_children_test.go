@@ -1,12 +1,12 @@
 package backfill
 
 import (
-	"fmt"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -78,11 +78,12 @@ func TestNestedUndoOrdersDescendantsAndRejectsCycles(t *testing.T) {
 
 func TestNestedUndoRejectsOverdepthRegardlessOfMemoizedParentOrder(t *testing.T) {
 	var sessions []UndoSession
-	for i := 0; i < 66; i++ {
-		reg := archive.SessionRegistration{ArchiveSessionID: fmt.Sprint(i)}
+	for i := range 66 {
+		parent := ""
 		if i > 0 {
-			reg.ParentSessionID = fmt.Sprint(i - 1)
+			parent = strconv.Itoa(i - 1)
 		}
+		reg := archive.SessionRegistration{ArchiveSessionID: strconv.Itoa(i), ParentSessionID: parent}
 		sessions = append(sessions, UndoSession{Registration: reg})
 	}
 	for range 50 {

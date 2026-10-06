@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/discovery"
+	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
@@ -78,9 +80,25 @@ func TestNativeChildBurstKeepsFreshWorkMovingAcrossBoundedPasses(t *testing.T) {
 		must(t, e)
 		for _, reg := range regs {
 			if reg.NativeSessionID == fresh {
-				verified, e := readVerification(home, reg.ArchiveSessionID)
+				// Background receipts have a separate five-readback cap. Assert
+				// publication fairness directly through the real reader/store.
+				metadataBytes, e := local.PublishedMetadata(reg.ArchiveSessionID)
 				must(t, e)
-				if !verified.VerifiedAt.IsZero() && freshPass < 0 {
+				if len(metadataBytes) > 0 && freshPass < 0 {
+					key, e := archive.MetadataObjectKey(reg.Harness.Name, reg.ArchiveSessionID)
+					must(t, e)
+					metadata, e := reader.ReadMetadata(t.Context(), cloud, key)
+					must(t, e)
+					bundle, e := reader.LoadSource(t.Context(), cloud, metadata, reader.Limits{})
+					must(t, e)
+					encoded, e := json.Marshal(bundle)
+					must(t, e)
+					if bundle.NativeSessionID != fresh || !bundle.NativeChild || bundle.ProjectID != archive.ProjectID(project) || !strings.Contains(string(encoded), "Synthetic burst own prompt") {
+						t.Fatal("fresh remote source identity/own context mismatch")
+					}
+					if _, pending, e := local.LoadRequest(reg.ArchiveSessionID); e != nil || pending {
+						t.Fatal("fresh published child retains pending capture request", pending, e)
+					}
 					freshPass = pass
 				}
 			}
@@ -92,6 +110,7 @@ func TestNativeChildBurstKeepsFreshWorkMovingAcrossBoundedPasses(t *testing.T) {
 	regs, e := local.LoadRegistrations()
 	must(t, e)
 	if len(regs) != burst+1 || freshPass < 1 {
+
 		t.Fatal("burst pinned fresh child or failed to converge", len(regs), freshPass)
 	}
 	for _, reg := range regs {

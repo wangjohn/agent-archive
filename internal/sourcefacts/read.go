@@ -155,7 +155,7 @@ func ReadCodexHeader(reader io.Reader, path string) (h Header) {
 				return h
 			}
 			h.Profile = CodexFormatProfile(meta)
-			if outcome := meta.FormatOutcome(); outcome != "native_format" {
+			if outcome := meta.FormatOutcome(); outcome != codexmeta.NativeFormat {
 				h.Outcome = string(outcome)
 				return h
 			}

@@ -110,6 +110,7 @@ type proofOpener struct {
 	sourcefacts.RootOpener
 	owner *nativeProofPasses
 }
+
 type proofFile struct {
 	transcriptio.File
 	owner *nativeProofPasses
@@ -123,6 +124,7 @@ func (o proofOpener) OpenRegular(path string) (transcriptio.File, error) {
 	o.owner.opens++
 	return proofFile{file, o.owner}, nil
 }
+
 func (f proofFile) ReadAt(buffer []byte, offset int64) (int, error) {
 	n, err := f.File.ReadAt(buffer, offset)
 	f.owner.reads++

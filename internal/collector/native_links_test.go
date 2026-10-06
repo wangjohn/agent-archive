@@ -24,16 +24,18 @@ func TestNativeLinksRetryChildrenBeforeParentAndSettleWithoutDecodeOrWrites(t *t
 		t.Fatal(err)
 	}
 	p := &pass{local: local, registrations: []archive.SessionRegistration{child}, now: at}
-	if err := p.reconcileNativeLinks(); err != nil || p.registrations[0].ParentSessionID != "" {
-		t.Fatalf("unresolved parent blocked or fabricated: %v", err)
+	p.reconcileNativeLinks()
+	if p.registrations[0].ParentSessionID != "" {
+		t.Fatal("unresolved parent fabricated")
 	}
 	parent := nativeLinkRegistration("parent", parentID, "", home, at)
 	if err := local.SaveRegistration(parent); err != nil {
 		t.Fatal(err)
 	}
 	p.registrations = append(p.registrations, parent)
-	if err := p.reconcileNativeLinks(); err != nil || p.registrations[0].ParentSessionID != "parent" {
-		t.Fatalf("late parent not reconciled: %v", err)
+	p.reconcileNativeLinks()
+	if p.registrations[0].ParentSessionID != "parent" {
+		t.Fatal("late parent not reconciled")
 	}
 	reg, found, err := local.LoadRegistration("child")
 	if err != nil || !found || reg.NativeSessionID != childID || reg.ParentSessionID != "parent" || !reg.HookObservedAt.IsZero() || !reg.ImportBatch.IsZero() || !reg.SessionStartedAt.Equal(child.SessionStartedAt) {
@@ -42,9 +44,7 @@ func TestNativeLinksRetryChildrenBeforeParentAndSettleWithoutDecodeOrWrites(t *t
 	before := snapshotMtimes(t, local.Home())
 	loads := state.PublishedStateLoads()
 	for range 3 {
-		if err := p.reconcileNativeLinks(); err != nil {
-			t.Fatal(err)
-		}
+		p.reconcileNativeLinks()
 	}
 	if state.PublishedStateLoads() != loads || !reflect.DeepEqual(before, snapshotMtimes(t, local.Home())) {
 		t.Fatal("settled relationship repair decoded published state or wrote session state")
@@ -52,8 +52,8 @@ func TestNativeLinksRetryChildrenBeforeParentAndSettleWithoutDecodeOrWrites(t *t
 }
 
 func TestNativeLinksRespectHomeProjectDestinationExclusionAndRemoval(t *testing.T) {
-	for _, mode := range []string{"home", "project", "destination", "excluded", "removed"} {
-		t.Run(mode, func(t *testing.T) {
+	for _, mode := range []nativeLinkScenario{nativeLinkHome, nativeLinkProject, nativeLinkDestination, nativeLinkExcluded, nativeLinkRemoved} {
+		t.Run(string(mode), func(t *testing.T) {
 			local := newTestStore(t)
 			at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
 			home := t.TempDir()
@@ -61,29 +61,32 @@ func TestNativeLinksRespectHomeProjectDestinationExclusionAndRemoval(t *testing.
 			parent := nativeLinkRegistration("parent", parentID, "", home, at)
 			child := nativeLinkRegistration("child", "00000000-0000-0000-0000-000000000002", parentID, home, at)
 			switch mode {
-			case "home":
+			case nativeLinkHome:
 				child.NativeSourceHome = t.TempDir()
-			case "project":
+			case nativeLinkProject:
 				child.ProjectID = "other"
 				child.ProjectRoot = "/synthetic/other"
-			case "destination":
+			case nativeLinkDestination:
 				child.DestinationID = "other"
+			case nativeLinkExcluded, nativeLinkRemoved:
+				// Policy/removal controls below decide these cases without changing identity.
 			}
 			for _, reg := range []archive.SessionRegistration{parent, child} {
 				if err := local.SaveRegistration(reg); err != nil {
 					t.Fatal(err)
 				}
 			}
-			if mode == "removed" {
+			if mode == nativeLinkRemoved {
 				if err := local.RecordRemoval("codex", parentID, state.RemovalReasonUndo, at); err != nil {
 					t.Fatal(err)
 				}
 			}
 			p := &pass{local: local, registrations: []archive.SessionRegistration{child, parent}, now: at, opts: Options{AcceptSession: func(reg archive.SessionRegistration) bool {
-				return mode != "excluded" || reg.ArchiveSessionID != "parent"
+				return mode != nativeLinkExcluded || reg.ArchiveSessionID != "parent"
 			}}}
-			if err := p.reconcileNativeLinks(); err != nil || p.registrations[0].ParentSessionID != "" {
-				t.Fatalf("scope/tombstone bypass mode %s: %v", mode, err)
+			p.reconcileNativeLinks()
+			if p.registrations[0].ParentSessionID != "" {
+				t.Fatalf("scope/tombstone bypass mode %s", mode)
 			}
 		})
 	}
@@ -116,9 +119,7 @@ func TestLegacyCodexCompositeGhostKeepsRawEvidenceWithoutDoubleCounting(t *testi
 		t.Fatal(err)
 	}
 	p := &pass{local: local, registrations: []archive.SessionRegistration{child, parent}, now: at.Add(time.Minute)}
-	if err := p.reconcileNativeLinks(); err != nil {
-		t.Fatal(err)
-	}
+	p.reconcileNativeLinks()
 	request, found, err := local.LoadRequest(parent.ArchiveSessionID)
 	if err != nil || !found {
 		t.Fatal(err)
@@ -150,10 +151,21 @@ func TestLegacyCodexCompositeGhostKeepsRawEvidenceWithoutDoubleCounting(t *testi
 	}
 	restarted := &pass{local: local, registrations: regs, now: at.Add(2 * time.Minute)}
 	before := snapshotMtimes(t, local.Home())
-	if err := restarted.reconcileNativeLinks(); err != nil || !reflect.DeepEqual(before, snapshotMtimes(t, local.Home())) {
+	restarted.reconcileNativeLinks()
+	if !reflect.DeepEqual(before, snapshotMtimes(t, local.Home())) {
 		t.Fatalf("legacy migration repeated writes after restart: %v", err)
 	}
 	if _, registered, err := local.LoadRegistration(oldID); err != nil || registered {
 		t.Fatal("ghost was registered or state lookup failed", err)
 	}
 }
+
+type nativeLinkScenario string
+
+const (
+	nativeLinkHome        nativeLinkScenario = "home"
+	nativeLinkProject     nativeLinkScenario = "project"
+	nativeLinkDestination nativeLinkScenario = "destination"
+	nativeLinkExcluded    nativeLinkScenario = "excluded"
+	nativeLinkRemoved     nativeLinkScenario = "removed"
+)

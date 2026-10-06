@@ -611,7 +611,7 @@ func TestBlanketLegacyContinuationResumesAfterExclusionLiftWithoutAdmittingExclu
 			}
 			objects := storagetest.NewMemoryStore()
 			result := collectNativeFixture(t, store, objects, codex, at.Add(8*time.Minute))
-			if err != nil || len(result.Errors) != 0 || len(result.Published) != 1 {
+			if len(result.Errors) != 0 || len(result.Published) != 1 {
 				t.Fatalf("resumed publication %#v %v", result, err)
 			}
 			raw, err := store.PublishedMetadata(before.ArchiveSessionID)

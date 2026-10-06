@@ -29,10 +29,11 @@ func filterImportSource(ctx context.Context, env Environment, w *work, started t
 		return out, release, errors.New("native source capability unavailable")
 	}
 	root := w.c.NativeHome
-	environment := agentapi.SourceEnvironment{CodexRollouts: env.CodexRollouts, RequireConfinedHistory: true, Files: sourcefacts.RootOpener{Root: root}, Policy: transcriptio.OpenPolicy{Root: root, RejectSymlinks: true}}
+	var budget *agentapi.NativeReadBudget
 	if shared, ok := env.CodexRollouts.(agentapi.CodexRolloutResourceBudget); ok {
-		environment.ReadBudget = shared.NativeReadBudget()
+		budget = shared.NativeReadBudget()
 	}
+	environment := agentapi.SourceEnvironment{ReadBudget: budget, CodexRollouts: env.CodexRollouts, RequireConfinedHistory: true, Files: sourcefacts.RootOpener{Root: root}, Policy: transcriptio.OpenPolicy{Root: root, RejectSymlinks: true}}
 	pass, err := provider.OpenPass(ctx, environment)
 	if err != nil {
 		return out, release, err

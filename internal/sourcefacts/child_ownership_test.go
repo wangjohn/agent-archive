@@ -16,15 +16,17 @@ func TestChildFirstOwnTaskPresenceAndBoundedPrefix(t *testing.T) {
 			}
 			head, _ := json.Marshal(map[string]any{"type": "session_meta", "payload": meta})
 			own := strings.SplitN(testRecords(t, nil, nil), "\n", 2)[1]
-			raw := string(head) + "\n"
+			var builder strings.Builder
+			builder.Write(head)
+			builder.WriteByte('\n')
 			if boundary >= 3 {
-				raw += `{"type":"event_msg","payload":{"type":"task_started","turn_id":"external-parent-task"}}` + "\n"
+				builder.WriteString(`{"type":"event_msg","payload":{"type":"task_started","turn_id":"external-parent-task"}}` + "\n")
 				for i := 2; i < boundary; i++ {
-					raw += `{"type":"turn_context","payload":{"model":"inherited"}}` + "\n"
+					builder.WriteString(`{"type":"turn_context","payload":{"model":"inherited"}}` + "\n")
 				}
 			}
-			raw += own
-			h := ReadCodexHeader(strings.NewReader(raw), "rollout-"+testID+".jsonl")
+			builder.WriteString(own)
+			h := ReadCodexHeader(strings.NewReader(builder.String()), "rollout-"+testID+".jsonl")
 			if boundary > HeaderRecords {
 				if h.Outcome != "incomplete_metadata" || !h.FirstTaskAt.IsZero() {
 					t.Fatalf("copied prefix licensed child: %+v", h)

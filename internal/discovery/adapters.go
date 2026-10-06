@@ -54,10 +54,11 @@ type Candidate struct {
 type Outcome string
 
 const (
-	outcomeUsable      Outcome = "native_format"
-	outcomeIncomplete  Outcome = "incomplete_metadata"
-	outcomeUnavailable Outcome = "source_unavailable"
-	outcomeChanged     Outcome = "source_changed"
+	outcomeUsable         Outcome = "native_format"
+	outcomeIncomplete     Outcome = "incomplete_metadata"
+	outcomeRelatedHistory Outcome = Outcome(codexmeta.RelatedHistoryPending)
+	outcomeUnavailable    Outcome = "source_unavailable"
+	outcomeChanged        Outcome = "source_changed"
 )
 
 // Observation is one bounded metadata probe and its typed outcome.
@@ -195,14 +196,16 @@ func candidateFromHeader(h sourcefacts.Header, source SourceDescriptor) Candidat
 	if json.Unmarshal(h.Meta.Source, &producerSource) != nil {
 		producerSource = string(h.Meta.Source)
 	}
-	c := Candidate{Agent: "codex", NativeSessionID: h.Meta.ID, Source: source, StartedAt: h.Started, FirstTaskAt: h.FirstTaskAt, StartEvidence: "native_start", WorkingDirectory: h.Meta.Cwd, RecordedRepoKey: archive.RepoKey(h.Meta.Git.RepositoryURL), HarnessVersion: h.Meta.Version, ProducerOriginator: h.Meta.Originator, ProducerSource: producerSource, FormatProfile: h.Profile, Execution: "native"}
+	var child bool
+	var root, parent, fork string
+	var own *uint64
 	if h.Identity != nil {
-		c.NativeChild = h.Identity.Child
-		c.RootNativeID = h.Identity.RootID
-		c.ParentNativeID = h.Identity.ParentID
-		c.ForkNativeID = h.Identity.ForkID
-		c.OwnStart = h.Identity.SubagentOrdinal
+		child = h.Identity.Child
+		root, parent, fork = h.Identity.RootID, h.Identity.ParentID, h.Identity.ForkID
+		own = h.Identity.SubagentOrdinal
 	}
+	c := nativeHeaderCandidate(h, source, producerSource, child, root, parent, fork, own)
+
 	return c
 }
 
@@ -227,4 +230,8 @@ func (a codexAdapter) Supported(c Candidate) bool {
 		source = json.RawMessage(c.ProducerSource)
 	}
 	return supported(sourcefacts.CodexMeta{ID: c.NativeSessionID, SessionID: c.RootNativeID, Version: c.HarnessVersion, Originator: c.ProducerOriginator, Source: source})
+}
+
+func nativeHeaderCandidate(h sourcefacts.Header, source SourceDescriptor, producerSource string, child bool, root, parent, fork string, own *uint64) Candidate {
+	return Candidate{Agent: "codex", NativeSessionID: h.Meta.ID, Source: source, StartedAt: h.Started, FirstTaskAt: h.FirstTaskAt, StartEvidence: "native_start", WorkingDirectory: h.Meta.Cwd, RecordedRepoKey: archive.RepoKey(h.Meta.Git.RepositoryURL), HarnessVersion: h.Meta.Version, ProducerOriginator: h.Meta.Originator, ProducerSource: producerSource, FormatProfile: h.Profile, Execution: "native", NativeChild: child, RootNativeID: root, ParentNativeID: parent, ForkNativeID: fork, OwnStart: own}
 }

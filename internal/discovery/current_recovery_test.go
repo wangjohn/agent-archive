@@ -89,7 +89,7 @@ func TestMovedDiscoveryContinuationRecoversOwnerOutsideNewStartWindow(t *testing
 		t.Fatalf("recovery lost or duplicated registration: %#v %v", regs, err)
 	}
 	result := collectNativeFixture(t, store, storagetest.NewMemoryStore(), root, options.Now())
-	if err != nil || len(result.Published) != 1 || len(result.Errors) != 0 {
+	if len(result.Published) != 1 || len(result.Errors) != 0 {
 		t.Fatalf("restored continuation did not publish: %#v %v", result, err)
 	}
 }

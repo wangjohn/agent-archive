@@ -259,9 +259,7 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	if err := p.loadWork(); err != nil {
 		return Result{}, err
 	}
-	if err := p.reconcileNativeLinks(); err != nil {
-		return Result{}, err
-	}
+	p.reconcileNativeLinks()
 	if p.opts.PrepareCodexCoverage != nil {
 		if err := p.opts.PrepareCodexCoverage(ctx, p.registrations); err != nil {
 			p.result.Errors["native-coverage"] = err

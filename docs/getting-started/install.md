@@ -296,5 +296,3 @@ first launch. Linux release binaries are static and unsigned.
   start the background collector.
 - [Import sessions already on this machine](../guides/backfill.md).
 - [Uninstall](uninstall.md).
-
-If you want to pull in older sessions, import them with `agent-archive backfill`.

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -20,7 +21,7 @@ import (
 
 func TestBackfillNativeChildOwnTaskPublicationWithoutParent(t *testing.T) {
 	for _, valid := range []bool{true, false} {
-		t.Run(fmt.Sprint(valid), func(t *testing.T) {
+		t.Run(strconv.FormatBool(valid), func(t *testing.T) {
 			canonical := func() string { p, e := filepath.EvalSymlinks(t.TempDir()); must(t, e); return p }
 			home, userHome, project := canonical(), canonical(), canonical()
 			native := filepath.Join(userHome, ".codex")
@@ -41,7 +42,7 @@ func TestBackfillNativeChildOwnTaskPublicationWithoutParent(t *testing.T) {
 			if !valid {
 				task = "external-import-turn"
 			}
-			raw.WriteString(fmt.Sprintf(`{"type":"event_msg","timestamp":%q,"payload":{"type":"task_started","turn_id":%q,"started_at":%q}}`+"\n", at.Format(time.RFC3339Nano), task, at.Format(time.RFC3339Nano)))
+			raw.Write(fmt.Appendf(nil, `{"type":"event_msg","timestamp":%q,"payload":{"type":"task_started","turn_id":%q,"started_at":%q}}`+"\n", at.Format(time.RFC3339Nano), task, at.Format(time.RFC3339Nano)))
 			raw.WriteString(`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Synthetic child own prompt"}]}}` + "\n")
 			path := filepath.Join(native, "sessions", "rollout-"+child+".jsonl")
 			must(t, os.WriteFile(path, []byte(raw.String()), 0600))
