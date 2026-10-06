@@ -6,18 +6,43 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-- Codex setup offers included-project or all-current-and-future-project scope,
-  independent of supported-source discovery. Fresh scripts explicitly choose
-  both source and scope; omitted reconfiguration preserves consent. Codex-only
-  all-mode permits zero explicitly included projects. Discovery does not require hooks;
-  existing installations opt in explicitly. Original creation-time consent, pause
-  intervals and project/destination scope apply. Indistinguishable recent native
-  copies may qualify. Status schema 4 separates discovery health and actual hook
-  observation from publication/read-back verification.
+### Added
 
-Planned for v0.2.0. This release has not been tagged or published.
+- Complete non-live experimental pairing/revocation handling: committed retired
+  dedicated-key history, healthy issuer labels and private operator bindings,
+  unused spare observations and bounded informational operation progress.
+  Pairing preserves standalone exclusions, offers safe scope/delivery/token/app
+  recovery and reports success before post-commit cleanup and history import.
+  Both peers must be upgraded for standalone exclusions; live provider and platform
+  acceptance remain pending and general availability stays disabled.
 
 ### Fixed
+
+- Status distinguishes installed hooks from observed execution and shows Codex
+  automatic capture with archived and verified session counts. Optional hook
+  evidence and detailed scan diagnostics move to verbose output; capture warnings
+  and required hook approval instructions stay visible in normal status.
+
+- Pairing recovery preserves exclusions on other clones and accepts home-prefixed
+  manual project paths. Retired keys with exact local deletion confirmations no
+  longer block revoking a replacement key after re-pairing; unverified absence
+  remains unresolved.
+
+## [0.2.0]
+
+### Documentation
+
+- Documentation provides a v0.2.0 quickstart for macOS and Linux,
+  explains conversation-only handoff and Codex all-project capture consent,
+  and moves the shell cleanup recipe into a focused archive-cleanup guide.
+
+### Fixed
+
+- Automatic Codex discovery admits compatible legacy and paginated JSONL formats
+  across versions and prereleases, including 0.155, without a producer-version
+  allowlist. Status distinguishes runtime-tested, source-inspected and untested
+  compatible session metadata. Creation consent, inherited-history exclusions,
+  filtering and publication/read-back checks remain required.
 
 - After local session membership changes, the collector rebuilds a completed
   packed identity index against the current registrations so recovery status
@@ -60,6 +85,15 @@ Planned for v0.2.0. This release has not been tagged or published.
 - Installers point to `agent-archive backfill` for importing older sessions.
   Installation docs include preview guidance and explain that upgrades keep
   your capture settings.
+
+- Codex setup offers included-project or all-current-and-future-project scope,
+  independent of supported-source discovery. Fresh scripts explicitly choose
+  both source and scope; omitted reconfiguration preserves consent. Codex-only
+  all-mode permits zero explicitly included projects. Discovery does not require hooks;
+  existing installations opt in explicitly. Original creation-time consent, pause
+  intervals and project/destination scope apply. Indistinguishable recent native
+  copies may qualify. Status schema 4 separates discovery health and actual hook
+  observation from publication/read-back verification.
 
 - `agent-archive recover SESSION_ID` previews a linked generation for a
   rewritten transcript; `--confirm` preserves the earlier archive and queues
@@ -167,7 +201,7 @@ Planned for v0.2.0. This release has not been tagged or published.
   creation: exact immutable provider identities, verified fresh keys, default
   two spare keys (`--spares 0..5`), and an authoritative secret-free slot ledger.
   Creation, reservation, delivery, and uncertain cleanup are tracked durably;
-  management tokens are never persisted. This phase remains gated and unmerged
+  management tokens are never persisted. This implementation is merged but remains experimentally gated
   pending live provider acceptance and integrated revocation/recovery review.
 
 - Handoff before setup discovers Claude Code and Codex native conversations in
@@ -200,6 +234,8 @@ Planned for v0.2.0. This release has not been tagged or published.
 
 ### Fixed
 
+- Guided R2 creation recognizes the management API's observed bucket-name
+  conflict (HTTP 409, code 10004) and retries a generated name.
 - Second-machine setup commands preserve excluded folders and reincluded
   subtrees, including when a repository checkout moves to another path.
   Scope transfer resolves all rules before applying any inclusion, treats
@@ -1321,6 +1357,7 @@ The first release.
   `credential_process` fails there. See
   [configuration](docs/reference/configuration.md#environment-variables).
 
-[Unreleased]: https://github.com/wangjohn/agent-archive/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/wangjohn/agent-archive/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/wangjohn/agent-archive/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/wangjohn/agent-archive/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/wangjohn/agent-archive/releases/tag/v0.1.0

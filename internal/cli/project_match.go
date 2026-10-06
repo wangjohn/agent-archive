@@ -26,11 +26,12 @@ type projectMatchRequest struct {
 }
 
 type projectMatchResult struct {
-	Roots      [][]string
-	History    backfill.KnownProjectsResult
-	Incomplete bool
-	TimedOut   bool
-	Capped     bool
+	RepositoryKeys map[string]string
+	Roots          [][]string
+	History        backfill.KnownProjectsResult
+	Incomplete     bool
+	TimedOut       bool
+	Capped         bool
 }
 
 func (e Env) projectRepoKey(ctx context.Context, root string) string {
@@ -139,7 +140,7 @@ func projectScopeBlocked(root string, included, excluded []string) bool {
 func matchProjects(ctx context.Context, env Env, userHome string, cfg config.Config, requests []projectMatchRequest) projectMatchResult {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	result := projectMatchResult{Roots: make([][]string, len(requests))}
+	result := projectMatchResult{Roots: make([][]string, len(requests)), RepositoryKeys: map[string]string{}}
 	bf := env.backfillEnvironment(userHome, cfg)
 	c := projectCandidates{ctx: ctx, result: &result, canonicalPaths: map[string]string{}, seen: map[string]bool{}}
 	var included, excluded []string
@@ -162,40 +163,54 @@ func matchProjects(ctx context.Context, env Env, userHome string, cfg config.Con
 	for _, request := range requests {
 		c.add(request.Path)
 	}
-	result.History = backfill.KnownProjectsBounded(ctx, bf, cfg, 128)
-	for _, project := range result.History.Projects {
-		c.add(project.Root)
-	}
-	result.Incomplete = result.Incomplete || result.History.Incomplete()
 	keys := make([]string, len(c.roots))
 	checkoutRoots := make([]string, len(c.roots))
 	known := make([]bool, len(c.roots))
-	var mu sync.Mutex
-	next := 0
-	var wg sync.WaitGroup
-	for range 4 {
-		wg.Go(func() {
-			for {
-				mu.Lock()
-				i := next
-				next++
-				mu.Unlock()
-				if i >= len(c.roots) || ctx.Err() != nil {
-					return
-				}
-				child, done := context.WithTimeout(ctx, 250*time.Millisecond)
-				keys[i], checkoutRoots[i], known[i] = env.projectRepository(child, c.roots[i])
-				if !known[i] || child.Err() != nil {
+	lookup := func(start int) {
+		var mu sync.Mutex
+		next := start
+		var wg sync.WaitGroup
+		for range 4 {
+			wg.Go(func() {
+				for {
 					mu.Lock()
-					result.Incomplete = true
-					result.TimedOut = result.TimedOut || child.Err() != nil
+					i := next
+					next++
 					mu.Unlock()
+					if i >= len(c.roots) || ctx.Err() != nil {
+						return
+					}
+					child, done := context.WithTimeout(ctx, 250*time.Millisecond)
+					keys[i], checkoutRoots[i], known[i] = env.projectRepository(child, c.roots[i])
+					if !known[i] || child.Err() != nil {
+						mu.Lock()
+						result.Incomplete = true
+						result.TimedOut = result.TimedOut || child.Err() != nil
+						mu.Unlock()
+					}
+					done()
 				}
-				done()
-			}
-		})
+			})
+		}
+		wg.Wait()
 	}
-	wg.Wait()
+	lookup(0)
+	unresolved := false
+	for _, request := range requests {
+		unresolved = unresolved || len(c.match(request, keys, checkoutRoots, known, included, excluded)) == 0
+	}
+	if unresolved && ctx.Err() == nil && !result.Capped {
+		start := len(c.roots)
+		result.History = backfill.KnownProjectsBounded(ctx, bf, cfg, 128)
+		for _, project := range result.History.Projects {
+			c.add(project.Root)
+		}
+		result.Incomplete = result.Incomplete || result.History.Incomplete()
+		keys = append(keys, make([]string, len(c.roots)-start)...)
+		checkoutRoots = append(checkoutRoots, make([]string, len(c.roots)-start)...)
+		known = append(known, make([]bool, len(c.roots)-start)...)
+		lookup(start)
+	}
 	result.TimedOut = result.TimedOut || ctx.Err() != nil || result.History.TimedOut
 	result.Capped = result.Capped || result.History.Capped
 	result.Incomplete = result.Incomplete || ctx.Err() != nil
@@ -228,6 +243,7 @@ func (c *projectCandidates) match(request projectMatchRequest, keys, checkoutRoo
 			continue
 		}
 		seen[root] = true
+		c.result.RepositoryKeys[root] = keys[j]
 		matches = append(matches, root)
 	}
 	return matches

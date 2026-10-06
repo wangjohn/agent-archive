@@ -10,7 +10,7 @@ import tempfile
 import unittest
 
 DOCS = Path(__file__).resolve().parent.parent / 'docs'
-RECIPE_PAGES = [DOCS / 'security' / 'privacy.md', DOCS / 'getting-started' / 'uninstall.md']
+RECIPE_PAGES = [DOCS / 'security' / 'archive-cleanup.md', DOCS / 'getting-started' / 'uninstall.md']
 
 FAKE_AWS = r'''#!/bin/sh
 cat > /dev/null

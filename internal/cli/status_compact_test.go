@@ -107,6 +107,7 @@ func healthyStatusView(projects int) statusView {
 		app := &view.Apps[i]
 		app.Uploading, app.UploadingSessions, app.CaptureGaps, app.SessionsWithCaptureGaps = []uploadingSession{}, 0, nil, 0
 		app.HookObserved, app.Sessions, app.SubagentSessions, app.Projects = true, 3, 0, compactProjects(projects)
+		app.PublishedSessions, app.VerifiedSessions = 3, 3
 	}
 	return view
 }
@@ -168,6 +169,8 @@ func TestStatusAppCounts(t *testing.T) {
 	}{
 		{appStatus{}, "no sessions yet"},
 		{appStatus{Sessions: 1}, "1 session"},
+		{appStatus{Sessions: 4, PublishedSessions: 2, VerifiedSessions: 1, UploadingSessions: 3}, "4 sessions · 2 archived (1 verified) · 3 uploading"},
+		{appStatus{Sessions: 1, PublishedSessions: 1}, "1 session · 1 archived"},
 		{appStatus{Sessions: 252, SubagentSessions: 40, ImportedSessions: 48, UploadingSessions: 3}, "212 sessions (+40 subagents) · 48 imported · 3 uploading"},
 		{appStatus{Sessions: 3, SubagentSessions: 1}, "2 sessions (+1 subagent)"},
 		{appStatus{ImportedSessions: 2, UploadingSessions: 1}, "no sessions yet · 2 imported · 1 uploading"},
@@ -476,7 +479,7 @@ func TestStatusCountsEachAppsSessions(t *testing.T) {
 	if pair := app.Projects[0]; pair.sessions != 4 || pair.imported != 1 || pair.uploading != 3 {
 		t.Errorf("project counts sessions=%d imported=%d uploading=%d", pair.sessions, pair.imported, pair.uploading)
 	}
-	if text := statusOutput(t, env); !strings.Contains(text, "discovery off; included projects   4 sessions (+1 subagent) · 1 imported · 3 uploading\n") {
+	if text := statusOutput(t, env); !strings.Contains(text, "discovery off; included projects   4 sessions (+1 subagent) · 1 archived (1 verified) · 1 imported · 3 uploading\n") {
 		t.Errorf("status:\n%s", text)
 	}
 	if full := statusOutput(t, env, "codex"); !strings.Contains(full, "\nProjects\n  Project") || !strings.Contains(full, "   4          1          3           verified\n") {

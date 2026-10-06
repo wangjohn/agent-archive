@@ -118,13 +118,10 @@ func (c S3Credentials) GoString() string { return c.String() }
 // endpoint accepts: the Access Key ID is the token's ID, and the Secret
 // Access Key is the SHA-256 hash of its value.
 //
-// Cloudflare's documentation says "SHA-256 hash" without spelling out the
-// encoding. Lowercase hex of the hash of the value's bytes is what is
-// implemented here. That is unconfirmed: guided setup checks the derived key
-// against the bucket (a full storage round trip) before it stores anything,
-// and the live acceptance step in dev/contributing/testing.md must confirm
-// this function against a real account before release. If the encoding is
-// wrong, this function is the only place to change.
+// Lowercase hex of the hash of the value's bytes passed the live default-
+// jurisdiction storage round trip on 2026-10-05. Guided setup still verifies
+// each derived key before storing it; the remaining release acceptance checks
+// are recorded in dev/contributing/testing.md.
 func DeriveS3Credentials(token Token) S3Credentials {
 	sum := sha256.Sum256([]byte(token.Value))
 	return S3Credentials{AccessKeyID: token.ID, SecretAccessKey: hex.EncodeToString(sum[:])}

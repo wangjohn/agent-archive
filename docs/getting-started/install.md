@@ -4,14 +4,15 @@
 dependencies. It runs on macOS (Intel and Apple Silicon) and on Linux (x86-64
 and arm64).
 
-After installing, [set up capture](setup.md) for new sessions. If you want to
-pull in older sessions, you can import them with `agent-archive backfill`
-after setup ([backfill guide](../guides/backfill.md)). Add `--dry-run` to
-preview without importing.
+v0.2.0 provides binaries for all four supported platform and architecture
+combinations. After installing, try `agent-archive handoff` inside a project
+to continue an existing Claude Code or Codex conversation before creating a
+bucket or running setup. See [native local selection and limits](../guides/handoff.md#before-setup-native-local-sessions).
 
-Try `agent-archive handoff` inside a project to continue an
-existing Claude Code or Codex conversation before creating a bucket or running
-setup. [Native local selection, limits and verification](../guides/handoff.md#before-setup-native-local-sessions).
+For persistent capture and cross-machine history, continue with [setup](setup.md).
+If you want to pull in older sessions, you can import them with
+`agent-archive backfill` after setup ([backfill guide](../guides/backfill.md)).
+Add `--dry-run` to preview without importing.
 
 ## Platforms
 
@@ -84,7 +85,7 @@ Windows is not supported.
 ## Install with the script
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/wangjohn/agent-archive/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/wangjohn/agent-archive/v0.2.0/install.sh | AGENT_ARCHIVE_VERSION=v0.2.0 sh
 ```
 
 [`install.sh`](../../install.sh) is short; read it first if you prefer. It
@@ -118,11 +119,8 @@ the binary came from this repository's release workflow, which needs the
 gh attestation verify "$(command -v agent-archive)" --repo wangjohn/agent-archive
 ```
 
-Linux binaries are attached to releases after v0.1.1; v0.1.1 and earlier have
-none, so on a Linux machine whose latest release is v0.1.1 the installer
-stops with `download failed: ...agent-archive-linux-...`. Build from source
-until a release has them. An architecture other than x86-64 and arm64 is
-refused.
+Linux release binaries are available starting with v0.2.0. v0.1.1 and earlier
+are macOS only. An architecture other than x86-64 and arm64 is refused.
 
 Run the same command again to upgrade. On a machine that is already set up (a
 `config.json` in `~/.local/share/agent-archive`, or in `AGENT_ARCHIVE_HOME`
@@ -143,10 +141,10 @@ Upgrades keep your capture settings. If you want to pull in older sessions,
 you can import them with `agent-archive backfill`.
 
 To pin both the installer script and the published release, or to choose a
-directory, use this `v0.1.1` example:
+directory, use this `v0.2.0` example:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/wangjohn/agent-archive/v0.1.1/install.sh | AGENT_ARCHIVE_VERSION=v0.1.1 AGENT_ARCHIVE_INSTALL_DIR="$HOME/bin" sh
+curl -fsSL https://raw.githubusercontent.com/wangjohn/agent-archive/v0.2.0/install.sh | AGENT_ARCHIVE_VERSION=v0.2.0 AGENT_ARCHIVE_INSTALL_DIR="$HOME/bin" sh
 ```
 
 ## Build from source

@@ -27,14 +27,14 @@ func testRecords(t *testing.T, m map[string]any, task map[string]any) string {
 	return string(first) + "\n" + string(second) + "\n"
 }
 
-func TestCodexNativeShapeDoesNotEnableAnUnverifiedProducer(t *testing.T) {
+func TestCodexNativeShapeAdmitsUntestedCompatibleProducer(t *testing.T) {
 	t.Parallel()
 	h := ReadCodexHeader(strings.NewReader(testRecords(t, nil, nil)), "rollout-2026-10-01T12-00-00-"+testID+".jsonl")
 	if h.Outcome != "native_format" {
 		t.Fatal(h.Outcome)
 	}
-	if SupportedCodexProducer(h.Meta) {
-		t.Fatal("unverified source activated")
+	if !SupportedCodexProducer(h.Meta) || h.Profile != CodexLegacyJSONL || CodexProducerEvidence(h.Meta) != CodexCompatibleUntested {
+		t.Fatal("compatible untested format rejected or mislabeled")
 	}
 }
 

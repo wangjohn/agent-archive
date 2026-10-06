@@ -1,0 +1,201 @@
+{
+  "revision": "7e804f8012cf81635fb092d9ea62cabe20319276+acceptance-fix",
+  "run_id": "6cbfa4daa71d0e03772c273599ab85f7",
+  "started": "2026-10-05T20:52:38.230724Z",
+  "platform": "darwin/arm64",
+  "account_id": "[redacted]",
+  "permission_id": "2efd5506f9c8494dacb1fa10a3e7d5b6",
+  "buckets": [
+    {
+      "name": "aa-accept-20261005-6cbfa4daa71d",
+      "created": true,
+      "deleted": true
+    },
+    {
+      "name": "aa-accept-20261005-6cbfa4daa71d-control",
+      "created": true,
+      "deleted": true
+    }
+  ],
+  "tokens": [
+    {
+      "id": "[redacted-token-1]",
+      "name": "agent-archive r=c2681aaa799afd6a648eb34fdda6b494 i=6cbfa4daa71d0e03772c273599ab85f7 k=9505a63abc992062771e9f4f0ab17147",
+      "deleted": true
+    },
+    {
+      "id": "[redacted-token-2]",
+      "name": "agent-archive r=0bd399be9bf9e7a0c44bda855a0ff745 i=6cbfa4daa71d0e03772c273599ab85f7 k=0277291358ecd855b00016cc214faa56",
+      "deleted": true
+    },
+    {
+      "id": "[redacted-token-3]",
+      "name": "agent-archive r=fce2e37db6d8f58740e97f3fa12b9472 i=6cbfa4daa71d0e03772c273599ab85f7 k=f580f9301ade4c4dfecd46a8c20eb0a2",
+      "deleted": true
+    }
+  ],
+  "checks": [
+    {
+      "name": "account listing with supplied permissions",
+      "result": "pass",
+      "milliseconds": 217
+    },
+    {
+      "name": "resolve selectable bucket-item-write permission",
+      "result": "pass",
+      "milliseconds": 605
+    },
+    {
+      "name": "create private scratch bucket aa-accept-20261005-6cbfa4daa71d",
+      "result": "pass",
+      "milliseconds": 881
+    },
+    {
+      "name": "create private scratch bucket aa-accept-20261005-6cbfa4daa71d-control",
+      "result": "pass",
+      "milliseconds": 533
+    },
+    {
+      "name": "duplicate bucket produces expected conflict",
+      "result": "pass",
+      "milliseconds": 352
+    },
+    {
+      "name": "r2.dev access is disabled",
+      "result": "pass",
+      "milliseconds": 2208
+    },
+    {
+      "name": "custom-domain response is readable and empty",
+      "result": "pass",
+      "milliseconds": 233
+    },
+    {
+      "name": "create canonical 118-byte bucket-scoped token",
+      "result": "pass",
+      "detail": "one-time secret retained only in memory"
+    },
+    {
+      "name": "provider details verify immutable name, exact bucket policy and no expiry",
+      "result": "pass",
+      "milliseconds": 197
+    },
+    {
+      "name": "create canonical 118-byte bucket-scoped token",
+      "result": "pass",
+      "detail": "one-time secret retained only in memory"
+    },
+    {
+      "name": "provider details verify immutable name, exact bucket policy and no expiry",
+      "result": "pass",
+      "milliseconds": 176
+    },
+    {
+      "name": "create canonical 118-byte bucket-scoped token",
+      "result": "pass",
+      "detail": "one-time secret retained only in memory"
+    },
+    {
+      "name": "provider details verify immutable name, exact bucket policy and no expiry",
+      "result": "pass",
+      "milliseconds": 185
+    },
+    {
+      "name": "lowercase-hex SHA256 key derivation and activation",
+      "result": "pass",
+      "detail": "observed after three sequential token creations; not exact mint-to-activation latency",
+      "milliseconds": 2151
+    },
+    {
+      "name": "production storage probe/write/read/list/delete/missing round trip",
+      "result": "pass",
+      "milliseconds": 631
+    },
+    {
+      "name": "same key works outside archive prefix (bucket-level scope)",
+      "result": "pass",
+      "milliseconds": 361
+    },
+    {
+      "name": "bucket-scoped key is refused by second scratch bucket",
+      "result": "pass",
+      "milliseconds": 97
+    },
+    {
+      "name": "bounded token inventory includes all three new tokens",
+      "result": "pass",
+      "milliseconds": 212
+    },
+    {
+      "name": "revocation test object is readable with recipient key",
+      "result": "pass",
+      "milliseconds": 418
+    },
+    {
+      "name": "delete recipient token",
+      "result": "pass",
+      "milliseconds": 264
+    },
+    {
+      "name": "revoked recipient key is denied on previously readable object",
+      "result": "pass",
+      "detail": "observed data-plane propagation; not an immediate-cutoff guarantee",
+      "milliseconds": 4182
+    },
+    {
+      "name": "another recipient remains active after independent revocation",
+      "result": "pass",
+      "milliseconds": 66
+    },
+    {
+      "name": "remove synthetic revocation object with still-active key",
+      "result": "pass",
+      "milliseconds": 106
+    },
+    {
+      "name": "already-deleted token response (observation only)",
+      "result": "observed",
+      "detail": "Cloudflare HTTP 404, codes [1003]"
+    },
+    {
+      "name": "cleanup issued token [redacted]",
+      "result": "pass"
+    },
+    {
+      "name": "cleanup issued token [redacted]",
+      "result": "pass"
+    },
+    {
+      "name": "cleanup scratch bucket aa-accept-20261005-6cbfa4daa71d",
+      "result": "pass",
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "cleanup scratch bucket aa-accept-20261005-6cbfa4daa71d-control",
+      "result": "pass",
+      "detail": "HTTP 200"
+    }
+  ],
+  "pending": [
+    "actual guided setup and paired CLI transaction",
+    "exact two-permission token provenance (operator confirmation)",
+    "r2.dev enabled-warning interaction",
+    "eu/us/fedramp jurisdiction acceptance",
+    "non-administrator member permissions",
+    "R2-disabled account",
+    "429 Retry-After observation (do not intentionally exhaust limits)",
+    "multi-page and account-wide inventory completeness",
+    "token creation rate limit",
+    "prefix-scoped token-creation restrictions",
+    "real macOS/Linux onboarding timings",
+    "full interruption/concurrency/issuer-compromise matrix"
+  ],
+  "evidence_notes": {
+    "original_sha256": "b61c20a528b66d99789f8361dd632c98ae08e16f67308e1d3364e30d7630eb5d",
+    "redactions": [
+      "account_id",
+      "token IDs"
+    ],
+    "scope": "Provider operations only; actual guided setup and paired CLI transactions were not exercised. Rerun confirms the corrected collision classifier."
+  }
+}

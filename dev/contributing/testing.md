@@ -576,8 +576,8 @@ Guided R2 creation (`internal/cloudflare`, `internal/cli/setup_r2_create.go`)
 is tested against a fake Cloudflare (`internal/cloudflare/cloudflaretest`). Its
 request and response shapes come from Cloudflare's API reference, read on
 2026-09-29, and the fake cannot confirm the points the documentation leaves
-open. **None of the items below has been run against a real account: the
-feature stays experimental, hidden behind `AGENT_ARCHIVE_EXPERIMENTAL_R2_CREATE=1`
+open. A partial real-account provider run on 2026-10-05 is recorded below.
+**The feature stays experimental, hidden behind `AGENT_ARCHIVE_EXPERIMENTAL_R2_CREATE=1`
 (`experimentalR2Create` in `internal/cli/setup_r2_create.go`), until each is
 checked.** Remove the gate (that function and its one use in `storageMenuFor`,
 and the switch's mentions in the docs and CHANGELOG) once every box is ticked. Use a scratch
@@ -587,6 +587,44 @@ exactly the two permissions setup prints, then run `agent-archive setup` and
 choose "Cloudflare R2", then "Continue" (with
 `AGENT_ARCHIVE_EXPERIMENTAL_R2_CREATE=1`). Record the result of each item in the
 open-source acceptance record.
+
+The [2026-10-05 provider evidence](../maintainers/acceptance/cloudflare/2026-10-05-provider.json)
+records a run on macOS arm64 using two new private scratch buckets, three
+bucket-scoped keys and synthetic objects. All keys and buckets were deleted.
+Lowercase-hex SHA-256 derivation, storage probe/write/read/list/delete, access
+outside the archive prefix, denial on the second bucket, canonical immutable
+names/policies with no expiry, bounded inventory and independent revocation
+passed. Revocation denial was observed after about 4.24 seconds in this one
+run; this does not establish an immediate-cutoff guarantee. Activation was
+measured after three sequential creations, so exact mint-to-activation latency
+is still unknown. An already-deleted token returned HTTP 404, code 1003; this
+observation does not justify treating every 404 as confirmed absence.
+
+The sole failed check exposed a classifier mismatch: management REST returned
+HTTP 409 with code 10004 for the duplicate bucket. The classifier and fake now
+recognize that response, while retaining code 10073 from the Workers/S3 error
+reference. The original failed evidence is preserved. The
+[provider rerun](../maintainers/acceptance/cloudflare/2026-10-05-provider-rerun.json)
+passed every required runner check, including collision classification, and
+confirmed cleanup of all three keys and both buckets. Actual guided-setup
+collision/retry acceptance is still required.
+
+Build and run the isolated provider runner from a human terminal:
+
+```sh
+go build -o /private/tmp/agent-archive-cloudflare-acceptance ./scripts/acceptance/cloudflare
+/private/tmp/agent-archive-cloudflare-acceptance --output /private/tmp/aa-cloudflare-acceptance-next.json
+```
+
+It prompts for the account ID and a hidden management token, uses no real
+archive configuration, Keychain or scheduler, journals only sanitized evidence
+with mode 0600, and cleans up only resources created by that run. Interrupted
+runs exit unsuccessfully. Evidence-write failures stop acceptance work but do
+not stop the remaining cleanup attempts, and are reported as failures. It does
+not exercise the CLI pairing transaction. Exact management-token permissions have
+not yet been confirmed by the operator, so account/domain reads with precisely
+the advertised two permissions remain open. The unchecked items below remain
+release gates; a partial provider observation does not close a whole item.
 
 - [ ] **Secret encoding (blocker).** The derived key
       (`cloudflare.DeriveS3Credentials`: Access Key ID = the token's `id`,
@@ -627,13 +665,10 @@ open-source acceptance record.
       bucket, and only it: it cannot read or list another bucket, create a
       bucket, or set a lifecycle rule. The docs describe bucket-level scope
       only; setup treats prefix scoping as unavailable.
-- [ ] **Bucket name collision.** Creating a name that is taken returns what
-      `cloudflare.Error.AlreadyExists` expects: HTTP 409 with R2 error code
-      10073 (BucketConflict, "Bucket name already exists.", from
-      Cloudflare's R2 error-code page; an earlier plan guessed 10004, which
-      that page does not list). Any other answer is shown as Cloudflare's own
-      message and is not retried as a name collision, so confirm the real
-      status and code, and that the retry with a new name works.
+- [ ] **Bucket name collision.** The 2026-10-05 management REST run returned
+      HTTP 409, code 10004. `cloudflare.Error.AlreadyExists` now accepts that
+      response and the documented Workers/S3 code 10073, each only with 409.
+      The provider rerun passed; confirm guided setup retry with a new name.
 - [ ] **Jurisdictions.** For each of `eu`, `us`, and `fedramp` (the ones setup
       offers): a bucket created with the jurisdiction, and its token resource
       string `..._<jurisdiction>_<bucket>`, pass the storage check at
@@ -756,6 +791,7 @@ go test ./internal/archive -run '^$' -fuzz '^FuzzFilterJSONL$' -fuzztime 2m -fuz
 A failing input is written to `testdata/fuzz/<target>/`; keep it there as a
 seed once it is fixed.
 
+
 ### Published writer refusal
 
 `bash scripts/test_published_writer.sh` runs an opt-in native macOS acceptance
@@ -763,3 +799,24 @@ check against the checksum-pinned public v0.1.1 Darwin binary. It uses disposabl
 HOME and data roots, stripped environment, and scheduler/Keychain stubs. A
 legacy scalar config is the successful control; protected config must fail the
 old integer decoder and remain byte-identical. Extended macOS runs this check.
+
+## Non-live machine pairing regression coverage
+
+Run combined source, recipient and third-operator fake acceptance together with
+scope, delivery, token-source and progress regressions:
+
+```sh
+go test -race ./internal/cli -run 'TestMachine(TwoHome|Remote)FakeAcceptance|TestPairingStandalone|TestPairingClipboardUnavailable|TestManagementTokenFailure|TestCommittedPairingHousekeeping|TestRetired|TestDirectDiscovery|TestRevocationProgressUses|TestPairingMissingApp' -count=1
+```
+
+These use temporary homes, private synthetic operator bindings, memory object and
+credential stores, and a loopback fake Cloudflare provider. Source issuer labels,
+rename-safe third-machine IDs, re-pairing history, unused versus delivered spares,
+issuer compromise and per-key partial deletion/retry are combined command flows.
+The existing issuance/revocation suites additionally exercise lock contention,
+interrupted reservations, uncertain delivery and cancelled execution budgets;
+bounded discovery/listing suites cover partial reads, shared deadlines, caps and
+worker limits. Fake results do not establish live token permissions, account
+inventory visibility, absence semantics, propagation or macOS/Linux timings.
+Keep the first-run pairing and experimental default gates disabled until the
+separate live and platform acceptance record satisfies those requirements.

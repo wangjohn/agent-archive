@@ -70,17 +70,17 @@ func syntheticSupport(m sourcefacts.CodexMeta) bool {
 	return m.Version == "test" && m.Originator == "synthetic"
 }
 
-func TestProductionScanKeepsUnverifiedNativeProducerUnregistered(t *testing.T) {
+func TestProductionScanAdmitsStructurallyCompatibleUntestedProducer(t *testing.T) {
 	t.Parallel()
 	store, cfg, at, root := fixture(t)
 	writeRollout(t, root, cfg.Archive.Projects[0].Root, at.Add(time.Minute), 1, "sessions")
-	h, err := Run(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(2 * time.Minute) }})
-	if err != nil || h.Registered != 0 || h.Supported || h.Outcomes["unsupported_producer"] != 1 {
+	h, err := runWithCensus(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(2 * time.Minute) }}, registeredAdapters())
+	if err != nil || h.Registered != 1 || !h.Supported || h.Outcomes["unsupported_producer"] != 0 || len(h.Formats) != 1 || h.Formats[0].Evidence != sourcefacts.CodexCompatibleUntested {
 		t.Fatalf("health=%#v err=%v", h, err)
 	}
 	regs, _ := store.LoadRegistrations()
-	if len(regs) != 0 {
-		t.Fatal("unverified producer admitted")
+	if len(regs) != 1 || regs[0].Harness.Version != "test" {
+		t.Fatal("compatible producer lost its recorded version")
 	}
 }
 

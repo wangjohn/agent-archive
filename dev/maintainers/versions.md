@@ -83,6 +83,15 @@ new provenance; the source line format remains 2 and metadata remains 1.
 Optional metadata fields do not bump those schema versions; parser version
 20 records the changed derivation.
 
+Codex discovery's format-based compatibility changes admission and local
+diagnostics, not privacy filtering, adapter output or derived metadata.
+Filter, adapter, parser and published source/metadata schema versions remain
+unchanged. The private discovery catalog advances to version 3 to reprobe
+older cached observations for format profiles. Health/status gain an optional
+bounded `observed_formats` array; older health summaries remain readable and
+status schema 4 remains compatible. Existing consent and writer fences do not
+change.
+
 Explicit transcript recovery installs the incompatible
 `{version: 4, writer: archive-generations-v4}` configuration writer fence.
 Its underlying discovery and Codex policies retain their independent v2/v3

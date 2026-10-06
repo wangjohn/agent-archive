@@ -120,7 +120,7 @@ func TestBasicCodexStatusSeparatesMixedSourceAndPublicationEvidence(t *testing.T
 		parts = append(parts, note.text)
 	}
 	text := strings.Join(parts, " ")
-	for _, fragment := range []string{"discovery coverage pending", "all current and future Codex projects", "Optional hooks: absent", "skipped 2", "Update agent-archive", "admission retry", "2 registered → 1 queued → 1 published → 0 read-back verified"} {
+	for _, fragment := range []string{"capture check pending", "all current and future Codex projects", "skipped 2", "status --verbose"} {
 		if !strings.Contains(text, fragment) {
 			t.Fatalf("missing %q in basic status: %s", fragment, text)
 		}
