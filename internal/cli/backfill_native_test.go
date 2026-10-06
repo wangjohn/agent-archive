@@ -113,6 +113,7 @@ func TestBackfillNativeChildOwnTaskPublicationWithoutParent(t *testing.T) {
 			if !verified {
 				t.Fatal("metadata not read back", objects)
 			}
+			assertNativeChildRecoveryRefused(t, local, reg, env)
 			// A parent imported later may resolve the link, but cannot move the
 			// independently admitted child into the parent's newer batch.
 			parentAt := at.Add(-time.Hour)
@@ -140,6 +141,7 @@ func TestBackfillNativeChildOwnTaskPublicationWithoutParent(t *testing.T) {
 			if !found || parentReg.NativeSessionID != parent || parentReg.ImportBatch.Recorded() == reg.ImportBatch.Recorded() {
 				t.Fatal("late parent batch/provenance lost", parentReg)
 			}
+			assertNativeChildRecoveryRefused(t, local, linked, env)
 			beforeRejected := bucketSnapshot(t, cloud)
 			changed := strings.Replace(raw.String(), `"turn_id":"`+child+`"`, `"turn_id":"external-import-turn"`, 1)
 			must(t, os.WriteFile(path, []byte(changed), 0600))
@@ -185,4 +187,32 @@ func TestBackfillNativeChildOwnTaskPublicationWithoutParent(t *testing.T) {
 
 		})
 	}
+}
+
+// An unresolved native parent link does not make its child a top-level owner.
+func assertNativeChildRecoveryRefused(t *testing.T, local *state.Store, reg archive.SessionRegistration, env Env) {
+	t.Helper()
+	published, err := local.LoadPublishedState(reg.ArchiveSessionID)
+	must(t, err)
+	bundle, at, found := published.LastPublished()
+	if !found {
+		t.Fatal("child recovery control requires an actual publication")
+	}
+	source, found := published.LastPublishedSource()
+	if !found {
+		t.Fatal("child recovery control requires its retained source reference")
+	}
+	metadata := published.Metadata()
+	must(t, published.SaveBlocked(bundle, at, state.BlockedReasonTranscriptRewritten))
+	before := snapshotTree(t, local.Home())
+	for _, args := range [][]string{{"recover", reg.ArchiveSessionID}, {"recover", reg.ArchiveSessionID, "--confirm"}} {
+		var out, errOut bytes.Buffer
+		if code := Run(args, nil, &out, &errOut, env); code != 1 || !strings.Contains(errOut.String(), "top-level transcript files only") {
+			t.Fatal("native child entered generation recovery", reg.ParentSessionID, code, out.String(), errOut.String())
+		}
+		if snapshotTree(t, local.Home()) != before {
+			t.Fatal("refused native child recovery changed local authority")
+		}
+	}
+	must(t, published.SavePublication(bundle, at, source, metadata))
 }
