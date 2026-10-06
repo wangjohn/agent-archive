@@ -4,7 +4,7 @@
 // local state through internal/state, builds on internal/local for atomic
 // file I/O and the machine-level lock, and does not own transcript reading
 // (archive adapters), privacy filtering (archive adapters), or storage
-// upload mechanics (storage.PutSourceThenMetadataIndexed). A caller runs Run under
+// upload mechanics (storage.PutSourceSetThenMetadata). A caller runs Run under
 // local.Lock(home) so only one collector process acts on a given home at a
 // time; Run itself does not take that lock.
 //
@@ -618,17 +618,28 @@ func (p *pass) repairListingIndex() {
 		if p.opts.AcceptSession != nil && !p.opts.AcceptSession(reg) {
 			continue
 		}
-		getter, ok := p.remote.(storage.VersionedGetter)
+		_, ok := p.remote.(storage.VersionedGetter)
 		if !ok {
 			continue
 		}
-		data, _, err := getter.GetVersioned(p.ctx, repair.MetadataKey)
+		data, err := storage.ReadPublicationMetadata(p.ctx, p.remote, repair.MetadataKey)
 		if errors.Is(err, storage.ErrNotFound) {
 			_ = p.local.RemoveListingRepair(id)
 			continue
 		}
 		if err == nil {
-			err = listingindex.PublishRevision(p.ctx, p.remote, repair.MetadataKey, data)
+			_, refs, identityErr := archive.PublicationIdentity(data, reg.DestinationID, "", "", "listing_repair")
+			err = identityErr
+			if err == nil {
+				sources := make([]storage.SourcePublication, len(refs))
+				for i, ref := range refs {
+					sources[i] = storage.SourcePublication{Key: ref.Key, SHA256: ref.SHA256, Size: ref.CompressedBytes}
+				}
+				err = storage.VerifySourceSet(p.ctx, p.remote, sources, p.opts.Retry)
+			}
+			if err == nil {
+				err = listingindex.PublishRevision(p.ctx, p.remote, repair.MetadataKey, data)
+			}
 		}
 		if err == nil {
 			err = p.local.RemoveListingRepair(id)
