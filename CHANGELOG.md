@@ -39,6 +39,14 @@ follow [Semantic Versioning](https://semver.org/).
   counts and retry/review actions while preserving existing skip codes. Dry-run
   JSON adds optional diagnostics and physical candidate inventory counts;
   logical history accounting remains pending.
+- First-time backfill can review live repository destinations and recover matching
+  deleted worktree sessions in the same import. Hidden clones and unknown or
+  excluded roots still prevent automatic attribution; proposed capture projects
+  are committed only after confirmation and current-evidence validation.
+  Destination witnesses must pass full native validation, including filtered or
+  already archived sources; unknown file ownership keeps recovery pending.
+  Collector waits retain their existing two-minute allowance before confirmation
+  validation starts.
 
 - Deleted-worktree project recovery supports Git installations without optional
   configuration-path introspection, including Git 2.39.2. Bounded semantic
