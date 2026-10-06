@@ -29,6 +29,11 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- First-time backfill can review live repository destinations and recover matching
+  deleted worktree sessions in the same import. Hidden clones and unknown or
+  excluded roots still prevent automatic attribution; proposed capture projects
+  are committed only after confirmation and current-evidence validation.
+
 - Deleted-worktree project recovery supports Git installations without optional
   configuration-path introspection, including Git 2.39.2. Bounded semantic
   revalidation preserves clone ambiguity and exclusions, and larger Git config

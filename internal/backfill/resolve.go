@@ -47,9 +47,14 @@ type resolver struct {
 	temps      []string
 	// worktreeStores are the folders Codex and Cursor keep their worktrees
 	// in; a missing worktree there cannot be mapped to its repository.
-	worktreeStores []string
-	cache          map[string]resolution
-	recovery       *sourcefacts.RecoveryResolver
+	worktreeStores         []string
+	cache                  map[string]resolution
+	recovery               *sourcefacts.RecoveryResolver
+	recoverySourcesCurrent func() bool
+	recoverySourcesReset   func(context.Context)
+	workspaceReset         func()
+	requireWitnessFormats  func(string)
+	proposedRootEligible   func(string) bool
 }
 
 func newResolver(env Environment, cfg config.Config, filters Filters) *resolver {
@@ -142,14 +147,24 @@ func (r *resolver) resolveEvidence(ctx context.Context, cwd, key string) resolut
 		proof, outcome := r.recovery.Recover(ctx, cwd, key)
 		if outcome == "" {
 			checked, valid := false, false
-			check := &resolutionCheck{reset: func(ctx context.Context) { checked = false; r.recovery.ResetValidationContext(ctx) }, valid: func() bool {
+			check := &resolutionCheck{reset: func(ctx context.Context) {
+				checked = false
+				if r.recoverySourcesReset != nil {
+					r.recoverySourcesReset(ctx)
+				}
+				r.recovery.ResetValidationContext(ctx)
+			}, valid: func() bool {
 				if !checked {
 					checked = true
-					valid = !r.env.exists(cwd) && r.env.exists(proof.Root) && !r.hasRepositoryEvidence(cwd) && r.recovery.CurrentSlice(proof)
+					valid = !r.env.exists(cwd) && r.env.exists(proof.Root) && !r.hasRepositoryEvidence(cwd) && (r.recoverySourcesCurrent == nil || r.recoverySourcesCurrent()) && r.recovery.CurrentSlice(proof)
 				}
 				return valid
 			}}
-			res = resolution{root: proof.Root, kind: r.kindOf(proof.Root), included: true, proof: &proof, current: check}
+			owner, configured := r.configured(proof.Root)
+			if !configured && r.requireWitnessFormats != nil {
+				r.requireWitnessFormats(proof.Root)
+			}
+			res = resolution{root: proof.Root, kind: r.kindOf(proof.Root), included: configured && owner.included, proof: &proof, current: check}
 		}
 		if outcome != "" {
 			res = resolution{skip: SkipWorktreeUnresolved}

@@ -111,11 +111,13 @@ type work struct {
 	duplicated bool
 	duplicate  bool
 	// Adapter outcomes.
-	empty         bool
-	unsafe        bool
-	sourceChanged bool
-	tooLarge      bool
-	sourceErr     error
+	empty            bool
+	unsafe           bool
+	sourceChanged    bool
+	tooLarge         bool
+	sourceErr        error
+	workspaceCurrent func(context.Context) bool
+	proposedWitness  bool
 }
 
 // subagentWork is one subagent transcript of an imported parent.
@@ -197,6 +199,11 @@ func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg con
 		return Plan{}, err
 	}
 
+	for _, w := range items {
+		if w.res.proof != nil && !w.res.included && !r.proposedRootEligible(w.res.root) {
+			w.res = resolution{skip: SkipWorktreeUnresolved}
+		}
+	}
 	if err := finalizePlanWork(ctx, env, items, &unread, since, until, now, workers); err != nil {
 		return Plan{}, err
 	}
@@ -246,6 +253,9 @@ func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg con
 		}
 		return a.SourceKey < b.SourceKey
 	})
+	if err := bindRecoveryPolicy(cfg, &plan); err != nil {
+		return Plan{}, err
+	}
 	return plan, nil
 }
 
@@ -291,17 +301,11 @@ func preparePlanWork(ctx context.Context, env Environment, cfg config.Config, fi
 		// A settled rewrite during discovery or Git lookup cannot become a new
 		// baseline for attribution from the earlier header.
 		w.checkSource(env)
-		if w.sourceChanged || w.vanished || w.tooLarge {
+		if w.sourceChanged || w.vanished {
 			continue
 		}
-		w.res = r.resolveEvidence(ctx, w.t.cwd, w.t.repoKey)
+		w.res = r.resolve(w.t.cwd)
 		w.checkSource(env)
-		if w.t.sourceInfo != nil && w.res.current != nil {
-			base := w.res.current
-			w.res.current = &resolutionCheck{reset: base.reset, valid: func() bool {
-				return w.sourceCurrent(env) && base.valid()
-			}}
-		}
 		if w.t.cwd != "" {
 			cursorCandidates = append(cursorCandidates, w.t.cwd)
 		}
@@ -310,6 +314,8 @@ func preparePlanWork(ctx context.Context, env Environment, cfg config.Config, fi
 		}
 	}
 	matchers := map[string]*workspaceMatcher{}
+	freshMatchers := map[string]*workspaceMatcher{}
+	r.workspaceReset = func() { freshMatchers = map[string]*workspaceMatcher{} }
 	for _, w := range items {
 		if w.t.cursorSlug == "" {
 			continue
@@ -326,11 +332,38 @@ func preparePlanWork(ctx context.Context, env Environment, cfg config.Config, fi
 		}
 		if ok {
 			w.res = r.resolve(folder)
+			w.workspaceCurrent = func(ctx context.Context) bool {
+				fresh := freshMatchers[name]
+				if fresh == nil {
+					fresh = &workspaceMatcher{env: env, agent: name, candidates: cursorCandidates}
+					freshMatchers[name] = fresh
+				}
+				current, matched, err := fresh.match(ctx, w.t.cursorSlug)
+				return err == nil && matched && env.resolved(current) == env.resolved(folder)
+			}
 		} else {
 			w.res = resolution{skip: SkipProjectUnknown}
 		}
 	}
 
+	prepareRecoveryInventory(ctx, r, items, unread)
+	for _, w := range items {
+		if w.t.cursorSlug != "" || w.vanished || w.sourceChanged || w.tooLarge {
+			continue
+		}
+		w.checkSource(env)
+		if w.sourceChanged || w.vanished {
+			continue
+		}
+		w.res = r.resolveEvidence(ctx, w.t.cwd, w.t.repoKey)
+		w.checkSource(env)
+		if w.t.sourceInfo != nil && w.res.current != nil {
+			base := w.res.current
+			w.res.current = &resolutionCheck{reset: base.reset, valid: func() bool {
+				return w.sourceCurrent(env) && base.valid()
+			}}
+		}
+	}
 	return items, r, unread, workers, nil
 }
 
@@ -416,10 +449,10 @@ func selectAdapterWork(items []*work, since, until time.Time) []*work {
 	dated := !since.IsZero() || !until.IsZero()
 	var selected []*work
 	for _, w := range items {
-		if w.vanished || w.state == SkipAlreadyArchived || w.tooLarge || w.unsafe || w.sourceChanged || w.t.capturePending {
+		if w.vanished || (w.state == SkipAlreadyArchived && !w.proposedWitness) || w.tooLarge || w.unsafe || w.sourceChanged || w.t.capturePending {
 			continue
 		}
-		if w.duplicated || (w.state == "" && !w.filtered && (dated || (w.res.skip == "" && !w.t.identityMismatch))) {
+		if w.proposedWitness || w.duplicated || (w.state == "" && !w.filtered && (dated || (w.res.skip == "" && !w.t.identityMismatch))) {
 			selected = append(selected, w)
 		}
 	}

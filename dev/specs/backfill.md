@@ -467,8 +467,25 @@ matching rule wins.
 3. **Worktree.** If walking up from the directory finds a `.git` file, follow
    `gitdir:` and `commondir` to the main repository. If the directory no
    longer exists, `<repo>/.claude/worktrees/<name>` still maps to `<repo>` by
-   its path. A missing Codex or Cursor worktree can't be mapped that way, and
-   is skipped with `worktree_unresolved`. Backfill never runs `git` to find a project (worktree or repository resolution is by files, as above); the one `git config --get remote.origin.url` it runs, at registration and only when the project root still exists, is for the session's `repo_key`.
+   its path. A missing Codex or Cursor worktree cannot be mapped by its path alone.
+   Recorded repository identity or a reviewed exact configured mapping may
+   recover its destination; otherwise it stays `worktree_unresolved`. Recovery
+   uses bounded read-only Git observations outside admission locks to establish
+   repository identity and renew its evidence.
+   Recorded repository recovery additionally considers the bounded union of all
+   configured roots (including excluded and unavailable roots) and live
+   repository roots resolved from the completed source/header inventory. Live
+   ownership is resolved before recorded recovery and before output filters,
+   including Cursor workspace evidence. Pending or oversized sources cannot
+   alone propose destinations; malformed or incomplete evidence cannot certify
+   uniqueness. Exact mappings continue to require configured targets.
+   The plan displays selected proposed roots as projects it will add through the
+   ordinary batch/config transaction. Hidden roots remain recovery evidence
+   without becoming new capture roots. Evidence Context/digest binds the union;
+   PolicyContext binds the exact prospective committed configuration, separately.
+   Outside-lock confirmation preflight and renewed admission validation reject
+   stale evidence. Neither planning nor automatic discovery uses uncommitted
+   proposed roots as capture authorization.
 4. **Repository.** If walking up finds a `.git` directory, use its parent.
    The walk stops at home.
 5. **Desktop app workspaces.** Anything under
