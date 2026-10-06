@@ -1129,6 +1129,8 @@ prefix and admit a recovered source. Further candidates remain retryable.
 `repository_metadata_operations` reports those invocation units; a canonical
 path invocation may perform multiple filesystem probes. Import resets this
 allowance per short hold, with one common inventory check for its candidates.
-Git identity lookup limits remain unchanged. Filesystem proof checks cannot
+Initial Git identity lookup limits remain unchanged; semantic admission has the
+separate 1024-root bound above. No-context programmatic import callers get a
+30-second validation deadline per slice. Filesystem proof checks cannot
 prevent a change after their final observation; the next admission slice or
 pass refreshes the evidence.
