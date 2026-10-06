@@ -57,12 +57,20 @@ separately from enumeration. Single-source appends preserve header evidence;
 appended duplicate copies require a renewed epoch before choosing a copy.
 Filesystem observations use the same practical size/mtime/identity contract as
 verified transcript snapshots; restored timestamps are not a filesystem lock.
+Optional caller-owned validation slices share one complete relevant sweep for
+up to 512 lookup/check calls and 30 seconds after the sweep (hard maxima 512
+calls and 60 seconds). Sweep/read contexts default to 30 seconds when the caller
+has no deadline. Cached sweep failures stop readers within the slice; expiry
+permits fresh validation after all active readers, snapshots and provider passes
+close. Observed epoch changes require a new catalog and reconfirmation.
 Each dependency uses its independently approved root opener, including across
 homes. Catalog metadata grants no authorization to retain ancestor content.
 
 Ordinary collection leaves this catalog unopened. Only a validated pending
 related-history refusal triggers a bounded metadata-only locator diagnostic,
 using approved discovery homes and one shared pass catalog. This diagnostic
+has a 100ms caller deadline and caps inventory at 256 entries, 64 directories
+and 256KiB of header reads; exceeding a cap leaves completeness unavailable. It
 reads no duplicate transcript prefixes and establishes neither recoverability
 nor permission to publish. Explicit source/filter callers can opt into the
 existing lookup port; history admission and mutation remain fenced until the

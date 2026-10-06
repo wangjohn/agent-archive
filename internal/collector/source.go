@@ -415,16 +415,26 @@ type sourcePassKey struct {
 }
 
 type sourcePassSet struct {
-	slice  agentapi.CodexRolloutSlice
-	active int
-	env    agentapi.SourceEnvironment
-	passes map[sourcePassKey]agentapi.SourcePass
+	sliceFailure error
+	slice        agentapi.CodexRolloutSlice
+	active       int
+	env          agentapi.SourceEnvironment
+	passes       map[sourcePassKey]agentapi.SourcePass
 }
 
 func (s *sourcePassSet) get(ctx context.Context, key sourcePassKey, p agentapi.SourceProvider) (agentapi.SourcePass, error) {
 	if key.name == "codex" {
 		if provider, ok := s.env.CodexRollouts.(agentapi.CodexRolloutSliceProvider); ok {
-			if s.slice == nil || s.slice.Valid(ctx) != nil {
+			var validation error
+			if s.slice != nil {
+				validation = s.slice.Valid(ctx)
+				// Preserve the failed sweep for its bounded slice. Expiry returns
+				// a distinct error and permits renewal after all readers close.
+				if validation != nil && errors.Is(validation, s.sliceFailure) {
+					return nil, validation
+				}
+			}
+			if s.slice == nil || validation != nil {
 				if err := ctx.Err(); err != nil {
 					return nil, err
 				}
@@ -449,6 +459,10 @@ func (s *sourcePassSet) get(ctx context.Context, key sourcePassKey, p agentapi.S
 					return nil, err
 				}
 				s.slice = slice
+				s.sliceFailure = slice.Valid(ctx)
+				if s.sliceFailure != nil {
+					return nil, s.sliceFailure
+				}
 			}
 		}
 	}

@@ -2,6 +2,7 @@ package rolloutcatalog
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -154,5 +155,94 @@ func TestCatalogDependencyAuthorityDoesNotBroadenSeedPolicy(t *testing.T) {
 	}
 	if c.Counters().Headers != 0 {
 		t.Fatal("rejected seed enumerated dependency inventory")
+	}
+}
+
+func TestProviderSharesAncestorWithinSeveralValidationSlices(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	base := fixture(t, home, "archived_sessions", thread, thread, nil, "{\"ordinal\":1}\n")
+	raw, err := os.ReadFile(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const children = 24
+	paths := make([]string, 0, children)
+	for i := range children {
+		id := fmt.Sprintf("%08x-2222-4222-8222-222222222222", i+1)
+		path := fixture(t, home, "sessions", id, id, map[string]any{
+			"parent_thread_id": thread,
+			"history_base":     codexmeta.CodexHistoryPosition{RolloutID: thread, EndOrdinal: 2, EndByteOffset: uint64(len(raw))},
+		}, "")
+		bytes, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var frame map[string]any
+		if err := json.Unmarshal(bytes, &frame); err != nil {
+			t.Fatal(err)
+		}
+		frame["ordinal"] = 2
+		bytes, err = json.Marshal(frame)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, append(bytes, '\n'), 0600); err != nil {
+			t.Fatal(err)
+		}
+		paths = append(paths, path)
+	}
+	c := New([]string{home}, Limits{})
+	for start := 0; start < children; start += 8 {
+		bound, err := c.BeginValidationSlice(t.Context(), agentapi.CodexValidationLimits{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		pass, err := (codex.SourceProvider{}).OpenPass(t.Context(), agentapi.SourceEnvironment{CodexRollouts: bound})
+		if err != nil {
+			_ = bound.Close()
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			if err := pass.Close(); err != nil {
+				t.Error(err)
+			}
+			if err := bound.Close(); err != nil {
+				t.Error(err)
+			}
+		})
+		for _, path := range paths[start : start+8] {
+			snapshot, err := pass.Read(t.Context(), agentapi.SourceRef{Path: path}, agentapi.ReadLimits{})
+			if err != nil {
+				_ = pass.Close()
+				_ = bound.Close()
+				t.Fatal(err)
+			}
+			for {
+				_, ok, err := snapshot.Input().Records.Next(t.Context())
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !ok {
+					break
+				}
+			}
+			if err := snapshot.Close(); err != nil {
+				t.Fatal(err)
+			}
+		}
+		// Every snapshot closes before either the provider pass or slice renews.
+		if err := pass.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if err := bound.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	counts := c.Counters()
+	// Seeds use the caller opener; only one shared ancestor is catalog-opened
+	// per slice, despite eight children each reading and verifying its prefix.
+	if counts.Headers != children+1 || counts.ValidationSweeps != 3 || counts.FileOpens != children+1+2+3 || counts.PrefixBytes != 0 || counts.CheckOperations > 3*(children+10) {
+		t.Fatalf("shared dependency work repeated: %#v", counts)
 	}
 }

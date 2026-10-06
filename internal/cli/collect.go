@@ -188,16 +188,7 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 	// Approved discovery homes authorize bounded metadata observation only.
 	// Ordinary capture leaves this pass-local catalog unopened. Pending diagnostics
 	// disallow transcript prefix reads; duplicate proofs remain unavailable here.
-	var pendingCatalog *rolloutcatalog.Catalog
-	pendingRollouts := func() agentapi.CodexRolloutLookup {
-		if cfg.Discovery == nil || !cfg.Discovery.Enabled || len(cfg.Discovery.CodexHomes) == 0 {
-			return nil
-		}
-		if pendingCatalog == nil {
-			pendingCatalog = rolloutcatalog.New(cfg.Discovery.CodexHomes, rolloutcatalog.Limits{PrefixBytes: 1})
-		}
-		return pendingCatalog
-	}
+	pendingRollouts := pendingCodexRollouts(cfg.Discovery)
 	result, err := collector.Run(ctx, localStore, objectStore, collector.Options{
 		SkipSessionIndexRecovery: true,
 		PendingCodexRollouts:     pendingRollouts,
@@ -553,4 +544,21 @@ func skillEvidenceRoots(env Env, name string, l agentapi.SkillLocations) []agent
 		return p.EvidenceRoots(l)
 	}
 	return nil
+}
+
+// pendingCodexRollouts shares one lazy diagnostic inventory without capture authority.
+func pendingCodexRollouts(discovery *config.DiscoveryConfig) func() agentapi.CodexRolloutLookup {
+	var catalog *rolloutcatalog.Catalog
+	return func() agentapi.CodexRolloutLookup {
+		if discovery == nil || !discovery.Enabled || len(discovery.CodexHomes) == 0 {
+			return nil
+		}
+		if catalog == nil {
+			catalog = rolloutcatalog.New(discovery.CodexHomes, rolloutcatalog.Limits{
+				Entries: 256, Directories: 64, HeaderBytes: 256 << 10,
+				CheckOperations: 1024, PrefixBytes: 1,
+			})
+		}
+		return catalog
+	}
 }
