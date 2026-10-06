@@ -270,6 +270,11 @@ func (s *Store) ResumeGenerationRecoveries(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	budget := s.resourceBudget
+	if budget == nil {
+		budget = agentapi.NewNativeReadBudget(128 << 20)
+	}
+	var pressure []error
 	for _, file := range files {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -278,30 +283,45 @@ func (s *Store) ResumeGenerationRecoveries(ctx context.Context) error {
 			continue
 		}
 		id := file.Name()[:len(file.Name())-5]
-		r, _, err := s.loadGenerationRecovery(id)
-		if generationReadRefusal(err) {
-			return err
-		}
-		if err != nil {
-			return ErrSessionIndexRecoveryRequired
-		}
-		if r.Version != 1 || r.Previous != id || !safeFileComponent(r.Next) || r.Key.Validate() != nil {
-			return ErrSessionIndexRecoveryRequired
-		}
-		if r.Complete {
-			continue
-		}
-		unlock, err := local.NamedLockWait(s.home, "hooks.lock", time.Second)
-		if err != nil {
-			return err
-		}
-		err = s.resumeGenerationRecovery(ctx, id)
-		unlock()
-		if err != nil {
-			return err
+		if err := s.resumeGenerationRecoveryFile(ctx, id, budget); err != nil {
+			if !errors.Is(err, agentapi.ErrReadBudget) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return err
+			}
+			pressure = append(pressure, fmt.Errorf("generation recovery %q remains pending: %w", id, err))
 		}
 	}
-	return nil
+	return errors.Join(pressure...)
+}
+
+// Each restart journal owns a short scope. Completed receipts and preceding
+// journals do not retain their decoded payloads while the next journal opens.
+func (s *Store) resumeGenerationRecoveryFile(ctx context.Context, id string, budget *agentapi.NativeReadBudget) error {
+	if !safeFileComponent(id) {
+		return ErrSessionIndexRecoveryRequired
+	}
+	scoped, closeScope := s.WithReadBudget(ctx, budget)
+	defer closeScope()
+	r, found, err := scoped.loadGenerationRecovery(id)
+	if generationReadRefusal(err) {
+		return err
+	}
+	if err != nil || !found || r.Version != 1 || r.Previous != id || !safeFileComponent(r.Next) || r.Key.Validate() != nil {
+		return ErrSessionIndexRecoveryRequired
+	}
+	if r.Complete {
+		return nil
+	}
+	// Only routing status was consumed. End this independent full view before
+	// rereading the locked journal that authorizes the actual replay.
+	closeScope()
+	unlock, err := local.NamedLockWait(s.home, "hooks.lock", time.Second)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	resumed, closeResume := s.WithReadBudget(ctx, budget)
+	defer closeResume()
+	return resumed.resumeGenerationRecovery(ctx, id)
 }
 
 // resumeGenerationRecovery runs with collector.lock then hooks.lock. Every

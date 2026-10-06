@@ -214,7 +214,11 @@ func TestCompleteCoverageRefusesMissingOrInconsistentEpochProof(t *testing.T) {
 		t.Fatal("restored complete flag certified no enumeration")
 	}
 	lookup := &CodexRolloutLookup{coverage: c, byThread: map[string]map[string]struct{}{}, observations: map[string]rolloutObservation{}}
-	if lookup.withCandidates("thread", agentapi.CodexRolloutSet{}).Complete {
+	set, err := lookup.withCandidates(t.Context(), "thread", agentapi.CodexRolloutSet{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if set.Complete {
 		t.Fatal("unvalidated proof issued completeness")
 	}
 }

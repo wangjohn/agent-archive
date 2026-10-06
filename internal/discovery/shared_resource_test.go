@@ -186,3 +186,62 @@ func TestDiscoveryHeaderCannotReadWithExhaustedSharedScratch(t *testing.T) {
 		t.Fatal("discovery read without scratch", health)
 	}
 }
+
+func TestLookupRevisionDigestRefusesSharedPressureAndRetries(t *testing.T) {
+	t.Parallel()
+	store, cfg, at, root := fixture(t)
+	id := writeRollout(t, root, cfg.Archive.Projects[0].Root, at, 1, "sessions")
+	lookup, err := NewCodexRolloutLookup(t.Context(), store, []string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = lookup.Close() }()
+	if _, err := lookup.Thread(t.Context(), id); err != nil {
+		t.Fatal(err)
+	}
+	for pass := 0; lookup.coverage.Phase != coverageComplete && pass < 4; pass++ {
+		if _, err := runWithAdapters(t.Context(), store, cfg, Options{Now: func() time.Time { return at }, Rollouts: lookup, inventoryOnly: true}, []SourceAdapter{codexAdapter{supported: syntheticSupport}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	first, err := lookup.Thread(t.Context(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !first.Complete {
+		t.Fatal("requested coverage did not converge")
+	}
+	// A complete observed attempt can still be owed to its consumer after
+	// restart. A resource refusal must not make it eligible for rotation.
+	request := lookup.coverage.Requests[id]
+	request.DeliveredEpoch = 0
+	lookup.coverage.Requests[id] = request
+	owned, _ := lookup.readBudget.Charged()
+	pressure := lookup.readBudget.Available()
+	if !lookup.readBudget.Reserve(pressure) {
+		t.Fatal("pressure")
+	}
+	if _, err := lookup.Thread(t.Context(), id); !errors.Is(err, agentapi.ErrReadBudget) {
+		t.Fatal("cached thread digest bypassed shared pressure", err)
+	}
+	if err := lookup.Check(t.Context(), id, first.Revision); !errors.Is(err, agentapi.ErrReadBudget) {
+		t.Fatal("comparison digest bypassed shared pressure", err)
+	}
+	if request := lookup.coverage.Requests[id]; request.DeliveredEpoch != 0 {
+		t.Fatal("refusal delivered an unseen requested proof", request)
+	}
+	lookup.readBudget.Release(pressure)
+	if used, _ := lookup.readBudget.Charged(); used != owned {
+		t.Fatal("refused digest leaked", used, owned)
+	}
+	next, err := lookup.Thread(t.Context(), id)
+	if err != nil || next.Revision != first.Revision {
+		t.Fatal("retry changed source facts", next, err)
+	}
+	if err := lookup.Check(t.Context(), id, first.Revision); err != nil {
+		t.Fatal(err)
+	}
+	if used, _ := lookup.readBudget.Charged(); used != owned {
+		t.Fatal("successful digest leaked", used, owned)
+	}
+}

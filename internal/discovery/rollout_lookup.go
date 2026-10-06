@@ -19,6 +19,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/codexmeta"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/jsonwire"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 	"github.com/wangjohn/agent-archive/internal/state"
@@ -382,7 +383,7 @@ func (l *CodexRolloutLookup) thread(ctx context.Context, id string, native bool)
 		return agentapi.CodexRolloutSet{}, agentapi.Wrap(agentapi.Limit, errors.New("thread candidate limit"))
 	}
 	if cached, present := l.threads[id]; present {
-		return l.withCandidates(id, cached), nil
+		return l.withCandidates(ctx, id, cached)
 	}
 	l.registrationHint(ctx, id)
 	var current *agentapi.SourceRef
@@ -414,7 +415,10 @@ func (l *CodexRolloutLookup) thread(ctx context.Context, id string, native bool)
 	if l.candidateCount(id) > archive.MaxHistorySpans {
 		return agentapi.CodexRolloutSet{}, agentapi.Wrap(agentapi.Limit, errors.New("thread candidate limit"))
 	}
-	set := l.withCandidates(id, agentapi.CodexRolloutSet{Current: current})
+	set, err := l.withCandidates(ctx, id, agentapi.CodexRolloutSet{Current: current})
+	if err != nil {
+		return agentapi.CodexRolloutSet{}, err
+	}
 	if len(l.threads) >= maxCoverageRequests {
 		delete(l.threads, l.threadOrder[0])
 		l.threadOrder = l.threadOrder[1:]
@@ -445,7 +449,7 @@ func (l *CodexRolloutLookup) registrationHint(ctx context.Context, id string) {
 	}
 }
 
-func (l *CodexRolloutLookup) withCandidates(id string, set agentapi.CodexRolloutSet) agentapi.CodexRolloutSet {
+func (l *CodexRolloutLookup) withCandidates(ctx context.Context, id string, set agentapi.CodexRolloutSet) (agentapi.CodexRolloutSet, error) {
 	set.Candidates = nil
 	for path := range l.byThread[id] {
 		set.Candidates = append(set.Candidates, agentapi.SourceRef{Kind: archive.SourceKindFile, Path: path, Key: id})
@@ -460,22 +464,53 @@ func (l *CodexRolloutLookup) withCandidates(id string, set agentapi.CodexRollout
 			}
 			slices.SortFunc(set.Candidates, func(a, b agentapi.SourceRef) int { return strings.Compare(a.Path, b.Path) })
 			set.Complete = true
-			if request.DeliveredEpoch != request.AttemptEpoch {
-				request.DeliveredEpoch = request.AttemptEpoch
-				l.coverage.Requests[id] = request
-				l.coverageDirty = true
-			}
 		}
 	}
-	data, _ := json.Marshal(struct {
+	value := struct {
 		Current      *agentapi.SourceRef        `json:"Current"`
 		Complete     bool                       `json:"Complete"`
 		Candidates   []agentapi.SourceRef       `json:"Candidates"`
 		Observations []rolloutObservationDigest `json:"Observations"`
-	}{Current: set.Current, Complete: set.Complete, Candidates: set.Candidates, Observations: l.candidateDigests(id)})
+	}{Current: set.Current, Complete: set.Complete, Candidates: set.Candidates, Observations: l.candidateDigests(id)}
+	revision, err := l.revisionDigest(ctx, value)
+	if err != nil {
+		return agentapi.CodexRolloutSet{}, err
+	}
+	set.Revision = revision
+	// A refused digest has delivered no complete result. Keep that requested
+	// attempt enrolled until the caller actually receives its revision proof.
+	if set.Complete {
+		request := l.coverage.Requests[id]
+		if request.DeliveredEpoch != request.AttemptEpoch {
+			request.DeliveredEpoch = request.AttemptEpoch
+			l.coverage.Requests[id] = request
+			l.coverageDirty = true
+		}
+	}
+	return set, nil
+}
+
+func (l *CodexRolloutLookup) revisionDigest(ctx context.Context, value any) (string, error) {
+	const scratch = 32 << 10
+	if !l.readBudget.Reserve(scratch) {
+		return "", errCatalogBudget
+	}
+	n, err := jsonwire.Bound(ctx, value, l.readBudget.Available()/2)
+	l.readBudget.Release(scratch)
+	if err != nil {
+		return "", errors.Join(errCatalogBudget, err)
+	}
+	// The encoder buffer and returned immutable JSON coexist until hashing ends.
+	if !l.readBudget.Reserve(n + n) {
+		return "", errCatalogBudget
+	}
+	defer l.readBudget.Release(n + n)
+	data, err := json.Marshal(value)
+	if err != nil {
+		return "", err
+	}
 	sum := sha256.Sum256(data)
-	set.Revision = hex.EncodeToString(sum[:])
-	return set
+	return hex.EncodeToString(sum[:]), nil
 }
 
 func (l *CodexRolloutLookup) candidateCount(id string) int {
@@ -560,7 +595,10 @@ func (l *CodexRolloutLookup) Check(ctx context.Context, id, revision string) err
 	if l.candidateCount(id) > archive.MaxHistorySpans {
 		return agentapi.Wrap(agentapi.Limit, errors.New("thread candidate limit"))
 	}
-	now := l.withCandidates(id, agentapi.CodexRolloutSet{Current: current})
+	now, err := l.withCandidates(ctx, id, agentapi.CodexRolloutSet{Current: current})
+	if err != nil {
+		return err
+	}
 	if now.Revision != revision {
 		return agentapi.Wrap(agentapi.Changed, errIndexChanged)
 	}
