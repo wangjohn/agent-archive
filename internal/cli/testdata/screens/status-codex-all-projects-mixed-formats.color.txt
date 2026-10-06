@@ -5,10 +5,8 @@ $ agent-archive status
     Start a supported new Codex task in any non-excluded project, then run \e[36magent-archive sync\e[0m. Hook approval is optional for discovery.
 
 \e[1mCapture\e[0m
-  \e[33m!\e[0m Codex 0.121.0   discovery coverage pending; all current and future Codex projects   \e[2mno sessions yet\e[0m
-    \e[2m·\e[0m Last discovery attempt 1 minute ago; discovery/reconciliation pending; sync advances bounded work, additional scans may be needed; 0 registered → 0 queued → 0 published → 0 read-back verified
-    \e[2m·\e[0m Optional hooks: hooks on; actual hook observation is separate evidence.
-    \e[33m!\e[0m Last scan skipped 2 unsupported, incomplete or malformed observations (unsupported producer: 1, invalid metadata: 1). Update agent-archive for format support; use hooks or deliberate backfill only where that source format is supported.
+  \e[33m!\e[0m Codex 0.121.0   capture check pending; all current and future Codex projects   \e[2mno sessions yet\e[0m
+    \e[33m!\e[0m Last scan skipped 2 observations; run agent-archive status --verbose for details.
   \e[33m!\e[0m Identity recovery: unknown; run agent-archive sync for current bounded local evidence.
 
 \e[1mStorage\e[0m

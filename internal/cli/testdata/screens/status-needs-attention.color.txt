@@ -6,9 +6,7 @@ $ agent-archive status
     To change credentials, run \e[36magent-archive setup\e[0m and choose storage.
 
 \e[1mCapture\e[0m
-  \e[32m✓\e[0m Codex   discovery: no supported task observed in last scan; included projects   \e[2m1 session\e[0m
-    \e[2m·\e[0m Last discovery attempt just now; 1 registered → 0 queued → 1 published → 1 read-back verified
-    \e[2m·\e[0m Optional hooks: hooks on; actual hook observation is separate evidence.
+  \e[32m✓\e[0m Codex   automatic capture; included projects   \e[2m1 session · 1 archived (1 verified)\e[0m
   \e[2m·\e[0m Identity recovery: complete
 
 \e[1mStorage\e[0m

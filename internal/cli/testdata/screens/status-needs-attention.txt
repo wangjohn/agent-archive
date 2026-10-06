@@ -6,9 +6,7 @@ Agent Archive  ● Needs attention
     To change credentials, run agent-archive setup and choose storage.
 
 Capture
-  ✓ Codex   discovery: no supported task observed in last scan; included projects   1 session
-    · Last discovery attempt just now; 1 registered → 0 queued → 1 published → 1 read-back verified
-    · Optional hooks: hooks on; actual hook observation is separate evidence.
+  ✓ Codex   automatic capture; included projects   1 session · 1 archived (1 verified)
   · Identity recovery: complete
 
 Storage

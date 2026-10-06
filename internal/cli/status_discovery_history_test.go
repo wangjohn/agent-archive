@@ -38,7 +38,11 @@ func TestStatusReportsUnsupportedHistoryAlongsideSupportedDiscovery(t *testing.T
 			var out bytes.Buffer
 			printStatus(&out, view, statusScreen{style: styleFor(&out), now: at, verbose: verbose})
 			text := out.String()
-			for _, expected := range []string{"discovery: supported observations", "skipped 2", "unsupported history: 2", "Update agent-archive for format support"} {
+			expectedText := []string{"automatic capture", "skipped 2", "status --verbose"}
+			if verbose {
+				expectedText = []string{"discovery: supported observations", "skipped 2", "unsupported history: 2", "Update agent-archive for format support"}
+			}
+			for _, expected := range expectedText {
 				if !strings.Contains(text, expected) {
 					t.Errorf("missing %q in rendered status:\n%s", expected, text)
 				}

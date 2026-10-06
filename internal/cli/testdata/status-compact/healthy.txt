@@ -1,9 +1,9 @@
 Agent Archive  ● Ready
 
 Capture
-  ✓ Claude Code 2.1.283       hooks on   3 sessions · 48 imported
-  ✓ Cursor 3.21.13            hooks on   3 sessions · 27 imported
-  ✓ Codex 0.155.0-alpha.9.2   hooks on   3 sessions
+  ✓ Claude Code 2.1.283       hooks installed   3 sessions · 3 archived (3 verified) · 48 imported
+  ✓ Cursor 3.21.13            hooks installed   3 sessions · 3 archived (3 verified) · 27 imported
+  ✓ Codex 0.155.0-alpha.9.2   hooks installed   3 sessions · 3 archived (3 verified)
 
 Storage
   ✓ r2://agent-archive/agent-archive/   reachable · bucket private · uploaded 2 minutes ago
