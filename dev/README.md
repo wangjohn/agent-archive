@@ -37,6 +37,7 @@ implemented design records live in `proposals/implemented/`.
 | [Release remediation](proposals/release-remediation.md) | Implementation and release-gate record; disposable provider and per-app acceptance remain open. |
 | [Cloud capture](proposals/cloud-capture.md) | Proposed; not implemented. |
 | [Local session discovery](proposals/local-session-discovery.md) | Proposed; Codex first, with shared discovery and admission rules. |
+| [Historical backfill recovery](proposals/historical-backfill-recovery.md) | Planned; portable project recovery, history import lifecycle, and incomplete historical evidence. |
 | [Portable handoff, guided setup, and Linux](proposals/implemented/portable-handoff-and-onboarding.md) | Implemented (repo-key handoff, guided S3 and R2 creation, Linux); guided R2 and machine pairing are generally available. Further provider coverage is tracked in testing. |
 | [Platform abstraction](proposals/implemented/platform-abstraction.md) | Implemented (scheduler port, OS value, systemd backend, Linux support); open items in the document. |
 | [Git activity in metadata](proposals/implemented/git-activity.md) | Implemented in parser 0.15.0. |
