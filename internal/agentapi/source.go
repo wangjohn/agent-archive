@@ -26,6 +26,10 @@ type SourceSemantics struct {
 
 // SourceEnvironment supplies narrow read dependencies and local database location.
 type SourceEnvironment struct {
+	// RequireConfinedHistory is set by capture callers. Read-only source facts
+	// remain independent of capture authority and may use explicit inputs.
+	RequireConfinedHistory bool
+
 	// LegacyUnboundRegistration is set only for an already admitted ordinary
 	// registration without a binding or discovery origin. It grants no creation
 	// permission; the provider retains its narrow legacy compatibility checks.

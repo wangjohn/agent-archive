@@ -1082,6 +1082,14 @@ func (s *Store) ScanPending(id string) (bool, error) {
 // Anything that invalidates the assertion removes the token (see
 // RemoveScanSignature's callers).
 type ScanSignature struct {
+	// A settled complete authority token carries only compact acknowledged facts.
+	SourceSetDigest       string    `json:"source_set_digest,omitempty"`
+	CurrentRevision       string    `json:"current_revision,omitempty"`
+	SourceSchemaVersion   int       `json:"source_schema_version,omitempty"`
+	MetadataSchemaVersion int       `json:"metadata_schema_version,omitempty"`
+	SourceSetComplete     bool      `json:"source_set_complete,omitempty"`
+	MeaningfulCapturedAt  time.Time `json:"meaningful_captured_at,omitzero"`
+
 	// SourceSetVersion invalidates earlier Codex signatures without decoding bundles.
 	SourceSetVersion int `json:"source_set_version,omitempty"`
 	// Frozen marks completed retained-history maintenance, independently of

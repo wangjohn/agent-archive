@@ -194,6 +194,23 @@ func (m *Metadata) validateRevisionHistory() error {
 	return nil
 }
 
+// MeaningfulCapturedAt returns the latest archive observation in the complete
+// retained source set. Derivation and native timestamps never contribute age.
+func (m *Metadata) MeaningfulCapturedAt() (time.Time, error) {
+	if _, err := m.SourceReferences(); err != nil {
+		return time.Time{}, err
+	}
+	at := m.CapturedAt
+	if m.History != nil {
+		for _, revision := range m.History.Preserved {
+			if revision.CapturedAt.After(at) {
+				at = revision.CapturedAt
+			}
+		}
+	}
+	return at, nil
+}
+
 // ErrHistoryMutationPending protects readable history until revision lifecycle support lands.
 var ErrHistoryMutationPending = errors.New("codex history mutation requires revision lifecycle support")
 

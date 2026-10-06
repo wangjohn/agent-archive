@@ -31,8 +31,11 @@ const (
 	// Reprobe older cached observations so they acquire explicit format profiles.
 	catalogVersion = 6
 	maxCatalog     = 8192
-	maxDirectories = 4096
-	maxRetries     = 256
+	// Keep disposable hints smaller than the accepted catalog limit. Coverage
+	// and requested proofs retain their independent capacity and continuation.
+	maxObservationCache = 2048
+	maxDirectories      = 4096
+	maxRetries          = 256
 )
 
 // Health separates scan coverage from upload and hook health. Codes never
@@ -123,7 +126,7 @@ func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config,
 	if err != nil {
 		return h, err
 	}
-	if c.Coverage != nil && c.Coverage.Phase == "validate" {
+	if c.Coverage != nil && c.Coverage.Phase == coverageValidate {
 		h.Supported = c.Health.Supported
 		h.Formats = slices.Clone(c.Health.Formats)
 	}
@@ -159,7 +162,7 @@ func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config,
 	h.RepositoryMetadataOperations = recovery.MetadataOperations
 	h.RepositoryLookups = recovery.Operations
 	h.GitBytes = resolver.GitBytes
-	h.Pending = len(c.Queue) > 0 || len(c.Retries) > 0 || c.Coverage != nil && c.Coverage.Phase != "complete"
+	h.Pending = len(c.Queue) > 0 || len(c.Retries) > 0 || c.Coverage != nil && c.Coverage.Phase != coverageComplete
 	if !h.Pending && len(h.Errors) == 0 {
 		h.LastReconciled = now
 	}
@@ -659,7 +662,7 @@ func (s scan) removalBlocks(candidate Candidate) bool {
 }
 
 func pruneCatalog(c *catalog) {
-	if len(c.Cache) > maxCatalog {
+	if len(c.Cache) > maxObservationCache {
 		keys := make([]string, 0, len(c.Cache))
 		for key := range c.Cache {
 			keys = append(keys, key)
@@ -673,7 +676,7 @@ func pruneCatalog(c *catalog) {
 			}
 			return c.Cache[a].Checked.Compare(c.Cache[b].Checked)
 		})
-		for _, key := range keys[:len(keys)-maxCatalog] {
+		for _, key := range keys[:len(keys)-maxObservationCache] {
 			delete(c.Cache, key)
 		}
 	}
@@ -816,7 +819,7 @@ func prepareCatalog(store *state.Store, cfg config.Config, o Options, adapter So
 			c.Coverage = newCoverage(roots)
 		}
 		o.Rollouts.coverage = c.Coverage
-		if c.Coverage.Phase == "complete" {
+		if c.Coverage.Phase == coverageComplete {
 			c.Coverage.restart()
 			c.Queue = nil
 		}
@@ -827,7 +830,7 @@ func prepareCatalog(store *state.Store, cfg config.Config, o Options, adapter So
 		c.Cache = map[string]cached{}
 	}
 	h.LastReconciled = c.Health.LastReconciled
-	if len(c.Queue) == 0 && (c.Coverage == nil || c.Coverage.Phase == "observe") {
+	if len(c.Queue) == 0 && (c.Coverage == nil || c.Coverage.Phase == coverageObserve) {
 		for _, root := range roots {
 			for _, path := range adapter.InitialDirectories() {
 				c.Queue = append(c.Queue, directory{Root: root, Path: path})
@@ -842,7 +845,7 @@ func (s scan) observeDirectories(o Options, deadline time.Time) {
 	// Retry unavailable directories before the remaining backlog next pass,
 	// without revisiting them in this pass or consuming forward queue slots.
 	var unavailable []directory
-	for (c.Coverage == nil || c.Coverage.Phase == "observe") && len(c.Queue) > 0 && discoveryProbeAvailable(h, o.Rollouts) && h.Entries < 2048 && time.Now().Before(deadline) {
+	for (c.Coverage == nil || c.Coverage.Phase == coverageObserve) && len(c.Queue) > 0 && discoveryProbeAvailable(h, o.Rollouts) && h.Entries < 2048 && time.Now().Before(deadline) {
 		if scanStopped(s.ctx, o) {
 			break
 		}
@@ -893,7 +896,7 @@ func (s scan) observeDirectories(o Options, deadline time.Time) {
 	}
 	c.Queue = append(unavailable, c.Queue...)
 	if c.Coverage != nil {
-		if c.Coverage.Phase == "observe" && len(c.Queue) == 0 {
+		if c.Coverage.Phase == coverageObserve && len(c.Queue) == 0 {
 			c.Coverage.beginValidation()
 		}
 		advanceCoverageValidation(s.ctx, c, h, s.adapter, deadline, o)

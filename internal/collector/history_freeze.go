@@ -124,8 +124,14 @@ func (s *sessionScan) resumeHistory(p state.PendingPublication) (sessionOutcome,
 	if p.History.MaintenanceOwed || pendingSkillMode(p.SkillEvidence) != s.opts.skillEvidence() || p.Bundle.Capture.FilterVersion != archive.FilterVersion || p.Bundle.Capture.AdapterVersion != adapter.Version() {
 		return s.resumeStricterHistory(p)
 	}
-	if err := s.recoverHistoryStages(p); err != nil {
+	committed, err := s.checkFrozenHistoryMetadata(p)
+	if err != nil {
 		return outcomeSkipped, err
+	}
+	if !committed {
+		if err := s.recoverHistoryStages(p); err != nil {
+			return outcomeSkipped, err
+		}
 	}
 	if err := s.advanceHistoryPreparation(&p); err != nil {
 		return outcomeSkipped, err
@@ -169,7 +175,14 @@ func (s *sessionScan) guardRevisionCandidate(read sourceRead, candidate *archive
 		prior, found = cached, true
 	}
 	if !found || revisionID(prior) != revisionID(*candidate) {
-		return nil
+		retained, present, err := s.reactivatedRevision(*candidate)
+		if err != nil {
+			return err
+		}
+		if !present {
+			return nil
+		}
+		prior = retained
 	}
 	if !ownedEvidenceCovered(read.adapter, prior, *candidate) {
 		return errors.New("current physical revision no longer extends verified evidence; retain history pending reconciliation")
@@ -178,4 +191,47 @@ func (s *sessionScan) guardRevisionCandidate(read sourceRead, candidate *archive
 		candidate.Capture.CapturedAt = prior.Capture.CapturedAt
 	}
 	return nil
+}
+
+// settleRevisionCandidate records a token only after the complete retained
+// manifest and active evidence agree with the acknowledged publication.
+func (s *sessionScan) settleRevisionCandidate(read sourceRead, candidate *archive.SourceBundle) (bool, error) {
+	prior, found, err := s.published.LastPublishedMetadata()
+	if err != nil || !found || prior.History == nil || prior.History.CurrentRevision != s.revisions.Current {
+		return false, err
+	}
+	same, err := jsonEncodingsEqual(prior.History.Preserved, s.revisions.Preserved)
+	if err != nil || !same {
+		return false, err
+	}
+	return s.compare(read, candidate)
+}
+
+// reactivatedRevision preserves the capture of already retained meaningful
+// evidence when its physical revision becomes current again.
+func (s *sessionScan) reactivatedRevision(candidate archive.SourceBundle) (archive.SourceBundle, bool, error) {
+	metadata, found, err := s.published.LastPublishedMetadata()
+	if err != nil || !found || metadata.History == nil {
+		return archive.SourceBundle{}, false, err
+	}
+	for _, revision := range metadata.History.Preserved {
+		if revision.RevisionID == revisionID(candidate) {
+			input := state.HistoryInput{Reference: revision.Source, RevisionID: revision.RevisionID, CapturedAt: revision.CapturedAt, FilterVersion: revision.FilterVersion, SourceSchemaVersion: revision.SourceSchemaVersion}
+			if input.FilterVersion == "" || input.SourceSchemaVersion == 0 {
+				inputs, err := s.retainedManifestInputs(metadata)
+				if err != nil {
+					return archive.SourceBundle{}, false, err
+				}
+				for _, verified := range inputs {
+					if verified.RevisionID == input.RevisionID {
+						input = verified
+						break
+					}
+				}
+			}
+			bundle, err := s.loadHistoryInput(metadata, input)
+			return bundle, err == nil, err
+		}
+	}
+	return archive.SourceBundle{}, false, nil
 }

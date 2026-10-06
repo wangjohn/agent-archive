@@ -70,8 +70,8 @@ type Observation struct {
 
 // Fingerprint is a retry/scheduling hint, never native start evidence.
 type Fingerprint struct {
-	Size  int64
-	Mtime int64
+	Size  int64 `json:"Size"`
+	Mtime int64 `json:"Mtime"`
 }
 
 // SourceEntry is a source or child directory in a bounded enumeration batch.

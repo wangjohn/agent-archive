@@ -167,7 +167,7 @@ func validateGenerationSuccessor(old, reg archive.SessionRegistration, pending P
 // A decodable journal must not redirect preserved metadata or carry bytes
 // belonging to another generation, even when its registration is intact.
 func validateGenerationPublication(reg archive.SessionRegistration, pending PendingPublication) error {
-	if err := archive.CheckHistoryMutation(pending.Bundle, archive.Metadata{}); err != nil {
+	if err := validateGenerationHistory(reg, pending); err != nil {
 		return err
 	}
 	bundle := pending.Bundle
@@ -187,8 +187,28 @@ func validateGenerationPublication(reg archive.SessionRegistration, pending Pend
 		return errors.New("recovery publication metadata key differs from registration")
 	}
 	var metadata archive.Metadata
-	if json.Unmarshal(pending.MetadataBytes, &metadata) != nil || metadata.SchemaVersion != archive.MetadataSchemaVersion || metadata.SessionID != reg.ArchiveSessionID || metadata.PreviousGenerationID != reg.PreviousGenerationID || metadata.NativeSessionID != reg.NativeSessionID || metadata.ProjectID != reg.ProjectID || metadata.Harness.Name != reg.Harness.Name || !metadata.CapturedAt.Equal(bundle.Capture.CapturedAt) || metadata.SourceBundle != pending.SourceReference() {
+	if json.Unmarshal(pending.MetadataBytes, &metadata) != nil || (metadata.SchemaVersion != archive.MetadataSchemaVersion && metadata.SchemaVersion != archive.HistoryMetadataSchemaVersion) || metadata.SessionID != reg.ArchiveSessionID || metadata.PreviousGenerationID != reg.PreviousGenerationID || metadata.NativeSessionID != reg.NativeSessionID || metadata.ProjectID != reg.ProjectID || metadata.Harness.Name != reg.Harness.Name || !metadata.CapturedAt.Equal(bundle.Capture.CapturedAt) || metadata.SourceBundle != pending.SourceReference() {
 		return errors.New("recovery publication metadata differs from its fixed source")
+	}
+	if pending.History != nil && (metadata.History == nil || len(metadata.History.Preserved) != 0 || metadata.History.CurrentRevision != bundle.History.ActiveRolloutID) {
+		return errors.New("recovery successor cannot redirect retained alternatives")
+	}
+	return nil
+}
+
+// validateGenerationHistory keeps the successor self-contained and leaves the
+// original generation's complete reference set under its original prefix.
+func validateGenerationHistory(reg archive.SessionRegistration, pending PendingPublication) error {
+	if pending.Bundle.History != nil || pending.Bundle.SchemaVersion == archive.HistorySourceSchemaVersion {
+		if pending.History == nil || pending.History.Preparing || len(pending.History.Retired) != 0 || pending.History.ExpectedMetadataSHA256 != "" {
+			return archive.ErrHistoryMutationPending
+		}
+		if err := pending.Bundle.ValidateHistory(); err != nil {
+			return err
+		}
+		if err := pending.ValidateHistory(reg.ArchiveSessionID); err != nil {
+			return err
+		}
 	}
 	return nil
 }

@@ -16,6 +16,7 @@ import (
 func (p *relatedSourcePass) genericLegacy(ref agentapi.SourceRef) bool {
 	return p.env.LegacyUnboundRegistration && codexmeta.RolloutID(ref.Path) == "" && ref.Key != "" && codexmeta.RolloutID(ref.Key+".jsonl") != ref.Key
 }
+
 func (p *relatedSourcePass) registeredLegacySet(ctx context.Context, ref agentapi.SourceRef) (agentapi.CodexRolloutSet, error) {
 	lookup, ok := p.env.CodexRollouts.(agentapi.CodexRegisteredRolloutLookup)
 	if !ok {
@@ -27,6 +28,7 @@ func (p *relatedSourcePass) registeredLegacySet(ctx context.Context, ref agentap
 	}
 	return set, err
 }
+
 func (p *relatedSourcePass) genericLegacySignature(ctx context.Context, ref agentapi.SourceRef) (agentapi.SourceObservation, error) {
 	set, err := p.registeredLegacySet(ctx, ref)
 	if err != nil {
@@ -40,6 +42,7 @@ func (p *relatedSourcePass) genericLegacySignature(ctx context.Context, ref agen
 	observation.Signature.Token = hex.EncodeToString(sum[:])
 	return observation, p.env.CodexRollouts.Check(ctx, ref.Key, set.Revision)
 }
+
 func (p *relatedSourcePass) genericLegacyRead(ctx context.Context, ref agentapi.SourceRef, limits agentapi.ReadLimits) (agentapi.SourceSnapshot, error) {
 	set, err := p.registeredLegacySet(ctx, ref)
 	if err != nil {
@@ -72,6 +75,7 @@ func (s *registeredLegacySnapshot) Observation() agentapi.SourceObservation {
 	observation.Signature.Token = hex.EncodeToString(sum[:])
 	return observation
 }
+
 func (s *registeredLegacySnapshot) Input() agentapi.NativeInput {
 	input := s.SourceSnapshot.Input()
 	if input.File != nil {

@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -101,8 +102,14 @@ func TestPrivateCurrentSnapshotAcceptsAppendBeyondCapturedCommit(t *testing.T) {
 func TestPrivateCurrentSnapshotRejectsCheckpointResetAndReplacement(t *testing.T) {
 	t.Parallel()
 	for _, stage := range []string{"generation", "main", "wal", "verified"} {
-		for _, mutation := range []string{"checkpoint", "reset", "replace"} {
-			t.Run(stage+"/"+mutation, func(t *testing.T) {
+		type mutationVariant0 string
+		const (
+			mutationCheckpoint0 mutationVariant0 = "checkpoint"
+			mutationReset0      mutationVariant0 = "reset"
+			mutationReplace0    mutationVariant0 = "replace"
+		)
+		for _, mutation := range []mutationVariant0{mutationCheckpoint0, mutationReset0, mutationReplace0} {
+			t.Run(stage+"/"+string(mutation), func(t *testing.T) {
 				t.Parallel()
 				root := t.TempDir()
 				db := hintDatabase(t, root, true)
@@ -112,18 +119,18 @@ func TestPrivateCurrentSnapshotRejectsCheckpointResetAndReplacement(t *testing.T
 						return
 					}
 					switch mutation {
-					case "checkpoint":
+					case mutationCheckpoint0:
 						if _, err := db.ExecContext(t.Context(), "PRAGMA wal_checkpoint(FULL)"); err != nil {
 							t.Fatal(err)
 						}
-					case "reset":
+					case mutationReset0:
 						if _, err := db.ExecContext(t.Context(), "PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
 							t.Fatal(err)
 						}
 						if _, err := db.ExecContext(t.Context(), "UPDATE threads SET rollout_path='after-reset'"); err != nil {
 							t.Fatal(err)
 						}
-					case "replace":
+					case mutationReplace0:
 						path := filepath.Join(root, "state_5.sqlite")
 						raw, err := os.ReadFile(path)
 						if err != nil {
@@ -171,4 +178,8 @@ func TestPrivateCurrentSnapshotRejectsCorruptCommittedWALAndCancellation(t *test
 	if snapshot, err := snapshotCurrentIndex(ctx, root, nil); snapshot != nil || !errors.Is(err, context.Canceled) {
 		t.Fatal(snapshot, err)
 	}
+}
+
+func snapshotCurrentIndex(ctx context.Context, root string, step func(string)) (*privateIndex, error) {
+	return snapshotCurrentIndexBudget(ctx, root, step, agentapi.NewNativeReadBudget(currentSnapshotLimit))
 }

@@ -8,6 +8,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -54,6 +55,15 @@ func (s *sessionScan) resumeStricterHistory(p state.PendingPublication) (session
 	successor, err := s.stricterHistorySuccessor(p, committed)
 	if err != nil {
 		return outcomeSkipped, err
+	}
+	// Staging can take several bounded reads. A predecessor that changes during
+	// that work cannot authorize replacement of the original retry descriptor.
+	stillCommitted, err := s.checkFrozenHistoryMetadata(p)
+	if err != nil {
+		return outcomeSkipped, err
+	}
+	if stillCommitted != committed {
+		return outcomeSkipped, errHistoryMetadataConflict
 	}
 	// Every retained input and stricter output is staged before replacement.
 	if err := s.local.SavePending(s.id(), successor); err != nil {
@@ -136,7 +146,7 @@ func (s *sessionScan) stricterHistorySuccessor(p state.PendingPublication, commi
 	}
 	var total int
 	for _, input := range inputs {
-		filtered, ref, stage, err := s.prepareStricterHistoryInput(metadata, input, append(append([]state.HistoryInput(nil), finalInputs...), ackInputs...), adapter, &total)
+		filtered, ref, stage, err := s.prepareStricterHistoryInput(metadata, input, append(append([]state.HistoryInput(nil), finalInputs...), ackInputs...), adapter, pendingSkillMode(p.SkillEvidence), &total)
 		if err != nil {
 			return state.PendingPublication{}, err
 		}
@@ -262,6 +272,9 @@ func (s *sessionScan) prepareRetainedHistoryWork() (sessionOutcome, bool, error)
 			return outcomeSkipped, true, errors.New("ordinary pending journal cannot replace retained history")
 		}
 		outcome, err := s.resumeHistory(p)
+		if err == nil && s.reg.CaptureFrozen {
+			err = s.recordFrozenSignature()
+		}
 		return outcome, true, err
 	}
 	// Strict acknowledged authority is independent of ordinary stale-filter
@@ -278,7 +291,7 @@ func (s *sessionScan) prepareRetainedHistoryWork() (sessionOutcome, bool, error)
 	if err != nil {
 		return outcomeSkipped, true, err
 	}
-	needed := bundle.Capture.FilterVersion != archive.FilterVersion || bundle.Capture.AdapterVersion != adapter.Version() || !sourceEvidenceWithinPolicy(bundle.SupplementalEvidence, s.opts.skillEvidence()) || authority.Parser.Version != s.parserVersion() || s.req.Token != "" || headFingerprint(s.reg.LastHead) != s.publishedLastHead()
+	needed := bundle.Capture.FilterVersion != archive.FilterVersion || bundle.Capture.AdapterVersion != adapter.Version() || !sourceEvidenceWithinPolicy(bundle.SupplementalEvidence, s.opts.skillEvidence()) || authority.Parser.Version != s.parserVersion() || s.reg.CaptureFrozen && s.req.Token != "" || headFingerprint(s.reg.LastHead) != s.publishedLastHead()
 	for _, revision := range authority.History.Preserved {
 		needed = needed || revision.FilterVersion != archive.FilterVersion
 	}
@@ -296,7 +309,7 @@ func (s *sessionScan) prepareRetainedHistoryWork() (sessionOutcome, bool, error)
 	return outcomeSkipped, true, archive.ErrHistoryMutationPending
 }
 
-func (s *sessionScan) prepareStricterHistoryInput(metadata archive.Metadata, input state.HistoryInput, others []state.HistoryInput, adapter agentapi.TranscriptFilter, total *int) (archive.SourceBundle, archive.SourceReference, state.PendingSource, error) {
+func (s *sessionScan) prepareStricterHistoryInput(metadata archive.Metadata, input state.HistoryInput, others []state.HistoryInput, adapter agentapi.TranscriptFilter, ceiling config.SkillEvidence, total *int) (archive.SourceBundle, archive.SourceReference, state.PendingSource, error) {
 	bundle, err := s.loadHistoryInput(metadata, input)
 	if err != nil {
 		return archive.SourceBundle{}, archive.SourceReference{}, state.PendingSource{}, err
@@ -312,6 +325,9 @@ func (s *sessionScan) prepareStricterHistoryInput(metadata archive.Metadata, inp
 	if _, err := s.local.StagePendingSource(s.id(), input.Reference, original); err != nil {
 		return archive.SourceBundle{}, archive.SourceReference{}, state.PendingSource{}, err
 	}
+	// Retained originals preserve interrupted work, but a broader later policy
+	// cannot restore evidence the frozen policy already removed.
+	bundle.SupplementalEvidence = limitSkillEvidence(bundle.SupplementalEvidence, ceiling)
 	bundle.SupplementalEvidence = limitSkillEvidence(bundle.SupplementalEvidence, s.opts.skillEvidence())
 	filtered, err := refilterBundle(s.ctx, s.reg, adapter, bundle)
 	if err != nil {
@@ -374,7 +390,19 @@ func (s *sessionScan) freezeRetainedMaintenance(authority archive.Metadata, bund
 	if err != nil {
 		return state.PendingPublication{}, err
 	}
-	p := state.PendingPublication{SkillEvidence: string(s.opts.skillEvidence()), Bundle: bundle, MetadataKey: key, MetadataBytes: append([]byte(nil), s.published.Metadata()...), RequestToken: s.req.Token, ReadyAt: s.now, History: &state.PendingHistory{Version: 1, Preparing: true, Inputs: inputs, FilterVersion: archive.FilterVersion, AdapterVersion: adapterVersion, ExpectedMetadataSHA256: metadataSHA(s.published.Metadata())}}
+	var observations []archive.SupplementalEvidence
+	for _, evidence := range s.req.HookEvidence {
+		if evidence.Kind == archive.EvidenceKindLinkedSession || evidence.Kind == archive.EvidenceKindExplicitFeedback {
+			observations = append(observations, evidence)
+		}
+	}
+	bundle.SupplementalEvidence = mergeSupplementalEvidence(bundle.SupplementalEvidence, observations)
+	// Live requests still owe native reads; frozen requests cover retained observations.
+	requestToken := ""
+	if s.reg.CaptureFrozen {
+		requestToken = s.req.Token
+	}
+	p := state.PendingPublication{SkillEvidence: string(s.opts.skillEvidence()), Bundle: bundle, MetadataKey: key, MetadataBytes: append([]byte(nil), s.published.Metadata()...), RequestToken: requestToken, ReadyAt: s.now, History: &state.PendingHistory{Version: 1, Preparing: true, Inputs: inputs, FilterVersion: archive.FilterVersion, AdapterVersion: adapterVersion, ExpectedMetadataSHA256: metadataSHA(s.published.Metadata())}}
 	if err := s.local.SweepPendingSources(s.id()); err != nil {
 		return state.PendingPublication{}, err
 	}

@@ -86,8 +86,9 @@ func ReadHeader(ctx context.Context, root, path string) Header {
 }
 
 type measuredHeaderReader struct {
-	reader            io.Reader
-	bytes, operations int64
+	reader     io.Reader
+	bytes      int64
+	operations int64
 }
 
 func (r *measuredHeaderReader) Read(buffer []byte) (int, error) {
@@ -147,7 +148,7 @@ func ReadCodexHeader(reader io.Reader, path string) (h Header) {
 				h.Identity = &identity
 				h.NativeCreatedAt = start
 			}
-			if outcome := meta.CaptureOutcome(path); outcome != "native_format" {
+			if outcome := meta.CaptureOutcome(path); outcome != codexmeta.NativeFormat {
 				h.Outcome = string(outcome)
 				return h
 			}

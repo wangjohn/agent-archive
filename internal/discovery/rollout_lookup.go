@@ -56,6 +56,7 @@ type rolloutObservation struct {
 	stamp    Fingerprint
 	identity codexmeta.CodexIdentity
 }
+
 type currentIndexView struct {
 	snapshot    *privateIndex
 	db          *sql.DB
@@ -443,7 +444,7 @@ func (l *CodexRolloutLookup) withCandidates(id string, set agentapi.CodexRollout
 	slices.SortFunc(set.Candidates, func(a, b agentapi.SourceRef) int { return strings.Compare(a.Path, b.Path) })
 	set.Complete = false
 	if l.coverage != nil {
-		if request, present := l.coverage.Requests[id]; present && request.CompleteEpoch == l.coverage.Epoch && l.coverage.proofEpoch == l.coverage.Epoch && !request.Overflow && l.coverage.Phase == "complete" && !l.coverage.Failed {
+		if request, present := l.coverage.Requests[id]; present && request.CompleteEpoch == l.coverage.Epoch && l.coverage.proofEpoch == l.coverage.Epoch && !request.Overflow && l.coverage.Phase == coverageComplete && !l.coverage.Failed {
 			set.Candidates = nil
 			for _, candidate := range request.Candidates {
 				set.Candidates = append(set.Candidates, agentapi.SourceRef{Kind: archive.SourceKindFile, Path: candidate.Source.Locator, Key: id})
@@ -458,10 +459,10 @@ func (l *CodexRolloutLookup) withCandidates(id string, set agentapi.CodexRollout
 		}
 	}
 	data, _ := json.Marshal(struct {
-		Current      *agentapi.SourceRef
-		Complete     bool
-		Candidates   []agentapi.SourceRef
-		Observations []rolloutObservationDigest
+		Current      *agentapi.SourceRef        `json:"Current"`
+		Complete     bool                       `json:"Complete"`
+		Candidates   []agentapi.SourceRef       `json:"Candidates"`
+		Observations []rolloutObservationDigest `json:"Observations"`
 	}{Current: set.Current, Complete: set.Complete, Candidates: set.Candidates, Observations: l.candidateDigests(id)})
 	sum := sha256.Sum256(data)
 	set.Revision = hex.EncodeToString(sum[:])
@@ -469,7 +470,7 @@ func (l *CodexRolloutLookup) withCandidates(id string, set agentapi.CodexRollout
 }
 
 func (l *CodexRolloutLookup) candidateCount(id string) int {
-	if l.coverage != nil && l.coverage.Phase == "complete" && l.coverage.proofEpoch == l.coverage.Epoch && !l.coverage.Failed {
+	if l.coverage != nil && l.coverage.Phase == coverageComplete && l.coverage.proofEpoch == l.coverage.Epoch && !l.coverage.Failed {
 		if request, found := l.coverage.Requests[id]; found && request.CompleteEpoch == l.coverage.Epoch && !request.Overflow {
 			return len(request.Candidates)
 		}
@@ -478,14 +479,14 @@ func (l *CodexRolloutLookup) candidateCount(id string) int {
 }
 
 type rolloutObservationDigest struct {
-	Path     string
-	Stamp    Fingerprint
-	Identity codexmeta.CodexIdentity
+	Path     string                  `json:"Path"`
+	Stamp    Fingerprint             `json:"Stamp"`
+	Identity codexmeta.CodexIdentity `json:"Identity"`
 }
 
 func (l *CodexRolloutLookup) candidateDigests(id string) []rolloutObservationDigest {
 	var out []rolloutObservationDigest
-	if l.coverage != nil && l.coverage.Phase == "complete" && l.coverage.proofEpoch == l.coverage.Epoch && !l.coverage.Failed {
+	if l.coverage != nil && l.coverage.Phase == coverageComplete && l.coverage.proofEpoch == l.coverage.Epoch && !l.coverage.Failed {
 		if request, present := l.coverage.Requests[id]; present && request.CompleteEpoch == l.coverage.Epoch && !request.Overflow {
 			for path, candidate := range request.Candidates {
 				out = append(out, rolloutObservationDigest{path, candidate.Stamp, candidate.Identity})
@@ -565,6 +566,7 @@ func indexStamps(root string) []os.FileInfo {
 	}
 	return out
 }
+
 func equalIndexStamps(a, b []os.FileInfo) bool {
 	if len(a) != len(b) {
 		return false
@@ -668,7 +670,10 @@ func currentLocator(ctx context.Context, db *sql.DB, id string) (string, bool, e
 		return "", false, err
 	}
 	defer func() { _ = conn.Close() }()
-	for _, limit := range []struct{ id, value int }{{sqlite3.SQLITE_LIMIT_LENGTH, 1 << 20}, {sqlite3.SQLITE_LIMIT_SQL_LENGTH, 16384}, {sqlite3.SQLITE_LIMIT_ATTACHED, 0}, {sqlite3.SQLITE_LIMIT_VDBE_OP, 20000}} {
+	for _, limit := range []struct {
+		id    int
+		value int
+	}{{sqlite3.SQLITE_LIMIT_LENGTH, 1 << 20}, {sqlite3.SQLITE_LIMIT_SQL_LENGTH, 16384}, {sqlite3.SQLITE_LIMIT_ATTACHED, 0}, {sqlite3.SQLITE_LIMIT_VDBE_OP, 20000}} {
 		if _, err := sqlite.Limit(conn, limit.id, limit.value); err != nil {
 			return "", false, err
 		}
@@ -678,6 +683,7 @@ func currentLocator(ctx context.Context, db *sql.DB, id string) (string, bool, e
 	if err != nil {
 		return "", false, err
 	}
+	defer func() { _ = plan.Close() }()
 	valid := false
 	count := 0
 	for plan.Next() {

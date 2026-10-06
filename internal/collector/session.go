@@ -158,6 +158,9 @@ func (s *sessionScan) run() (sessionOutcome, error) {
 		if err := s.guardRevisionCandidate(read, &candidate); err != nil {
 			return outcomeSkipped, err
 		}
+		if settled, err := s.settleRevisionCandidate(read, &candidate); settled || err != nil {
+			return outcomeSkipped, err
+		}
 		return s.publish(read, candidate)
 	}
 	if err := archive.CheckHistoryMutation(candidate, archive.Metadata{}); err != nil {

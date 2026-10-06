@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -29,9 +30,11 @@ func (l *reconciliationLookup) Thread(context.Context, string) (agentapi.CodexRo
 	l.reads++
 	return l.set, nil
 }
+
 func (l *reconciliationLookup) Rollout(_ context.Context, id string) ([]agentapi.SourceRef, error) {
 	return l.refs[id], nil
 }
+
 func (l *reconciliationLookup) Check(context.Context, string, string) error {
 	if l.changed {
 		return agentapi.Wrap(agentapi.Changed, errors.New("synthetic source changed"))
@@ -66,6 +69,7 @@ func reconciliationNative(t *testing.T, root, id string, start uint64, base bool
 	}
 	return ref
 }
+
 func reconciliationFixture(t *testing.T) (*sessionScan, *reconciliationLookup) {
 	t.Helper()
 	root := t.TempDir()
@@ -133,7 +137,7 @@ func TestNativeRevisionReconciliationFirstABCUsesActualPorts(t *testing.T) {
 
 func TestRunRevisionReconciliationStaysPendingWithoutAcknowledgement(t *testing.T) {
 	for _, incomplete := range []bool{false, true} {
-		t.Run(fmt.Sprint(incomplete), func(t *testing.T) {
+		t.Run(strconv.FormatBool(incomplete), func(t *testing.T) {
 			scan, lookup := reconciliationFixture(t)
 			lookup.set.Complete = !incomplete
 			if err := scan.local.SaveRequest(scan.id(), "stop", scan.now); err != nil {
@@ -168,9 +172,18 @@ func TestRunRevisionReconciliationStaysPendingWithoutAcknowledgement(t *testing.
 		})
 	}
 }
+
 func TestNativeRevisionReconciliationChangedCancellationAndLimits(t *testing.T) {
-	for _, scenario := range []string{"changed", "cancel", "raw", "filtered", "records"} {
-		t.Run(scenario, func(t *testing.T) {
+	type scenarioVariant0 string
+	const (
+		scenarioChanged0  scenarioVariant0 = "changed"
+		scenarioCancel0   scenarioVariant0 = "cancel"
+		scenarioRaw0      scenarioVariant0 = "raw"
+		scenarioFiltered0 scenarioVariant0 = "filtered"
+		scenarioRecords0  scenarioVariant0 = "records"
+	)
+	for _, scenario := range []scenarioVariant0{scenarioChanged0, scenarioCancel0, scenarioRaw0, scenarioFiltered0, scenarioRecords0} {
+		t.Run(string(scenario), func(t *testing.T) {
 			scan, lookup := reconciliationFixture(t)
 			read, ok, err := scan.read()
 			if err != nil || !ok {
@@ -181,15 +194,15 @@ func TestNativeRevisionReconciliationChangedCancellationAndLimits(t *testing.T) 
 				t.Fatal(err)
 			}
 			switch scenario {
-			case "changed":
+			case scenarioChanged0:
 				lookup.changed = true
-			case "cancel":
+			case scenarioCancel0:
 				ctx, cancel := context.WithCancel(scan.ctx)
 				cancel()
 				scan.ctx = ctx
-			case "raw":
+			case scenarioRaw0:
 				scan.opts.MaxTranscriptBytes = 1
-			case "filtered", "records":
+			case scenarioFiltered0, scenarioRecords0:
 				// The source filter receives a retained record budget before accumulation.
 				provider, _ := newSourceReader(scan.reg, scan.opts)
 				p := provider.(providerReader)
@@ -208,7 +221,7 @@ func TestNativeRevisionReconciliationChangedCancellationAndLimits(t *testing.T) 
 				}
 				defer func() { _ = snapshot.Close() }()
 				limits := agentapi.ReadLimits{Records: 1, FilteredBytes: 128 << 20}
-				if scenario == "filtered" {
+				if scenario == scenarioFiltered0 {
 					limits.Records = archive.MaxHistoryRecords
 					limits.FilteredBytes = 1
 				}
@@ -227,7 +240,7 @@ func TestNativeRevisionReconciliationChangedCancellationAndLimits(t *testing.T) 
 
 func TestNativeRevisionReconciliationRateLimitedOutgoingAppendAndMissingFile(t *testing.T) {
 	for _, appendSuffix := range []bool{false, true} {
-		t.Run(fmt.Sprint(appendSuffix), func(t *testing.T) {
+		t.Run(strconv.FormatBool(appendSuffix), func(t *testing.T) {
 			scan, lookup := reconciliationFixture(t)
 			b := lookup.refs[revisionB][0]
 			lookup.set.Current = &b
@@ -469,17 +482,8 @@ func TestNativeRevisionReconciliationUnknownSourceHomeRemainsPending(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	filtered, observed, err := provider.Filter(scan.ctx, adapter, scan.opts.maxTranscriptBytes())
-	if err != nil {
-		t.Fatal(err)
-	}
-	active, err := archive.NewSourceBundle(scan.reg, adapter, filtered, scan.now, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	read := sourceRead{adapter: adapter, filtered: filtered, observed: observed}
-	if _, err := scan.reconcileRevisions(read, active); !agentapi.HasFailure(err, agentapi.Unavailable) {
-		t.Fatal("unknown source home authorized historical reads", err)
+	if _, _, err := provider.Filter(scan.ctx, adapter, scan.opts.maxTranscriptBytes()); !agentapi.HasFailure(err, agentapi.Unavailable) {
+		t.Fatal("unknown source home authorized history reads before reconciliation", err)
 	}
 }
 

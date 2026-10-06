@@ -173,7 +173,7 @@ with conservative bounds before accumulation and serialization: 1 MiB per
 request and 16 MiB combined requested proofs and lookup hints. Hints use at most
 half that allowance so they cannot monopolize request progress. They are also
 charged to the shared native read ledger. The prunable observation cache remains
-at most 8192 entries. Completed attempts rotate only after their consumer receives
+at most 2048 entries. Completed attempts rotate only after their consumer receives
 the result; unfinished and undelivered work stays enrolled. Physical dependencies
 use the same worker and requested facts, including those outside the hint cache.
 A validation epoch digests every observed directory entry fingerprint before
@@ -187,5 +187,7 @@ source prefix and the real lookup token, without manufacturing modern bindings
 from optional legacy evidence. Generic non-native hook files use the existing
 registered lane with actual ownership and current-row revalidation. Bound,
 discovered, paginated, forked and revised sources remain strict. This compatibility
-lane creates no registrations. History publication and maintenance remain fenced
-until the complete source-set lifecycle is implemented and verified.
+lane creates no registrations. History publication and maintenance require a supported complete source set,
+durable frozen journal and all-reference verification. Unknown home migration uses
+configured confined evidence, rechecked before saving the binding; lookup hints
+never provide admission permission.

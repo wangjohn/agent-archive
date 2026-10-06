@@ -15,21 +15,31 @@ import (
 )
 
 const currentSnapshotLimit int64 = 128 << 20
+
 const indexVerificationScratch int64 = 64 << 10
 
 var errIndexChanged = errors.New("native index changed during snapshot")
 
 // indexCopyMetrics accounts actual native reads and private writes, including
 // revalidation. Its buffer budget is not a claim about SQLite or process RSS.
-type indexCopyMetrics struct{ NativeBytes, PrivateBytes, PeakBuffers, NativeOpens, NativeReads, PrivateOpens, PrivateWrites int64 }
+type indexCopyMetrics struct {
+	NativeBytes   int64
+	PrivateBytes  int64
+	PeakBuffers   int64
+	NativeOpens   int64
+	NativeReads   int64
+	PrivateOpens  int64
+	PrivateWrites int64
+}
 
 type privateIndex struct {
-	dir, path string
-	metrics   indexCopyMetrics
-	lock      *os.File
-	proof     indexAppendProof
-	budget    *agentapi.NativeReadBudget
-	charge    int64
+	dir     string
+	path    string
+	metrics indexCopyMetrics
+	lock    *os.File
+	proof   indexAppendProof
+	budget  *agentapi.NativeReadBudget
+	charge  int64
 }
 
 func (p *privateIndex) close() error {
@@ -52,10 +62,6 @@ func (p *privateIndex) close() error {
 // Checkpoint/reset/replacement or any ambiguous read refuses the projection.
 // The private immutable main file contains the replayed committed state, so
 // SQLite does not need a WAL, SHM, lock, or recovery operation beside native data.
-func snapshotCurrentIndex(ctx context.Context, root string, step func(string)) (*privateIndex, error) {
-	return snapshotCurrentIndexBudget(ctx, root, step, agentapi.NewNativeReadBudget(currentSnapshotLimit))
-}
-
 func snapshotCurrentIndexBudget(ctx context.Context, root string, step func(string), budget *agentapi.NativeReadBudget) (*privateIndex, error) {
 	charge := indexVerificationScratch + 64
 	if !budget.Reserve(charge) {

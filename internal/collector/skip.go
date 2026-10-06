@@ -240,7 +240,11 @@ func (p *pass) linkOwed(reg archive.SessionRegistration) (bool, error) {
 // scan consumed, so the next pass can skip it. It is written only at an exit
 // that owes no further work.
 func (s *sessionScan) recordScanSignature(observed sourceState, bundle archive.SourceBundle) error {
+	summary := s.published.Summary()
 	return s.local.SaveScanSignature(s.id(), state.ScanSignature{
+		SourceSetDigest: summary.SourceSetDigest, CurrentRevision: summary.CurrentRevision,
+		SourceSchemaVersion: summary.SourceSchemaVersion, MetadataSchemaVersion: summary.MetadataSchemaVersion,
+		SourceSetComplete: summary.SourceSetComplete, MeaningfulCapturedAt: summary.MeaningfulCapturedAt,
 		SourceSetVersion: sourceSetVersion(s.reg),
 		SkillEvidence:    string(s.opts.skillEvidence()),
 		TranscriptSize:   observed.size(), TranscriptMtime: observed.file.Mtime,
@@ -287,7 +291,7 @@ func missingSource(reg archive.SessionRegistration) *sourceState {
 
 func sourceSetVersion(reg archive.SessionRegistration) int {
 	if reg.Harness.Name == "codex" {
-		return 1
+		return 2
 	}
 	return 0
 }

@@ -48,26 +48,35 @@ func TestLegacyOrdinaryUnboundKeepsAnchoredSourceAndCurrentToken(t *testing.T) {
 
 func TestLegacyCompatibilityRefusesBoundPaginatedRelatedAndRevert(t *testing.T) {
 	t.Parallel()
-	for _, scenario := range []string{"bound", "paginated", "fork", "revert", "base"} {
-		t.Run(scenario, func(t *testing.T) {
+	type scenarioVariant0 string
+	const (
+		scenarioBound0     scenarioVariant0 = "bound"
+		scenarioPaginated0 scenarioVariant0 = "paginated"
+		scenarioFork0      scenarioVariant0 = "fork"
+		scenarioRevert0    scenarioVariant0 = "revert"
+		scenarioBase0      scenarioVariant0 = "base"
+	)
+	for _, scenario := range []scenarioVariant0{scenarioBound0, scenarioPaginated0, scenarioFork0, scenarioRevert0, scenarioBase0} {
+		t.Run(string(scenario), func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
 			physical := threadA
 			extra := map[string]any{}
 			switch scenario {
-			case "paginated":
+			case scenarioBound0:
+			case scenarioPaginated0:
 				extra["history_mode"] = "paginated"
-			case "fork":
+			case scenarioFork0:
 				extra["forked_from_id"] = threadB
-			case "revert":
+			case scenarioRevert0:
 				physical = threadB
-			case "base":
+			case scenarioBase0:
 				extra["history_base"] = map[string]any{"thread_id": threadB, "end_ordinal_exclusive": 1, "end_byte_offset": 1}
 			}
 			ref := legacyTestFile(t, root, physical, threadA, extra)
 			ref.Key = threadA
 			lookup := &historyLookup{thread: agentapi.CodexRolloutSet{Revision: "one"}}
-			pass, err := (SourceProvider{}).OpenPass(context.Background(), agentapi.SourceEnvironment{CodexRollouts: lookup, LegacyUnboundRegistration: scenario != "bound", Policy: transcriptio.OpenPolicy{Root: root, RejectSymlinks: true}})
+			pass, err := (SourceProvider{}).OpenPass(context.Background(), agentapi.SourceEnvironment{CodexRollouts: lookup, LegacyUnboundRegistration: scenario != scenarioBound0, Policy: transcriptio.OpenPolicy{Root: root, RejectSymlinks: true}})
 			if err != nil {
 				t.Fatal(err)
 			}

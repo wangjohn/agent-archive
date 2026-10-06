@@ -5,7 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
-	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -117,7 +117,7 @@ func TestLoadHistorySourceValidatesActiveRevisionAndReferences(t *testing.T) {
 func TestLoadRevisionUsesIndependentFormatAndFilterProvenance(t *testing.T) {
 	t.Parallel()
 	for _, schema := range []int{archive.SourceSchemaVersion, archive.HistorySourceSchemaVersion} {
-		t.Run(fmt.Sprint(schema), func(t *testing.T) {
+		t.Run(strconv.Itoa(schema), func(t *testing.T) {
 			t.Parallel()
 			metadata, bundle, store := fixture(t)
 			const thread = "11111111-1111-4111-8111-111111111111"

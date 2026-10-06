@@ -17,7 +17,16 @@ func (s *sessionScan) checkRetainedHistory() error {
 			return err
 		}
 	}
-	return archive.CheckHistoryMutation(b, m)
+	if b.History == nil && m.History == nil {
+		return archive.CheckHistoryMutation(b, m)
+	}
+	if err := b.ValidateHistory(); err != nil {
+		return errors.Join(archive.ErrHistoryMutationPending, err)
+	}
+	if err := s.validateAuthorityIdentity(m); err != nil {
+		return errors.Join(archive.ErrHistoryMutationPending, err)
+	}
+	return nil
 }
 
 func (s *sessionScan) checkHistoryPublication(p state.PendingPublication) error {
@@ -26,9 +35,11 @@ func (s *sessionScan) checkHistoryPublication(p state.PendingPublication) error 
 		return err
 	}
 	if p.History != nil {
-		if _, err := s.checkFrozenHistoryMetadata(p); err != nil {
-			return err
+		if p.History.Preparing {
+			return archive.ErrHistoryMutationPending
 		}
+		_, err := s.checkFrozenHistoryMetadata(p)
+		return err
 	}
 	if err := archive.CheckHistoryMutation(p.Bundle, next); err != nil {
 		return err

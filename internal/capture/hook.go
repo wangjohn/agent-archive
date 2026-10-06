@@ -40,7 +40,6 @@ type eventOptions struct {
 	repoKey     RepoKeyFunc
 	replay      *archive.Replay
 	gitHead     GitHeadFunc
-	decoders    agentapi.DecodersLookup
 	stat        func(string) (os.FileInfo, error)
 	afterEffect func(effectName) error
 }

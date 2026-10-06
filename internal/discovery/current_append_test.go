@@ -13,8 +13,16 @@ import (
 
 func TestPrivateAppendRejectsUncertainGenerationAndReleases(t *testing.T) {
 	t.Parallel()
-	for _, change := range []string{"checkpoint", "reset", "malformed", "cancel", "budget"} {
-		t.Run(change, func(t *testing.T) {
+	type changeVariant0 string
+	const (
+		changeCheckpoint0 changeVariant0 = "checkpoint"
+		changeReset0      changeVariant0 = "reset"
+		changeMalformed0  changeVariant0 = "malformed"
+		changeCancel0     changeVariant0 = "cancel"
+		changeBudget0     changeVariant0 = "budget"
+	)
+	for _, change := range []changeVariant0{changeCheckpoint0, changeReset0, changeMalformed0, changeCancel0, changeBudget0} {
+		t.Run(string(change), func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
 			db := hintDatabase(t, root, true)
@@ -28,22 +36,22 @@ func TestPrivateAppendRejectsUncertainGenerationAndReleases(t *testing.T) {
 			ctx := t.Context()
 			budget := agentapi.NewNativeReadBudget(currentSnapshotLimit)
 			switch change {
-			case "checkpoint":
+			case changeCheckpoint0:
 				_, err = db.ExecContext(ctx, "PRAGMA wal_checkpoint(FULL)")
-			case "reset":
+			case changeReset0:
 				_, err = db.ExecContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)")
-			case "malformed":
+			case changeMalformed0:
 				f, e := os.OpenFile(filepath.Join(root, "state_5.sqlite-wal"), os.O_WRONLY, 0600)
 				if e != nil {
 					t.Fatal(e)
 				}
 				_, err = f.WriteAt([]byte{0xff}, int64(p.proof.end+24))
 				_ = f.Close()
-			case "cancel":
+			case changeCancel0:
 				var cancel context.CancelFunc
 				ctx, cancel = context.WithCancel(ctx)
 				cancel()
-			case "budget":
+			case changeBudget0:
 				budget = agentapi.NewNativeReadBudget(1)
 			}
 			if err != nil {
@@ -92,7 +100,7 @@ func TestPrivateAppendIgnoresTornUncommittedTail(t *testing.T) {
 		t.Fatal(got)
 	}
 	used, _ := budget.Charged()
-    if used != 0 {
+	if used != 0 {
 		t.Fatal(used)
 	}
 }

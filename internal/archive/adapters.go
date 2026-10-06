@@ -612,8 +612,6 @@ func isHiddenRole(value string) bool {
 	}
 }
 
-type sanitizeState = PrivacyState
-
 func nonEmptyValue(raw any) bool {
 	switch value := raw.(type) {
 	case nil:

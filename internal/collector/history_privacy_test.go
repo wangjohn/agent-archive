@@ -132,9 +132,10 @@ func TestStricterHistoryPriorStagesAllOriginalsAndLeavesRequestsOwed(t *testing.
 	if err != nil || len(objects) != 0 {
 		t.Fatal("stricter preparation uploaded", err)
 	}
-	if _, err := scan.publishPending(next); !errors.Is(err, archive.ErrHistoryMutationPending) {
-		t.Fatal("publication fence lost", err)
+	if outcome, err := scan.publishPending(next); err != nil || outcome != outcomePublished {
+		t.Fatal("prepared successor failed", err)
 	}
+	assertCompleteHistory(t, scan, next, scan.remote)
 }
 
 func TestStricterHistoryUnknownRemoteKeepsAttemptedDescriptor(t *testing.T) {
@@ -326,7 +327,7 @@ func TestMixedHistoryPreparationRestartsAndReadsOriginalReplacedStage(t *testing
 	}
 }
 
-func TestRunAcknowledgedAllRefPrivacyPreparesWithoutNativeOrAcknowledgement(t *testing.T) {
+func TestRunAcknowledgedAllRefPrivacyPublishesTogetherWithoutNativeReads(t *testing.T) {
 	scan, p := privacyJournal(t)
 	var m archive.Metadata
 	if err := json.Unmarshal(p.MetadataBytes, &m); err != nil {
@@ -387,14 +388,48 @@ func TestRunAcknowledgedAllRefPrivacyPreparesWithoutNativeOrAcknowledgement(t *t
 		t.Fatal(err)
 	}
 	scan.opts.RepoKey = func(string) string { t.Fatal("retained preparation consulted current Git"); return "" }
-	for range len(p.History.Inputs) + 1 {
+	for pass := range len(p.History.Inputs) {
 		scan.local, err = state.Open(scan.local.Home())
 		if err != nil {
 			t.Fatal(err)
 		}
 		result, err := Run(t.Context(), scan.local, scan.remote, scan.opts)
+		if pass == len(p.History.Inputs)-1 {
+			if err != nil || len(result.Published) != 1 || len(result.Errors) != 0 {
+				t.Fatal("complete maintenance did not publish", result, err)
+			}
+			current, found, err := scan.local.LoadRequest(scan.id())
+			if err != nil || !found || current.Token != request.Token {
+				t.Fatal("live native request lost", err)
+			}
+			final, err := scan.remote.Get(t.Context(), p.MetadataKey)
+			if err != nil || bytes.Equal(final, raw) {
+				t.Fatal("maintenance sidecar missing", err)
+			}
+			if err := json.Unmarshal(final, &m); err != nil {
+				t.Fatal(err)
+			}
+			refs, err := m.SourceReferences()
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, ref := range refs {
+				data, err := scan.remote.Get(t.Context(), ref.Key)
+				if err != nil {
+					t.Fatal(err)
+				}
+				b, err := decodeHistoryStage(t.Context(), m, p, ref, data)
+				if err != nil || b.Capture.FilterVersion != archive.FilterVersion || !b.Capture.CapturedAt.Equal(scan.now) {
+					t.Fatal("partial refilter or changed capture", err)
+				}
+			}
+			if _, found, err := scan.local.LoadPending(scan.id()); err != nil || found {
+				t.Fatal("maintenance cleanup incomplete", err)
+			}
+			return
+		}
 		if err != nil || len(result.Published) != 0 || len(result.Errors) == 0 {
-			t.Fatal("production maintenance escaped fence", result, err)
+			t.Fatal("partial maintenance escaped preparation", result, err)
 		}
 		current, found, err := scan.local.LoadRequest(scan.id())
 		if err != nil || !found || current.Token != request.Token {
@@ -405,23 +440,7 @@ func TestRunAcknowledgedAllRefPrivacyPreparesWithoutNativeOrAcknowledgement(t *t
 			t.Fatal("partial privacy sidecar published", err)
 		}
 	}
-	next, found, err := scan.local.LoadPending(scan.id())
-	if err != nil || !found || next.History.Preparing || next.Attempted || len(next.History.Inputs) != len(p.History.Inputs) {
-		t.Fatal("all-reference preparation did not converge", next.History, err)
-	}
-	if err := json.Unmarshal(next.MetadataBytes, &m); err != nil {
-		t.Fatal(err)
-	}
-	for _, stage := range next.History.Sources {
-		data, err := scan.local.ReadPendingSource(scan.id(), stage)
-		if err != nil {
-			t.Fatal(err)
-		}
-		b, err := decodeHistoryStage(t.Context(), m, next, stage.Reference, data)
-		if err != nil || b.Capture.FilterVersion != archive.FilterVersion {
-			t.Fatal("partial refilter", err)
-		}
-	}
+	t.Fatal("all-reference preparation did not converge")
 }
 
 type privacyPutStore struct {

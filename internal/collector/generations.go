@@ -51,7 +51,7 @@ func PrepareGenerationRecovery(ctx context.Context, reg archive.SessionRegistrat
 	if err != nil {
 		return nil, err
 	}
-	if err := archive.CheckHistoryMutation(preview, archive.Metadata{}); err != nil {
+	if err := preview.ValidateHistory(); err != nil {
 		return nil, err
 	}
 	if opts.RequireSkillUse {
@@ -83,7 +83,15 @@ func PrepareGenerationRecovery(ctx context.Context, reg archive.SessionRegistrat
 		if rendered.declined {
 			return latest, state.PendingPublication{}, errors.New("current transcript does not meet configured skill-use policy")
 		}
-		pending := state.PendingPublication{SkillEvidence: string(opts.skillEvidence()), Bundle: bundle, SourceKey: rendered.source.Key, SourceSHA256: rendered.source.SHA256, SourceBytes: rendered.sourceBytes, MetadataKey: rendered.metadataKey, MetadataBytes: rendered.metadata, ReadyAt: at, Attempted: true}
+		var history *state.PendingHistory
+		if bundle.History != nil {
+			// The original generation retains all alternatives under its prefix.
+			history = &state.PendingHistory{Version: 1, FilterVersion: bundle.Capture.FilterVersion, AdapterVersion: bundle.Capture.AdapterVersion, PreparedAt: at}
+		}
+		pending := state.PendingPublication{History: history, SkillEvidence: string(opts.skillEvidence()), Bundle: bundle, SourceKey: rendered.source.Key, SourceSHA256: rendered.source.SHA256, SourceBytes: rendered.sourceBytes, MetadataKey: rendered.metadataKey, MetadataBytes: rendered.metadata, ReadyAt: at, Attempted: true}
+		if err := pending.ValidateHistory(id); err != nil {
+			return latest, state.PendingPublication{}, err
+		}
 		return latest, pending, nil
 	}, nil
 }
@@ -202,8 +210,13 @@ func (s *sessionScan) recordFrozenSignature() error {
 	if !known {
 		return nil
 	}
-	return s.local.SaveScanSignature(s.id(), state.ScanSignature{SourceSetVersion: sourceSetVersion(s.reg),
-		Frozen: true, SkillEvidence: string(s.opts.skillEvidence()),
+	summary := s.published.Summary()
+	return s.local.SaveScanSignature(s.id(), state.ScanSignature{
+		SourceSetDigest: summary.SourceSetDigest, CurrentRevision: summary.CurrentRevision,
+		SourceSchemaVersion: summary.SourceSchemaVersion, MetadataSchemaVersion: summary.MetadataSchemaVersion,
+		SourceSetComplete: summary.SourceSetComplete, MeaningfulCapturedAt: summary.MeaningfulCapturedAt,
+		SourceSetVersion: sourceSetVersion(s.reg),
+		Frozen:           true, SkillEvidence: string(s.opts.skillEvidence()),
 		ParserVersion: s.parserVersion(), FilterVersion: archive.FilterVersion,
 		AdapterVersion: adapterVersion, PublishedLastHead: s.publishedLastHead(),
 	})

@@ -5,8 +5,10 @@ import "sync"
 // NativeReadBudget bounds charged native extents, immutable caches and borrowed
 // scratch across one pass. It is not a bound on filtered maps or process RSS.
 type NativeReadBudget struct {
-	mu                sync.Mutex
-	limit, used, peak int64
+	mu    sync.Mutex
+	limit int64
+	used  int64
+	peak  int64
 }
 
 // NewNativeReadBudget creates a pass-owned shared charge ledger.

@@ -105,7 +105,7 @@ func TestAbandonedStageSweepIsBoundedAndRefusesUnsafeTypes(t *testing.T) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i < pendingStageCleanupBatch+1; i++ {
+	for i := range pendingStageCleanupBatch + 1 {
 		sum := sha256.Sum256([]byte{byte(i)})
 		if err := os.WriteFile(filepath.Join(dir, hex.EncodeToString(sum[:])+".gz"), []byte("synthetic"), 0600); err != nil {
 			t.Fatal(err)

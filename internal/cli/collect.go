@@ -166,7 +166,7 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (result collector.Resu
 		recordPreflightError(localStore, recoveryErr)
 	}
 	recoveryCancel()
-	rollouts, err := passCodexRollouts(ctx, localStore, cfg, env)
+	rollouts, readHomes, err := passCodexRollouts(ctx, localStore, cfg, env)
 	if err != nil {
 		recordPreflightError(localStore, err)
 		return collector.Result{}, err
@@ -193,6 +193,8 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (result collector.Resu
 	result, err = collector.Run(ctx, localStore, objectStore, collector.Options{
 		SkipSessionIndexRecovery: true,
 		CodexRollouts:            rollouts,
+		ConfiguredCodexHomes:     readHomes,
+		ResolveCodexReadHomes:    func(current config.Config) ([]string, error) { return trustedCodexReadHomes(current, env) },
 		Parsers:                  parsersFor(env),
 		Sources:                  registryFor(env),
 		Decoders:                 env.agentRegistry(),

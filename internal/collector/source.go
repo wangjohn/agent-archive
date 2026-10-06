@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/local"
+	"os"
 	"path/filepath"
 	"sync/atomic"
 	"time"
@@ -97,7 +99,7 @@ func newSourceReader(reg archive.SessionRegistration, opts Options) (sourceReade
 		subagentMetadata: reg.ParentSessionID != "", sources: opts.Sources,
 		passes: opts.sourcePasses, database: opts.CursorDatabase, rollouts: opts.CodexRollouts,
 		admission: sourceAdmission(reg),
-		discovery: discoveryRegistration(reg),
+		discovery: confinedSourceRegistration(reg, opts.ConfiguredCodexHomes),
 	}, true
 }
 
@@ -124,6 +126,45 @@ func discoveryRegistration(reg archive.SessionRegistration) *archive.SessionRegi
 	return &reg
 }
 
+// confinedSourceRegistration recognizes only an admitted native locator below
+// an actual configured home. Lookup hints never supply containment authority.
+func confinedSourceRegistration(reg archive.SessionRegistration, homes []string) *archive.SessionRegistration {
+	if confined := discoveryRegistration(reg); confined != nil {
+		return confined
+	}
+	ref := sourceRef(reg)
+	if reg.Harness.Name != archive.HarnessCodex || sourcefacts.RolloutID(ref.Path) == "" {
+		return nil
+	}
+	root := ""
+	for _, home := range homes {
+		canonical, err := filepath.EvalSymlinks(home)
+		if err != nil || !filepath.IsAbs(canonical) {
+			continue
+		}
+		info, err := os.Stat(canonical)
+		if err != nil || !info.IsDir() {
+			continue
+		}
+		// The configured root itself may use a platform alias (for example
+		// /var on macOS). OpenRoot still confines every descendant and rejects
+		// native symlinks; the alias does not authorize another home.
+		for _, scope := range []string{filepath.Clean(home), canonical} {
+			if !filepath.IsAbs(scope) || (!local.PathWithin(ref.Path, filepath.Join(scope, "sessions")) && !local.PathWithin(ref.Path, filepath.Join(scope, "archived_sessions"))) {
+				continue
+			}
+			if root == "" || len(scope) > len(root) {
+				root = scope
+			}
+		}
+	}
+	if root == "" {
+		return nil
+	}
+	reg.DiscoveryRoot = root // transient read policy only; persisted provenance is unchanged.
+	return &reg
+}
+
 // sourceEnvironment keeps discovered files confined to their admitted source home.
 // Hooks and backfill retain the provider's existing default filesystem semantics.
 func sourceEnvironment(reg *archive.SessionRegistration, database string) agentapi.SourceEnvironment {
@@ -134,12 +175,12 @@ func sourceEnvironment(reg *archive.SessionRegistration, database string) agenta
 			root = reg.CodexBinding.Home
 		}
 		return agentapi.SourceEnvironment{
-			Database: db,
-			Files:    sourcefacts.RootOpener{Root: root},
-			Policy:   transcriptio.OpenPolicy{Root: root, RejectSymlinks: true},
+			Database: db, RequireConfinedHistory: true,
+			Files:  sourcefacts.RootOpener{Root: root},
+			Policy: transcriptio.OpenPolicy{Root: root, RejectSymlinks: true},
 		}
 	}
-	return agentapi.SourceEnvironment{Database: db}
+	return agentapi.SourceEnvironment{Database: db, RequireConfinedHistory: true}
 }
 
 func (r providerReader) binding() (agentapi.SourceProvider, agentapi.TranscriptFilter, error) {
@@ -158,12 +199,12 @@ func (r providerReader) binding() (agentapi.SourceProvider, agentapi.TranscriptF
 
 func (r providerReader) pass(ctx context.Context, p agentapi.SourceProvider, key string) (agentapi.SourcePass, func() error, error) {
 	if r.passes != nil {
-		pass, err := r.passes.get(ctx, sourcePassKey{name: key, root: r.discoveryRoot(), discovery: r.discovery != nil, legacy: r.harness == archive.HarnessCodex && r.discovery == nil && r.admission.Binding == nil}, p)
+		pass, err := r.passes.get(ctx, sourcePassKey{name: key, root: r.discoveryRoot(), discovery: r.discovery != nil, legacy: r.harness == archive.HarnessCodex && r.admission.Binding == nil && (r.discovery == nil || r.discovery.Origin != archive.SessionOriginDiscovery)}, p)
 		return pass, func() error { return nil }, err
 	}
 	env := sourceEnvironment(r.discovery, r.database)
 	env.CodexRollouts = r.rollouts
-	env.LegacyUnboundRegistration = r.harness == archive.HarnessCodex && r.discovery == nil && r.admission.Binding == nil
+	env.LegacyUnboundRegistration = r.harness == archive.HarnessCodex && r.admission.Binding == nil && (r.discovery == nil || r.discovery.Origin != archive.SessionOriginDiscovery)
 	pass, err := p.OpenPass(ctx, env)
 	if err != nil {
 		return nil, nil, err
@@ -389,7 +430,7 @@ func (s *sourcePassSet) get(ctx context.Context, key sourcePassKey, p agentapi.S
 }
 
 func openCursorPass(_ []archive.SessionRegistration, opts *Options) func() error {
-	opts.sourcePasses = &sourcePassSet{env: agentapi.SourceEnvironment{Database: opts.cursorDatabase(), CodexRollouts: opts.CodexRollouts}, passes: map[sourcePassKey]agentapi.SourcePass{}}
+	opts.sourcePasses = &sourcePassSet{env: agentapi.SourceEnvironment{RequireConfinedHistory: true, Database: opts.cursorDatabase(), CodexRollouts: opts.CodexRollouts}, passes: map[sourcePassKey]agentapi.SourcePass{}}
 	return func() error {
 		var err error
 		for _, p := range opts.sourcePasses.passes {
@@ -523,14 +564,15 @@ func sourceAdmission(reg archive.SessionRegistration) agentapi.SourceAdmission {
 	if reg.CodexBinding != nil {
 		cwd = ""
 	}
-	admission := agentapi.SourceAdmission{NativeID: reg.NativeSessionID, Cwd: cwd, Binding: reg.CodexBinding}
+	createdAt := time.Time{}
+	producerVersion, producerOriginator, producerSource := "", "", ""
 	if reg.Origin == archive.SessionOriginDiscovery && reg.CodexBinding == nil {
-		admission.NativeCreatedAt = reg.SessionStartedAt
-		admission.InitialProducerVersion = reg.Harness.Version
-		admission.InitialProducerOriginator = reg.DiscoveryProducerOriginator
-		admission.InitialProducerSource = reg.DiscoveryProducerSource
+		createdAt = reg.SessionStartedAt
+		producerVersion = reg.Harness.Version
+		producerOriginator = reg.DiscoveryProducerOriginator
+		producerSource = reg.DiscoveryProducerSource
 	}
-	return admission
+	return agentapi.SourceAdmission{NativeID: reg.NativeSessionID, Cwd: cwd, Binding: reg.CodexBinding, NativeCreatedAt: createdAt, InitialProducerVersion: producerVersion, InitialProducerOriginator: producerOriginator, InitialProducerSource: producerSource}
 }
 
 func (r providerReader) snapshotBinding(ctx context.Context, snap agentapi.SourceSnapshot) (*archive.CodexSourceBinding, error) {

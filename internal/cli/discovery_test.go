@@ -118,7 +118,7 @@ func TestSupportedDiscoveryPublishesWithoutHooksAndAcceptsRecentCopy(t *testing.
 	db, err := sql.Open("sqlite", filepath.Join(source, "state_5.sqlite"))
 	must(t, err)
 	defer func() { _ = db.Close() }()
-	_, err = db.Exec("PRAGMA journal_mode=WAL; CREATE TABLE threads(id TEXT PRIMARY KEY, rollout_path TEXT)")
+	_, err = db.ExecContext(t.Context(), "PRAGMA journal_mode=WAL; CREATE TABLE threads(id TEXT PRIMARY KEY, rollout_path TEXT)")
 	must(t, err)
 	for n, created := range []time.Time{at.Add(time.Minute), at.Add(-time.Hour), at.Add(25 * time.Second)} {
 		id := fmt.Sprintf("00000000-0000-0000-0000-%012d", n+1)
@@ -134,7 +134,7 @@ func TestSupportedDiscoveryPublishesWithoutHooksAndAcceptsRecentCopy(t *testing.
 		copied, err := os.ReadFile(original)
 		must(t, err)
 		must(t, os.WriteFile(path, copied, 0600))
-		_, err = db.Exec("INSERT INTO threads VALUES(?,?)", id, path)
+		_, err = db.ExecContext(t.Context(), "INSERT INTO threads VALUES(?,?)", id, path)
 		must(t, err)
 	}
 	remote := storagetest.NewMemoryStore()
@@ -156,7 +156,7 @@ func TestSupportedDiscoveryPublishesWithoutHooksAndAcceptsRecentCopy(t *testing.
 	must(t, err)
 	must(t, os.WriteFile(archived, moved, 0600))
 	must(t, os.Remove(reg.TranscriptPath))
-	_, err = db.Exec("UPDATE threads SET rollout_path=? WHERE id=?", archived, reg.NativeSessionID)
+	_, err = db.ExecContext(t.Context(), "UPDATE threads SET rollout_path=? WHERE id=?", archived, reg.NativeSessionID)
 	must(t, err)
 	for range 2 {
 		result, err := runOnePass(env, true)

@@ -22,7 +22,7 @@ func TestRunStagesCompleteRevisionJournalAndResumesWithoutNativeReads(t *testing
 	}
 	opts := scan.opts
 	opts.RepoKey = func(string) string { return "" }
-	for pass := 0; pass < 4; pass++ {
+	for pass := range 3 {
 		if pass > 0 {
 			reopened, err := state.Open(scan.local.Home())
 			if err != nil {
@@ -31,8 +31,20 @@ func TestRunStagesCompleteRevisionJournalAndResumesWithoutNativeReads(t *testing
 			scan.local = reopened
 		}
 		result, err := Run(t.Context(), scan.local, scan.remote, opts)
+		if pass == 2 {
+			if err != nil || len(result.Published) != 1 || len(result.Errors) != 0 {
+				t.Fatal("final publication failed", result, err)
+			}
+			if _, found, err := scan.local.LoadPending(scan.id()); err != nil || found {
+				t.Fatal("final journal not cleaned", err)
+			}
+			if _, found, err := scan.local.LoadRequest(scan.id()); err != nil || !found {
+				t.Fatal("newer request lost", err)
+			}
+			return
+		}
 		if err != nil || len(result.Published) != 0 || len(result.Errors) == 0 {
-			t.Fatal("fence lost", result, err)
+			t.Fatal("preparation settled early", result, err)
 		}
 		pending, found, err := scan.local.LoadPending(scan.id())
 		if err != nil || !found {

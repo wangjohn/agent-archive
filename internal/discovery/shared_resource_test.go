@@ -67,17 +67,17 @@ func TestSourceAndLiveIndexShareChargeBeforeCopyAndRelease(t *testing.T) {
 	if before <= 32<<20 {
 		t.Fatalf("large native source was not charged: %d", before)
 	}
-	copy, err := snapshotCurrentIndexBudget(t.Context(), root, nil, ledger)
-	if copy != nil {
-		_ = copy.close()
-		t.Fatal("allocated an index copy over shared source budget")
+	indexCopy, err := snapshotCurrentIndexBudget(t.Context(), root, nil, ledger)
+	if indexCopy != nil {
+		_ = indexCopy.close()
+		t.Fatal("allocated an index indexCopy over shared source budget")
 	}
 	if agentapi.Failure(err) != agentapi.Limit {
 		t.Fatal(err)
 	}
 	used, peak := ledger.Charged()
 	if used != before || peak > currentSnapshotLimit {
-		t.Fatalf("failed copy leaked/exceeded shared charge: %d %d", used, peak)
+		t.Fatalf("failed indexCopy leaked/exceeded shared charge: %d %d", used, peak)
 	}
 	if err := captured.Close(); err != nil {
 		t.Fatal(err)
@@ -95,20 +95,20 @@ func TestSourceAndLiveIndexShareChargeBeforeCopyAndRelease(t *testing.T) {
 		}
 	}, ledger)
 	if err == nil {
-		t.Fatal("cancelled copy accepted")
+		t.Fatal("cancelled indexCopy accepted")
 	}
 	if used, _ := ledger.Charged(); used != 0 {
-		t.Fatalf("cancelled copy charge leaked: %d", used)
+		t.Fatalf("cancelled indexCopy charge leaked: %d", used)
 	}
-	copy, err = snapshotCurrentIndexBudget(t.Context(), root, nil, ledger)
+	indexCopy, err = snapshotCurrentIndexBudget(t.Context(), root, nil, ledger)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := copy.close(); err != nil {
+	if err := indexCopy.close(); err != nil {
 		t.Fatal(err)
 	}
 	if used, peak := ledger.Charged(); used != 0 || peak > currentSnapshotLimit {
-		t.Fatalf("successful copy charge leaked/exceeded: %d %d", used, peak)
+		t.Fatalf("successful indexCopy charge leaked/exceeded: %d %d", used, peak)
 	}
 }
 

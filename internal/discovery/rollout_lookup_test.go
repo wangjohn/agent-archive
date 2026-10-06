@@ -52,7 +52,7 @@ func TestRolloutLookupCurrentWALIdentityRefreshAndPrivateCleanup(t *testing.T) {
 	}
 	// Later unrelated commits revalidate and replay into the same private view.
 	privatePath := lookup.indexes[root].snapshot.path
-	for n := 0; n < 8; n++ {
+	for n := range 8 {
 		addHint(t, db, fmt.Sprintf("unrelated-%d", n), "unused", at.Add(time.Minute))
 		if err := lookup.Check(t.Context(), id, set.Revision); err != nil {
 			t.Fatal(err)

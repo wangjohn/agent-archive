@@ -2,17 +2,19 @@ package discovery
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"testing"
 	"time"
 )
 
 type measuredCoverageAdapter struct {
 	SourceAdapter
-	enumerations, entries, headers int
+	enumerations int
+	entries      int
+	headers      int
 }
 
 func (a *measuredCoverageAdapter) Enumerate(ctx context.Context, root, path string, cookie int64) (SourceBatch, error) {
@@ -21,6 +23,7 @@ func (a *measuredCoverageAdapter) Enumerate(ctx context.Context, root, path stri
 	a.entries += len(batch.Entries)
 	return batch, err
 }
+
 func (a *measuredCoverageAdapter) Inspect(ctx context.Context, source SourceDescriptor) Observation {
 	a.headers++
 	return a.SourceAdapter.Inspect(ctx, source)
@@ -32,14 +35,14 @@ func (a *measuredCoverageAdapter) Inspect(ctx context.Context, source SourceDesc
 // index actual reads/writes and header logical records, separately labelled.
 func BenchmarkRequestedLookupScale(b *testing.B) {
 	for _, count := range []int{1000, 10000, 100000} {
-		b.Run(fmt.Sprint(count), func(b *testing.B) {
+		b.Run(strconv.Itoa(count), func(b *testing.B) {
 			store, cfg, at, root := fixture(b)
 			db := hintDatabase(b, root, true)
-			tx, err := db.Begin()
+			tx, err := db.BeginTx(b.Context(), nil)
 			if err != nil {
 				b.Fatal(err)
 			}
-			stmt, err := tx.Prepare("INSERT INTO threads(id,rollout_path,created_at_ms,updated_at_ms) VALUES(?,?,?,?)")
+			stmt, err := tx.PrepareContext(b.Context(), "INSERT INTO threads(id,rollout_path,created_at_ms,updated_at_ms) VALUES(?,?,?,?)")
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -47,18 +50,20 @@ func BenchmarkRequestedLookupScale(b *testing.B) {
 			for n := range count {
 				id := writeRollout(b, root, cfg.Archive.Projects[0].Root, at.Add(-time.Hour), n+1, "sessions")
 				path := filepath.Join(root, "sessions", "rollout-2026-10-01T12-00-00-"+id+".jsonl")
-				if _, err := stmt.Exec(id, path, at.Unix(), at.Unix()); err != nil {
+				if _, err := stmt.ExecContext(b.Context(), id, path, at.Unix(), at.Unix()); err != nil {
 					b.Fatal(err)
 				}
 				wanted = id
 			}
+			defer func() { _ = stmt.Close() }()
+			defer func() { _ = stmt.Close() }()
 			if err := stmt.Close(); err != nil {
 				b.Fatal(err)
 			}
 			if err := tx.Commit(); err != nil {
 				b.Fatal(err)
 			}
-			if _, err := db.Exec("PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
+			if _, err := db.ExecContext(b.Context(), "PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
 				b.Fatal(err)
 			}
 			adapter := &measuredCoverageAdapter{SourceAdapter: codexAdapter{supported: syntheticSupport}}

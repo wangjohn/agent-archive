@@ -68,6 +68,9 @@ func (s *sessionScan) persistCodexBinding(binding *archive.CodexSourceBinding) e
 	if !found || cfg.Paused || !cfg.AcceptSession(s.reg) {
 		return errors.New("codex binding requires current capture permission")
 	}
+	if err := s.validateMigrationHome(cfg, binding); err != nil {
+		return err
+	}
 	if s.reg.CodexAdmission != nil {
 		if !cfg.CodexContinuationAllowed(s.reg.ProjectRoot, canonicalCwd) {
 			return errors.New("native cwd is outside current Codex continuation permission")
@@ -140,6 +143,31 @@ func (s *sessionScan) validateInitialBindingCwd(binding *archive.CodexSourceBind
 				return errors.New("native cwd contradicts admitted physical project evidence")
 			}
 		}
+	}
+	return nil
+}
+
+func (s *sessionScan) validateMigrationHome(cfg config.Config, binding *archive.CodexSourceBinding) error {
+	if binding.Home == "" || s.reg.CodexBinding != nil && s.reg.CodexBinding.Home != "" || s.reg.Origin == archive.SessionOriginDiscovery {
+		return nil
+	}
+	homes := []string{}
+	if cfg.Discovery != nil {
+		homes = append(homes, cfg.Discovery.CodexHomes...)
+	}
+	if path := cfg.HookFiles["codex"]; path != "" {
+		homes = append(homes, filepath.Dir(path))
+	}
+	if s.opts.ResolveCodexReadHomes != nil {
+		var err error
+		homes, err = s.opts.ResolveCodexReadHomes(cfg)
+		if err != nil {
+			return err
+		}
+	}
+	confined := confinedSourceRegistration(s.reg, homes)
+	if confined == nil || confined.DiscoveryRoot != binding.Home {
+		return errors.New("trusted confined source home changed before binding migration")
 	}
 	return nil
 }

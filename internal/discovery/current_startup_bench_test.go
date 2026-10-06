@@ -22,27 +22,28 @@ func BenchmarkCurrentStartupBeforeCoverage(b *testing.B) {
 		b.Fatal(err)
 	}
 	db := hintDatabase(b, root, true)
-	tx, err := db.Begin()
+	tx, err := db.BeginTx(b.Context(), nil)
 	if err != nil {
 		b.Fatal(err)
 	}
-	stmt, err := tx.Prepare("INSERT INTO threads(id,rollout_path) VALUES(?,?)")
+	stmt, err := tx.PrepareContext(b.Context(), "INSERT INTO threads(id,rollout_path) VALUES(?,?)")
 	if err != nil {
 		b.Fatal(err)
 	}
 	for n := range 100000 {
 		id := fmt.Sprintf("00000000-0000-0000-0000-%012d", n+1)
-		if _, err := stmt.Exec(id, path); err != nil {
+		if _, err := stmt.ExecContext(b.Context(), id, path); err != nil {
 			b.Fatal(err)
 		}
 	}
+	defer func() { _ = stmt.Close() }()
 	if err := stmt.Close(); err != nil {
 		b.Fatal(err)
 	}
 	if err := tx.Commit(); err != nil {
 		b.Fatal(err)
 	}
-	if _, err := db.Exec("PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
+	if _, err := db.ExecContext(b.Context(), "PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
 		b.Fatal(err)
 	}
 	c := catalog{Version: catalogVersion, Roots: []string{root}, Coverage: newCoverage([]string{root}), Cache: map[string]cached{}}

@@ -148,17 +148,15 @@ through the native record comparator; file sizes and copied headers supply no
 coverage evidence. One physical revision receives one latest verified retained
 entry, including an outgoing append first seen during reconciliation. Newly
 observed historical evidence uses the reconciliation observation time; an existing
-verified candidate keeps its capture time. Publication, frozen journaling,
-all-reference maintenance and retention remain fenced until the complete lifecycle
-is integrated and verified.
+verified candidate keeps its capture time. Publication, frozen journaling, all-reference maintenance and retention require
+complete supported authority; unknown identity/schema evidence remains pending.
 
 Ordinary retained source2 snapshots still supply privacy maintenance inputs when
 their stale filter version disagrees with the cached acknowledged sidecar. This
 compatibility path requires a supported ordinary sidecar and matching ownership,
 identity, capture time and acknowledged source reference; it does not certify
 complete history authority. A physical revision transition validates the complete
-remote source set before planning, and the remote history publication fence still
-applies. Recovery must not replace a valid ordinary maintenance input merely to
+remote source set before planning, and the exact predecessor/final metadata preflight still applies. Recovery must not replace a valid ordinary maintenance input merely to
 clear its stale privacy version.
 
 The collector now freezes reconciled Codex revisions into its existing pending
@@ -169,7 +167,9 @@ Preparation consumes one retained input per pass and persists its cursor with
 `Attempted=false`. Restart uses those inputs even after native files disappear;
 newer requests cannot bypass the history journal. Policy changes retain the
 journal and stages pending complete all-reference successor preparation.
-Publication and maintenance mutation fences remain in place at this checkpoint.
+Final publication verifies all references before exact predecessor preflight and
+metadata PUT, then verifies exact readback before recording cleanup, cache and
+token acknowledgement. Committed retries skip source and metadata PUT.
 
 Stage cleanup reads one bounded directory batch under collector ownership and
 protects live descriptor stages and preparation inputs. It refuses symlinks,
@@ -188,10 +188,11 @@ capture times. Source2 alternatives keep their own format and per-reference
 provenance. Preparation loads original checksum stages independently of the final
 source list, so an earlier slice cannot make a replaced original unreadable.
 Supported complete acknowledged history can enter private sequential maintenance
-before the publication fence; the complete final sidecar is derived only after
+under the frozen journal; the complete final sidecar is derived only after
 all inputs finish. Retained maintenance uses the recorded repository key rather
-than the pass's current Git lookup. Publication and request completion remain
-fenced at this preparation checkpoint.
+than the pass's current Git lookup. All references finish before metadata publication or request completion. A live
+request retains its native-read obligation after parser/privacy maintenance; frozen
+generations acknowledge their retained hook observations.
 
 A stronger-policy retry first resolves the exact remote predecessor or final
 sidecar. Unknown state retains the attempted journal. When the predecessor still
@@ -202,6 +203,10 @@ final is identity-decoded across every reference and read back again; its journa
 records a maintenance obligation before exact acknowledgement. The stricter
 successor remains owed, without re-uploading broader source or metadata bytes.
 An unavailable original input keeps that obligation and can recover only from
-exact verified retained bytes. These seams do not enable new history publication,
-generation recovery, retention or deletion; their remaining lifecycle gates and
-complete resource/crash evidence must precede fence release.
+exact verified retained bytes. Generation recovery keeps the original whole set frozen and creates an independent
+self-contained successor. Compact summaries and signatures retain source-set digest,
+revision, schemas, completeness and meaningful capture age. Retention protects all
+references and rechecks the current set before deletion; whole-prefix deletion
+removes metadata first. Privacy/parser/link-only work preserves meaningful age.
+The native/index charged ledger does not bound process RSS: retained decode/filter/
+compression/comparison scratch and staged disk are separate performance evidence.

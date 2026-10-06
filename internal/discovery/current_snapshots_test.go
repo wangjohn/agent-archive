@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -22,7 +23,8 @@ func TestStalePrivateIndexSweepPreservesLiveAndUnsafeDirectories(t *testing.T) {
 		if name == "unknown" {
 			prefix = "unrelated-"
 		}
-		dir, err := os.MkdirTemp(root, prefix+name+"-")
+		dir := filepath.Join(root, prefix+name+"-synthetic")
+		err := os.Mkdir(dir, 0700)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -89,8 +91,9 @@ func TestStalePrivateIndexSweepResumesBeyondOneDirectoryBatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Now()
-	for range 400 {
-		dir, err := os.MkdirTemp(root, privateIndexPrefix)
+	for n := range 400 {
+		dir := filepath.Join(root, privateIndexPrefix+strconv.Itoa(n))
+		err := os.Mkdir(dir, 0700)
 		if err != nil {
 			t.Fatal(err)
 		}

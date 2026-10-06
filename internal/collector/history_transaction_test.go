@@ -165,6 +165,7 @@ func (s *oversizedHistoryStore) GetLimited(ctx context.Context, key string, limi
 	}
 	return s.MemoryStore.GetLimited(ctx, key, limit)
 }
+
 func (s *oversizedHistoryStore) Get(context.Context, string) ([]byte, error) {
 	panic("unbounded history GET")
 }

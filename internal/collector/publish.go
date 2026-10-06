@@ -88,8 +88,14 @@ func (s *sessionScan) publishPending(pending state.PendingPublication) (sessionO
 		}
 	}
 	if pending.History != nil {
-		if err := s.recoverHistoryStages(pending); err != nil {
+		committed, err := s.checkFrozenHistoryMetadata(pending)
+		if err != nil {
 			return outcomeSkipped, err
+		}
+		if !committed {
+			if err := s.recoverHistoryStages(pending); err != nil {
+				return outcomeSkipped, err
+			}
 		}
 	}
 	if err := s.upload(pending); err != nil {
@@ -194,16 +200,19 @@ func (s *sessionScan) upload(pending state.PendingPublication) error {
 			return s.verifyHistoryReadback(pending)
 		}
 		if !pending.CarriesNoSource() {
-			if err := storage.PutVerifiedSource(s.ctx, s.remote, pending.SourceKey, pending.SourceSHA256, pending.SourceBytes, s.opts.Retry); err != nil {
+			if err := s.ensureHistorySource(pending.SourceKey, pending.SourceSHA256, pending.SourceBytes); err != nil {
 				return err
 			}
 		}
 		for _, stage := range pending.History.Sources {
+			if !pending.CarriesNoSource() && stage.Reference == pending.SourceReference() {
+				continue
+			}
 			data, err := s.local.ReadPendingSource(s.id(), stage)
 			if err != nil {
 				return err
 			}
-			if err := storage.PutVerifiedSource(s.ctx, s.remote, stage.Reference.Key, stage.Reference.SHA256, data, s.opts.Retry); err != nil {
+			if err := s.ensureHistorySource(stage.Reference.Key, stage.Reference.SHA256, data); err != nil {
 				return err
 			}
 		}
@@ -253,4 +262,17 @@ func (s *sessionScan) upload(pending state.PendingPublication) error {
 		return fmt.Errorf("publish metadata: %w", err)
 	}
 	return nil
+}
+
+// ensureHistorySource reuses exact immutable remote bytes on an interrupted
+// source-first attempt. Typed all-reference verification still precedes metadata.
+func (s *sessionScan) ensureHistorySource(key, sha string, data []byte) error {
+	err := storage.VerifySource(s.ctx, s.remote, key, sha, len(data), s.opts.Retry)
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, storage.ErrNotFound) && !errors.Is(err, storage.ErrChecksumMismatch) {
+		return err
+	}
+	return storage.PutVerifiedSource(s.ctx, s.remote, key, sha, data, s.opts.Retry)
 }

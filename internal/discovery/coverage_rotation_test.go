@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -64,7 +65,7 @@ func TestCoverageRotationPreservesUnfinishedAndUndelivered(t *testing.T) {
 	t.Parallel()
 	c := newCoverage([]string{"/synthetic"})
 	for i := range 256 {
-		c.request(fmt.Sprint(i))
+		c.request(strconv.Itoa(i))
 	}
 	if c.request("fresh") {
 		t.Fatal("evicted unfinished")
@@ -104,7 +105,7 @@ func TestPhysicalRolloutEnrollsAndFindsRequestedFactsBeyondCache(t *testing.T) {
 		t.Fatal("missing dependency not enrolled")
 	}
 	for n := range maxCatalog {
-		l.Observe(SourceDescriptor{Root: root, Locator: filepath.Join(root, "sessions", fmt.Sprintf("%d.jsonl", n))}, Fingerprint{}, &codexmeta.CodexIdentity{ThreadID: "other", RolloutID: fmt.Sprint(n)})
+		l.Observe(SourceDescriptor{Root: root, Locator: filepath.Join(root, "sessions", fmt.Sprintf("%d.jsonl", n))}, Fingerprint{}, &codexmeta.CodexIdentity{ThreadID: "other", RolloutID: strconv.Itoa(n)})
 	}
 	path := filepath.Join(root, "sessions", "late.jsonl")
 	thread := "22222222-2222-4222-8222-222222222222"

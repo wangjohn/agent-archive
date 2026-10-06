@@ -29,8 +29,8 @@ func TestOrdinaryPrivacyMaintenanceCannotCertifyHistoryAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	scan := newSessionScan(t.Context(), local, cloud, reg, state.Request{}, published, at.Add(time.Hour), Options{MachineID: "m"})
-	if recover, err := scan.requiresReferenceRecovery(); err != nil || recover {
-		t.Fatalf("ordinary privacy maintenance lost its retained input: %v %v", recover, err)
+	if needsRecovery, err := scan.requiresReferenceRecovery(); err != nil || needsRecovery {
+		t.Fatalf("ordinary privacy maintenance lost its retained input: %v %v", needsRecovery, err)
 	}
 	if _, _, err := published.LastPublishedMetadata(); err == nil {
 		t.Fatal("ordinary maintenance certified mismatched history authority")
@@ -39,34 +39,57 @@ func TestOrdinaryPrivacyMaintenanceCannotCertifyHistoryAuthority(t *testing.T) {
 	if err := json.Unmarshal(published.Metadata(), &original); err != nil {
 		t.Fatal(err)
 	}
-	for _, damage := range []string{"schema", "history", "native", "project", "harness", "parent", "capture", "reference", "owner"} {
-		t.Run(damage, func(t *testing.T) {
+	type damageVariant0 string
+	const (
+		damageSchema0    damageVariant0 = "schema"
+		damageHistory0   damageVariant0 = "history"
+		damageNative0    damageVariant0 = "native"
+		damageProject0   damageVariant0 = "project"
+		damageHarness0   damageVariant0 = "harness"
+		damageParent0    damageVariant0 = "parent"
+		damageCapture0   damageVariant0 = "capture"
+		damageReference0 damageVariant0 = "reference"
+		damageOwner0     damageVariant0 = "owner"
+	)
+	for _, damage := range []damageVariant0{damageSchema0, damageHistory0, damageNative0, damageProject0, damageHarness0, damageParent0, damageCapture0, damageReference0, damageOwner0} {
+		t.Run(string(damage), func(t *testing.T) {
+			t.Parallel()
+			isolated := newTestStore(t)
+			isolatedPublished, err := isolated.LoadPublishedState(reg.ArchiveSessionID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			bundle, when, _ := published.LastPublished()
+			if err := isolatedPublished.SavePublication(bundle, when, original.SourceBundle, published.Metadata()); err != nil {
+				t.Fatal(err)
+			}
+			scan := newSessionScan(t.Context(), isolated, cloud, reg, state.Request{}, isolatedPublished, at.Add(time.Hour), Options{MachineID: "m"})
 			metadata := original
 			switch damage {
-			case "schema":
+			case damageSchema0:
 				metadata.SchemaVersion = 99
-			case "history":
+			case damageHistory0:
 				metadata.History = &archive.RevisionHistory{}
-			case "native":
+			case damageNative0:
 				metadata.NativeSessionID = "another-thread"
-			case "project":
+			case damageProject0:
 				metadata.ProjectID = "another-project"
-			case "harness":
+			case damageHarness0:
 				metadata.Harness.Name = "claude-code"
-			case "parent":
+			case damageParent0:
 				metadata.ParentSessionID = "another-parent"
-			case "capture":
+			case damageCapture0:
 				metadata.CapturedAt = at.Add(time.Minute)
-			case "reference":
+			case damageReference0:
 				metadata.SourceBundle.SHA256 = "another-checksum"
-			case "owner":
+			case damageOwner0:
 				metadata.MachineID = "another-machine"
 			}
 			raw, err := json.Marshal(metadata)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := published.CacheMetadata(raw); err != nil {
+			if err := isolatedPublished.CacheMetadata(raw); err != nil {
 				t.Fatal(err)
 			}
 			if scan.ordinaryPrivacyMaintenance() {
@@ -125,8 +148,18 @@ func TestRunRecoversWholeHistoryAuthorityAfterStateLoss(t *testing.T) {
 
 func TestRunRefusesUncertainRemoteAuthorityWithoutCachingOrMutation(t *testing.T) {
 	t.Parallel()
-	for _, damage := range []string{"missing", "checksum", "wrong_thread", "future_schema", "foreign_owner", "filter_provenance", "format_provenance"} {
-		t.Run(damage, func(t *testing.T) {
+	type damageVariant1 string
+	const (
+		damageMissing1          damageVariant1 = "missing"
+		damageChecksum1         damageVariant1 = "checksum"
+		damageWrongThread1      damageVariant1 = "wrong_thread"
+		damageFutureSchema1     damageVariant1 = "future_schema"
+		damageForeignOwner1     damageVariant1 = "foreign_owner"
+		damageFilterProvenance1 damageVariant1 = "filter_provenance"
+		damageFormatProvenance1 damageVariant1 = "format_provenance"
+	)
+	for _, damage := range []damageVariant1{damageMissing1, damageChecksum1, damageWrongThread1, damageFutureSchema1, damageForeignOwner1, damageFilterProvenance1, damageFormatProvenance1} {
+		t.Run(string(damage), func(t *testing.T) {
 			t.Parallel()
 			scan, pending, cloud, previous := frozenHistoryFixture(t)
 			if err := scan.local.SaveRegistration(scan.reg); err != nil {
@@ -140,15 +173,15 @@ func TestRunRefusesUncertainRemoteAuthorityWithoutCachingOrMutation(t *testing.T
 				t.Fatal(err)
 			}
 			switch damage {
-			case "missing":
+			case damageMissing1:
 				if err := cloud.Delete(t.Context(), previous.Key); err != nil {
 					t.Fatal(err)
 				}
-			case "checksum":
+			case damageChecksum1:
 				if err := cloud.Put(t.Context(), previous.Key, []byte("corrupt")); err != nil {
 					t.Fatal(err)
 				}
-			case "wrong_thread":
+			case damageWrongThread1:
 				foreign := pending.Bundle
 				foreign.NativeSessionID = "33333333-3333-4333-8333-333333333333"
 				foreign.Capture.CapturedAt = metadata.History.Preserved[0].CapturedAt
@@ -164,14 +197,14 @@ func TestRunRefusesUncertainRemoteAuthorityWithoutCachingOrMutation(t *testing.T
 					t.Fatal(err)
 				}
 				metadata.History.Preserved[0].Source = archive.SourceReference{Key: key, SHA256: packed.SHA256, CompressedBytes: len(packed.Bytes)}
-			case "future_schema":
+			case damageFutureSchema1:
 				metadata.SchemaVersion = 99
 				metadata.History = nil
-			case "foreign_owner":
+			case damageForeignOwner1:
 				metadata.MachineID = "another"
-			case "filter_provenance":
+			case damageFilterProvenance1:
 				metadata.History.Preserved[0].FilterVersion = "different"
-			case "format_provenance":
+			case damageFormatProvenance1:
 				metadata.History.Preserved[0].SourceSchemaVersion = 3
 			}
 			raw, err := json.Marshal(metadata)

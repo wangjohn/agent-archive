@@ -117,16 +117,37 @@ type ageClamp struct {
 
 // ageClampFor returns the clamp when it was recorded for bundle's capture.
 func (p publishedState) ageClampFor(bundle archive.SourceBundle) *ageClamp {
-	if p.AgeFrom != nil && p.AgeFrom.For.Equal(bundle.Capture.CapturedAt) {
+	if p.AgeFrom != nil && p.AgeFrom.For.Equal(p.captureAge(bundle, p.MetadataBytes)) {
 		return p.AgeFrom
 	}
 	return nil
+}
+
+// captureAge keeps an unacknowledged meaningful candidate and the complete
+// acknowledged manifest independent. Neither can age out the other's evidence.
+func (p publishedState) captureAge(bundle archive.SourceBundle, raw []byte) time.Time {
+	at := bundle.Capture.CapturedAt
+	var m archive.Metadata
+	if json.Unmarshal(raw, &m) == nil && m.SessionID == bundle.ArchiveSessionID && m.NativeSessionID == bundle.NativeSessionID && m.ProjectID == bundle.ProjectID && m.Harness.Name == bundle.Capture.Harness.Name {
+		if retained, err := m.MeaningfulCapturedAt(); err == nil && retained.After(at) {
+			at = retained
+		}
+	}
+	return at
 }
 
 // PublishedSummary is what a session's published state says about the
 // session without its source bundles: enough for retention, for a subagent
 // looking for its link in its parent, and for status.
 type PublishedSummary struct {
+	// Complete source-set facts are derived only when acknowledged state changes.
+	SourceSetDigest       string    `json:"source_set_digest,omitempty"`
+	CurrentRevision       string    `json:"current_revision,omitempty"`
+	SourceSchemaVersion   int       `json:"source_schema_version,omitempty"`
+	MetadataSchemaVersion int       `json:"metadata_schema_version,omitempty"`
+	SourceSetComplete     bool      `json:"source_set_complete,omitempty"`
+	MeaningfulCapturedAt  time.Time `json:"meaningful_captured_at,omitzero"`
+
 	// Harness is the cached bundle's harness: the one its objects are under.
 	Harness string `json:"harness,omitempty"`
 	// Status is the cached bundle's status, and BlockedReason why it is
@@ -152,6 +173,9 @@ func (s PublishedSummary) RetentionAge() time.Time {
 	if !s.AgeFrom.IsZero() {
 		return s.AgeFrom
 	}
+	if !s.MeaningfulCapturedAt.IsZero() {
+		return s.MeaningfulCapturedAt
+	}
 	return s.CapturedAt
 }
 
@@ -173,9 +197,26 @@ func (p publishedState) summary() PublishedSummary {
 			linked = append(linked, link.SessionID)
 		}
 	}
+	digest, revision := "", ""
+	complete := false
+	sourceSchema, metadataSchema := 0, 0
+	var m archive.Metadata
+	if json.Unmarshal(p.MetadataBytes, &m) == nil && m.SessionID == p.Bundle.ArchiveSessionID && m.NativeSessionID == p.Bundle.NativeSessionID && m.ProjectID == p.Bundle.ProjectID && m.Harness.Name == p.Bundle.Capture.Harness.Name {
+		if observedDigest, err := m.SourceSetDigest(); err == nil {
+			digest, complete = observedDigest, true
+			acknowledged, _, _ := p.resolveLastPublished()
+			sourceSchema, metadataSchema = acknowledged.SchemaVersion, m.SchemaVersion
+			if m.History != nil {
+				revision = m.History.CurrentRevision
+			}
+		}
+	}
 	return PublishedSummary{
-		Harness: p.Bundle.Capture.Harness.Name,
-		Status:  p.Status, BlockedReason: p.BlockedReason, CapturedAt: p.Bundle.Capture.CapturedAt, AgeFrom: ageFrom,
+		SourceSetDigest: digest, CurrentRevision: revision,
+		SourceSetComplete: complete, SourceSchemaVersion: sourceSchema, MetadataSchemaVersion: metadataSchema,
+		MeaningfulCapturedAt: p.captureAge(p.Bundle, p.MetadataBytes),
+		Harness:              p.Bundle.Capture.Harness.Name,
+		Status:               p.Status, BlockedReason: p.BlockedReason, CapturedAt: p.Bundle.Capture.CapturedAt, AgeFrom: ageFrom,
 		Published: published, LastPublishedAt: lastPublishedAt, LinkedPublished: linked,
 	}
 }
@@ -304,7 +345,11 @@ func (p publishedState) next(bundle archive.SourceBundle, publishedAt time.Time,
 	if len(metadata) == 0 {
 		metadata = p.MetadataBytes
 	}
-	return publishedState{Bundle: bundle, PublishedAt: publishedAt, Status: status, BlockedReason: reason, PreBlockStatus: preBlock, DeferredHookEvidence: held, LastPublished: last, MetadataBytes: metadata, AgeFrom: p.ageClampFor(bundle)}
+	next := publishedState{Bundle: bundle, PublishedAt: publishedAt, Status: status, BlockedReason: reason, PreBlockStatus: preBlock, DeferredHookEvidence: held, LastPublished: last, MetadataBytes: metadata}
+	if p.AgeFrom != nil && p.AgeFrom.For.Equal(next.captureAge(bundle, metadata)) {
+		next.AgeFrom = p.AgeFrom
+	}
+	return next
 }
 
 // Published is one session's published state, read from published/<id>.json
@@ -379,7 +424,7 @@ func (p *Published) ClampAgeFrom(at time.Time) error {
 	if !p.found {
 		return fmt.Errorf("read published state %q: %w", p.id, os.ErrNotExist)
 	}
-	capturedAt := p.state.Bundle.Capture.CapturedAt
+	capturedAt := p.state.captureAge(p.state.Bundle, p.state.MetadataBytes)
 	if current := p.state.ageClampFor(p.state.Bundle); (current != nil && !at.Before(current.At)) || !at.Before(capturedAt) {
 		return nil
 	}

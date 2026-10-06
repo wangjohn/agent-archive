@@ -10,6 +10,7 @@ func directoryByteBound(d directory) int64 { return 6*int64(len(d.Root)+len(d.Pa
 func (candidate coverageCandidate) byteBound() int64 {
 	return 6*int64(len(candidate.Source.Root)+len(candidate.Source.Locator)+len(candidate.Source.StableKey)) + identityByteBound(candidate.Identity) + 512
 }
+
 func (r coverageRequest) byteBound() int64 {
 	size := int64(512)
 	for path, candidate := range r.Candidates {
@@ -17,6 +18,7 @@ func (r coverageRequest) byteBound() int64 {
 	}
 	return size
 }
+
 func (c *coverageInventory) byteBound() int64 {
 	if c.factBound != 0 {
 		return c.factBound

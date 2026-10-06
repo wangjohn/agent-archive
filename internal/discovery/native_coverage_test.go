@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -25,7 +26,7 @@ func collectCoverageDirectory(t *testing.T, c *coverageInventory, root, path str
 			t.Fatal("missing all-entry digest")
 		}
 		if validation {
-			c.validateBatch(d, *batch.coverage, batch.Continuation, batch.Complete)
+			c.validateBatch(d, *batch.coverage, batch.Complete)
 		} else {
 			c.recordBatch(d, *batch.coverage, batch.Continuation, batch.Complete, true)
 		}
@@ -191,7 +192,7 @@ func TestRequestedCoverageKeepsMatchesBeyondPrunableObservationCache(t *testing.
 	lookup.coverage.request("wanted")
 	for i := range maxCatalog {
 		path := filepath.Join(root, "sessions", fmt.Sprintf("%d.jsonl", i))
-		lookup.Observe(SourceDescriptor{Kind: "", Root: root, Locator: path}, Fingerprint{}, &codexmeta.CodexIdentity{ThreadID: "other", RolloutID: fmt.Sprint(i)})
+		lookup.Observe(SourceDescriptor{Kind: "", Root: root, Locator: path}, Fingerprint{}, &codexmeta.CodexIdentity{ThreadID: "other", RolloutID: strconv.Itoa(i)})
 	}
 	path := filepath.Join(root, "sessions", "late.jsonl")
 	lookup.Observe(SourceDescriptor{Kind: "", Root: root, Locator: path}, Fingerprint{}, &codexmeta.CodexIdentity{ThreadID: "wanted", RolloutID: "physical"})
@@ -205,7 +206,7 @@ func TestCompleteCoverageRefusesMissingOrInconsistentEpochProof(t *testing.T) {
 	t.Parallel()
 	c := newCoverage([]string{"/synthetic"})
 	c.request("thread")
-	c.Phase = "complete"
+	c.Phase = coverageComplete
 	request := c.Requests["thread"]
 	request.CompleteEpoch = c.Epoch
 	c.Requests["thread"] = request

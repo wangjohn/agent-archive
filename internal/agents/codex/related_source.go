@@ -23,6 +23,7 @@ import (
 )
 
 const relatedRawBudget int64 = 128 << 20
+
 const sourceHeaderCharge int64 = 128 << 10
 
 // Describe retains ordinary append protection; revision publication is separately fenced.
@@ -449,6 +450,9 @@ func (p *relatedSourcePass) Signature(ctx context.Context, ref agentapi.SourceRe
 		}
 		return p.observation(ctx, selection, []physicalSpan{{file: selection.leaf, end: selection.leaf.boundary}})
 	}
+	if p.env.RequireConfinedHistory && p.env.Policy.Root == "" {
+		return agentapi.SourceObservation{}, sourceFailure(agentapi.Unavailable, "related history requires admitted confined source home")
+	}
 	spans, err := p.graph(ctx, selection.leaf)
 	if err != nil {
 		return agentapi.SourceObservation{}, err
@@ -528,10 +532,10 @@ func (p *relatedSourcePass) Read(ctx context.Context, ref agentapi.SourceRef, li
 		}
 		return fail(err)
 	}
-	return p.readSelection(ctx, ref, limits, selection)
+	return p.readSelection(ctx, limits, selection)
 }
 
-func (p *relatedSourcePass) readSelection(ctx context.Context, ref agentapi.SourceRef, limits agentapi.ReadLimits, selection sourceSelection) (agentapi.SourceSnapshot, error) {
+func (p *relatedSourcePass) readSelection(ctx context.Context, limits agentapi.ReadLimits, selection sourceSelection) (agentapi.SourceSnapshot, error) {
 	fail := func(err error) (agentapi.SourceSnapshot, error) { return nil, errors.Join(err, p.evict()) }
 	if !hasRelated(selection.leaf) {
 		snapshot, err := p.ordinary(ctx, limits, selection)
@@ -547,6 +551,9 @@ func (p *relatedSourcePass) readSelection(ctx context.Context, ref agentapi.Sour
 }
 
 func (p *relatedSourcePass) readHistorySelection(ctx context.Context, limits agentapi.ReadLimits, selection sourceSelection) (agentapi.SourceSnapshot, error) {
+	if p.env.RequireConfinedHistory && p.env.Policy.Root == "" {
+		return nil, sourceFailure(agentapi.Unavailable, "related history requires admitted confined source home")
+	}
 	fail := func(err error) (agentapi.SourceSnapshot, error) { return nil, errors.Join(err, p.evict()) }
 	spans, err := p.graph(ctx, selection.leaf)
 	if err != nil {
@@ -980,6 +987,9 @@ func (p *relatedSourcePass) ValidateSourceAdmission(ctx context.Context, ref age
 	if selection.legacyOrdinary && (admission.Binding != nil || !admission.NativeCreatedAt.IsZero()) {
 		return sourceFailure(agentapi.Unavailable, "legacy compatibility requires unbound admission")
 	}
+	if p.env.RequireConfinedHistory && p.env.Policy.Root == "" && hasRelated(selection.leaf) {
+		return sourceFailure(agentapi.Unavailable, "related admission requires confined source home")
+	}
 	spans, err := p.graph(ctx, selection.leaf)
 	if err != nil {
 		return err
@@ -1091,11 +1101,11 @@ func (s *historySnapshot) validateSpan(ctx context.Context, span *physicalSpan) 
 		}
 		return result, ctx.Err()
 	}
-	facts := prefixValidation{startOrdinal: span.startOrdinal, endOrdinal: span.startOrdinal}
-	facts.taskOwned = span.file.identity.ThreadID == s.selection.thread
+	boundary := uint64(0)
 	if s.history.OwnStart != nil {
-		facts.taskBoundary = *s.history.OwnStart
+		boundary = *s.history.OwnStart
 	}
+	facts := prefixValidation{startOrdinal: span.startOrdinal, endOrdinal: span.startOrdinal, taskOwned: span.file.identity.ThreadID == s.selection.thread, taskBoundary: boundary}
 
 	h := sha256.New()
 	scanner := bufio.NewScanner(io.TeeReader(io.NewSectionReader(span.reader(), 0, span.end), h))
@@ -1157,13 +1167,14 @@ func (p *relatedSourcePass) ReadRevision(ctx context.Context, ref agentapi.Sourc
 	if admission.NativeID == "" || leaf.identity.ThreadID != admission.NativeID {
 		return nil, sourceFailure(agentapi.Unsafe, "historical revision belongs to another thread")
 	}
-	selection := sourceSelection{leaf: leaf, thread: admission.NativeID}
+	var set agentapi.CodexRolloutSet
 	if p.env.CodexRollouts != nil {
-		selection.set, err = p.env.CodexRollouts.Thread(ctx, admission.NativeID)
+		set, err = p.env.CodexRollouts.Thread(ctx, admission.NativeID)
 		if err != nil {
 			return nil, err
 		}
 	}
+	selection := sourceSelection{leaf: leaf, thread: admission.NativeID, set: set}
 	snapshot, err := p.readHistorySelection(ctx, limits, selection)
 	if err != nil {
 		return nil, err
@@ -1450,6 +1461,7 @@ func (p *relatedSourcePass) reserve(bytes int64) bool {
 	p.bytes += bytes
 	return true
 }
+
 func (p *relatedSourcePass) release(bytes int64) { p.env.ReadBudget.Release(bytes); p.bytes -= bytes }
 
 func (p *relatedSourcePass) lookupThread(ctx context.Context, id string) (agentapi.CodexRolloutSet, error) {

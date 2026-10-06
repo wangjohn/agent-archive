@@ -165,7 +165,18 @@ func (s *sessionScan) prepareHistoryInput(p *state.PendingPublication, metadata 
 	if err != nil {
 		return err
 	}
-	if bundle.Capture.FilterVersion != archive.FilterVersion || bundle.Capture.AdapterVersion != adapter.Version() || !sourceEvidenceWithinPolicy(bundle.SupplementalEvidence, s.opts.skillEvidence()) {
+	privacyChanged := bundle.Capture.FilterVersion != archive.FilterVersion || bundle.Capture.AdapterVersion != adapter.Version() || !sourceEvidenceWithinPolicy(bundle.SupplementalEvidence, s.opts.skillEvidence())
+	observationsChanged := false
+	if input.RevisionID == metadata.History.CurrentRevision {
+		observations := mergeSupplementalEvidence(bundle.SupplementalEvidence, p.Bundle.SupplementalEvidence)
+		same, err := jsonEncodingsEqual(observations, bundle.SupplementalEvidence)
+		if err != nil {
+			return err
+		}
+		observationsChanged = !same
+		bundle.SupplementalEvidence = observations
+	}
+	if observationsChanged || bundle.Capture.FilterVersion != archive.FilterVersion || bundle.Capture.AdapterVersion != adapter.Version() || !sourceEvidenceWithinPolicy(bundle.SupplementalEvidence, s.opts.skillEvidence()) {
 		bundle.SupplementalEvidence = limitSkillEvidence(bundle.SupplementalEvidence, s.opts.skillEvidence())
 		filtered, err := refilterBundle(s.ctx, s.reg, adapter, bundle)
 		if err != nil {
@@ -192,7 +203,7 @@ func (s *sessionScan) prepareHistoryInput(p *state.PendingPublication, metadata 
 		}
 		if next != input.Reference {
 			p.History.Sources = append(p.History.Sources, stage)
-			p.History.Retired = append(p.History.Retired, state.RetiredSource{Reference: input.Reference, PrivacySensitive: true})
+			p.History.Retired = append(p.History.Retired, state.RetiredSource{Reference: input.Reference, PrivacySensitive: privacyChanged})
 		}
 	}
 	return nil

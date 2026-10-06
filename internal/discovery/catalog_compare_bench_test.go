@@ -55,7 +55,7 @@ func BenchmarkCatalogCoverageComparison(b *testing.B) {
 				passes++
 				done := !h.Pending
 				if shared {
-					done = l.coverage.Phase == "complete" && l.coverage.Requests[wanted].CompleteEpoch == l.coverage.Epoch
+					done = l.coverage.Phase == coverageComplete && l.coverage.Requests[wanted].CompleteEpoch == l.coverage.Epoch
 					dirty := l.coverageDirty
 					if err := l.Close(); err != nil {
 						b.Fatal(err)

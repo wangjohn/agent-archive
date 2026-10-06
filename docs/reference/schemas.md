@@ -87,7 +87,7 @@ inheriting the active revision’s filter version. Readers validate every pointe
 before selecting one. The source-set digest includes active and preserved capture
 times and revision provenance, invalidating earlier receipts when these change. Ordinary sources and sidecars continue using
 schemas 2 and 1. This reader rollout keeps history publication, recovery,
-refilter mutation and deletion fenced until the matching revision lifecycle
+refilter mutation and deletion protected by the matching revision lifecycle
 and writer protection are installed.
 
 See the [reader contract](../../dev/specs/codex-history.md) for identity,

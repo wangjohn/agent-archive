@@ -16,11 +16,13 @@ import (
 )
 
 const privateIndexPrefix = "snapshot-"
+
 const privateIndexLock = "in-use.lock"
 
 func indexSnapshotRoot(temp string) string {
 	return filepath.Join(temp, "agent-archive-codex-index-"+strconv.Itoa(os.Getuid()))
 }
+
 func privateOwnedDirectory(path string) bool {
 	info, err := os.Lstat(path)
 	if err != nil || !info.IsDir() || info.Mode().Perm() != 0700 {
@@ -29,6 +31,7 @@ func privateOwnedDirectory(path string) bool {
 	stat, ok := info.Sys().(*syscall.Stat_t)
 	return ok && int64(stat.Uid) == int64(os.Getuid())
 }
+
 func prepareIndexSnapshotRoot() (string, error) {
 	root := indexSnapshotRoot(os.TempDir())
 	if err := os.Mkdir(root, 0700); err != nil && !errors.Is(err, os.ErrExist) {
@@ -39,6 +42,7 @@ func prepareIndexSnapshotRoot() (string, error) {
 	}
 	return root, nil
 }
+
 func lockPrivateIndex(dir string) (*os.File, error) {
 	path := filepath.Join(dir, privateIndexLock+".new")
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0600)

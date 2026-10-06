@@ -327,15 +327,16 @@ func verifyPublicationsWithin(ctx context.Context, home string, cfg config.Confi
 		}
 		summary.Attempted++
 		sha, err := verifyPublication(ctx, cfg, remote, c.reg, published)
-		record := verificationEvidence{ConfigurationID: c.cfgID, PublishedAt: c.at, SourceSHA256: sha, Attempts: c.prior.Attempts + 1}
+		setDigest, metadataDigest := "", ""
 		if err == nil {
 			var m archive.Metadata
 			if decodeErr := json.Unmarshal(published.Metadata(), &m); decodeErr == nil {
-				record.SourceSetDigest, _ = m.SourceSetDigest()
+				setDigest, _ = m.SourceSetDigest()
 				raw, _ := json.Marshal(m)
-				record.MetadataDigest = storage.SHA256Hex(raw)
+				metadataDigest = storage.SHA256Hex(raw)
 			}
 		}
+		record := verificationEvidence{ConfigurationID: c.cfgID, PublishedAt: c.at, SourceSHA256: sha, Attempts: c.prior.Attempts + 1, SourceSetDigest: setDigest, MetadataDigest: metadataDigest}
 		switch {
 		case err == nil:
 			summary.Verified++

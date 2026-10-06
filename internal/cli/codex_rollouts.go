@@ -12,7 +12,16 @@ import (
 // passCodexRollouts owns one lookup for discovery and collector sources. Known
 // native homes describe where facts may be read; creation permission continues
 // to come independently from the actual original facts and current config.
-func passCodexRollouts(ctx context.Context, store *state.Store, cfg config.Config, env Env) (*discovery.CodexRolloutLookup, error) {
+func passCodexRollouts(ctx context.Context, store *state.Store, cfg config.Config, env Env) (*discovery.CodexRolloutLookup, []string, error) {
+	homes, err := trustedCodexReadHomes(cfg, env)
+	if err != nil {
+		return nil, nil, err
+	}
+	lookup, err := discovery.NewCodexRolloutLookup(ctx, store, homes)
+	return lookup, homes, err
+}
+
+func trustedCodexReadHomes(cfg config.Config, env Env) ([]string, error) {
 	userHome, err := env.userHomeDir()
 	if err != nil {
 		return nil, err
@@ -25,5 +34,5 @@ func passCodexRollouts(ctx context.Context, store *state.Store, cfg config.Confi
 			}
 		}
 	}
-	return discovery.NewCodexRolloutLookup(ctx, store, homes)
+	return homes, nil
 }

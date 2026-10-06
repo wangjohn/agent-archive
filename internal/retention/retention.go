@@ -436,8 +436,18 @@ func (s *sweeper) remote(reg archive.SessionRegistration, summary state.Publishe
 	// failed. Remote metadata for the capture already cached says nothing
 	// new: its time is the cached one, clamped or not.
 	capturedAt := ageFrom
-	if remoteErr == nil && metadata.CapturedAt.After(capturedAt) && !metadata.CapturedAt.Equal(summary.CapturedAt) {
-		capturedAt = metadata.CapturedAt
+	if remoteErr == nil {
+		remoteAge, err := metadata.MeaningfulCapturedAt()
+		if err != nil {
+			return err
+		}
+		cachedAge := summary.MeaningfulCapturedAt
+		if cachedAge.IsZero() {
+			cachedAge = summary.CapturedAt
+		}
+		if remoteAge.After(capturedAt) && !remoteAge.Equal(cachedAge) {
+			capturedAt = remoteAge
+		}
 	}
 
 	// locallyExpired already carries SessionMaxAge, the cached capture time,
@@ -478,7 +488,12 @@ func (s *sweeper) currentMetadata(reg archive.SessionRegistration) (archive.Meta
 	if err != nil {
 		return archive.Metadata{}, err
 	}
-	data, err := s.store.Get(s.ctx, metadataKey)
+	var data []byte
+	if reg.Harness.Name == "codex" {
+		data, err = boundedHistoryMetadata(s.ctx, s.store, metadataKey)
+	} else {
+		data, err = s.store.Get(s.ctx, metadataKey)
+	}
 	if errors.Is(err, storage.ErrNotFound) {
 		return archive.Metadata{}, err
 	}
@@ -495,8 +510,11 @@ func (s *sweeper) currentMetadata(reg archive.SessionRegistration) (archive.Meta
 	if metadata.SessionID != reg.ArchiveSessionID || metadata.Harness.Name != reg.Harness.Name || !strings.HasPrefix(metadata.SourceBundle.Key, fmt.Sprintf("sessions/%s/%s/", reg.Harness.Name, reg.ArchiveSessionID)) {
 		return archive.Metadata{}, fmt.Errorf("current metadata belongs to another session")
 	}
-	if err := archive.CheckHistoryMutation(archive.SourceBundle{}, metadata); err != nil {
+	if _, err := metadata.SourceReferences(); err != nil {
 		return archive.Metadata{}, err
+	}
+	if metadata.History != nil && (metadata.NativeSessionID != reg.NativeSessionID || metadata.ProjectID != reg.ProjectID || metadata.CapturedAt.IsZero()) {
+		return archive.Metadata{}, errors.New("complete cleanup history authority required")
 	}
 	return metadata, nil
 }
@@ -557,6 +575,19 @@ func (s *sweeper) deleteSuperseded(reg archive.SessionRegistration, superseded [
 			if !s.opts.PrivacyVerified(reg, fresh) {
 				continue
 			}
+		}
+		// Recheck after receipt callbacks and immediately before deletion. A
+		// reactivated ordinary reference is protected just like a privacy ref.
+		fresh, err := s.currentMetadata(reg)
+		if err != nil {
+			return err
+		}
+		freshDigest, err := fresh.SourceSetDigest()
+		if err != nil {
+			return err
+		}
+		if freshDigest != currentDigest {
+			return errors.New("current metadata changed during source cleanup")
 		}
 		if !s.clockAllowsDeletion() {
 			return nil
