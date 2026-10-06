@@ -424,11 +424,11 @@
       "properties": {
         "rollout_id": {
           "type": "string",
-          "pattern": "^[A-Za-z0-9_.-]{1,256}$"
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
         },
         "thread_id": {
           "type": "string",
-          "pattern": "^[A-Za-z0-9_.-]{1,256}$"
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
         },
         "first_record": {
           "type": "integer",
@@ -463,11 +463,11 @@
       "properties": {
         "active_rollout_id": {
           "type": "string",
-          "pattern": "^[A-Za-z0-9_.-]{1,256}$"
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
         },
         "thread_id": {
           "type": "string",
-          "pattern": "^[A-Za-z0-9_.-]{1,256}$"
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
         },
         "own_start_ordinal": {
           "type": "integer",
