@@ -81,7 +81,11 @@ are initialize, initialized and thread/read with includeTurns false; no thread
 start/resume, turns, rename, tools or inventory requests are sent. The returned
 home, native ID and pinned 0.159.2 protocol/retained producer are checked. Missing
 optional names and unknown versions are unavailable; compatible null is explicit
-absence. Unknown config/SQLite placement and related histories remain excluded.
+absence. Known current environment or local configuration overrides and related
+histories are refused. Managed/system configuration and historical SQLite
+placement remain unverified: the child's `CODEX_SQLITE_HOME` selects the home
+only as a fallback, and Codex's merged `sqlite_home` setting can override it.
+Startup may therefore touch configured native storage beyond that fallback.
 
 Opt-in accepts native startup side effects: disposable 0.159.2 probes observed
 database/state and system-skill writes even with metadata-only requests. One

@@ -17,11 +17,19 @@ func (e Env) labelProviders(cfg config.Config) agentapi.LabelsLookup {
 	if cfg.CodexNameLookup != config.CodexNameLookupNative {
 		return e.agentRegistry()
 	}
+	return e.agentRegistry().WithCodexLabelHost(e.codexLabelHostFactory())
+}
+
+// runPass composes a fresh factory for one synchronous collector pass.
+func (e Env) codexLabelHostFactory() agentapi.LabelHostFactory {
 	host := e.CodexLabelHost
 	if host == nil {
-		host = e.startCodexLabelHost
+		budget := &labelStdoutBudget{remaining: 1 << 20}
+		host = func(ctx context.Context, home string) (agentapi.LabelTransport, error) {
+			return e.startCodexLabelHost(ctx, home, budget)
+		}
 	}
-	return e.agentRegistry().WithCodexLabelHost(host)
+	return host
 }
 
 // Carry native user settings and authentication through HOME/config, without
@@ -42,7 +50,10 @@ func (e Env) codexLabelEnvironment(home string) []string {
 	return out
 }
 
-func (e Env) startCodexLabelHost(ctx context.Context, home string) (agentapi.LabelTransport, error) {
+func (e Env) startCodexLabelHost(ctx context.Context, home string, budget *labelStdoutBudget) (agentapi.LabelTransport, error) {
+	if budget == nil {
+		budget = &labelStdoutBudget{remaining: 1 << 20}
+	}
 	path, err := e.labelExecutable(ctx)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -65,7 +76,7 @@ func (e Env) startCodexLabelHost(ctx context.Context, home string) (agentapi.Lab
 		_ = input.Close()
 		return nil, agentapi.ErrLabelHostUnavailable
 	}
-	h := &codexLabelHost{cmd: cmd, input: input, output: output, lines: make(chan labelLine, 1), done: make(chan struct{}), waited: make(chan struct{})}
+	h := &codexLabelHost{cmd: cmd, input: input, output: output, stdoutBudget: budget, lines: make(chan labelLine, 1), done: make(chan struct{}), waited: make(chan struct{})}
 	cmd.Stderr = &labelDiscard{limit: 16 << 10, exceeded: func() { _ = cmd.Process.Kill() }}
 	if cmd.Start() != nil {
 		_ = input.Close()
@@ -83,19 +94,20 @@ type labelLine struct {
 }
 
 type codexLabelHost struct {
-	cmd    *exec.Cmd
-	input  io.WriteCloser
-	output io.ReadCloser
-	lines  chan labelLine
-	done   chan struct{}
-	waited chan struct{}
-	once   sync.Once
-	write  sync.Mutex
+	cmd          *exec.Cmd
+	input        io.WriteCloser
+	output       io.ReadCloser
+	stdoutBudget *labelStdoutBudget
+	lines        chan labelLine
+	done         chan struct{}
+	waited       chan struct{}
+	once         sync.Once
+	write        sync.Mutex
 }
 
 func (h *codexLabelHost) readLines() {
 	defer close(h.lines)
-	reader := bufio.NewReaderSize(io.LimitReader(h.output, (1<<20)+1), (256<<10)+1)
+	reader := bufio.NewReaderSize(io.LimitReader(labelBudgetReader{reader: h.output, budget: h.stdoutBudget}, (1<<20)+1), (256<<10)+1)
 	for {
 		line, err := reader.ReadSlice('\n')
 		if len(line) > 256<<10 {
@@ -117,6 +129,33 @@ func (h *codexLabelHost) readLines() {
 			return
 		}
 	}
+}
+
+// Reserve before pipe reads so concurrent read-ahead never exceeds the pass cap.
+// Small reservations keep idle hosts from holding a full line's allowance.
+type labelStdoutBudget struct {
+	mu        sync.Mutex
+	remaining int
+}
+
+type labelBudgetReader struct {
+	reader io.Reader
+	budget *labelStdoutBudget
+}
+
+func (r labelBudgetReader) Read(p []byte) (int, error) {
+	r.budget.mu.Lock()
+	allowance := min(len(p), r.budget.remaining, 4096)
+	r.budget.remaining -= allowance
+	r.budget.mu.Unlock()
+	if allowance == 0 {
+		return 0, agentapi.ErrLabelBudgetExceeded
+	}
+	n, err := r.reader.Read(p[:allowance])
+	r.budget.mu.Lock()
+	r.budget.remaining += allowance - n
+	r.budget.mu.Unlock()
+	return n, err
 }
 
 func (h *codexLabelHost) ReadLine(ctx context.Context) ([]byte, error) {

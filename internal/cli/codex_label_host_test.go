@@ -4,16 +4,127 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 )
+
+type countedLabelOutput struct {
+	io.Reader
+	read *atomic.Int64
+}
+
+func (r countedLabelOutput) Read(p []byte) (int, error) {
+	n, err := r.Reader.Read(p)
+	r.read.Add(int64(n))
+	return n, err
+}
+
+// Unsolicited lines left behind a successful response still spend the pass cap.
+func TestCodexNamingBoundsReadAheadAcrossHomes(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		budget := &labelStdoutBudget{remaining: 1 << 20}
+		var read atomic.Int64
+		var hosts []*codexLabelHost
+		for range 8 {
+			output := "{}\n" + strings.Repeat(strings.Repeat("x", 120<<10)+"\n", 4)
+			h := &codexLabelHost{output: io.NopCloser(countedLabelOutput{strings.NewReader(output), &read}), stdoutBudget: budget, lines: make(chan labelLine, 1), done: make(chan struct{})}
+			hosts = append(hosts, h)
+			go h.readLines()
+			_, _ = h.ReadLine(context.Background())
+			synctest.Wait()
+		}
+		if n := read.Load(); n > 1<<20 {
+			t.Errorf("unsolicited stdout read across homes = %d, limit %d", n, 1<<20)
+		}
+		for _, h := range hosts {
+			close(h.done)
+			_ = h.output.Close()
+		}
+		synctest.Wait()
+	})
+}
+
+func TestCodexNamingFreshPassRestoresStdoutAllowance(t *testing.T) {
+	env, home := labelHostScript(t, "read line\nprintf '%s\\n' '{\"id\":1,\"result\":{}}'\nread line\n")
+	flood := filepath.Join(home, "flood")
+	notification := `{"method":"progress","params":"` + strings.Repeat("x", 64<<10) + `"}` + "\n"
+	if err := os.WriteFile(flood, []byte("#!/bin/sh\ncat <<'FLOOD'\n"+strings.Repeat(notification, 17)+"FLOOD\nread line\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	validPath, _ := env.LookPath("codex")
+	lookups := 0
+	env.LookPath = func(string) (string, error) {
+		lookups++
+		if lookups == 1 {
+			return flood, nil
+		}
+		return validPath, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	for pass := range 2 {
+		// labelProviders composes one of these factories for each collector Run.
+		host, err := env.codexLabelHostFactory()(ctx, home)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if pass == 0 {
+			readBytes := 0
+			for {
+				line, err := host.ReadLine(ctx)
+				if err != nil {
+					break
+				}
+				readBytes += len(line)
+			}
+			if ctx.Err() != nil || readBytes < 900<<10 {
+				t.Fatalf("first factory did not exhaust actual stdout: %d bytes, %v", readBytes, ctx.Err())
+			}
+		} else {
+			if err := host.WriteLine(ctx, []byte(`{"id":1}`)); err != nil {
+				t.Fatal(err)
+			}
+			line, err := host.ReadLine(ctx)
+			if err != nil || string(line) != `{"id":1,"result":{}}` {
+				t.Fatalf("fresh pass retained exhausted allowance: %q %v", line, err)
+			}
+		}
+		if err := host.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestCodexNamingExhaustedStdoutClosesAndReapsHost(t *testing.T) {
+	env, home := labelHostScript(t, "printf '123456789\\n'\nexec /bin/sleep 30\n")
+	host, err := env.startCodexLabelHost(context.Background(), home, &labelStdoutBudget{remaining: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if _, err := host.ReadLine(ctx); err == nil {
+		t.Fatal("exhausted stdout accepted a partial line")
+	}
+	if err := host.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-host.(*codexLabelHost).waited:
+	default:
+		t.Fatal("exhausted host was not reaped")
+	}
+}
 
 func TestFilesNamingNeverStartsHost(t *testing.T) {
 	for _, mode := range []config.CodexNameLookup{"", config.CodexNameLookupFiles} {
@@ -60,7 +171,7 @@ func TestCodexNamingHostMissingExecutableIsUnavailable(t *testing.T) {
 		}
 		return "", errors.New("private path")
 	}
-	_, err := env.startCodexLabelHost(context.Background(), t.TempDir())
+	_, err := env.startCodexLabelHost(context.Background(), t.TempDir(), nil)
 	if !errors.Is(err, agentapi.ErrLabelHostMissing) || strings.Contains(err.Error(), "private") {
 		t.Fatalf("error: %v", err)
 	}
@@ -81,7 +192,7 @@ func labelHostScript(t *testing.T, body string) (Env, string) {
 func TestCodexNamingProcessWireAndReap(t *testing.T) {
 	env, home := labelHostScript(t, "read line\nprintf '%s\\n' '{\"id\":1,\"result\":{}}'\nread line\n")
 	ctx := context.Background()
-	transport, err := env.startCodexLabelHost(ctx, home)
+	transport, err := env.startCodexLabelHost(ctx, home, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +215,7 @@ func TestCodexNamingProcessWireAndReap(t *testing.T) {
 
 func TestCodexNamingCancellationKillsAndReaps(t *testing.T) {
 	env, home := labelHostScript(t, "exec /bin/sleep 30\n")
-	transport, err := env.startCodexLabelHost(context.Background(), home)
+	transport, err := env.startCodexLabelHost(context.Background(), home, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +238,7 @@ func TestCodexNamingStreamRejectsPartialAndOversizedLines(t *testing.T) {
 	for _, body := range []string{"printf '{'\n", "/bin/dd if=/dev/zero bs=262145 count=1 2>/dev/null\n"} {
 		env, home := labelHostScript(t, body)
 		ctx := context.Background()
-		h, err := env.startCodexLabelHost(ctx, home)
+		h, err := env.startCodexLabelHost(ctx, home, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
