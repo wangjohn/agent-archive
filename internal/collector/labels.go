@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"maps"
 	"os"
 	"sort"
 	"time"
@@ -324,9 +325,7 @@ func lookupLabelRequests(ctx context.Context, providers map[string]agentapi.Labe
 		if ctx.Err() != nil {
 			break
 		}
-		for id, label := range providers[name].LookupLabels(ctx, env, groups[name]) {
-			results[id] = label
-		}
+		maps.Copy(results, providers[name].LookupLabels(ctx, env, groups[name]))
 	}
 	return results
 }
