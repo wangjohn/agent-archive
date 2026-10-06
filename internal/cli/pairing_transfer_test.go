@@ -38,7 +38,7 @@ func TestPairingGuidedFileTransferCanBeReceived(t *testing.T) {
 		t.Fatal("file transfer also printed the encrypted bundle")
 	}
 	var code string
-	for _, line := range strings.Split(out.String(), "\n") {
+	for line := range strings.SplitSeq(out.String(), "\n") {
 		if len(strings.Fields(line)) == 6 {
 			if normalized, err := pairing.NormalizeCode(line); err == nil {
 				code = normalized
@@ -105,9 +105,9 @@ func TestPairingTransferCommandUsesReceivingHomeAndQuotesFilename(t *testing.T) 
 			must(t, os.WriteFile(filepath.Join(bin, "agent-archive"), []byte("#!/bin/sh\nprintf '%s\\n' \"$@\"\n"), 0700))
 			var out bytes.Buffer
 			now := time.Now()
-			printPairingTransfer(&out, filepath.Join("/source-home", name), false, pairingLedger{Name: "laptop", ExpiresAt: now.Add(15 * time.Minute)}, now)
+			printPairingTransfer(&out, filepath.Join(t.TempDir(), name), false, pairingLedger{Name: "laptop", ExpiresAt: now.Add(15 * time.Minute)}, now)
 			var command string
-			for _, line := range strings.Split(out.String(), "\n") {
+			for line := range strings.SplitSeq(out.String(), "\n") {
 				if strings.HasPrefix(line, "  agent-archive setup") {
 					command = strings.TrimSpace(line)
 				}
