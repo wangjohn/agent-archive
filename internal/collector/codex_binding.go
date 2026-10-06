@@ -11,6 +11,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
+	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 )
 
 // persistCodexBinding runs after native validation and keeps admission and
@@ -25,8 +26,14 @@ func (s *sessionScan) persistCodexBinding(binding *archive.CodexSourceBinding) e
 	}
 	if s.reg.CodexBinding == nil && s.reg.CodexAdmission != nil {
 		cwd, err := canonicalBindingCwd(binding.Cwd)
-		if err != nil || cwd != s.reg.CodexAdmission.Cwd {
-			return errors.New("native cwd contradicts admitted project evidence")
+		if err != nil {
+			return err
+		}
+		if cwd != s.reg.CodexAdmission.Cwd {
+			facts, known := sourcefacts.PhysicalProject(binding.Cwd)
+			if !known || facts.Root != s.reg.ProjectRoot {
+				return errors.New("native cwd contradicts admitted physical project evidence")
+			}
 		}
 	}
 	if !binding.PreservesFacts(s.reg.CodexBinding) {
@@ -43,6 +50,13 @@ func (s *sessionScan) persistCodexBinding(binding *archive.CodexSourceBinding) e
 	if string(before) == string(after) {
 		return nil
 	}
+	canonicalCwd := ""
+	if s.reg.CodexAdmission != nil {
+		canonicalCwd, err = canonicalBindingCwd(binding.Cwd)
+		if err != nil {
+			return err
+		}
+	}
 	home := s.local.Home()
 	unlock, err := local.NamedLockWait(home, "hooks.lock", time.Second)
 	if err != nil {
@@ -58,6 +72,11 @@ func (s *sessionScan) persistCodexBinding(binding *archive.CodexSourceBinding) e
 	}
 	if !found || cfg.Paused || !cfg.AcceptSession(s.reg) {
 		return errors.New("Codex binding requires current capture permission")
+	}
+	if s.reg.CodexAdmission != nil {
+		if !cfg.CodexContinuationAllowed(s.reg.ProjectRoot, canonicalCwd) {
+			return errors.New("native cwd is outside current Codex continuation permission")
+		}
 	}
 	if !cfg.CodexHistoryProtection {
 		cfg.CodexHistoryProtection = true
