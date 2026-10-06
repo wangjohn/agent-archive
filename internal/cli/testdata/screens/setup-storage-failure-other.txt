@@ -20,7 +20,8 @@ Enter 1-2 [1]: included-projects
 
 Projects to archive (✓ included):
   1) ✓ ~/src/web-app  this folder
-a includes all listed projects. Or enter 1 to include or leave it out, or a path to add a project.
+a includes all listed projects. Or enter 1 to include or leave it out, or a path
+to add a project.
 Enter a blank line when finished.
 Projects:
 
@@ -51,7 +52,8 @@ Checking your storage connection…
   ✗ The storage check failed.
     agent-archive couldn't use the storage settings.
 
-    Fix: Check the storage provider, bucket, region and endpoint, then try again.
+    Fix: Check the storage provider, bucket, region and endpoint, then try
+         again.
     Details: agent-archive setup --verbose
 
 What next?

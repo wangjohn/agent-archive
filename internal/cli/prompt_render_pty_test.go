@@ -9,6 +9,38 @@ import (
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
+type promptTestMode string
+
+const (
+	promptModeNormal        promptTestMode = "normal"
+	promptModeNoColor       promptTestMode = "no-color"
+	promptModeWide          promptTestMode = "wide"
+	promptModeLong          promptTestMode = "long"
+	promptModeDefaultLong   promptTestMode = "default-long"
+	promptModeRetry         promptTestMode = "retry"
+	promptModeResize        promptTestMode = "resize"
+	promptModeScroll        promptTestMode = "scroll"
+	promptModeTypedAhead    promptTestMode = "typed-ahead"
+	promptModeTypedAheadTwo promptTestMode = "typed-ahead-two"
+	promptModeSuspend       promptTestMode = "suspend"
+	promptModeExternal      promptTestMode = "external"
+	promptModePager         promptTestMode = "pager"
+	promptModeEof           promptTestMode = "eof"
+	promptModeSecretEof     promptTestMode = "secret-eof"
+	promptModeInterrupt     promptTestMode = "interrupt"
+	promptModeTerm          promptTestMode = "term"
+	promptModeHup           promptTestMode = "hup"
+	promptModeQuit          promptTestMode = "quit"
+	promptModePairingOutput promptTestMode = "pairing-output"
+	promptModeLive          promptTestMode = "live"
+	promptModeHeight        promptTestMode = "height"
+	promptModeOverflow      promptTestMode = "overflow"
+	promptModeContinued     promptTestMode = "continued"
+	promptModeRedirect      promptTestMode = "redirect"
+	promptModeDumb          promptTestMode = "dumb"
+	promptModeLongEcho      promptTestMode = "long-echo"
+)
+
 // TestGuidedSetupTerminalChild uses setup's exact provider model with synthetic
 // answers. No setup transaction, home, credential store or provider is opened.
 func TestGuidedSetupTerminalChild(t *testing.T) {
@@ -17,15 +49,20 @@ func TestGuidedSetupTerminalChild(t *testing.T) {
 	}
 	p := newPrompter(os.Stdin, os.Stdout)
 	defer p.close()
-	mode := os.Getenv("ARCHIVE_GUIDED_PROMPT_MODE")
+	mode := promptTestMode(os.Getenv("ARCHIVE_GUIDED_PROMPT_MODE"))
+	if mode == promptModePairingOutput {
+		must(t, showPairingCode(p, "aardvark-abandoned-abbreviate-abdomen-abhorrence-abiding", Env{LookupEnv: noEnv, Interrupts: noInterrupts}))
+		terminal.Println(p.out, "DONE")
+		return
+	}
 	model := promptExample()
 	model.Helpers = nil
-	if mode == "external" || mode == "pager" {
+	if mode == promptModeExternal || mode == promptModePager {
 		r := p.renderer()
 		region := r.begin(model)
 		release := p.suspendPrompts()
 		terminal.Println(p.out, "\nEXTERNAL SENTINEL")
-		if mode == "pager" {
+		if mode == promptModePager {
 			terminal.Print(p.out, "\x1b[?1049hPAGER CONTENT\x1b[?1049l")
 		}
 		raw, interrupted, err := p.guidedRead(nil)
@@ -40,12 +77,12 @@ func TestGuidedSetupTerminalChild(t *testing.T) {
 		}
 	}
 	profileDefault := "work"
-	if mode == "default-long" {
+	if mode == promptModeDefaultLong {
 		profileDefault = strings.Repeat("d", 90)
 	}
 	value, err := p.guidedText(promptModel{Question: "AWS profile", Label: "Profile", Default: profileDefault, Receipt: "Profile"})
 	must(t, err)
-	if mode == "long" && value != strings.Repeat("x", 90) {
+	if mode == promptModeLong && value != strings.Repeat("x", 90) {
 		t.Fatalf("lost long answer")
 	}
 	secret, err := p.guidedText(promptModel{Question: "Secret access key (hidden)", Label: "Credential", Secret: true})
@@ -66,10 +103,10 @@ func TestGuidedPromptTerminalCells(t *testing.T) {
 	}
 	binary, err := os.Executable()
 	must(t, err)
-	for _, mode := range []string{"normal", "no-color", "long", "default-long", "retry", "resize", "scroll", "typed-ahead", "suspend", "external", "pager", "eof", "secret-eof", "interrupt", "term", "hup", "quit"} {
-		t.Run(mode, func(t *testing.T) {
+	for _, mode := range []promptTestMode{promptModeNormal, promptModeNoColor, promptModeWide, promptModeLong, promptModeDefaultLong, promptModeRetry, promptModeResize, promptModeScroll, promptModeTypedAhead, promptModeTypedAheadTwo, promptModeSuspend, promptModeExternal, promptModePager, promptModeEof, promptModeSecretEof, promptModeInterrupt, promptModeTerm, promptModeHup, promptModeQuit} {
+		t.Run(string(mode), func(t *testing.T) {
 			t.Parallel()
-			if out, err := runPTYScript(t, python, guidedPromptPTY, binary, mode); err != nil {
+			if out, err := runPTYScript(t, python, guidedPromptPTY, binary, string(mode)); err != nil {
 				t.Fatalf("PTY %s: %v\n%s", mode, err, out)
 			}
 		})
@@ -147,6 +184,7 @@ try:
         if mode=='retry':
             offset=len(output);os.write(master,b'bad\n');wait(b'Choose [2]: ',offset)
         if mode=='typed-ahead': os.write(master,b'2\nwork\nsynthetic-secret\n')
+        elif mode=='typed-ahead-two': os.write(master,b'2\n'+b'x'*170+b'\n')
         else: os.write(master,b'2\n')
         wait(b'Profile ['+ (b'd'*90 if mode=='default-long' else b'work') + b']: ')
         if mode=='resize':
@@ -154,14 +192,16 @@ try:
             fcntl.ioctl(master,termios.TIOCSWINSZ,struct.pack('HHHH',20,60,0,0))
             signal.signal(signal.SIGTTOU,signal.SIG_DFL)
             p.send_signal(signal.SIGWINCH)
-        if mode!='typed-ahead': os.write(master,(b'x'*90 if mode=='long' else b'x'*900 if mode=='scroll' else b'' if mode=='default-long' else b'work')+b'\n')
+        if mode not in ('typed-ahead','typed-ahead-two'): os.write(master,(('xxx漢漢漢漢xx漢x漢漢x漢漢x漢x漢漢xx漢漢漢xxx漢漢漢x漢xxxxx漢x漢xx漢漢漢漢漢xxx漢x漢x漢xx漢x漢x漢xx漢xxxxxx漢漢漢漢漢xxx漢x漢x漢xxx漢漢xxxx漢xx漢漢xxx漢漢xx漢漢漢漢漢漢漢漢漢漢x漢漢漢xx漢漢x漢xxx漢x漢x漢x漢漢xxxxxx漢漢xxx漢'.encode() if mode=='wide' else b'x'*90) if mode in ('wide','long') else b'x'*900 if mode=='scroll' else b'' if mode=='default-long' else b'work')+b'\n')
         wait(b'Credential: ')
         if mode!='typed-ahead': echo(False)
         if mode=='suspend':
             p.send_signal(signal.SIGTSTP)
             while True:
                 pid,status=os.waitpid(p.pid,os.WNOHANG|os.WUNTRACED)
-                if pid and os.WIFSTOPPED(status): break
+                if pid and os.WIFSTOPPED(status):
+                    assert os.WSTOPSIG(status)==signal.SIGSTOP, ('unexpected stop signal',os.WSTOPSIG(status))
+                    break
                 if time.monotonic()>deadline: raise RuntimeError('did not suspend')
                 read()
             assert termios.tcgetattr(slave)[3] & termios.ECHO, 'suspend did not restore echo'
@@ -190,7 +230,7 @@ try:
         assert 'DONE' in view,view
         assert 'Credential received' in view,view
         assert 'Provider Amazon S3' in view,view
-        if mode in ('normal','no-color','long','default-long'):
+        if mode in ('normal','no-color','wide','long','default-long'):
             assert 'Where should your archive live?' not in view,view
             assert 'AWS profile' not in view,view
             assert 'Secret access key' not in view,view
@@ -202,5 +242,50 @@ try:
 finally:
     if p.poll() is None: p.kill();p.wait()
     signal.signal(signal.SIGHUP,signal.SIG_IGN)
+    os.close(master);os.close(slave)
+`
+
+// A real file terminal must remain identifiable through the prompt writer.
+func TestPairingCodeDisplayRecognizesWrappedTerminal(t *testing.T) {
+	t.Parallel()
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("PTY harness requires Python 3")
+	}
+	binary, err := os.Executable()
+	must(t, err)
+	if out, err := runPTYScript(t, python, pairingOutputPTY, binary); err != nil {
+		t.Fatalf("pairing terminal: %v\n%s", err, out)
+	}
+}
+
+const pairingOutputPTY = `import os, pty, select, subprocess, sys, time
+master, slave = pty.openpty()
+env = dict(os.environ, ARCHIVE_GUIDED_PROMPT_CHILD='1', ARCHIVE_GUIDED_PROMPT_MODE='pairing-output')
+p = subprocess.Popen([sys.argv[1], '-test.run=^TestGuidedSetupTerminalChild$'], stdin=slave, stdout=slave, stderr=slave, env=env)
+output = b''
+deadline = time.monotonic()+60
+def read():
+    global output
+    if select.select([master],[],[],.05)[0]:
+        try: output += os.read(master,65536)
+        except OSError: pass
+try:
+    while b'Press Enter to hide.' not in output:
+        if p.poll() is not None or time.monotonic()>deadline: raise RuntimeError('pairing display',output)
+        read()
+    os.write(master,b'\n')
+    while p.poll() is None:
+        if time.monotonic()>deadline: raise RuntimeError('child exit',output)
+        read()
+    os.write(slave,b'<<drained>>')
+    while b'<<drained>>' not in output:
+        if time.monotonic()>deadline: raise RuntimeError('drain',output)
+        read()
+    assert p.returncode==0,(p.returncode,output)
+    assert b'\x1b[?1049h' in output and b'\x1b[?1049l' in output,output
+    assert output.index(b'\x1b[?1049h') < output.index(b'Pairing code:') < output.index(b'\x1b[?1049l'),output
+finally:
+    if p.poll() is None: p.kill();p.wait()
     os.close(master);os.close(slave)
 `

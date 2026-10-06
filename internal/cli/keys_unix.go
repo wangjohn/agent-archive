@@ -220,20 +220,23 @@ func readTerminal(fd int, p []byte) (int, error) {
 // Go retains its job-control handler after notification, so later ordinary
 // prompts must continue handling Ctrl-Z too. It never reads stdin.
 type promptLineGuard struct {
-	fd             int
-	mu             sync.Mutex
-	original       *unix.Termios
-	hiddenModes    *unix.Termios
-	signals        chan os.Signal
-	interrupts     chan os.Signal
-	done, finished chan struct{}
-	onSuspend      func()
-	delegated      atomic.Bool
+	fd          int
+	mu          sync.Mutex
+	original    *unix.Termios
+	hiddenModes *unix.Termios
+	signals     chan os.Signal
+	interrupts  chan os.Signal
+	done        chan struct{}
+	finished    chan struct{}
+	resumed     chan os.Signal
+	onSuspend   func()
+	delegated   atomic.Bool
 }
 
 func newPromptLineGuard(fd int, onSuspend func()) *promptLineGuard {
-	g := &promptLineGuard{fd: fd, onSuspend: onSuspend, signals: make(chan os.Signal, 8), interrupts: make(chan os.Signal, 4), done: make(chan struct{}), finished: make(chan struct{})}
+	g := &promptLineGuard{fd: fd, onSuspend: onSuspend, signals: make(chan os.Signal, 8), interrupts: make(chan os.Signal, 4), done: make(chan struct{}), finished: make(chan struct{}), resumed: make(chan os.Signal, 1)}
 	signal.Notify(g.signals, syscall.SIGTSTP)
+	signal.Notify(g.resumed, syscall.SIGCONT)
 	go g.watch()
 	return g
 }
@@ -272,7 +275,6 @@ func (g *promptLineGuard) restore() {
 }
 
 func (g *promptLineGuard) watch() {
-	defer close(g.finished)
 	for {
 		select {
 		case <-g.signals:
@@ -284,7 +286,15 @@ func (g *promptLineGuard) watch() {
 			if g.onSuspend != nil {
 				g.onSuspend()
 			}
-			_ = unix.Kill(os.Getpid(), unix.SIGSTOP)
+			select {
+			case <-g.resumed:
+			default:
+			}
+			// SIGSTOP delivery may race this goroutine on another runtime thread.
+			// Keep echo restored until SIGCONT confirms the process resumed.
+			if err := unix.Kill(os.Getpid(), unix.SIGSTOP); err == nil {
+				<-g.resumed
+			}
 			if g.hiddenModes != nil {
 				_ = unix.IoctlSetTermios(g.fd, ioctlSetTermios, g.hiddenModes)
 			}
@@ -298,6 +308,7 @@ func (g *promptLineGuard) watch() {
 			g.mu.Lock()
 			g.restore()
 			g.mu.Unlock()
+			close(g.finished)
 			return
 		}
 	}
@@ -308,6 +319,7 @@ func (g *promptLineGuard) close() {
 	signal.Stop(g.interrupts)
 	close(g.done)
 	<-g.finished
+	signal.Stop(g.resumed)
 }
 
 // terminalInputPending detects canonical lines already echoed for a later

@@ -45,12 +45,15 @@ Step 3 of 3 · Ready to start
 
   ✓ Storage connected       write, read, list, delete
   ✗ Bucket is public        a bucket policy allows public access
-    Fix its access before archiving: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
+    Fix its access before archiving:
+    https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
   ✓ Hook file is valid      ~/.claude/settings.json
 
-  Edit a setting adds projects, drops apps, and changes how long sessions are kept.
+  Edit a setting adds projects, drops apps, and changes how long sessions are
+  kept.
   Filtering is best effort; sensitive text may remain in archived sessions.
-  What leaves your machine: https://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md
+  What leaves your machine:
+  https://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md
   · Machine name: unnamed (random ID suffix after save). Choose Name this machine to set a label; no hostname is read.
 
 Fix what is marked ✗ above first.

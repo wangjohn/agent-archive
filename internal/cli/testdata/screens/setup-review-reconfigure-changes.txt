@@ -63,12 +63,15 @@ Step 3 of 3 · Review your changes
 
   ✓ Storage connected       write, read, list, delete
   ! Bucket privacy unknown  public-access settings could not be read
-    Make sure public access is off: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
-  ✓ Hook files are valid    ~/.codex/hooks.json, ~/.claude/settings.json, ~/.cursor/hooks.json
+    Make sure public access is off:
+    https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
+  ✓ Hook files are valid    ~/.codex/hooks.json, ~/.claude/settings.json,
+                            ~/.cursor/hooks.json
   ✓ Codex discovery         supported new tasks do not require hook approval
 
   Filtering is best effort; sensitive text may remain in archived sessions.
-  What leaves your machine: https://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md
+  What leaves your machine:
+  https://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md
 
 Save these changes?
   1) Yes, save
@@ -119,12 +122,15 @@ Step 3 of 3 · Review your changes
 
   ✓ Storage connected       write, read, list, delete
   ! Bucket privacy unknown  public-access settings could not be read
-    Make sure public access is off: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
-  ✓ Hook files are valid    ~/.codex/hooks.json, ~/.claude/settings.json, ~/.cursor/hooks.json
+    Make sure public access is off:
+    https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
+  ✓ Hook files are valid    ~/.codex/hooks.json, ~/.claude/settings.json,
+                            ~/.cursor/hooks.json
   ✓ Codex discovery         supported new tasks do not require hook approval
 
   Filtering is best effort; sensitive text may remain in archived sessions.
-  What leaves your machine: https://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md
+  What leaves your machine:
+  https://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md
 
 Save these changes?
   1) Yes, save
@@ -139,8 +145,10 @@ Installed the agent-archive skill, which lets your agents look up and pull in pa
 To remove the agent skills and keep them off, run agent-archive setup --no-skills.
 
 Next, in each app:
-  Codex: start a supported new task in an included project; automatic discovery does not require hook approval.
-  Optional hook capture: Codex: run /hooks and approve the archive hooks, then start a new session (or /clear).
+  Codex: start a supported new task in an included project; automatic discovery
+  does not require hook approval.
+  Optional hook capture: Codex: run /hooks and approve the archive hooks, then
+  start a new session (or /clear).
   Claude Code: nothing to approve; start a new session (or /clear).
   Cursor: nothing to approve; start a new Agent chat.
 Sessions already open are not captured. Start a new one in an included project.

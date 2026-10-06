@@ -57,14 +57,16 @@ Checking your storage connection…
 
   \e[32m✓\e[0m Storage connected       \e[2mwrite, read, list, delete\e[0m
   \e[33m!\e[0m Bucket privacy unknown  \e[2mpublic-access settings could not be read\e[0m
-    Make sure public access is off: \e[36mhttps://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html\e[0m
+    Make sure public access is off:
+    \e[36mhttps://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html\e[0m
   \e[32m✓\e[0m Hook file is valid      \e[2m~/.codex/hooks.json\e[0m
   \e[32m✓\e[0m Codex discovery         \e[2msupported new tasks do not require hook approval\e[0m
   \e[33m!\e[0m Codex scope expands to all current and future projects (Codex only).
     New admissions start after this local consent; old history and paused or excluded starts remain out of scope.
 
 \e[2m  Filtering is best effort; sensitive text may remain in archived sessions.\e[0m
-  \e[2mWhat leaves your machine:\e[0m \e[36mhttps://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md\e[0m
+  \e[2mWhat leaves your machine:\e[0m
+  \e[36mhttps://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md\e[0m
   \e[2m·\e[0m Machine name: unnamed (random ID suffix after save). Choose Name this machine to set a label; no hostname is read.
 
 \e[1mStart archiving?\e[0m
@@ -81,8 +83,10 @@ Installed the agent-archive skill, which lets your agents look up and pull in pa
 To remove the agent skills and keep them off, run \e[36magent-archive setup --no-skills\e[0m.
 
 Next, in each app:
-  Codex: start a supported new task in any non-excluded current or future project; automatic discovery does not require hook approval.
-  Optional hook capture: Codex: run \e[36m/hooks\e[0m and approve the archive hooks, then start a new session (or \e[36m/clear\e[0m).
+  Codex: start a supported new task in any non-excluded current or future
+  project; automatic discovery does not require hook approval.
+  Optional hook capture: Codex: run \e[36m/hooks\e[0m and approve the archive hooks, then
+  start a new session (or \e[36m/clear\e[0m).
 Sessions already open are not captured. Start a supported new Codex task in any non-excluded project.
 Check progress with \e[36magent-archive status\e[0m.
 

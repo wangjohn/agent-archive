@@ -1681,7 +1681,7 @@ func TestGuidedR2DoesNotAddNumberedProviderChoices(t *testing.T) {
 	t.Parallel()
 	g := newGuidedR2Fixture(t)
 	out := g.run(t, g.happy(), 0)
-	if !strings.Contains(out, "  1) Cloudflare R2\n  2) Amazon S3\n[h] Setup instructions") {
+	if !strings.Contains(out, "  1) Cloudflare R2 (default)\n  2) Amazon S3\n\n  [h] Setup instructions") {
 		t.Fatalf("menu:\n%s", out)
 	}
 }

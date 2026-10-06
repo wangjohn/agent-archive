@@ -13,7 +13,8 @@ Include Claude Code? [Y/n]
 Projects to archive (✓ included):
   1) ✓ ~/src/web-app  this folder
   2)   ~/src/api      1 session · 3 days ago
-a includes all listed projects. Or enter numbers to include or leave out (such as 2 3), or a path.
+a includes all listed projects. Or enter numbers to include or leave out (such
+as 2 3), or a path.
 Enter a blank line when finished.
 Projects: 1
 
@@ -24,7 +25,8 @@ Projects:
 Projects to archive (✓ included):
   1)   ~/src/web-app  this folder
   2)   ~/src/api      1 session · 3 days ago
-a includes all listed projects. Or enter numbers to include or leave out (such as 2 3), or a path.
+a includes all listed projects. Or enter numbers to include or leave out (such
+as 2 3), or a path.
 Enter a blank line when finished.
 Projects: a
 

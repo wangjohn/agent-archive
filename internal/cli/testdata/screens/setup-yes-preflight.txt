@@ -23,8 +23,10 @@ Installed the agent-archive skill, which lets your agents look up and pull in pa
 To remove the agent skills and keep them off, run agent-archive setup --no-skills.
 
 Next, in each app:
-  Codex: start a supported new task in an included project; automatic discovery does not require hook approval.
-  Optional hook capture: Codex: run /hooks and approve the archive hooks, then start a new session (or /clear).
+  Codex: start a supported new task in an included project; automatic discovery
+  does not require hook approval.
+  Optional hook capture: Codex: run /hooks and approve the archive hooks, then
+  start a new session (or /clear).
 Sessions already open are not captured. Start a new one in an included project.
 Import sessions from before setup with agent-archive backfill.
 Check progress with agent-archive status.

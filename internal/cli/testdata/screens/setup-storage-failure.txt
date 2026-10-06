@@ -20,7 +20,8 @@ Enter 1-2 [1]: included-projects
 
 Projects to archive (✓ included):
   1) ✓ ~/src/web-app  this folder
-a includes all listed projects. Or enter 1 to include or leave it out, or a path to add a project.
+a includes all listed projects. Or enter 1 to include or leave it out, or a path
+to add a project.
 Enter a blank line when finished.
 Projects:
 
@@ -51,7 +52,8 @@ Checking your storage connection…
   ✗ Can't sign in to AWS.
     No credentials were found for the storage profile.
 
-    Fix: Add them with aws configure --profile work, or sign in with aws sso login --profile work for an SSO profile, then try again.
+    Fix: Add them with aws configure --profile work, or sign in with aws sso
+         login --profile work for an SSO profile, then try again.
     Details: agent-archive setup --verbose
 
 What next?

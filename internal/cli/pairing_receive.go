@@ -74,6 +74,7 @@ func setupPairing(opts setupOptions, stdin io.Reader, out, errOut io.Writer, env
 		return err
 	}
 	defer closeInput()
+	defer p.close()
 	code, err := readPairingCode(opts, p, env)
 	if err != nil {
 		return err

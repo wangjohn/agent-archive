@@ -57,14 +57,16 @@ Step 3 of 3 · Ready to start
 
   ✓ Storage connected       write, read, list, delete
   ! Bucket privacy unknown  public-access settings could not be read
-    Make sure public access is off: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
+    Make sure public access is off:
+    https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
   ✓ Hook file is valid      ~/.codex/hooks.json
   ✓ Codex discovery         supported new tasks do not require hook approval
   ! Codex scope expands to all current and future projects (Codex only).
     New admissions start after this local consent; old history and paused or excluded starts remain out of scope.
 
   Filtering is best effort; sensitive text may remain in archived sessions.
-  What leaves your machine: https://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md
+  What leaves your machine:
+  https://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md
   · Machine name: unnamed (random ID suffix after save). Choose Name this machine to set a label; no hostname is read.
 
 Start archiving?
@@ -81,8 +83,10 @@ Installed the agent-archive skill, which lets your agents look up and pull in pa
 To remove the agent skills and keep them off, run agent-archive setup --no-skills.
 
 Next, in each app:
-  Codex: start a supported new task in any non-excluded current or future project; automatic discovery does not require hook approval.
-  Optional hook capture: Codex: run /hooks and approve the archive hooks, then start a new session (or /clear).
+  Codex: start a supported new task in any non-excluded current or future
+  project; automatic discovery does not require hook approval.
+  Optional hook capture: Codex: run /hooks and approve the archive hooks, then
+  start a new session (or /clear).
 Sessions already open are not captured. Start a supported new Codex task in any non-excluded project.
 Check progress with agent-archive status.
 

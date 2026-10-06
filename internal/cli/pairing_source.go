@@ -349,7 +349,7 @@ func showPairingCode(p *prompter, code string, env Env) error {
 	if err != nil {
 		return err
 	}
-	if !env.interactive(p.out) {
+	if !env.interactive(underlyingWriter(p.out)) {
 		return errors.New("pairing code display needs terminal output")
 	}
 	// Use checked writes for secret-bearing output. Always restore the screen.

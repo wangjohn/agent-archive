@@ -53,9 +53,11 @@ Step 3 of 3 · Ready to start
   ! Bucket privacy unknown  check public access in the Cloudflare dashboard
   ✓ Hook file is valid      ~/.claude/settings.json
 
-  Edit a setting adds projects, drops apps, and changes how long sessions are kept.
+  Edit a setting adds projects, drops apps, and changes how long sessions are
+  kept.
   Filtering is best effort; sensitive text may remain in archived sessions.
-  What leaves your machine: https://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md
+  What leaves your machine:
+  https://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md
   · Machine name: unnamed (random ID suffix after save). Choose Name this machine to set a label; no hostname is read.
 
 Start archiving?

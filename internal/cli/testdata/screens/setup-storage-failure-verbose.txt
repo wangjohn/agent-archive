@@ -20,7 +20,8 @@ Enter 1-2 [1]: included-projects
 
 Projects to archive (✓ included):
   1) ✓ ~/src/web-app  this folder
-a includes all listed projects. Or enter 1 to include or leave it out, or a path to add a project.
+a includes all listed projects. Or enter 1 to include or leave it out, or a path
+to add a project.
 Enter a blank line when finished.
 Projects:
 
@@ -51,8 +52,12 @@ Checking your storage connection…
   ✗ Access denied.
     The storage provider refused access to the bucket.
 
-    Fix: Check that the credentials are current and allowed to list, read, write and delete in the bucket, then try again.
-    Details: setup test upload ".setup-test/KEY.json" (relative to the configured prefix): operation error S3: PutObject, api error AccessDenied: Access Denied
+    Fix: Check that the credentials are current and allowed to list, read, write
+         and delete in the bucket, then try again.
+    Details: setup test upload
+             ".setup-test/KEY.json" (relative to
+             the configured prefix): operation error S3: PutObject, api error
+             AccessDenied: Access Denied
 
 What next?
   1) Change storage settings

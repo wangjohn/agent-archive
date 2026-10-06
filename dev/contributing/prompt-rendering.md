@@ -18,7 +18,8 @@ secret fields. A default is offered only when its key is an available choice.
 paging and selection. `ResolveReceipt` converts a resolved key or ordinary text
 value to human text. `Receipt` is a label prefix for choices and ordinary text;
 Enter on a text field resolves its default before its receipt. `Validate` runs
-before completion and retains the same field on errors. Validators must not
+on the resolved semantic choice key or resolved text before completion and
+retains the same field on errors. Validators must not
 perform a transaction or imply consent to a larger flow.
 
 Set `Secret` for credentials, clipboard-derived secrets and pairing input.
@@ -49,7 +50,9 @@ Only an owned active region can collapse. The renderer counts wrapped helpers,
 choices and nonsecret echo using `visibleWidth`/`displayLines`. It appends a
 receipt instead when dimensions change, the block/answer cannot fit the visible
 viewport, typed-ahead input may already have echoed, a resume/resize arrives,
-or the region's output generation/ownership changes. Receipts stay in ordinary
+or the region's output generation/ownership changes. Emoji variation selectors
+and joined emoji clusters also use static completion because terminals disagree
+about their displayed widths. Receipts stay in ordinary
 scrollback. Setup never opens an alternate screen for prompts.
 
 Use `release := p.suspendPrompts()` **before** a spinner, credential helper,

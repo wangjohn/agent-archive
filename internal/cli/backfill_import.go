@@ -215,7 +215,7 @@ func underlyingWriter(w io.Writer) io.Writer {
 		return underlyingWriter(p.w)
 	}
 	if l, ok := w.(*lockedWriter); ok {
-		return l.w
+		return underlyingWriter(l.w)
 	}
 	return w
 }

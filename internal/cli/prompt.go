@@ -231,8 +231,7 @@ type actionOption struct {
 }
 
 // actions keeps primary choices numbered and renders navigation separately.
-// Hidden aliases are accepted only here, never by secret or name inputs.
-func (p *prompter) actions(question, def string, primary []option, secondary []actionOption, aliases ...option) (string, error) {
+func (p *prompter) actions(question, def string, primary []option, secondary []actionOption) (string, error) {
 	p.heading(question)
 	choices := append([]option(nil), primary...)
 	for i, o := range primary {
@@ -246,7 +245,6 @@ func (p *prompter) actions(question, def string, primary []option, secondary []a
 		terminal.Printf(p.out, "[%s] %s\n", key, o.Label)
 		choices = append(choices, option{o.Key, o.Label})
 	}
-	choices = append(choices, aliases...)
 	displayDefault := ""
 	for i, o := range primary {
 		if o.Key == def {

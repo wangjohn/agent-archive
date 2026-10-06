@@ -13,7 +13,8 @@ Choose Cloudflare R2 or Amazon S3 for private archive storage. Setup will guide 
 Projects to archive (✓ included):
   1) \e[32m✓\e[0m ~/src/web-app  \e[2mthis folder\e[0m
   2)   ~/src/api      \e[2m1 session · 3 days ago\e[0m
-a includes all listed projects. Or enter numbers to include or leave out (such as 2 3), or a path.
+a includes all listed projects. Or enter numbers to include or leave out (such
+as 2 3), or a path.
 Enter a blank line when finished.
 \e[1mProjects\e[0m › 1
 
@@ -24,7 +25,8 @@ No project included yet.
 Projects to archive (✓ included):
   1)   ~/src/web-app  \e[2mthis folder\e[0m
   2)   ~/src/api      \e[2m1 session · 3 days ago\e[0m
-a includes all listed projects. Or enter numbers to include or leave out (such as 2 3), or a path.
+a includes all listed projects. Or enter numbers to include or leave out (such
+as 2 3), or a path.
 Enter a blank line when finished.
 \e[1mProjects\e[0m › a
 

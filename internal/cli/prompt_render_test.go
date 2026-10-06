@@ -56,17 +56,14 @@ func TestGuidedPromptSnapshots(t *testing.T) {
 
 func TestGuidedPromptCollapseRequiresOwnedVisibleRows(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"live", "no-color", "resize", "height", "overflow", "external", "suspend", "typed-ahead", "continued", "redirect", "dumb", "long-echo"} {
-		t.Run(mode, func(t *testing.T) {
+	for _, mode := range []promptTestMode{promptModeLive, promptModeNoColor, promptModeResize, promptModeHeight, promptModeOverflow, promptModeExternal, promptModeSuspend, promptModeTypedAhead, promptModeContinued, promptModeRedirect, promptModeDumb, promptModeLongEcho} {
+		t.Run(string(mode), func(t *testing.T) {
 			t.Parallel()
-			c := promptCapabilities{Color: true, InputTerminal: true, OutputTerminal: true, SharedTerminal: true, Redraw: true, Width: 80, Height: 24}
-			if mode == "no-color" {
-				c.Color = false
-			}
-			if mode == "redirect" {
+			c := promptCapabilities{Color: mode != promptModeNoColor, InputTerminal: true, OutputTerminal: true, SharedTerminal: true, Redraw: true, Width: 80, Height: 24}
+			if mode == promptModeRedirect {
 				c.InputTerminal = false
 			}
-			if mode == "dumb" {
+			if mode == promptModeDumb {
 				c.ASCII = true
 				c.Redraw = false
 			}
@@ -76,31 +73,31 @@ func TestGuidedPromptCollapseRequiresOwnedVisibleRows(t *testing.T) {
 			region := r.begin(promptExample())
 			echo := "2\n"
 			switch mode {
-			case "resize":
+			case promptModeResize:
 				out.caps.Width = 60
-			case "height":
+			case promptModeHeight:
 				out.caps.Height = 20
-			case "overflow":
+			case promptModeOverflow:
 				region.rows = 24
-			case "external":
+			case promptModeExternal:
 				terminal.Println(p.out, "EXTERNAL SENTINEL")
-			case "suspend":
+			case promptModeSuspend:
 				release := p.suspendPrompts()
 				terminal.Println(out, "PAGER SENTINEL")
 				release()
-			case "long-echo":
+			case promptModeLongEcho:
 				echo = strings.Repeat("a", 2000) + "\n"
 			}
-			r.finish(region, "Provider Amazon S3", echo, false, mode == "typed-ahead", mode == "continued")
+			r.finish(region, "Provider Amazon S3", echo, false, mode == promptModeTypedAhead, mode == promptModeContinued)
 			got := out.String()
 			collapsed := strings.Contains(got, "\x1b[2K")
-			if want := mode == "live" || mode == "no-color"; collapsed != want {
+			if want := mode == promptModeLive || mode == promptModeNoColor; collapsed != want {
 				t.Fatalf("collapse=%t want %t: %q", collapsed, want, got)
 			}
-			if mode == "dumb" && (!strings.Contains(got, "> Choose [2]: ") || !strings.Contains(got, "OK Provider")) {
+			if mode == promptModeDumb && (!strings.Contains(got, "> Choose [2]: ") || !strings.Contains(got, "OK Provider")) {
 				t.Fatal(got)
 			}
-			if mode == "no-color" && strings.Contains(got, "\x1b[2m") {
+			if mode == promptModeNoColor && strings.Contains(got, "\x1b[2m") {
 				t.Fatal("NO_COLOR added emphasis")
 			}
 		})
@@ -109,7 +106,11 @@ func TestGuidedPromptCollapseRequiresOwnedVisibleRows(t *testing.T) {
 
 func TestGuidedChoicesResolveDefaultsShortcutsAliasesAndStableNumbers(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct{ input, key, label string }{{"\n", "s3", "Amazon S3"}, {"2\n", "r2", "Cloudflare R2"}, {"13\n", "s3", "Amazon S3"}, {"h\n", "help", "Setup instructions"}, {"s3-existing\n", "s3-existing", "Amazon S3"}, {"wrong\n13\n", "s3", "Amazon S3"}} {
+	for _, tc := range []struct {
+		input string
+		key   string
+		label string
+	}{{"\n", "s3", "Amazon S3"}, {"2\n", "r2", "Cloudflare R2"}, {"13\n", "s3", "Amazon S3"}, {"h\n", "help", "Setup instructions"}, {"s3-existing\n", "s3-existing", "Amazon S3"}, {"wrong\n13\n", "s3", "Amazon S3"}} {
 		t.Run(strings.TrimSpace(tc.input), func(t *testing.T) {
 			t.Parallel()
 			out := &promptScreen{}
@@ -242,4 +243,98 @@ func TestGuidedTerminalOwnerCanDelegateJobControl(t *testing.T) {
 		t.Fatal("prompt authority was not restored")
 	}
 	p.lineGuard = nil
+}
+
+func TestPromptWriterPreservesTerminalStyle(t *testing.T) {
+	t.Parallel()
+	out := &promptScreen{caps: promptCapabilities{Color: true, Redraw: true, Width: 60, Height: 20}}
+	p := newPrompter(strings.NewReader(""), out)
+	for _, wrapped := range []io.Writer{p.out, &lockedWriter{w: p.out}, &promptWriter{w: &lockedWriter{w: out}}} {
+		got := styleFor(wrapped)
+		if want := styleFor(out); got != want {
+			t.Fatalf("wrapped terminal style: %+v", got)
+		}
+		if got := capabilitiesFor(nil, wrapped); got != out.caps {
+			t.Fatalf("wrapped capabilities: %+v", got)
+		}
+	}
+}
+
+func TestPromptRowsCountWideGlyphsThatWrapBeforeTheLastCell(t *testing.T) {
+	t.Parallel()
+	for _, text := range []string{"xx漢xx漢xx漢", "x́x́漢x́x́漢x́x́漢", "xx❤️xx❤️xx❤️", "\x1b[32mxx漢xx漢xx漢\x1b[0m"} {
+		if got := displayLines(text, 3); got != 5 {
+			t.Fatalf("wide glyph rows for %q: %d, want 5", text, got)
+		}
+	}
+}
+
+func TestPromptAmbiguousEmojiWidthsPreserveHistory(t *testing.T) {
+	t.Parallel()
+	for _, value := range []string{"❤️", "👩‍💻"} {
+		out := &promptScreen{caps: promptCapabilities{InputTerminal: true, OutputTerminal: true, SharedTerminal: true, Redraw: true, Width: 36, Height: 20}}
+		p := newPrompter(strings.NewReader(""), out)
+		r := p.renderer()
+		region := r.begin(promptModel{Question: "Profile", Helpers: []string{value}})
+		r.finish(region, "Profile work", "work\n", false, false, false)
+		region = r.begin(promptModel{Question: "Profile"})
+		r.finish(region, "Profile work", value+"\n", false, false, false)
+		if strings.Contains(out.String(), "\x1b[2K") {
+			t.Fatalf("ambiguous emoji width erased history: %q", out.String())
+		}
+	}
+}
+
+// Choices validate the resolved key, including defaults, before success receipts.
+func TestGuidedChoiceValidatesResolvedKeysBeforeReceipt(t *testing.T) {
+	t.Parallel()
+	for _, input := range []string{"1\n2\n", "start\ncheck\n", "\n2\n"} {
+		out := &promptScreen{}
+		p := newPrompter(strings.NewReader(input), out)
+		var checked []string
+		key, err := p.guidedChoice(promptModel{Question: "Start archiving?", Default: "start", Primary: []option{{"start", "Start archiving"}, {"check", "Check again"}}, Validate: func(key string) error {
+			checked = append(checked, key)
+			if key == "start" {
+				return errors.New("Project directory disappeared. Check again.")
+			}
+			return nil
+		}})
+		must(t, err)
+		if key != "check" || strings.Join(checked, ",") != "start,check" || strings.Contains(out.String(), "✓ Start archiving") || !strings.Contains(out.String(), "Project directory disappeared") || !strings.Contains(out.String(), "✓ Check again") {
+			t.Fatalf("validation key=%q checked=%v output=%q", key, checked, out.String())
+		}
+	}
+}
+
+func TestPromptSyntheticCapabilitiesSetWrappingWidth(t *testing.T) {
+	t.Parallel()
+	out := &promptScreen{caps: promptCapabilities{Width: 36, Height: 20}}
+	style := styleFor(out)
+	text := style.hang("  ", "Choose storage for the selected projects and keep credentials private.")
+	if style.width != 36 || !strings.Contains(text, "\n") {
+		t.Fatalf("explicit width lost: style=%+v text=%q", style, text)
+	}
+	for _, line := range strings.Split(text, "\n") {
+		if visibleWidth(line) > 36 {
+			t.Fatalf("synthetic wrapped line too wide: %q", line)
+		}
+	}
+}
+
+func TestPromptEchoStartsAtTheActualWrappedCursorColumn(t *testing.T) {
+	t.Parallel()
+	out := &promptScreen{caps: promptCapabilities{InputTerminal: true, OutputTerminal: true, SharedTerminal: true, Redraw: true, Width: 3, Height: 100}}
+	p := newPrompter(strings.NewReader(""), out)
+	r := p.renderer()
+	region := r.begin(promptModel{Question: "Profile", Label: "漢"})
+	if region.rows != 7 || region.cursorColumns != 1 {
+		t.Fatalf("wrapped region rows=%d column=%d, want 7 and 1", region.rows, region.cursorColumns)
+	}
+	r.finish(region, "Profile resolved", "xx\n", false, false, false)
+	// The wide label wraps early and leaves the cursor in column one. Two
+	// echoed characters fit that row; counting total label width erases a
+	// preceding row instead.
+	if want := fmt.Sprintf("\x1b[%dA\r", region.rows); !strings.Contains(out.String(), want) {
+		t.Fatalf("wrapped cursor over-erased: %q, want %q", out.String(), want)
+	}
 }

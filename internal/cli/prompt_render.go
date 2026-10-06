@@ -22,8 +22,14 @@ import (
 // promptCapabilities keeps stream ownership separate from color. Synthetic
 // writers can supply the same capabilities as a terminal without real stdin.
 type promptCapabilities struct {
-	Color, InputTerminal, OutputTerminal, SharedTerminal, Redraw, ASCII bool
-	Width, Height                                                       int
+	Color          bool
+	InputTerminal  bool
+	OutputTerminal bool
+	SharedTerminal bool
+	Redraw         bool
+	ASCII          bool
+	Width          int
+	Height         int
 }
 
 type promptOutput interface{ promptCapabilities() promptCapabilities }
@@ -33,12 +39,14 @@ func capabilitiesFor(in io.Reader, out io.Writer) promptCapabilities {
 	if synthetic, ok := out.(promptOutput); ok {
 		return synthetic.promptCapabilities()
 	}
-	c := promptCapabilities{Color: styleFor(out).color}
 	input, inputOK := in.(*os.File)
 	output, outputOK := out.(*os.File)
-	c.InputTerminal = inputOK && input != nil && term.IsTerminal(int(input.Fd()))
-	c.OutputTerminal = outputOK && output != nil && term.IsTerminal(int(output.Fd()))
-	c.ASCII = os.Getenv("TERM") == "dumb"
+	c := promptCapabilities{
+		Color:          styleFor(out).color,
+		InputTerminal:  inputOK && input != nil && term.IsTerminal(int(input.Fd())),
+		OutputTerminal: outputOK && output != nil && term.IsTerminal(int(output.Fd())),
+		ASCII:          os.Getenv("TERM") == "dumb",
+	}
 	if c.OutputTerminal {
 		c.Width, c.Height, _ = term.GetSize(int(output.Fd()))
 	}
@@ -62,13 +70,15 @@ type promptModel struct {
 	Helpers  []string
 	Primary  []option
 	// Numbers optionally supplies stable visible indices for a paginated model.
-	Numbers                 []int
-	Validate                func(string) error
-	Secondary               []actionOption
-	Aliases                 []option
-	Default, Label, Receipt string
-	ResolveReceipt          func(string) string
-	Secret                  bool
+	Numbers        []int
+	Validate       func(string) error
+	Secondary      []actionOption
+	Aliases        []option
+	Default        string
+	Label          string
+	Receipt        string
+	ResolveReceipt func(string) string
+	Secret         bool
 	// ReadAnswer can enforce an existing bound using the shared buffered reader.
 	ReadAnswer func(*bufio.Reader) (string, error)
 }
@@ -111,11 +121,13 @@ type promptRenderer struct {
 }
 
 type ownedPromptRegion struct {
-	caps                promptCapabilities
-	rows, cursorColumns int
-	generation          uint64
-	epoch               uint64
-	valid               bool
+	caps               promptCapabilities
+	rows               int
+	cursorColumns      int
+	generation         uint64
+	epoch              uint64
+	valid              bool
+	inputAlreadyEchoed bool
 }
 
 func (p *prompter) renderer() *promptRenderer {
@@ -238,7 +250,8 @@ func (r *promptRenderer) begin(m promptModel) ownedPromptRegion {
 	b.WriteString("\n" + cursor + " " + label + ": ")
 	text := b.String()
 	r.block(text)
-	return ownedPromptRegion{caps: c, rows: displayLines(text, c.Width), cursorColumns: visibleWidth(text[strings.LastIndex(text, "\n")+1:]), generation: r.writer.generation.Load(), epoch: r.epoch.Load(), valid: c.Redraw && c.InputTerminal && c.OutputTerminal && r.suspended == 0}
+	_, cursorColumns := lineMetrics(text[strings.LastIndex(text, "\n")+1:], c.Width)
+	return ownedPromptRegion{caps: c, rows: displayLines(text, c.Width), cursorColumns: cursorColumns, generation: r.writer.generation.Load(), epoch: r.epoch.Load(), valid: c.Redraw && c.InputTerminal && c.OutputTerminal && r.suspended == 0 && !ambiguousPromptWidth(text)}
 }
 
 func (r *promptRenderer) finish(region ownedPromptRegion, receipt string, echoed string, secret, typedAhead, interrupted bool) {
@@ -252,14 +265,14 @@ func (r *promptRenderer) resolve(region ownedPromptRegion, mark, receipt, echoed
 		// ReadString includes the newline; it moves the cursor to the next row.
 		rows += lineRows(strings.Repeat(" ", region.cursorColumns)+strings.TrimSuffix(echoed, "\n"), region.caps.Width) - lineRows(strings.Repeat(" ", region.cursorColumns), region.caps.Width)
 	}
-	safe := (secret || strings.HasSuffix(echoed, "\n")) && !strings.ContainsAny(echoed, "\r\x1b\t") && region.valid && c.Redraw && c.Width == region.caps.Width && c.Height == region.caps.Height && rows < c.Height && r.epoch.Load() == region.epoch && r.suspended == 0 && r.writer.generation.Load() == region.generation && !typedAhead && !interrupted
+	safe := (secret || strings.HasSuffix(echoed, "\n")) && !strings.ContainsAny(echoed, "\r\x1b\t") && !ambiguousPromptWidth(echoed) && region.valid && c.Redraw && c.Width == region.caps.Width && c.Height == region.caps.Height && rows < c.Height && r.epoch.Load() == region.epoch && r.suspended == 0 && r.writer.generation.Load() == region.generation && !region.inputAlreadyEchoed && !typedAhead && !interrupted
 	// Hidden input has no echoed newline; redirected streams have no echo at all.
-	if secret || !region.caps.SharedTerminal {
+	if secret || !region.caps.SharedTerminal || region.inputAlreadyEchoed {
 		terminal.Println(r.writer)
 	}
 	if safe {
 		terminal.Printf(r.writer, "\x1b[%dA\r", rows)
-		for i := 0; i < rows; i++ {
+		for range rows {
 			terminal.Print(r.writer, "\x1b[2K\x1b[1B\r")
 		}
 		terminal.Printf(r.writer, "\x1b[%dA", rows)
@@ -270,6 +283,16 @@ func (r *promptRenderer) resolve(region ownedPromptRegion, mark, receipt, echoed
 	s := textStyle{color: c.Color, width: c.Width}
 	terminal.Println(r.writer, s.dim(s.hang(mark+" ", receiptText(receipt))))
 	terminal.Println(r.writer)
+}
+
+// beginGuided checks for input that the terminal may have echoed before this
+// block. The last buffered answer has no new cursor movement when read, even
+// when there is no more pending input afterward.
+func (p *prompter) beginGuided(m promptModel) ownedPromptRegion {
+	pending := p.inputPending()
+	region := p.renderer().begin(m)
+	region.inputAlreadyEchoed = pending
+	return region
 }
 
 // guidedChoice resolves a valid choice before producing its completion receipt.
@@ -287,7 +310,7 @@ func (p *prompter) guidedChoice(m promptModel) (string, error) {
 		m.Default = ""
 	}
 	for {
-		region := r.begin(m)
+		region := p.beginGuided(m)
 		raw, interrupted, err := p.guidedRead(m.ReadAnswer)
 		if err != nil {
 			return "", err
@@ -318,6 +341,12 @@ func (p *prompter) guidedChoice(m promptModel) (string, error) {
 			}
 		}
 		if key != "" {
+			if m.Validate != nil {
+				if err := m.Validate(key); err != nil {
+					r.resolve(region, symbolWarn, err.Error(), raw, false, p.inputPending(), interrupted)
+					continue
+				}
+			}
 			receipt := key
 			for _, o := range choices {
 				if o.Key == key {
@@ -346,7 +375,7 @@ func (p *prompter) guidedText(m promptModel) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		region := r.begin(m)
+		region := p.beginGuided(m)
 		raw, interrupted, err := p.guidedRead(m.ReadAnswer)
 		restore()
 		if err != nil {
@@ -401,6 +430,12 @@ func (m promptModel) number(i int) int {
 	return i + 1
 }
 
+// Emoji presentation and joined clusters vary between terminals. Their existing
+// visible widths still guide formatting, but cannot justify erasing owned rows.
+func ambiguousPromptWidth(text string) bool {
+	return strings.ContainsAny(text, "\u200d\ufe0f")
+}
+
 func receiptText(s string) string {
 	return strings.Map(func(r rune) rune {
 		if unicode.IsControl(r) {
@@ -431,7 +466,7 @@ func (p *prompter) guidedRead(read func(*bufio.Reader) (string, error)) (string,
 	}
 	raw, err := read(p.in)
 	changed := signalled(changes)
-	if err != nil && !(errors.Is(err, io.EOF) && raw != "") {
+	if err != nil && (!errors.Is(err, io.EOF) || raw == "") {
 		if errors.Is(err, io.EOF) {
 			return "", true, fmt.Errorf("no more input: %w", err)
 		}

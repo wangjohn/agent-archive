@@ -20,7 +20,8 @@ Enter 1-2 [1]: included-projects
 
 Projects to archive (✓ included):
   1) ✓ ~/src/web-app  this folder
-a includes all listed projects. Or enter 1 to include or leave it out, or a path to add a project.
+a includes all listed projects. Or enter 1 to include or leave it out, or a path
+to add a project.
 Enter a blank line when finished.
 Projects:
 
