@@ -11,20 +11,32 @@ import (
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
+type labelOwnershipMutation string
+
+const (
+	labelMachineChange      labelOwnershipMutation = "machine"
+	labelOwnerChange        labelOwnershipMutation = "owner"
+	labelOwnerBackoffChange labelOwnershipMutation = "owner-backoff"
+	labelArchiveChange      labelOwnershipMutation = "archive"
+	labelNativeChange       labelOwnershipMutation = "native"
+	labelMissingMetadata    labelOwnershipMutation = "missing"
+	labelMalformedMetadata  labelOwnershipMutation = "malformed"
+)
+
 func TestExternalRenameRequiresCurrentPublishedOwnerBeforeLookup(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		warm   bool
-		mutate string
+		mutate labelOwnershipMutation
 	}{
-		{"current machine changed", false, "machine"},
-		{"current machine changed with cached context", true, "machine"},
-		{"published owner changed with same source", true, "owner"},
-		{"owed cached name during owner-change backoff", true, "owner-backoff"},
-		{"published archive identity changed", true, "archive"},
-		{"published native identity changed", true, "native"},
-		{"published metadata missing", true, "missing"},
-		{"published metadata malformed", true, "malformed"},
+		{"current machine changed", false, labelMachineChange},
+		{"current machine changed with cached context", true, labelMachineChange},
+		{"published owner changed with same source", true, labelOwnerChange},
+		{"owed cached name during owner-change backoff", true, labelOwnerBackoffChange},
+		{"published archive identity changed", true, labelArchiveChange},
+		{"published native identity changed", true, labelNativeChange},
+		{"published metadata missing", true, labelMissingMetadata},
+		{"published metadata malformed", true, labelMalformedMetadata},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			local := newTestStore(t)
@@ -52,7 +64,7 @@ func TestExternalRenameRequiresCurrentPublishedOwnerBeforeLookup(t *testing.T) {
 				run()
 			}
 			before := fetchMetadata(t, remote, "codex", reg.ArchiveSessionID)
-			if tc.mutate == "owner-backoff" {
+			if tc.mutate == labelOwnerBackoffChange {
 				cache, err := local.LoadLabels()
 				if err != nil {
 					t.Fatal(err)
@@ -69,7 +81,7 @@ func TestExternalRenameRequiresCurrentPublishedOwnerBeforeLookup(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if tc.mutate == "machine" {
+			if tc.mutate == labelMachineChange {
 				opts.MachineID = "new-owner"
 			} else {
 				published, err := local.LoadPublishedState(reg.ArchiveSessionID)
@@ -78,22 +90,24 @@ func TestExternalRenameRequiresCurrentPublishedOwnerBeforeLookup(t *testing.T) {
 				}
 				metadata := before
 				switch tc.mutate {
-				case "owner", "owner-backoff":
+				case labelMachineChange, labelMissingMetadata, labelMalformedMetadata:
+					// These cases change the current machine or encoded bytes outside this projection.
+				case labelOwnerChange, labelOwnerBackoffChange:
 					metadata.MachineID = "other-owner"
-				case "archive":
+				case labelArchiveChange:
 					metadata.SessionID = "other-session"
-				case "native":
+				case labelNativeChange:
 					metadata.NativeSessionID = "other-native"
 				}
 				encoded, err := json.Marshal(metadata)
 				if err != nil {
 					t.Fatal(err)
 				}
-				if tc.mutate == "missing" {
+				if tc.mutate == labelMissingMetadata {
 					encoded = nil
 				}
-				if tc.mutate == "malformed" {
-					encoded = []byte("malformed")
+				if tc.mutate == labelMalformedMetadata {
+					encoded = []byte(labelMalformedMetadata)
 				}
 				if err := published.CacheMetadata(encoded); err != nil {
 					t.Fatal(err)
@@ -103,7 +117,7 @@ func TestExternalRenameRequiresCurrentPublishedOwnerBeforeLookup(t *testing.T) {
 					t.Fatalf("owner edit changed source revision: %s %s %v", originalChecksum, checksum, err)
 				}
 			}
-			if tc.mutate == "owner-backoff" {
+			if tc.mutate == labelOwnerBackoffChange {
 				now = now.Add(30 * time.Second)
 			} else {
 				now = now.Add(time.Hour)
