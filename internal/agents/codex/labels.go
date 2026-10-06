@@ -15,12 +15,12 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/local"
-	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 	"modernc.org/sqlite"
 	sqlite3 "modernc.org/sqlite/lib"
 	"modernc.org/sqlite/vfs"
@@ -154,7 +154,7 @@ func labelDefaultStorage(root string) bool {
 	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
 		return true
 	}
-	f, err := sourcefacts.OpenRegular(root, path)
+	f, err := labelOpenRegular(root, path)
 	if errors.Is(err, os.ErrNotExist) {
 		return true
 	}
@@ -188,7 +188,7 @@ func readLabelIndex(ctx context.Context, root string, requests []agentapi.LabelR
 	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
 		return out, true
 	}
-	f, err := sourcefacts.OpenRegular(root, path)
+	f, err := labelOpenRegular(root, path)
 	if errors.Is(err, os.ErrNotExist) {
 		return out, true
 	}
@@ -339,7 +339,7 @@ func (f *labelFS) Open(name string) (fs.File, error) {
 	if name != "state_5.sqlite" {
 		return nil, fs.ErrNotExist
 	}
-	file, err := sourcefacts.OpenRegular(f.root, filepath.Join(f.root, name))
+	file, err := labelOpenRegular(f.root, filepath.Join(f.root, name))
 	if err != nil {
 		return nil, err
 	}
@@ -373,7 +373,7 @@ func (f *labelFile) Read(p []byte) (int, error) {
 }
 
 func labelDBHeader(root string) ([]byte, bool) {
-	f, err := sourcefacts.OpenRegular(root, filepath.Join(root, "state_5.sqlite"))
+	f, err := labelOpenRegular(root, filepath.Join(root, "state_5.sqlite"))
 	if err != nil {
 		return nil, false
 	}
@@ -416,4 +416,32 @@ func (LabelProvider) LabelContext(bundle archive.SourceBundle) agentapi.LabelCon
 func labelPreviewDigest(value string) string {
 	sum := sha256.Sum256([]byte(strings.TrimSpace(value)))
 	return hex.EncodeToString(sum[:])
+}
+
+// labelOpenRegular confines native reads to an approved root and never blocks
+// on a FIFO. It intentionally has no higher-level preview/discovery dependency.
+func labelOpenRegular(root, path string) (*os.File, error) {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return nil, errors.New("invalid label source locator")
+	}
+	directory, err := os.OpenRoot(root)
+	if err != nil {
+		return nil, errors.New("label source root unavailable")
+	}
+	defer func() { _ = directory.Close() }()
+	before, err := directory.Lstat(rel)
+	if err != nil || !before.Mode().IsRegular() {
+		return nil, errors.New("label source is not a regular file")
+	}
+	file, err := directory.OpenFile(rel, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, errors.New("label source unavailable")
+	}
+	after, err := file.Stat()
+	if err != nil || !after.Mode().IsRegular() || !os.SameFile(before, after) {
+		_ = file.Close()
+		return nil, errors.New("label source changed while opening")
+	}
+	return file, nil
 }
