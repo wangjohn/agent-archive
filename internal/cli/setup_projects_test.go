@@ -219,7 +219,7 @@ func TestSetupCompleteTranscriptMatrix(t *testing.T) {
 					t.Fatalf("config %+v", cfg)
 				}
 				text := f.normalize(out.String())
-				if !strings.Contains(text, "Setup complete") || !strings.Contains(text, "Optional · Import past sessions") || !strings.Contains(text, "Found 2 sessions in 2 selected projects") || strings.Contains(text, "To set up another machine with this storage") {
+				if !strings.Contains(text, "Setup complete") || !strings.Contains(text, "Optional · Import past sessions") || !setupContainsText(text, "Found 2 sessions in 2 selected projects") || strings.Contains(text, "To set up another machine with this storage") {
 					t.Fatal(text)
 				}
 				golden.Check(t, filepath.Join("testdata", "setup-transcripts", fmt.Sprintf("%dx%d-color-%t.txt", size[0], size[1], color)), []byte(strings.ReplaceAll(text, "\x1b", "\\e")))

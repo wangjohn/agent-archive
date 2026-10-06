@@ -97,7 +97,10 @@ func readManagementToken(ctx context.Context, p *prompter, env Env, command []st
 			return "", false, false, errors.New("management token command failed")
 		}
 		choice, choiceErr := p.guidedChoice(promptModel{Question: "Management token", Helpers: []string{"Password manager did not supply a usable token. Unlock it and retry, or enter a token for this invocation."}, Default: "cancel", Primary: []option{{"retry", "Retry password manager"}, {"paste", "Enter token with hidden input"}, {"cancel", "Cancel"}}})
-		if choiceErr != nil || choice == "cancel" {
+		if choiceErr != nil {
+			return "", false, false, choiceErr
+		}
+		if choice == "cancel" {
 			return "", false, false, errChooseStorageAgain
 		}
 		if choice == "retry" {
