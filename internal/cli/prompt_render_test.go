@@ -65,20 +65,23 @@ func TestGuidedPromptCollapseRequiresOwnedVisibleRows(t *testing.T) {
 			r := p.renderer()
 			region := r.begin(promptExample())
 			echo := "2\n"
-			if mode == promptModeResize {
+			switch mode {
+			case promptModeResize:
 				out.caps.Width = 60
-			} else if mode == promptModeHeight {
+			case promptModeHeight:
 				out.caps.Height = 20
-			} else if mode == promptModeOverflow {
+			case promptModeOverflow:
 				region.rows = 24
-			} else if mode == promptModeExternal {
+			case promptModeExternal:
 				terminal.Println(p.out, "EXTERNAL SENTINEL")
-			} else if mode == promptModeSuspend {
+			case promptModeSuspend:
 				release := p.suspendPrompts()
 				terminal.Println(out, "PAGER SENTINEL")
 				release()
-			} else if mode == promptModeLongEcho {
+			case promptModeLongEcho:
 				echo = strings.Repeat("a", 2000) + "\n"
+			case promptModeNormal, promptModeNoColor, promptModeWide, promptModeLong, promptModeDefaultLong, promptModeRetry, promptModeScroll, promptModeTypedAhead, promptModeTypedAheadTwo, promptModePager, promptModeEof, promptModeSecretEof, promptModeInterrupt, promptModeTerm, promptModeHup, promptModeQuit, promptModePairingOutput, promptModeLive, promptModeContinued, promptModeRedirect, promptModeDumb:
+				// These modes retain the original block; only capability/read flags differ.
 			}
 			r.finish(region, "Provider Amazon S3", echo, false, mode == promptModeTypedAhead, mode == promptModeContinued)
 			got := out.String()
