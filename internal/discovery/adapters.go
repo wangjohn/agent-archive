@@ -56,9 +56,11 @@ const (
 
 // Observation is one bounded metadata probe and its typed outcome.
 type Observation struct {
-	Candidate Candidate
-	Outcome   Outcome
-	Bytes     int64
+	// SourceInfo is the transient observation that produced the header.
+	SourceInfo os.FileInfo `json:"-"`
+	Candidate  Candidate
+	Outcome    Outcome
+	Bytes      int64
 }
 
 // Fingerprint is a retry/scheduling hint, never native start evidence.
@@ -154,7 +156,7 @@ func (codexAdapter) Describe(root, path, name string) SourceEntry {
 
 func (a codexAdapter) Inspect(ctx context.Context, source SourceDescriptor) Observation {
 	h := sourcefacts.ReadHeader(ctx, source.Root, source.Locator)
-	o := Observation{Outcome: Outcome(h.Outcome), Bytes: h.Bytes}
+	o := Observation{Outcome: Outcome(h.Outcome), Bytes: h.Bytes, SourceInfo: h.SourceInfo}
 	if o.Outcome != outcomeUsable {
 		return o
 	}

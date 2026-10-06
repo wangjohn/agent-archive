@@ -18,6 +18,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/transcriptio"
 )
 
 // Plan is everything one backfill run found and decided. It is the input the
@@ -575,7 +576,7 @@ func (w *work) sourceCurrent(env Environment) bool {
 
 func (w *work) matchesSource(current os.FileInfo, err error) bool {
 	original := w.t.sourceInfo
-	return err == nil && current.Mode().IsRegular() && os.SameFile(original, current) && original.Size() == current.Size() && original.ModTime().Equal(current.ModTime())
+	return err == nil && transcriptio.SameObservation(original, current)
 }
 
 // runAdapter filters the whole transcript with the collector's own code and

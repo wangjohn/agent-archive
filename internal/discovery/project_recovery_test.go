@@ -8,9 +8,12 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agents/builtin"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/collector"
+	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
+	"github.com/wangjohn/agent-archive/internal/testutil/recoverytest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -163,5 +166,232 @@ func TestRecoveredDiscoveryRechecksEvidenceBeforeAdmission(t *testing.T) {
 		if err != nil || h.Registered != 0 || (h.Outcomes[string(sourcefacts.RecoveryInventoryUnavailable)] == 0 && h.Outcomes[string(outcomeChanged)] == 0) {
 			t.Fatal(h, err)
 		}
+	}
+}
+
+// changedHeaderAdapter mutates only after the real bounded header probe returns.
+type changedHeaderAdapter struct {
+	codexAdapter
+	after func(SourceDescriptor)
+}
+
+func (a changedHeaderAdapter) Inspect(ctx context.Context, source SourceDescriptor) Observation {
+	observation := a.codexAdapter.Inspect(ctx, source)
+	a.after(source)
+	return observation
+}
+
+type sourceChangePhase string
+
+const (
+	sourceChangeHeader         sourceChangePhase = "header"
+	sourceChangeLookup         sourceChangePhase = "repository_lookup"
+	sourceChangeRevalidation   sourceChangePhase = "repository_revalidation"
+	sourceChangePersistedCache sourceChangePhase = "persisted_cache"
+)
+
+type sourceChangeMutation string
+
+const (
+	sourceChangeCwd         sourceChangeMutation = "excluded_cwd"
+	sourceChangeRepoKey     sourceChangeMutation = "repository_key"
+	sourceChangeProducer    sourceChangeMutation = "producer"
+	sourceChangeCreation    sourceChangeMutation = "creation_time"
+	sourceChangeReplacement sourceChangeMutation = "same_stamp_replacement"
+)
+
+func TestDiscoveryRejectsSourceChangesAcrossHeaderAndRecovery(t *testing.T) {
+	for _, phase := range []sourceChangePhase{sourceChangeHeader, sourceChangeLookup, sourceChangeRevalidation, sourceChangePersistedCache} {
+		for _, mutation := range []sourceChangeMutation{sourceChangeCwd, sourceChangeRepoKey, sourceChangeProducer, sourceChangeCreation, sourceChangeReplacement} {
+			t.Run(string(phase)+"/"+string(mutation), func(t *testing.T) {
+				store, cfg, at, root := fixture(t)
+				gone := filepath.Join(t.TempDir(), "gone")
+				excluded := filepath.Join(filepath.Dir(gone), "deny")
+				if err := os.Mkdir(excluded, 0700); err != nil {
+					t.Fatal(err)
+				}
+				cfg.Archive.Projects = append(cfg.Archive.Projects, archive.ProjectActivation{Root: excluded, ProjectID: archive.ProjectID(excluded), Included: false})
+				if err := config.Save(store.Home(), cfg); err != nil {
+					t.Fatal(err)
+				}
+				native := writeRollout(t, root, gone, at.Add(time.Minute), 44, "sessions")
+				stable := writeRollout(t, root, cfg.Archive.Projects[0].Root, at.Add(time.Minute), 45, "sessions")
+				for _, id := range []string{native, stable} {
+					if err := store.RequestSessionIndexRecovery(agentmeta.SessionKey{Agent: agentmeta.Codex, NativeID: id}); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if err := recoverytest.Exhaust(t.Context(), store, state.SessionIndexRecoverySlice, false); err != nil {
+					t.Fatal(err)
+				}
+				path := filepath.Join(root, "sessions", "rollout-2026-10-01T12-00-00-"+native+".jsonl")
+				raw, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				raw = bytes.Replace(raw, []byte(`"source":"cli"`), []byte(`"git":{"repository_url":"https://example.test/acme/repo"},"source":"cli"`), 1)
+				if err := os.WriteFile(path, raw, 0600); err != nil {
+					t.Fatal(err)
+				}
+				original, err := os.Stat(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				changed := false
+				mutate := func() {
+					if changed {
+						return
+					}
+					changed = true
+					newer := raw
+					switch mutation {
+					case sourceChangeCwd, sourceChangeReplacement:
+						newer = bytes.Replace(raw, []byte(gone), []byte(excluded), 1)
+					case sourceChangeRepoKey:
+						newer = bytes.Replace(raw, []byte("acme/repo"), []byte("acme/nope"), 1)
+					case sourceChangeProducer:
+						newer = bytes.Replace(raw, []byte(`"source":"cli"`), []byte(`"source":"xyz"`), 1)
+					case sourceChangeCreation:
+						newer = bytes.ReplaceAll(raw, []byte(at.Add(time.Minute).Format(time.RFC3339Nano)), []byte(at.Add(-time.Hour).Format(time.RFC3339Nano)))
+					}
+					if bytes.Equal(raw, newer) {
+						t.Fatal("mutation did not change the fixture")
+					}
+					target := path
+					if mutation == sourceChangeReplacement {
+						target += ".replacement"
+					}
+					if err := os.WriteFile(target, newer, 0600); err != nil {
+						t.Fatal(err)
+					}
+					if mutation == sourceChangeReplacement {
+						if err := os.Chtimes(target, original.ModTime(), original.ModTime()); err != nil {
+							t.Fatal(err)
+						}
+						if err := os.Rename(target, path); err != nil {
+							t.Fatal(err)
+						}
+						current, err := os.Stat(path)
+						if err != nil || os.SameFile(original, current) || current.Size() != original.Size() || !current.ModTime().Equal(original.ModTime()) {
+							t.Fatal("invalid replacement observation", err)
+						}
+					} else {
+						// Guarantee a changed stamp even on a coarse-clock filesystem.
+						stamp := original.ModTime().Add(time.Second)
+						if err := os.Chtimes(path, stamp, stamp); err != nil {
+							t.Fatal(err)
+						}
+					}
+				}
+				adapter := codexAdapter{supported: syntheticSupport}
+				var sourceAdapter SourceAdapter = adapter
+				if phase == sourceChangeHeader {
+					sourceAdapter = changedHeaderAdapter{codexAdapter: adapter, after: func(source SourceDescriptor) {
+						if source.Locator == path {
+							mutate()
+						}
+					}}
+				}
+				if phase == sourceChangePersistedCache {
+					entry := adapter.Describe(root, "sessions", filepath.Base(path))
+					observation := adapter.Inspect(t.Context(), entry.Source)
+					prior := catalog{Version: catalogVersion, Roots: []string{root}, Cache: map[string]cached{path: {Size: entry.Fingerprint.Size, Mtime: entry.Fingerprint.Mtime, Checked: at.Add(2 * time.Minute), Observation: observation}}}
+					if err := local.Write(filepath.Join(store.Home(), "discovery-catalog.json"), prior); err != nil {
+						t.Fatal(err)
+					}
+					mutate()
+				}
+				key := archive.RepoKey("https://example.test/acme/repo")
+				opts := Options{Now: func() time.Time { return at.Add(2 * time.Minute) }, RepositoryIdentity: func(_ context.Context, rootPath string) sourcefacts.RepositoryIdentity {
+					if phase == sourceChangeLookup {
+						mutate()
+					}
+					rootKey := key
+					if rootPath == excluded {
+						rootKey = archive.RepoKey("https://example.test/acme/deny")
+					}
+					return sourcefacts.RepositoryIdentity{Root: rootPath, Key: rootKey, Known: true}
+				}, RepositoryIdentityCurrent: func(sourcefacts.RepositoryIdentity) bool {
+					if phase == sourceChangeRevalidation {
+						mutate()
+					}
+					return true
+				}}
+				h, err := runWithAdapters(t.Context(), store, cfg, opts, []SourceAdapter{sourceAdapter})
+				if err != nil || !changed || h.Registered != 1 {
+					t.Fatalf("unrelated progress: %+v changed=%v err=%v", h, changed, err)
+				}
+				if phase != sourceChangePersistedCache && h.Outcomes[string(outcomeChanged)] == 0 {
+					t.Fatalf("changed source was not retried: %+v", h)
+				}
+				regs, err := store.LoadRegistrations()
+				if err != nil || len(regs) != 1 || regs[0].NativeSessionID != stable {
+					t.Fatalf("stale ownership: %+v %v", regs, err)
+				}
+				h, err = runWithAdapters(t.Context(), store, cfg, opts, []SourceAdapter{adapter})
+				if err != nil || h.Registered != 0 || h.Outcomes[string(outcomeChanged)] != 0 {
+					t.Fatalf("settled retry: %+v %v", h, err)
+				}
+				if (mutation == sourceChangeCwd || mutation == sourceChangeReplacement) && h.Outcomes["excluded_project"] == 0 && h.Outcomes["project_not_authorized"] == 0 {
+					t.Fatalf("current exclusion lost: %+v", h)
+				}
+			})
+		}
+	}
+}
+
+func TestCachedRecoveryObservationRejectsSameStampReplacement(t *testing.T) {
+	for _, exhausted := range []bool{false, true} {
+		t.Run(map[bool]string{false: "reprobe", true: "probe_budget"}[exhausted], func(t *testing.T) {
+			store, cfg, at, root := fixture(t)
+			gone := filepath.Join(t.TempDir(), "gone")
+			excluded := filepath.Join(filepath.Dir(gone), "deny")
+			if err := os.Mkdir(excluded, 0700); err != nil {
+				t.Fatal(err)
+			}
+			cfg.Archive.Projects = append(cfg.Archive.Projects, archive.ProjectActivation{Root: excluded, ProjectID: archive.ProjectID(excluded), Included: false})
+			native := writeRollout(t, root, gone, at.Add(time.Minute), 46, "sessions")
+			path := filepath.Join(root, "sessions", "rollout-2026-10-01T12-00-00-"+native+".jsonl")
+			adapter := codexAdapter{supported: syntheticSupport}
+			entry := adapter.Describe(root, "sessions", filepath.Base(path))
+			observation := adapter.Inspect(t.Context(), entry.Source)
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			replacement := path + ".replacement"
+			if err := os.WriteFile(replacement, bytes.Replace(raw, []byte(gone), []byte(excluded), 1), 0600); err != nil {
+				t.Fatal(err)
+			}
+			stamp := observation.SourceInfo.ModTime()
+			if err := os.Chtimes(replacement, stamp, stamp); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Rename(replacement, path); err != nil {
+				t.Fatal(err)
+			}
+			current, err := os.Stat(path)
+			if err != nil || os.SameFile(observation.SourceInfo, current) || current.Size() != observation.SourceInfo.Size() || !current.ModTime().Equal(stamp) {
+				t.Fatal("invalid same-stamp replacement", err)
+			}
+			c := catalog{Cache: map[string]cached{path: {Size: entry.Fingerprint.Size, Mtime: entry.Fingerprint.Mtime, Checked: at.Add(2 * time.Minute), Observation: observation}}}
+			probes := 0
+			if exhausted {
+				probes = HeaderProbes
+			}
+			h := Health{Outcomes: map[string]int{}, Probes: probes}
+			s := scan{resolver: sourcefacts.NewProjectResolver(), store: store, cfg: cfg, catalog: &c, health: &h, now: at.Add(2 * time.Minute), adapter: adapter, ctx: t.Context()}
+			retry, stop := s.visitEntry(directory{Root: root, Path: "sessions"}, entry)
+			if exhausted {
+				if !retry || !stop || h.Probes != HeaderProbes || len(c.Cache) != 0 {
+					t.Fatalf("exhausted probe admitted or retained stale facts: %+v retry=%v stop=%v", h, retry, stop)
+				}
+			} else if retry || stop || h.Probes != 1 || h.Outcomes["project_not_authorized"] != 1 {
+				t.Fatalf("replacement did not reprobe current exclusion: %+v", h)
+			}
+			if h.Registered != 0 {
+				t.Fatal("cached replacement granted ownership")
+			}
+		})
 	}
 }

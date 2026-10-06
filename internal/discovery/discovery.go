@@ -20,6 +20,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 	"github.com/wangjohn/agent-archive/internal/state"
+	"github.com/wangjohn/agent-archive/internal/transcriptio"
 )
 
 const (
@@ -546,6 +547,10 @@ func (s scan) visitEntry(d directory, source SourceEntry) (retry, stop bool) {
 	if entry.Observation.Outcome == outcomeIncomplete || entry.Observation.Outcome == outcomeUnavailable || entry.Observation.Outcome == outcomeChanged {
 		retryDelay = time.Minute
 	}
+	if hit && cachedObservationNeedsProbe(entry.Observation, source.Source) {
+		delete(c.Cache, loc)
+		hit = false
+	}
 	if !hit || entry.Size != source.Fingerprint.Size || entry.Mtime != source.Fingerprint.Mtime || now.Sub(entry.Checked) >= retryDelay || now.Before(entry.Checked) {
 		if h.Probes >= HeaderProbes {
 			return true, true
@@ -559,6 +564,12 @@ func (s scan) visitEntry(d directory, source SourceEntry) (retry, stop bool) {
 	if s.priority && !entry.ActiveHint {
 		entry.ActiveHint = true
 		c.Cache[loc] = entry
+	}
+	if observedSourceChanged(entry.Observation, source.Source) {
+		delete(c.Cache, loc)
+		h.Outcomes[string(outcomeChanged)]++
+		s.retainRetry(source.Source)
+		return false, false
 	}
 	h.Outcomes[string(entry.Observation.Outcome)]++
 	if entry.Observation.Outcome != outcomeUsable {
@@ -708,6 +719,9 @@ func (s scan) admitCandidate(candidate Candidate, loc string) (bool, bool) {
 	}
 	if !ok {
 		if proof, outcome, attempted := s.recoverProject(candidate); attempted {
+			if s.rejectChangedRecoverySource(candidate, loc) {
+				return false, false
+			}
 			if outcome != "" {
 				h.Outcomes[string(outcome)]++
 				if outcome != sourcefacts.RecoveryExcluded {
@@ -793,19 +807,60 @@ func (s scan) recoverProject(candidate Candidate) (archive.ProjectResolution, so
 
 func (s scan) recoveryEvidenceOutcome(candidate Candidate, loc string) string {
 	observed, cached := s.catalog.Cache[loc]
-	relative, err := filepath.Rel(candidate.Source.Root, filepath.Dir(candidate.Source.Locator))
-	current := s.adapter.Describe(candidate.Source.Root, relative, filepath.Base(candidate.Source.Locator))
-	if err != nil || !cached || current.Fingerprint.Size != observed.Size || current.Fingerprint.Mtime != observed.Mtime {
+	if !cached || !sourceObservationCurrent(observed.Observation, loc) {
 		return string(outcomeChanged)
 	}
 	_, cwdErr := os.Stat(candidate.WorkingDirectory)
-	if !errors.Is(cwdErr, os.ErrNotExist) || !s.recovery.Current(*candidate.ProjectResolution) {
+	current := errors.Is(cwdErr, os.ErrNotExist) && s.recovery.Current(*candidate.ProjectResolution)
+	// Repository revalidation may itself observe external changes. Keep the
+	// accepted baseline until the last check before durable admission.
+	if !sourceObservationCurrent(observed.Observation, loc) {
+		return string(outcomeChanged)
+	}
+	if !current {
 		if s.recovery.MetadataExhausted {
 			return string(sourcefacts.RecoveryBudgetExhausted)
 		}
 		return string(sourcefacts.RecoveryInventoryUnavailable)
 	}
 	return ""
+}
+
+// Persisted hints schedule ordinary continuation, but cannot recreate the
+// identity behind recovered ownership. Live cached facts keep their baseline.
+func cachedObservationNeedsProbe(observed Observation, source SourceDescriptor) bool {
+	if observed.Outcome != outcomeUsable || source.Kind != archive.SourceKindFile {
+		return false
+	}
+	if observed.SourceInfo == nil {
+		return observed.Candidate.RecordedRepoKey != "" && missingSourceCwd(observed.Candidate)
+	}
+	return !sourceObservationCurrent(observed, source.Locator)
+}
+
+func observedSourceChanged(observed Observation, source SourceDescriptor) bool {
+	return observed.Outcome == outcomeUsable && source.Kind == archive.SourceKindFile && observed.SourceInfo != nil && !sourceObservationCurrent(observed, source.Locator)
+}
+
+func (s scan) rejectChangedRecoverySource(candidate Candidate, loc string) bool {
+	observed, found := s.catalog.Cache[loc]
+	if found && sourceObservationCurrent(observed.Observation, loc) {
+		return false
+	}
+	delete(s.catalog.Cache, loc)
+	s.health.Outcomes[string(outcomeChanged)]++
+	s.retainRetry(candidate.Source)
+	return true
+}
+
+func missingSourceCwd(candidate Candidate) bool {
+	_, err := os.Stat(candidate.WorkingDirectory)
+	return errors.Is(err, os.ErrNotExist)
+}
+
+func sourceObservationCurrent(observed Observation, loc string) bool {
+	current, err := os.Lstat(loc)
+	return err == nil && transcriptio.SameObservation(observed.SourceInfo, current)
 }
 
 func (s scan) retainedProject(candidate Candidate) (*archive.SessionRegistration, bool) {

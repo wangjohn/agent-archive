@@ -1082,13 +1082,15 @@ stamps include HEAD, worktree/common config paths, empty or absent included
 files, all candidate global/system config paths reported by Git, and scratch
 ancestors with no Git metadata. Unsupported Git path queries remain unavailable; a documented no-value result
 establishes that no config path applies.
-New discovery checks the source fingerprint and original cwd again; imports validate each source and
+New discovery checks the original source observation and original cwd again; imports validate each source and
 cwd and coalesce the common inventory check for each short registration hold.
-Import attribution retains the file identity, size and modification time sampled
+Import and recovered discovery attribution retain the file identity, size and modification time sampled
 before bounded native header inspection. It checks that same observation after
-header inspection, repository resolution and full filtering, and before each
+header inspection and repository resolution. Imports also check after full filtering, and before each
 registration hold for recovered attribution. A rewrite or replacement during those stages reports
-`source_changed`; a settled retry resolves current cwd/repository facts.
+`source_changed`; a settled retry resolves current cwd/repository facts. Automatic
+discovery retains file identity only in memory; persisted scheduling hints must
+reprobe the header before recovering new ownership.
 These checks run outside hooks.lock; current policy and consent still run under
 it. Already retained ownership continues without rerunning recovery evidence.
 
