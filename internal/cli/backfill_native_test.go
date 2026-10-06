@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -114,6 +115,10 @@ func TestBackfillNativeChildOwnTaskPublicationWithoutParent(t *testing.T) {
 				t.Fatal("metadata not read back", objects)
 			}
 			assertNativeChildRecoveryRefused(t, local, reg, env)
+			beforeLinkMetadata, e := local.PublishedMetadata(reg.ArchiveSessionID)
+			must(t, e)
+			var beforeLink archive.Metadata
+			must(t, json.Unmarshal(beforeLinkMetadata, &beforeLink))
 			// A parent imported later may resolve the link, but cannot move the
 			// independently admitted child into the parent's newer batch.
 			parentAt := at.Add(-time.Hour)
@@ -140,6 +145,16 @@ func TestBackfillNativeChildOwnTaskPublicationWithoutParent(t *testing.T) {
 			must(t, e)
 			if !found || parentReg.NativeSessionID != parent || parentReg.ImportBatch.Recorded() == reg.ImportBatch.Recorded() {
 				t.Fatal("late parent batch/provenance lost", parentReg)
+			}
+			afterLinkMetadata, e := local.PublishedMetadata(reg.ArchiveSessionID)
+			must(t, e)
+			var afterLink archive.Metadata
+			must(t, json.Unmarshal(afterLinkMetadata, &afterLink))
+			if !afterLink.CapturedAt.Equal(beforeLink.CapturedAt) {
+				t.Fatal("late parent repair advanced child capture age", beforeLink.CapturedAt, afterLink.CapturedAt)
+			}
+			if !reflect.DeepEqual(beforeLink.Counts, afterLink.Counts) || !reflect.DeepEqual(beforeLink.ModelTokens, afterLink.ModelTokens) {
+				t.Fatal("late parent repair changed child own activity or token usage")
 			}
 			assertNativeChildRecoveryRefused(t, local, linked, env)
 			beforeRejected := bucketSnapshot(t, cloud)

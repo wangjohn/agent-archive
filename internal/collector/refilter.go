@@ -76,7 +76,7 @@ func refilterBundleBounded(ctx context.Context, reg archive.SessionRegistration,
 	if bundle.SchemaVersion != archive.SourceSchemaVersion && bundle.SchemaVersion != archive.HistorySourceSchemaVersion {
 		return archive.SourceBundle{}, errors.New("unsupported retained source schema")
 	}
-	if bundle.ArchiveSessionID != reg.ArchiveSessionID || bundle.NativeSessionID != reg.NativeSessionID || bundle.ProjectID != reg.ProjectID || bundle.Capture.Harness.Name != reg.Harness.Name || bundle.ParentSessionID != reg.ParentSessionID {
+	if bundle.ArchiveSessionID != reg.ArchiveSessionID || bundle.NativeSessionID != reg.NativeSessionID || bundle.ProjectID != reg.ProjectID || bundle.Capture.Harness.Name != reg.Harness.Name || !retainedParentMatches(reg, bundle) {
 		return archive.SourceBundle{}, errors.New("retained refilter identity mismatch")
 	}
 	if err := bundle.ValidateHistory(); err != nil {
@@ -173,4 +173,11 @@ func (s *sessionScan) refilterRewritten(_ context.Context, read sourceRead, snap
 	}
 	s.rewritten = &candidate
 	return refiltered, true, nil
+}
+
+// Native parent links may resolve after a retained revision was captured. The
+// stable child owner still identifies that earlier evidence; a different known
+// parent remains a conflict.
+func retainedParentMatches(reg archive.SessionRegistration, bundle archive.SourceBundle) bool {
+	return bundle.ParentSessionID == reg.ParentSessionID || reg.NativeChild && bundle.NativeChild && bundle.ParentSessionID == ""
 }

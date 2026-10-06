@@ -124,6 +124,12 @@ func (p *pass) reconcileNativeLink(i int, reg archive.SessionRegistration, paren
 	if reg.ParentSessionID == parent.ArchiveSessionID && !legacyChecked {
 		return
 	}
+	// Queue before marking reconciliation complete. A crash or failed request
+	// write must leave a retryable relationship, even when the child is settled.
+	if err := p.local.SaveRequest(reg.ArchiveSessionID, "native-parent-linked", p.now); err != nil {
+		p.nativeLinkPending("relationship_state_retry")
+		return
+	}
 	found, err := p.local.UpdateRegistration(reg.ArchiveSessionID, func(current *archive.SessionRegistration) error {
 		if !current.NativeChild || current.ParentNativeSessionID != reg.ParentNativeSessionID || nativeParentKey(*current, current.ParentNativeSessionID) != key {
 			return errors.New("native relationship changed")
@@ -149,7 +155,4 @@ func (p *pass) reconcileNativeLink(i int, reg archive.SessionRegistration, paren
 		reg.NativeLinkVersion = 1
 	}
 	p.registrations[i] = reg
-	if err := p.local.SaveRequest(reg.ArchiveSessionID, "native-parent-linked", p.now); err != nil {
-		p.nativeLinkPending("relationship_state_retry")
-	}
 }

@@ -118,6 +118,10 @@ repair uses the existing registration inventory, scoped to the same native sourc
 home, project and destination; ambiguous owners and removal tombstones remain
 unresolved. Parent hooks and admission are never substituted for child consent.
 Native discovery and import do not fabricate SubagentStop observations.
+Relationship repair queues its durable publication obligation before marking the
+link reconciled. Resolving a missing parent preserves the child's capture age and
+own usage. Privacy maintenance accepts an unresolved historical parent only for
+positively identified native child evidence; conflicting known parents are refused.
 
 `native_child` in retained source and metadata records ownership independently of
 `parent_session_id`. A captured child with an unresolved archive parent includes
