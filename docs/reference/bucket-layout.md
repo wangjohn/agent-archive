@@ -136,7 +136,7 @@ remain untrusted informational claims; a matching claim only changes local
 ledger observation, never grants permission to delete or revoke access.
 
 
-Experimental revocation operations live under `machines/revocations/<operation-id>.json`.
+Revocation operations live under `machines/revocations/<operation-id>.json`.
 Ordinary machine listing fetches them within the same registry deadline and count
 limits, with a separate 64 KiB body bound. Their outcomes are explicitly untrusted
 bucket claims. Machine records retain their 16 KiB bound and include unused spare

@@ -46,7 +46,7 @@ func revocationFixture(t *testing.T) (Env, string, *cloudflaretest.Server, confi
 	must(t, machines.Publish(t.Context(), store, record))
 	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return store, nil }
 	env.LookupEnv = func(key string) (string, bool) {
-		values := map[string]string{"AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_REVOKE": "1", "AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_KEYS": "1", "CLOUDFLARE_API_TOKEN": bootstrapCanary}
+		values := map[string]string{"CLOUDFLARE_API_TOKEN": bootstrapCanary}
 		value, ok := values[key]
 		return value, ok
 	}
@@ -178,13 +178,13 @@ func TestRevokeRefusesForgedMappingAndUnverified404(t *testing.T) {
 
 func TestRevokeNoTokenOnlyRequestsAndProviderSuccessSurvivesPublicationFailure(t *testing.T) {
 	env, home, cf, cfg, _ := revocationFixture(t)
-	env.LookupEnv = func(key string) (string, bool) { return "1", key == "AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_REVOKE" }
+	env.LookupEnv = func(string) (string, bool) { return "", false }
 	var output bytes.Buffer
 	if code := Run([]string{"machines", "revoke", "--machine-id", cfg.MachineID, "--yes"}, nil, &output, &output, env); code != 1 || cf.Calls(cloudflaretest.RouteDeleteToken) != 0 || !strings.Contains(output.String(), "access not removed") {
 		t.Fatal("request claimed removal")
 	}
 	env.LookupEnv = func(key string) (string, bool) {
-		values := map[string]string{"AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_REVOKE": "1", "CLOUDFLARE_API_TOKEN": bootstrapCanary}
+		values := map[string]string{"CLOUDFLARE_API_TOKEN": bootstrapCanary}
 		value, ok := values[key]
 		return value, ok
 	}
@@ -205,19 +205,6 @@ func TestRevokeNoTokenOnlyRequestsAndProviderSuccessSurvivesPublicationFailure(t
 	}
 	if !confirmed {
 		t.Fatal("final publication failure discarded provider result")
-	}
-}
-
-func TestPairingGeneralAvailabilityRemainsOff(t *testing.T) {
-	if pairingGeneralAvailabilityReady() {
-		t.Fatal("live and combined acceptance have not activated GA")
-	}
-	env := testEnv(t, t.TempDir(), time.Now())
-	env.IsTerminal = func(any) bool { return true }
-	var output bytes.Buffer
-	opts, input, err := firstSetupPairingQuestion(pairingGeneralAvailabilityReady(), setupOptions{}, strings.NewReader("yes\n"), &output, env)
-	if err != nil || opts.pair || output.Len() != 0 || input == nil {
-		t.Fatal("first-run pairing was advertised before acceptance")
 	}
 }
 
@@ -383,9 +370,6 @@ func TestRevocationPublicationKeepsRegistryCommandsUsable(t *testing.T) {
 	must(t, putRevocation(t.Context(), store, j))
 	lookup := env.LookupEnv
 	env.LookupEnv = func(key string) (string, bool) {
-		if key == "AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_VERIFY" {
-			return "1", true
-		}
 		return lookup(key)
 	}
 	for _, args := range [][]string{{"machines", "--json"}, {"machines", "--verify", "--yes", "--json"}, {"machines", "rename", "renamed-source"}, {"machines", "revoke", "renamed-source", "--yes"}} {
@@ -416,7 +400,7 @@ func TestRequestOnlyRevocationPersistsUnverifiedSelector(t *testing.T) {
 					cfg.MachineAssignment = nil
 					must(t, config.Save(home, cfg))
 				}
-				env.LookupEnv = func(key string) (string, bool) { return "1", key == "AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_REVOKE" }
+				env.LookupEnv = func(string) (string, bool) { return "", false }
 				value := strings.Repeat("b", 32)
 				args := []string{"machines", "revoke", "--yes"}
 				if kind == "name" {

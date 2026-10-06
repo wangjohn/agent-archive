@@ -1,7 +1,7 @@
 {
  "$schema":"https://json-schema.org/draft/2020-12/schema",
  "$id":"https://agent-archive.dev/schemas/revocation.schema.json",
- "title":"Experimental secret-free revocation operation",
+ "title":"Secret-free revocation operation",
  "type":"object",
  "additionalProperties":false,
  "required":["version","operation_id","destination_id","requester_id","account_id","bucket","created_at","include_issued","account_inventory_complete","keys","publication_pending","request_only"],

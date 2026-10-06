@@ -283,11 +283,9 @@ not publish a record or write registration state, including when nothing needs
 refreshing. The next collector pass publishes a changed application version
 through its normal fingerprint check, without waiting for the daily heartbeat.
 
-### Experimental provider observations
+### Provider observations
 
-Provider verification remains experimental and has not passed live Phase 4
-acceptance. Opt in with `AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_VERIFY=1` and run
-`agent-archive machines --verify`. This reads Cloudflare account token metadata
+Run `agent-archive machines --verify` to request provider verification. This reads Cloudflare account token metadata
 for the configured R2 destination; it does not create or revoke keys. Arbitrary
 S3-compatible endpoints are refused.
 
@@ -320,10 +318,12 @@ binding; other bucket records remain untrusted claims. Legacy/manual keys
 remain unknown. “Claim not observed” keys are candidates for inspection, never
 proof that a key is unused or safe to revoke.
 
-## Encrypted pairing (shared-key beta)
+## Encrypted pairing
 
-On a configured source, run `agent-archive machines add --name laptop --share-key`
-for R2, or omit `--share-key` for S3. The source checks storage before creating a
+First setup asks whether to import a pairing from another machine. On a
+configured source, run `agent-archive machines add --name laptop` to create a
+dedicated R2 pairing or transfer S3 settings. Use `--share-key` explicitly
+when sharing the active R2 key is intended. The source checks storage before creating a
 pairing. Deliver the clipboard bundle to the recipient and the six-word code by a
 separate channel. On the receiver run `agent-archive setup --pair`, paste the
 bundle, and enter the code privately. The first three characters of each word
@@ -331,7 +331,7 @@ are sufficient; use `yo-` for `yo-yo`, including the hyphen.
 Review the destination before capture settings: an existing destination change
 requires explicit consent. Source apps that are absent here are skipped.
 
-This beta shares the active R2 key. Cancelling a pairing, expiry, and deleting a
+Explicit shared-key pairing shares the active R2 key. Cancelling a pairing, expiry, and deleting a
 machine record do not remove access. Replace the shared key on every machine to
 revoke it. S3 bundles contain a profile name and settings, without AWS credentials;
 configure that local profile with `aws configure --profile NAME` or
@@ -372,11 +372,9 @@ remains pending without disabling capture; the collector can reconstruct paired
 assignment metadata and publish after the bundle expires. App approval and history
 imports remain separate steps.
 
-### Dedicated issuance draft
+### Dedicated key issuance
 
-Dedicated R2 issuance is experimental and awaits live Cloudflare acceptance and
-integrated revocation before general availability. In a reviewed development
-build, set `AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_KEYS=1` to use `machines add` without
+Dedicated R2 issuance is the default for `machines add` without
 `--share-key`. The configured destination must be an exact Cloudflare R2 endpoint,
 not a compatible third-party endpoint.
 
@@ -386,7 +384,7 @@ your shell may still retain it. The management token stays in memory and is disc
 at exit. Without a token, an eligible spare is reserved; without a spare, interactive
 use offers a hidden token prompt, explicit sharing, or cancellation. `--yes` never
 shares implicitly and never runs a token command; supply the environment token or
-use an existing spare. `--share-key` deliberately retains the shared beta behavior.
+use an existing spare. `--share-key` deliberately retains the shared-key behavior.
 
 `machines add --spares N` saves a target from zero through five; the default is two.
 Zero disables spare use/refill. Lowering the target does not silently delete existing
@@ -408,16 +406,14 @@ A file, clipboard, or print error may have exposed the bundle, so its key stays 
 Expiry is not key revocation. Delivered issuer-local secrets are removed at command
 exit; immutable issuance lineage remains for later verification. Local cancellation
 needs management access to delete a dedicated token; otherwise access may remain.
-No provider propagation or independent cutoff guarantee has passed live acceptance.
+Provider deletion does not guarantee immediate access cutoff; verify propagation.
 
-### Experimental revocation and shared-key migration
+### Revocation and shared-key migration
 
-These Phase 4 commands remain draft code. Live Cloudflare and combined
-acceptance have not enabled general availability or the first-run pairing
-question. Read-only verification and complete pagination never prove ownership
+Pairing is available during first setup and through explicit commands. Read-only verification and complete pagination never prove ownership
 or account-wide visibility.
 
-With `AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_REVOKE=1`, use
+Use
 `agent-archive machines revoke NAME` or select exactly one `--machine-id`,
 `--recipient-id`, `--pairing-id`, or retry `--operation-id`. A bucket name or
 machine record is a hint, never deletion authority. A current destination-bound
@@ -473,7 +469,7 @@ locally committed name (or explicit immutable ID); a forged bucket label cannot
 redirect the command to this machine's trusted key. Revocation never creates or refills keys, never
 promises immediate cutoff, and leaves sessions/downloaded data intact.
 
-With `AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_KEYS=1`, run
+Run
 `agent-archive machines own-key` to migrate shared/legacy R2 access. The exact
 slot is checkpointed before minting, verified/staged privately, and committed
 through setup's rollback-capable transaction. The existing machine ID is its
@@ -521,8 +517,9 @@ The focused revocation tests cover forged mappings, delivered-key
 exclusion and issuer inclusion, scope mismatch, unknown 404 outcomes, and
 publication failure. This establishes local contracts only. Live provider
 permission, inventory visibility, absence semantics and revocation propagation
-acceptance remain unrun; all Phase 4 commands remain experimental draft features
-and the first-setup pairing question remains disabled.
+coverage remains tracked separately from fake tests. The maintainer approved
+general availability after additional acceptance testing; a full separate-machine
+release test remains planned.
 
 
 Ordinary `machines` listing reads records and revocation operations together within

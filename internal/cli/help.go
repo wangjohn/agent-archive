@@ -74,7 +74,6 @@ Nothing is uploaded or written.
        agent-archive machines revoke --operation-id OPERATION_ID
        [--yes] [--json]
 
-Experimental draft: AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_REVOKE=1 is required.
 Bucket claims never authorize deletion. Verify immutable ownership through a
 local assignment, healthy issuer ledger or independently checked operator file.
 Unknown ownership refuses even under --yes. No token records a request only.
@@ -95,7 +94,6 @@ Self's active object key is deleted last. Sessions and downloaded data remain.
 `,
 	"machines own-key": `Usage: agent-archive machines own-key [--yes] [--cancel]
 
-Experimental draft: AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_KEYS=1 is required.
 Stage and check a dedicated key, then commit through setup's transaction.
 Existing machine identity remains. Shared access stays valid for other users.
 Remove the old local secret only after commit and only when no other local
@@ -107,16 +105,15 @@ destination needs it. Record publication retries independently of commit.
        [--expires 15m] [--print | --file PATH] [--yes]
 
 Create an encrypted pairing bundle after checking the source storage.
-Dedicated R2 issuance is an experimental draft, gated by
-AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_KEYS=1. An available management token creates
+An available management token creates
 and checks a fresh key; otherwise use a ledger-backed spare. --yes never shares
-implicitly. --share-key explicitly selects shared-key beta without independent
-recipient revocation. Live provider acceptance and revocation remain required.
+implicitly. --share-key explicitly selects shared-key pairing without
+independent recipient revocation.
 S3 transfers settings and a profile name. Configure the profile on the receiver.
 Deliver the bundle and six-word code separately. Pairing refuses in any coding
 agent, even with --yes or AGENT_ARCHIVE_NONINTERACTIVE=0.
   --name NAME    Recipient name: 1..40 lowercase letters, digits or hyphens
-  --share-key    Explicitly share the active R2 key (beta)
+  --share-key    Explicitly share the active R2 key (shared access)
   --spares N     Save unused R2 key target, 0..5 (default 2)
                  Refill with an available management token
   --expires DURATION  Lifetime from 5m to 24h (default: 15m)
@@ -134,9 +131,9 @@ remains. Spare refill failure does not invalidate the delivered pairing.
 	"machines": `Usage: agent-archive machines [--json] [--verify] [--yes]
 
 List informational machine records from this bucket.
---verify opts into an experimental, read-only Cloudflare metadata check behind
-AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_VERIFY=1. Account inventory completeness
-remains unknown; matching metadata never proves ownership or access removal.
+--verify requests a read-only Cloudflare metadata check. Account inventory
+completeness remains unknown; matching metadata never proves ownership or access
+removal.
 Anyone with bucket access can forge records; they never authorize revocation.
 Heartbeat is updated at most daily and does not indicate current activity.
 Unreadable records and incomplete listings are reported; those exit with code 1.
