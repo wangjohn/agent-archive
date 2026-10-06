@@ -5,9 +5,23 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"strings"
 	"testing"
 	"time"
+
+	_ "github.com/wangjohn/agent-archive/internal/testutil/golden"
+	"github.com/wangjohn/agent-archive/internal/testutil/importgraph"
 )
+
+func TestSizingImportBoundary(t *testing.T) {
+	direct, all := importgraph.Imports(t, "github.com/wangjohn/agent-archive/internal/jsonwire")
+	importgraph.Forbid(t, "internal/jsonwire", direct, "os", "os/exec", "io/fs", "path/filepath", "net", "net/http", "math/rand", "math/rand/v2")
+	for _, path := range all {
+		if strings.HasPrefix(path, "github.com/wangjohn/agent-archive/") {
+			t.Errorf("pure JSON sizing reaches operational dependency %s", path)
+		}
+	}
+}
 
 type arbitraryMarshaler struct{}
 

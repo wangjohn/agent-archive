@@ -1,12 +1,13 @@
 package collector
 
 import (
-	"encoding/json"
+	"context"
 	"errors"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/jsonwire"
 	"github.com/wangjohn/agent-archive/internal/state"
 )
 
@@ -71,7 +72,7 @@ func (s *sessionScan) reconcileRevisions(read sourceRead, active archive.SourceB
 			}
 		}
 	}
-	planner := revisionPlanner{plan: plan, active: active, adapter: read.adapter, bytesLeft: 128 << 20, compress: s.compressSource}
+	planner := revisionPlanner{ctx: s.ctx, budget: s.readBudget(), plan: plan, active: active, adapter: read.adapter, bytesLeft: 128 << 20, compress: s.compressSource}
 	if err := s.addPendingRevision(&planner); err != nil {
 		return nil, err
 	}
@@ -106,6 +107,8 @@ func revisionID(b archive.SourceBundle) string {
 }
 
 type revisionPlanner struct {
+	ctx       context.Context
+	budget    *agentapi.NativeReadBudget
 	compress  func(archive.SourceBundle) (archive.CompressedSource, error)
 	plan      *revisionPlan
 	active    archive.SourceBundle
@@ -333,6 +336,15 @@ func (s *sessionScan) addPendingRevision(planner *revisionPlanner) error {
 // checkStageEvidence reserves retained records and encoded bytes independently of
 // compressed disk size, including cached/pending inputs absent from native reads.
 func (p *revisionPlanner) checkStageEvidence(bundle archive.SourceBundle) (int, error) {
+	const countScratch = 32 << 10
+	if !p.budget.Reserve(countScratch) {
+		return 0, errRetainedBudget
+	}
+	defer p.budget.Release(countScratch)
+	ctx := p.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	recordsLeft, bytesLeft := archive.MaxHistoryRecords, 128<<20
 	for _, stage := range p.plan.Sources {
 		recordsLeft -= len(stage.Bundle.NativeRecords)
@@ -343,14 +355,16 @@ func (p *revisionPlanner) checkStageEvidence(bundle archive.SourceBundle) (int, 
 	}
 	size := 0
 	for _, record := range bundle.NativeRecords {
-		encoded, err := json.Marshal(record)
+		// Count a conservative wire bound without allocating an encoded row.
+		// Native records already belong to the retained input lease.
+		n, err := jsonwire.Bound(ctx, record, int64(bytesLeft-size))
 		if err != nil {
+			if errors.Is(err, jsonwire.ErrLimit) {
+				return 0, agentapi.Wrap(agentapi.Limit, errors.Join(errors.New("revision retained byte budget exceeded"), err))
+			}
 			return 0, err
 		}
-		if len(encoded) > bytesLeft-size {
-			return 0, agentapi.Wrap(agentapi.Limit, errors.New("revision retained byte budget exceeded"))
-		}
-		size += len(encoded)
+		size += int(n)
 	}
 	return size, nil
 }

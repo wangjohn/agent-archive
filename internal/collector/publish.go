@@ -1,8 +1,10 @@
 package collector
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/listingindex"
@@ -278,12 +280,33 @@ func (s *sessionScan) upload(pending state.PendingPublication) error {
 // ensureHistorySource reuses exact immutable remote bytes on an interrupted
 // source-first attempt. Typed all-reference verification still precedes metadata.
 func (s *sessionScan) ensureHistorySource(key, sha string, data []byte) error {
-	err := storage.VerifySource(s.ctx, s.remote, key, sha, len(data), s.opts.Retry)
-	if err == nil {
-		return nil
+	return storage.PutVerifiedSource(s.ctx, s.remote, key, sha, data, s.opts.Retry, s.verifyHistorySource)
+}
+
+// verifyHistorySource keeps HEAD checksum verification cheap. Older/multipart
+// objects without a digest need an exact-size charged read. Its bytes end before
+// retrying or moving to a sibling reference.
+func (s *sessionScan) verifyHistorySource(ctx context.Context, key, sha string, size int) error {
+	if statter, ok := s.remote.(storage.ObjectStatter); ok {
+		info, err := statter.Stat(ctx, key)
+		if err != nil {
+			return err
+		}
+		if info.SHA256 != "" {
+			if !strings.EqualFold(info.SHA256, strings.TrimSpace(sha)) || info.Size != int64(size) {
+				return fmt.Errorf("%w for %q", storage.ErrChecksumMismatch, key)
+			}
+			return nil
+		}
 	}
-	if !errors.Is(err, storage.ErrNotFound) && !errors.Is(err, storage.ErrChecksumMismatch) {
+	mark := len(s.retainedReleases)
+	defer s.releaseRetainedAfter(mark)
+	raw, err := s.historyGet(key, int64(size))
+	if err != nil {
 		return err
 	}
-	return storage.PutVerifiedSource(s.ctx, s.remote, key, sha, data, s.opts.Retry)
+	if len(raw) != size || !storage.VerifySHA256(raw, sha) {
+		return fmt.Errorf("%w for %q", storage.ErrChecksumMismatch, key)
+	}
+	return nil
 }

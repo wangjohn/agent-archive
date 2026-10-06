@@ -2,14 +2,17 @@ package discovery
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agents/codex"
+	"github.com/wangjohn/agent-archive/internal/local"
 )
 
 func TestSourceAndLiveIndexShareChargeBeforeCopyAndRelease(t *testing.T) {
@@ -55,6 +58,18 @@ func TestSourceAndLiveIndexShareChargeBeforeCopyAndRelease(t *testing.T) {
 		t.Fatal(err)
 	}
 	ledger := agentapi.NewNativeReadBudget(currentSnapshotLimit)
+	// A restored local catalog remains an input owner while the real native
+	// source and private index compete for the same logical data allowance.
+	catalogPath := filepath.Join(root, "synthetic-catalog.json")
+	if err := local.WriteCompact(catalogPath, catalog{Health: Health{Errors: []string{strings.Repeat("synthetic", 1<<20)}}}); err != nil {
+		t.Fatal(err)
+	}
+	owner := &CodexRolloutLookup{readBudget: ledger}
+	var restored catalog
+	if err := owner.readCatalog(t.Context(), catalogPath, &restored); err != nil {
+		t.Fatal(err)
+	}
+	catalogCharge := owner.catalogCharge
 	source, err := (codex.SourceProvider{}).OpenPass(t.Context(), agentapi.SourceEnvironment{ReadBudget: ledger})
 	if err != nil {
 		t.Fatal(err)
@@ -85,8 +100,14 @@ func TestSourceAndLiveIndexShareChargeBeforeCopyAndRelease(t *testing.T) {
 	if err := source.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if used, _ := ledger.Charged(); used != 0 {
+	if used, _ := ledger.Charged(); used != catalogCharge {
 		t.Fatalf("source pass charge leaked: %d", used)
+	}
+	if err := owner.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if used, _ := ledger.Charged(); used != 0 {
+		t.Fatalf("catalog charge leaked: %d", used)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	_, err = snapshotCurrentIndexBudget(ctx, root, func(stage string) {
@@ -158,7 +179,7 @@ func TestDiscoveryHeaderCannotReadWithExhaustedSharedScratch(t *testing.T) {
 	}
 	health, err := run(t.Context(), store, cfg, Options{Now: func() time.Time { return at }, Rollouts: lookup}, syntheticSupport)
 	lookup.readBudget.Release(currentSnapshotLimit)
-	if err != nil {
+	if err != nil && !errors.Is(err, agentapi.ErrReadBudget) {
 		t.Fatal(err)
 	}
 	if health.Probes != 0 || !health.Pending {

@@ -37,19 +37,20 @@ const (
 // evidence becomes usable. Stamp comparison has the ordinary filesystem model:
 // same-stamp out-of-band rewrites and changes after observation are not detected.
 type coverageInventory struct {
-	Version     int                          `json:"version"`
-	Epoch       uint64                       `json:"epoch"`
-	Phase       coveragePhase                `json:"phase"`
-	Roots       []string                     `json:"roots"`
-	Requests    map[string]coverageRequest   `json:"requests"`
-	Directories map[string]coverageDirectory `json:"directories"`
-	Validation  []directory                  `json:"validation"`
-	Sequence    uint64                       `json:"sequence,omitempty"`
-	FinalOffset int                          `json:"final_offset,omitempty"`
-	hintBytes   int64
-	factBound   int64
-	proofEpoch  uint64
-	Failed      bool `json:"failed,omitempty"`
+	Version      int                          `json:"version"`
+	Epoch        uint64                       `json:"epoch"`
+	Phase        coveragePhase                `json:"phase"`
+	Roots        []string                     `json:"roots"`
+	Requests     map[string]coverageRequest   `json:"requests"`
+	Directories  map[string]coverageDirectory `json:"directories"`
+	Validation   []directory                  `json:"validation"`
+	Sequence     uint64                       `json:"sequence,omitempty"`
+	FinalOffset  int                          `json:"final_offset,omitempty"`
+	hintBytes    int64
+	factBound    int64
+	proofEpoch   uint64
+	reserveFacts func(int64) bool
+	Failed       bool `json:"failed,omitempty"`
 }
 
 type coverageRequest struct {
@@ -156,10 +157,10 @@ func (c *coverageInventory) request(id string) bool {
 	if len(id) > 4096 {
 		return false
 	}
+	victim := ""
 	if len(c.Requests) >= maxCoverageRequests {
 		// Retire only work that has finished a complete observation/validation
 		// attempt. Unfinished requests survive every capacity refusal.
-		victim := ""
 		for key, request := range c.Requests {
 			if request.AttemptEpoch == 0 || request.DeliveredEpoch != request.AttemptEpoch {
 				continue
@@ -171,11 +172,19 @@ func (c *coverageInventory) request(id string) bool {
 		if victim == "" {
 			return false
 		}
-		delete(c.Requests, victim)
-		c.factBound = 0
 	}
-	if c.totalByteBound()+6*int64(len(id))+512 > maxCoverageBytes {
+	removed := int64(0)
+	if victim != "" {
+		removed = 6*int64(len(victim)) + c.Requests[victim].byteBound() + 16
+	}
+	if c.totalByteBound()-removed+6*int64(len(id))+512 > maxCoverageBytes {
 		return false
+	}
+	if !c.reserve(6*int64(len(id)) + 512 + 16) {
+		return false
+	}
+	if victim != "" {
+		delete(c.Requests, victim)
 	}
 	c.Sequence++
 	c.factBound = 0
@@ -207,7 +216,7 @@ func (c *coverageInventory) observe(source SourceDescriptor, stamp Fingerprint, 
 		if old, found := request.Candidates[source.Locator]; found {
 			prior = old.byteBound() + 6*int64(len(source.Locator)) + 16
 		}
-		if request.byteBound()+added-prior > maxCoverageRequestBytes || c.totalByteBound()+added-prior > maxCoverageBytes {
+		if request.byteBound()+added-prior > maxCoverageRequestBytes || c.totalByteBound()+added-prior > maxCoverageBytes || !c.reserve(max(added-prior, 0)) {
 			changed = changed || !request.Overflow
 			request.Overflow = true
 		} else {
@@ -244,6 +253,10 @@ func (c *coverageInventory) recordBatch(d directory, b coverageBatch, next int64
 			c.Failed = true
 			return
 		}
+		if !c.reserve(6*int64(len(key)) + 2*directoryByteBound(d) + 1040) {
+			c.Failed = true
+			return
+		}
 		prior = coverageDirectory{Directory: d, Stamp: b.Stamp}
 		c.factBound = 0
 	}
@@ -255,6 +268,10 @@ func (c *coverageInventory) recordBatch(d directory, b coverageBatch, next int64
 	prior.Offset = next
 	prior.Complete = complete
 	c.Directories[key] = prior
+}
+
+func (c *coverageInventory) reserve(n int64) bool {
+	return n == 0 || c.reserveFacts == nil || c.reserveFacts(n)
 }
 
 func (c *coverageInventory) beginValidation() {
