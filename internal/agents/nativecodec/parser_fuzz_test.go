@@ -189,6 +189,7 @@ var fuzzSecretRecords = []struct {
 	{CodexAdapter{}, `{"type":"response_item","payload":{"type":"function_call","name":"shell","arguments":"{\"command\":\"echo aa-pair1:%s\"}"}}`},
 	{CursorAdapter{}, `{"role":"tool","content":"  12→aa-pair1:%s"}`},
 	// Filter 13: a session's name and linked pull request.
+	{ClaudeAdapter{}, `{"type":"ai-title","aiTitle":"password=%s","sessionId":"s"}`},
 	{ClaudeAdapter{}, `{"type":"custom-title","customTitle":"export ANTHROPIC_API_KEY=sk-ant-api03-%s","sessionId":"s"}`},
 	{ClaudeAdapter{}, `{"type":"custom-title","customTitle":"{\"client_secret\":\"%s\"}","sessionId":"s"}`},
 	{ClaudeAdapter{}, `{"type":"pr-link","prNumber":"1","prRepository":"a/b","prUrl":"https://github.com/a/b/pull/1?token=%s","sessionId":"s"}`},
@@ -488,6 +489,7 @@ func FuzzSanitizeValueIdempotent(f *testing.F) {
 		"password: |\n  secret\nuser: x",
 		"-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA7synthetic\nfunc x() {}",
 		"postgres://u:p@ss/w@db:5432/app?sslmode=require&password=x",
+		"    <external_codex_apps_open_page>example</external_codex_apps_open_page>\n<system-reminder>Injected</system-reminder>",
 	} {
 		f.Add(seed)
 	}
