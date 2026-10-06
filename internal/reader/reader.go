@@ -555,11 +555,47 @@ func matchesSkillIdentity(name, hash string, f Filter) bool {
 // metadata pointer. A schema-1 bundle (a single JSON document) is refused with
 // an error naming its schema version.
 func LoadSource(ctx context.Context, store storage.ObjectStore, metadata archive.Metadata, limits Limits) (archive.SourceBundle, error) {
+	selection := archive.RevisionReference{Source: metadata.SourceBundle, CapturedAt: metadata.CapturedAt}
+	if metadata.History != nil {
+		selection.RevisionID = metadata.History.CurrentRevision
+	}
+	return loadReferencedSource(ctx, store, metadata, selection, true, limits)
+}
+
+// LoadRevisionSource verifies one exact retained selection, using its capture age.
+// A preserved schema-2 filtered bundle is evidence, never a raw native dependency.
+func LoadRevisionSource(ctx context.Context, store storage.ObjectStore, metadata archive.Metadata, selected archive.RevisionReference, limits Limits) (archive.SourceBundle, error) {
+	if err := metadata.ValidateSourceReference(); err != nil {
+		return archive.SourceBundle{}, err
+	}
+	active := selected.Source == metadata.SourceBundle && selected.CapturedAt.Equal(metadata.CapturedAt)
+	if active && (metadata.History == nil && selected.RevisionID == "" || metadata.History != nil && selected.RevisionID == metadata.History.CurrentRevision) {
+		return loadReferencedSource(ctx, store, metadata, selected, true, limits)
+	}
+	if metadata.History != nil {
+		for _, ref := range metadata.History.Preserved {
+			if ref == selected {
+				return loadReferencedSource(ctx, store, metadata, selected, false, limits)
+			}
+		}
+	}
+	return archive.SourceBundle{}, errors.New("retained revision is not selected by metadata")
+}
+
+func loadReferencedSource(ctx context.Context, store storage.ObjectStore, metadata archive.Metadata, selected archive.RevisionReference, active bool, limits Limits) (archive.SourceBundle, error) {
 	defer trace.Start("load source").End()
 	if err := metadata.ValidateSourceReference(); err != nil {
 		return archive.SourceBundle{}, err
 	}
-	data, err := store.Get(ctx, metadata.SourceBundle.Key)
+	metadata.SourceBundle = selected.Source
+	metadata.CapturedAt = selected.CapturedAt
+	var data []byte
+	var err error
+	if getter, ok := store.(storage.LimitedGetter); ok {
+		data, err = getter.GetLimited(ctx, metadata.SourceBundle.Key, int64(limits.compressed()))
+	} else {
+		data, err = store.Get(ctx, metadata.SourceBundle.Key)
+	}
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
 			return archive.SourceBundle{}, ErrRefreshRequired
@@ -582,10 +618,10 @@ func LoadSource(ctx context.Context, store storage.ObjectStore, metadata archive
 	if err != nil {
 		return archive.SourceBundle{}, fmt.Errorf("decode source: %w", err)
 	}
-	if bundle.History != nil && (metadata.History == nil || metadata.History.CurrentRevision != bundle.History.ActiveRolloutID) {
+	if bundle.History != nil && (metadata.History == nil || selected.RevisionID != bundle.History.ActiveRolloutID) {
 		return archive.SourceBundle{}, errors.New("source revision disagrees with metadata")
 	}
-	if (bundle.SchemaVersion != archive.SourceSchemaVersion && bundle.SchemaVersion != archive.HistorySourceSchemaVersion) || bundle.ArchiveSessionID != metadata.SessionID || bundle.NativeSessionID != metadata.NativeSessionID || bundle.ProjectID != metadata.ProjectID || bundle.ParentSessionID != metadata.ParentSessionID || bundle.Capture.Harness != metadata.Harness || !bundle.Capture.CapturedAt.Equal(metadata.CapturedAt) || bundle.Capture.FilterVersion != metadata.FilterVersion {
+	if (bundle.SchemaVersion != archive.SourceSchemaVersion && bundle.SchemaVersion != archive.HistorySourceSchemaVersion) || bundle.ArchiveSessionID != metadata.SessionID || bundle.NativeSessionID != metadata.NativeSessionID || bundle.ProjectID != metadata.ProjectID || bundle.PreviousGenerationID != metadata.PreviousGenerationID || bundle.ParentSessionID != metadata.ParentSessionID || bundle.Capture.Harness.Name != metadata.Harness.Name || !bundle.Capture.CapturedAt.Equal(metadata.CapturedAt) || (active && (bundle.Capture.Harness != metadata.Harness || bundle.Capture.FilterVersion != metadata.FilterVersion)) {
 		return archive.SourceBundle{}, errors.New("source identity does not match metadata")
 	}
 	key, err := archive.SourceObjectKey(bundle, metadata.SourceBundle.SHA256)

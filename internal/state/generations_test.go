@@ -32,7 +32,25 @@ func generationFixture(t *testing.T) (*Store, archive.SessionRegistration, time.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := p.Save(bundle, reg.RegisteredAt, CacheStatusPublished); err != nil {
+	bundle.Capture.AdapterName = "test"
+	bundle.Capture.AdapterVersion = "test-v1"
+	bundle.Capture.FilterVersion = archive.FilterVersion
+	bundle.Capture.SourceFormat = "test-jsonl"
+	compressed, err := archive.BuildCompressedSource(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := archive.SourceObjectKey(bundle, compressed.SHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := archive.SourceReference{Key: key, SHA256: compressed.SHA256, CompressedBytes: len(compressed.Bytes)}
+	metadata := archive.Metadata{SchemaVersion: archive.MetadataSchemaVersion, SessionID: reg.ArchiveSessionID, NativeSessionID: reg.NativeSessionID, ProjectID: reg.ProjectID, MachineID: "test", StartedAt: reg.SessionStartedAt, CapturedAt: reg.RegisteredAt, MetadataDerivedAt: reg.RegisteredAt, Harness: reg.Harness, FilterVersion: archive.FilterVersion, SourceBundle: ref}
+	raw, err := json.Marshal(metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.SavePublication(bundle, reg.RegisteredAt, ref, raw); err != nil {
 		t.Fatal(err)
 	}
 	if err := p.SaveBlocked(bundle, reg.RegisteredAt, BlockedReasonTranscriptRewritten); err != nil {
@@ -44,6 +62,7 @@ func generationFixture(t *testing.T) (*Store, archive.SessionRegistration, time.
 func generationBuilder(at time.Time) func(archive.SessionRegistration, string) (archive.SessionRegistration, PendingPublication, error) {
 	return func(reg archive.SessionRegistration, id string) (archive.SessionRegistration, PendingPublication, error) {
 		prev := reg.ArchiveSessionID
+		reg.AdmissionStage = ""
 		reg.ArchiveSessionID = id
 		reg.PreviousGenerationID = prev
 		bundle := archive.SourceBundle{SchemaVersion: archive.SourceSchemaVersion, ArchiveSessionID: id, NativeSessionID: reg.NativeSessionID, ProjectID: reg.ProjectID, PreviousGenerationID: prev, Capture: archive.SourceCapture{Harness: reg.Harness, AdapterName: "test", CapturedAt: at}}

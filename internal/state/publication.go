@@ -23,6 +23,8 @@ const (
 	PublicationCapture PublicationPurpose = "capture"
 	// PublicationMetadata refreshes metadata over unchanged retained sources.
 	PublicationMetadata PublicationPurpose = "metadata"
+	// PublicationPrivacyRewrite replaces every retained source under current privacy policy.
+	PublicationPrivacyRewrite PublicationPurpose = "privacy"
 )
 
 // PredecessorState distinguishes absent metadata from unavailable evidence.
@@ -44,6 +46,7 @@ type PublicationPredecessor struct {
 	Body                   []byte
 	Bundle                 archive.SourceBundle
 	SameRevisionContinuity *PublicationContinuity
+	Privacy                *PublicationPrivacyEvidence
 }
 
 // PublicationContinuity binds a provider-approved continuation to exact source digests.
@@ -64,15 +67,16 @@ type PublicationSource struct {
 
 // PublicationCommit binds replay to the complete source set and admitted context.
 type PublicationCommit struct {
-	Version           int                `json:"version"`
-	MetadataSHA256    string             `json:"metadata_sha256"`
-	SourceSetSHA256   string             `json:"source_set_sha256"`
-	Predecessor       PredecessorState   `json:"predecessor"`
-	PredecessorSHA256 string             `json:"predecessor_sha256,omitempty"`
-	DestinationID     string             `json:"destination_id,omitempty"`
-	AdmissionContext  string             `json:"admission_context,omitempty"`
-	PolicyContext     string             `json:"policy_context"`
-	Purpose           PublicationPurpose `json:"purpose"`
+	Privacy           *PublicationPrivacyEvidence `json:"privacy,omitempty"`
+	Version           int                         `json:"version"`
+	MetadataSHA256    string                      `json:"metadata_sha256"`
+	SourceSetSHA256   string                      `json:"source_set_sha256"`
+	Predecessor       PredecessorState            `json:"predecessor"`
+	PredecessorSHA256 string                      `json:"predecessor_sha256,omitempty"`
+	DestinationID     string                      `json:"destination_id,omitempty"`
+	AdmissionContext  string                      `json:"admission_context,omitempty"`
+	PolicyContext     string                      `json:"policy_context"`
+	Purpose           PublicationPurpose          `json:"purpose"`
 }
 
 func publicationSHA256(data []byte) string {
@@ -86,7 +90,7 @@ func PreparePublication(p PendingPublication, prior PublicationPredecessor, dest
 	if p.Commit != nil {
 		return p, p.ValidatePublication()
 	}
-	if purpose != PublicationCapture && purpose != PublicationMetadata {
+	if purpose != PublicationCapture && purpose != PublicationMetadata && purpose != PublicationPrivacyRewrite {
 		return p, errors.New("unsupported publication purpose")
 	}
 	if err := p.validatePublicationPredecessor(prior, destination, admission, policy, purpose); err != nil {
@@ -118,7 +122,7 @@ func PreparePublication(p PendingPublication, prior PublicationPredecessor, dest
 	if len(provided) != 0 {
 		return p, errors.New("pending payload is not selected by metadata")
 	}
-	p.Commit = &PublicationCommit{Version: 1, MetadataSHA256: publicationSHA256(p.MetadataBytes), SourceSetSHA256: digest, Predecessor: prior.State, DestinationID: destination, AdmissionContext: admission, PolicyContext: policy, Purpose: purpose}
+	p.Commit = &PublicationCommit{Privacy: prior.Privacy, Version: 1, MetadataSHA256: publicationSHA256(p.MetadataBytes), SourceSetSHA256: digest, Predecessor: prior.State, DestinationID: destination, AdmissionContext: admission, PolicyContext: policy, Purpose: purpose}
 	if prior.State == PredecessorPresent {
 		p.Commit.PredecessorSHA256 = publicationSHA256(prior.Body)
 	}
@@ -144,6 +148,9 @@ func (p PendingPublication) validatePublicationPredecessor(prior PublicationPred
 		if previous.SessionID != next.SessionID || previous.NativeSessionID != next.NativeSessionID || previous.ProjectID != next.ProjectID || previous.MachineID != next.MachineID {
 			return errors.New("publication cannot change committed ownership")
 		}
+		if purpose == PublicationPrivacyRewrite {
+			return validatePrivacyPreparation(p, prior, previous, next, destination, admission, policy)
+		}
 		if previous.History != nil && next.History != nil && previous.History.CurrentRevision == next.History.CurrentRevision && previous.SourceBundle != next.SourceBundle {
 			proof := prior.SameRevisionContinuity
 			if proof == nil || proof.PreviousSourceSHA256 != previous.SourceBundle.SHA256 || proof.NextSourceSHA256 != next.SourceBundle.SHA256 {
@@ -154,6 +161,9 @@ func (p PendingPublication) validatePublicationPredecessor(prior PublicationPred
 			return err
 		}
 	case PredecessorAbsent, PredecessorUnknown:
+		if purpose == PublicationPrivacyRewrite && (prior.Privacy == nil || prior.Privacy.Authority != PrivacyStage || prior.Privacy.StageDigest != p.AdmissionStage) {
+			return errors.New("privacy replacement requires committed predecessor or immutable admitted stage authority")
+		}
 		if len(prior.Body) != 0 {
 			return errors.New("unexpected publication predecessor body")
 		}
@@ -166,7 +176,7 @@ func (p PendingPublication) validatePublicationPredecessor(prior PublicationPred
 // ValidatePublication checks every local replay payload and exact metadata binding.
 func (p PendingPublication) ValidatePublication() error {
 	c := p.Commit
-	if c == nil || c.Version != 1 || (c.Purpose != PublicationCapture && c.Purpose != PublicationMetadata) {
+	if c == nil || c.Version != 1 || (c.Purpose != PublicationCapture && c.Purpose != PublicationMetadata && c.Purpose != PublicationPrivacyRewrite) {
 		return errors.New("pending source-set journal is incomplete")
 	}
 	if c.Predecessor != PredecessorAbsent && c.Predecessor != PredecessorPresent && c.Predecessor != PredecessorUnknown {
@@ -181,6 +191,9 @@ func (p PendingPublication) ValidatePublication() error {
 	}
 	if digest != c.SourceSetSHA256 || publicationSHA256(p.MetadataBytes) != c.MetadataSHA256 || len(refs) != len(p.Sources) || len(refs) > archive.MaxPreservedRevisions+1 {
 		return errors.New("pending publication identity mismatch")
+	}
+	if err := p.validatePrivacyEvidence(); err != nil {
+		return err
 	}
 	if err := p.validatePublicationOwnership(refs[0]); err != nil {
 		return err

@@ -69,6 +69,11 @@ func refilterBundle(ctx context.Context, reg archive.SessionRegistration, adapte
 	if err := archive.CheckHistoryMutation(bundle, archive.Metadata{}); err != nil {
 		return archive.SourceBundle{}, err
 	}
+	return refilterRetainedBundle(ctx, reg, adapter, bundle)
+}
+
+// refilterRetainedBundle is the shared native-codec transform beneath entrypoint fences.
+func refilterRetainedBundle(ctx context.Context, reg archive.SessionRegistration, adapter archive.Adapter, bundle archive.SourceBundle) (archive.SourceBundle, error) {
 	filtered, err := refilterNative(ctx, reg, adapter, bundle)
 	if err != nil {
 		return archive.SourceBundle{}, err

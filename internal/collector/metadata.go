@@ -94,6 +94,10 @@ func regenerateMetadata(s *sessionScan) (outcome sessionOutcome, handled bool, e
 		return outcomeSkipped, false, nil
 	}
 	source, ok := chooseRefreshSource(last.bundle, uploaded, known)
+	if prior.History != nil {
+		source = refreshSource{ref: prior.SourceBundle}
+		ok = true
+	}
 	if !ok {
 		// Neither the bytes nor a recorded reference: nothing to publish
 		// against. The next content change publishes current metadata.
@@ -144,6 +148,10 @@ func (s *sessionScan) refreshedMetadata(last lastPublication, source archive.Sou
 	next.ApplyRepoKey(s.opts.repoKeyOr(s.reg, func() string { return prior.RepoKey }))
 	next.ApplyGitHead(s.reg)
 	next.ApplyReplay(s.reg)
+	if prior.History != nil {
+		preserveRetainedMetadata(&next, prior)
+		next.ApplyGitHead(s.reg)
+	}
 	if buildErr != nil && !archive.IsParseError(buildErr) {
 		// This build cannot derive metadata from the retained bundle at all
 		// (one cached under an older source schema, say). That is not a
@@ -366,6 +374,9 @@ func (s *sessionScan) publishRecordedGitHead(last lastPublication, key string) (
 	source := refreshSource{ref: next.SourceBundle}
 	if rebuilt, ok := chooseRefreshSource(last.bundle, uploaded, known); ok && rebuilt.bytes != nil {
 		source = rebuilt
+	}
+	if next.History != nil {
+		source = refreshSource{ref: next.SourceBundle}
 	}
 	next.SourceBundle = source.ref
 	next.MetadataDerivedAt = s.now

@@ -381,11 +381,13 @@ func (s *Store) SaveAdmissionRequest(reg archive.SessionRegistration, evidence .
 }
 
 type stageRelease struct {
-	Checksum     string `json:"checksum"`
-	Digest       string `json:"digest"`
-	SourceSHA256 string `json:"source_sha256"`
-	CoveredToken string `json:"covered_token,omitempty"`
-	Complete     bool   `json:"complete"`
+	Checksum                string `json:"checksum"`
+	Digest                  string `json:"digest"`
+	SourceSHA256            string `json:"source_sha256"`
+	SelectingMetadataSHA256 string `json:"selecting_metadata_sha256,omitempty"`
+	ReplacementSHA256       string `json:"replacement_sha256,omitempty"`
+	CoveredToken            string `json:"covered_token,omitempty"`
+	Complete                bool   `json:"complete"`
 }
 
 func stageReleaseChecksum(r stageRelease) string {
@@ -439,7 +441,9 @@ func (s *Store) ReleaseAdmissionStage(reg archive.SessionRegistration, m Admissi
 		}
 	}
 	if !represented {
-		return ErrAdmissionStageRecovery
+		if _, valid := published.privacyStageSource(reg, m); !valid {
+			return ErrAdmissionStageRecovery
+		}
 	}
 	if coveredToken != "" {
 		if _, err = s.CompleteRequest(reg.ArchiveSessionID, coveredToken); err != nil {
@@ -447,7 +451,12 @@ func (s *Store) ReleaseAdmissionStage(reg archive.SessionRegistration, m Admissi
 		}
 	}
 	path, _ := s.stagePath(reg.ArchiveSessionID, ".released")
-	if err = writeStageRelease(path, stageRelease{Digest: reg.AdmissionStage, SourceSHA256: m.SHA256, CoveredToken: coveredToken}); err != nil {
+	receipt := stageRelease{Digest: reg.AdmissionStage, SourceSHA256: m.SHA256, CoveredToken: coveredToken}
+	if replacement, valid := published.privacyStageSource(reg, m); valid {
+		receipt.ReplacementSHA256 = replacement
+		receipt.SelectingMetadataSHA256 = published.state.Commit.MetadataSHA256
+	}
+	if err = writeStageRelease(path, receipt); err != nil {
 		return err
 	}
 	_, err = s.ResumeAdmissionStageRelease(reg, published)
@@ -469,7 +478,8 @@ func (s *Store) AdmissionStageCommitted(reg archive.SessionRegistration, m Admis
 			return true
 		}
 	}
-	return false
+	_, transformed := p.privacyStageSource(reg, m)
+	return transformed
 }
 
 // PreparedAdmissionStage reads a reservation only. Callers must still obtain
@@ -528,6 +538,12 @@ func (s *Store) ResumeAdmissionStageRelease(reg archive.SessionRegistration, p *
 	var m AdmissionStage
 	if json.Unmarshal(raw, &m) != nil || m.SHA256 != r.SourceSHA256 || !s.AdmissionStageCommitted(reg, m, p) {
 		return true, ErrAdmissionStageRecovery
+	}
+	if r.ReplacementSHA256 != "" {
+		replacement, valid := p.privacyStageSource(reg, m)
+		if !valid || replacement != r.ReplacementSHA256 || p.state.Commit.MetadataSHA256 != r.SelectingMetadataSHA256 {
+			return true, ErrAdmissionStageRecovery
+		}
 	}
 	if r.Complete {
 		return true, nil

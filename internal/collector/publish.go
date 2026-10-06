@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/listingindex"
@@ -112,6 +113,11 @@ func (s *sessionScan) publishPending(pending state.PendingPublication) (sessionO
 	if err != nil {
 		return outcomeSkipped, err
 	}
+	for _, ref := range pending.PrivacyRetiredSources() {
+		if !slices.Contains(previous, ref) {
+			previous = append(previous, ref)
+		}
+	}
 	selected := map[string]bool{}
 	for _, source := range pending.Sources {
 		selected[source.Reference.Key] = true
@@ -120,7 +126,7 @@ func (s *sessionScan) publishPending(pending state.PendingPublication) (sessionO
 		if selected[previous.Key] {
 			continue
 		}
-		privacySensitive := havePrior && priorBundle.Capture.FilterVersion != pending.Bundle.Capture.FilterVersion
+		privacySensitive := pending.Commit.Purpose == state.PublicationPrivacyRewrite || havePrior && priorBundle.Capture.FilterVersion != pending.Bundle.Capture.FilterVersion
 		if err := s.local.RecordSupersededWithPrivacy(s.id(), previous.Key, s.now, privacySensitive); err != nil {
 			if privacySensitive {
 				return outcomeSkipped, fmt.Errorf("record privacy-sensitive predecessor: %w", err)

@@ -70,6 +70,7 @@ func PrepareGenerationRecovery(ctx context.Context, reg archive.SessionRegistrat
 		if latest.NativeSessionID != reg.NativeSessionID || latest.ProjectRoot != reg.ProjectRoot || latest.TranscriptPath != reg.TranscriptPath || latest.DestinationID != reg.DestinationID {
 			return latest, state.PendingPublication{}, errors.New("registration changed during recovery; preview again")
 		}
+		latest.AdmissionStage = ""
 		latest.ArchiveSessionID = id
 		latest.PreviousGenerationID = reg.ArchiveSessionID
 		bundle, err := archive.NewSourceBundle(latest, adapter, filtered, at, nil)
