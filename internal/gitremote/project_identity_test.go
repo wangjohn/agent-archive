@@ -178,3 +178,38 @@ func TestProjectIdentityTracksAbsentGlobalConfiguration(t *testing.T) {
 		}
 	}
 }
+
+func TestTopLevelConfigDependenciesRespectGitPathQueryContract(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name      string
+		global    string
+		system    string
+		globalErr error
+		systemErr error
+		want      bool
+		count     int
+	}{
+		{name: "multiple candidate paths", global: "/synthetic/xdg/git/config\n/synthetic/home/.gitconfig\n", system: "/synthetic/etc/gitconfig\n", want: true, count: 3},
+		{name: "disabled system", global: "/synthetic/home/.gitconfig\n", systemErr: projectExitStatusError(1), want: true, count: 1},
+		{name: "no global paths", globalErr: projectExitStatusError(1), system: "/synthetic/etc/gitconfig\n", want: true, count: 1},
+		{name: "both no value", globalErr: projectExitStatusError(1), systemErr: projectExitStatusError(1), want: true},
+		{name: "unsupported variable", globalErr: projectExitStatusError(129)},
+		{name: "failed output", global: "/synthetic/home/.gitconfig\n", globalErr: projectExitStatusError(1)},
+		{name: "relative path", global: "relative\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			run := func(_ context.Context, _ string, args ...string) ([]byte, error) {
+				if args[len(args)-1] == "GIT_CONFIG_GLOBAL" {
+					return []byte(tc.global), tc.globalErr
+				}
+				return []byte(tc.system), tc.systemErr
+			}
+			paths := map[string]bool{}
+			if got := topLevelConfigDependencies(t.Context(), "/synthetic/repo", paths, run); got != tc.want || (got && len(paths) != tc.count) {
+				t.Fatal(got, paths)
+			}
+		})
+	}
+}

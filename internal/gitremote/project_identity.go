@@ -133,7 +133,7 @@ func projectDependencies(ctx context.Context, root string) ([]sourcefacts.Reposi
 		}
 		paths[filepath.Clean(path)] = true
 	}
-	if !topLevelConfigDependencies(bounded, root, paths) || !includeDependencies(bounded, root, paths) {
+	if !topLevelConfigDependencies(bounded, root, paths, ExecRunner) || !includeDependencies(bounded, root, paths) {
 		return nil, false
 	}
 	for i := 0; i < len(parts); i += 2 {
@@ -200,10 +200,19 @@ func includeDependencies(ctx context.Context, root string, paths map[string]bool
 
 // Git reports all candidate top-level config paths, including absent files.
 // Origins from --list alone omit absent/empty global and system configuration.
-func topLevelConfigDependencies(ctx context.Context, root string, paths map[string]bool) bool {
+func topLevelConfigDependencies(ctx context.Context, root string, paths map[string]bool, run Runner) bool {
 	for _, variable := range []string{"GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM"} {
-		raw, err := ExecRunner(ctx, root, "-C", root, "var", variable)
-		if err != nil || ctx.Err() != nil {
+		raw, err := run(ctx, root, "-C", root, "var", variable)
+		if ctx.Err() != nil {
+			return false
+		}
+		if err != nil {
+			var status interface{ ExitCode() int }
+			// Git documents exit 1 for a recognized variable with no value;
+			// unsupported variable queries are usage errors, not known absence.
+			if errors.As(err, &status) && status.ExitCode() == 1 && len(raw) == 0 {
+				continue
+			}
 			return false
 		}
 		for path := range strings.SplitSeq(strings.TrimSuffix(string(raw), "\n"), "\n") {

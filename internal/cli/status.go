@@ -2815,7 +2815,7 @@ func (sc statusScreen) addCodexDiscoveryRow(row *statusRow, app appStatus) {
 			row.notes = append(row.notes, statusNote{s.warnMark(), fmt.Sprintf("Project attribution pending for %d observations: multiple checkouts or unproved subtree scope. Review historical imports with backfill --dry-run --map-project OLD_CWD=CONFIGURED_ROOT; start future chats in a configured checkout.", pending)})
 		}
 		if app.Discovery.Outcomes[string(sourcefacts.RecoveryInventoryUnavailable)] > 0 || app.Discovery.Outcomes[string(sourcefacts.RecoveryBudgetExhausted)] > 0 {
-			row.notes = append(row.notes, statusNote{sc.info(), "Project repository inventory pending. Restore configured checkout access if needed, then run sync to advance bounded recovery."})
+			row.notes = append(row.notes, statusNote{sc.info(), "Project repository inventory pending. Restore configured checkout access if needed and ensure local Git supports config path queries, then run sync to advance bounded recovery."})
 		}
 	}
 	if optionalCodexHooks(app) {

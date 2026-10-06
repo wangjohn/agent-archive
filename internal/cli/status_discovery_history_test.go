@@ -65,7 +65,7 @@ func TestStatusReportsActionableProjectRecoveryWithoutPrivatePaths(t *testing.T)
 		var out bytes.Buffer
 		printStatus(&out, view, statusScreen{style: styleFor(&out), now: at, verbose: verbose})
 		text := out.String()
-		for _, want := range []string{"Project attribution pending for 2 observations", "--map-project OLD_CWD=CONFIGURED_ROOT", "start future chats in a configured checkout", "Project repository inventory pending"} {
+		for _, want := range []string{"Project attribution pending for 2 observations", "--map-project OLD_CWD=CONFIGURED_ROOT", "start future chats in a configured checkout", "Project repository inventory pending", "ensure local Git supports config path queries"} {
 			if !strings.Contains(text, want) {
 				t.Fatalf("missing %q in %s", want, text)
 			}

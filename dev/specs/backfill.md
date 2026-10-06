@@ -1078,7 +1078,8 @@ configured root and never overrides configured or live ownership.
 Recovery evidence is rechecked before admitting a new owner. Git dependency
 stamps include HEAD, worktree/common config paths, empty or absent included
 files, all candidate global/system config paths reported by Git, and scratch
-ancestors with no Git metadata. Unsupported Git path queries remain unavailable.
+ancestors with no Git metadata. Unsupported Git path queries remain unavailable; a documented no-value result
+establishes that no config path applies.
 New discovery checks the source fingerprint and original cwd again; imports validate each source and
 cwd and coalesce the common inventory check for each short registration hold.
 These checks run outside hooks.lock; current policy and consent still run under
