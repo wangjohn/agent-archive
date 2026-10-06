@@ -591,6 +591,19 @@ func LoadSource(ctx context.Context, store storage.ObjectStore, metadata archive
 		}
 		return archive.SourceBundle{}, err
 	}
+	return DecodeReferencedSource(ctx, metadata, data, limits)
+}
+
+// DecodeReferencedSource verifies bounded immutable compressed bytes against a
+// selected metadata pointer before decoding. Private publication stages reuse
+// this reader without pretending to be a second object-store implementation.
+func DecodeReferencedSource(ctx context.Context, metadata archive.Metadata, data []byte, limits Limits) (archive.SourceBundle, error) {
+	if err := ctx.Err(); err != nil {
+		return archive.SourceBundle{}, err
+	}
+	if err := metadata.ValidateSourceReference(); err != nil {
+		return archive.SourceBundle{}, err
+	}
 	if len(data) > limits.compressed() {
 		return archive.SourceBundle{}, errors.New("source exceeds compressed read limit")
 	}

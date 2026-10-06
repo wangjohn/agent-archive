@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"syscall"
+	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/local"
@@ -24,10 +25,23 @@ var stagedSourceName = regexp.MustCompile(`^[0-9a-f]{64}\.gz$`)
 // PendingHistory freezes one complete reference-set replacement. Source payloads
 // are staged individually before this descriptor, outside the journal JSON.
 type PendingHistory struct {
+	// Preparing performs private sequential privacy work before any remote write.
+	Preparing              bool            `json:"preparing,omitempty"`
+	PrivacyCursor          int             `json:"privacy_cursor,omitempty"`
+	Inputs                 []HistoryInput  `json:"inputs,omitempty"`
 	Version                int             `json:"version"`
 	ExpectedMetadataSHA256 string          `json:"expected_metadata_sha256,omitempty"`
 	Sources                []PendingSource `json:"sources,omitempty"`
 	Retired                []RetiredSource `json:"retired,omitempty"`
+}
+
+// HistoryInput freezes the capture facts needed to read an earlier reference
+// while the next metadata document is being prepared under newer privacy rules.
+type HistoryInput struct {
+	Reference     archive.SourceReference `json:"reference"`
+	RevisionID    string                  `json:"revision_id"`
+	CapturedAt    time.Time               `json:"captured_at"`
+	FilterVersion string                  `json:"filter_version"`
 }
 
 // PendingSource identifies an immutable owned stage by checksum-derived name.
@@ -64,6 +78,19 @@ func (p PendingPublication) ValidateHistory(id string) error {
 	known := map[archive.SourceReference]bool{}
 	for _, r := range refs {
 		known[r] = true
+	}
+	if p.History.PrivacyCursor < 0 || p.History.PrivacyCursor > len(p.History.Inputs) || len(p.History.Inputs) > archive.MaxHistorySpans || p.History.Preparing && p.Attempted {
+		return errors.New("invalid history preparation progress")
+	}
+	for _, input := range p.History.Inputs {
+		prior := m
+		prior.History = &archive.RevisionHistory{CurrentRevision: input.RevisionID}
+		prior.SourceBundle = input.Reference
+		prior.CapturedAt = input.CapturedAt
+		prior.FilterVersion = input.FilterVersion
+		if prior.ValidateSourceReference() != nil || input.CapturedAt.IsZero() || input.FilterVersion == "" {
+			return errors.New("invalid history preparation input")
+		}
 	}
 	if len(p.History.Sources) > archive.MaxHistorySpans || len(p.History.Retired) > archive.MaxHistorySpans+1 {
 		return errors.New("pending history exceeds source limit")
