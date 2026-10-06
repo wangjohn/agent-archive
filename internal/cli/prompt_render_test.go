@@ -59,33 +59,25 @@ func TestGuidedPromptCollapseRequiresOwnedVisibleRows(t *testing.T) {
 	for _, mode := range []promptTestMode{promptModeLive, promptModeNoColor, promptModeResize, promptModeHeight, promptModeOverflow, promptModeExternal, promptModeSuspend, promptModeTypedAhead, promptModeContinued, promptModeRedirect, promptModeDumb, promptModeLongEcho} {
 		t.Run(string(mode), func(t *testing.T) {
 			t.Parallel()
-			c := promptCapabilities{Color: mode != promptModeNoColor, InputTerminal: true, OutputTerminal: true, SharedTerminal: true, Redraw: true, Width: 80, Height: 24}
-			if mode == promptModeRedirect {
-				c.InputTerminal = false
-			}
-			if mode == promptModeDumb {
-				c.ASCII = true
-				c.Redraw = false
-			}
+			c := promptCapabilities{Color: mode != promptModeNoColor, InputTerminal: mode != promptModeRedirect, OutputTerminal: true, SharedTerminal: true, Redraw: mode != promptModeDumb, ASCII: mode == promptModeDumb, Width: 80, Height: 24}
 			out := &promptScreen{caps: c}
 			p := newPrompter(strings.NewReader(""), out)
 			r := p.renderer()
 			region := r.begin(promptExample())
 			echo := "2\n"
-			switch mode {
-			case promptModeResize:
+			if mode == promptModeResize {
 				out.caps.Width = 60
-			case promptModeHeight:
+			} else if mode == promptModeHeight {
 				out.caps.Height = 20
-			case promptModeOverflow:
+			} else if mode == promptModeOverflow {
 				region.rows = 24
-			case promptModeExternal:
+			} else if mode == promptModeExternal {
 				terminal.Println(p.out, "EXTERNAL SENTINEL")
-			case promptModeSuspend:
+			} else if mode == promptModeSuspend {
 				release := p.suspendPrompts()
 				terminal.Println(out, "PAGER SENTINEL")
 				release()
-			case promptModeLongEcho:
+			} else if mode == promptModeLongEcho {
 				echo = strings.Repeat("a", 2000) + "\n"
 			}
 			r.finish(region, "Provider Amazon S3", echo, false, mode == promptModeTypedAhead, mode == promptModeContinued)
@@ -314,7 +306,7 @@ func TestPromptSyntheticCapabilitiesSetWrappingWidth(t *testing.T) {
 	if style.width != 36 || !strings.Contains(text, "\n") {
 		t.Fatalf("explicit width lost: style=%+v text=%q", style, text)
 	}
-	for _, line := range strings.Split(text, "\n") {
+	for line := range strings.SplitSeq(text, "\n") {
 		if visibleWidth(line) > 36 {
 			t.Fatalf("synthetic wrapped line too wide: %q", line)
 		}
