@@ -337,6 +337,8 @@ type ProjectResolution struct {
 }
 
 type SessionRegistration struct {
+	// AdmissionStage is the immutable private evidence manifest digest for a durable import.
+	AdmissionStage    string               `json:"admission_stage,omitempty"`
 	ProjectResolution *ProjectResolution   `json:"project_resolution,omitempty"`
 	CodexAdmission    *CodexAdmissionProof `json:"codex_admission,omitempty"`
 	ArchiveSessionID  string               `json:"archive_session_id"`
@@ -432,6 +434,16 @@ func (r SessionRegistration) Imported() bool {
 // a missing session ID, project, harness name, or start time, or source
 // fields (SourceKind, SourceKey, TranscriptPath) that do not fit together.
 func (r SessionRegistration) Validate() error {
+	if r.AdmissionStage != "" {
+		if len(r.AdmissionStage) != 64 || r.Origin != SessionOriginImport {
+			return errors.New("invalid durable admission stage pointer")
+		}
+		for _, c := range r.AdmissionStage {
+			if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+				return errors.New("invalid durable admission stage pointer")
+			}
+		}
+	}
 	if r.PreviousGenerationID == r.ArchiveSessionID && r.PreviousGenerationID != "" {
 		return errors.New("generation cannot precede itself")
 	}

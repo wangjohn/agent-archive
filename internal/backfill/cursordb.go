@@ -300,7 +300,7 @@ func selectCursorDatabaseChats(chats []CursorDatabaseChat, candidates []Candidat
 			t:    &transcript{harness: harnessCursor, nativeID: chat.ID},
 			chat: chat,
 			c: Candidate{
-				Harness: string(harnessCursor), NativeSessionID: chat.ID,
+				reviewedChat: &chat, Harness: string(harnessCursor), NativeSessionID: chat.ID,
 				SourceKind: archive.SourceKindCursorSQLite, SourceKey: chat.ID,
 				StartedAt: chat.CreatedAt, StartedAtSource: archive.StartedAtSourceCursorComposer,
 			},

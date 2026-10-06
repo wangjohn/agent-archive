@@ -45,9 +45,11 @@ import (
 // directory (see local.Home): registrations, upload requests, and a
 // per-session cache of the last published source bundle, used to detect
 // unchanged input without redownloading or reparsing published history. It
-// never stores credentials or a second copy of conversation content beyond
-// what the published source bundle itself already contains.
+// never stores credentials. Durable imports temporarily retain an additional
+// bounded filtered source until complete local publication is verified.
 type Store struct {
+	// onStageCleanup injects failure after release intent is durable.
+	onStageCleanup func() error
 	// indexSnapshots uses logical packed authority for qualified-index writes.
 	indexSnapshots bool
 	// onPackedEnumeration observes collector-only physical-index directory probes.
@@ -104,7 +106,7 @@ var storeDirs = []string{"registrations", "requests", "request-locks", "publishe
 
 // lazyStoreDirs are the directories the store creates under home on first
 // use rather than up front.
-var lazyStoreDirs = []string{generationHeadsDir, generationNodesDir, generationRecoveryDir, "superseded", "forgotten", refreshSkipDir, listingRepairDir}
+var lazyStoreDirs = []string{admissionStageDir, generationHeadsDir, generationNodesDir, generationRecoveryDir, "superseded", "forgotten", refreshSkipDir, listingRepairDir}
 
 // OwnedEntries lists every top-level entry a Store can create under its
 // home: its directories, its status file, and the storage clock reading
@@ -211,6 +213,7 @@ func (s *Store) updateRegistration(archiveSessionID string, update func(*archive
 		if err := json.Unmarshal(current.data, &reg); err != nil {
 			return nil, false, fmt.Errorf("read registration %q: %w", archiveSessionID, err)
 		}
+		originalReg := reg
 		var originalProof *archive.CodexAdmissionProof
 		if reg.CodexAdmission != nil {
 			proof := *reg.CodexAdmission
@@ -226,6 +229,9 @@ func (s *Store) updateRegistration(archiveSessionID string, update func(*archive
 		if err := update(&reg); err != nil {
 			updateFailed = true
 			return nil, false, err
+		}
+		if originalReg.AdmissionStage != "" && (originalReg.AdmissionStage != reg.AdmissionStage || CheckAdmissionStageOwnership(reg, AdmissionStage{Reservation: originalReg}) != nil) {
+			return nil, false, ErrAdmissionStageRecovery
 		}
 		if !sameCodexAdmission(originalProof, reg.CodexAdmission) {
 			return nil, false, errors.New("a registration update cannot change Codex admission proof")
@@ -336,6 +342,9 @@ func (s *Store) registerUnderLock(key agentmeta.SessionKey, id string, build fun
 				prior, found, err := s.LoadRegistration(id)
 				if err != nil {
 					return err
+				}
+				if found && prior.AdmissionStage != "" && (prior.AdmissionStage != reg.AdmissionStage || CheckAdmissionStageOwnership(reg, AdmissionStage{Reservation: prior}) != nil) {
+					return ErrAdmissionStageRecovery
 				}
 				if found && !sameCodexAdmission(prior.CodexAdmission, reg.CodexAdmission) {
 					return errors.New("a registration replacement cannot change Codex admission proof")
@@ -455,6 +464,8 @@ func (s *Store) LoadRegistration(archiveSessionID string) (archive.SessionRegist
 // request with no new evidence is a no-op beyond confirming the session was
 // checked.
 type Request struct {
+	StageDigest      string                         `json:"stage_digest,omitempty"`
+	StageToken       string                         `json:"stage_token,omitempty"`
 	ArchiveSessionID string                         `json:"archive_session_id"`
 	Token            string                         `json:"token"`
 	Reasons          []string                       `json:"reasons"`
@@ -722,15 +733,16 @@ func (s *Store) CompleteRequest(archiveSessionID, coveredToken string) (bool, er
 // every retry uses the same hash and timestamps even after process restart.
 // Bundle remains available for change detection and future parser-only rebuilds.
 type PendingPublication struct {
-	Commit        *PublicationCommit   `json:"commit,omitempty"`
-	Sources       []PublicationSource  `json:"sources,omitempty"`
-	SkillEvidence string               `json:"skill_evidence,omitempty"`
-	MetadataOnly  bool                 `json:"metadata_only,omitempty"`
-	Bundle        archive.SourceBundle `json:"bundle"`
-	SourceKey     string               `json:"source_key"`
-	MetadataKey   string               `json:"metadata_key"`
-	SourceSHA256  string               `json:"source_sha256"`
-	SourceBytes   []byte               `json:"source_bytes"`
+	AdmissionStage string               `json:"admission_stage,omitempty"`
+	Commit         *PublicationCommit   `json:"commit,omitempty"`
+	Sources        []PublicationSource  `json:"sources,omitempty"`
+	SkillEvidence  string               `json:"skill_evidence,omitempty"`
+	MetadataOnly   bool                 `json:"metadata_only,omitempty"`
+	Bundle         archive.SourceBundle `json:"bundle"`
+	SourceKey      string               `json:"source_key"`
+	MetadataKey    string               `json:"metadata_key"`
+	SourceSHA256   string               `json:"source_sha256"`
+	SourceBytes    []byte               `json:"source_bytes"`
 	// SourceSize is the source's compressed size when SourceBytes is empty:
 	// a metadata-only publication over a source this build cannot reproduce
 	// byte for byte, which is checked in storage instead of re-uploaded.

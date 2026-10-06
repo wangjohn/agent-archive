@@ -276,7 +276,7 @@ func preparePlanWork(ctx context.Context, env Environment, cfg config.Config, fi
 	inventory := newRecoverySourceInventory(env)
 	unread, err = enumerateDiscovery(ctx, inventory.environment(), agentapi.DiscoveryImport, func(c agentapi.DiscoveryCandidate) error {
 		t := &transcript{harness: harness(c.Session.Agent), path: c.Source.Path, size: c.Bytes, nativeID: c.Session.NativeID, cwd: c.Header.Directory, repoKey: c.Header.RepoKey, metaStart: c.Header.StartedAt, identityMismatch: c.Header.IdentityMismatch, capturePending: c.Header.CapturePending != "", cursorSlug: c.WorkspaceKey, sourcePriority: c.SourcePriority, sourceInfo: c.SourceInfo}
-		w := &work{t: t, c: Candidate{Harness: string(c.Session.Agent), TranscriptPath: t.path, SourceKind: c.Source.Kind, SourceKey: c.Source.Key, Bytes: t.size, NativeSessionID: t.nativeID}, unsafe: c.IdentityError != nil}
+		w := &work{t: t, c: Candidate{reviewedHeader: &c.Header, Harness: string(c.Session.Agent), TranscriptPath: t.path, SourceKind: c.Source.Kind, SourceKey: c.Source.Key, Bytes: t.size, NativeSessionID: t.nativeID}, unsafe: c.IdentityError != nil}
 		w.checkSource(env)
 		items = append(items, w)
 		return nil
@@ -663,6 +663,18 @@ func runAdapter(ctx context.Context, env Environment, w *work) {
 		}
 		freshStart = created.UTC()
 		w.c.StartedAt, w.c.StartedAtSource = freshStart, archive.StartedAtSourceFileCreated
+		path := w.t.path
+		original, err := env.lstat(path)
+		if err != nil {
+			w.sourceChanged = true
+			return
+		}
+		w.c.sourceAdmissionCurrent = func() bool {
+			current, e := env.lstat(path)
+			created, creationErr := env.fileCreated(path)
+			return e == nil && creationErr == nil && transcriptio.SameObservation(original, current) && created.UTC().Equal(freshStart)
+		}
+
 	}
 	filtered, _, err := collector.FilterSource(ctx, string(w.t.harness), agentapi.SourceRef{Kind: w.c.SourceKind, Path: w.t.path, Key: w.c.SourceKey}, freshStart, env.Sources)
 	if err != nil {

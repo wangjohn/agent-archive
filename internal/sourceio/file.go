@@ -227,3 +227,11 @@ func (p FileProvider) Activities(ctx context.Context, e agentapi.SourceEnvironme
 	}
 	return out, nil
 }
+
+// OpenAdmissionPass uses verified handles and allocates no temporary disk.
+func (p FileProvider) OpenAdmissionPass(ctx context.Context, e agentapi.SourceEnvironment, ref agentapi.SourceRef) (agentapi.SourcePass, error) {
+	if _, err := p.Describe(ref); err != nil {
+		return nil, err
+	}
+	return p.OpenPass(ctx, e)
+}

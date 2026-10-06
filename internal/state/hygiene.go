@@ -66,6 +66,7 @@ const (
 // corruptionPolicies is the corruption policy of every entry OwnedEntries
 // names.
 var corruptionPolicies = map[string]corruption{
+	admissionStageDir:         readAsRecoveryRequired,
 	generationHeadsDir:        readAsRecoveryRequired,
 	generationNodesDir:        readAsRecoveryRequired,
 	generationRecoveryDir:     readAsRecoveryRequired,
@@ -295,7 +296,16 @@ func (s *Store) ScanRegistrations() (regs []archive.SessionRegistration, issues 
 	issues = map[string]error{}
 	regs = make([]archive.SessionRegistration, 0, len(ids))
 	for _, id := range ids {
-		reg, found, err := readOrQuarantine[archive.SessionRegistration](s, s.registrationPath(id), requestLockName(id))
+		reg, found, err := readJSON[archive.SessionRegistration](s.registrationPath(id))
+		if err != nil {
+			stagePath, pathErr := s.stagePath(id, ".json")
+			_, stageErr := os.Lstat(stagePath)
+			if pathErr == nil && errors.Is(stageErr, os.ErrNotExist) {
+				reg, found, err = readOrQuarantine[archive.SessionRegistration](s, s.registrationPath(id), requestLockName(id))
+			} else {
+				err = errors.Join(ErrAdmissionStageRecovery, err)
+			}
+		}
 		if err != nil {
 			issues[id] = fmt.Errorf("read registration %q: %w", id, err)
 			continue

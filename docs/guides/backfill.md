@@ -169,3 +169,26 @@ Automatic discovery uses the same unique-repository fallback, while preserving
 the native original creation time and current capture authorization. Future
 ambiguous chats remain pending. Imported ownership and its original cwd proof
 are preserved when a chat continues.
+
+## Durable import evidence
+
+After confirmation, backfill writes private filtered evidence before admitting
+each parent and selected child. A first upload can then finish after the native
+transcript disappears, including after restart. Dry runs write no evidence.
+
+Foreground imports publish completed groups between admissions. Background
+imports retain completed groups and stop when the 1 GiB staging capacity is
+full; run the same backfill options again after pending groups publish. Capacity
+includes pending publication copies and atomic write headroom. Native database
+backups are never charged after the fact: settled Cursor databases use a bounded
+read-only path, and a live or changing database remains unadmitted until a bounded
+snapshot reader is available. Settling Cursor and retrying is actionable.
+
+Corrupt evidence or a changed privacy policy remains pending for recovery; it
+does not silently substitute current native content. Stage objects are released
+only after the complete source set is verified, recorded locally, and its covered
+request is processed. Later hook requests remain queued. Compact attribution and
+cleanup journals remain private. The first durable import keeps a configuration
+writer fence across setup rollback so older binaries cannot discard its ownership.
+Related-history admission remains protected; this does not enable Codex history
+imports or complete privacy maintenance of retained history.
