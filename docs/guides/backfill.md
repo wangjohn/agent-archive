@@ -142,7 +142,9 @@ worktree recovery. It can propose those live repositories as destinations for
 sessions with matching recorded identity. Review the project rows: confirmation
 adds the selected destinations through the ordinary import configuration change,
 so new sessions there will be captured too. Dry-run changes no configuration.
-Output date, app, and project filters do not remove observed live clones from the
+Supported readable Cursor database chats also provide live evidence, even when
+only Codex output is selected. Unavailable or malformed database evidence keeps
+automatic recovery pending. Output date, app, and project filters do not remove observed live clones from the
 recovery evidence. Hidden clones remain evidence without being silently added to
 capture; exclusions, unknown roots and incomplete source inventories keep
 recovery pending. Automatic discovery uses committed projects only.

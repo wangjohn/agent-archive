@@ -19,6 +19,11 @@ import (
 func firstRunImportPlan(t *testing.T) (*backfillFixture, backfill.Plan, config.Config, *bool) {
 	t.Helper()
 	f := newBackfillFixture(t)
+	// This transaction fixture reviews file evidence only. The general fixture's
+	// deliberately unknown database ownership must not certify uniqueness.
+	if err := os.Remove(macCursorDatabase(f.userHome)); err != nil {
+		t.Fatal(err)
+	}
 	cfg, _, err := config.Load(f.data)
 	if err != nil {
 		t.Fatal(err)

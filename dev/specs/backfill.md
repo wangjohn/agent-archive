@@ -476,7 +476,20 @@ matching rule wins.
    configured roots (including excluded and unavailable roots) and live
    repository roots resolved from the completed source/header inventory. Live
    ownership is resolved before recorded recovery and before output filters,
-   including Cursor workspace evidence. Pending or oversized sources cannot
+   including validated Cursor workspace and database evidence. The database
+   evidence pass inspects at most 1,024 catalog records, 65,536 metadata/raw
+   SQL rows and 128 MiB of aggregate payload before filters. The shared ledger
+   includes catalog keys/values, numeric metadata projections, source header
+   observations, bounded workspace metadata and composer/bubble keys/values before
+   allocation. This bounds
+   payload read into the process, not SQLite page I/O. Recovery reads only
+   settled in-place transactions, with no backup or failure-signature reads;
+   live WAL, unavailable capability and exhausted budgets keep it pending.
+   Settled database, side-file and workspace observations
+   renew without rereading chats; changed observations require a new plan.
+   Unsettled sources can renew at most eight bounded evidence epochs per plan;
+   exhausted renewal leaves admission pending with the instruction to rerun.
+   Pending or oversized sources cannot
    alone propose destinations; malformed or incomplete evidence cannot certify
    uniqueness. Exact mappings continue to require configured targets.
    The plan displays selected proposed roots as projects it will add through the

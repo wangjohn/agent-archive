@@ -13,7 +13,7 @@ import (
 
 // prepareRecoveryInventory separates observed repository membership from
 // committed capture policy. Discovery has finished; output filters have not run.
-func prepareRecoveryInventory(ctx context.Context, r *resolver, items []*work, unread unreadable) {
+func prepareRecoveryInventory(ctx context.Context, r *resolver, items []*work, unread unreadable, dbIncomplete bool) {
 	projects := slices.Clone(r.cfg.Archive.Projects)
 	configured := map[string]bool{}
 	for _, p := range projects {
@@ -21,7 +21,7 @@ func prepareRecoveryInventory(ctx context.Context, r *resolver, items []*work, u
 	}
 	observed := map[string]bool{}
 	witnesses := map[string][]*work{}
-	incomplete := unread.folders > 0 || len(unread.stores) > 0
+	incomplete := dbIncomplete || unread.folders > 0 || len(unread.stores) > 0
 	for _, w := range items {
 		if w.vanished || w.sourceChanged || w.unsafe || w.t.identityMismatch {
 			incomplete = true
@@ -74,7 +74,11 @@ func prepareRecoveryInventory(ctx context.Context, r *resolver, items []*work, u
 			return currentSources
 		}
 		checkedSources = true
+		if r.databaseRecoveryCurrent != nil && !r.databaseRecoveryCurrent(validationCtx) {
+			return false
+		}
 		checks := 0
+		ownership := newResolver(r.env, r.cfg, r.filters)
 		for root, group := range witnesses {
 			found := false
 			for _, w := range group {
@@ -85,7 +89,13 @@ func prepareRecoveryInventory(ctx context.Context, r *resolver, items []*work, u
 					return false
 				}
 				checks++
-				if w.sourceCurrent(r.env) && (w.workspaceCurrent == nil || w.workspaceCurrent(validationCtx)) {
+				if w.t.cwd != "" {
+					fresh := ownership.resolve(w.t.cwd)
+					if fresh.root != w.res.root || fresh.kind != w.res.kind || fresh.skip != w.res.skip {
+						continue
+					}
+				}
+				if (w.c.SourceKind == archive.SourceKindCursorSQLite || w.sourceCurrent(r.env)) && (w.workspaceCurrent == nil || w.workspaceCurrent(validationCtx)) {
 					found = true
 					break
 				}
@@ -98,9 +108,12 @@ func prepareRecoveryInventory(ctx context.Context, r *resolver, items []*work, u
 		return true
 	}
 	lookup := r.env.RepositoryIdentity
-	if incomplete && len(observed) > 0 {
-		lookup = nil
+	if incomplete {
+		lookup = func(context.Context, string) sourcefacts.RepositoryIdentity {
+			return sourcefacts.RepositoryIdentity{BudgetExhausted: r.recoveryInventoryBudget}
+		}
 	}
+	r.mappingRecovery = r.recovery
 	r.recovery = sourcefacts.NewRecoveryResolver(projects, r.filters.ProjectMappings, r.env.resolved, lookup, nil)
 	r.recovery.MaxOperations = 1024
 	r.recovery.Validate = r.env.RepositoryIdentityCurrent

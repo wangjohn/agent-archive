@@ -47,14 +47,17 @@ type resolver struct {
 	temps      []string
 	// worktreeStores are the folders Codex and Cursor keep their worktrees
 	// in; a missing worktree there cannot be mapped to its repository.
-	worktreeStores         []string
-	cache                  map[string]resolution
-	recovery               *sourcefacts.RecoveryResolver
-	recoverySourcesCurrent func() bool
-	recoverySourcesReset   func(context.Context)
-	workspaceReset         func()
-	requireWitnessFormats  func(string)
-	proposedRootEligible   func(string) bool
+	worktreeStores          []string
+	cache                   map[string]resolution
+	recovery                *sourcefacts.RecoveryResolver
+	recoverySourcesCurrent  func() bool
+	recoverySourcesReset    func(context.Context)
+	databaseRecoveryCurrent func(context.Context) bool
+	recoveryInventoryBudget bool
+	mappingRecovery         *sourcefacts.RecoveryResolver
+	workspaceReset          func()
+	requireWitnessFormats   func(string)
+	proposedRootEligible    func(string) bool
 }
 
 func newResolver(env Environment, cfg config.Config, filters Filters) *resolver {
@@ -134,7 +137,11 @@ func withinAny(path string, roots []string) bool {
 // resolve maps a session's working directory to a project, applying the
 // spec's rules in order; the first that matches wins.
 func (r *resolver) resolveEvidence(ctx context.Context, cwd, key string) resolution {
-	cacheKey := cwd + "\x00" + r.env.resolved(cwd) + "\x00" + key + "\x00" + r.recovery.Context
+	recovery := r.recovery
+	if r.mappingRecovery != nil && r.filters.ProjectMappings[filepath.Clean(cwd)] != "" {
+		recovery = r.mappingRecovery
+	}
+	cacheKey := cwd + "\x00" + r.env.resolved(cwd) + "\x00" + key + "\x00" + recovery.Context
 	if cached, ok := r.cache[cacheKey]; ok && !r.env.exists(cwd) {
 		return cached
 	}
@@ -144,7 +151,7 @@ func (r *resolver) resolveEvidence(ctx context.Context, cwd, key string) resolut
 		if r.hasRepositoryEvidence(cwd) {
 			return resolution{skip: SkipWorktreeUnresolved}
 		}
-		proof, outcome := r.recovery.Recover(ctx, cwd, key)
+		proof, outcome := recovery.Recover(ctx, cwd, key)
 		if outcome == "" {
 			checked, valid := false, false
 			check := &resolutionCheck{reset: func(ctx context.Context) {
@@ -152,11 +159,11 @@ func (r *resolver) resolveEvidence(ctx context.Context, cwd, key string) resolut
 				if r.recoverySourcesReset != nil {
 					r.recoverySourcesReset(ctx)
 				}
-				r.recovery.ResetValidationContext(ctx)
+				recovery.ResetValidationContext(ctx)
 			}, valid: func() bool {
 				if !checked {
 					checked = true
-					valid = !r.env.exists(cwd) && r.env.exists(proof.Root) && !r.hasRepositoryEvidence(cwd) && (r.recoverySourcesCurrent == nil || r.recoverySourcesCurrent()) && r.recovery.CurrentSlice(proof)
+					valid = !r.env.exists(cwd) && r.env.exists(proof.Root) && !r.hasRepositoryEvidence(cwd) && (proof.Method == "explicit_mapping" || r.recoverySourcesCurrent == nil || r.recoverySourcesCurrent()) && recovery.CurrentSlice(proof)
 				}
 				return valid
 			}}

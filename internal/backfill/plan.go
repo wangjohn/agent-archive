@@ -346,7 +346,11 @@ func preparePlanWork(ctx context.Context, env Environment, cfg config.Config, fi
 		}
 	}
 
-	prepareRecoveryInventory(ctx, r, items, unread)
+	dbWitnesses, dbIncomplete, err := prepareCursorRecoveryWitnesses(ctx, env, r, items, unread)
+	if err != nil {
+		return nil, nil, unread, workers, err
+	}
+	prepareRecoveryInventory(ctx, r, append(slices.Clone(items), dbWitnesses...), unread, dbIncomplete)
 	for _, w := range items {
 		if w.t.cursorSlug != "" || w.vanished || w.sourceChanged || w.tooLarge {
 			continue

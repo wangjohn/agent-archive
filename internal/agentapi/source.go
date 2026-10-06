@@ -144,3 +144,17 @@ type SourceSweeper interface{ SweepSources() }
 type ActivityProvider interface {
 	Activities(context.Context, SourceEnvironment, []SourceRef) (map[SourceRef]time.Time, error)
 }
+
+// RecoveryReadBudget bounds metadata and raw payload allocations across one
+// evidence epoch. It does not measure SQLite page I/O or filesystem stat calls.
+type RecoveryReadBudget interface {
+	RemainingRows() int
+	RemainingBytes() int64
+	Charge(int, int64) error
+}
+
+// RecoverySourcePass supplies optional bounded in-place recovery evidence.
+// It never grants admission identity or changes ordinary Signature/Read behavior.
+type RecoverySourcePass interface {
+	ReadRecovery(context.Context, SourceRef, ReadLimits, RecoveryReadBudget) (SourceSnapshot, error)
+}

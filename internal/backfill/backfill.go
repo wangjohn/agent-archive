@@ -306,6 +306,10 @@ type Environment struct {
 	// Nil means not checked; the CLI uses CursorDatabaseReaderFor. Undo reads
 	// the database under Home instead (see resumedSinceImport).
 	CursorDatabase func(ctx context.Context) (CursorDatabaseResult, error)
+	// CursorRecoveryDatabase supplies a complete, bounded prefilter evidence
+	// catalog. Nil capability keeps automatic deleted-worktree recovery pending
+	// when a database exists; no unbounded catalog fallback is permitted.
+	CursorRecoveryDatabase func(context.Context, int, int64) (CursorDatabaseResult, error)
 	// Workers overrides the filter worker count; zero uses defaultWorkers.
 	Workers int
 	// OS is the operating system whose app locations are looked in: the
