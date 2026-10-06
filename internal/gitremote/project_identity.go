@@ -14,12 +14,6 @@ import (
 	"syscall"
 )
 
-// ProjectIdentity supplies bounded, local checkout evidence for configured-root recovery.
-// Existing non-Git scratch roots are known absent; unreadable/missing roots stay unknown.
-func ProjectIdentity(ctx context.Context, root string) sourcefacts.RepositoryIdentity {
-	return (&IdentityObserver{}).Lookup(ctx, root)
-}
-
 // IdentityObserver scopes optional command capability results to one observation pass.
 // A change of executable or effective environment discards the cached capability.
 type IdentityObserver struct {
