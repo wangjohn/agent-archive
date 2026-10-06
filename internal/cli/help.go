@@ -666,7 +666,7 @@ Import the Claude Code, Codex, and Cursor sessions already on this machine that
 the archive has not captured. First shows each project with its session count
 per app, and why any session is not imported; nothing is written until you
 confirm. Projects the import needs are added to capture. Prints project
-folders and counts only, never conversation content.
+folders, counts, and recovery reasons, never conversation content.
   --harness NAME        Only claude, codex, or cursor (repeatable)
   --project DIR         Only this project; it need not still exist (repeatable)
   --map-project OLD=ROOT Exact missing cwd to included root (repeatable)

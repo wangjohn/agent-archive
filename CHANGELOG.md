@@ -29,6 +29,11 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Backfill explains deleted-worktree recovery failures with bounded diagnostic
+  counts and retry/review actions while preserving existing skip codes. Dry-run
+  JSON adds optional diagnostics and physical candidate inventory counts;
+  logical history accounting remains pending.
+
 - Deleted Codex worktrees can recover an existing configured project from a
   unique recorded repository identity, or an exact historical backfill mapping.
   Excluded clones, ambiguous scope and damaged live checkouts remain pending;

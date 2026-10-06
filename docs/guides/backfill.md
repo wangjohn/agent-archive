@@ -157,3 +157,20 @@ Automatic discovery uses the same unique-repository fallback, while preserving
 the native original creation time and current capture authorization. Future
 ambiguous chats remain pending. Imported ownership and its original cwd proof
 are preserved when a chat continues.
+
+Backfill preserves the `worktree_unresolved` skip code and adds specific recovery
+reasons: unavailable repository evidence, resource limits, excluded or ambiguous
+repositories, mapping conflicts, and unproved subtree ownership. Retry reasons
+ask you to check access or Git and run the plan again; review reasons ask you to
+review configured ownership or an exact mapping. A mapping never overrides an
+exclusion or conflicting recorded identity.
+
+Dry-run JSON includes optional `diagnostics` summaries with `skip`, `detail`,
+`action`, and `count`. When diagnostics are present, `inventory` reconciles
+unique candidate transcript files into one disposition each and reports
+database-only candidates separately. These counts cover enumerated candidates,
+not unreadable stores. Duplicate candidates are not proof of identical bytes.
+`logical_history_pending` is true: dependencies, logical sessions, and retained
+revisions have not been reconciled. Related histories keep their existing pending
+skip; backfill has not inspected their current selection or missing dependencies.
+Summaries contain no transcript paths, native IDs, remote URLs, or content.
