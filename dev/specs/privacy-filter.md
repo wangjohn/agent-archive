@@ -18,17 +18,22 @@ names belong to the tool, subject to the deny list below.
 
 ### Session names and linked pull requests
 
-Two record types that only name a session are kept (filter 13), each rebuilt
+Typed Claude name and pull-request records are kept (filter 16), each rebuilt
 from typed values rather than passed through the key allowlist, so the keys
 below are admitted on those records only:
 
-- Claude Code `custom-title`: `type`, `customTitle`, and `sessionId` and
-  `timestamp` when they are strings. `customTitle` must be a string with
+- Claude Code `custom-title` and `ai-title`: `type`, the corresponding
+  `customTitle` or `aiTitle`, boolean `isSidechain`, and `sessionId` and
+  `timestamp` when they are strings. The title must be a string with
   something in it and passes the value rules like a prompt. Any other key is
   dropped (named in the `unknown_field_omitted` gap); a record without a
   usable title is dropped with an `unsupported_value_omitted` gap. Claude
   Code appends a record for each name a session is given, and every one is
-  kept, so a renamed session keeps its earlier names too.
+  kept, so a renamed session keeps its earlier names too. Custom titles take
+  precedence over generated titles regardless of record order. Present session
+  IDs must match the owning native session; legacy missing IDs are accepted
+  only within that source. Sidechain titles are excluded from naming. Name
+  records do not establish identity, activity or archive eligibility.
 - Claude Code `pr-link`: `type`, `prNumber`, `prRepository`, `prUrl`, and
   `sessionId` and `timestamp` when they are strings. `prRepository` is
   `owner/name` with each part matching `git_activity`'s repository pattern;
@@ -402,3 +407,7 @@ Codex history parser 0.22.0 can add the content-free metadata gap
 own usage across inherited history. It retains independently observed own
 per-call accounting and reports no invented parent-baseline subtraction.
 This changes derivation, not the privacy allowlist or filter version.
+
+Leading native `<external_codex_apps_open_page>` context wrappers follow the
+nested and unclosed-block omission rules. User prose, quoted markup and code
+examples are preserved, as is human text following a context wrapper.

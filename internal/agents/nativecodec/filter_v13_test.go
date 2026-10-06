@@ -395,6 +395,7 @@ func TestFilterV13NewRecordsChangeOnlyNameAndPullRequests(t *testing.T) {
 		}
 		reg := registration()
 		reg.Harness = Harness{Name: "claude"}
+		reg.NativeSessionID = "native-named"
 		now := time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
 		bundle, err := NewSourceBundle(reg, ClaudeAdapter{}, filtered, now, nil)
 		if err != nil {

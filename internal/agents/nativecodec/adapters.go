@@ -701,7 +701,7 @@ func recordCarriesConversation(record map[string]any) bool {
 	return conversationRecordTypes[strings.ToLower(strings.TrimSpace(kind))]
 }
 
-const adapterVersion = "0.15.0"
+const adapterVersion = "0.16.0"
 
 var maxRecordBytes = archive.MaxRecordBytes
 
@@ -724,6 +724,9 @@ func observeHarness(t *archive.FilteredTranscript, record map[string]any) {
 }
 
 func noteNativeIdentity(result *archive.FilteredTranscript, raw map[string]any) {
+	if isClaudeTitleRecord(raw) {
+		return
+	}
 	noteRecordTime(result, raw)
 	result.SessionIDs = appendUniqueString(result.SessionIDs, firstString(raw, "session_id", "sessionId"))
 	result.AgentIDs = appendUniqueString(result.AgentIDs, firstString(raw, "agent_id", "agentId"))
@@ -731,6 +734,9 @@ func noteNativeIdentity(result *archive.FilteredTranscript, raw map[string]any) 
 
 // noteSafeIdentity observes only records that survived the privacy filter.
 func noteSafeIdentity(result *archive.FilteredTranscript, safe map[string]any) {
+	if isClaudeTitleRecord(safe) {
+		return
+	}
 	if result.Format == "codex-jsonl" && result.LocalIdentity.ID == "" && firstString(safe, "type") == "session_meta" {
 		if payload, ok := safe["payload"].(map[string]any); ok {
 			result.LocalIdentity.ID = firstString(payload, "id")

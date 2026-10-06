@@ -19,10 +19,11 @@ var injectedInstructionOpen = regexp.MustCompile(`<(system-reminder|user_instruc
 // kind, so a block nested inside a block of the same kind extends the outer
 // block instead of ending it early.
 var injectedInstructionOpenByTag = map[string]*regexp.Regexp{
-	"system-reminder":     regexp.MustCompile(`<system-reminder\b[^>]*>`),
-	"user_instructions":   regexp.MustCompile(`<user_instructions\b[^>]*>`),
-	"environment_context": regexp.MustCompile(`<environment_context\b[^>]*>`),
-	"recommended_plugins": regexp.MustCompile(`<recommended_plugins\b[^>]*>`),
+	"external_codex_apps_open_page": regexp.MustCompile(`<external_codex_apps_open_page(?:\s+[^>]*)?>`),
+	"system-reminder":               regexp.MustCompile(`<system-reminder\b[^>]*>`),
+	"user_instructions":             regexp.MustCompile(`<user_instructions\b[^>]*>`),
+	"environment_context":           regexp.MustCompile(`<environment_context\b[^>]*>`),
+	"recommended_plugins":           regexp.MustCompile(`<recommended_plugins\b[^>]*>`),
 }
 
 // stripInjectedInstructions removes every injected instruction block from one
@@ -33,6 +34,27 @@ var injectedInstructionOpenByTag = map[string]*regexp.Regexp{
 // still-streaming record can produce, drops everything after it rather than
 // retaining part of the block.
 func stripInjectedInstructions(value string) (bool, string) {
+	changed, safe := stripKnownInjectedInstructions(value)
+	// Native open-page context is a leading wrapper. A mention in prose or a
+	// quoted/code example is user text, not proof of injected page context.
+	for {
+		leading := strings.TrimLeft(safe, " \t\r\n")
+		open := injectedInstructionOpenByTag["external_codex_apps_open_page"].FindStringIndex(leading)
+		if open == nil || open[0] != 0 {
+			break
+		}
+		changed = true
+		end := injectedInstructionEnd(leading, open[1], "external_codex_apps_open_page")
+		if end < 0 {
+			safe = ""
+			break
+		}
+		safe = strings.TrimSpace(leading[end:])
+	}
+	return changed, safe
+}
+
+func stripKnownInjectedInstructions(value string) (bool, string) {
 	loc := injectedInstructionOpen.FindStringSubmatchIndex(value)
 	if loc == nil {
 		return false, value

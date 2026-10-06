@@ -32,11 +32,18 @@ func parse(ctx context.Context, bundle archive.SourceBundle, agent nativeProfile
 	var codexModel, codexReasoning string
 	var candidates []toolCallCandidate
 	tokens := archive.TokenAccumulator{}
+	names := archive.PreviewAccumulator{NativeID: bundle.NativeSessionID}
 	for i, record := range bundle.NativeRecords {
 		if err := ctx.Err(); err != nil {
 			return archive.Analysis{}, err
 		}
 		if agent == profileCodex && !ownCodexRecord(bundle, i, record, &codexModel, &codexReasoning) {
+			continue
+		}
+		if agent == profileClaude && isClaudeTitleRecord(record) {
+			if !isSidechainRecord(record) {
+				names.AddFacts(claudeTitlePreview(record), true)
+			}
 			continue
 		}
 		collectFacts(&analysis.Facts, bundle, record, agent)
@@ -111,6 +118,9 @@ func parse(ctx context.Context, bundle archive.SourceBundle, agent nativeProfile
 			TurnID:            firstStringDeep(record, "turn_id"),
 			Timestamp:         firstStringDeep(record, "timestamp", "created_at"),
 		})
+	}
+	if names.Labels.Name != "" {
+		analysis.Facts.Name = names.Labels.Name
 	}
 	archive.ResolveSlashCommands(view.Turns)
 	for _, turn := range view.Turns {
@@ -198,8 +208,6 @@ func collectFacts(f *archive.NativeFacts, b archive.SourceBundle, r map[string]a
 	kind := firstString(r, "type")
 	var name string
 	switch {
-	case kind == "custom-title":
-		name = firstString(r, "customTitle")
 	case kind == "subagent-meta":
 		name = firstString(r, "description")
 	case kind == "session" && b.Capture.SourceFormat == "cursor-composer":
@@ -355,4 +363,9 @@ func observeRecordTokens(bundle archive.SourceBundle, record map[string]any, age
 	} else if !isPlaceholderModel(firstStringDeep(record, "model", "model_id")) {
 		accumulateTokens(record, tokenModel(agent, record, codexModel), tokens)
 	}
+}
+
+func isClaudeTitleRecord(r map[string]any) bool {
+	kind := firstString(r, "type")
+	return kind == "custom-title" || kind == "ai-title"
 }

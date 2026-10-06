@@ -7,10 +7,11 @@ import (
 	"strings"
 )
 
-// Filter 13 keeps the name a session was given and the pull request it is
+// Filter 16 keeps explicit and generated native session names and the pull request it is
 // linked to. Claude Code writes them as two record types of their own:
 //
 //	{"type":"custom-title","customTitle":…,"sessionId":…}
+//	{"type":"ai-title","aiTitle":…,"sessionId":…}
 //	{"type":"pr-link","prNumber":…,"prRepository":…,"prUrl":…,"sessionId":…,"timestamp":…}
 //
 // Neither is admitted through allowedKeys, which would admit the same key
@@ -20,9 +21,10 @@ import (
 // claudeLabelKind is the type of such a record.
 type claudeLabelKind string
 
-// The two record types filter 13 keeps through claudeLabelRecord.
+// Typed native label records are rebuilt through claudeLabelRecord.
 const (
 	claudeCustomTitleType claudeLabelKind = "custom-title"
+	claudeAITitleType     claudeLabelKind = "ai-title"
 	claudePRLinkType      claudeLabelKind = "pr-link"
 )
 
@@ -30,13 +32,14 @@ const (
 // carries beyond the ones every record may: they are admitted for that record
 // only, and only as the flat values claudeLabelRecord checked.
 var claudeLabelKeys = map[string]bool{
-	"customtitle": true, "prnumber": true, "prrepository": true, "prurl": true,
+	"aititle": true, "customtitle": true, "prnumber": true, "prrepository": true, "prurl": true,
 }
 
 // claudeLabelPayloadKeys are the keys each record type keeps besides the
 // identity keys; claudeLabelRecord checks their values below.
 var claudeLabelPayloadKeys = map[claudeLabelKind]map[string]bool{
 	claudeCustomTitleType: {"customTitle": true},
+	claudeAITitleType:     {"aiTitle": true},
 	claudePRLinkType:      {"prNumber": true, "prRepository": true, "prUrl": true},
 }
 
@@ -48,7 +51,7 @@ var claudeLabelIdentityKeys = map[string]bool{"sessionId": true, "timestamp": tr
 // keeps through claudeLabelRecord.
 func isClaudeLabelType(kind string) bool {
 	switch claudeLabelKind(kind) {
-	case claudeCustomTitleType, claudePRLinkType:
+	case claudeCustomTitleType, claudeAITitleType, claudePRLinkType:
 		return true
 	}
 	return false
@@ -68,7 +71,7 @@ func isClaudeLabelType(kind string) bool {
 //     dropped and the rest of the record is kept. A pr-link whose repository
 //     or number is missing or out of shape is dropped whole.
 //
-// Both keep type, and sessionId and timestamp when they are strings.
+// These records keep type, string sessionId/timestamp and boolean isSidechain.
 func claudeLabelRecord(raw map[string]any, omit func(string)) (map[string]any, bool) {
 	rawKind, _ := raw["type"].(string)
 	kind := claudeLabelKind(rawKind)
@@ -77,6 +80,12 @@ func claudeLabelRecord(raw map[string]any, omit func(string)) (map[string]any, b
 		value := raw[key]
 		switch {
 		case key == "type":
+		case key == "isSidechain":
+			if sidechain, ok := value.(bool); ok {
+				out[key] = sidechain
+			} else {
+				omit(key)
+			}
 		case claudeLabelIdentityKeys[key]:
 			if text, ok := value.(string); ok {
 				out[key] = text
@@ -88,12 +97,16 @@ func claudeLabelRecord(raw map[string]any, omit func(string)) (map[string]any, b
 			omit(key)
 		}
 	}
-	if kind == claudeCustomTitleType {
-		title, ok := raw["customTitle"].(string)
+	if kind == claudeCustomTitleType || kind == claudeAITitleType {
+		key := "customTitle"
+		if kind == claudeAITitleType {
+			key = "aiTitle"
+		}
+		title, ok := raw[key].(string)
 		if !ok || strings.TrimSpace(title) == "" {
 			return nil, false
 		}
-		out["customTitle"] = title
+		out[key] = title
 		return out, true
 	}
 	number, ok := claudePRNumber(raw["prNumber"])
@@ -143,8 +156,12 @@ func claudePRURL(owner, name string, number int) string {
 // when it changed, and its name reported through omit, as it is when
 // claudeLabelRecord drops it.
 func claudeLabelSurvived(label, safe map[string]any, omit func(string)) bool {
-	if label["type"] == string(claudeCustomTitleType) {
-		title, ok := safe["customTitle"].(string)
+	if label["type"] == string(claudeCustomTitleType) || label["type"] == string(claudeAITitleType) {
+		key := "customTitle"
+		if label["type"] == string(claudeAITitleType) {
+			key = "aiTitle"
+		}
+		title, ok := safe[key].(string)
 		return ok && strings.TrimSpace(title) != ""
 	}
 	if safe["prRepository"] != label["prRepository"] || safe["prNumber"] != label["prNumber"] {
