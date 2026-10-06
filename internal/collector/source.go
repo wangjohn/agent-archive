@@ -205,6 +205,9 @@ func (r providerReader) pass(ctx context.Context, p agentapi.SourceProvider, key
 	}
 	env := sourceEnvironment(r.discovery, r.database)
 	env.CodexRollouts = r.rollouts
+	if r.resourceOwner != nil {
+		env.ReadBudget = r.resourceOwner.readBudget()
+	}
 	env.LegacyUnboundRegistration = r.harness == archive.HarnessCodex && r.admission.Binding == nil && (r.discovery == nil || r.discovery.Origin != archive.SessionOriginDiscovery)
 	pass, err := p.OpenPass(ctx, env)
 	if err != nil {

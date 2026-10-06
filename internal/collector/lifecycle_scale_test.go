@@ -396,13 +396,15 @@ func runLifecycleScale(t *testing.T, n int) {
 	}
 	recoveryOpts := opts
 	recoveryOpts.RepoKey = func(string) string { return "" }
-	build, err := PrepareGenerationRecovery(t.Context(), currentReg, now.Add(time.Hour), recoveryOpts)
+	build, closePreview, err := PrepareGenerationRecovery(t.Context(), currentReg, now.Add(time.Hour), recoveryOpts)
+	defer closePreview()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := local.BeginGenerationRecovery(reg.ArchiveSessionID, now.Add(time.Hour), build); err != nil {
 		t.Fatal(err)
 	}
+	closePreview()
 	if err := os.RemoveAll(nativeHome); err != nil {
 		t.Fatal(err)
 	}

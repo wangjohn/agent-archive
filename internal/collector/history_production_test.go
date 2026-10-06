@@ -372,7 +372,8 @@ func TestRunHistoryRecoveryFrozenParserAndHookMaintenanceUseRetainedSet(t *testi
 	}
 	opts := scan.opts
 	opts.RepoKey = func(string) string { return "" }
-	build, err := PrepareGenerationRecovery(t.Context(), scan.reg, scan.now.Add(time.Hour), opts)
+	build, closePreview, err := PrepareGenerationRecovery(t.Context(), scan.reg, scan.now.Add(time.Hour), opts)
+	defer closePreview()
 	if err != nil {
 		t.Fatal(err)
 	}

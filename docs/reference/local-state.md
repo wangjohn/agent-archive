@@ -214,3 +214,11 @@ identities after request locks release. Retired generations use an explicit
 absence override rather than redirecting native hooks to a retained ancestor.
 
 The scheduled collector primes qualified history requests from accepted existing registrations before opening native snapshots. The CLI advances one shared inventory observation and validation slice with the same lookup deadline and read budget. That slice cannot admit owners; scheduled IDs never replace provider identity, confinement, project or consent checks. Preview planning remains read-only.
+
+Explicit generation recovery previews use the same trusted Codex homes and
+lookup as capture. Preview cleanup discards newly requested coverage and leaves
+the capture catalog unchanged. Filtered preview and returned publication data
+retain their shared lease through confirmation; cleanup returns it on refusal,
+cancellation, error or completion. Confirmation charges full recovery-journal
+reads and encoding, and validates canonical source bytes by streaming their
+checksum rather than retaining another compressed source.
