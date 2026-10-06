@@ -172,7 +172,9 @@ func (cmd undoCommand) run() int {
 	backfill.RenderUndo(stdout, plan)
 	terminal.Println(stdout)
 	if !yes {
-		confirmed, err := newPrompter(stdin, stdout).yesNo(backfill.UndoQuestion(plan), false)
+		p := newPrompter(stdin, stdout)
+		defer p.close()
+		confirmed, err := p.guidedYesNo(backfill.UndoQuestion(plan), false)
 		if err != nil {
 			return fail("%v. Nothing was changed.", err)
 		}

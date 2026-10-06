@@ -382,7 +382,7 @@ func TestActiveSourceAsksOnATerminal(t *testing.T) {
 	} {
 		var stderr bytes.Buffer
 		dir, err := prepareLaunchDir(f.env, handoffOptions{to: "claude"}, target, repo, tty, bufio.NewReader(strings.NewReader(tc.answer)), &stderr)
-		if !strings.Contains(stderr.String(), "The source session was active just now; continue in the same checkout? [y/N/w]") {
+		if !strings.Contains(stderr.String(), "The source session was active just now; where should the new agent continue?") {
 			t.Errorf("%q: no question in %q", tc.answer, stderr.String())
 		}
 		switch {

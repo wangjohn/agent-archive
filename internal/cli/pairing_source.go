@@ -78,8 +78,14 @@ func runPairingAdd(args []string, stdin io.Reader, out, errOut io.Writer, env En
 		return 1
 	}
 	p := newPrompter(stdin, out)
+	defer p.close()
 	if *name == "" {
-		value, err := p.ask("Name for the new machine", false, nil, -1, ": ")
+		value, err := p.guidedText(promptModel{Question: "Name for the new machine", Helpers: []string{"Use 1 to 40 lowercase letters, digits, or hyphens."}, Validate: func(value string) error {
+			if !pairing.ValidName(value) {
+				return errors.New("Machine names use 1 to 40 lowercase letters, digits, or hyphens.")
+			}
+			return nil
+		}})
 		if err != nil {
 			terminal.Println(errOut, "no name supplied")
 			return 1
@@ -246,7 +252,7 @@ func finishPairingDelivery(p *prompter, code string, ledger pairingLedger, home 
 	}
 	terminal.Printf(out, "Bundle expires at %s. On %s, run agent-archive setup --pair.\n", ledger.ExpiresAt.Format(time.RFC3339), ledger.Name)
 	for {
-		choice, err := p.menu("Pairing code", "show", option{"show", "Show code on a cleared alternate screen"}, option{"done", "Done"}, option{"cancel", "Cancel pairing (dedicated cleanup needs management access)"})
+		choice, err := p.guidedMenu("Pairing code", "show", option{"show", "Show code on a cleared alternate screen"}, option{"done", "Done"}, option{"cancel", "Cancel pairing (dedicated cleanup needs management access)"})
 		if err != nil {
 			terminal.Println(errOut, "pairing remains delivered; code discarded on exit")
 			return 1
@@ -352,6 +358,8 @@ func showPairingCode(p *prompter, code string, env Env) error {
 	if !env.interactive(underlyingWriter(p.out)) {
 		return errors.New("pairing code display needs terminal output")
 	}
+	release := p.suspendPrompts(true)
+	defer release()
 	// Use checked writes for secret-bearing output. Always restore the screen.
 	if _, err := io.WriteString(p.out, "\x1b[?1049h\x1b[2J\x1b[H"); err != nil {
 		return err
@@ -567,7 +575,7 @@ func deliverPairingBundle(home, bundle string, ledger *pairingLedger, slot *issu
 				break
 			}
 			terminal.Println(errOut, "Clipboard unavailable. The key remains tracked; choose deliberate delivery or retry.")
-			choice, e := opts.prompt.menu("Bundle delivery", "cancel", option{"retry", "Retry clipboard"}, option{"file", "Write a new private file"}, option{"print", "Print encrypted bundle in this terminal"}, option{"cancel", "Stop; retain tracked key"})
+			choice, e := opts.prompt.guidedMenu("Bundle delivery", "cancel", option{"retry", "Retry clipboard"}, option{"file", "Write a new private file"}, option{"print", "Print encrypted bundle in this terminal"}, option{"cancel", "Stop; retain tracked key"})
 			if e != nil || choice == "cancel" {
 				break
 			}
@@ -578,7 +586,7 @@ func deliverPairingBundle(home, bundle string, ledger *pairingLedger, slot *issu
 				_, err = fmt.Fprintln(out, bundle)
 				break
 			}
-			path, e := opts.prompt.ask("New private bundle file", false, nil, -1, ": ")
+			path, e := opts.prompt.guidedDefault("New private bundle file", "")
 			if e != nil {
 				err = e
 				break

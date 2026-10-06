@@ -1,5 +1,8 @@
 # Using more than one machine
 
+Pairing and key-management questions use `?` for the active question and `›` for the answer. Numbered choices are the main decisions; bracketed shortcuts are secondary actions. Completed answers become short receipts where safe terminal redraw is available. Pairing codes remain confined to their cleared alternate screen, and hidden token and bundle receipts never reproduce private input. Human machine listings have labeled fields when the terminal is too narrow for aligned columns. JSON output retains its existing structure.
+
+
 Several machines, macOS and Linux in any mix, can archive into the same
 bucket and prefix. Each machine runs its own setup, with its own machine ID,
 hooks, collector, and local state.

@@ -106,6 +106,7 @@ var terminalPackageUses = classifiedCalls{
 // hand): every place agent-archive can ask a question. The comment says what
 // stops the question when interaction is off.
 var promptSites = classifiedCalls{
+	"purge.go":            {"newPrompter": 1},                  // Exact digest consent is refused when noninteractive unless --yes.
 	"machines_revoke.go":  {"newPrompter": 1},                  // confirmation and token prompt require Env.interactive; --yes/--json never prompt
 	"machines_own_key.go": {"newPrompter": 1},                  // own-key confirmation/token require Env.interactive; --yes uses environment only
 	"pairing_rollout.go":  {"newPrompter": 1},                  // first-run question requires terminal input/output, fresh setup, and Env.interactive
@@ -147,7 +148,6 @@ var inputReads = classifiedCalls{
 	"hook_command.go": {"json.NewDecoder": 1},
 	// purge apply's typed digest: refused in runPurgeApply when the switch is
 	// on and --yes is not given.
-	"purge.go": {"bufio.NewReader": 1},
 	// Files, not standard input.
 	"setup_aws.go": {"bufio.NewScanner": 1},
 	// eval export --ids-from -: a list piped in, refused when standard input

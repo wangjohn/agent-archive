@@ -211,18 +211,19 @@ func printUninstallSummary(out io.Writer, unverified []unverifiedJob) {
 // be checked again under the locks. Declining is not an error: confirmed is
 // false and nothing was changed.
 func confirmUninstall(purge, yes bool, home string, previewCfg config.Config, previewFound bool, stdin io.Reader, out io.Writer) (previewPending int, confirmed bool, err error) {
-	terminal.Println(out, "Remove the archive's hooks and background collector from this machine. Remote archives are kept.")
+	guidedExplanation(out, "Remove integrations", "Remove the archive's hooks and background collector from this machine. Remote archives are kept.")
 	if purge {
 		terminal.Printf(out, "Also delete owned local state and credentials under %s.\n", home)
 	} else {
 		terminal.Println(out, "Local evidence, settings, and credentials will be kept. Run setup to reinstall.")
 	}
 	p := newPrompter(stdin, out)
+	defer p.close()
 	confirm := func(question string) (bool, error) {
 		if yes {
 			return true, nil
 		}
-		confirmed, err := p.yesNo(question, false)
+		confirmed, err := p.guidedYesNo(question, false)
 		if err == nil && !confirmed {
 			terminal.Println(out, "Cancelled. No changes were made.")
 		}
@@ -237,7 +238,7 @@ func confirmUninstall(purge, yes bool, home string, previewCfg config.Config, pr
 			terminal.Println(out, strings.Replace(problem, "status left it out", "it is deleted with the rest", 1))
 		}
 		previewPending = pending
-		terminal.Printf(out, "%d pending session(s) and all owned local caches will be removed. Unpublished evidence cannot be recovered from the bucket.\n", pending)
+		guidedExplanation(out, "Delete owned local data", fmt.Sprintf("%d pending session(s) and all owned local caches will be removed. Unpublished evidence cannot be recovered from the bucket.", pending))
 		if confirmed, err := confirm("Delete local data and stored credentials too?"); err != nil || !confirmed {
 			return 0, false, err
 		}

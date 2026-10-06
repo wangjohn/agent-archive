@@ -61,8 +61,7 @@ func readPairingBundle(p *prompter, opts setupOptions, stdin io.Reader) (string,
 	if opts.yes {
 		return "", fmt.Errorf("--yes pairing needs --pair-file PATH or --pair-file -")
 	}
-	terminal.Print(p.out, "Paste the encrypted pairing bundle: ")
-	return boundedPairingLine(p.in, pairing.MaxBundle+1)
+	return p.guidedText(promptModel{Question: "Paste the encrypted pairing bundle", Label: "Credential", Secret: true, ReadAnswer: func(in *bufio.Reader) (string, error) { return boundedPairingLine(in, pairing.MaxBundle+1) }})
 }
 
 func setupPairing(opts setupOptions, stdin io.Reader, out, errOut io.Writer, env Env) error {
@@ -192,7 +191,7 @@ func readPairingCode(opts setupOptions, p *prompter, env Env) (string, error) {
 		if env.PairingCode != nil {
 			code, err = env.PairingCode()
 		} else if env.interactive(p.source) {
-			code, err = p.secret("Pairing code (hidden): ")
+			code, err = p.guidedText(promptModel{Question: "Pairing code (hidden)", Label: "Credential", Secret: true})
 		} else {
 			return "", fmt.Errorf("pairing code needs a terminal, or --yes with AGENT_ARCHIVE_PAIRING_CODE")
 		}
@@ -213,7 +212,7 @@ func reviewPairingDestination(p *prompter, payload pairing.Payload, existing con
 			return cfg, fmt.Errorf("paired R2 endpoint is invalid")
 		}
 	}
-	terminal.Printf(p.out, "%s from %s. Proposed machine: %s.\nSessions will upload to %s bucket %s, folder %s, account %s, endpoint %s.\n", pairingCredentialDescription(payload), payload.IssuerName, payload.Name, cfg.Storage.Provider, cfg.Storage.Bucket, cfg.Storage.Prefix, cfg.Storage.R2AccountID, cfg.Storage.R2Endpoint)
+	guidedExplanation(p.out, "Pairing destination", fmt.Sprintf("%s from %s. Proposed machine: %s.", pairingCredentialDescription(payload), payload.IssuerName, payload.Name), fmt.Sprintf("Sessions will upload to %s bucket %s, folder %s, account %s, endpoint %s.", cfg.Storage.Provider, cfg.Storage.Bucket, cfg.Storage.Prefix, cfg.Storage.R2AccountID, cfg.Storage.R2Endpoint))
 	if found {
 		terminal.Printf(p.out, "Prior destination: %s bucket %s, folder %s.\n", existing.Storage.Provider, existing.Storage.Bucket, existing.Storage.Prefix)
 	}
@@ -222,7 +221,7 @@ func reviewPairingDestination(p *prompter, payload pairing.Payload, existing con
 		return cfg, fmt.Errorf("paired destination differs from this machine's destination; run interactive pairing to approve the exact change")
 	}
 	if changed {
-		consent, e := p.yesNo("Explicitly replace the prior destination with the displayed destination?", false)
+		consent, e := p.guidedYesNo("Explicitly replace the prior destination with the displayed destination?", false)
 		if e != nil {
 			return cfg, e
 		}
@@ -279,7 +278,7 @@ func pairingCaptureSettings(p *prompter, payload pairing.Payload, cfg, existing 
 		} else {
 			terminal.Printf(p.out, "Source app %s is not found here. See https://github.com/wangjohn/agent-archive/blob/main/docs/getting-started/setup.md for app installation and permissions.\n", app)
 			if !opts.yes {
-				choice, e := p.menu("Missing app "+app, "skip", option{"retry", "Recheck after installing the app"}, option{"skip", "Continue without this app"}, option{"cancel", "Cancel pairing setup"})
+				choice, e := p.guidedMenu("Missing app "+app, "skip", option{"retry", "Recheck after installing the app"}, option{"skip", "Continue without this app"}, option{"cancel", "Cancel pairing setup"})
 				if e != nil {
 					return cfg, e
 				}
@@ -327,7 +326,7 @@ func reviewPairingSettings(p *prompter, payload pairing.Payload, cfg, existing c
 	if !opts.yes {
 		for {
 			showSetupReview(p, cfg, setupReview{existing: existing, reconfiguring: found, hookFiles: env.hookFiles(userHome), installedHookFiles: env.installedHookFiles(userHome, existing), userHome: userHome})
-			choice, e := p.menu("Review pairing settings", "cancel", option{"save", "Save the displayed destination and capture settings"}, option{"edit", "Edit settings"}, option{"cancel", "Cancel"})
+			choice, e := p.guidedMenu("Review pairing settings", "cancel", option{"save", "Save the displayed destination and capture settings"}, option{"edit", "Edit settings"}, option{"cancel", "Cancel"})
 			if e != nil {
 				return cfg, e
 			}
@@ -348,7 +347,7 @@ func reviewPairingSettings(p *prompter, payload pairing.Payload, cfg, existing c
 			cfg = draft.Config
 			if !destinationEqual(cfg.Storage, approvedStorage) {
 				terminal.Printf(p.out, "Edited destination: %s bucket %s, folder %s, account %s, endpoint %s.\n", cfg.Storage.Provider, cfg.Storage.Bucket, cfg.Storage.Prefix, cfg.Storage.R2AccountID, cfg.Storage.R2Endpoint)
-				consent, e := p.yesNo("Explicitly approve this edited destination?", false)
+				consent, e := p.guidedYesNo("Explicitly approve this edited destination?", false)
 				if e != nil {
 					return cfg, e
 				}
@@ -423,20 +422,24 @@ func pairingReceiverInput(opts setupOptions, stdin io.Reader, out io.Writer, env
 		return nil, "", noClose, fmt.Errorf("pasting a pairing bundle needs a terminal; use --pair-file for redirected input")
 	}
 	p := newPrompter(stdin, out)
+	closePrompt := func() { p.close(); noClose() }
 	if opts.pairingInput != nil {
 		p.in = bufio.NewReader(opts.pairingInput)
 	}
 	p.now = env.now
 	bundle, err := readPairingBundle(p, opts, stdin)
 	if err != nil {
+		p.close()
 		return nil, "", noClose, err
 	}
 	if _, err = pairing.Inspect(bundle); err != nil {
+		p.close()
 		return nil, "", noClose, err
 	}
 	// Bundle stdin is consumed separately; all subsequent private input and
 	// destination consent must use the same interactive terminal.
 	if !opts.yes && !env.interactive(stdin) {
+		p.close()
 		tty, e := env.openPairingTerminal()
 		if e != nil {
 			return nil, "", noClose, fmt.Errorf("pairing review needs a terminal, or deliberate --yes")
@@ -449,7 +452,7 @@ func pairingReceiverInput(opts setupOptions, stdin io.Reader, out io.Writer, env
 		p = newPrompter(tty, tty)
 		p.now = env.now
 	}
-	return p, bundle, noClose, nil
+	return p, bundle, closePrompt, nil
 }
 
 func pairingCredentialDescription(payload pairing.Payload) string {

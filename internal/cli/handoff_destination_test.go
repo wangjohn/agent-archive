@@ -119,22 +119,23 @@ func TestChooseDestinationListsTheDefaultFirst(t *testing.T) {
 	if _, err := chooseDestination(newPrompter(strings.NewReader("q\n"), &out), installed, handoffDestinationCodex, true, productionAgents.Catalog()); err != nil {
 		t.Fatal(err)
 	}
-	want := "Continue in:\n  1) Codex (default)\n  2) Claude Code\n  3) Cursor\n  p) print\n  c) copy to the clipboard\n  w) write to a file\n  q) quit\nEnter 1-3, p, c, w, or q [1]: "
-	if out.String() != want {
-		t.Fatalf("prompt:\n%q\nwant\n%q", out.String(), want)
+	for _, want := range []string{"? Continue in", "1) Codex (default)", "2) Claude Code", "3) Cursor", "[p] print", "[c] copy to the clipboard", "[w] write to a file", "[q] quit", "Choose [1]", "Handoff quit"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("missing %q in prompt:\n%s", want, out.String())
+		}
 	}
 	out.Reset()
 	if _, err := chooseDestination(newPrompter(strings.NewReader("q\n"), &out), nil, "", true, productionAgents.Catalog()); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasSuffix(out.String(), "  q) quit\nEnter p, c, w, or q [p]: ") || strings.Contains(out.String(), "1)") {
+	if !strings.Contains(out.String(), "[q] quit") || !strings.Contains(out.String(), "Choose [print]") || strings.Contains(out.String(), "1)") {
 		t.Fatalf("prompt with no agent installed:\n%s", out.String())
 	}
 	out.Reset()
 	if _, err := chooseDestination(newPrompter(strings.NewReader("q\n"), &out), []handoffDestination{handoffDestinationClaude}, handoffDestinationClaude, true, productionAgents.Catalog()); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasSuffix(out.String(), "\nEnter 1, p, c, w, or q [1]: ") {
+	if !strings.Contains(out.String(), "Choose [1]") {
 		t.Fatalf("prompt with one agent installed:\n%s", out.String())
 	}
 }
