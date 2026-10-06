@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -94,6 +95,31 @@ func TestLabelsIndexRequiresVerifiedLegacyContext(t *testing.T) {
 	request.Bundle.NativeRecords[0]["payload"].(map[string]any)["history_mode"] = "paginated"
 	if _, ok := lookupLabel(root, request); ok {
 		t.Fatal("missing paginated DB was interpreted as legacy index")
+	}
+}
+
+func TestLabelsIndexMatchesNativeRequiredStringAndUUIDSemantics(t *testing.T) {
+	t.Parallel()
+	root, request := labelFixture(t)
+	entries := []map[string]any{
+		{"id": labelTestID, "thread_name": "Old name", "updated_at": "unknown"},
+		{"id": strings.ToUpper(labelTestID), "thread_name": "Current name", "updated_at": ""},
+		{"id": labelTestID, "thread_name": "Missing required stamp"},
+	}
+	data := []byte{}
+	for _, entry := range entries {
+		encoded, err := json.Marshal(entry)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data = append(data, encoded...)
+		data = append(data, '\n')
+	}
+	if err := os.WriteFile(filepath.Join(root, "session_index.jsonl"), data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if label, ok := lookupLabel(root, request); !ok || label.Name != "Current name" {
+		t.Fatalf("%+v %v", label, ok)
 	}
 }
 

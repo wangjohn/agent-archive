@@ -95,7 +95,7 @@ func resolveLabel(root string, request agentapi.LabelRequest, row labelRow, foun
 				if !indexComplete {
 					return archive.SessionLabel{}, false
 				}
-				name = index[reg.NativeSessionID]
+				name = index[strings.ToLower(reg.NativeSessionID)]
 			}
 			if strings.TrimSpace(name) == strings.TrimSpace(row.preview) {
 				name = ""
@@ -108,7 +108,7 @@ func resolveLabel(root string, request agentapi.LabelRequest, row labelRow, foun
 		if !absent || !indexComplete || !request.Context.Legacy || request.Context.Producer != "0.159.2" || !request.Context.PreviewComplete {
 			return archive.SessionLabel{}, false
 		}
-		name = index[reg.NativeSessionID]
+		name = index[strings.ToLower(reg.NativeSessionID)]
 		if labelPreviewDigest(name) == request.Context.PreviewDigest {
 			name = ""
 		}
@@ -182,7 +182,7 @@ func readLabelIndex(ctx context.Context, root string, requests []agentapi.LabelR
 	out := map[string]string{}
 	wanted := map[string]bool{}
 	for _, request := range requests {
-		wanted[request.Registration.NativeSessionID] = true
+		wanted[strings.ToLower(request.Registration.NativeSessionID)] = true
 	}
 	path := filepath.Join(root, "session_index.jsonl")
 	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
@@ -214,14 +214,14 @@ func readLabelIndex(ctx context.Context, root string, requests []agentapi.LabelR
 			return nil, false
 		}
 		var entry struct {
-			ID      string `json:"id"`
-			Name    string `json:"thread_name"`
-			Updated string `json:"updated_at"`
+			ID      string  `json:"id"`
+			Name    string  `json:"thread_name"`
+			Updated *string `json:"updated_at"`
 		}
-		if json.Unmarshal(line, &entry) != nil || !wanted[entry.ID] || strings.TrimSpace(entry.Name) == "" || entry.Updated == "" {
+		if json.Unmarshal(line, &entry) != nil || !wanted[strings.ToLower(entry.ID)] || strings.TrimSpace(entry.Name) == "" || entry.Updated == nil {
 			continue
 		}
-		out[entry.ID] = strings.TrimSpace(entry.Name)
+		out[strings.ToLower(entry.ID)] = strings.TrimSpace(entry.Name)
 	}
 	after, err := os.Lstat(path)
 	if err != nil || !os.SameFile(before, after) || before.Size() != after.Size() || !before.ModTime().Equal(after.ModTime()) {
