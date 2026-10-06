@@ -77,6 +77,10 @@ func importPlanLocked(env Env, stdout, stderr io.Writer, home string, plan backf
 	// between a session's subagent candidates and its registration.
 	releaseCollector = releaseOnce(releaseCollector)
 	defer releaseCollector()
+	// Waiting for the collector has its own allowance. Start the evidence
+	// deadline only after that wait, retaining signal cancellation throughout.
+	confirmationCtx, cancelConfirmation := context.WithTimeout(confirmationCtx, 30*time.Second)
+	defer cancelConfirmation()
 	batch, admittedAt, added, err := commitImport(confirmationCtx, env, home, plan, fingerprint)
 	if err != nil {
 		return fail("%v", err)
@@ -263,11 +267,9 @@ func importConfirmationContext(env Env, stderr io.Writer, plan backfill.Plan) (c
 		recovered = recovered || c.ProjectResolution != nil
 	}
 	if !recovered {
-		return context.WithTimeout(context.Background(), 30*time.Second)
+		return context.WithCancel(context.Background())
 	}
-	watchedCtx, stopWatch := interruptibleContext(env, stderr)
-	boundedCtx, cancelBound := context.WithTimeout(watchedCtx, 30*time.Second)
-	return boundedCtx, func() { cancelBound(); stopWatch() }
+	return interruptibleContext(env, stderr)
 }
 
 // commitImport is step 4. With collector.lock held, it takes hooks.lock,
