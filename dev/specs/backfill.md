@@ -1105,8 +1105,37 @@ Recovery evidence is rechecked before admitting a new owner. Git dependency
 stamps include HEAD, worktree/common config paths, empty or absent included
 files, all candidate global/system config paths reported by Git, and scratch
 ancestors with no Git metadata and absent nearer checkout markers for configured
-Git subdirectories. Unsupported Git path queries remain unavailable; a documented no-value result
-establishes that no config path applies.
+Git subdirectories. A documented no-value result establishes that no config path
+applies. Optional `git var GIT_CONFIG_GLOBAL`/`GIT_CONFIG_SYSTEM` usage errors
+select semantic validation instead of making otherwise known identity unknown.
+The capability cache and retained root observations belong to one pass and are
+invalidated by executable metadata or effective environment changes; version
+strings are never authority. A content-free observer-scope digest binds temporary
+inventory evidence to that executable and environment. Exact mappings share a
+single planned identity per destination root; a later candidate cannot overwrite
+the observation on which an earlier proof depends.
+Name/origin enumeration has a 256 KiB output cap; URLs and short queries retain
+the 4 KiB cap. Each command has the existing 500 ms timeout and dependency
+collection has a shared 500 ms deadline, at most 128 paths and 64 ancestors.
+
+A semantic epoch binds the full sorted configured inventory (including excluded
+roots), canonical configured paths, policy/mapping context, and each root's
+known/unknown state, canonical checkout top level and normalized repository key.
+The planning sweep and second admission sweep must agree on every root, even
+scratch or excluded roots that did not match the selected key. Unknown, changed
+or cancelled evidence stays pending. The second sweep is coalesced once per
+bounded admission slice and costs at most 1024 root observations independently
+of its number of imported sessions. The initial discovery sweep retains its
+128-lookup continuation cursor; its partial entries never establish uniqueness.
+Each lookup verifies its root/key again after collecting bounded metadata.
+Semantic sweeps cannot stamp unknown absent system/global paths and are not an
+atomic filesystem snapshot: a change after the last observation, or a change
+and reversal between sweeps, can escape observation. Enumerated local stamps,
+canonical original cwd and native source observation checks remain required.
+Git reads occur before the admission lock, which rechecks configuration,
+destination and consent. `validation_method=semantic` is retained privately as
+ownership provenance. Validation caches and observation contexts are temporary;
+retained admitted ownership does not acquire a continuing live-Git requirement.
 New discovery checks the original source observation and original cwd again; imports validate each source and
 cwd and coalesce the common inventory check for each short registration hold.
 Import and recovered discovery attribution retain the file identity, size and modification time sampled
@@ -1128,6 +1157,8 @@ prefix and admit a recovered source. Further candidates remain retryable.
 `repository_metadata_operations` reports those invocation units; a canonical
 path invocation may perform multiple filesystem probes. Import resets this
 allowance per short hold, with one common inventory check for its candidates.
-Git identity lookup limits remain unchanged. Filesystem proof checks cannot
+Initial Git identity lookup limits remain unchanged; semantic admission has the
+separate 1024-root bound above. No-context programmatic import callers get a
+30-second validation deadline per slice. Filesystem proof checks cannot
 prevent a change after their final observation; the next admission slice or
 pass refreshes the evidence.
