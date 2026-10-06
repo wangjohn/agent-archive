@@ -118,6 +118,7 @@ type work struct {
 	sourceErr        error
 	workspaceCurrent func(context.Context) bool
 	proposedWitness  bool
+	validated        bool
 }
 
 // subagentWork is one subagent transcript of an imported parent.
@@ -313,37 +314,8 @@ func preparePlanWork(ctx context.Context, env Environment, cfg config.Config, fi
 			cursorCandidates = append(cursorCandidates, w.res.root)
 		}
 	}
-	matchers := map[string]*workspaceMatcher{}
-	freshMatchers := map[string]*workspaceMatcher{}
-	r.workspaceReset = func() { freshMatchers = map[string]*workspaceMatcher{} }
-	for _, w := range items {
-		if w.t.cursorSlug == "" {
-			continue
-		}
-		name := string(w.t.harness)
-		matcher := matchers[name]
-		if matcher == nil {
-			matcher = &workspaceMatcher{env: env, agent: name, candidates: cursorCandidates}
-			matchers[name] = matcher
-		}
-		folder, ok, err := matcher.match(ctx, w.t.cursorSlug)
-		if err != nil {
-			return nil, nil, unread, workers, err
-		}
-		if ok {
-			w.res = r.resolve(folder)
-			w.workspaceCurrent = func(ctx context.Context) bool {
-				fresh := freshMatchers[name]
-				if fresh == nil {
-					fresh = &workspaceMatcher{env: env, agent: name, candidates: cursorCandidates}
-					freshMatchers[name] = fresh
-				}
-				current, matched, err := fresh.match(ctx, w.t.cursorSlug)
-				return err == nil && matched && env.resolved(current) == env.resolved(folder)
-			}
-		} else {
-			w.res = resolution{skip: SkipProjectUnknown}
-		}
+	if err := resolveWorkspaceWitnesses(ctx, env, r, items, cursorCandidates); err != nil {
+		return nil, nil, unread, workers, err
 	}
 
 	dbWitnesses, dbIncomplete, err := prepareCursorRecoveryWitnesses(ctx, env, r, items, unread)
@@ -369,6 +341,44 @@ func preparePlanWork(ctx context.Context, env Environment, cfg config.Config, fi
 		}
 	}
 	return items, r, unread, workers, nil
+}
+
+// resolveWorkspaceWitnesses retains one renewed matcher per agent and slice.
+func resolveWorkspaceWitnesses(ctx context.Context, env Environment, r *resolver, items []*work, cursorCandidates []string) error {
+	matchers := map[string]*workspaceMatcher{}
+	freshMatchers := map[string]*workspaceMatcher{}
+	r.workspaceReset = func() { freshMatchers = map[string]*workspaceMatcher{} }
+	for _, w := range items {
+		if w.t.cursorSlug == "" {
+			continue
+		}
+		name := string(w.t.harness)
+		matcher := matchers[name]
+		if matcher == nil {
+			matcher = &workspaceMatcher{env: env, agent: name, candidates: cursorCandidates}
+			matchers[name] = matcher
+		}
+		folder, ok, err := matcher.match(ctx, w.t.cursorSlug)
+		if err != nil {
+			return err
+		}
+		if ok {
+			w.res = r.resolve(folder)
+			w.workspaceCurrent = func(ctx context.Context) bool {
+				fresh := freshMatchers[name]
+				if fresh == nil {
+					fresh = &workspaceMatcher{env: env, agent: name, candidates: cursorCandidates}
+					freshMatchers[name] = fresh
+				}
+				current, matched, err := fresh.match(ctx, w.t.cursorSlug)
+				return err == nil && matched && env.resolved(current) == env.resolved(folder)
+			}
+		} else {
+			w.res = resolution{skip: SkipProjectUnknown}
+		}
+	}
+
+	return nil
 }
 
 // classifyPlanWork asks the archive about native IDs, then reads full
@@ -686,6 +696,7 @@ func applyImportInspection(ctx context.Context, inspector agentapi.ImportInspect
 		w.unsafe = true
 		return
 	}
+	w.validated = true
 	w.empty = !observed.Conversation
 	w.t.identityMismatch = w.t.identityMismatch || observed.IdentityMismatch
 	if !observed.StartedAt.IsZero() {

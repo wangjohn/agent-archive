@@ -86,15 +86,24 @@ func (h *recoveryCatalogHost) Query(ctx context.Context, query string, visit fun
 }
 
 func (h *recoveryCatalogHost) preflight(ctx context.Context, tx *sql.Tx, query string) (err error) {
+	if h.budget.RemainingRows() <= 0 || h.budget.RemainingBytes() < 16 {
+		return agentapi.Wrap(agentapi.Limit, agentapi.ErrRawLimit)
+	}
 	// #nosec G202 -- native catalog owner supplies static SQL; limits are bound parameters.
-	rows, err := tx.QueryContext(ctx, "SELECT length(CAST(key AS BLOB)), length(CAST(value AS BLOB)) FROM ("+query+") LIMIT ?", h.maxRows+1)
+	rows, err := tx.QueryContext(ctx, "SELECT length(CAST(key AS BLOB)), length(CAST(value AS BLOB)) FROM ("+query+") LIMIT ?", min(h.maxRows+1, h.budget.RemainingRows()))
 	if err != nil {
 		return err
 	}
 	defer func() { err = errors.Join(err, rows.Close()) }()
 	count, remaining := 0, h.budget.remaining
 	var payload int64
-	for rows.Next() {
+	for {
+		if h.budget.RemainingRows() <= 0 || h.budget.RemainingBytes() < 16 {
+			return agentapi.Wrap(agentapi.Limit, agentapi.ErrRawLimit)
+		}
+		if !rows.Next() {
+			break
+		}
 		if err := h.budget.Charge(1, 16); err != nil {
 			return err
 		}

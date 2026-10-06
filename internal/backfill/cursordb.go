@@ -137,7 +137,7 @@ func openCursorDatabaseSource(ctx context.Context, env Environment, res CursorDa
 				if !ok {
 					return cursorstore.Composer{}, nil, agentapi.Wrap(agentapi.Unavailable, errors.New("bounded recovery source unavailable"))
 				}
-				snap, err = bounded.ReadRecovery(ctx, agentapi.SourceRef{Kind: archive.SourceKindCursorSQLite, Key: id}, agentapi.ReadLimits{RecordBytes: archive.MaxRecordBytes}, recoveryBudget)
+				snap, err = bounded.ReadRecovery(ctx, agentapi.SourceRef{Kind: archive.SourceKindCursorSQLite, Key: id}, agentapi.ReadLimits{RawBytes: collector.DefaultMaxRawTranscriptBytes, RecordBytes: archive.MaxRecordBytes}, recoveryBudget)
 			} else {
 				snap, err = pass.Read(ctx, agentapi.SourceRef{Kind: archive.SourceKindCursorSQLite, Key: id}, agentapi.ReadLimits{RawBytes: collector.DefaultMaxRawTranscriptBytes, RecordBytes: archive.MaxRecordBytes})
 			}

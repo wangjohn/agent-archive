@@ -248,3 +248,73 @@ func TestFirstRunRecoveryPendingWitnessCannotReplaceLostEligibleSource(t *testin
 		t.Fatal("pending witness replaced vanished eligible destination source")
 	}
 }
+
+func TestFirstRunRecoveryArchivedEmptyCodexCannotProposeDestination(t *testing.T) {
+	tr, env, cfg, root, goneID := firstRunRecoveryFixture(t, false)
+	id := "00000000-0000-0000-0000-000000000011"
+	body := codexTranscript(id, id, root, fixedNow.Add(-48*time.Hour))
+	// A supported header and no conversation is insufficient eligibility.
+	tr.write(filepath.Join("home", codexFile(id)), strings.SplitN(body, "\n", 2)[0]+"\n")
+	p := plan(t, env, states{id: SkipAlreadyArchived}, cfg, Filters{})
+	if c := candidate(t, p, goneID); c.ProjectResolution != nil || c.Skip == "" {
+		t.Fatalf("header-only hidden source invented destination: %+v", c)
+	}
+}
+
+func TestFirstRunRecoveryFilteredClaudeLocatorCannotProposeDestination(t *testing.T) {
+	tr, env, cfg, root, goneID := firstRunRecoveryFixture(t, false)
+	removeFirstRunFileWitness(t, tr)
+	tr.write(filepath.Join("home", claudeFile("repo", "locator")), fmt.Sprintf(`{"cwd":%q}`+"\n", root))
+	p := plan(t, env, nil, cfg, Filters{Harnesses: []string{"codex"}})
+	if c := candidate(t, p, goneID); c.ProjectResolution != nil || c.Skip == "" {
+		t.Fatalf("raw Claude locator invented destination: %+v", c)
+	}
+}
+
+func TestFirstRunRecoveryUnknownFileOwnershipCannotCertifyUniqueness(t *testing.T) {
+	tr, env, cfg, _, goneID := firstRunRecoveryFixture(t, false)
+	tr.write(filepath.Join("home", claudeFile("unknown", "unknown")), claudeTranscript("unknown", "", fixedNow))
+	p := plan(t, env, nil, cfg, Filters{Harnesses: []string{"codex"}})
+	if c := candidate(t, p, goneID); c.ProjectResolution != nil || c.Skip == "" {
+		t.Fatalf("unknown live ownership certified uniqueness: %+v", c)
+	}
+}
+
+func TestFirstRunRecoveryExactMappingRetainsUnionContext(t *testing.T) {
+	tr, env, cfg, root, goneID := firstRunRecoveryFixture(t, false)
+	cfg.Archive.Projects = []archive.ProjectActivation{project(root, true)}
+	clone := tr.repo("home/hidden-clone")
+	id := "00000000-0000-0000-0000-000000000022"
+	tr.write(filepath.Join("home", codexFile(id)), codexTranscript(id, id, clone, fixedNow))
+	gone := filepath.Join(env.Home, ".codex", "worktrees", "deleted", "repo")
+	filters := Filters{Projects: []string{root}, ProjectMappings: map[string]string{gone: root}}
+	p := plan(t, env, nil, cfg, filters)
+	c := candidate(t, p, goneID)
+	projects := append(slices.Clone(cfg.Archive.Projects), project(clone, true))
+	want := sourcefacts.RecoveryContext(projects, filters.ProjectMappings, env.resolved)
+	if c.ProjectResolution == nil || c.ProjectResolution.Method != "explicit_mapping" || c.ProjectResolution.Context != want {
+		t.Fatalf("mapping lost complete evidence context: %+v", c.ProjectResolution)
+	}
+	if err := p.CheckRecovery(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestFirstRunRecoveryPolicyIncludesFinalNestedDecisions(t *testing.T) {
+	tr, env, cfg, _, goneID := firstRunRecoveryFixture(t, false)
+	folder := tr.mkdir("home/notes")
+	nested := tr.repo("home/notes/nested")
+	id := "00000000-0000-0000-0000-000000000022"
+	tr.write(filepath.Join("home", codexFile(id)), codexTranscript(id, id, folder, fixedNow.Add(-time.Hour)))
+	p := plan(t, env, nil, cfg, Filters{})
+	c := candidate(t, p, goneID)
+	if _, err := ApplyToConfig(&cfg, p, fixedNow); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(cfg.Archive.Projects, func(p archive.ProjectActivation) bool { return p.Root == nested && !p.Included }) {
+		t.Fatal("fixture did not commit its nested exclusion", cfg.Archive.Projects)
+	}
+	if c.ProjectResolution == nil || c.ProjectResolution.PolicyContext != sourcefacts.RecoveryContext(cfg.Archive.Projects, nil, filepath.Clean) {
+		t.Fatal("policy omitted final nested decisions", c.ProjectResolution)
+	}
+}

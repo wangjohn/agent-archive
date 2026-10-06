@@ -14,6 +14,60 @@ import (
 // prepareRecoveryInventory separates observed repository membership from
 // committed capture policy. Discovery has finished; output filters have not run.
 func prepareRecoveryInventory(ctx context.Context, r *resolver, items []*work, unread unreadable, dbIncomplete bool) {
+	projects, witnesses, incomplete := recoveryWitnessInventory(r, items)
+	incomplete = incomplete || dbIncomplete || unread.folders > 0 || len(unread.stores) > 0
+	selectedRoots := map[string]bool{}
+	r.requireWitnessFormats = func(root string) {
+		selectedRoots[root] = true
+		for _, w := range witnesses[root] {
+			w.proposedWitness = true
+		}
+	}
+	r.proposedRootEligible = func(root string) bool {
+		for _, w := range witnesses[root] {
+			if w.validated && w.importable() && !w.vanished {
+				return true
+			}
+		}
+		return false
+	}
+	validation := &recoveryWitnessValidation{ctx: ctx}
+	r.recoverySourcesReset = func(ctx context.Context) {
+		validation.ctx = ctx
+		validation.checked, validation.current = false, false
+		if r.workspaceReset != nil {
+			r.workspaceReset()
+		}
+	}
+	r.recoverySourcesCurrent = func() bool {
+		if !validation.checked {
+			validation.checked = true
+			validation.current = recoveryWitnessesCurrent(validation.ctx, r, witnesses, selectedRoots)
+		}
+		return validation.current
+	}
+	lookup := r.env.RepositoryIdentity
+	if incomplete {
+		lookup = func(context.Context, string) sourcefacts.RepositoryIdentity {
+			return sourcefacts.RepositoryIdentity{BudgetExhausted: r.recoveryInventoryBudget}
+		}
+	}
+	r.mappingRecovery = r.recovery
+	r.recovery = sourcefacts.NewRecoveryResolver(projects, r.filters.ProjectMappings, r.env.resolved, lookup, nil)
+	r.recovery.MaxOperations = 1024
+	r.recovery.Validate = r.env.RepositoryIdentityCurrent
+	r.recovery.ResetValidationContext(ctx)
+	// Ordinary path ownership still uses committed r.cfg exclusively.
+	r.cache = map[string]resolution{}
+}
+
+type recoveryWitnessValidation struct {
+	ctx     context.Context
+	checked bool
+	current bool
+}
+
+func recoveryWitnessInventory(r *resolver, items []*work) ([]archive.ProjectActivation, map[string][]*work, bool) {
 	projects := slices.Clone(r.cfg.Archive.Projects)
 	configured := map[string]bool{}
 	for _, p := range projects {
@@ -21,9 +75,13 @@ func prepareRecoveryInventory(ctx context.Context, r *resolver, items []*work, u
 	}
 	observed := map[string]bool{}
 	witnesses := map[string][]*work{}
-	incomplete := dbIncomplete || unread.folders > 0 || len(unread.stores) > 0
+	incomplete := false
 	for _, w := range items {
 		if w.vanished || w.sourceChanged || w.unsafe || w.t.identityMismatch {
+			incomplete = true
+			continue
+		}
+		if w.res.skip == SkipProjectUnknown {
 			incomplete = true
 			continue
 		}
@@ -43,83 +101,41 @@ func prepareRecoveryInventory(ctx context.Context, r *resolver, items []*work, u
 	for root, eligible := range observed {
 		projects = append(projects, archive.ProjectActivation{Root: root, ProjectID: archive.ProjectID(root), Included: eligible})
 	}
-	selectedRoots := map[string]bool{}
-	r.requireWitnessFormats = func(root string) {
-		selectedRoots[root] = true
-		for _, w := range witnesses[root] {
-			if w.t.cursorSlug != "" {
-				w.proposedWitness = true
-			}
-		}
-	}
-	r.proposedRootEligible = func(root string) bool {
-		for _, w := range witnesses[root] {
-			if !w.t.capturePending && !w.tooLarge && !w.unsafe && !w.empty && !w.t.identityMismatch && !w.sourceChanged && !w.vanished {
-				return true
-			}
-		}
+	return projects, witnesses, incomplete
+}
+
+func recoveryWitnessesCurrent(ctx context.Context, r *resolver, witnesses map[string][]*work, selectedRoots map[string]bool) bool {
+	if r.databaseRecoveryCurrent != nil && !r.databaseRecoveryCurrent(ctx) {
 		return false
 	}
-	checkedSources, currentSources := false, false
-	validationCtx := ctx
-	r.recoverySourcesReset = func(ctx context.Context) {
-		checkedSources, currentSources = false, false
-		validationCtx = ctx
-		if r.workspaceReset != nil {
-			r.workspaceReset()
-		}
-	}
-	r.recoverySourcesCurrent = func() bool {
-		if checkedSources {
-			return currentSources
-		}
-		checkedSources = true
-		if r.databaseRecoveryCurrent != nil && !r.databaseRecoveryCurrent(validationCtx) {
-			return false
-		}
-		checks := 0
-		ownership := newResolver(r.env, r.cfg, r.filters)
-		for root, group := range witnesses {
-			found := false
-			for _, w := range group {
-				if selectedRoots[root] && !w.importable() {
-					continue
-				}
-				if checks >= 1024 || validationCtx.Err() != nil {
-					return false
-				}
-				checks++
-				if w.t.cwd != "" {
-					fresh := ownership.resolve(w.t.cwd)
-					if fresh.root != w.res.root || fresh.kind != w.res.kind || fresh.skip != w.res.skip {
-						continue
-					}
-				}
-				if (w.c.SourceKind == archive.SourceKindCursorSQLite || w.sourceCurrent(r.env)) && (w.workspaceCurrent == nil || w.workspaceCurrent(validationCtx)) {
-					found = true
-					break
-				}
+	checks := 0
+	ownership := newResolver(r.env, r.cfg, r.filters)
+	for root, group := range witnesses {
+		found := false
+		for _, w := range group {
+			if selectedRoots[root] && !w.importable() {
+				continue
 			}
-			if !found {
+			if checks >= 1024 || ctx.Err() != nil {
 				return false
 			}
+			checks++
+			if w.t.cwd != "" {
+				fresh := ownership.resolve(w.t.cwd)
+				if fresh.root != w.res.root || fresh.kind != w.res.kind || fresh.skip != w.res.skip {
+					continue
+				}
+			}
+			if (w.c.SourceKind == archive.SourceKindCursorSQLite || w.sourceCurrent(r.env)) && (w.workspaceCurrent == nil || w.workspaceCurrent(ctx)) {
+				found = true
+				break
+			}
 		}
-		currentSources = true
-		return true
-	}
-	lookup := r.env.RepositoryIdentity
-	if incomplete {
-		lookup = func(context.Context, string) sourcefacts.RepositoryIdentity {
-			return sourcefacts.RepositoryIdentity{BudgetExhausted: r.recoveryInventoryBudget}
+		if !found {
+			return false
 		}
 	}
-	r.mappingRecovery = r.recovery
-	r.recovery = sourcefacts.NewRecoveryResolver(projects, r.filters.ProjectMappings, r.env.resolved, lookup, nil)
-	r.recovery.MaxOperations = 1024
-	r.recovery.Validate = r.env.RepositoryIdentityCurrent
-	r.recovery.ResetValidationContext(ctx)
-	// Ordinary path ownership still uses committed r.cfg exclusively.
-	r.cache = map[string]resolution{}
+	return true
 }
 
 // bindRecoveryPolicy binds admitted imports to the exact prospective config,
@@ -141,11 +157,11 @@ func bindRecoveryPolicy(cfg config.Config, p *Plan) error {
 	return nil
 }
 
-// CheckRecovery renews recovered ownership before committing proposed capture
-// configuration. It performs repository work outside the short hooks lock hold.
+// CheckRecovery requires a non-nil context and renews recovered ownership
+// before committing proposed capture configuration. It performs repository work outside the short hooks lock hold.
 func (p Plan) CheckRecovery(ctx context.Context) error {
 	if ctx == nil {
-		ctx = context.Background()
+		return errors.New("recovery validation requires a context")
 	}
 	if err := ctx.Err(); err != nil {
 		return err

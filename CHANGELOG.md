@@ -33,6 +33,8 @@ follow [Semantic Versioning](https://semver.org/).
   deleted worktree sessions in the same import. Hidden clones and unknown or
   excluded roots still prevent automatic attribution; proposed capture projects
   are committed only after confirmation and current-evidence validation.
+  Destination witnesses must pass full native validation, including filtered or
+  already archived sources; unknown file ownership keeps recovery pending.
 
 - Deleted-worktree project recovery supports Git installations without optional
   configuration-path introspection, including Git 2.39.2. Bounded semantic

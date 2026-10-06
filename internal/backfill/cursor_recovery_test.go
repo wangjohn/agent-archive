@@ -13,6 +13,29 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/cursorstore"
+	"github.com/wangjohn/agent-archive/internal/platform"
+)
+
+type cursorUnavailableEvidenceCase string
+
+type cursorChangedEvidenceCase string
+
+type cursorWorkspaceEvidenceCase string
+
+const (
+	cursorEvidenceLocked        cursorUnavailableEvidenceCase = "locked"
+	cursorEvidenceUnknown       cursorUnavailableEvidenceCase = "unknown"
+	cursorEvidenceError         cursorUnavailableEvidenceCase = "error"
+	cursorEvidenceMalformed     cursorUnavailableEvidenceCase = "malformed"
+	cursorEvidenceUnknownRoot   cursorUnavailableEvidenceCase = "unknown_root"
+	cursorEvidenceRows          cursorUnavailableEvidenceCase = "rows"
+	cursorEvidenceMembership    cursorChangedEvidenceCase     = "membership"
+	cursorEvidenceRoot          cursorChangedEvidenceCase     = "root"
+	cursorEvidenceEligibility   cursorChangedEvidenceCase     = "eligibility"
+	cursorEvidenceValid         cursorWorkspaceEvidenceCase   = "valid"
+	cursorEvidenceOversize      cursorWorkspaceEvidenceCase   = "oversize"
+	cursorEvidenceSymlink       cursorWorkspaceEvidenceCase   = "symlink"
+	cursorEvidenceUnboundedPort cursorWorkspaceEvidenceCase   = "unbounded_port"
 )
 
 func removeFirstRunFileWitness(t *testing.T, tr *tree) {
@@ -68,26 +91,26 @@ func TestFirstRunRecoveryCursorDatabaseSoleDestinationAndHiddenClone(t *testing.
 }
 
 func TestFirstRunRecoveryCursorDatabaseUnavailableOrMalformed(t *testing.T) {
-	for _, kind := range []string{"locked", "unknown", "error", "malformed", "unknown_root", "rows"} {
-		t.Run(kind, func(t *testing.T) {
+	for _, kind := range []cursorUnavailableEvidenceCase{cursorEvidenceLocked, cursorEvidenceUnknown, cursorEvidenceError, cursorEvidenceMalformed, cursorEvidenceUnknownRoot, cursorEvidenceRows} {
+		t.Run(string(kind), func(t *testing.T) {
 			_, env, cfg, root, goneID := firstRunRecoveryFixture(t, false)
 			chats := []CursorDatabaseChat{{ID: "live", Folder: root, CreatedAt: fixedNow}}
-			if kind == "malformed" {
+			if kind == cursorEvidenceMalformed {
 				chats[0].Malformed = true
 			}
-			if kind == "unknown_root" {
+			if kind == cursorEvidenceUnknownRoot {
 				chats[0].Folder = ""
 			}
-			if kind == "rows" {
+			if kind == cursorEvidenceRows {
 				chats = make([]CursorDatabaseChat, cursorRecoveryRows+1)
 			}
 			env.CursorDatabase = fakeCursorDatabase(chats, map[string]cursorstore.Composer{"live": syntheticChat("live", nil, "hi")}, nil, nil)
-			if kind == "locked" || kind == "unknown" {
+			if kind == cursorEvidenceLocked || kind == cursorEvidenceUnknown {
 				env.CursorDatabase = func(context.Context) (CursorDatabaseResult, error) {
 					return CursorDatabaseResult{Reason: CursorUncheckedLocked}, nil
 				}
 			}
-			if kind == "error" {
+			if kind == cursorEvidenceError {
 				env.CursorDatabase = func(context.Context) (CursorDatabaseResult, error) {
 					return CursorDatabaseResult{}, errors.New("unavailable")
 				}
@@ -98,7 +121,7 @@ func TestFirstRunRecoveryCursorDatabaseUnavailableOrMalformed(t *testing.T) {
 			if c.ProjectResolution != nil || c.Skip == "" {
 				t.Fatal(c)
 			}
-			if kind == "rows" {
+			if kind == cursorEvidenceRows {
 				epoch, err := readCursorRecoveryEpoch(t.Context(), env, newResolver(env, cfg, Filters{}), unreadable{})
 				if err != nil || !epoch.budget || epoch.complete {
 					t.Fatal(epoch, err)
@@ -109,8 +132,8 @@ func TestFirstRunRecoveryCursorDatabaseUnavailableOrMalformed(t *testing.T) {
 }
 
 func TestFirstRunRecoveryCursorDatabaseEpochRenewsMembershipRootAndEligibility(t *testing.T) {
-	for _, kind := range []string{"membership", "root", "eligibility"} {
-		t.Run(kind, func(t *testing.T) {
+	for _, kind := range []cursorChangedEvidenceCase{cursorEvidenceMembership, cursorEvidenceRoot, cursorEvidenceEligibility} {
+		t.Run(string(kind), func(t *testing.T) {
 			tr, env, cfg, root, _ := firstRunRecoveryFixture(t, false)
 			removeFirstRunFileWitness(t, tr)
 			chats := []CursorDatabaseChat{{ID: "live", Folder: root, CreatedAt: fixedNow}}
@@ -124,12 +147,12 @@ func TestFirstRunRecoveryCursorDatabaseEpochRenewsMembershipRootAndEligibility(t
 				t.Fatal(err)
 			}
 			switch kind {
-			case "membership":
+			case cursorEvidenceMembership:
 				chats = append(chats, CursorDatabaseChat{ID: "clone", Folder: tr.repo("home/clone"), CreatedAt: fixedNow})
 				composers["clone"] = syntheticChat("clone", nil, "hi")
-			case "root":
+			case cursorEvidenceRoot:
 				chats[0].Folder = tr.repo("home/other")
-			case "eligibility":
+			case cursorEvidenceEligibility:
 				composers["live"] = syntheticChat("live", nil)
 			}
 			if err := p.CheckRecovery(t.Context()); err == nil {
@@ -142,7 +165,7 @@ func TestFirstRunRecoveryCursorDatabaseEpochRenewsMembershipRootAndEligibility(t
 func TestFirstRunRecoveryCursorDatabaseSettledObservationAvoidsChatRereads(t *testing.T) {
 	tr, env, cfg, root, _ := firstRunRecoveryFixture(t, false)
 	removeFirstRunFileWitness(t, tr)
-	path := CursorStateDatabase(tr.home)
+	path := env.cursorStateDatabase()
 	writeCursorDB(t, path, true, chatRows("live", map[string]any{"workspaceIdentifier": map[string]any{"uri": "file://" + root}}, "hi"))
 	reader := CursorRecoveryDatabaseReaderFor(env)
 	catalogs, reads := 0, 0
@@ -200,10 +223,10 @@ func TestFirstRunRecoveryCursorDatabaseBoundedRenewalsAndAggregateBytes(t *testi
 	}
 	b := cursorRecoveryReadBudget{remaining: 12}
 	c := cursorstore.Composer{Composer: []byte("1234"), Bubbles: []cursorstore.Bubble{{Value: []byte("5678")}}}
-	if err := b.charge(c); err != nil || b.remaining != 4 {
+	if err := b.Charge(0, int64(len(c.Composer)+len(c.Bubbles[0].Value))); err != nil || b.remaining != 4 {
 		t.Fatal(b, err)
 	}
-	if err := b.charge(c); err == nil || !b.exhausted {
+	if err := b.Charge(0, int64(len(c.Composer)+len(c.Bubbles[0].Value))); err == nil || !b.exhausted {
 		t.Fatal("aggregate byte cap ignored")
 	}
 }
@@ -241,9 +264,9 @@ func boundedTestRecoveryReader(reader func(context.Context) (CursorDatabaseResul
 func TestFirstRunRecoveryCursorDatabaseCatalogBoundBeforeAllocation(t *testing.T) {
 	tr := newTree(t)
 	root := tr.repo("home/repo")
-	path := CursorStateDatabase(tr.home)
-	writeCursorDB(t, path, true, mergeRows(chatRows("a", map[string]any{"workspaceIdentifier": map[string]any{"uri": "file://" + root}}, "hi"), chatRows("b", nil, "hi")))
 	env := tr.env()
+	path := env.cursorStateDatabase()
+	writeCursorDB(t, path, true, mergeRows(chatRows("a", map[string]any{"workspaceIdentifier": map[string]any{"uri": "file://" + root}}, "hi"), chatRows("b", nil, "hi")))
 	read := CursorRecoveryDatabaseReaderFor(env)
 	for _, tc := range []struct {
 		name  string
@@ -257,8 +280,8 @@ func TestFirstRunRecoveryCursorDatabaseCatalogBoundBeforeAllocation(t *testing.T
 			}
 		})
 	}
-	res, err := read(t.Context(), 4, 128<<20)
-	if err != nil || !res.Checked || res.RecoveryRows != 4 || res.RecoveryBytes <= 0 {
+	res, err := read(t.Context(), 5, 128<<20)
+	if err != nil || !res.Checked || res.RecoveryRows != 5 || res.RecoveryBytes <= 0 {
 		t.Fatal(res, err)
 	}
 	if _, snap, err := res.ReadRecoverySnapshot(t.Context(), "a", &cursorRecoveryReadBudget{remaining: 1, rows: cursorRecoveryRecords}); err == nil || snap != nil || !agentapi.HasFailure(err, agentapi.Limit) {
@@ -294,7 +317,7 @@ func TestFirstRunRecoveryCursorDatabaseSettledOwnershipCannotChange(t *testing.T
 	tr, env, cfg, root, _ := firstRunRecoveryFixture(t, false)
 	removeFirstRunFileWitness(t, tr)
 	folder := tr.mkdir("home/repo/inner")
-	path := CursorStateDatabase(tr.home)
+	path := env.cursorStateDatabase()
 	writeCursorDB(t, path, false, chatRows("live", map[string]any{"workspaceIdentifier": map[string]any{"uri": "file://" + folder}}, "hi"))
 	env.CursorRecoveryDatabase = CursorRecoveryDatabaseReaderFor(env)
 	p := plan(t, env, nil, cfg, Filters{Harnesses: []string{"codex"}})
@@ -309,7 +332,7 @@ func TestFirstRunRecoveryCursorDatabaseSettledOwnershipCannotChange(t *testing.T
 
 func TestFirstRunRecoveryCatalogLengthAndValuesShareTransaction(t *testing.T) {
 	tr := newTree(t)
-	path := CursorStateDatabase(tr.home)
+	path := tr.env().cursorStateDatabase()
 	db := openCursorWriter(t, path, true)
 	defer closeAtEnd(t, db)
 	insertCursorRows(t, db, map[string]any{"composerData:a": "a", "composerData:b": "b"})
@@ -336,16 +359,16 @@ func TestFirstRunRecoveryCatalogLengthAndValuesShareTransaction(t *testing.T) {
 }
 
 func TestFirstRunRecoveryWorkspaceEvidenceIsBoundedAndRooted(t *testing.T) {
-	for _, kind := range []string{"valid", "oversize", "symlink", "unbounded_port"} {
-		t.Run(kind, func(t *testing.T) {
+	for _, kind := range []cursorWorkspaceEvidenceCase{cursorEvidenceValid, cursorEvidenceOversize, cursorEvidenceSymlink, cursorEvidenceUnboundedPort} {
+		t.Run(string(kind), func(t *testing.T) {
 			tr, env, cfg, root, goneID := firstRunRecoveryFixture(t, false)
 			removeFirstRunFileWitness(t, tr)
 			rel := "home/Library/Application Support/Cursor/User/workspaceStorage/current/workspace.json"
 			path := tr.write(rel, fmt.Sprintf(`{"folder":%q}`, "file://"+root))
 			switch kind {
-			case "oversize":
+			case cursorEvidenceOversize:
 				tr.write(rel, strings.Repeat("x", (1<<20)+1))
-			case "symlink":
+			case cursorEvidenceSymlink:
 				if err := os.Remove(path); err != nil {
 					t.Fatal(err)
 				}
@@ -353,14 +376,16 @@ func TestFirstRunRecoveryWorkspaceEvidenceIsBoundedAndRooted(t *testing.T) {
 				if err := os.Symlink(target, path); err != nil {
 					t.Fatal(err)
 				}
-			case "unbounded_port":
+			case cursorEvidenceUnboundedPort:
 				env.ReadFile = os.ReadFile
+			case cursorEvidenceValid:
+				// Keep the supported bounded workspace fixture unchanged.
 			}
-			writeCursorDB(t, CursorStateDatabase(tr.home), false, chatRows("live", map[string]any{"workspaceIdentifier": map[string]any{"id": "current"}}, "hi"))
+			writeCursorDB(t, env.cursorStateDatabase(), false, chatRows("live", map[string]any{"workspaceIdentifier": map[string]any{"id": "current"}}, "hi"))
 			env.CursorRecoveryDatabase = CursorRecoveryDatabaseReaderFor(env)
 			p := plan(t, env, nil, cfg, Filters{Harnesses: []string{"codex"}})
 			c := candidate(t, p, goneID)
-			if kind == "valid" {
+			if kind == cursorEvidenceValid {
 				if c.Skip != "" || c.ProjectRoot != root {
 					t.Fatal(c)
 				}
@@ -371,5 +396,38 @@ func TestFirstRunRecoveryWorkspaceEvidenceIsBoundedAndRooted(t *testing.T) {
 				t.Fatal("unsafe metadata invented destination", c)
 			}
 		})
+	}
+}
+
+func TestFirstRunRecoveryCursorDatabaseUsesInjectedLocations(t *testing.T) {
+	for _, operatingSystem := range []platform.OS{platform.Darwin, platform.Linux} {
+		t.Run(string(operatingSystem), func(t *testing.T) {
+			tr, env, cfg, root, goneID := firstRunRecoveryFixture(t, false)
+			env.OS = operatingSystem
+			removeFirstRunFileWitness(t, tr)
+			writeCursorDB(t, env.cursorStateDatabase(), false, chatRows("live", map[string]any{"workspaceIdentifier": map[string]any{"uri": "file://" + root}}, "hi"))
+			env.CursorRecoveryDatabase = CursorRecoveryDatabaseReaderFor(env)
+			p := plan(t, env, nil, cfg, Filters{Harnesses: []string{"codex"}})
+			if c := candidate(t, p, goneID); c.Skip != "" || c.ProjectRoot != root || c.ProjectResolution == nil {
+				t.Fatal(c)
+			}
+			if err := p.CheckRecovery(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestRecoveryCatalogExhaustionPrecedesSQL(t *testing.T) {
+	tr := newTree(t)
+	db := openCursorWriter(t, tr.env().cursorStateDatabase(), false)
+	defer closeAtEnd(t, db)
+	for _, budget := range []*cursorRecoveryReadBudget{{rows: 0, remaining: 4096}, {rows: 100, remaining: 15}} {
+		host := &recoveryCatalogHost{db: db, maxRows: 1024, budget: budget}
+		// An invalid static selector proves the gate runs before native SQL.
+		err := host.Query(t.Context(), "SELECT key,value FROM unavailable_table", func(agentapi.DatabaseRecord) error { t.Fatal("allocated catalog payload after exhaustion"); return nil })
+		if !agentapi.HasFailure(err, agentapi.Limit) {
+			t.Fatal("catalog query preceded budget gate", err)
+		}
 	}
 }

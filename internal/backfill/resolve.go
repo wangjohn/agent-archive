@@ -171,7 +171,11 @@ func (r *resolver) resolveEvidence(ctx context.Context, cwd, key string) resolut
 			if !configured && r.requireWitnessFormats != nil {
 				r.requireWitnessFormats(proof.Root)
 			}
-			res = resolution{root: proof.Root, kind: r.kindOf(proof.Root), included: configured && owner.included, proof: &proof, current: check}
+			// Exact maps still validate against configured targets alone. Retained
+			// evidence records the full observed union separately from that check.
+			visibleProof := proof
+			visibleProof.Context = r.recovery.Context
+			res = resolution{root: proof.Root, kind: r.kindOf(proof.Root), included: configured && owner.included, proof: &visibleProof, current: check}
 		}
 		if outcome != "" {
 			res = resolution{skip: SkipWorktreeUnresolved}

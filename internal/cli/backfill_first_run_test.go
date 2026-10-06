@@ -16,12 +16,26 @@ import (
 	"github.com/wangjohn/agent-archive/internal/state"
 )
 
+type confirmationFailureCase string
+
+const (
+	confirmationStale      confirmationFailureCase = "stale"
+	confirmationCancelled  confirmationFailureCase = "cancelled"
+	confirmationBatchSaved confirmationFailureCase = "batch_saved"
+)
+
 func firstRunImportPlan(t *testing.T) (*backfillFixture, backfill.Plan, config.Config, *bool) {
 	t.Helper()
 	f := newBackfillFixture(t)
 	// This transaction fixture reviews file evidence only. The general fixture's
 	// deliberately unknown database ownership must not certify uniqueness.
 	if err := os.Remove(macCursorDatabase(f.userHome)); err != nil {
+		t.Fatal(err)
+	}
+	// Its deliberately unresolved Cursor locator also belongs in the separate
+	// conservative-inventory tests, rather than this successful transaction.
+	unknown := filepath.Join(f.userHome, ".cursor", "projects", cursorSlugFor(filepath.Join(f.userHome, "no-such-folder")), "agent-transcripts", "k-lost", "k-lost.jsonl")
+	if err := os.Remove(unknown); err != nil {
 		t.Fatal(err)
 	}
 	cfg, _, err := config.Load(f.data)
@@ -41,10 +55,10 @@ func firstRunImportPlan(t *testing.T) (*backfillFixture, backfill.Plan, config.C
 	}
 	root := filepath.Join(f.userHome, "agent-archive")
 	gone := filepath.Join(f.userHome, ".codex", "worktrees", "deleted", "repo")
-	copy := strings.ReplaceAll(string(body), liveID, goneID)
-	copy = strings.Replace(copy, root, gone, 1)
-	copy = strings.Replace(copy, `"source":"cli"`, `"source":"cli","git":{"repository_url":"https://example.test/acme/repo"}`, 1)
-	f.write(t, strings.Replace(relative, liveID, goneID, 1), copy)
+	bodyCopy := strings.ReplaceAll(string(body), liveID, goneID)
+	bodyCopy = strings.Replace(bodyCopy, root, gone, 1)
+	bodyCopy = strings.Replace(bodyCopy, `"source":"cli"`, `"source":"cli","git":{"repository_url":"https://example.test/acme/repo"}`, 1)
+	f.write(t, strings.Replace(relative, liveID, goneID, 1), bodyCopy)
 	env := f.env.backfillEnvironment(f.userHome, cfg)
 	current := true
 	env.RepositoryIdentity = func(_ context.Context, path string) sourcefacts.RepositoryIdentity {
@@ -95,17 +109,17 @@ func TestFirstRunImportConfirmationCommitsBeforeBackgroundAdmission(t *testing.T
 }
 
 func TestFirstRunImportConfirmationFailureDoesNotCommitProposedProjects(t *testing.T) {
-	for _, failure := range []string{"stale", "cancelled", "batch_saved"} {
-		t.Run(failure, func(t *testing.T) {
+	for _, failure := range []confirmationFailureCase{confirmationStale, confirmationCancelled, confirmationBatchSaved} {
+		t.Run(string(failure), func(t *testing.T) {
 			f, p, cfg, current := firstRunImportPlan(t)
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			switch failure {
-			case "stale":
+			case confirmationStale:
 				*current = false
-			case "cancelled":
+			case confirmationCancelled:
 				cancel()
-			case "batch_saved":
+			case confirmationBatchSaved:
 				f.env.backfillCheckpoint = func(step string) error {
 					if step == "batch saved" {
 						return errors.New("synthetic config transition failure")

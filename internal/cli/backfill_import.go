@@ -63,17 +63,7 @@ func importPlanLocked(env Env, stdout, stderr io.Writer, home string, plan backf
 		terminal.Printf(stderr, "agent-archive: backfill: "+format+"\n", args...)
 		return 1
 	}
-	confirmationCtx, stopConfirmation := context.WithTimeout(context.Background(), 30*time.Second)
-	for _, c := range plan.Imported() {
-		if c.ProjectResolution != nil {
-			stopConfirmation()
-			watchedCtx, stopWatch := interruptibleContext(env, stderr)
-			boundedCtx, cancelBound := context.WithTimeout(watchedCtx, 30*time.Second)
-			confirmationCtx = boundedCtx
-			stopConfirmation = func() { cancelBound(); stopWatch() }
-			break
-		}
-	}
+	confirmationCtx, stopConfirmation := importConfirmationContext(env, stderr, plan)
 	stopConfirmation = releaseOnce(stopConfirmation)
 	defer stopConfirmation()
 	// Step 4: commit the configuration, under collector.lock and hooks.lock.
@@ -265,6 +255,19 @@ func (a *activityStop) invoke() {
 	if fn != nil {
 		fn()
 	}
+}
+
+func importConfirmationContext(env Env, stderr io.Writer, plan backfill.Plan) (context.Context, func()) {
+	recovered := false
+	for _, c := range plan.Imported() {
+		recovered = recovered || c.ProjectResolution != nil
+	}
+	if !recovered {
+		return context.WithTimeout(context.Background(), 30*time.Second)
+	}
+	watchedCtx, stopWatch := interruptibleContext(env, stderr)
+	boundedCtx, cancelBound := context.WithTimeout(watchedCtx, 30*time.Second)
+	return boundedCtx, func() { cancelBound(); stopWatch() }
 }
 
 // commitImport is step 4. With collector.lock held, it takes hooks.lock,

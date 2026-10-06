@@ -479,16 +479,21 @@ matching rule wins.
    including validated Cursor workspace and database evidence. The database
    evidence pass inspects at most 1,024 catalog records, 65,536 metadata/raw
    SQL rows and 128 MiB of aggregate payload before filters. The shared ledger
-   includes catalog keys/values, numeric metadata projections, source header
-   observations, bounded workspace metadata and composer/bubble keys/values before
+   includes catalog keys/values, scalar schema checks, numeric metadata projections,
+   source header observations, bounded workspace metadata and composer/bubble keys/values before
    allocation. This bounds
    payload read into the process, not SQLite page I/O. Recovery reads only
    settled in-place transactions, with no backup or failure-signature reads;
    live WAL, unavailable capability and exhausted budgets keep it pending.
+   Native recovery requires a non-partial unique binary index on the exact key
+   column with the native default binary comparisons; explicit collations and
+   unknown schemas cannot establish payload length bounds.
    Settled database, side-file and workspace observations
    renew without rereading chats; changed observations require a new plan.
    Unsettled sources can renew at most eight bounded evidence epochs per plan;
    exhausted renewal leaves admission pending with the instruction to rerun.
+   Selected file witnesses pass the full native filter/import inspector even
+   when archive state or output filters hide their sessions.
    Pending or oversized sources cannot
    alone propose destinations; malformed or incomplete evidence cannot certify
    uniqueness. Exact mappings continue to require configured targets.

@@ -16,10 +16,12 @@ import (
 	"github.com/wangjohn/agent-archive/internal/cursorstore"
 )
 
-const cursorRecoveryRows = 1024
-const cursorRecoveryBytes = 128 << 20
-const cursorRecoveryRenewals = 8
-const cursorRecoveryRecords = 65536
+const (
+	cursorRecoveryRows     = 1024
+	cursorRecoveryBytes    = 128 << 20
+	cursorRecoveryRenewals = 8
+	cursorRecoveryRecords  = 65536
+)
 
 type recoveryCatalogState struct{}
 
@@ -45,6 +47,7 @@ func recoveryStamps(env Environment, paths []string) ([]recoveryFileStamp, bool)
 	}
 	return stamps, true
 }
+
 func sameRecoveryStamps(a, b []recoveryFileStamp) bool {
 	if len(a) != len(b) {
 		return false
@@ -113,8 +116,8 @@ func readCursorRecoveryEpoch(ctx context.Context, env Environment, r *resolver, 
 	if err != nil {
 		return epoch, err
 	}
-	readChat, readSnapshot, budget := cursorRecoveryReaders(res, cursorRecoveryBytes-res.RecoveryBytes)
-	if err := readCursorDatabaseChats(ctx, env, 1, readChat, readSnapshot, toRead, env.Sources); err != nil {
+	readSnapshot, budget := cursorRecoveryReaders(res, cursorRecoveryBytes-res.RecoveryBytes)
+	if err := readCursorDatabaseChats(ctx, env, 1, nil, readSnapshot, toRead, env.Sources); err != nil {
 		if ctx.Err() != nil || fatalSourceFailure(err) {
 			return epoch, err
 		}
@@ -177,8 +180,10 @@ type cursorRecoveryReadBudget struct {
 	exhausted bool
 }
 
-func (b *cursorRecoveryReadBudget) RemainingRows() int    { return b.rows }
+func (b *cursorRecoveryReadBudget) RemainingRows() int { return b.rows }
+
 func (b *cursorRecoveryReadBudget) RemainingBytes() int64 { return b.remaining }
+
 func (b *cursorRecoveryReadBudget) Charge(rows int, bytes int64) error {
 	if b.exhausted || rows < 0 || bytes < 0 || rows > b.rows || bytes > b.remaining {
 		b.exhausted = true
@@ -188,14 +193,8 @@ func (b *cursorRecoveryReadBudget) Charge(rows int, bytes int64) error {
 	b.remaining -= bytes
 	return nil
 }
-func (b *cursorRecoveryReadBudget) charge(c cursorstore.Composer) error {
-	size := int64(len(c.Composer))
-	for _, bubble := range c.Bubbles {
-		size += int64(len(bubble.Value))
-	}
-	return b.Charge(0, size)
-}
-func cursorRecoveryReaders(res CursorDatabaseResult, remaining int64) (func(context.Context, string) (cursorstore.Composer, error), func(context.Context, string) (cursorstore.Composer, agentapi.SourceSnapshot, error), *cursorRecoveryReadBudget) {
+
+func cursorRecoveryReaders(res CursorDatabaseResult, remaining int64) (func(context.Context, string) (cursorstore.Composer, agentapi.SourceSnapshot, error), *cursorRecoveryReadBudget) {
 	budget := res.recoveryReadBudget
 	if budget == nil {
 		budget = &cursorRecoveryReadBudget{remaining: remaining, rows: cursorRecoveryRecords}
@@ -211,21 +210,32 @@ func cursorRecoveryReaders(res CursorDatabaseResult, remaining int64) (func(cont
 		}
 		return c, snap, err
 	}
-	return nil, readSnapshot, budget
+	return readSnapshot, budget
 }
 
 func cursorRecoveryDigest(works []*work) [32]byte {
 	// Membership, native identity, original creation, format eligibility and
 	// ownership all participate. Hashes stay private; no message bytes are kept.
 	type fact struct {
-		Chat                                                CursorDatabaseChat
-		Root                                                string
-		Skip                                                SkipReason
-		Unsafe, Empty, Large, Vanished, Duplicate, Mismatch bool
+		ID          string     `json:"id"`
+		KeyID       string     `json:"key_id"`
+		CreatedAt   time.Time  `json:"created_at"`
+		Folder      string     `json:"folder"`
+		WorkspaceID string     `json:"workspace_id"`
+		Malformed   bool       `json:"malformed"`
+		Root        string     `json:"root"`
+		Skip        SkipReason `json:"skip"`
+		Unsafe      bool       `json:"unsafe"`
+		Empty       bool       `json:"empty"`
+		Large       bool       `json:"large"`
+		Vanished    bool       `json:"vanished"`
+		Duplicate   bool       `json:"duplicate"`
+		Mismatch    bool       `json:"mismatch"`
+		Validated   bool       `json:"validated"`
 	}
 	facts := make([]fact, 0, len(works))
 	for _, w := range works {
-		facts = append(facts, fact{w.chat, w.res.root, w.res.skip, w.unsafe, w.empty, w.tooLarge, w.vanished, w.duplicate, w.t.identityMismatch})
+		facts = append(facts, fact{ID: w.chat.ID, KeyID: w.chat.KeyID, CreatedAt: w.chat.CreatedAt, Folder: w.chat.Folder, WorkspaceID: w.chat.WorkspaceID, Malformed: w.chat.Malformed, Root: w.res.root, Skip: w.res.skip, Unsafe: w.unsafe, Empty: w.empty, Large: w.tooLarge, Vanished: w.vanished, Duplicate: w.duplicate, Mismatch: w.t.identityMismatch, Validated: w.validated})
 	}
 	sort.Slice(facts, func(i, j int) bool {
 		a, _ := json.Marshal(facts[i])

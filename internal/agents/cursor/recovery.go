@@ -22,7 +22,7 @@ func (p *sourcePass) ReadRecovery(ctx context.Context, r agentapi.SourceRef, l a
 	if r.Kind != archive.SourceKindCursorSQLite {
 		return nil, agentapi.Wrap(agentapi.Unsafe, errors.New("unsupported recovery source"))
 	}
-	c, err := cursorstore.ReadRecoveryComposer(ctx, p.database, r.Key, l.RecordBytes, budget)
+	c, err := cursorstore.ReadRecoveryComposer(ctx, p.database, r.Key, l.RawBytes, l.RecordBytes, budget)
 	if err != nil {
 		return nil, sourceio.Classify(err)
 	}
