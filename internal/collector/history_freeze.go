@@ -1,11 +1,9 @@
 package collector
 
 import (
-	"encoding/json"
 	"errors"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
@@ -14,7 +12,7 @@ import (
 // descriptor. Only acknowledged complete authority supplies the predecessor.
 func (s *sessionScan) freezeRevisionPublication(p *state.PendingPublication) error {
 	var final archive.Metadata
-	if err := json.Unmarshal(p.MetadataBytes, &final); err != nil {
+	if err := s.unmarshalRetained(p.MetadataBytes, &final); err != nil {
 		return err
 	}
 	final.SchemaVersion = archive.HistoryMetadataSchemaVersion
@@ -31,7 +29,7 @@ func (s *sessionScan) freezeRevisionPublication(p *state.PendingPublication) err
 		predecessor = metadataSHA(s.published.Metadata())
 	} else {
 		// Absence must be observed, never inferred from missing local state.
-		if _, err := historyLimitedGet(s.ctx, s.remote, p.MetadataKey, historyMetadataLimit); !errors.Is(err, storage.ErrNotFound) {
+		if _, err := s.historyGet(p.MetadataKey, historyMetadataLimit); !errors.Is(err, storage.ErrNotFound) {
 			if err != nil {
 				return err
 			}
@@ -73,11 +71,11 @@ func (s *sessionScan) freezeRevisionPublication(p *state.PendingPublication) err
 	for i := range final.History.Preserved {
 		revision := &final.History.Preserved[i]
 		if revision.FilterVersion == "" || revision.SourceSchemaVersion == 0 {
-			raw, err := historyLimitedGet(s.ctx, s.remote, revision.Source.Key, int64(revision.Source.CompressedBytes))
+			raw, err := s.historyGet(revision.Source.Key, int64(revision.Source.CompressedBytes))
 			if err != nil {
 				return err
 			}
-			bundle, err := reader.DecodeRevisionSource(s.ctx, final, revision.RevisionID, raw, reader.Limits{})
+			bundle, err := s.decodeRevision(final, revision.RevisionID, raw)
 			if err != nil {
 				return err
 			}
@@ -105,7 +103,7 @@ func (s *sessionScan) freezeRevisionPublication(p *state.PendingPublication) err
 			}
 		}
 	}
-	p.MetadataBytes, err = json.Marshal(final)
+	p.MetadataBytes, err = s.marshalRetained(final)
 	if err != nil {
 		return err
 	}

@@ -1,7 +1,6 @@
 package collector
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -128,7 +127,7 @@ func (s *sessionScan) acknowledgePublication(pending state.PendingPublication, k
 	// it again on every pass (a ledger that no longer decodes did exactly
 	// that). A failure is reported once the publication is recorded.
 	var next archive.Metadata
-	if err := json.Unmarshal(pending.MetadataBytes, &next); err != nil {
+	if err := s.unmarshalRetained(pending.MetadataBytes, &next); err != nil {
 		return outcomeSkipped, err
 	}
 	refs, err := next.SourceReferences()
@@ -168,6 +167,16 @@ func (s *sessionScan) acknowledgePublication(pending state.PendingPublication, k
 	if err := saveErr; err != nil {
 		return outcomeSkipped, fmt.Errorf("update published cache: %w", err)
 	}
+	if pending.History != nil && pending.ScanSignature != nil && !keepPending {
+		proof := *pending.ScanSignature
+		summary := s.published.Summary()
+		proof.SourceSetDigest, proof.CurrentRevision = summary.SourceSetDigest, summary.CurrentRevision
+		proof.SourceSchemaVersion, proof.MetadataSchemaVersion = summary.SourceSchemaVersion, summary.MetadataSchemaVersion
+		proof.SourceSetComplete, proof.MeaningfulCapturedAt = summary.SourceSetComplete, summary.MeaningfulCapturedAt
+		if err := s.local.SaveScanSignature(s.id(), proof); err != nil {
+			return outcomeSkipped, fmt.Errorf("settle acknowledged native history: %w", err)
+		}
+	}
 	// Whatever kept this session's metadata from being refreshed described
 	// the publication just replaced.
 	if err := s.local.RemoveRefreshSkip(s.id()); err != nil {
@@ -205,19 +214,21 @@ func (s *sessionScan) upload(pending state.PendingPublication) error {
 			}
 		}
 		for _, stage := range pending.History.Sources {
+			mark := len(s.retainedReleases)
 			if !pending.CarriesNoSource() && stage.Reference == pending.SourceReference() {
 				continue
 			}
-			data, err := s.local.ReadPendingSource(s.id(), stage)
+			data, err := s.historyStage(stage)
 			if err != nil {
 				return err
 			}
 			if err := s.ensureHistorySource(stage.Reference.Key, stage.Reference.SHA256, data); err != nil {
 				return err
 			}
+			s.releaseRetainedAfter(mark)
 		}
 		var m archive.Metadata
-		if err := json.Unmarshal(pending.MetadataBytes, &m); err != nil {
+		if err := s.unmarshalRetained(pending.MetadataBytes, &m); err != nil {
 			return err
 		}
 		if err := s.verifyHistoryReferences(pending, m); err != nil {

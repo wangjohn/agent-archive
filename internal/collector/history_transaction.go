@@ -5,12 +5,10 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
@@ -24,13 +22,15 @@ func metadataSHA(raw []byte) string { sum := sha256.Sum256(raw); return hex.Enco
 // exact final bytes can be replaced. An out-of-band writer racing GET-to-PUT is
 // outside the single-machine collector.lock ownership contract.
 func (s *sessionScan) checkFrozenHistoryMetadata(p state.PendingPublication) (bool, error) {
+	mark := len(s.retainedReleases)
+	defer s.releaseRetainedAfter(mark)
 	if p.History == nil {
 		return false, nil
 	}
 	if _, err := s.frozenHistoryMetadata(p); err != nil {
 		return false, err
 	}
-	raw, err := historyLimitedGet(s.ctx, s.remote, p.MetadataKey, historyMetadataLimit)
+	raw, err := s.historyGet(p.MetadataKey, historyMetadataLimit)
 	if errors.Is(err, storage.ErrNotFound) {
 		if p.History.ExpectedMetadataSHA256 == "" {
 			return false, nil
@@ -47,7 +47,7 @@ func (s *sessionScan) checkFrozenHistoryMetadata(p state.PendingPublication) (bo
 		return false, errHistoryMetadataConflict
 	}
 	var previous archive.Metadata
-	if err := json.Unmarshal(raw, &previous); err != nil {
+	if err := s.unmarshalRetained(raw, &previous); err != nil {
 		return false, err
 	}
 	if _, err := previous.SourceReferences(); err != nil {
@@ -63,6 +63,8 @@ func (s *sessionScan) checkFrozenHistoryMetadata(p state.PendingPublication) (bo
 // journal's checksum-verified remote references. Failure leaves the descriptor,
 // all other stages and the request untouched; no new native evidence is guessed.
 func (s *sessionScan) recoverHistoryStages(p state.PendingPublication) error {
+	mark := len(s.retainedReleases)
+	defer s.releaseRetainedAfter(mark)
 	if p.History == nil {
 		return nil
 	}
@@ -71,14 +73,16 @@ func (s *sessionScan) recoverHistoryStages(p state.PendingPublication) error {
 		return err
 	}
 	for _, stage := range p.History.Sources {
-		if _, err := s.local.ReadPendingSource(s.id(), stage); err == nil {
+		mark := len(s.retainedReleases)
+		if _, err := s.historyStage(stage); err == nil {
+			s.releaseRetainedAfter(mark)
 			continue
 		}
-		raw, err := historyLimitedGet(s.ctx, s.remote, stage.Reference.Key, int64(stage.Reference.CompressedBytes))
+		raw, err := s.historyGet(stage.Reference.Key, int64(stage.Reference.CompressedBytes))
 		if err != nil {
 			return fmt.Errorf("recover frozen revision source: %w", err)
 		}
-		if _, err := decodeHistoryStage(s.ctx, metadata, p, stage.Reference, raw); err != nil {
+		if _, err := s.decodeHistoryStage(metadata, p, stage.Reference, raw); err != nil {
 			return fmt.Errorf("verify recovered revision source: %w", err)
 		}
 		restored, err := s.local.StagePendingSource(s.id(), stage.Reference, raw)
@@ -88,16 +92,23 @@ func (s *sessionScan) recoverHistoryStages(p state.PendingPublication) error {
 		if restored != stage {
 			return errors.New("recovered revision stage identity changed")
 		}
+		s.releaseRetainedAfter(mark)
 	}
 	return nil
 }
 
 func decodeHistoryStage(ctx context.Context, metadata archive.Metadata, p state.PendingPublication, ref archive.SourceReference, raw []byte) (archive.SourceBundle, error) {
+	scan := &sessionScan{ctx: ctx}
+	defer scan.releaseRetained()
+	return scan.decodeHistoryStage(metadata, p, ref, raw)
+}
+
+func (s *sessionScan) decodeHistoryStage(metadata archive.Metadata, p state.PendingPublication, ref archive.SourceReference, raw []byte) (archive.SourceBundle, error) {
 	if _, err := metadata.SourceReferences(); err != nil {
 		return archive.SourceBundle{}, err
 	}
 	if metadata.SourceBundle == ref {
-		return reader.DecodeReferencedSource(ctx, metadata, raw, reader.Limits{})
+		return s.decodeReferenced(metadata, raw)
 	}
 	if metadata.History != nil {
 		for _, revision := range metadata.History.Preserved {
@@ -115,7 +126,7 @@ func decodeHistoryStage(ctx context.Context, metadata archive.Metadata, p state.
 					}
 				}
 			}
-			return reader.DecodeRevisionSource(ctx, metadata, revision.RevisionID, raw, reader.Limits{})
+			return s.decodeRevision(metadata, revision.RevisionID, raw)
 		}
 	}
 	return archive.SourceBundle{}, errors.New("stage is not referenced by the complete frozen source set")
@@ -124,10 +135,12 @@ func decodeHistoryStage(ctx context.Context, metadata archive.Metadata, p state.
 // verifyHistoryReadback verifies exact final bytes and ALL referenced sources
 // before any privacy obligation, published cache or request is acknowledged.
 func (s *sessionScan) verifyHistoryReadback(p state.PendingPublication) error {
+	mark := len(s.retainedReleases)
+	defer s.releaseRetainedAfter(mark)
 	if _, err := s.frozenHistoryMetadata(p); err != nil {
 		return err
 	}
-	raw, err := historyLimitedGet(s.ctx, s.remote, p.MetadataKey, historyMetadataLimit)
+	raw, err := s.historyGet(p.MetadataKey, historyMetadataLimit)
 	if err != nil {
 		return err
 	}
@@ -135,13 +148,13 @@ func (s *sessionScan) verifyHistoryReadback(p state.PendingPublication) error {
 		return errHistoryMetadataConflict
 	}
 	var metadata archive.Metadata
-	if err := json.Unmarshal(raw, &metadata); err != nil {
+	if err := s.unmarshalRetained(raw, &metadata); err != nil {
 		return err
 	}
 	if err := s.verifyHistoryReferences(p, metadata); err != nil {
 		return err
 	}
-	current, err := historyLimitedGet(s.ctx, s.remote, p.MetadataKey, historyMetadataLimit)
+	current, err := s.historyGet(p.MetadataKey, historyMetadataLimit)
 	if err != nil {
 		return err
 	}
@@ -181,7 +194,7 @@ func (s *sessionScan) frozenHistoryMetadata(p state.PendingPublication) (archive
 		return archive.Metadata{}, storage.ErrObjectTooLarge
 	}
 	var metadata archive.Metadata
-	if err := json.Unmarshal(p.MetadataBytes, &metadata); err != nil {
+	if err := s.unmarshalRetained(p.MetadataBytes, &metadata); err != nil {
 		return archive.Metadata{}, err
 	}
 	if metadata.SessionID != s.id() || metadata.NativeSessionID != s.reg.NativeSessionID || metadata.Harness.Name != s.reg.Harness.Name || metadata.ProjectID != s.reg.ProjectID {
@@ -196,6 +209,8 @@ func (s *sessionScan) frozenHistoryMetadata(p state.PendingPublication) (archive
 // verifyHistoryReferences decodes each bounded immutable object before metadata
 // replacement as well as after readback; a valid checksum alone is insufficient.
 func (s *sessionScan) verifyHistoryReferences(p state.PendingPublication, metadata archive.Metadata) error {
+	mark := len(s.retainedReleases)
+	defer s.releaseRetainedAfter(mark)
 	refs, err := metadata.SourceReferences()
 	if err != nil {
 		return err
@@ -204,17 +219,19 @@ func (s *sessionScan) verifyHistoryReferences(p state.PendingPublication, metada
 		return err
 	}
 	for _, ref := range refs {
-		data, err := historyLimitedGet(s.ctx, s.remote, ref.Key, int64(ref.CompressedBytes))
+		mark := len(s.retainedReleases)
+		data, err := s.historyGet(ref.Key, int64(ref.CompressedBytes))
 		if err != nil {
 			return err
 		}
-		bundle, err := decodeHistoryStage(s.ctx, metadata, p, ref, data)
+		bundle, err := s.decodeHistoryStage(metadata, p, ref, data)
 		if err != nil {
 			return err
 		}
 		if !p.History.Preparing && ((p.History.FilterVersion != "" && bundle.Capture.FilterVersion != p.History.FilterVersion) || (p.History.AdapterVersion != "" && bundle.Capture.AdapterVersion != p.History.AdapterVersion)) {
 			return errors.New("final reference disagrees with frozen all-reference privacy policy")
 		}
+		s.releaseRetainedAfter(mark)
 	}
 	return nil
 }

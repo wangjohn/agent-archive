@@ -1,6 +1,9 @@
 package agentapi
 
-import "sync"
+import (
+	"errors"
+	"sync"
+)
 
 // NativeReadBudget bounds charged native extents, immutable caches and borrowed
 // scratch across one pass. It is not a bound on filtered maps or process RSS.
@@ -67,3 +70,10 @@ func (b *NativeReadBudget) Charged() (used, peak int64) {
 
 // CodexRolloutResourceBudget shares lookup copy charges with source providers.
 type CodexRolloutResourceBudget interface{ NativeReadBudget() *NativeReadBudget }
+
+// ErrReadBudget identifies transient shared resource pressure separately from
+// permanent record/format ceilings that also use the Limit failure category.
+var ErrReadBudget = errors.New("shared read data budget exhausted")
+
+// ReadBudgetLimit keeps resource refusal pending through codec/error wrappers.
+func ReadBudgetLimit(cause error) error { return Wrap(Limit, errors.Join(ErrReadBudget, cause)) }

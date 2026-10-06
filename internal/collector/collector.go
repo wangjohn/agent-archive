@@ -45,10 +45,11 @@ type Options struct {
 	// bounded local recovery stage. Direct collector callers recover once.
 	SkipSessionIndexRecovery bool
 	// Parsers resolves pure derivation separately from native source access.
-	Parsers      agentapi.ParsersLookup
-	parserCache  map[string]agentapi.TranscriptParser
-	Sources      agentapi.SourcesLookup
-	sourcePasses *sourcePassSet
+	Parsers       agentapi.ParsersLookup
+	parserCache   map[string]agentapi.TranscriptParser
+	Sources       agentapi.SourcesLookup
+	sourcePasses  *sourcePassSet
+	retainedOwner *sessionScan
 	// Decoders translates retained legacy admission intents; no lookup is needed for new generic effects.
 	Decoders agentapi.DecodersLookup
 	// ParserVersion identifies metadata derivation independently of source capture.
@@ -389,6 +390,10 @@ func (p *pass) fail(id string, err error) {
 // scan gives one session its turn in the pass: skip it if nothing about it
 // changed, otherwise scan it (sessionScan.run) and account for the outcome.
 func (p *pass) scan(reg archive.SessionRegistration) {
+	priorLocal := p.local
+	scopedLocal, closeLocal := p.local.WithReadBudget(p.ctx, (&sessionScan{opts: p.opts}).readBudget())
+	p.local = scopedLocal
+	defer func() { closeLocal(); p.local = priorLocal }()
 	id := reg.ArchiveSessionID
 	p.result.Scanned++
 	if p.unreadable[id] {
@@ -415,6 +420,7 @@ func (p *pass) scan(reg archive.SessionRegistration) {
 		p.pending++
 	}
 	scan := newSessionScan(p.ctx, p.local, p.remote, reg, req, published, p.now, p.opts)
+	defer scan.releaseRetained()
 	outcome, err := scan.run()
 	for _, warning := range scan.warnings {
 		addError(p.result.Errors, id, warning)

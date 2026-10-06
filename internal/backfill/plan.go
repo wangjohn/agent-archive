@@ -637,7 +637,8 @@ func runAdapter(ctx context.Context, env Environment, w *work) {
 		freshStart = created.UTC()
 		w.c.StartedAt, w.c.StartedAtSource = freshStart, archive.StartedAtSourceFileCreated
 	}
-	filtered, err := filterImportSource(ctx, env, w, freshStart)
+	filtered, release, err := filterImportSource(ctx, env, w, freshStart)
+	defer release()
 	if err != nil {
 		if fatalSourceFailure(err) {
 			w.sourceErr = err

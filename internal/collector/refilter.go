@@ -66,6 +66,10 @@ func (s *sessionScan) rewrittenSinceCapture(read sourceRead) (bool, error) {
 // now drop or redact changes. What the earlier filter already dropped stays
 // dropped.
 func refilterBundle(ctx context.Context, reg archive.SessionRegistration, adapter archive.Adapter, bundle archive.SourceBundle) (archive.SourceBundle, error) {
+	return refilterBundleBounded(ctx, reg, adapter, bundle, agentapi.ReadLimits{})
+}
+
+func refilterBundleBounded(ctx context.Context, reg archive.SessionRegistration, adapter archive.Adapter, bundle archive.SourceBundle, limits agentapi.ReadLimits) (archive.SourceBundle, error) {
 	if err := ctx.Err(); err != nil {
 		return archive.SourceBundle{}, err
 	}
@@ -78,7 +82,17 @@ func refilterBundle(ctx context.Context, reg archive.SessionRegistration, adapte
 	if err := bundle.ValidateHistory(); err != nil {
 		return archive.SourceBundle{}, err
 	}
-	filtered, err := refilterNative(ctx, reg, adapter, bundle)
+	var filtered archive.FilteredTranscript
+	var err error
+	if limits.FilteredBytes > 0 {
+		f, ok := adapter.(agentapi.BoundedTranscriptRefilter)
+		if !ok {
+			return archive.SourceBundle{}, errRetainedBudget
+		}
+		filtered, err = f.RefilterBounded(ctx, bundle, reg.SessionStartedAt, limits)
+	} else {
+		filtered, err = refilterNative(ctx, reg, adapter, bundle)
+	}
 	if err != nil {
 		return archive.SourceBundle{}, err
 	}
@@ -129,9 +143,9 @@ func (s *sessionScan) refilterRewritten(ctx context.Context, read sourceRead, sn
 	if err != nil || !rewritten {
 		return candidate, false, err
 	}
-	refiltered, err := refilterBundle(ctx, s.reg, read.adapter, snapshot)
+	refiltered, err := s.refilterRetained(read.adapter, snapshot)
 	if err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		if errors.Is(err, agentapi.ErrReadBudget) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return candidate, false, err
 		}
 		s.warn(fmt.Errorf("filter the retained snapshot of a rewritten transcript again (the rewritten transcript replaces it): %w", err))

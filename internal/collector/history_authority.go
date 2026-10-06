@@ -2,12 +2,10 @@ package collector
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -32,7 +30,7 @@ func (s *sessionScan) restoreReferenceAuthority() error {
 	if err != nil {
 		return err
 	}
-	raw, err := historyLimitedGet(s.ctx, s.remote, key, historyMetadataLimit)
+	raw, err := s.historyGet(key, historyMetadataLimit)
 	if errors.Is(err, storage.ErrNotFound) {
 		if _, _, acknowledged := s.published.LastPublished(); acknowledged {
 			return errors.New("acknowledged remote source authority is missing")
@@ -42,7 +40,7 @@ func (s *sessionScan) restoreReferenceAuthority() error {
 	if err != nil {
 		return err
 	}
-	if err := json.Unmarshal(raw, &metadata); err != nil {
+	if err := s.unmarshalRetained(raw, &metadata); err != nil {
 		return err
 	}
 	if err := s.validateAuthorityIdentity(metadata); err != nil {
@@ -63,24 +61,26 @@ func (s *sessionScan) restoreReferenceAuthority() error {
 	// Decode and release preserved alternatives before retaining the active view.
 	if metadata.History != nil {
 		for _, revision := range metadata.History.Preserved {
-			data, err := historyLimitedGet(s.ctx, s.remote, revision.Source.Key, int64(revision.Source.CompressedBytes))
+			mark := len(s.retainedReleases)
+			data, err := s.historyGet(revision.Source.Key, int64(revision.Source.CompressedBytes))
 			if err != nil {
 				return err
 			}
-			if _, err := reader.DecodeRevisionSource(s.ctx, metadata, revision.RevisionID, data, reader.Limits{}); err != nil {
+			if _, err := s.decodeRevision(metadata, revision.RevisionID, data); err != nil {
 				return err
 			}
+			s.releaseRetainedAfter(mark)
 		}
 	}
-	data, err := historyLimitedGet(s.ctx, s.remote, metadata.SourceBundle.Key, int64(metadata.SourceBundle.CompressedBytes))
+	data, err := s.historyGet(metadata.SourceBundle.Key, int64(metadata.SourceBundle.CompressedBytes))
 	if err != nil {
 		return err
 	}
-	bundle, err := reader.DecodeReferencedSource(s.ctx, metadata, data, reader.Limits{})
+	bundle, err := s.decodeReferenced(metadata, data)
 	if err != nil {
 		return err
 	}
-	current, err := historyLimitedGet(s.ctx, s.remote, key, historyMetadataLimit)
+	current, err := s.historyGet(key, historyMetadataLimit)
 	if err != nil {
 		return err
 	}
@@ -140,7 +140,7 @@ func (s *sessionScan) requiresReferenceRecovery() (bool, error) {
 		var header struct {
 			SchemaVersion int `json:"schema_version"`
 		}
-		if json.Unmarshal(raw, &header) == nil && header.SchemaVersion != archive.MetadataSchemaVersion && header.SchemaVersion != archive.HistoryMetadataSchemaVersion {
+		if s.unmarshalRetained(raw, &header) == nil && header.SchemaVersion != archive.MetadataSchemaVersion && header.SchemaVersion != archive.HistoryMetadataSchemaVersion {
 			return false, fmt.Errorf("unsupported acknowledged metadata schema version %d", header.SchemaVersion)
 		}
 	}
@@ -153,7 +153,7 @@ func (s *sessionScan) ordinaryPrivacyMaintenance() bool {
 		return false
 	}
 	var metadata archive.Metadata
-	if json.Unmarshal(s.published.Metadata(), &metadata) != nil || metadata.SchemaVersion != archive.MetadataSchemaVersion || metadata.History != nil || s.validateAuthorityIdentity(metadata) != nil {
+	if s.unmarshalRetained(s.published.Metadata(), &metadata) != nil || metadata.SchemaVersion != archive.MetadataSchemaVersion || metadata.History != nil || s.validateAuthorityIdentity(metadata) != nil {
 		return false
 	}
 	if metadata.NativeSessionID != bundle.NativeSessionID || metadata.ProjectID != bundle.ProjectID || metadata.Harness != bundle.Capture.Harness || metadata.ParentSessionID != bundle.ParentSessionID || !metadata.CapturedAt.Equal(bundle.Capture.CapturedAt) {
