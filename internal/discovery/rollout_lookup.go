@@ -32,6 +32,7 @@ const maxCurrentThreads = 64
 // Observation-cache membership never implies complete filesystem coverage.
 type CodexRolloutLookup struct {
 	store         *state.Store
+	readBudget    *agentapi.NativeReadBudget
 	coverage      *coverageInventory
 	coverageDirty bool
 	roots         []string
@@ -69,7 +70,7 @@ func NewCodexRolloutLookup(ctx context.Context, store *state.Store, homes []stri
 	if len(roots) > 1024 {
 		return nil, agentapi.Wrap(agentapi.Limit, errors.New("native home limit"))
 	}
-	lookup := &CodexRolloutLookup{store: store, roots: roots, deadline: time.Now().Add(Budget), remaining: Budget, coverage: newCoverage(roots), observations: map[string]rolloutObservation{}, byThread: map[string]map[string]struct{}{}, byPhysical: map[string]map[string]struct{}{}, threads: map[string]agentapi.CodexRolloutSet{}, indexes: map[string]*currentIndexView{}}
+	lookup := &CodexRolloutLookup{store: store, readBudget: agentapi.NewNativeReadBudget(currentSnapshotLimit), roots: roots, deadline: time.Now().Add(Budget), remaining: Budget, coverage: newCoverage(roots), observations: map[string]rolloutObservation{}, byThread: map[string]map[string]struct{}{}, byPhysical: map[string]map[string]struct{}{}, threads: map[string]agentapi.CodexRolloutSet{}, indexes: map[string]*currentIndexView{}}
 	var prior catalog
 	if err := local.Read(filepath.Join(store.Home(), "discovery-catalog.json"), &prior); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return lookup, nil
@@ -163,6 +164,16 @@ func (l *CodexRolloutLookup) inspect(ctx context.Context, path, thread string) (
 	if root == "" {
 		return nil, agentapi.Wrap(agentapi.Unsafe, errors.New("current locator outside native home"))
 	}
+	if prior, present := l.observations[path]; present && prior.identity.ThreadID == thread {
+		opened, err := sourcefacts.OpenRegular(root, path)
+		if err == nil {
+			info, statErr := opened.Stat()
+			_ = opened.Close()
+			if statErr == nil && prior.stamp.Size == info.Size() && prior.stamp.Mtime == info.ModTime().UnixNano() {
+				return &agentapi.SourceRef{Kind: archive.SourceKindFile, Path: path, Key: thread}, nil
+			}
+		}
+	}
 	if l.probes >= HeaderProbes {
 		return nil, agentapi.Wrap(agentapi.Limit, errors.New("native header probe limit"))
 	}
@@ -227,21 +238,21 @@ func (l *CodexRolloutLookup) Thread(ctx context.Context, id string) (agentapi.Co
 	if cached, present := l.threads[id]; present {
 		return l.withCandidates(id, cached), nil
 	}
-	if len(l.threads) >= maxCurrentThreads {
-		return agentapi.CodexRolloutSet{}, agentapi.Wrap(agentapi.Limit, errors.New("current thread query limit"))
-	}
+
 	if l.coverage == nil {
 		l.coverage = newCoverage(l.roots)
 	}
-	if !l.coverage.request(id) {
-		return agentapi.CodexRolloutSet{}, agentapi.Wrap(agentapi.Limit, errors.New("native requested coverage limit"))
+	if l.coverage.request(id) {
+		l.coverageDirty = true
 	}
-	l.coverageDirty = true
 	l.registrationHint(ctx, id)
 	var current *agentapi.SourceRef
 	for _, root := range l.roots {
 		view, err := l.index(ctx, root, false)
 		if err != nil {
+			if agentapi.Failure(err) == agentapi.Limit {
+				return agentapi.CodexRolloutSet{}, err
+			}
 			continue
 		}
 		path, found, err := currentLocator(ctx, view.db, id)
@@ -264,6 +275,12 @@ func (l *CodexRolloutLookup) Thread(ctx context.Context, id string) (agentapi.Co
 		return agentapi.CodexRolloutSet{}, agentapi.Wrap(agentapi.Limit, errors.New("thread candidate limit"))
 	}
 	set := l.withCandidates(id, agentapi.CodexRolloutSet{Current: current})
+	if len(l.threads) >= maxCoverageRequests {
+		for key := range l.threads {
+			delete(l.threads, key)
+			break
+		}
+	}
 	l.threads[id] = set
 	return set, nil
 }
@@ -447,8 +464,12 @@ func (l *CodexRolloutLookup) index(ctx context.Context, root string, refresh boo
 	ctx, cancel := context.WithDeadline(ctx, l.deadline)
 	defer cancel()
 	capturedStamps := indexStamps(root)
-	snapshot, err := snapshotCurrentIndex(ctx, root, nil)
+	snapshot, err := snapshotCurrentIndexBudget(ctx, root, nil, l.readBudget)
 	if err != nil {
+		if agentapi.Failure(err) == agentapi.Limit {
+			delete(l.indexes, root)
+			return nil, err
+		}
 		view.unavailable = true
 		view.stamps = indexStamps(root)
 		return nil, err
@@ -577,3 +598,6 @@ func (l *CodexRolloutLookup) beginOperation(ctx context.Context) (context.Contex
 	operation, cancel := context.WithDeadline(ctx, deadline)
 	return operation, func() { cancel(); l.remaining -= time.Since(started) }, nil
 }
+
+// NativeReadBudget is the pass-owned shared native/source/cache charge ledger.
+func (l *CodexRolloutLookup) NativeReadBudget() *agentapi.NativeReadBudget { return l.readBudget }

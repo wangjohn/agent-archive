@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 )
 
@@ -36,6 +37,15 @@ func (p *privateIndex) close() error { return os.RemoveAll(p.dir) }
 // The private immutable main file contains the replayed committed state, so
 // SQLite does not need a WAL, SHM, lock, or recovery operation beside native data.
 func snapshotCurrentIndex(ctx context.Context, root string, step func(string)) (*privateIndex, error) {
+	return snapshotCurrentIndexBudget(ctx, root, step, agentapi.NewNativeReadBudget(currentSnapshotLimit))
+}
+
+func snapshotCurrentIndexBudget(ctx context.Context, root string, step func(string), budget *agentapi.NativeReadBudget) (*privateIndex, error) {
+	charge := indexVerificationScratch + 64
+	if !budget.Reserve(charge) {
+		return nil, agentapi.Wrap(agentapi.Limit, errors.New("shared index scratch budget exhausted"))
+	}
+	defer func() { budget.Release(charge) }()
 	mainPath := filepath.Join(root, "state_5.sqlite")
 	if _, err := os.Lstat(mainPath + "-journal"); !errors.Is(err, os.ErrNotExist) {
 		return nil, errIndexChanged
@@ -56,6 +66,11 @@ func snapshotCurrentIndex(ctx context.Context, root string, step func(string)) (
 	if wal != nil {
 		defer func() { _ = wal.Close() }()
 	}
+	extra, err := reserveIndexExtents(budget, before, walBefore)
+	if err != nil {
+		return nil, err
+	}
+	charge += extra
 	if step != nil {
 		step("generation")
 	}
@@ -67,15 +82,9 @@ func snapshotCurrentIndex(ctx context.Context, root string, step func(string)) (
 	if step != nil {
 		step("main")
 	}
-	var walBytes []byte
-	if wal != nil {
-		if before.Size()+walBefore.Size()+indexVerificationScratch > currentSnapshotLimit {
-			return nil, errIndexChanged
-		}
-		walBytes, err = readIndexExtent(ctx, wal, walBefore.Size(), &metrics)
-		if err != nil || len(walBytes) < 32 || !bytes.Equal(header, walBytes[:32]) {
-			return nil, errIndexChanged
-		}
+	walBytes, err := readCapturedWAL(ctx, wal, before, walBefore, header, &metrics)
+	if err != nil {
+		return nil, err
 	}
 	metrics.PeakBuffers = int64(len(mainBytes)+len(walBytes)) + indexVerificationScratch
 	committed, pages, pageSize, err := committedWAL(walBytes)
@@ -110,6 +119,10 @@ func snapshotCurrentIndex(ctx context.Context, root string, step func(string)) (
 		if peak > currentSnapshotLimit {
 			return nil, errIndexChanged
 		}
+		if !budget.Reserve(projected) {
+			return nil, agentapi.Wrap(agentapi.Limit, errors.New("shared native replay budget exhausted"))
+		}
+		charge += projected
 		metrics.PeakBuffers = max(metrics.PeakBuffers, peak)
 	}
 	if err := replayCommittedWAL(&mainBytes, walBytes[:committed], pages, pageSize); err != nil {
@@ -352,4 +365,30 @@ func verifyIndexGeneration(mainPath string, before os.FileInfo, wal *os.File, wa
 		return errIndexChanged
 	}
 	return nil
+}
+
+func reserveIndexExtents(budget *agentapi.NativeReadBudget, main, wal os.FileInfo) (int64, error) {
+	bytes := main.Size()
+	if wal != nil {
+		bytes += wal.Size()
+	}
+	if !budget.Reserve(bytes) {
+		return 0, agentapi.Wrap(agentapi.Limit, errors.New("shared native copy budget exhausted"))
+	}
+	return bytes, nil
+}
+
+func readCapturedWAL(ctx context.Context, wal *os.File, before, walBefore os.FileInfo, header []byte, metrics *indexCopyMetrics) ([]byte, error) {
+	var walBytes []byte
+	var err error
+	if wal != nil {
+		if before.Size()+walBefore.Size()+indexVerificationScratch > currentSnapshotLimit {
+			return nil, errIndexChanged
+		}
+		walBytes, err = readIndexExtent(ctx, wal, walBefore.Size(), metrics)
+		if err != nil || len(walBytes) < 32 || !bytes.Equal(header, walBytes[:32]) {
+			return nil, errIndexChanged
+		}
+	}
+	return walBytes, nil
 }

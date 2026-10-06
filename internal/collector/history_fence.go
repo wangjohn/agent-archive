@@ -25,6 +25,11 @@ func (s *sessionScan) checkHistoryPublication(p state.PendingPublication) error 
 	if err := json.Unmarshal(p.MetadataBytes, &next); err != nil {
 		return err
 	}
+	if p.History != nil {
+		if _, err := s.checkFrozenHistoryMetadata(p); err != nil {
+			return err
+		}
+	}
 	if err := archive.CheckHistoryMutation(p.Bundle, next); err != nil {
 		return err
 	}

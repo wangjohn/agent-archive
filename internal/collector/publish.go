@@ -87,8 +87,18 @@ func (s *sessionScan) publishPending(pending state.PendingPublication) (sessionO
 			return outcomeSkipped, fmt.Errorf("mark pending publication attempted: %w", err)
 		}
 	}
+	if pending.History != nil {
+		if err := s.recoverHistoryStages(pending); err != nil {
+			return outcomeSkipped, err
+		}
+	}
 	if err := s.upload(pending); err != nil {
 		return outcomeSkipped, err
+	}
+	if pending.History != nil {
+		if err := s.verifyHistoryReadback(pending); err != nil {
+			return outcomeSkipped, err
+		}
 	}
 	if err := listingindex.PublishRevision(s.ctx, s.remote, pending.MetadataKey, pending.MetadataBytes); err != nil {
 		s.warn(fmt.Errorf("listing maintenance pending: %w", err))
@@ -196,6 +206,9 @@ func (s *sessionScan) upload(pending state.PendingPublication) error {
 			}
 		}
 		if err := s.checkHistoryPublication(pending); err != nil {
+			return err
+		}
+		if _, err := s.checkFrozenHistoryMetadata(pending); err != nil {
 			return err
 		}
 		return s.remote.Put(s.ctx, pending.MetadataKey, pending.MetadataBytes)

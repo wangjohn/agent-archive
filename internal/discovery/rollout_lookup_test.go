@@ -155,14 +155,14 @@ func TestRolloutLookupBoundsCurrentIDsAndCancellation(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = lookup.Close() }()
-	for i := range maxCurrentThreads {
+	for i := range maxCoverageRequests + 2 {
 		id := fmt.Sprintf("00000000-0000-0000-0000-%012x", i)
 		if _, err := lookup.Thread(t.Context(), id); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if _, err := lookup.Thread(t.Context(), "11111111-1111-1111-1111-111111111111"); agentapi.Failure(err) != agentapi.Limit {
-		t.Fatal(err)
+	if len(lookup.threads) > maxCoverageRequests {
+		t.Fatal("unbounded pass current cache")
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()

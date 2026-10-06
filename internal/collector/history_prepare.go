@@ -68,7 +68,7 @@ func (s *sessionScan) advanceHistoryPreparation(p *state.PendingPublication) err
 			}
 			if next != input.Reference {
 				p.History.Sources = append(p.History.Sources, stage)
-				p.History.Retired = append(p.History.Retired, state.RetiredSource{Reference: input.Reference, PrivacySensitive: bundle.Capture.FilterVersion != filtered.Capture.FilterVersion})
+				p.History.Retired = append(p.History.Retired, state.RetiredSource{Reference: input.Reference, PrivacySensitive: true})
 			}
 		}
 		p.History.PrivacyCursor++
@@ -123,7 +123,7 @@ func (s *sessionScan) loadHistoryInput(p state.PendingPublication, identity arch
 		}
 	}
 	if !staged {
-		data, err = s.remote.Get(s.ctx, input.Reference.Key)
+		data, err = historyLimitedGet(s.ctx, s.remote, input.Reference.Key, int64(input.Reference.CompressedBytes))
 	}
 	if err != nil {
 		return archive.SourceBundle{}, err

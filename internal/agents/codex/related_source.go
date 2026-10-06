@@ -23,6 +23,7 @@ import (
 )
 
 const relatedRawBudget int64 = 128 << 20
+const sourceHeaderCharge int64 = 128 << 10
 
 // Describe retains ordinary append protection; revision publication is separately fenced.
 func (SourceProvider) Describe(ref agentapi.SourceRef) (agentapi.SourceSemantics, error) {
@@ -34,6 +35,13 @@ func (SourceProvider) OpenPass(ctx context.Context, e agentapi.SourceEnvironment
 	legacy, err := (sourceio.FileProvider{}).OpenPass(ctx, e)
 	if err != nil {
 		return nil, err
+	}
+	if e.ReadBudget == nil {
+		if shared, ok := e.CodexRollouts.(agentapi.CodexRolloutResourceBudget); ok {
+			e.ReadBudget = shared.NativeReadBudget()
+		} else {
+			e.ReadBudget = agentapi.NewNativeReadBudget(relatedRawBudget)
+		}
 	}
 	if e.Files == nil {
 		e.Files = transcriptio.OS{}
@@ -93,7 +101,7 @@ func (p *relatedSourcePass) open(ctx context.Context, ref agentapi.SourceRef) (*
 		if old.refs > 0 {
 			return nil, sourceFailure(agentapi.Changed, "rollout dependency changed")
 		}
-		p.bytes -= old.charge()
+		p.release(old.charge())
 		delete(p.files, ref.Path)
 		if err := old.file.Close(); err != nil {
 			return nil, agentapi.Wrap(agentapi.Cleanup, err)
@@ -106,7 +114,12 @@ func (p *relatedSourcePass) open(ctx context.Context, ref agentapi.SourceRef) (*
 	if err != nil {
 		return nil, sourceio.Classify(err)
 	}
+	ownedCharge := int64(0)
 	fail := func(e error) (*rolloutFile, error) {
+		if ownedCharge > 0 {
+			p.release(ownedCharge)
+			ownedCharge = 0
+		}
 		return nil, errors.Join(e, agentapi.Wrap(agentapi.Cleanup, f.Close()))
 	}
 	if f.Length() > relatedRawBudget {
@@ -118,6 +131,10 @@ func (p *relatedSourcePass) open(ctx context.Context, ref agentapi.SourceRef) (*
 	if p.bytes+f.Length() > relatedRawBudget || len(p.files) >= archive.MaxHistorySpans {
 		return fail(sourceFailure(agentapi.Limit, "shared rollout budget exhausted"))
 	}
+	if !p.reserve(f.Length() + sourceHeaderCharge) {
+		return fail(sourceFailure(agentapi.Limit, "shared source and index budget exhausted"))
+	}
+	ownedCharge = f.Length() + sourceHeaderCharge
 	reader := bufio.NewReaderSize(io.NewSectionReader(f, 0, min(f.Length(), int64(64<<10)+1)), 4096)
 	line, err := reader.ReadBytes('\n')
 	if err != nil || len(line) > 64<<10 {
@@ -140,7 +157,6 @@ func (p *relatedSourcePass) open(ctx context.Context, ref agentapi.SourceRef) (*
 	}
 	out := &rolloutFile{ref: ref, file: f, meta: meta, identity: identity, header: line, boundary: boundary}
 	p.files[ref.Path] = out
-	p.bytes += f.Length()
 	return out, nil
 }
 
@@ -149,7 +165,7 @@ func (p *relatedSourcePass) evict() error {
 	for path, f := range p.files {
 		if f.refs == 0 {
 			err = errors.Join(err, agentapi.Wrap(agentapi.Cleanup, f.file.Close()))
-			p.bytes -= f.charge()
+			p.release(f.charge())
 			delete(p.files, path)
 		}
 	}
@@ -166,6 +182,7 @@ func (p *relatedSourcePass) Close() error {
 		err = errors.Join(err, s.Close())
 	}
 	for _, f := range p.files {
+		p.release(f.charge())
 		err = errors.Join(err, agentapi.Wrap(agentapi.Cleanup, f.file.Close()))
 		f.prefix = nil
 		f.validated = nil
@@ -188,6 +205,12 @@ func (p *relatedSourcePass) selectSource(ctx context.Context, ref agentapi.Sourc
 			return sourceSelection{}, err
 		}
 	}
+	var err error
+	ref, err = p.initialLookupRef(ctx, ref)
+	if err != nil {
+		return sourceSelection{}, err
+	}
+
 	seed, err := p.open(ctx, ref)
 	if errors.Is(err, os.ErrNotExist) && p.env.CodexRollouts != nil && codexmeta.RolloutID(ref.Key+".jsonl") == ref.Key && ref.Key != "" {
 		set, lookupErr := p.env.CodexRollouts.Thread(ctx, ref.Key)
@@ -464,13 +487,15 @@ func (p *relatedSourcePass) readSelection(ctx context.Context, ref agentapi.Sour
 	for _, span := range spans {
 		largest = max(largest, span.end)
 	}
-	bufferCharge := min(max(int64(4096), min(largest+1, limit+1)), relatedRawBudget-p.bytes)
+	bufferCharge := min(max(int64(4096), min(largest+1, limit+1)), min(relatedRawBudget-p.bytes, p.env.ReadBudget.Available()))
 	if bufferCharge < 4096 {
 		return fail(sourceFailure(agentapi.Limit, "shared record buffer budget exhausted"))
 	}
 	limit = min(limit, bufferCharge-1)
 	s := &historySnapshot{owner: p, selection: selection, spans: spans, recordLimit: limit, bufferCharge: bufferCharge}
-	p.bytes += bufferCharge
+	if !p.reserve(bufferCharge) {
+		return fail(sourceFailure(agentapi.Limit, "shared record buffer budget exhausted"))
+	}
 	for _, span := range spans {
 		span.file.refs++
 	}
@@ -559,7 +584,7 @@ func (s *historySnapshot) Close() error {
 	}
 	s.closed = true
 	delete(s.owner.live, s)
-	s.owner.bytes -= s.bufferCharge
+	s.owner.release(s.bufferCharge)
 	s.bufferCharge = 0
 	for _, span := range s.spans {
 		span.file.refs--
@@ -883,7 +908,7 @@ type prefixValidation struct {
 const prefixSummaryCharge int64 = 128
 
 func (f *rolloutFile) charge() int64 {
-	charge := f.file.Length()
+	charge := f.file.Length() + sourceHeaderCharge
 	if f.prefix != nil {
 		charge += int64(len(f.prefix)) + prefixSummaryCharge
 	}
@@ -900,18 +925,22 @@ func (span physicalSpan) reader() io.ReaderAt {
 func (p *relatedSourcePass) cachePrefixes(ctx context.Context, spans []physicalSpan) error {
 	for _, span := range spans[:len(spans)-1] {
 		f := span.file
-		if f.prefix != nil || span.end > relatedRawBudget/4 || p.bytes+span.end+prefixSummaryCharge > relatedRawBudget {
+		if f.prefix != nil || span.end > relatedRawBudget/4 || p.bytes+span.end+prefixSummaryCharge > relatedRawBudget || span.end+prefixSummaryCharge > p.env.ReadBudget.Available() {
 			continue
 		}
 		// The one bounded immutable copy is shared by descendants; never replace it
 		// while a snapshot might hold a borrowed scanner over its bytes.
+		charge := span.end + prefixSummaryCharge
+		if !p.reserve(charge) {
+			continue
+		}
 		raw := make([]byte, span.end)
 		reader := sourceio.Reader(ctx, f.file, span.end)
 		if _, err := io.ReadFull(reader, raw); err != nil {
+			p.release(charge)
 			return sourceio.Classify(err)
 		}
 		f.prefix = raw
-		p.bytes += span.end + prefixSummaryCharge
 	}
 	return nil
 }
@@ -1285,4 +1314,39 @@ func (s *ordinarySnapshot) AdmissionEvidence(ctx context.Context, admission agen
 		return agentapi.AdmissionEvidence{}, err
 	}
 	return agentapi.AdmissionEvidence{Binding: binding, Task: task}, nil
+}
+
+func (p *relatedSourcePass) reserve(bytes int64) bool {
+	if bytes < 0 || bytes > relatedRawBudget-p.bytes || !p.env.ReadBudget.Reserve(bytes) {
+		return false
+	}
+	p.bytes += bytes
+	return true
+}
+func (p *relatedSourcePass) release(bytes int64) { p.env.ReadBudget.Release(bytes); p.bytes -= bytes }
+
+func (p *relatedSourcePass) lookupThread(ctx context.Context, id string) (agentapi.CodexRolloutSet, error) {
+	set, err := p.env.CodexRollouts.Thread(ctx, id)
+	if agentapi.Failure(err) == agentapi.Limit {
+		if evictionErr := p.evict(); evictionErr != nil {
+			return set, errors.Join(err, evictionErr)
+		}
+		return p.env.CodexRollouts.Thread(ctx, id)
+	}
+	return set, err
+}
+
+func (p *relatedSourcePass) initialLookupRef(ctx context.Context, ref agentapi.SourceRef) (agentapi.SourceRef, error) {
+	if p.env.CodexRollouts != nil && ref.Key != "" && codexmeta.RolloutID(ref.Key+".jsonl") == ref.Key {
+		set, lookupErr := p.lookupThread(ctx, ref.Key)
+		if lookupErr != nil {
+			return ref, lookupErr
+		}
+		if set.Current != nil {
+			ref = *set.Current
+		} else if set.Complete && len(set.Candidates) > 0 {
+			ref = set.Candidates[0]
+		}
+	}
+	return ref, nil
 }

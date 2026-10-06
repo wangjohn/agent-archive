@@ -26,6 +26,7 @@ type SourceSemantics struct {
 
 // SourceEnvironment supplies narrow read dependencies and local database location.
 type SourceEnvironment struct {
+	ReadBudget    *NativeReadBudget
 	CodexRollouts CodexRolloutLookup
 	Files         transcriptio.Opener
 	Policy        transcriptio.OpenPolicy

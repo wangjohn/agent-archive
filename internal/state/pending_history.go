@@ -66,6 +66,10 @@ func (p PendingPublication) ValidateHistory(id string) error {
 	if p.History.Version != pendingHistoryVersion {
 		return errors.New("pending history requires a newer writer")
 	}
+	if err := validatePredecessorSHA(p.History.ExpectedMetadataSHA256); err != nil {
+		return err
+	}
+
 	var m archive.Metadata
 	if err := json.Unmarshal(p.MetadataBytes, &m); err != nil {
 		return err
@@ -74,6 +78,10 @@ func (p PendingPublication) ValidateHistory(id string) error {
 	if err != nil {
 		return err
 	}
+	expectedKey, keyErr := archive.MetadataObjectKey(m.Harness.Name, id)
+	if keyErr != nil || expectedKey != p.MetadataKey {
+		return errors.New("pending history metadata key mismatch")
+	}
 	if m.SessionID != id || m.SourceBundle != p.SourceReference() {
 		return errors.New("pending history identity mismatch")
 	}
@@ -81,18 +89,8 @@ func (p PendingPublication) ValidateHistory(id string) error {
 	for _, r := range refs {
 		known[r] = true
 	}
-	if p.History.PrivacyCursor < 0 || p.History.PrivacyCursor > len(p.History.Inputs) || len(p.History.Inputs) > archive.MaxHistorySpans || p.History.Preparing && p.Attempted {
-		return errors.New("invalid history preparation progress")
-	}
-	for _, input := range p.History.Inputs {
-		prior := m
-		prior.History = &archive.RevisionHistory{CurrentRevision: input.RevisionID}
-		prior.SourceBundle = input.Reference
-		prior.CapturedAt = input.CapturedAt
-		prior.FilterVersion = input.FilterVersion
-		if prior.ValidateSourceReference() != nil || input.CapturedAt.IsZero() || input.FilterVersion == "" {
-			return errors.New("invalid history preparation input")
-		}
+	if err := p.validateHistoryInputs(m); err != nil {
+		return err
 	}
 	if len(p.History.Sources) > archive.MaxHistorySpans || len(p.History.Retired) > archive.MaxHistorySpans+1 {
 		return errors.New("pending history exceeds source limit")
@@ -196,4 +194,32 @@ func (s *Store) ReadPendingSource(id string, stage PendingSource) ([]byte, error
 		return nil, errors.New("history stage checksum mismatch")
 	}
 	return data, nil
+}
+
+func validatePredecessorSHA(value string) error {
+	if value == "" {
+		return nil
+	}
+	checksum, err := hex.DecodeString(value)
+	if err != nil || len(checksum) != sha256.Size {
+		return errors.New("invalid frozen predecessor checksum")
+	}
+	return nil
+}
+
+func (p PendingPublication) validateHistoryInputs(m archive.Metadata) error {
+	if p.History.PrivacyCursor < 0 || p.History.PrivacyCursor > len(p.History.Inputs) || len(p.History.Inputs) > archive.MaxHistorySpans || p.History.Preparing && p.Attempted {
+		return errors.New("invalid history preparation progress")
+	}
+	for _, input := range p.History.Inputs {
+		prior := m
+		prior.History = &archive.RevisionHistory{CurrentRevision: input.RevisionID}
+		prior.SourceBundle = input.Reference
+		prior.CapturedAt = input.CapturedAt
+		prior.FilterVersion = input.FilterVersion
+		if prior.ValidateSourceReference() != nil || input.CapturedAt.IsZero() || input.FilterVersion == "" {
+			return errors.New("invalid history preparation input")
+		}
+	}
+	return nil
 }
