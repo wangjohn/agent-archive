@@ -23,6 +23,13 @@ func (s *sessionScan) advanceHistoryPreparation(p *state.PendingPublication) err
 	if err := p.ValidateHistory(s.id()); err != nil {
 		return err
 	}
+	adapter, err := sourceAdapter(s.opts.Sources, s.reg.Harness.Name)
+	if err != nil {
+		return err
+	}
+	if p.History.FilterVersion != "" && (p.History.FilterVersion != archive.FilterVersion || p.History.AdapterVersion != adapter.Version()) {
+		return errors.New("history preparation policy changed; frozen inputs remain pending")
+	}
 	var metadata archive.Metadata
 	if err := json.Unmarshal(p.MetadataBytes, &metadata); err != nil {
 		return err
@@ -56,17 +63,8 @@ func (s *sessionScan) advanceHistoryPreparation(p *state.PendingPublication) err
 			if err != nil {
 				return err
 			}
-			found := false
-			for i := range metadata.History.Preserved {
-				if metadata.History.Preserved[i].RevisionID == input.RevisionID && metadata.History.Preserved[i].Source == input.Reference {
-					metadata.History.Preserved[i].Source = next
-					metadata.History.Preserved[i].SourceSchemaVersion = filtered.SchemaVersion
-					metadata.History.Preserved[i].FilterVersion = filtered.Capture.FilterVersion
-					found = true
-				}
-			}
-			if !found {
-				return errors.New("history preparation input no longer belongs to its frozen set")
+			if err := replacePreparedReference(p, &metadata, input, filtered, next, compressed.Bytes); err != nil {
+				return err
 			}
 			if next != input.Reference {
 				p.History.Sources = append(p.History.Sources, stage)
@@ -130,5 +128,30 @@ func (s *sessionScan) loadHistoryInput(p state.PendingPublication, identity arch
 	if err != nil {
 		return archive.SourceBundle{}, err
 	}
-	return reader.DecodeReferencedSource(s.ctx, selected, data, reader.Limits{})
+	bundle, err := reader.DecodeReferencedSource(s.ctx, selected, data, reader.Limits{})
+	if err == nil && input.SourceSchemaVersion != 0 && bundle.SchemaVersion != input.SourceSchemaVersion {
+		return archive.SourceBundle{}, errors.New("frozen input source schema differs from retained bytes")
+	}
+	return bundle, err
+}
+
+func replacePreparedReference(p *state.PendingPublication, metadata *archive.Metadata, input state.HistoryInput, filtered archive.SourceBundle, next archive.SourceReference, data []byte) error {
+	found := false
+	for i := range metadata.History.Preserved {
+		revision := &metadata.History.Preserved[i]
+		if revision.RevisionID == input.RevisionID && revision.Source == input.Reference {
+			revision.Source, revision.SourceSchemaVersion, revision.FilterVersion = next, filtered.SchemaVersion, filtered.Capture.FilterVersion
+			found = true
+		}
+	}
+	if metadata.SourceBundle == input.Reference && metadata.History.CurrentRevision == input.RevisionID {
+		metadata.SourceBundle, metadata.FilterVersion = next, filtered.Capture.FilterVersion
+		p.Bundle = filtered
+		p.SourceKey, p.SourceSHA256, p.SourceBytes = next.Key, next.SHA256, data
+		found = true
+	}
+	if !found {
+		return errors.New("history preparation input no longer belongs to its frozen set")
+	}
+	return nil
 }

@@ -102,6 +102,9 @@ func (s *sessionScan) maintainFrozen() (sessionOutcome, error) {
 	if pending, found, err := s.local.LoadPending(s.id()); err != nil {
 		return outcomeSkipped, err
 	} else if found {
+		if pending.History != nil {
+			return s.resumeHistory(pending)
+		}
 		if pending.Bundle.Capture.FilterVersion != archive.FilterVersion || pending.Bundle.Capture.AdapterVersion != adapter.Version() || !sourceEvidenceWithinPolicy(pending.Bundle.SupplementalEvidence, s.opts.skillEvidence()) {
 			// Stronger privacy supersedes a retained-history maintenance retry.
 			// Rebuild below from the last acknowledged publication, without native

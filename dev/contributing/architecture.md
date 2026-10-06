@@ -160,3 +160,23 @@ complete history authority. A physical revision transition validates the complet
 remote source set before planning, and the remote history publication fence still
 applies. Recovery must not replace a valid ordinary maintenance input merely to
 clear its stale privacy version.
+
+The collector now freezes reconciled Codex revisions into its existing pending
+journal before publication: the active source and new preserved sources are
+staged privately first, and the complete manifest retains per-input capture,
+filter and source-schema provenance plus the exact acknowledged predecessor SHA.
+Preparation consumes one retained input per pass and persists its cursor with
+`Attempted=false`. Restart uses those inputs even after native files disappear;
+newer requests cannot bypass the history journal. Policy changes retain the
+journal and stages pending complete all-reference successor preparation.
+Publication and maintenance mutation fences remain in place at this checkpoint.
+
+Stage cleanup reads one bounded directory batch under collector ownership and
+protects live descriptor stages and preparation inputs. It refuses symlinks,
+unsafe names and nonregular stages; failures remain pending. Acknowledgement
+removes private stages before its journal, so failed stage cleanup retains a
+retry record. Missing frozen stages can be recovered only from the exact
+checksum-verified remote object, never from newer native bytes. Expected-SHA
+preflight and exact readback detect observed conflicts under the local collector
+lock; unconditional object-store PUT does not exclude an out-of-band writer
+racing between the preflight GET and PUT.

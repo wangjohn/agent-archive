@@ -20,6 +20,7 @@ type revisionPlan struct {
 	Sources      []revisionStage
 	MeaningfulAt time.Time
 }
+
 type revisionStage struct {
 	retainedBytes int
 	Bundle        archive.SourceBundle
@@ -222,6 +223,7 @@ func ownedEvidenceCovered(adapter agentapi.TranscriptFilter, previous, candidate
 	}
 	return true
 }
+
 func revisionOrdinal(bundle archive.SourceBundle, index int) uint64 {
 	if bundle.History != nil {
 		return bundle.Ordinals[index]

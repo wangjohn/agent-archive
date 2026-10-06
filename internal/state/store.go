@@ -847,14 +847,20 @@ func (s *Store) HasPending(id string) (bool, error) {
 // RemovePending discards a session's publication transaction once it has
 // been published and acknowledged locally. A missing one is not an error.
 func (s *Store) RemovePending(id string) error {
+	if !safeFileComponent(id) {
+		return errors.New("archive session ID is not a safe file name component")
+	}
+	// Keep the journal until its private cleanup succeeds. After a crash, final
+	// remote bytes can restore any stage already removed by this cleanup.
+	if err := s.removePendingSources(id, nil); err != nil {
+		return err
+	}
 	err := os.Remove(s.pendingPath(id))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("remove pending publication %q: %w", id, err)
 	}
-	if safeFileComponent(id) {
-		if err := os.RemoveAll(filepath.Join(s.home, "sessions", id, "pending-sources")); err != nil {
-			return err
-		}
+	if err == nil {
+		return syncPendingDirectory(filepath.Dir(s.pendingPath(id)))
 	}
 	return nil
 }
