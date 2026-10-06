@@ -105,6 +105,14 @@ func (s *sessionScan) requiresReferenceRecovery() (bool, error) {
 	if err == nil && found {
 		return false, s.validateAuthorityIdentity(metadata)
 	}
+	// A legacy ordinary cache can require privacy maintenance even when its
+	// filter provenance differs from the acknowledged sidecar. Recovering over
+	// that cache would erase the maintenance input and settle the upgrade. This
+	// lane cannot certify history authority: transitions explicitly restore the
+	// complete remote set, and publication still checks the remote history fence.
+	if s.ordinaryPrivacyMaintenance() {
+		return false, nil
+	}
 	// Existing ordinary snapshots predating cached metadata keep their legacy
 	// migration lane. They cannot authorize any history mutation; publication
 	// still validates the remote schema and history fence before writing.
@@ -137,4 +145,20 @@ func (s *sessionScan) requiresReferenceRecovery() (bool, error) {
 		}
 	}
 	return true, nil
+}
+
+func (s *sessionScan) ordinaryPrivacyMaintenance() bool {
+	bundle, _, found := s.published.LastPublished()
+	if !found || bundle.SchemaVersion != archive.SourceSchemaVersion || bundle.History != nil || bundle.Capture.FilterVersion == archive.FilterVersion {
+		return false
+	}
+	var metadata archive.Metadata
+	if json.Unmarshal(s.published.Metadata(), &metadata) != nil || metadata.SchemaVersion != archive.MetadataSchemaVersion || metadata.History != nil || s.validateAuthorityIdentity(metadata) != nil {
+		return false
+	}
+	if metadata.NativeSessionID != bundle.NativeSessionID || metadata.ProjectID != bundle.ProjectID || metadata.Harness != bundle.Capture.Harness || metadata.ParentSessionID != bundle.ParentSessionID || !metadata.CapturedAt.Equal(bundle.Capture.CapturedAt) {
+		return false
+	}
+	ref, known := s.published.LastPublishedSource()
+	return known && metadata.SourceBundle == ref
 }

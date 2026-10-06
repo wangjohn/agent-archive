@@ -151,3 +151,12 @@ observed historical evidence uses the reconciliation observation time; an existi
 verified candidate keeps its capture time. Publication, frozen journaling,
 all-reference maintenance and retention remain fenced until the complete lifecycle
 is integrated and verified.
+
+Ordinary retained source2 snapshots still supply privacy maintenance inputs when
+their stale filter version disagrees with the cached acknowledged sidecar. This
+compatibility path requires a supported ordinary sidecar and matching ownership,
+identity, capture time and acknowledged source reference; it does not certify
+complete history authority. A physical revision transition validates the complete
+remote source set before planning, and the remote history publication fence still
+applies. Recovery must not replace a valid ordinary maintenance input merely to
+clear its stale privacy version.

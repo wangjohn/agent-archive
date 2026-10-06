@@ -11,7 +11,70 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/state"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
+
+func TestOrdinaryPrivacyMaintenanceCannotCertifyHistoryAuthority(t *testing.T) {
+	t.Parallel()
+	local, cloud := newTestStore(t), storagetest.NewMemoryStore()
+	at := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
+	publishCodexSession(t, local, cloud, at)
+	simulateFilterUpgrade(t, local)
+	reg, _, err := local.LoadRegistration("session-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	published, err := local.LoadPublishedState(reg.ArchiveSessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scan := newSessionScan(t.Context(), local, cloud, reg, state.Request{}, published, at.Add(time.Hour), Options{MachineID: "m"})
+	if recover, err := scan.requiresReferenceRecovery(); err != nil || recover {
+		t.Fatalf("ordinary privacy maintenance lost its retained input: %v %v", recover, err)
+	}
+	if _, _, err := published.LastPublishedMetadata(); err == nil {
+		t.Fatal("ordinary maintenance certified mismatched history authority")
+	}
+	var original archive.Metadata
+	if err := json.Unmarshal(published.Metadata(), &original); err != nil {
+		t.Fatal(err)
+	}
+	for _, damage := range []string{"schema", "history", "native", "project", "harness", "parent", "capture", "reference", "owner"} {
+		t.Run(damage, func(t *testing.T) {
+			metadata := original
+			switch damage {
+			case "schema":
+				metadata.SchemaVersion = 99
+			case "history":
+				metadata.History = &archive.RevisionHistory{}
+			case "native":
+				metadata.NativeSessionID = "another-thread"
+			case "project":
+				metadata.ProjectID = "another-project"
+			case "harness":
+				metadata.Harness.Name = "claude-code"
+			case "parent":
+				metadata.ParentSessionID = "another-parent"
+			case "capture":
+				metadata.CapturedAt = at.Add(time.Minute)
+			case "reference":
+				metadata.SourceBundle.SHA256 = "another-checksum"
+			case "owner":
+				metadata.MachineID = "another-machine"
+			}
+			raw, err := json.Marshal(metadata)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := published.CacheMetadata(raw); err != nil {
+				t.Fatal(err)
+			}
+			if scan.ordinaryPrivacyMaintenance() {
+				t.Fatal("uncertain metadata entered ordinary maintenance")
+			}
+		})
+	}
+}
 
 func TestRunRecoversWholeHistoryAuthorityAfterStateLoss(t *testing.T) {
 	t.Parallel()
