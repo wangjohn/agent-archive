@@ -422,6 +422,9 @@ func pairingReceiverInput(opts setupOptions, stdin io.Reader, out io.Writer, env
 		return nil, "", noClose, fmt.Errorf("pasting a pairing bundle needs a terminal; use --pair-file for redirected input")
 	}
 	p := newPrompter(stdin, out)
+	if opts.pairingInput != nil {
+		p.in = bufio.NewReader(opts.pairingInput)
+	}
 	p.now = env.now
 	bundle, err := readPairingBundle(p, opts, stdin)
 	if err != nil {
@@ -453,7 +456,7 @@ func pairingCredentialDescription(payload pairing.Payload) string {
 		return "AWS profile/settings transfer"
 	}
 	if payload.Kind == config.MachineAssignmentR2Own {
-		return "Dedicated R2 key draft; live revocation acceptance pending"
+		return "Dedicated R2 key; recipient can be revoked independently"
 	}
-	return "Shared-key R2 beta; recipient cannot be revoked independently"
+	return "Shared-key R2 pairing; recipient cannot be revoked independently"
 }

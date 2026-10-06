@@ -136,9 +136,9 @@ S3-compatible credentials can't read the bucket's public-access settings, so
 R2 privacy is always `not_verified`: check in the Cloudflare dashboard that
 the bucket has no public `r2.dev` URL or custom domain.
 
-### If setup creates the bucket (experimental)
+### If setup creates the bucket
 
-With experimental creation enabled, choose **Cloudflare R2**, then **Continue**.
+For guided creation, choose **Cloudflare R2**, then **Continue**.
 Setup makes this key itself. It
 creates an account API token whose one policy grants **Workers R2 Storage
 Bucket Item Write** on that one bucket: it can read, write, and list objects

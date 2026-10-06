@@ -139,7 +139,7 @@ func runMachinesCommand(args []string, stdin io.Reader, out, errOut io.Writer, e
 	}
 	fs := env.newCommandFlags("machines", errOut)
 	asJSON := fs.Bool("json", false, "write informational machine records as JSON")
-	verify := fs.Bool("verify", false, "explicit experimental read-only provider check")
+	verify := fs.Bool("verify", false, "explicit read-only provider check")
 	unattended := fs.Bool("yes", false, "do not prompt or run the configured token command")
 	if !fs.parseFlagsOnly(args) {
 		return 2

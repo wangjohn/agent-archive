@@ -106,8 +106,6 @@ already have a profile with credentials, and R2 otherwise.
 The menu has two numbered choices: **Cloudflare R2** and **Amazon S3**.
 After choosing a provider, press Enter to continue with bucket creation, or
 choose **Use an existing bucket** before supplying creation credentials.
-R2 creation still requires `AGENT_ARCHIVE_EXPERIMENTAL_R2_CREATE=1`; without
-it, R2 guides you directly to connecting an existing bucket.
 
 For R2 creation, supply a temporary setup token. Setup checks archive-key
 permission access before showing a suggested name and automatic location.
@@ -639,7 +637,7 @@ carries the saved folder with `--prefix`, retention, skill-use capture rule,
 effective skill evidence mode, and whether agent skills are installed.
 Omitting these flags from a scripted reconfiguration keeps the saved settings.
 
-For another machine, the encrypted shared-key beta can transfer settings through
+For another machine, encrypted pairing can transfer settings through
 `setup --pair` or `setup --pair-file PATH`. Read [Multiple machines](../guides/multiple-machines.md)
 for separate bundle/code delivery, destination consent, scope review, and the
 shared R2 key's revocation limit. Pairing refuses to run inside a coding agent.

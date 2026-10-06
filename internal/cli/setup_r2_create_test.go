@@ -94,13 +94,9 @@ func newGuidedR2Fixture(t *testing.T) *guidedR2Fixture {
 	return g
 }
 
-// setEnv is the process environment setup sees: the switch that turns guided
-// creation on, and extra.
+// setEnv is the process environment setup sees.
 func (g *guidedR2Fixture) setEnv(extra map[string]string) {
 	g.env.LookupEnv = func(key string) (string, bool) {
-		if key == experimentalR2CreateVar {
-			return "1", true
-		}
 		value, ok := extra[key]
 		return value, ok
 	}
@@ -781,7 +777,7 @@ func TestGuidedR2CheckAgainSeesTheDashboardChange(t *testing.T) {
 	t.Parallel()
 	g := newGuidedR2Fixture(t)
 	g.cf.ManagedEnabled = true
-	answers := strings.Split(strings.TrimSuffix(guidedAnswers(append(append([]string{}, askToken...), publicRest("again")...)...), "\n"), "\n")
+	answers := strings.Split(strings.TrimSuffix("no\n"+guidedAnswers(append(append([]string{}, askToken...), publicRest("again")...)...), "\n"), "\n")
 	g.env.IsTerminal = func(any) bool { return true }
 	in := &flipReader{lines: answers, before: "again", flip: func() { g.cf.SetPublicAccess(false, nil) }}
 	var out bytes.Buffer
@@ -1204,9 +1200,6 @@ func TestParseR2AccountID(t *testing.T) {
 	}
 }
 
-// withR2CreateSwitch is an Env whose lookup answers the experimental R2
-// switch with value, set or not, and nothing else.
-
 func menuKeys(options []option) string {
 	var keys []string
 	for _, o := range options {
@@ -1215,11 +1208,7 @@ func menuKeys(options []option) string {
 	return strings.Join(keys, ",")
 }
 
-// With the switch off the menu is exactly storageMenuOptions, which the
-// goldens show. The guided R2 choice joins it next to the guided S3 one,
-// before the instructions, only when the switch is on, and nothing but the
-// exact value 1 turns it on.
-func TestStorageMenuHasTwoProvidersWithEitherGateState(t *testing.T) {
+func TestStorageMenuHasTwoProviders(t *testing.T) {
 	t.Parallel()
 	for range 2 {
 		if got := menuKeys(storageMenuOptions()); got != "r2,s3" {
@@ -1676,23 +1665,18 @@ func TestGuidedR2TokenAnswerWithoutAValueIsRevokedByID(t *testing.T) {
 	}
 }
 
-// Without the switch, setup never offers guided creation, and typing its key
-// picks nothing.
-func TestGuidedR2IsHiddenWithoutTheSwitch(t *testing.T) {
+// Guided creation works through the explicit shortcut without environment switches.
+func TestGuidedR2AvailableWithoutFlags(t *testing.T) {
 	t.Parallel()
 	g := newGuidedR2Fixture(t)
 	g.env.LookupEnv = func(string) (string, bool) { return "", false }
-	out := g.run(t, strings.Join([]string{"", guidedR2Choice, "s3-existing", "work", "2", ""}, "\n")+"\n", 0)
-	if strings.Contains(out, "Cloudflare R2: create a new bucket for me") || !strings.Contains(out, "Choose a listed number or action") {
-		t.Fatalf("output:\n%s", out)
+	g.run(t, g.happy(), 0)
+	if len(g.cf.Tokens()) != 3 {
+		t.Fatal("guided creation did not issue its archive key and spares")
 	}
-	if len(g.cf.Requests()) != 0 || len(g.apis) != 0 {
-		t.Fatal("Cloudflare was reached")
-	}
+	g.savedConfig(t)
 }
 
-// With the switch on the guided choice follows the guided S3 one, right
-// before the instructions.
 func TestGuidedR2DoesNotAddNumberedProviderChoices(t *testing.T) {
 	t.Parallel()
 	g := newGuidedR2Fixture(t)
@@ -1747,7 +1731,7 @@ func TestGuidedR2AsksForANewNameOutsideTheSignalHandler(t *testing.T) {
 	g.env.Interrupts = sig.interrupts
 	g.env.IsTerminal = func(any) bool { return true }
 	var reads, activeAtRead atomic.Int32
-	answers := append(append([]string{"", "r2-create"}, askToken...), "customize", "taken-name", "n", "", "other-name", "", "")
+	answers := append(append([]string{"no", "", "r2-create"}, askToken...), "customize", "taken-name", "n", "", "other-name", "", "")
 	in := &probeReader{lines: answers, onRead: func() {
 		reads.Add(1)
 		activeAtRead.Add(sig.active())

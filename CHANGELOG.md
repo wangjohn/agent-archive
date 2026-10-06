@@ -15,13 +15,17 @@ follow [Semantic Versioning](https://semver.org/).
   Concurrent header rewrites defer capture for retry, including ordinary
   admission headers and dependencies with empty captured prefixes.
 
+- Make machine pairing, dedicated R2 keys, provider verification, revocation,
+  and guided R2 bucket creation generally available without experimental flags.
+  First setup offers pairing from another machine.
+
 - Complete non-live experimental pairing/revocation handling: committed retired
   dedicated-key history, healthy issuer labels and private operator bindings,
   unused spare observations and bounded informational operation progress.
   Pairing preserves standalone exclusions, offers safe scope/delivery/token/app
   recovery and reports success before post-commit cleanup and history import.
-  Both peers must be upgraded for standalone exclusions; live provider and platform
-  acceptance remain pending and general availability stays disabled.
+  Both peers must be upgraded for standalone exclusions; additional live provider and platform
+  coverage remains tracked for release testing.
 
 ### Fixed
 
@@ -500,7 +504,7 @@ the release behavior.
   revokes the new key), or continue anyway. Not available with
   `setup --yes`. It has not yet been run against every kind of Cloudflare
   account, which is why it is behind the switch. See [creating a
-  bucket](docs/getting-started/bucket.md#let-setup-create-it-experimental).
+  bucket](docs/getting-started/bucket.md#let-setup-create-it).
 - **`agent-archive stats` is interactive on a terminal.** Plain `stats` opens
   a screen with a bar of keys: `o` `d` `p` `m` `a` switch between the
   overview, detail, projects, models and agents views, `w` cycles the window
