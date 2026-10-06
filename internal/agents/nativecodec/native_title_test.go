@@ -145,3 +145,38 @@ func TestCodexOpenPageContextIsNotAPromptFallback(t *testing.T) {
 		})
 	}
 }
+
+func TestClaudeNamingOnlyChangeAcrossCodecUpgradeRejectsOtherEvidence(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		change func(*archive.SourceBundle)
+		want   bool
+	}{
+		{"codec provenance", func(b *archive.SourceBundle) {}, true},
+		{"conversation", func(b *archive.SourceBundle) {
+			b.NativeRecords[0]["message"].(map[string]any)["content"] = "New human request"
+		}, false},
+		{"owner", func(b *archive.SourceBundle) { b.NativeSessionID = "other" }, false},
+		{"harness", func(b *archive.SourceBundle) { b.Capture.Harness.Version = "different" }, false},
+		{"supplemental", func(b *archive.SourceBundle) {
+			b.SupplementalEvidence = []archive.SupplementalEvidence{{Kind: archive.EvidenceKindLifecycleHook}}
+		}, false},
+		{"source format", func(b *archive.SourceBundle) { b.Capture.SourceFormat = "codex-jsonl" }, false},
+		{"links", func(b *archive.SourceBundle) {
+			b.LinkedSessions = []archive.LinkedSessionReference{{SessionID: "child"}}
+		}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			before := claudeLabelLines(t)
+			before.Capture.FilterVersion = "15"
+			before.Capture.AdapterVersion = "0.15.0"
+			after := claudeLabelLines(t, `{"type":"ai-title","aiTitle":"Generated","sessionId":"s"}`)
+			tc.change(&after)
+			if got := ClaudeNamingOnlyChange(before, after); got != tc.want {
+				t.Fatalf("naming-only = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

@@ -53,6 +53,10 @@ func ClaudeNamingOnlyChange(previous, candidate archive.SourceBundle) bool {
 		if len(b.LinkedSessions) == 0 {
 			b.LinkedSessions = nil
 		}
+		// Codec provenance can change during a title append on the first pass
+		// after an upgrade. Equal retained conversation still proves no activity.
+		b.Capture.FilterVersion = ""
+		b.Capture.AdapterVersion = ""
 		b.Capture.CapturedAt = time.Time{}
 		b.Capture.Boundary = archive.CaptureBoundary{}
 		b.Capture.Gaps = nil
