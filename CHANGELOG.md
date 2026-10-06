@@ -8,6 +8,12 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- A bounded shared Codex catalog observes active and archived rollout identity
+  across approved homes, validates optional read-only current locators and
+  independently confines each history dependency. Pending-history diagnostics
+  can report candidate locator evidence; history writes remain disabled and
+  ordinary capture performs no catalog inventory.
+
 - Readers understand self-contained Codex fork, child and revised histories,
   preserve exact raw ordinal boundaries and count only the chat's own activity.
   Related-history writes and cleanup remain protected pending revision-aware
