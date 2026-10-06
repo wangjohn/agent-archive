@@ -134,8 +134,10 @@ func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config,
 		h.Formats = slices.Clone(c.Health.Formats)
 	}
 	allowance := Budget
+	checkpointAllowance := Budget
 	if o.Rollouts != nil {
-		allowance = min(Budget-time.Second, o.Rollouts.remaining-time.Second)
+		checkpointAllowance = min(Budget, o.Rollouts.remaining)
+		allowance = checkpointAllowance - time.Second
 		if allowance <= 0 {
 			return h, errors.New("native observation budget exhausted")
 		}
@@ -144,8 +146,13 @@ func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config,
 	if o.Rollouts != nil {
 		defer func() { o.Rollouts.remaining -= time.Since(started) }()
 	}
+	// Observation may exhaust its slice while the durable queue/proofs still
+	// need saving. Keep the reserved checkpoint second inside the same pass
+	// allowance and under the original caller's cancellation.
+	checkpointCtx, cancelCheckpoint := context.WithDeadline(ctx, started.Add(checkpointAllowance))
+	defer cancelCheckpoint()
 	deadline := started.Add(allowance)
-	ctx, cancel := context.WithDeadline(ctx, deadline)
+	ctx, cancel := context.WithDeadline(checkpointCtx, deadline)
 	defer cancel()
 	resolver := sourcefacts.NewProjectResolver()
 	recovery := sourcefacts.NewRecoveryResolver(cfg.Archive.Projects, nil, canonicalProjectPath, o.RepositoryIdentity, &c.Recovery)
@@ -180,7 +187,7 @@ func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config,
 	}
 	write := func() error { return local.WriteCompact(path, c) }
 	if o.Rollouts != nil {
-		write = func() error { return o.Rollouts.writeCatalog(ctx, path, c) }
+		write = func() error { return o.Rollouts.writeCatalog(checkpointCtx, path, c) }
 	}
 	if err := write(); err != nil {
 		return h, errors.Join(errors.New("discovery state write failed; retry next scan"), err)

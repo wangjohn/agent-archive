@@ -78,6 +78,9 @@ func (l *CodexRolloutLookup) readCatalog(ctx context.Context, path string, c *ca
 }
 
 func (l *CodexRolloutLookup) writeCatalog(ctx context.Context, path string, c catalog) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	const countScratch = 32 << 10
 	if !l.readBudget.Reserve(countScratch) {
 		return errCatalogBudget
@@ -85,12 +88,18 @@ func (l *CodexRolloutLookup) writeCatalog(ctx context.Context, path string, c ca
 	n, err := jsonwire.Bound(ctx, c, l.readBudget.Available()-1)
 	l.readBudget.Release(countScratch)
 	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return err
+		}
 		return errors.Join(errCatalogBudget, err)
 	}
 	if !l.readBudget.Reserve(n + 1) {
 		return errCatalogBudget
 	}
 	defer l.readBudget.Release(n + 1)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	return local.WriteCompact(path, c)
 }
 
