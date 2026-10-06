@@ -72,19 +72,19 @@ func (s *sessionScan) reconcileRevisions(read sourceRead, active archive.SourceB
 			}
 		}
 	}
-	planner := revisionPlanner{ctx: s.ctx, budget: s.readBudget(), plan: plan, active: active, adapter: read.adapter, bytesLeft: 128 << 20, compress: s.compressSource}
+	planner := revisionPlanner{budget: s.readBudget(), plan: plan, active: active, adapter: read.adapter, bytesLeft: 128 << 20, compress: s.compressSource}
 	if err := s.addPendingRevision(&planner); err != nil {
 		return nil, err
 	}
 	// Latest locally verified candidate precedes native candidates. It survives
 	// missing outgoing files; a freshly opened extension can replace it below.
 	if haveCached && revisionID(cached) != current {
-		if err := planner.add(cached); err != nil {
+		if err := planner.add(s.ctx, cached); err != nil {
 			return nil, err
 		}
 	}
 	if havePrevious && revisionID(previous) != current {
-		if err := planner.add(previous); err != nil {
+		if err := planner.add(s.ctx, previous); err != nil {
 			return nil, err
 		}
 	}
@@ -107,7 +107,6 @@ func revisionID(b archive.SourceBundle) string {
 }
 
 type revisionPlanner struct {
-	ctx       context.Context
 	budget    *agentapi.NativeReadBudget
 	compress  func(archive.SourceBundle) (archive.CompressedSource, error)
 	plan      *revisionPlan
@@ -116,7 +115,7 @@ type revisionPlanner struct {
 	bytesLeft int
 }
 
-func (p *revisionPlanner) add(bundle archive.SourceBundle) error {
+func (p *revisionPlanner) add(ctx context.Context, bundle archive.SourceBundle) error {
 	if err := bundle.ValidateHistory(); err != nil {
 		return err
 	}
@@ -150,7 +149,7 @@ func (p *revisionPlanner) add(bundle archive.SourceBundle) error {
 	if len(p.plan.Sources) >= archive.MaxHistorySpans {
 		return agentapi.Wrap(agentapi.Limit, errors.New("revision stage limit exceeded"))
 	}
-	retainedBytes, err := p.checkStageEvidence(bundle)
+	retainedBytes, err := p.checkStageEvidence(ctx, bundle)
 	if err != nil {
 		return err
 	}
@@ -302,7 +301,7 @@ func (s *sessionScan) addNativeRevision(planner *revisionPlanner, filtered archi
 			break
 		}
 	}
-	return planner.add(bundle)
+	return planner.add(s.ctx, bundle)
 }
 
 func (s *sessionScan) addPendingRevision(planner *revisionPlanner) error {
@@ -324,7 +323,7 @@ func (s *sessionScan) addPendingRevision(planner *revisionPlanner) error {
 			return err
 		}
 		if revisionID(bundle) != planner.plan.Current {
-			if err := planner.add(bundle); err != nil {
+			if err := planner.add(s.ctx, bundle); err != nil {
 				return err
 			}
 		}
@@ -335,16 +334,12 @@ func (s *sessionScan) addPendingRevision(planner *revisionPlanner) error {
 
 // checkStageEvidence reserves retained records and encoded bytes independently of
 // compressed disk size, including cached/pending inputs absent from native reads.
-func (p *revisionPlanner) checkStageEvidence(bundle archive.SourceBundle) (int, error) {
+func (p *revisionPlanner) checkStageEvidence(ctx context.Context, bundle archive.SourceBundle) (int, error) {
 	const countScratch = 32 << 10
 	if !p.budget.Reserve(countScratch) {
 		return 0, errRetainedBudget
 	}
 	defer p.budget.Release(countScratch)
-	ctx := p.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	recordsLeft, bytesLeft := archive.MaxHistoryRecords, 128<<20
 	for _, stage := range p.plan.Sources {
 		recordsLeft -= len(stage.Bundle.NativeRecords)

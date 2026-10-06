@@ -124,7 +124,7 @@ func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config,
 	}
 	now := o.Now().UTC()
 	h := Health{Enabled: enabled, LastAttempt: now, Outcomes: map[string]int{}}
-	c, path, roots, err := prepareCatalog(store, cfg, o, adapter, &h)
+	c, path, roots, err := prepareCatalog(ctx, store, cfg, o, adapter, &h)
 	if err != nil {
 		h.Pending = true
 		return h, err
@@ -823,7 +823,7 @@ func discoveryProbeAvailable(h *Health, rollouts *CodexRolloutLookup) bool {
 	return h.Probes < HeaderProbes && (rollouts == nil || rollouts.probes < HeaderProbes-maxCurrentThreads)
 }
 
-func prepareCatalog(store *state.Store, cfg config.Config, o Options, adapter SourceAdapter, h *Health) (catalog, string, []string, error) {
+func prepareCatalog(ctx context.Context, store *state.Store, cfg config.Config, o Options, adapter SourceAdapter, h *Health) (catalog, string, []string, error) {
 	path := filepath.Join(store.Home(), "discovery-catalog.json")
 	var c catalog
 	if o.Rollouts != nil && o.Rollouts.catalog != nil {
@@ -831,7 +831,7 @@ func prepareCatalog(store *state.Store, cfg config.Config, o Options, adapter So
 	} else {
 		read := func() error { return local.Read(path, &c) }
 		if o.Rollouts != nil {
-			read = func() error { return o.Rollouts.readCatalog(context.Background(), path, &c) }
+			read = func() error { return o.Rollouts.readCatalog(ctx, path, &c) }
 		}
 		if err := read(); err != nil && !errors.Is(err, os.ErrNotExist) {
 			if errors.Is(err, agentapi.ErrReadBudget) {

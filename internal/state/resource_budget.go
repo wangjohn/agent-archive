@@ -6,9 +6,12 @@ import (
 	"errors"
 	"io"
 	"os"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/jsonwire"
 	"github.com/wangjohn/agent-archive/internal/local"
 )
@@ -107,4 +110,105 @@ func (s *Store) writeCompact(path string, value any) error {
 	}
 	defer s.resourceBudget.Release(n + 1)
 	return local.WriteCompact(path, value)
+}
+
+// unmarshalOwned charges an additional decoded view of bytes already owned by
+// this scope. Returned metadata has an independent lifetime from its wire input.
+func (s *Store) unmarshalOwned(data []byte, value any) error {
+	if s.resourceBudget == nil {
+		return json.Unmarshal(data, value)
+	}
+	if err := s.resourceContext.Err(); err != nil {
+		return err
+	}
+	n := int64(len(data))
+	if !s.resourceBudget.Reserve(n) {
+		return errStateBudget
+	}
+	if err := json.Unmarshal(data, value); err != nil {
+		s.resourceBudget.Release(n)
+		return err
+	}
+	*s.resourceReleases = append(*s.resourceReleases, func() { s.resourceBudget.Release(n) })
+	return nil
+}
+
+// summaryBudgeted holds one decoded sidecar and the digest's two encoded byte
+// owners only while deriving the compact summary, before persistence starts.
+func (s *Store) summaryBudgeted(p publishedState) (PublishedSummary, error) {
+	if s.resourceBudget != nil {
+		if err := s.resourceContext.Err(); err != nil {
+			return PublishedSummary{}, err
+		}
+	}
+	n := int64(len(p.MetadataBytes))
+	if !s.resourceBudget.Reserve(n) {
+		return PublishedSummary{}, errStateBudget
+	}
+	defer s.resourceBudget.Release(n)
+	var metadata archive.Metadata
+	if json.Unmarshal(p.MetadataBytes, &metadata) != nil {
+		metadata = archive.Metadata{}
+	} // preserve the unreadable legacy fallback
+	if s.resourceBudget != nil {
+		const scratch = 32 << 10
+		if !s.resourceBudget.Reserve(scratch) {
+			return PublishedSummary{}, errStateBudget
+		}
+		ctx := s.resourceContext
+		size, err := jsonwire.Bound(ctx, struct {
+			Active     archive.SourceReference  `json:"active"`
+			CapturedAt time.Time                `json:"captured_at"`
+			History    *archive.RevisionHistory `json:"history,omitempty"`
+		}{metadata.SourceBundle, metadata.CapturedAt, metadata.History}, s.resourceBudget.Available()/2)
+		s.resourceBudget.Release(scratch)
+		if err != nil {
+			return PublishedSummary{}, errors.Join(errStateBudget, err)
+		}
+		// SourceSetDigest's encoder buffer and returned JSON coexist independently.
+		if !s.resourceBudget.Reserve(size + size) {
+			return PublishedSummary{}, errStateBudget
+		}
+		defer s.resourceBudget.Release(size + size)
+	}
+	// The final digest and revision ID outlive the ephemeral metadata. Reserve
+	// their independently owned bytes before deriving/cloning them.
+	output := int64(64)
+	if metadata.History != nil {
+		output += int64(len(metadata.History.CurrentRevision))
+	}
+	if !s.resourceBudget.Reserve(output) {
+		return PublishedSummary{}, errStateBudget
+	}
+	summary := p.summaryFromMetadata(metadata)
+	summary.CurrentRevision = strings.Clone(summary.CurrentRevision)
+	actual := int64(len(summary.SourceSetDigest) + len(summary.CurrentRevision))
+	s.resourceBudget.Release(output - actual)
+	if s.resourceBudget != nil {
+		*s.resourceReleases = append(*s.resourceReleases, func() { s.resourceBudget.Release(actual) })
+	}
+	return summary, nil
+}
+
+// nextBudgeted borrows the sole temporary metadata decode used to preserve an
+// existing clock clamp. The result keeps only the compact clamp, never that view.
+func (p *Published) nextBudgeted(bundle archive.SourceBundle, at time.Time, status CacheStatus, reason BlockedReason, metadata []byte, held []archive.SupplementalEvidence, source *archive.SourceReference) (publishedState, error) {
+	if p.store.resourceBudget != nil {
+		if err := p.store.resourceContext.Err(); err != nil {
+			return publishedState{}, err
+		}
+	}
+	n := int64(0)
+	if p.state.AgeFrom != nil {
+		raw := metadata
+		if len(raw) == 0 {
+			raw = p.state.MetadataBytes
+		}
+		n = int64(len(raw))
+	}
+	if !p.store.resourceBudget.Reserve(n) {
+		return publishedState{}, errStateBudget
+	}
+	defer p.store.resourceBudget.Release(n)
+	return p.state.next(bundle, at, status, reason, metadata, held, source), nil
 }

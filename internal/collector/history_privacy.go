@@ -191,7 +191,7 @@ func (s *sessionScan) stricterHistorySuccessor(p state.PendingPublication, commi
 	if err := boundFrozenReferences(derived); err != nil {
 		return state.PendingPublication{}, err
 	}
-	return next, next.ValidateHistory(s.id())
+	return next, next.ValidateHistoryBudgeted(s.id(), s.readBudget())
 }
 
 func hasRevisionInput(inputs []state.HistoryInput, id string) bool {
@@ -288,7 +288,7 @@ func (s *sessionScan) prepareRetainedHistoryWork() (sessionOutcome, bool, error)
 	// compatibility. Each input is decoded before constructing this journal.
 	authority, found, err := s.published.LastPublishedMetadata()
 	if err != nil || !found {
-		return outcomeSkipped, true, errors.New("complete acknowledged history authority required for maintenance")
+		return outcomeSkipped, true, errors.Join(errors.New("complete acknowledged history authority required for maintenance"), err)
 	}
 	bundle, _, found := s.published.LastPublished()
 	if !found {

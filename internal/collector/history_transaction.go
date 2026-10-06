@@ -181,7 +181,7 @@ func historyLimitedGet(ctx context.Context, store storage.ObjectStore, key strin
 }
 
 func (s *sessionScan) frozenHistoryMetadata(p state.PendingPublication) (archive.Metadata, error) {
-	if err := p.ValidateHistory(s.id()); err != nil {
+	if err := p.ValidateHistoryBudgeted(s.id(), s.readBudget()); err != nil {
 		return archive.Metadata{}, err
 	}
 	if int64(len(p.MetadataBytes)) > historyMetadataLimit {

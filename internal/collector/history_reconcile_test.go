@@ -36,7 +36,7 @@ func TestRevisionPlannerFirstABCAndOutgoingAppend(t *testing.T) {
 	plan := &revisionPlan{Current: revisionC, ObservedAt: c.Capture.CapturedAt}
 	planner := revisionPlanner{plan: plan, active: c, adapter: codex.Filter{}, bytesLeft: 128 << 20}
 	for _, bundle := range []archive.SourceBundle{b, a, b} {
-		if err := planner.add(bundle); err != nil {
+		if err := planner.add(t.Context(), bundle); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -46,7 +46,7 @@ func TestRevisionPlannerFirstABCAndOutgoingAppend(t *testing.T) {
 	// A never-published append replaces B's physical entry, retaining its suffix.
 	appended := revisionBundle(t, revisionB, "common", "B-only", "unobserved")
 	appended.Capture.CapturedAt = plan.ObservedAt.Add(time.Minute)
-	if err := planner.add(appended); err != nil {
+	if err := planner.add(t.Context(), appended); err != nil {
 		t.Fatal(err)
 	}
 	if len(plan.Preserved) != 2 || len(plan.Sources) != 2 || !plan.MeaningfulAt.Equal(appended.Capture.CapturedAt) {
@@ -69,25 +69,25 @@ func TestRevisionPlannerOwnershipReactivationAndSameSizeRewrite(t *testing.T) {
 	own := uint64(3)
 	old.History.OwnStart = &own // All text is inherited; it is not history activity.
 	p := revisionPlanner{plan: &revisionPlan{Current: revisionC}, active: active, adapter: codex.Filter{}, bytesLeft: 128 << 20}
-	if err := p.add(old); err != nil || len(p.plan.Preserved) != 0 {
+	if err := p.add(t.Context(), old); err != nil || len(p.plan.Preserved) != 0 {
 		t.Fatal("copied prefix preserved", err)
 	}
 	old.History.OwnStart = nil
-	if err := p.add(old); err != nil {
+	if err := p.add(t.Context(), old); err != nil {
 		t.Fatal(err)
 	}
 	rewrite := revisionBundle(t, revisionB, "prefix", "other") // Same count and string length.
-	if err := p.add(rewrite); !agentapi.HasFailure(err, agentapi.Changed) {
+	if err := p.add(t.Context(), rewrite); !agentapi.HasFailure(err, agentapi.Changed) {
 		t.Fatal("same-size contradiction accepted", err)
 	}
 	p.plan.Current = revisionB
-	if err := p.add(old); err != nil || len(p.plan.Sources) != 1 {
+	if err := p.add(t.Context(), old); err != nil || len(p.plan.Sources) != 1 {
 		t.Fatal("reactivation added another source", err)
 	}
 	// An ordinary append on the active physical revision never adds a history entry.
 	activeAppend := revisionBundle(t, revisionC, "prefix", "append")
 	p = revisionPlanner{plan: &revisionPlan{Current: revisionC}, active: activeAppend, adapter: codex.Filter{}, bytesLeft: 128 << 20}
-	if err := p.add(active); err != nil || len(p.plan.Preserved) != 0 {
+	if err := p.add(t.Context(), active); err != nil || len(p.plan.Preserved) != 0 {
 		t.Fatal("active append preserved", err)
 	}
 }
@@ -95,7 +95,7 @@ func TestRevisionPlannerOwnershipReactivationAndSameSizeRewrite(t *testing.T) {
 func TestRevisionPlannerBoundsAndFilterChangesCannotProveCoverage(t *testing.T) {
 	b, c := revisionBundle(t, revisionB, "lost"), revisionBundle(t, revisionC, "current")
 	p := revisionPlanner{plan: &revisionPlan{Current: revisionC}, active: c, adapter: codex.Filter{}, bytesLeft: 1}
-	if err := p.add(b); !agentapi.HasFailure(err, agentapi.Limit) || len(p.plan.Preserved) != 0 {
+	if err := p.add(t.Context(), b); !agentapi.HasFailure(err, agentapi.Limit) || len(p.plan.Preserved) != 0 {
 		t.Fatal("stage budget not enforced", err)
 	}
 	c = b
@@ -108,7 +108,7 @@ func TestRevisionPlannerBoundsAndFilterChangesCannotProveCoverage(t *testing.T) 
 	if err := json.Unmarshal(raw, &restored); err != nil || !ownedEvidenceCovered(codex.Filter{}, b, restored) {
 		t.Fatal("restart changed ordinal coverage", err)
 	}
-	if errors.Is(p.add(b), archive.ErrHistoryMutationPending) {
+	if errors.Is(p.add(t.Context(), b), archive.ErrHistoryMutationPending) {
 		t.Fatal("planner must produce evidence independently of publication fence")
 	}
 }

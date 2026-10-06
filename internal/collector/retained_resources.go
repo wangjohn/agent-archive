@@ -183,7 +183,13 @@ func (s *sessionScan) refilterRetained(adapter archive.Adapter, bundle archive.S
 		}
 		out.Capture.Harness = bundle.Capture.Harness
 		out.Capture.Gaps = mergeCaptureGaps(bundle.Capture.Gaps, out.Capture.Gaps)
-		return out, out.ValidateHistory()
+		if err := out.ValidateHistory(); err != nil {
+			return archive.SourceBundle{}, err
+		}
+		// Ordinary retained filtering also finishes encoded-row consumption once
+		// the independently decoded bundle and auxiliary envelope are available.
+		read := sourceRead{filtered: filtered, filterLease: &mark}
+		return s.finishNativeFilter(&read, out)
 	}
 	capBytes := min(int64(32<<20), max(int64(0), (b.Available()-(64<<10))/2))
 	if capBytes <= 0 {
@@ -414,4 +420,40 @@ func (s *sessionScan) keepRetainedFrom(mark, keep int) {
 	for i := mark; i < keep; i++ {
 		s.releaseRetainedIndex(i)
 	}
+}
+
+// nativeFilterLease identifies the one output owner installed by a successful
+// injected leased native filter. Unleased adapters install no owner here.
+func (s *sessionScan) nativeFilterLease(mark int) *int {
+	if len(s.retainedReleases) == mark+1 {
+		return &mark
+	}
+	return nil
+}
+
+// finishNativeFilter ends ordinary encoded-row ownership after every build and
+// rewrite guard has consumed it. History, ordinal and text aliases retain their
+// input lease. The returned ordinary envelope owns its auxiliary observations.
+func (s *sessionScan) finishNativeFilter(read *sourceRead, candidate archive.SourceBundle) (archive.SourceBundle, error) {
+	if read.filterLease == nil || candidate.History != nil || len(candidate.Ordinals) != 0 || read.filtered.History != nil || len(read.filtered.Ordinals) != 0 || len(read.filtered.Text) != 0 {
+		return candidate, nil
+	}
+	detached, err := s.detachRetainedEnvelope(candidate)
+	if err != nil {
+		return archive.SourceBundle{}, err
+	}
+	read.filtered.Records = nil
+	if s.filtered != nil && s.filtered.filterLease != nil && *s.filtered.filterLease == *read.filterLease {
+		s.filtered = nil
+	}
+	if s.rewritten != nil {
+		rewritten, err := s.detachRetainedEnvelope(*s.rewritten)
+		if err != nil {
+			return archive.SourceBundle{}, err
+		}
+		s.rewritten = &rewritten
+	}
+	s.releaseRetainedIndex(*read.filterLease)
+	read.filterLease = nil
+	return detached, nil
 }

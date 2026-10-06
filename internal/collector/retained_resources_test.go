@@ -10,6 +10,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agents/codex"
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
@@ -159,16 +160,16 @@ func TestRevisionSizingRefusesSharedPressureAndReleasesScratch(t *testing.T) {
 	if !budget.Reserve(pressure) {
 		t.Fatal("pressure")
 	}
-	p := revisionPlanner{ctx: t.Context(), budget: budget, plan: &revisionPlan{}}
+	p := revisionPlanner{budget: budget, plan: &revisionPlan{}}
 	b := revisionBundle(t, revisionB, "synthetic retained evidence")
-	if _, err := p.checkStageEvidence(b); !errors.Is(err, agentapi.ErrReadBudget) {
+	if _, err := p.checkStageEvidence(t.Context(), b); !errors.Is(err, agentapi.ErrReadBudget) {
 		t.Fatalf("sizing bypassed shared pressure: %v", err)
 	}
 	if used, _ := budget.Charged(); used != pressure {
 		t.Fatalf("refusal changed prior charge: %d", used)
 	}
 	budget.Release(pressure)
-	if n, err := p.checkStageEvidence(b); err != nil || n == 0 {
+	if n, err := p.checkStageEvidence(t.Context(), b); err != nil || n == 0 {
 		t.Fatalf("independent sizing failed: %d %v", n, err)
 	}
 	if used, _ := budget.Charged(); used != 0 {
@@ -204,5 +205,75 @@ func TestMetadataRefreshEncodingRefusesSharedPressure(t *testing.T) {
 	scan.releaseRetained()
 	if used, _ := scan.retainedBudget.Charged(); used != 0 {
 		t.Fatalf("refresh refusal leaked: %d", used)
+	}
+}
+
+func TestNativeFilteredRowsEndAfterDecodedOrdinaryConsumption(t *testing.T) {
+	local := newTestStore(t)
+	path := writeTranscript(t, t.TempDir(), "codex.jsonl", variedTranscript(200))
+	reg := registration(t, path)
+	published, err := local.LoadPublishedState(reg.ArchiveSessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scan := newSessionScan(t.Context(), local, storagetest.NewMemoryStore(), reg, state.Request{}, published, reg.RegisteredAt, Options{Sources: testSources, Parsers: testParsers})
+	defer scan.releaseRetained()
+	read, ok, err := scan.read()
+	if err != nil || !ok || read.filterLease == nil {
+		t.Fatal("leased ordinary read", ok, err)
+	}
+	candidate, _, err := scan.build(read)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, _ := scan.readBudget().Charged()
+	out, err := scan.finishNativeFilter(&read, candidate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, _ := scan.readBudget().Charged()
+	if after >= before || read.filterLease != nil || len(read.filtered.Records) != 0 {
+		t.Fatal("encoded rows retained after consumption", before, after)
+	}
+	// Independent decoded native rows and the detached envelope remain usable.
+	if len(out.NativeRecords) != len(candidate.NativeRecords) || out.Capture.Harness != candidate.Capture.Harness {
+		t.Fatal("decoded output lost")
+	}
+	if same, err := scan.bundleEvidenceEqual(out, candidate); err != nil || !same {
+		t.Fatal("ordinary evidence changed", err)
+	}
+}
+
+func TestNativeHistoryAliasesRemainChargedAfterProviderClose(t *testing.T) {
+	scan, _ := reconciliationFixture(t)
+	closePass := openCursorPass(nil, &scan.opts)
+	defer func() { _ = closePass(); scan.releaseRetained() }()
+	read, ok, err := scan.read()
+	if err != nil || !ok || read.filterLease == nil {
+		t.Fatal(ok, err)
+	}
+	candidate, _, err := scan.build(read)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, _ := scan.readBudget().Charged()
+	out, err := scan.finishNativeFilter(&read, candidate)
+	after, _ := scan.readBudget().Charged()
+	if err != nil || after != before || read.filterLease == nil {
+		t.Fatal("history alias lease ended", before, after, err)
+	}
+	if err := closePass(); err != nil {
+		t.Fatal(err)
+	}
+	if err := out.ValidateHistory(); err != nil {
+		t.Fatal("borrowed history after provider close", err)
+	}
+	if len(out.Ordinals) != len(out.NativeRecords) {
+		t.Fatal("ordinal aliases lost")
+	}
+	scan.releaseRetained()
+	used, _ := scan.readBudget().Charged()
+	if used != 0 {
+		t.Fatal("history alias scope leaked", used)
 	}
 }

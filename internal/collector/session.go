@@ -96,9 +96,10 @@ type sessionScan struct {
 
 // filteredSource is a source read and filtered once in a scan.
 type filteredSource struct {
-	adapter    agentapi.TranscriptFilter
-	transcript archive.FilteredTranscript
-	observed   sourceState
+	filterLease *int
+	adapter     agentapi.TranscriptFilter
+	transcript  archive.FilteredTranscript
+	observed    sourceState
 }
 
 // warn records a failure that does not end the scan.
@@ -247,9 +248,10 @@ func (s *sessionScan) resume() (outcome sessionOutcome, handled bool, err error)
 
 // sourceRead is what reading the session's source produced.
 type sourceRead struct {
-	adapter  agentapi.TranscriptFilter
-	filtered archive.FilteredTranscript
-	observed sourceState
+	filterLease *int
+	adapter     agentapi.TranscriptFilter
+	filtered    archive.FilteredTranscript
+	observed    sourceState
 	// outcome is the scan's outcome when the read ended it.
 	outcome sessionOutcome
 }
@@ -270,11 +272,14 @@ func (s *sessionScan) read() (read sourceRead, ok bool, err error) {
 	if s.filtered != nil {
 		read.adapter = s.filtered.adapter
 		read.filtered, read.observed = s.filtered.transcript, s.filtered.observed
+		read.filterLease = s.filtered.filterLease
 	} else {
 		if read.adapter, err = sourceAdapter(s.opts.Sources, s.reg.Harness.Name); err != nil {
 			return read, false, err
 		}
+		mark := len(s.retainedReleases)
 		read.filtered, read.observed, err = reader.Filter(s.ctx, read.adapter, s.opts.maxTranscriptBytes())
+		read.filterLease = s.nativeFilterLease(mark)
 	}
 	if err != nil {
 		read.outcome, err = s.readFailed(read, err)
@@ -390,6 +395,7 @@ func (s *sessionScan) build(read sourceRead) (archive.SourceBundle, []archive.Su
 	// now is a placeholder here; bundleEvidenceEqual ignores CapturedAt, so
 	// it has no effect on the comparison. The real value is assigned once it
 	// is known whether this is genuinely new evidence.
+	candidateOwner := len(s.retainedReleases)
 	candidate, err := s.newSourceBundle(s.reg, read.adapter, read.filtered, s.now, supplemental)
 	if err != nil {
 		return archive.SourceBundle{}, nil, fmt.Errorf("build source bundle: %w", err)
@@ -410,6 +416,9 @@ func (s *sessionScan) build(read sourceRead) (archive.SourceBundle, []archive.Su
 	}
 	supplemental = mergeSupplementalEvidence(baseEvidence, observed, s.req.HookEvidence)
 	supplemental = limitSkillEvidence(supplemental, s.opts.skillEvidence())
+	// The activity probe's decoded rows are no longer consumed. The filtered
+	// input still owns history/ordinal/text aliases needed by the final build.
+	s.releaseRetainedIndex(candidateOwner)
 	candidate, err = s.newSourceBundle(s.reg, read.adapter, read.filtered, s.now, supplemental)
 	if err != nil {
 		return archive.SourceBundle{}, nil, fmt.Errorf("build observed source bundle: %w", err)
@@ -581,6 +590,11 @@ func (s *sessionScan) guard(ctx context.Context, read sourceRead, candidate arch
 // publish renders candidate's publication and decides what happens to it:
 // declined by policy, held back by the upload interval, or published now.
 func (s *sessionScan) publish(read sourceRead, candidate archive.SourceBundle) (sessionOutcome, error) {
+	var err error
+	candidate, err = s.finishNativeFilter(&read, candidate)
+	if err != nil {
+		return outcomeSkipped, err
+	}
 	rendered, err := renderPublication(s.ctx, s.resolveParser(), s.parserVersion(), candidate, s.reg, s.now, s.opts, s.priorRepoKey)
 	if err != nil {
 		return outcomeSkipped, err

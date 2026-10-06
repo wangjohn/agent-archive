@@ -59,6 +59,7 @@ func (SourceProvider) Activities(ctx context.Context, e agentapi.SourceEnvironme
 }
 
 type rolloutFile struct {
+	rawCharged   bool
 	ref          agentapi.SourceRef
 	file         *transcriptio.Snapshot
 	meta         codexmeta.CodexMeta
@@ -102,6 +103,12 @@ func (p *relatedSourcePass) open(ctx context.Context, ref agentapi.SourceRef) (*
 	}
 	if old := p.files[ref.Path]; old != nil {
 		if err := old.file.Check(); err == nil && old.checkHeader(ctx) == nil {
+			if !old.rawCharged {
+				if !p.reserve(old.file.Length()) {
+					return nil, agentapi.ReadBudgetLimit(errors.New("cached native extent exceeds shared budget"))
+				}
+				old.rawCharged = true
+			}
 			return old, nil
 		}
 		if old.refs > 0 {
@@ -138,7 +145,7 @@ func (p *relatedSourcePass) open(ctx context.Context, ref agentapi.SourceRef) (*
 		return fail(sourceFailure(agentapi.Limit, "shared rollout budget exhausted"))
 	}
 	if !p.reserve(f.Length() + sourceHeaderCharge) {
-		return fail(sourceFailure(agentapi.Limit, "shared source and index budget exhausted"))
+		return fail(agentapi.ReadBudgetLimit(errors.New("shared source and index budget exhausted")))
 	}
 	ownedCharge = f.Length() + sourceHeaderCharge
 	reader := bufio.NewReaderSize(io.NewSectionReader(f, 0, min(f.Length(), int64(64<<10)+1)), 4096)
@@ -161,7 +168,7 @@ func (p *relatedSourcePass) open(ctx context.Context, ref agentapi.SourceRef) (*
 	if err != nil {
 		return fail(sourceio.Classify(err))
 	}
-	out := &rolloutFile{ref: ref, file: f, meta: meta, identity: identity, header: line, headerDigest: sha256.Sum256(line), boundary: boundary}
+	out := &rolloutFile{rawCharged: true, ref: ref, file: f, meta: meta, identity: identity, header: line, headerDigest: sha256.Sum256(line), boundary: boundary}
 	p.files[ref.Path] = out
 	return out, nil
 }
@@ -361,7 +368,7 @@ func (p *relatedSourcePass) graph(ctx context.Context, leaf *rolloutFile) ([]phy
 	var reversed []physicalSpan
 	seen := map[string]bool{}
 	current := leaf
-	end, err := newlineBoundary(leaf.file, leaf.file.Length())
+	end, err := p.chargedNewlineBoundary(leaf.file)
 	if err != nil {
 		return nil, sourceio.Classify(err)
 	}
@@ -427,6 +434,7 @@ func hasRelated(f *rolloutFile) bool {
 }
 
 func (p *relatedSourcePass) Signature(ctx context.Context, ref agentapi.SourceRef) (agentapi.SourceObservation, error) {
+	defer p.releaseIdleExtents()
 	if p.env.CodexRollouts != nil && p.genericLegacy(ref) {
 		return p.genericLegacySignature(ctx, ref)
 	}
@@ -524,7 +532,7 @@ func (p *relatedSourcePass) Read(ctx context.Context, ref agentapi.SourceRef, li
 	if p.env.CodexRollouts == nil && codexmeta.RolloutID(ref.Path) == "" {
 		return p.legacy.Read(ctx, ref, limits)
 	}
-	fail := func(err error) (agentapi.SourceSnapshot, error) { return nil, errors.Join(err, p.evict()) }
+	fail := p.readFailure
 	selection, err := p.selectSource(ctx, ref)
 	if err != nil {
 		if selection.leaf == nil && p.env.CodexRollouts == nil && !agentapi.HasFailure(err, agentapi.Cleanup) && (agentapi.Failure(err) == agentapi.FormatMismatch || agentapi.Failure(err) == agentapi.Unavailable) {
@@ -536,7 +544,7 @@ func (p *relatedSourcePass) Read(ctx context.Context, ref agentapi.SourceRef, li
 }
 
 func (p *relatedSourcePass) readSelection(ctx context.Context, limits agentapi.ReadLimits, selection sourceSelection) (agentapi.SourceSnapshot, error) {
-	fail := func(err error) (agentapi.SourceSnapshot, error) { return nil, errors.Join(err, p.evict()) }
+	fail := p.readFailure
 	if !hasRelated(selection.leaf) {
 		snapshot, err := p.ordinary(ctx, limits, selection)
 		if err != nil {
@@ -554,7 +562,7 @@ func (p *relatedSourcePass) readHistorySelection(ctx context.Context, limits age
 	if p.env.RequireConfinedHistory && p.env.Policy.Root == "" {
 		return nil, sourceFailure(agentapi.Unavailable, "related history requires admitted confined source home")
 	}
-	fail := func(err error) (agentapi.SourceSnapshot, error) { return nil, errors.Join(err, p.evict()) }
+	fail := p.readFailure
 	spans, err := p.graph(ctx, selection.leaf)
 	if err != nil {
 		return fail(err)
@@ -681,6 +689,7 @@ func (s *historySnapshot) Close() error {
 	s.scanner = nil
 	s.spans = nil
 	s.selection = sourceSelection{}
+	s.owner.releaseIdleExtents()
 	return nil
 }
 
@@ -825,6 +834,7 @@ func (s *ordinarySnapshot) Close() error {
 			header.refs--
 		}
 		s.headers = nil
+		s.owner.releaseIdleExtents()
 	}
 	return nil
 }
@@ -876,6 +886,28 @@ func newlineBoundary(file io.ReaderAt, size int64) (int64, error) {
 		end = start
 	}
 	return 0, agentapi.Wrap(agentapi.Limit, archive.ErrRecordTooLarge)
+}
+
+// chargedNewlineBoundary preserves the history producer's newline commit
+// boundary. Ordinary JSONL may accept a valid unterminated record instead.
+func (p *relatedSourcePass) chargedNewlineBoundary(file *transcriptio.Snapshot) (int64, error) {
+	size := file.Length()
+	if size == 0 {
+		return 0, nil
+	}
+	var last [1]byte
+	if _, err := file.ReadAt(last[:], size-1); err != nil {
+		return 0, err
+	}
+	if last[0] == '\n' {
+		return size, nil
+	}
+	const scratch = 64 << 10
+	if !p.reserve(scratch) {
+		return 0, agentapi.ReadBudgetLimit(errors.New("native newline scratch budget exhausted"))
+	}
+	defer p.release(scratch)
+	return newlineBoundary(file, size)
 }
 
 func (f ordinaryFile) Records(ctx context.Context, tail bool, windowBytes, recordBytes int64, visit func([]byte) bool) (transcriptio.RecordWindow, error) {
@@ -970,6 +1002,7 @@ func (s *historySnapshot) AdmissionFacts(ctx context.Context) (archive.CodexSour
 }
 
 func (p *relatedSourcePass) ValidateSourceAdmission(ctx context.Context, ref agentapi.SourceRef, admission agentapi.SourceAdmission) error {
+	defer p.releaseIdleExtents()
 	if p.env.CodexRollouts != nil && p.genericLegacy(ref) && admission.Binding == nil && admission.NativeCreatedAt.IsZero() {
 		if admission.NativeID != ref.Key {
 			return sourceFailure(agentapi.Unsafe, "legacy admission identity mismatch")
@@ -1047,7 +1080,10 @@ type prefixValidation struct {
 const prefixSummaryCharge int64 = 128
 
 func (f *rolloutFile) charge() int64 {
-	charge := f.file.Length() + sourceHeaderCharge
+	charge := sourceHeaderCharge
+	if f.rawCharged {
+		charge += f.file.Length()
+	}
 	if f.prefix != nil {
 		charge += int64(len(f.prefix)) + prefixSummaryCharge
 	}
@@ -1464,6 +1500,18 @@ func (p *relatedSourcePass) reserve(bytes int64) bool {
 
 func (p *relatedSourcePass) release(bytes int64) { p.env.ReadBudget.Release(bytes); p.bytes -= bytes }
 
+// Idle file handles retain header/proof and immutable-prefix ownership. Native
+// raw extents have no remaining record consumer once every snapshot closes.
+// Reopening a cached extent reserves it again before graph/record consumption.
+func (p *relatedSourcePass) releaseIdleExtents() {
+	for _, file := range p.files {
+		if file.refs == 0 && file.rawCharged {
+			p.release(file.file.Length())
+			file.rawCharged = false
+		}
+	}
+}
+
 func (p *relatedSourcePass) lookupThread(ctx context.Context, id string) (agentapi.CodexRolloutSet, error) {
 	set, err := p.env.CodexRollouts.Thread(ctx, id)
 	if agentapi.Failure(err) == agentapi.Limit {
@@ -1507,4 +1555,13 @@ func (p *relatedSourcePass) chargedBoundary(f *transcriptio.Snapshot) (int64, er
 	}
 	defer p.release(charge)
 	return transcriptio.CompleteJSONLBoundary(f, f.Length(), archive.MaxRecordBytes)
+}
+
+// A transient shared reservation refusal leaves idle header/proof owners intact.
+// Other failed reads retain the existing cleanup of unusable private snapshots.
+func (p *relatedSourcePass) readFailure(err error) (agentapi.SourceSnapshot, error) {
+	if errors.Is(err, agentapi.ErrReadBudget) {
+		return nil, err
+	}
+	return nil, errors.Join(err, p.evict())
 }
