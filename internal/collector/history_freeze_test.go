@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -90,7 +91,7 @@ func TestRunStagesCompleteRevisionJournalAndResumesWithoutNativeReads(t *testing
 	}
 }
 
-func TestHistoryPolicyMismatchKeepsAttemptedAndPreparingEvidence(t *testing.T) {
+func TestHistoryPolicyMismatchReplacesDescriptorButKeepsOriginalEvidence(t *testing.T) {
 	for _, attempted := range []bool{false, true} {
 		t.Run(map[bool]string{false: "preparing", true: "attempted"}[attempted], func(t *testing.T) {
 			scan, _ := reconciliationFixture(t)
@@ -134,8 +135,12 @@ func TestHistoryPolicyMismatchKeepsAttemptedAndPreparingEvidence(t *testing.T) {
 				t.Fatal("policy bypass", err)
 			}
 			after, err := os.ReadFile(path)
-			if err != nil || !bytes.Equal(before, after) {
-				t.Fatal("frozen evidence discarded", err)
+			if err != nil || bytes.Equal(before, after) {
+				t.Fatal("stricter successor was not persisted", err)
+			}
+			next, found, err := scan.local.LoadPending(scan.id())
+			if err != nil || !found || next.Attempted || next.History.Preparing || !slices.Equal(p.History.Inputs, next.History.Inputs) {
+				t.Fatal("original evidence/provenance discarded", err)
 			}
 			for _, stage := range p.History.Sources {
 				if _, err := scan.local.ReadPendingSource(scan.id(), stage); err != nil {

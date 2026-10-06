@@ -31,6 +31,8 @@ var stagedTempName = regexp.MustCompile(`^\.pending-[0-9]+$`)
 // PendingHistory freezes one complete reference-set replacement. Source payloads
 // are staged individually before this descriptor, outside the journal JSON.
 type PendingHistory struct {
+	// MaintenanceOwed survives exact committed acknowledgement under a stronger policy.
+	MaintenanceOwed bool `json:"maintenance_owed,omitempty"`
 	// Preparing performs private sequential privacy work before any remote write.
 	FilterVersion          string          `json:"filter_version,omitempty"`
 	AdapterVersion         string          `json:"adapter_version,omitempty"`
@@ -101,7 +103,8 @@ func (p PendingPublication) ValidateHistory(id string) error {
 	if err := p.validateHistoryInputs(m); err != nil {
 		return err
 	}
-	if len(p.History.Sources) > archive.MaxHistorySpans+1 || len(p.History.Retired) > archive.MaxHistorySpans+1 {
+	// A stronger successor can owe original, prepared and acknowledged refs.
+	if len(p.History.Sources) > archive.MaxHistorySpans+1 || len(p.History.Retired) > 3*(archive.MaxHistorySpans+1) {
 		return errors.New("pending history exceeds source limit")
 	}
 	size := 0

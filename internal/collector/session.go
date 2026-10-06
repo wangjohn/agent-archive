@@ -120,6 +120,9 @@ func (s *sessionScan) run() (sessionOutcome, error) {
 	if err := s.recoverReferenceAuthority(); err != nil {
 		return outcomeSkipped, err
 	}
+	if outcome, handled, err := s.prepareRetainedHistoryWork(); handled || err != nil {
+		return outcome, err
+	}
 	if err := s.checkRetainedHistory(); err != nil {
 		return outcomeSkipped, err
 	}

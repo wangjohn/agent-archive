@@ -121,8 +121,8 @@ func (s *sessionScan) resumeHistory(p state.PendingPublication) (sessionOutcome,
 	if err != nil {
 		return outcomeSkipped, err
 	}
-	if pendingSkillMode(p.SkillEvidence) != s.opts.skillEvidence() || p.Bundle.Capture.FilterVersion != archive.FilterVersion || p.Bundle.Capture.AdapterVersion != adapter.Version() {
-		return outcomeSkipped, errors.New("history privacy policy changed; retain frozen evidence for all-reference successor preparation")
+	if p.History.MaintenanceOwed || pendingSkillMode(p.SkillEvidence) != s.opts.skillEvidence() || p.Bundle.Capture.FilterVersion != archive.FilterVersion || p.Bundle.Capture.AdapterVersion != adapter.Version() {
+		return s.resumeStricterHistory(p)
 	}
 	if err := s.recoverHistoryStages(p); err != nil {
 		return outcomeSkipped, err

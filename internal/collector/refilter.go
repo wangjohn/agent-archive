@@ -66,7 +66,16 @@ func (s *sessionScan) rewrittenSinceCapture(read sourceRead) (bool, error) {
 // now drop or redact changes. What the earlier filter already dropped stays
 // dropped.
 func refilterBundle(ctx context.Context, reg archive.SessionRegistration, adapter archive.Adapter, bundle archive.SourceBundle) (archive.SourceBundle, error) {
-	if err := archive.CheckHistoryMutation(bundle, archive.Metadata{}); err != nil {
+	if err := ctx.Err(); err != nil {
+		return archive.SourceBundle{}, err
+	}
+	if bundle.SchemaVersion != archive.SourceSchemaVersion && bundle.SchemaVersion != archive.HistorySourceSchemaVersion {
+		return archive.SourceBundle{}, errors.New("unsupported retained source schema")
+	}
+	if bundle.ArchiveSessionID != reg.ArchiveSessionID || bundle.NativeSessionID != reg.NativeSessionID || bundle.ProjectID != reg.ProjectID || bundle.Capture.Harness.Name != reg.Harness.Name || bundle.ParentSessionID != reg.ParentSessionID {
+		return archive.SourceBundle{}, errors.New("retained refilter identity mismatch")
+	}
+	if err := bundle.ValidateHistory(); err != nil {
 		return archive.SourceBundle{}, err
 	}
 	filtered, err := refilterNative(ctx, reg, adapter, bundle)
@@ -75,6 +84,11 @@ func refilterBundle(ctx context.Context, reg archive.SessionRegistration, adapte
 	}
 	refiltered, err := archive.NewSourceBundle(reg, adapter, filtered, bundle.Capture.CapturedAt, bundle.SupplementalEvidence)
 	if err != nil {
+		return archive.SourceBundle{}, err
+	}
+	// Retained maintenance cannot adopt current producer/version observations.
+	refiltered.Capture.Harness = bundle.Capture.Harness
+	if err := refiltered.ValidateHistory(); err != nil {
 		return archive.SourceBundle{}, err
 	}
 	refiltered.Capture.Gaps = mergeCaptureGaps(bundle.Capture.Gaps, refiltered.Capture.Gaps)

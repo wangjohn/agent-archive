@@ -86,6 +86,9 @@ func filterHistory(ctx context.Context, in agentapi.RecordInput, bounds ...archi
 	if e != nil {
 		return archive.FilteredTranscript{}, e
 	}
+	if selected.LocalIdentity.ID != history.ThreadID {
+		return archive.FilteredTranscript{}, errors.New("selected retained history header disagrees with thread identity")
+	}
 	out.History = &history
 	out.Ordinals = ordinals
 	out.LocalIdentity = selected.LocalIdentity

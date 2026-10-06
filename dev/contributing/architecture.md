@@ -180,3 +180,28 @@ checksum-verified remote object, never from newer native bytes. Expected-SHA
 preflight and exact readback detect observed conflicts under the local collector
 lock; unconditional object-store PUT does not exclude an out-of-band writer
 racing between the preflight GET and PUT.
+
+Retained Codex privacy preparation now accepts validated source3 bundles through
+the adapter's retained-record port. It preserves physical spans, exclusive raw
+ordinal bounds, retained ordinal omissions, thread ownership, OwnStart and original
+capture times. Source2 alternatives keep their own format and per-reference
+provenance. Preparation loads original checksum stages independently of the final
+source list, so an earlier slice cannot make a replaced original unreadable.
+Supported complete acknowledged history can enter private sequential maintenance
+before the publication fence; the complete final sidecar is derived only after
+all inputs finish. Retained maintenance uses the recorded repository key rather
+than the pass's current Git lookup. Publication and request completion remain
+fenced at this preparation checkpoint.
+
+A stronger-policy retry first resolves the exact remote predecessor or final
+sidecar. Unknown state retains the attempted journal. When the predecessor still
+exists, a stricter successor validates original pending inputs, final references
+and acknowledged references, stages all inputs and outputs before replacing the
+journal, and preserves capture facts and cleanup obligations. An exact committed
+final is identity-decoded across every reference and read back again; its journal
+records a maintenance obligation before exact acknowledgement. The stricter
+successor remains owed, without re-uploading broader source or metadata bytes.
+An unavailable original input keeps that obligation and can recover only from
+exact verified retained bytes. These seams do not enable new history publication,
+generation recovery, retention or deletion; their remaining lifecycle gates and
+complete resource/crash evidence must precede fence release.

@@ -18,8 +18,8 @@ func (s *sessionScan) recoverReferenceAuthority() error {
 	if s.reg.Harness.Name != "codex" {
 		return nil
 	}
-	recover, err := s.requiresReferenceRecovery()
-	if err != nil || !recover {
+	needed, err := s.requiresReferenceRecovery()
+	if err != nil || !needed {
 		return err
 	}
 	return s.restoreReferenceAuthority()

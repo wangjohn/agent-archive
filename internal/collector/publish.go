@@ -100,6 +100,12 @@ func (s *sessionScan) publishPending(pending state.PendingPublication) (sessionO
 			return outcomeSkipped, err
 		}
 	}
+	return s.acknowledgePublication(pending, false)
+}
+
+// acknowledgePublication follows verified exact readback. A committed privacy
+// retry keeps its journal until the all-reference successor replaces it durably.
+func (s *sessionScan) acknowledgePublication(pending state.PendingPublication, keepPending bool) (sessionOutcome, error) {
 	if err := listingindex.PublishRevision(s.ctx, s.remote, pending.MetadataKey, pending.MetadataBytes); err != nil {
 		s.warn(fmt.Errorf("listing maintenance pending: %w", err))
 	} else if err := s.local.RemoveListingRepair(s.id()); err != nil {
@@ -166,8 +172,10 @@ func (s *sessionScan) publishPending(pending state.PendingPublication) (sessionO
 			return outcomeSkipped, fmt.Errorf("complete published request: %w", err)
 		}
 	}
-	if err := s.local.RemovePending(s.id()); err != nil {
-		return outcomeSkipped, err
+	if !keepPending {
+		if err := s.local.RemovePending(s.id()); err != nil {
+			return outcomeSkipped, err
+		}
 	}
 	return outcomePublished, nil
 }
@@ -178,6 +186,13 @@ func (s *sessionScan) upload(pending state.PendingPublication) error {
 		return fmt.Errorf("journal listing repair: %w", err)
 	}
 	if pending.History != nil {
+		committed, err := s.checkFrozenHistoryMetadata(pending)
+		if err != nil {
+			return err
+		}
+		if committed {
+			return s.verifyHistoryReadback(pending)
+		}
 		if !pending.CarriesNoSource() {
 			if err := storage.PutVerifiedSource(s.ctx, s.remote, pending.SourceKey, pending.SourceSHA256, pending.SourceBytes, s.opts.Retry); err != nil {
 				return err
@@ -196,20 +211,16 @@ func (s *sessionScan) upload(pending state.PendingPublication) error {
 		if err := json.Unmarshal(pending.MetadataBytes, &m); err != nil {
 			return err
 		}
-		refs, err := m.SourceReferences()
-		if err != nil {
+		if err := s.verifyHistoryReferences(pending, m); err != nil {
 			return err
-		}
-		for _, ref := range refs {
-			if err := storage.VerifySource(s.ctx, s.remote, ref.Key, ref.SHA256, ref.CompressedBytes, s.opts.Retry); err != nil {
-				return err
-			}
 		}
 		if err := s.checkHistoryPublication(pending); err != nil {
 			return err
 		}
-		if _, err := s.checkFrozenHistoryMetadata(pending); err != nil {
+		if committed, err := s.checkFrozenHistoryMetadata(pending); err != nil {
 			return err
+		} else if committed {
+			return s.verifyHistoryReadback(pending)
 		}
 		return s.remote.Put(s.ctx, pending.MetadataKey, pending.MetadataBytes)
 	}

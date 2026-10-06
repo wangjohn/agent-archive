@@ -138,19 +138,21 @@ func (s *sessionScan) verifyHistoryReadback(p state.PendingPublication) error {
 	if err := json.Unmarshal(raw, &metadata); err != nil {
 		return err
 	}
-	refs, err := metadata.SourceReferences()
+	if err := s.verifyHistoryReferences(p, metadata); err != nil {
+		return err
+	}
+	current, err := historyLimitedGet(s.ctx, s.remote, p.MetadataKey, historyMetadataLimit)
 	if err != nil {
 		return err
 	}
-	for _, ref := range refs {
-		if err := storage.VerifySource(s.ctx, s.remote, ref.Key, ref.SHA256, ref.CompressedBytes, s.opts.Retry); err != nil {
-			return err
-		}
+	if !bytes.Equal(current, p.MetadataBytes) {
+		return errHistoryMetadataConflict
 	}
 	return nil
 }
 
 const historyMetadataLimit int64 = 32 << 20
+
 const historyCompressedLimit int64 = 32 << 20
 
 func historyLimitedGet(ctx context.Context, store storage.ObjectStore, key string, limit int64) ([]byte, error) {
@@ -185,5 +187,34 @@ func (s *sessionScan) frozenHistoryMetadata(p state.PendingPublication) (archive
 	if metadata.SessionID != s.id() || metadata.NativeSessionID != s.reg.NativeSessionID || metadata.Harness.Name != s.reg.Harness.Name || metadata.ProjectID != s.reg.ProjectID {
 		return archive.Metadata{}, errors.New("frozen history does not belong to the current registration")
 	}
+	if err := s.validateAuthorityIdentity(metadata); err != nil {
+		return archive.Metadata{}, err
+	}
 	return metadata, nil
+}
+
+// verifyHistoryReferences decodes each bounded immutable object before metadata
+// replacement as well as after readback; a valid checksum alone is insufficient.
+func (s *sessionScan) verifyHistoryReferences(p state.PendingPublication, metadata archive.Metadata) error {
+	refs, err := metadata.SourceReferences()
+	if err != nil {
+		return err
+	}
+	if err := boundFrozenReferences(metadata); err != nil {
+		return err
+	}
+	for _, ref := range refs {
+		data, err := historyLimitedGet(s.ctx, s.remote, ref.Key, int64(ref.CompressedBytes))
+		if err != nil {
+			return err
+		}
+		bundle, err := decodeHistoryStage(s.ctx, metadata, p, ref, data)
+		if err != nil {
+			return err
+		}
+		if !p.History.Preparing && ((p.History.FilterVersion != "" && bundle.Capture.FilterVersion != p.History.FilterVersion) || (p.History.AdapterVersion != "" && bundle.Capture.AdapterVersion != p.History.AdapterVersion)) {
+			return errors.New("final reference disagrees with frozen all-reference privacy policy")
+		}
+	}
+	return nil
 }

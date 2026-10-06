@@ -28,11 +28,11 @@ func (f Filter) Filter(ctx context.Context, in agentapi.NativeInput, c agentapi.
 
 // Refilter applies current privacy rules to retained native evidence.
 func (f Filter) Refilter(ctx context.Context, b archive.SourceBundle, _ time.Time) (archive.FilteredTranscript, error) {
-	if b.History != nil {
+	if b.SchemaVersion == archive.HistorySourceSchemaVersion || b.History != nil {
 		if err := b.ValidateHistory(); err != nil {
 			return archive.FilteredTranscript{}, err
 		}
-		return filterHistory(ctx, &retainedHistory{bundle: b})
+		return filterHistory(ctx, &retainedHistory{bundle: b}, archive.CaptureBoundary{RetainedRecords: archive.MaxHistoryRecords, RetainedBytes: 32 << 20})
 	}
 	return sourceio.RefilterJSONL(ctx, f, b)
 }
