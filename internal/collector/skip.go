@@ -114,7 +114,7 @@ func (p *pass) unchangedSinceLastScan(reg archive.SessionRegistration) (unchange
 		return p.owesNothing(id, false)
 	}
 	signature, found, err := p.local.LoadScanSignature(id)
-	if err != nil || !found || signature.Frozen {
+	if err != nil || !found || signature.Frozen || signature.SourceSetVersion != sourceSetVersion(reg) {
 		return false, signature, err
 	}
 	if signature.SourceFormat == cursorTextSourceFormat && signature.Blocked != state.BlockedReasonTranscriptMissing {
@@ -241,8 +241,9 @@ func (p *pass) linkOwed(reg archive.SessionRegistration) (bool, error) {
 // that owes no further work.
 func (s *sessionScan) recordScanSignature(observed sourceState, bundle archive.SourceBundle) error {
 	return s.local.SaveScanSignature(s.id(), state.ScanSignature{
-		SkillEvidence:  string(s.opts.skillEvidence()),
-		TranscriptSize: observed.size(), TranscriptMtime: observed.file.Mtime,
+		SourceSetVersion: sourceSetVersion(s.reg),
+		SkillEvidence:    string(s.opts.skillEvidence()),
+		TranscriptSize:   observed.size(), TranscriptMtime: observed.file.Mtime,
 		ParserVersion: s.parserVersion(), FilterVersion: bundle.Capture.FilterVersion,
 		AdapterVersion: bundle.Capture.AdapterVersion, SourceFormat: bundle.Capture.SourceFormat,
 		SourceSignature: signaturePointer(observed), SourceKind: observed.kind, CursorLastUpdatedAt: observed.cursor.LastUpdatedAt,
@@ -263,8 +264,9 @@ func (s *sessionScan) recordBlockedSignature(reason state.BlockedReason, observe
 		return s.local.RemoveScanSignature(s.id())
 	}
 	return s.local.SaveScanSignature(s.id(), state.ScanSignature{
-		SkillEvidence:  string(s.opts.skillEvidence()),
-		TranscriptSize: observed.size(), TranscriptMtime: observed.file.Mtime,
+		SourceSetVersion: sourceSetVersion(s.reg),
+		SkillEvidence:    string(s.opts.skillEvidence()),
+		TranscriptSize:   observed.size(), TranscriptMtime: observed.file.Mtime,
 		ParserVersion: s.parserVersion(), FilterVersion: archive.FilterVersion, AdapterVersion: adapterVersion,
 		SourceSignature: signaturePointer(*observed), SourceKind: observed.kind, CursorLastUpdatedAt: observed.cursor.LastUpdatedAt,
 		CursorHeaderCount: observed.cursor.HeaderCount, CursorLastBubbleID: observed.cursor.LastBubbleID,
@@ -281,4 +283,11 @@ func missingSource(reg archive.SessionRegistration) *sourceState {
 		return &sourceState{kind: archive.SourceKindCursorSQLite}
 	}
 	return &sourceState{}
+}
+
+func sourceSetVersion(reg archive.SessionRegistration) int {
+	if reg.Harness.Name == "codex" {
+		return 1
+	}
+	return 0
 }

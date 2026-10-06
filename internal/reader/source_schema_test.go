@@ -5,8 +5,10 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -109,5 +111,60 @@ func TestLoadHistorySourceValidatesActiveRevisionAndReferences(t *testing.T) {
 	selected.History.Preserved = []archive.RevisionReference{{RevisionID: thread, CapturedAt: selected.CapturedAt, Source: archive.SourceReference{Key: "sessions/codex/foreign/source." + packed.SHA256 + ".jsonl.gz", SHA256: packed.SHA256, CompressedBytes: len(packed.Bytes)}}}
 	if _, err := LoadSource(t.Context(), store, selected, Limits{}); err == nil {
 		t.Fatal("foreign preserved source reference accepted")
+	}
+}
+
+func TestLoadRevisionUsesIndependentFormatAndFilterProvenance(t *testing.T) {
+	t.Parallel()
+	for _, schema := range []int{archive.SourceSchemaVersion, archive.HistorySourceSchemaVersion} {
+		t.Run(fmt.Sprint(schema), func(t *testing.T) {
+			t.Parallel()
+			metadata, bundle, store := fixture(t)
+			const thread = "11111111-1111-4111-8111-111111111111"
+			const active = "22222222-2222-4222-8222-222222222222"
+			const preserved = "33333333-3333-4333-8333-333333333333"
+			bundle.NativeSessionID = thread
+			bundle.Capture.CapturedAt = bundle.Capture.CapturedAt.Add(-time.Hour)
+			bundle.Capture.FilterVersion = "14"
+			bundle.SchemaVersion = schema
+			if schema == archive.HistorySourceSchemaVersion {
+				bundle.Ordinals = []uint64{0, 1}
+				bundle.History = &archive.SourceHistory{ThreadID: thread, ActiveRolloutID: preserved, Spans: []archive.HistorySpan{{ThreadID: thread, RolloutID: preserved, EndRecord: 2, EndOrdinal: 2}}}
+			}
+			packed, err := archive.BuildCompressedSource(bundle)
+			if err != nil {
+				t.Fatal(err)
+			}
+			key, err := archive.SourceObjectKey(bundle, packed.SHA256)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := store.Put(t.Context(), key, packed.Bytes); err != nil {
+				t.Fatal(err)
+			}
+			metadata.SchemaVersion = archive.HistoryMetadataSchemaVersion
+			metadata.NativeSessionID = thread
+			metadata.FilterVersion = "15"
+			metadata.History = &archive.RevisionHistory{CurrentRevision: active, Preserved: []archive.RevisionReference{{RevisionID: preserved, CapturedAt: bundle.Capture.CapturedAt, Source: archive.SourceReference{Key: key, SHA256: packed.SHA256, CompressedBytes: len(packed.Bytes)}}}}
+			for _, explicit := range []bool{false, true} {
+				if explicit {
+					metadata.History.Preserved[0].SourceSchemaVersion = schema
+					metadata.History.Preserved[0].FilterVersion = "14"
+				}
+				got, err := LoadRevision(t.Context(), store, metadata, preserved, Limits{})
+				if err != nil || got.Capture.FilterVersion != "14" || got.SchemaVersion != schema {
+					t.Fatalf("mixed legacy/explicit provenance: %+v %v", got.Capture, err)
+				}
+			}
+			metadata.History.Preserved[0].FilterVersion = "15"
+			if _, err := LoadRevision(t.Context(), store, metadata, preserved, Limits{}); err == nil {
+				t.Fatal("false privacy provenance accepted")
+			}
+			metadata.History.Preserved[0].FilterVersion = "14"
+			metadata.History.Preserved[0].SourceSchemaVersion = 5 - schema
+			if _, err := LoadRevision(t.Context(), store, metadata, preserved, Limits{}); err == nil {
+				t.Fatal("false format provenance accepted")
+			}
+		})
 	}
 }

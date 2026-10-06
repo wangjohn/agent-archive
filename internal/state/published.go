@@ -459,6 +459,53 @@ func (p *Published) LastPublishedSource() (archive.SourceReference, bool) {
 	return p.state.lastPublishedSource()
 }
 
+// LastPublishedMetadata returns the supported complete acknowledged reference set.
+// Unlike LastPublishedSource, it never extracts a pointer from an unknown schema.
+func (p *Published) LastPublishedMetadata() (archive.Metadata, bool, error) {
+	if len(p.state.MetadataBytes) == 0 {
+		return archive.Metadata{}, false, nil
+	}
+	var metadata archive.Metadata
+	if err := json.Unmarshal(p.state.MetadataBytes, &metadata); err != nil {
+		return archive.Metadata{}, false, err
+	}
+	if _, err := metadata.SourceReferences(); err != nil {
+		return archive.Metadata{}, false, err
+	}
+	bundle, _, found := p.LastPublished()
+	if !found {
+		return archive.Metadata{}, false, nil
+	}
+	if metadata.SessionID != p.id || metadata.NativeSessionID != bundle.NativeSessionID || metadata.ProjectID != bundle.ProjectID || metadata.Harness != bundle.Capture.Harness || metadata.ParentSessionID != bundle.ParentSessionID || metadata.FilterVersion != bundle.Capture.FilterVersion || !metadata.CapturedAt.Equal(bundle.Capture.CapturedAt) {
+		return archive.Metadata{}, false, errors.New("acknowledged metadata disagrees with published snapshot")
+	}
+	if bundle.History != nil && (metadata.History == nil || metadata.History.CurrentRevision != bundle.History.ActiveRolloutID) {
+		return archive.Metadata{}, false, errors.New("acknowledged metadata disagrees with published revision")
+	}
+	if ref, ok := p.LastPublishedSource(); ok && metadata.SourceBundle != ref {
+		return archive.Metadata{}, false, errors.New("acknowledged metadata disagrees with published reference")
+	}
+	return metadata, true, nil
+}
+
+// RestorePublication records an independently verified remote publication after
+// local state loss. A newer local-only candidate survives this recovery.
+func (p *Published) RestorePublication(bundle archive.SourceBundle, source archive.SourceReference, metadata []byte, at time.Time) error {
+	if !p.found {
+		return p.SavePublication(bundle, at, source, metadata)
+	}
+	next := p.state
+	next.MetadataBytes = metadata
+	next.PublishedAt = at
+	next.LastPublished = &publishedSnapshot{Bundle: bundle, PublishedAt: at, Source: &source}
+	if next.Status == CacheStatusPublished {
+		next.Bundle = bundle
+		next.LastPublished.SameAsBundle = true
+		next.LastPublished.Bundle = archive.SourceBundle{}
+	}
+	return p.write(next)
+}
+
 // Metadata returns the metadata document published with the last
 // publication, or nil when none is cached (publications from before it was).
 func (p *Published) Metadata() []byte { return p.state.MetadataBytes }

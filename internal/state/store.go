@@ -1076,6 +1076,8 @@ func (s *Store) ScanPending(id string) (bool, error) {
 // Anything that invalidates the assertion removes the token (see
 // RemoveScanSignature's callers).
 type ScanSignature struct {
+	// SourceSetVersion invalidates earlier Codex signatures without decoding bundles.
+	SourceSetVersion int `json:"source_set_version,omitempty"`
 	// Frozen marks completed retained-history maintenance, independently of
 	// the live native source's stat. Ordinary capture never trusts this token.
 	Frozen          bool                      `json:"frozen,omitempty"`

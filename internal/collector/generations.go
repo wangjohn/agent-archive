@@ -174,7 +174,7 @@ func (p *pass) unchangedFrozenSinceLastScan(reg archive.SessionRegistration) (bo
 		return false, signature, err
 	}
 	signature, found, err := p.local.LoadScanSignature(reg.ArchiveSessionID)
-	if err != nil || !found || !signature.Frozen || signature.Failed {
+	if err != nil || !found || !signature.Frozen || signature.SourceSetVersion != sourceSetVersion(reg) || signature.Failed {
 		return false, signature, err
 	}
 	adapterVersion, known := harnessAdapterVersion(p.opts.Sources, reg.Harness.Name)
@@ -199,7 +199,7 @@ func (s *sessionScan) recordFrozenSignature() error {
 	if !known {
 		return nil
 	}
-	return s.local.SaveScanSignature(s.id(), state.ScanSignature{
+	return s.local.SaveScanSignature(s.id(), state.ScanSignature{SourceSetVersion: sourceSetVersion(s.reg),
 		Frozen: true, SkillEvidence: string(s.opts.skillEvidence()),
 		ParserVersion: s.parserVersion(), FilterVersion: archive.FilterVersion,
 		AdapterVersion: adapterVersion, PublishedLastHead: s.publishedLastHead(),

@@ -53,8 +53,8 @@ func (s *sessionScan) checkFrozenHistoryMetadata(p state.PendingPublication) (bo
 	if _, err := previous.SourceReferences(); err != nil {
 		return false, err
 	}
-	if previous.SessionID != s.id() || previous.NativeSessionID != s.reg.NativeSessionID || previous.Harness.Name != s.reg.Harness.Name {
-		return false, errors.New("remote history predecessor identity changed")
+	if err := s.validateAuthorityIdentity(previous); err != nil {
+		return false, err
 	}
 	return false, nil
 }
@@ -74,15 +74,11 @@ func (s *sessionScan) recoverHistoryStages(p state.PendingPublication) error {
 		if _, err := s.local.ReadPendingSource(s.id(), stage); err == nil {
 			continue
 		}
-		selected, err := historyStageMetadata(metadata, p, stage.Reference)
-		if err != nil {
-			return err
-		}
 		raw, err := historyLimitedGet(s.ctx, s.remote, stage.Reference.Key, int64(stage.Reference.CompressedBytes))
 		if err != nil {
 			return fmt.Errorf("recover frozen revision source: %w", err)
 		}
-		if _, err := reader.DecodeReferencedSource(s.ctx, selected, raw, reader.Limits{}); err != nil {
+		if _, err := decodeHistoryStage(s.ctx, metadata, p, stage.Reference, raw); err != nil {
 			return fmt.Errorf("verify recovered revision source: %w", err)
 		}
 		restored, err := s.local.StagePendingSource(s.id(), stage.Reference, raw)
@@ -96,35 +92,33 @@ func (s *sessionScan) recoverHistoryStages(p state.PendingPublication) error {
 	return nil
 }
 
-func historyStageMetadata(metadata archive.Metadata, p state.PendingPublication, ref archive.SourceReference) (archive.Metadata, error) {
+func decodeHistoryStage(ctx context.Context, metadata archive.Metadata, p state.PendingPublication, ref archive.SourceReference, raw []byte) (archive.SourceBundle, error) {
 	if _, err := metadata.SourceReferences(); err != nil {
-		return archive.Metadata{}, err
+		return archive.SourceBundle{}, err
 	}
 	if metadata.SourceBundle == ref {
-		return metadata, nil
+		return reader.DecodeReferencedSource(ctx, metadata, raw, reader.Limits{})
 	}
-	if metadata.History == nil {
-		return archive.Metadata{}, errors.New("stage is not referenced by frozen metadata")
-	}
-	for _, revision := range metadata.History.Preserved {
-		if revision.Source != ref {
-			continue
-		}
-		selected := metadata
-		selected.SourceBundle = ref
-		selected.CapturedAt = revision.CapturedAt
-		selected.History = &archive.RevisionHistory{CurrentRevision: revision.RevisionID}
-		if p.History.Preparing {
-			for _, input := range p.History.Inputs {
-				if input.Reference == ref && input.RevisionID == revision.RevisionID {
-					selected.FilterVersion = input.FilterVersion
-					break
+	if metadata.History != nil {
+		for _, revision := range metadata.History.Preserved {
+			if revision.Source != ref {
+				continue
+			}
+			if p.History.Preparing {
+				for _, input := range p.History.Inputs {
+					if input.Reference == ref && input.RevisionID == revision.RevisionID {
+						history := *metadata.History
+						history.Preserved = []archive.RevisionReference{revision}
+						history.Preserved[0].FilterVersion = input.FilterVersion
+						metadata.History = &history
+						break
+					}
 				}
 			}
+			return reader.DecodeRevisionSource(ctx, metadata, revision.RevisionID, raw, reader.Limits{})
 		}
-		return selected, nil
 	}
-	return archive.Metadata{}, errors.New("stage is not referenced by the complete frozen source set")
+	return archive.SourceBundle{}, errors.New("stage is not referenced by the complete frozen source set")
 }
 
 // verifyHistoryReadback verifies exact final bytes and ALL referenced sources

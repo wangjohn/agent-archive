@@ -421,7 +421,7 @@ func (r SessionRegistration) Imported() bool {
 func (r SessionRegistration) Validate() error {
 	if r.CodexBinding != nil {
 		if r.Harness.Name != "codex" || r.CodexBinding.NativeThreadID != r.NativeSessionID {
-			return errors.New("Codex binding requires matching Codex registration")
+			return errors.New("codex binding requires matching codex registration")
 		}
 		if err := r.CodexBinding.Validate(); err != nil {
 			return err

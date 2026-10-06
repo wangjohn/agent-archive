@@ -60,6 +60,8 @@ func (s *sessionScan) advanceHistoryPreparation(p *state.PendingPublication) err
 			for i := range metadata.History.Preserved {
 				if metadata.History.Preserved[i].RevisionID == input.RevisionID && metadata.History.Preserved[i].Source == input.Reference {
 					metadata.History.Preserved[i].Source = next
+					metadata.History.Preserved[i].SourceSchemaVersion = filtered.SchemaVersion
+					metadata.History.Preserved[i].FilterVersion = filtered.Capture.FilterVersion
 					found = true
 				}
 			}

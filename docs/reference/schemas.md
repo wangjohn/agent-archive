@@ -79,8 +79,13 @@ counts exclude inherited records. A same-thread revert prefix remains owned.
 
 Metadata schema 2 points to the active source and up to 64 preserved native
 revision references under that same archive session's prefix. A preserved
-reference may name a legacy source-schema-2 bundle. Readers validate every
-pointer before selecting one. Ordinary sources and sidecars continue using
+reference may name a legacy source-schema-2 bundle. Optional
+`source_schema_version` and `filter_version` record that revision’s own format
+and privacy provenance; readers compare them with the retained bytes. When
+absent in older sidecars, readers validate the bounded source header without
+inheriting the active revision’s filter version. Readers validate every pointer
+before selecting one. The source-set digest includes active and preserved capture
+times and revision provenance, invalidating earlier receipts when these change. Ordinary sources and sidecars continue using
 schemas 2 and 1. This reader rollout keeps history publication, recovery,
 refilter mutation and deletion fenced until the matching revision lifecycle
 and writer protection are installed.

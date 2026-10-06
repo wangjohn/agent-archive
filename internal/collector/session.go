@@ -116,6 +116,9 @@ const (
 func (s *sessionScan) id() string { return s.reg.ArchiveSessionID }
 
 func (s *sessionScan) run() (sessionOutcome, error) {
+	if err := s.recoverReferenceAuthority(); err != nil {
+		return outcomeSkipped, err
+	}
 	if err := s.checkRetainedHistory(); err != nil {
 		return outcomeSkipped, err
 	}

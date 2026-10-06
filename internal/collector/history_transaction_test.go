@@ -49,7 +49,7 @@ func frozenHistoryFixture(t *testing.T) (*sessionScan, state.PendingPublication,
 	if err != nil {
 		t.Fatal(err)
 	}
-	metadata := archive.Metadata{SchemaVersion: archive.HistoryMetadataSchemaVersion, SessionID: reg.ArchiveSessionID, NativeSessionID: reg.NativeSessionID, ProjectID: reg.ProjectID, Harness: reg.Harness, CapturedAt: at, FilterVersion: archive.FilterVersion, SourceBundle: active, History: &archive.RevisionHistory{CurrentRevision: reg.NativeSessionID, Preserved: []archive.RevisionReference{{RevisionID: "22222222-2222-4222-8222-222222222222", CapturedAt: previous.Capture.CapturedAt, Source: oldRef}}}}
+	metadata := archive.Metadata{MachineID: "m", MetadataDerivedAt: at, SchemaVersion: archive.HistoryMetadataSchemaVersion, SessionID: reg.ArchiveSessionID, NativeSessionID: reg.NativeSessionID, ProjectID: reg.ProjectID, Harness: reg.Harness, CapturedAt: at, FilterVersion: archive.FilterVersion, SourceBundle: active, History: &archive.RevisionHistory{CurrentRevision: reg.NativeSessionID, Preserved: []archive.RevisionReference{{RevisionID: "22222222-2222-4222-8222-222222222222", CapturedAt: previous.Capture.CapturedAt, Source: oldRef}}}}
 	encoded, err := json.Marshal(metadata)
 	if err != nil {
 		t.Fatal(err)
