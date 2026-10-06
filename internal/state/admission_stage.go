@@ -123,6 +123,11 @@ func (s *Store) PrepareAdmissionStage(reg archive.SessionRegistration, bundle ar
 	} else if !errors.Is(e, os.ErrNotExist) {
 		return "", e
 	}
+	unlock, err := s.namedLockWait("temporary-quota", time.Second)
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
 	used, err := s.admissionStageUsage()
 	if err != nil {
 		return "", err
@@ -215,7 +220,10 @@ func (s *Store) ReadAdmissionStage(id, digest string) (AdmissionStage, archive.S
 }
 
 func (s *Store) admissionStageUsage() (int64, error) {
-	var used int64
+	used, err := s.temporaryUsage()
+	if err != nil {
+		return 0, err
+	}
 	entries, err := os.ReadDir(filepath.Join(s.home, admissionStageDir))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return 0, err
@@ -242,12 +250,21 @@ func (s *Store) admissionStageUsage() (int64, error) {
 		if released {
 			object, _ := s.stagePath(id, ".source.gz")
 			if info, e := os.Lstat(object); e == nil {
+				if info.Size() < 0 || info.Size() > (AdmissionStageQuota-used)/2 {
+					return 0, ErrAdmissionStageCapacity
+				}
 				used += 2 * info.Size()
 			} else if !errors.Is(e, os.ErrNotExist) {
 				return 0, e
 			}
+			if int64(len(b)) > AdmissionStageQuota-used {
+				return 0, ErrAdmissionStageCapacity
+			}
 			used += int64(len(b))
 		} else {
+			if m.ReservedBytes > AdmissionStageQuota-used {
+				return 0, ErrAdmissionStageCapacity
+			}
 			used += m.ReservedBytes
 		}
 		seen[id+".source.gz"] = true
@@ -260,6 +277,9 @@ func (s *Store) admissionStageUsage() (int64, error) {
 		if err != nil || !info.Mode().IsRegular() {
 			return 0, ErrAdmissionStageRecovery
 		}
+		if info.Size() < 0 || info.Size() > AdmissionStageQuota-used {
+			return 0, ErrAdmissionStageCapacity
+		}
 		used += info.Size()
 	}
 	// Existing pending work is charged even when it predates durable admission.
@@ -271,6 +291,9 @@ func (s *Store) admissionStageUsage() (int64, error) {
 		info, err := e.Info()
 		if err != nil || !info.Mode().IsRegular() {
 			return 0, ErrAdmissionStageRecovery
+		}
+		if info.Size() < 0 || info.Size() > (AdmissionStageQuota-used)/2 {
+			return 0, ErrAdmissionStageCapacity
 		}
 		used += 2 * info.Size()
 	}
