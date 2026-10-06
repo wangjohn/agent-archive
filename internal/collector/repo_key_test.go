@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agents/codex"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
@@ -153,8 +154,8 @@ func checkOldSidecarGainsRepoKey(t *testing.T, oldVersion string) {
 		t.Fatalf("refresh: %#v %v", result, err)
 	}
 	after := fetchMetadata(t, remote, "codex", reg.ArchiveSessionID)
-	if after.RepoKey != widgetKey || after.Parser.Version != archive.DefaultParserVersion {
-		t.Fatalf("refreshed sidecar = repo_key %q, parser %q; want %q, %q", after.RepoKey, after.Parser.Version, widgetKey, archive.DefaultParserVersion)
+	if after.RepoKey != widgetKey || after.Parser.Version != (codex.Parser{}).Version() {
+		t.Fatalf("refreshed sidecar = repo_key %q, parser %q; want %q, %q", after.RepoKey, after.Parser.Version, widgetKey, (codex.Parser{}).Version())
 	}
 	// The refresh republishes metadata (and its listing entries) over the
 	// retained source, never the source itself.

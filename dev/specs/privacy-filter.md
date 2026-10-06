@@ -396,3 +396,9 @@ Known misses.
 Redaction is best effort in both directions: a legitimate value that looks like
 a credential is redacted, and a tool argument that happens to contain one of
 the instruction tags above loses that span. Both are recorded as gaps.
+
+Codex history parser 0.22.0 can add the content-free metadata gap
+`history_cumulative_tokens_unavailable`: a cumulative counter cannot establish
+own usage across inherited history. It retains independently observed own
+per-call accounting and reports no invented parent-baseline subtraction.
+This changes derivation, not the privacy allowlist or filter version.

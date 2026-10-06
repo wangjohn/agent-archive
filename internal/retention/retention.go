@@ -495,6 +495,9 @@ func (s *sweeper) currentMetadata(reg archive.SessionRegistration) (archive.Meta
 	if metadata.SessionID != reg.ArchiveSessionID || metadata.Harness.Name != reg.Harness.Name || !strings.HasPrefix(metadata.SourceBundle.Key, fmt.Sprintf("sessions/%s/%s/", reg.Harness.Name, reg.ArchiveSessionID)) {
 		return archive.Metadata{}, fmt.Errorf("current metadata belongs to another session")
 	}
+	if err := archive.CheckHistoryMutation(archive.SourceBundle{}, metadata); err != nil {
+		return archive.Metadata{}, err
+	}
 	return metadata, nil
 }
 

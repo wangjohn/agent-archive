@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agents/builtin"
+	"github.com/wangjohn/agent-archive/internal/agents/codex"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
@@ -693,7 +694,7 @@ func TestBlanketPausedConsentFloorFlowsThroughHookDiscoveryAndPublication(t *tes
 // Blanket publication must derive native facts through the injected parser port.
 func assertBlanketNativeAnalysis(t *testing.T, meta archive.Metadata) {
 	t.Helper()
-	if meta.Parser.Version != archive.DefaultParserVersion || meta.Parser.Status != archive.ParserStatusPartial || meta.Counts.Messages == nil || *meta.Counts.Messages < 1 {
+	if meta.Parser.Version != (codex.Parser{}).Version() || meta.Parser.Status != archive.ParserStatusPartial || meta.Counts.Messages == nil || *meta.Counts.Messages < 1 {
 		t.Fatalf("blanket publication lacks native analysis: parser=%#v counts=%#v", meta.Parser, meta.Counts)
 	}
 }

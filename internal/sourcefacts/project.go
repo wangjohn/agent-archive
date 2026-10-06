@@ -14,7 +14,7 @@ func ConfiguredOwner(projects []archive.ProjectActivation, cwd string, resolve f
 	var owner archive.ProjectActivation
 	for _, p := range projects {
 		root := resolve(p.Root)
-		if local.PathWithin(cwd, root) && len(root) > best {
+		if local.PathWithin(cwd, root) && (len(root) > best || (len(root) == best && !p.Included)) {
 			owner = p
 			best = len(root)
 		}

@@ -10,6 +10,7 @@ package archive
 var CaptureGapCodes = []string{
 	CaptureGapDiscoveredWithoutHookEvidence,
 	"recovered_generation",
+	"history_cumulative_tokens_unavailable",
 	// Source filter (every format).
 	"binary_content_omitted",
 	"content_truncated",

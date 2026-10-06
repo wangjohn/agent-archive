@@ -69,7 +69,7 @@ type Result struct {
 	Coverage   Coverage
 }
 
-var errSubagent = errors.New("native subagent-only transcript")
+var errNativeHistory = errors.New("native history is not selectable")
 
 // InspectNative requires transcript content to establish the selected identity.
 // Import's compatibility parser deliberately retains its separate semantics.
@@ -87,8 +87,8 @@ func InspectNative(ctx context.Context, ports agentapi.NativeHeadersLookup, s tr
 		w, err = s.Records(ctx, false, window, record, visit)
 		return err
 	}})
-	if h.SubagentOnly && err == nil {
-		err = errSubagent
+	if (h.SubagentOnly || h.CapturePending != "") && err == nil {
+		err = errNativeHistory
 	}
 	return h, w, err
 }
@@ -358,7 +358,7 @@ func scopeNativeCandidates(ctx context.Context, files FileSystem, scope Scope, a
 		c.Inspected++
 		if a.err != nil {
 			c.Skipped++
-			if !errors.Is(a.err, errSubagent) {
+			if !errors.Is(a.err, errNativeHistory) {
 				c.IdentityComplete = false
 			}
 			continue

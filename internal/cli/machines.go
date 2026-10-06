@@ -11,6 +11,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
+	"github.com/wangjohn/agent-archive/internal/issuance"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/machines"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
@@ -40,7 +41,24 @@ func machineRecord(ctx context.Context, cfg config.Config, env Env) (machines.Re
 		}
 		keyID = key.AccessKeyID
 	}
-	return machines.Build(cfg, string(env.operatingSystem())+"/"+runtime.GOARCH, versionString(), keyID, env.now())
+	r, err := machines.Build(cfg, string(env.operatingSystem())+"/"+runtime.GOARCH, versionString(), keyID, env.now())
+	if err != nil {
+		return r, err
+	}
+	home, err := env.readHome()
+	if err != nil {
+		return r, err
+	}
+	slots, err := issuance.List(home)
+	if err != nil {
+		return r, err
+	}
+	for _, slot := range slots {
+		if slot.State == issuance.Spare && slot.DestinationID == cfg.DestinationID() && slot.IssuerID == cfg.MachineID {
+			r.UnusedSpares = append(r.UnusedSpares, machines.CredentialBinding{Kind: config.MachineAssignmentR2Own, AccessKeyID: slot.ProviderID, RecipientID: slot.RecipientID, IssuerID: slot.IssuerID, SlotID: slot.SlotID})
+		}
+	}
+	return r, nil
 }
 
 // publishMachineLocked runs with collector.lock held and never changes config.
@@ -121,7 +139,7 @@ func runMachinesCommand(args []string, stdin io.Reader, out, errOut io.Writer, e
 	}
 	fs := env.newCommandFlags("machines", errOut)
 	asJSON := fs.Bool("json", false, "write informational machine records as JSON")
-	verify := fs.Bool("verify", false, "explicit experimental read-only provider check")
+	verify := fs.Bool("verify", false, "explicit read-only provider check")
 	unattended := fs.Bool("yes", false, "do not prompt or run the configured token command")
 	if !fs.parseFlagsOnly(args) {
 		return 2
@@ -166,8 +184,19 @@ func runMachinesCommand(args []string, stdin io.Reader, out, errOut io.Writer, e
 			}
 			terminal.Printf(out, "%s  %s  %s  %s  Paired %s  Heartbeat %s%s\n", r.Name, r.MachineID, r.Platform, machineCredentialClaim(r, result.Records), machinePairingDate(r), r.HeartbeatAt.Format("2006-01-02"), own)
 		}
+		for _, r := range result.Records {
+			for _, spare := range r.UnusedSpares {
+				terminal.Printf(out, "%s: unused spare claim %s (unverified).\n", r.MachineID, spare.AccessKeyID)
+			}
+			if r.CredentialHistoryPartial {
+				terminal.Printf(out, "%s: retired credential hints incomplete; committed history remains local.\n", r.MachineID)
+			}
+		}
 		for _, u := range result.Unreadable {
 			terminal.Printf(out, "Omitted %s: %s.\n", u.Key, u.Reason)
+		}
+		for _, progress := range result.Revocations {
+			terminal.Printf(out, "Untrusted bucket revocation claim %s: %s.\n", progress.OperationID, progress.Summary())
 		}
 		terminal.Println(out, "Not checked against the provider. Bucket records are untrusted claims, not proof of ownership or access removal.")
 		terminal.Println(out, "Heartbeat is updated at most daily; it does not indicate current activity.")

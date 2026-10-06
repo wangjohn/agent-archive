@@ -2,6 +2,7 @@ package retention
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -19,6 +20,21 @@ func DeleteWholeSession(ctx context.Context, store storage.ObjectStore, harness,
 	metadataKey, err := archive.MetadataObjectKey(harness, archiveSessionID)
 	if err != nil {
 		return err
+	}
+	if harness == "codex" {
+		raw, readErr := store.Get(ctx, metadataKey)
+		if readErr != nil && !errors.Is(readErr, storage.ErrNotFound) {
+			return readErr
+		}
+		if readErr == nil {
+			var metadata archive.Metadata
+			if err := json.Unmarshal(raw, &metadata); err != nil {
+				return err
+			}
+			if err := archive.CheckHistoryMutation(archive.SourceBundle{}, metadata); err != nil {
+				return err
+			}
+		}
 	}
 	if err := store.Delete(ctx, metadataKey); err != nil {
 		return fmt.Errorf("delete metadata: %w", err)

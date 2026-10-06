@@ -71,6 +71,9 @@ func (s *sessionScan) block(reason state.BlockedReason, candidate *archive.Sourc
 // source in the ledger, the new published state, the covered request, and
 // finally the removal of the pending file.
 func (s *sessionScan) publishPending(pending state.PendingPublication) (sessionOutcome, error) {
+	if err := s.checkHistoryPublication(pending); err != nil {
+		return outcomeSkipped, err
+	}
 	if !pending.CarriesNoSource() && !storage.VerifySHA256(pending.SourceBytes, pending.SourceSHA256) {
 		return outcomeSkipped, errors.New("pending source checksum does not match its persisted bytes")
 	}

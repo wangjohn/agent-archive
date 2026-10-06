@@ -62,6 +62,36 @@ decoders refuse. Legacy hook-only config remains numeric. Setup integration must
 fence protected Before snapshots before journaling a reconfiguration; never
 recover a numeric snapshot over protected authorization.
 
+## Codex native identity and related history
+
+The pure `codexmeta` decoder is shared by bounded source facts, native headers
+and live capture filtering. `payload.id` is the stable thread ID;
+`session_id` is its root conversation ID, and `parent_thread_id` is its
+immediate parent. A grandchild's root and parent differ. A fork has independent
+thread ownership: `forked_from_id` is logical ancestry, not child ownership.
+A rollout filename identifies a physical history segment and may differ from
+the stable thread after revert. `history_base.thread_id` names that physical
+prefix rollout, with exclusive ordinal and byte bounds. See the pinned
+[upstream protocol](https://github.com/openai/codex/blob/01fc69f4026735edfdf6789820549727a4867b11/codex-rs/protocol/src/protocol.rs).
+
+`CodexMeta.Identity(path)` returns bounded `CodexIdentity` facts, including
+optional ordinal pointers that distinguish absent and zero. It validates known
+shapes and direct contradictions; dependency resolution, cycles across files,
+active-rollout selection and capture authorization remain separate. Missing
+older optional fields and unknown additive fields remain readable.
+
+Children, forks and revised histories currently report explicit pending
+capture outcomes. Backfill skips these files and all observed sibling segments
+of the same thread rather than selecting an incomplete view. Live source
+filtering also refuses related metadata before privacy filtering can omit it.
+Existing retained ordinary sources still use the privacy-only refilter. Source
+confinement, original creation consent and first native task checks remain
+required; none of these metadata facts grant admission.
+
+A snapshot that changes while backfill reads it reports `source_changed`, with
+an instruction to retry. It does not claim the JSON format is unsafe or stop
+other candidates, and a later settled scan can admit the session.
+
 ## Scheduled identity recovery
 
 Recovery retains the qualified identity census as its authority. Each scheduled

@@ -117,12 +117,6 @@ func runSetupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 	if !parsed {
 		return 2
 	}
-	var questionErr error
-	opts, stdin, questionErr = initialSetupPairingQuestion(*refresh || *abandon, opts, stdin, stdout, env)
-	if questionErr != nil {
-		terminal.Println(stderr, questionErr.Error())
-		return 1
-	}
 	if opts.pair || opts.pairFile != "" {
 		return runPairingSetupCommand(opts, *refresh, *abandon, fs, stdin, stdout, stderr, env)
 	}
@@ -191,6 +185,12 @@ func runSetupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 		return 0
 	}
 	if err := setup(stdin, stdout, stderr, env, opts.verbose, opts.skillsChoice(), opts.allowNetworkHome); err != nil {
+		var pairingRequest *setupPairingRedirectError
+		if errors.As(err, &pairingRequest) {
+			opts.pair = true
+			opts.pairingInput = pairingRequest.input
+			return runPairingSetupCommand(opts, false, false, fs, pairingRequest.source, stdout, stderr, env)
+		}
 		// The checks above already name each blocker, marked ✗, so the exit
 		// only says what to do. setup --yes names them again on standard
 		// error, which is what a script reads.
@@ -284,6 +284,16 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env, verbose bool, skills
 	if checks.blocked() {
 		return &preflightError{checks: checks}
 	}
+	// Offer pairing only after the ordinary setup preflight passes. Returning
+	// releases setup's lock before the pairing transaction acquires it.
+	pairOptions, pairInput, err := firstSetupPairingQuestion(setupOptions{}, stdin, out, env)
+	if err != nil {
+		return err
+	}
+	if pairOptions.pair {
+		return &setupPairingRedirectError{input: pairInput, source: stdin}
+	}
+	p.in = newPrompter(pairInput, out).in
 	// A saved draft that names a bucket has already been past this.
 	if !found && unfinished.Config.Storage.Bucket == "" {
 		terminal.Println(out, "Choose Cloudflare R2 or Amazon S3 for private archive storage. Setup will guide you through connecting your account.")
@@ -768,7 +778,7 @@ func finishSetup(p *prompter, errOut io.Writer, home string, cfg config.Config, 
 		terminal.Printf(p.out, "Warning: installed application versions could not be recorded: %v\n", err)
 	}
 	if err := os.Remove(draftPath(home)); err != nil && !os.IsNotExist(err) {
-		return err
+		terminal.Println(errOut, "Configuration is committed; saved setup draft cleanup pending. Rerun setup to retry cleanup.")
 	}
 	// The configuration is committed; a diagnostic for a project that
 	// was just excluded is stale local state, not a reason to fail.

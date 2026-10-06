@@ -2,16 +2,15 @@
 // guided R2 setup needs: find the account, create a bucket, mint a
 // bucket-scoped API token, and check the bucket's public-access settings.
 //
-// It is used only at setup time, with a bootstrap token the person pastes
-// once. That token lives in a Client, is never written anywhere, and is
+// Setup and explicit key-management commands use a temporary management
+// token. That token lives in a Client, is never written anywhere, and is
 // dropped with Discard. The runtime credentials the archive stores are
 // different values that are used against the S3 endpoint, never against this
 // API.
 //
-// Nothing here has been run against the real Cloudflare API yet: the request
-// and response shapes come from Cloudflare's published API reference, and the
-// items that documentation leaves open are listed under "Live acceptance" in
-// dev/contributing/testing.md.
+// A default-jurisdiction provider acceptance run passed on 2026-10-05.
+// Guided setup and the remaining release checks are listed under "Live
+// acceptance" in dev/contributing/testing.md; these track provider coverage.
 package cloudflare
 
 import (
@@ -172,17 +171,19 @@ func (e *Error) RateLimited() bool { return e.Status == http.StatusTooManyReques
 // ServerError reports a failure on Cloudflare's side.
 func (e *Error) ServerError() bool { return e.Status >= 500 }
 
-// codeBucketConflict is the R2 error code for a bucket name that is taken
-// (BucketConflict, HTTP 409: "Bucket name already exists."), from
-// https://developers.cloudflare.com/r2/api/error-codes/. Whether a real
-// account answers so is a live acceptance item.
-const codeBucketConflict = 10073
+// codeRESTBucketConflict was observed from the management REST API on
+// 2026-10-05. The R2 error-code reference documents Workers/S3 API code 10073;
+// keep that recognized too, but require HTTP 409 for either code.
+const (
+	codeRESTBucketConflict = 10004
+	codeBucketConflict     = 10073
+)
 
-// AlreadyExists reports that Cloudflare said the bucket name is taken: R2's
-// BucketConflict code, with the 409 it is documented to come with. Any other
-// conflict is not a name collision.
+// AlreadyExists reports a recognized bucket-name conflict, never a bare 409
+// or a message-only match.
 func (e *Error) AlreadyExists() bool {
-	return e.Status == http.StatusConflict && slices.Contains(e.Codes, codeBucketConflict)
+	return e.Status == http.StatusConflict &&
+		(slices.Contains(e.Codes, codeRESTBucketConflict) || slices.Contains(e.Codes, codeBucketConflict))
 }
 
 // envelope is the JSON wrapper around every Cloudflare answer.

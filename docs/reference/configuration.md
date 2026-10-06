@@ -38,6 +38,7 @@ consistent with each other.
 | `handoff.default_to` | Optional, edited by hand. Per source harness, the destination `handoff` offers first, for example `{"claude": "codex"}`. Unknown agent names are refused when the file is read. |
 | `destination_since`, `previous_destinations` | When the current storage destination was configured, and the ones it replaced. Sessions stay with the destination they were published to. |
 | `storage_verified_at`, `bucket_privacy` | The last storage access check and bucket privacy inspection. Evidence, not settings. |
+| `retired_machine_assignments` | Up to 128 nonsecret dedicated assignments retired by committed setup, retaining destination, provider, recipient, issuer and slot bindings for explicit ordinary revocation. Never imported from a pairing or draft. |
 | `retired_credential_refs` | Credential references (Keychain items, or credential files) of R2 credentials a reconfiguration replaced, kept so `uninstall --delete-local-data` can remove them too. |
 
 ## Environment variables
@@ -107,23 +108,23 @@ Resuming an ordinary setup draft keeps the latest committed machine name and
 credential provenance for unchanged credentials. Changing the destination or
 credential reference clears old provenance; a draft cannot restore it.
 
-### Experimental dedicated key spares
+### Dedicated key spares
 
 `spare_keys` is an optional integer from 0 through 5; absence means 2. Zero
 suppresses spare reservation/refill without deleting existing provider keys.
 `spare_credential_refs` contains only opaque `issued-<32 lowercase hex>` references
 and is an advisory index. Validated private `issued/slot-<id>.json` records own
 eligibility and immutable destination/recipient/issuer/slot lineage. Refilling occurs
-only during explicit `machines add` or experimental guided R2 creation while a
+only during explicit `machines add` or guided R2 creation while a
 management token is available. Listing, collection and revocation never refill.
-This dedicated issuance phase remains a gated draft pending live acceptance.
+Dedicated issuance is available without an experimental flag.
 
-## Experimental management token source
+## Management token source
 
 `cloudflare_token_command` is an optional argv array, for example
 `["op", "read", "op://Private/Cloudflare/agent-archive"]`. Store a reference to
 an external secret, never the token itself or a literal secret argument. Guided
-R2 creation and experimental `machines --verify` share this source. Both prefer
+R2 creation and `machines --verify` share this source. Both prefer
 `CLOUDFLARE_API_TOKEN` and remove that variable before management requests;
 removal failure stops the operation. Otherwise an interactive invocation runs
 the configured program directly, without a shell, or asks for a hidden token.
@@ -133,8 +134,8 @@ limit, and suppresses stderr and failure output. Its environment excludes
 credential variables. `--yes`, `--json`, pipes and the noninteractive policy
 never run the configured command or prompt; explicit verification in those
 modes requires the environment token. Ordinary listing, status and collection
-never acquire a management token. See [experimental provider observations](../guides/multiple-machines.md#experimental-provider-observations)
-for the opt-in gate and limits. This command configuration is local and is not
+never acquire a management token. See [provider observations](../guides/multiple-machines.md#provider-observations)
+for the explicit verification command and limits. This command configuration is local and is not
 part of a pairing payload.
 
 `AGENT_ARCHIVE_PAIRING_CODE` supplies the six-word pairing code only to

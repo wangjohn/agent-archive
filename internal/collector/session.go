@@ -116,6 +116,9 @@ const (
 func (s *sessionScan) id() string { return s.reg.ArchiveSessionID }
 
 func (s *sessionScan) run() (sessionOutcome, error) {
+	if err := s.checkRetainedHistory(); err != nil {
+		return outcomeSkipped, err
+	}
 	if s.reg.CaptureFrozen {
 		outcome, err := s.maintainFrozen()
 		if err != nil {
@@ -138,6 +141,9 @@ func (s *sessionScan) run() (sessionOutcome, error) {
 	}
 	candidate, supplemental, err := s.build(read)
 	if err != nil {
+		return outcomeSkipped, err
+	}
+	if err := archive.CheckHistoryMutation(candidate, archive.Metadata{}); err != nil {
 		return outcomeSkipped, err
 	}
 	if settled, err := s.compare(read, &candidate); settled || err != nil {

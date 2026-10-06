@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 	"github.com/wangjohn/agent-archive/internal/state"
 )
 
@@ -106,8 +108,9 @@ type parentWork struct {
 	chatGone    bool
 	// repoKey is the project's repository key, and repoKeyChecked whether it
 	// was asked for (see resolveRepoKeys).
-	repoKey        string
-	repoKeyChecked bool
+	repoKey              string
+	repoKeyChecked       bool
+	projectEvidenceStale bool
 }
 
 // Run registers every candidate, in order.
@@ -135,6 +138,21 @@ func (r Registration) Run(candidates []Candidate) (RegistrationResult, error) {
 			return result, err
 		}
 		r.resolveRepoKeys(works[i:], repoKeys)
+		// Filesystem/Git proof validation belongs before the short lock hold.
+		limit := maxHoldSteps
+		if r.MaxHoldSteps > 0 {
+			limit = r.MaxHoldSteps
+		}
+		for _, w := range works[i : i+min(limit, len(works)-i)] {
+			if w.c.projectResolutionReset != nil {
+				w.c.projectResolutionReset()
+			}
+		}
+		for _, w := range works[i : i+min(limit, len(works)-i)] {
+			if w.c.projectResolutionCurrent != nil {
+				w.projectEvidenceStale = !w.c.projectResolutionCurrent()
+			}
+		}
 		err := r.hold(works, &i, &result)
 		if flushErr := flush(); err == nil {
 			err = flushErr
@@ -301,6 +319,14 @@ func (r Registration) step(cfg config.Config, w *parentWork, result *Registratio
 // last is a backstop: no registration ever starts after its admission.
 func (r Registration) skip(cfg config.Config, w *parentWork, result *RegistrationResult) (bool, error) {
 	c := w.c
+	if w.projectEvidenceStale {
+		result.NotAdmitted++
+		return true, nil
+	}
+	if c.ProjectResolution != nil && c.ProjectResolution.PolicyContext != sourcefacts.RecoveryContext(cfg.Archive.Projects, nil, filepath.Clean) {
+		result.NotAdmitted++
+		return true, nil
+	}
 	if !cfg.AcceptSession(r.registration(c, "", "")) {
 		result.NotAdmitted++
 		return true, nil
@@ -379,23 +405,27 @@ func (r Registration) valid(c Candidate) bool {
 // registration is the imported session's registration: its true start, the
 // import's admission, and the batch.
 func (r Registration) registration(c Candidate, archiveID, repoKey string) archive.SessionRegistration {
+	if repoKey == "" && c.ProjectResolution != nil && archive.IsRepoKey(c.ProjectResolution.RecordedRepoKey) {
+		repoKey = c.ProjectResolution.RecordedRepoKey
+	}
 	return archive.SessionRegistration{
-		ArchiveSessionID: archiveID,
-		NativeSessionID:  c.NativeSessionID,
-		ProjectID:        archive.ProjectID(c.ProjectRoot),
-		ProjectRoot:      c.ProjectRoot,
-		RepoKey:          repoKey,
-		Harness:          archive.Harness{Name: c.Harness},
-		TranscriptPath:   c.TranscriptPath,
-		SourceKind:       c.SourceKind,
-		SourceKey:        c.SourceKey,
-		SessionStartedAt: c.StartedAt,
-		StartedAtSource:  c.StartedAtSource,
-		RegisteredAt:     r.AdmittedAt,
-		AdmittedAt:       r.AdmittedAt,
-		Origin:           archive.SessionOriginImport,
-		ImportBatch:      archive.NewImportBatch(r.Batch),
-		DestinationID:    r.DestinationID,
+		ArchiveSessionID:  archiveID,
+		NativeSessionID:   c.NativeSessionID,
+		ProjectID:         archive.ProjectID(c.ProjectRoot),
+		ProjectRoot:       c.ProjectRoot,
+		RepoKey:           repoKey,
+		ProjectResolution: c.ProjectResolution,
+		Harness:           archive.Harness{Name: c.Harness},
+		TranscriptPath:    c.TranscriptPath,
+		SourceKind:        c.SourceKind,
+		SourceKey:         c.SourceKey,
+		SessionStartedAt:  c.StartedAt,
+		StartedAtSource:   c.StartedAtSource,
+		RegisteredAt:      r.AdmittedAt,
+		AdmittedAt:        r.AdmittedAt,
+		Origin:            archive.SessionOriginImport,
+		ImportBatch:       archive.NewImportBatch(r.Batch),
+		DestinationID:     r.DestinationID,
 	}
 }
 

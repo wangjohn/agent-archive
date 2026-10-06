@@ -3,6 +3,7 @@ package transcriptio
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -80,8 +81,13 @@ func (OS) OpenRegularFile(p string) (*os.File, error) {
 }
 
 // unchanged compares identity and observable metadata across verification.
-func unchanged(before, after fs.FileInfo) bool {
-	return os.SameFile(before, after) && before.Size() == after.Size() && before.ModTime().Equal(after.ModTime())
+func unchanged(before, after fs.FileInfo) bool { return SameObservation(before, after) }
+
+// SameObservation binds interpreted facts to the regular file that produced them.
+// Identity, size and modification time are practical observations, not a lock
+// against external writers or a detector of deliberately restored timestamps.
+func SameObservation(before, after fs.FileInfo) bool {
+	return before != nil && after != nil && before.Mode().IsRegular() && after.Mode().IsRegular() && os.SameFile(before, after) && before.Size() == after.Size() && before.ModTime().Equal(after.ModTime())
 }
 
 // Stamp retains real file identity privately, alongside ordering facts.
@@ -104,6 +110,8 @@ type OpenPolicy struct {
 
 // Snapshot owns one descriptor and its fixed initial size boundary.
 type Snapshot struct {
+	files    Opener
+	path     string
 	file     File
 	stamp    Stamp
 	closed   bool
@@ -152,7 +160,7 @@ func Open(files Opener, p string, policy OpenPolicy) (*Snapshot, error) {
 			}
 			return nil, err
 		}
-		return &Snapshot{file: f, stamp: Stamp{opened.Size(), opened.ModTime(), opened}}, nil
+		return &Snapshot{files: files, path: p, file: f, stamp: Stamp{opened.Size(), opened.ModTime(), opened}}, nil
 	}
 	f, err := files.OpenRegular(path)
 	if err != nil {
@@ -168,7 +176,7 @@ func Open(files Opener, p string, policy OpenPolicy) (*Snapshot, error) {
 		}
 		return nil, err
 	}
-	return &Snapshot{file: f, stamp: Stamp{info.Size(), info.ModTime(), info}}, nil
+	return &Snapshot{files: files, path: p, file: f, stamp: Stamp{info.Size(), info.ModTime(), info}}, nil
 }
 
 // Close releases the snapshot descriptor.
@@ -180,6 +188,10 @@ func (s *Snapshot) Close() error {
 	s.closeErr = s.file.Close()
 	return s.closeErr
 }
+
+// SourceInfo returns the initial observation for transient admission checks.
+// Callers must not persist the operating-system identity.
+func (s *Snapshot) SourceInfo() fs.FileInfo { return s.stamp.identity }
 
 // Stamp returns the initial identity and boundary.
 func (s *Snapshot) Stamp() Stamp { return s.stamp }
@@ -248,3 +260,45 @@ type Input interface {
 
 // Length returns the captured boundary without another stat.
 func (s *Snapshot) Length() int64 { return s.stamp.Size }
+
+// CheckPrefix proves a captured prefix remained unchanged while allowing later appends.
+// Both the descriptor and locator must still identify the original regular file.
+func (s *Snapshot) CheckPrefix(ctx context.Context, length int64, digest [32]byte) error {
+	if s.closed || length < 0 || length > s.stamp.Size {
+		return ErrChanged
+	}
+	check := func() error {
+		info, err := s.file.Stat()
+		if err != nil {
+			return err
+		}
+		named, err := s.files.Lstat(s.path)
+		if err == nil && named.Mode()&fs.ModeSymlink != 0 {
+			var resolved string
+			resolved, err = s.files.EvalSymlinks(s.path)
+			if err == nil {
+				named, err = s.files.Lstat(resolved)
+			}
+		}
+		if err != nil {
+			return err
+		}
+		if !s.stamp.SameFile(Stamp{identity: info}) || !s.stamp.SameFile(Stamp{identity: named}) || info.Size() < length || named.Size() < length {
+			return ErrChanged
+		}
+		return nil
+	}
+	if err := check(); err != nil {
+		return err
+	}
+	h := sha256.New()
+	if _, err := io.Copy(h, &contextReader{ctx, io.NewSectionReader(s, 0, length)}); err != nil {
+		return err
+	}
+	var got [32]byte
+	copy(got[:], h.Sum(nil))
+	if got != digest {
+		return ErrChanged
+	}
+	return check()
+}

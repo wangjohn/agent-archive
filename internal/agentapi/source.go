@@ -26,9 +26,10 @@ type SourceSemantics struct {
 
 // SourceEnvironment supplies narrow read dependencies and local database location.
 type SourceEnvironment struct {
-	Files    transcriptio.Opener
-	Policy   transcriptio.OpenPolicy
-	Database string
+	CodexRollouts CodexRolloutLookup
+	Files         transcriptio.Opener
+	Policy        transcriptio.OpenPolicy
+	Database      string
 }
 
 // ReadLimits bounds raw values and each native record before filtering.
@@ -88,6 +89,8 @@ const (
 
 // NativeRecord borrows one immutable ordered native value until snapshot close.
 type NativeRecord struct {
+	Ordinal uint64
+	History *archive.SourceHistory
 	Kind    NativeRecordKind
 	Key     string
 	Raw     []byte
@@ -108,6 +111,8 @@ type NativeInput struct {
 
 // FilterContext supplies existing native filtering observations without path access.
 type FilterContext struct {
+	// Filename is a physical locator observation only; it grants no path access.
+	Filename  string
 	StartedAt time.Time
 	Limits    ReadLimits
 }

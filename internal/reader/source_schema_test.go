@@ -61,3 +61,53 @@ func TestLoadSourceStreamsAndKeepsTheUncompressedLimit(t *testing.T) {
 		t.Fatalf("uncompressed limit error = %v", err)
 	}
 }
+
+func TestLoadHistorySourceValidatesActiveRevisionAndReferences(t *testing.T) {
+	t.Parallel()
+	metadata, bundle, store := fixture(t)
+	const thread = "11111111-1111-4111-8111-111111111111"
+	const revision = "22222222-2222-4222-8222-222222222222"
+	bundle.SchemaVersion = archive.HistorySourceSchemaVersion
+	bundle.NativeSessionID = thread
+	bundle.Ordinals = []uint64{0, 1}
+	bundle.History = &archive.SourceHistory{ThreadID: thread, ActiveRolloutID: revision, Spans: []archive.HistorySpan{{ThreadID: thread, RolloutID: revision, EndRecord: 2, EndOrdinal: 2}}}
+	packed, err := archive.BuildCompressedSource(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := archive.SourceObjectKey(bundle, packed.SHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata.SchemaVersion = archive.HistoryMetadataSchemaVersion
+	metadata.NativeSessionID = thread
+	metadata.History = &archive.RevisionHistory{CurrentRevision: revision}
+	metadata.SourceBundle = archive.SourceReference{Key: key, SHA256: packed.SHA256, CompressedBytes: len(packed.Bytes)}
+	if err := store.Put(t.Context(), key, packed.Bytes); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Put(t.Context(), "sessions/codex/session-1/metadata.json", raw); err != nil {
+		t.Fatal(err)
+	}
+	selected, err := ReadMetadata(t.Context(), store, "sessions/codex/session-1/metadata.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadSource(t.Context(), store, selected, Limits{})
+	if err != nil || got.History == nil || got.History.ActiveRolloutID != revision {
+		t.Fatalf("history readback: %+v %v", got.History, err)
+	}
+	selected.History.CurrentRevision = thread
+	if _, err := LoadSource(t.Context(), store, selected, Limits{}); err == nil {
+		t.Fatal("wrong active revision accepted")
+	}
+	selected.History.CurrentRevision = revision
+	selected.History.Preserved = []archive.RevisionReference{{RevisionID: thread, CapturedAt: selected.CapturedAt, Source: archive.SourceReference{Key: "sessions/codex/foreign/source." + packed.SHA256 + ".jsonl.gz", SHA256: packed.SHA256, CompressedBytes: len(packed.Bytes)}}}
+	if _, err := LoadSource(t.Context(), store, selected, Limits{}); err == nil {
+		t.Fatal("foreign preserved source reference accepted")
+	}
+}

@@ -137,8 +137,14 @@ func defaultMetadataParser(bundle SourceBundle, parser ParserInfo) ParserInfo {
 
 func baseMetadata(bundle SourceBundle, machineID string, startedAt, derivedAt time.Time, reference SourceReference, parser ParserInfo) Metadata {
 	state, outcome := deriveLifecycle(bundle.SupplementalEvidence)
-	return Metadata{
-		SchemaVersion: MetadataSchemaVersion, SessionID: bundle.ArchiveSessionID, NativeSessionID: bundle.NativeSessionID,
+	schemaVersion := MetadataSchemaVersion
+	var history *RevisionHistory
+	if bundle.History != nil {
+		schemaVersion = HistoryMetadataSchemaVersion
+		history = &RevisionHistory{CurrentRevision: bundle.History.ActiveRolloutID}
+	}
+	m := Metadata{
+		History: history, SchemaVersion: schemaVersion, SessionID: bundle.ArchiveSessionID, NativeSessionID: bundle.NativeSessionID,
 		MachineID: machineID, ProjectID: bundle.ProjectID, StartedAt: startedAt.UTC(), CapturedAt: bundle.Capture.CapturedAt.UTC(),
 		MetadataDerivedAt: derivedAt.UTC(), Harness: bundle.Capture.Harness,
 		Adapter: AdapterInfo{Name: bundle.Capture.AdapterName, Version: bundle.Capture.AdapterVersion}, Parser: parser,
@@ -149,6 +155,7 @@ func baseMetadata(bundle SourceBundle, machineID string, startedAt, derivedAt ti
 		ParentSessionID: bundle.ParentSessionID,
 		LinkedSessions:  append([]LinkedSessionReference(nil), bundle.LinkedSessions...),
 	}
+	return m
 }
 
 func summarizeTurns(turns []NormalizedTurn) (prompts, messages, shellCommands int, summaries []ModelSummary) {
@@ -655,7 +662,10 @@ func skillNameFromPath(value string) string {
 // version and names its source bundle: an object key and a 64-character
 // SHA-256.
 func (m *Metadata) ValidateSourceReference() error {
-	if m.SchemaVersion != MetadataSchemaVersion {
+	if err := m.validateRevisionHistory(); err != nil {
+		return err
+	}
+	if m.SchemaVersion != MetadataSchemaVersion && m.SchemaVersion != HistoryMetadataSchemaVersion {
 		return fmt.Errorf("unsupported metadata schema version %d", m.SchemaVersion)
 	}
 	if m.SourceBundle.Key == "" || len(m.SourceBundle.SHA256) != 64 {
@@ -675,6 +685,9 @@ func BuildMetadataWithAnalysis(bundle SourceBundle, analysis Analysis, parseErr 
 		parser.Status = ParserStatusFailed
 	}
 	metadata := baseMetadata(bundle, machineID, startedAt, derivedAt, reference, parser)
+	if analysis.Facts.TokenScopeUnknown {
+		metadata.CaptureGaps = append(metadata.CaptureGaps, CaptureGap{Code: "history_cumulative_tokens_unavailable", Detail: "Cumulative native accounting cannot establish own usage; independently recorded own usage is retained."})
+	}
 	if parseErr != nil {
 		return metadata, parseErr
 	}

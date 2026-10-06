@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agents/codex"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
@@ -46,7 +47,7 @@ func TestParserBumpRepublishesModelTokensFromRetainedSource(t *testing.T) {
 		t.Fatalf("%#v %v", result, err)
 	}
 	next := fetchMetadata(t, remote, "codex", reg.ArchiveSessionID)
-	if next.Parser.Version != archive.DefaultParserVersion || next.Parser.Version == old.Parser.Version {
+	if next.Parser.Version != (codex.Parser{}).Version() || next.Parser.Version == old.Parser.Version {
 		t.Fatalf("parser version %q after %q", next.Parser.Version, old.Parser.Version)
 	}
 	if next.SourceBundle != old.SourceBundle {

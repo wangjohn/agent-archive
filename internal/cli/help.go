@@ -74,7 +74,6 @@ Nothing is uploaded or written.
        agent-archive machines revoke --operation-id OPERATION_ID
        [--yes] [--json]
 
-Experimental draft: AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_REVOKE=1 is required.
 Bucket claims never authorize deletion. Verify immutable ownership through a
 local assignment, healthy issuer ledger or independently checked operator file.
 Unknown ownership refuses even under --yes. No token records a request only.
@@ -95,7 +94,6 @@ Self's active object key is deleted last. Sessions and downloaded data remain.
 `,
 	"machines own-key": `Usage: agent-archive machines own-key [--yes] [--cancel]
 
-Experimental draft: AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_KEYS=1 is required.
 Stage and check a dedicated key, then commit through setup's transaction.
 Existing machine identity remains. Shared access stays valid for other users.
 Remove the old local secret only after commit and only when no other local
@@ -107,16 +105,15 @@ destination needs it. Record publication retries independently of commit.
        [--expires 15m] [--print | --file PATH] [--yes]
 
 Create an encrypted pairing bundle after checking the source storage.
-Dedicated R2 issuance is an experimental draft, gated by
-AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_KEYS=1. An available management token creates
+An available management token creates
 and checks a fresh key; otherwise use a ledger-backed spare. --yes never shares
-implicitly. --share-key explicitly selects shared-key beta without independent
-recipient revocation. Live provider acceptance and revocation remain required.
+implicitly. --share-key explicitly selects shared-key pairing without
+independent recipient revocation.
 S3 transfers settings and a profile name. Configure the profile on the receiver.
 Deliver the bundle and six-word code separately. Pairing refuses in any coding
 agent, even with --yes or AGENT_ARCHIVE_NONINTERACTIVE=0.
   --name NAME    Recipient name: 1..40 lowercase letters, digits or hyphens
-  --share-key    Explicitly share the active R2 key (beta)
+  --share-key    Explicitly share the active R2 key (shared access)
   --spares N     Save unused R2 key target, 0..5 (default 2)
                  Refill with an available management token
   --expires DURATION  Lifetime from 5m to 24h (default: 15m)
@@ -132,17 +129,21 @@ attempted exposure. Issuer-local delivered secrets are removed on exit; lineage
 remains. Spare refill failure does not invalidate the delivered pairing.
 `,
 	"machines": `Usage: agent-archive machines [--json] [--verify] [--yes]
+       agent-archive machines add [options]
 
-List informational machine records from this bucket.
---verify opts into an experimental, read-only Cloudflare metadata check behind
-AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_VERIFY=1. Account inventory completeness
-remains unknown; matching metadata never proves ownership or access removal.
-Anyone with bucket access can forge records; they never authorize revocation.
-Heartbeat is updated at most daily and does not indicate current activity.
-Unreadable records and incomplete listings are reported; those exit with code 1.
+List or add machine records for this bucket. Records are informational and do
+not prove identity, current activity, or access removal.
+
+Pair another machine:
+  agent-archive machines add    On this machine
+  agent-archive setup --pair    On the other machine
+
+Options:
   --json    Write records and observations as JSON
             Never prompt or run a token command
   --verify  Explicit bounded provider metadata check for this R2 bucket
+            Account inventory completeness remains unknown; matching metadata
+            never proves ownership or access removal
   --yes     With --verify, require CLOUDFLARE_API_TOKEN and never prompt
 `,
 	"machines rename": `Usage: agent-archive machines rename [CURRENT_NAME|MACHINE_ID] NEW_NAME
@@ -668,6 +669,7 @@ confirm. Projects the import needs are added to capture. Prints project
 folders and counts only, never conversation content.
   --harness NAME        Only claude, codex, or cursor (repeatable)
   --project DIR         Only this project; it need not still exist (repeatable)
+  --map-project OLD=ROOT Exact missing cwd to included root (repeatable)
   --since DATE|TIME|AGE Sessions started on or after this local day (list's
                         --since uses UTC): a date (2026-09-01), an RFC 3339
                         time, or an age (7d, 12h); a time or age selects

@@ -374,9 +374,6 @@ func choosePairingKey(home string, cfg config.Config, p *prompter, env Env, yes,
 	if cfg.Storage.Provider != credentials.ProviderR2 || share {
 		return issuance.Slot{}, nil, nil
 	}
-	if env.getenv("AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_KEYS") != "1" {
-		return issuance.Slot{}, nil, errors.New("dedicated issuance is experimental; set AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_KEYS=1 after reviewing its limitations, or use explicit --share-key")
-	}
 	if _, _, err := providerDestination(cfg.Storage); err != nil {
 		return issuance.Slot{}, nil, err
 	}

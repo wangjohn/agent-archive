@@ -66,6 +66,9 @@ func (s *sessionScan) rewrittenSinceCapture(read sourceRead) (bool, error) {
 // now drop or redact changes. What the earlier filter already dropped stays
 // dropped.
 func refilterBundle(ctx context.Context, reg archive.SessionRegistration, adapter archive.Adapter, bundle archive.SourceBundle) (archive.SourceBundle, error) {
+	if err := archive.CheckHistoryMutation(bundle, archive.Metadata{}); err != nil {
+		return archive.SourceBundle{}, err
+	}
 	filtered, err := refilterNative(ctx, reg, adapter, bundle)
 	if err != nil {
 		return archive.SourceBundle{}, err
