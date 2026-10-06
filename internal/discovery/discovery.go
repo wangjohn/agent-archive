@@ -28,7 +28,7 @@ const (
 	// HeaderProbes caps metadata reads in one pass.
 	HeaderProbes = 256
 	// Reprobe older cached observations so they acquire explicit format profiles.
-	catalogVersion = 5
+	catalogVersion = 6
 	maxCatalog     = 8192
 	maxDirectories = 4096
 	maxRetries     = 256
@@ -71,6 +71,7 @@ type cached struct {
 }
 
 type catalog struct {
+	Coverage *coverageInventory `json:"native_coverage,omitempty"`
 	Version  int                `json:"version"`
 	Roots    []string           `json:"roots"`
 	Queue    []directory        `json:"queue"`
@@ -83,8 +84,10 @@ type catalog struct {
 // Options contains injectable clocks and stop signals; it cannot override
 // source format support or authorize capture.
 type Options struct {
-	Now  func() time.Time
-	Stop func() bool
+	// Rollouts receives the same validated observations and bounded coverage state.
+	Rollouts *CodexRolloutLookup
+	Now      func() time.Time
+	Stop     func() bool
 }
 
 // Run observes configured Codex homes under the caller's collector lock,
@@ -107,88 +110,44 @@ func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config,
 	}
 	now := o.Now().UTC()
 	h := Health{Enabled: true, LastAttempt: now, Outcomes: map[string]int{}}
-	path := filepath.Join(store.Home(), "discovery-catalog.json")
-	var c catalog
-	if err := local.Read(path, &c); err != nil && !errors.Is(err, os.ErrNotExist) {
-		h.Errors = append(h.Errors, "catalog_rebuilt")
+	c, path, roots, err := prepareCatalog(store, cfg, o, adapter, &h)
+	if err != nil {
+		return h, err
 	}
-	roots := approvedRoots(cfg.Discovery.CodexHomes)
-	if catalogNeedsReset(c, roots) {
-		c = catalog{}
-	}
-	c.Version = catalogVersion
-	c.Roots = roots
-	if c.Cache == nil {
-		c.Cache = map[string]cached{}
-	}
-	h.LastReconciled = c.Health.LastReconciled
-	if len(c.Queue) == 0 {
-		for _, root := range roots {
-			for _, path := range adapter.InitialDirectories() {
-				c.Queue = append(c.Queue, directory{Root: root, Path: path})
-			}
+	allowance := Budget
+	if o.Rollouts != nil {
+		allowance = min(Budget-time.Second, o.Rollouts.remaining-time.Second)
+		if allowance <= 0 {
+			return h, errors.New("native observation budget exhausted")
 		}
 	}
-	deadline := time.Now().Add(Budget)
+	started := time.Now()
+	if o.Rollouts != nil {
+		defer func() { o.Rollouts.remaining -= time.Since(started) }()
+	}
+	deadline := started.Add(allowance)
 	ctx, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
 	resolver := sourcefacts.NewProjectResolver()
-	priority := scan{resolver: resolver, store: store, cfg: cfg, catalog: &c, health: &h, now: now, adapter: adapter, priority: true, ctx: ctx}
+	priority := scan{resolver: resolver, store: store, cfg: cfg, catalog: &c, health: &h, now: now, adapter: adapter, priority: true, ctx: ctx, rollouts: o.Rollouts}
 	priority.observeIndexHints(ctx, o, roots, deadline)
 	priority.observeActiveHints(ctx, o, roots, deadline)
 	priority.observeRetries(o)
 
-	// Retry unavailable directories before the remaining backlog next pass,
-	// without revisiting them in this pass or consuming forward queue slots.
-	var unavailable []directory
-	for len(c.Queue) > 0 && h.Probes < HeaderProbes && h.Entries < 2048 && time.Now().Before(deadline) {
-		if scanStopped(ctx, o) {
-			break
-		}
-		d := c.Queue[0]
-		c.Queue = c.Queue[1:]
-		batch, err := adapter.Enumerate(ctx, d.Root, d.Path, d.Offset)
-		next, finished := batch.Continuation, batch.Complete
-		if err != nil {
-			if ctx.Err() != nil {
-				c.Queue = append(c.Queue, d)
-				break
-			}
-			h.Errors = appendUnique(h.Errors, "source_root_unavailable")
-			unavailable = append(unavailable, d)
-			continue
-		}
-		worker := scan{resolver: resolver, store: store, cfg: cfg, catalog: &c, health: &h, now: now, adapter: adapter, ctx: ctx, reservedDirectories: len(unavailable)}
-		for _, source := range batch.Entries {
-			if scanStopped(ctx, o) || time.Now().After(deadline) {
-				finished = false
-				next = d.Offset
-				break
-			}
-			retry, stop := worker.visitEntry(d, source)
-			if retry {
-				finished = false
-				next = d.Offset
-			}
-			if stop {
-				break
-			}
-		}
-
-		if !finished {
-			d.Offset = next
-			c.Queue = append(c.Queue, d)
-		}
-	}
-	c.Queue = append(unavailable, c.Queue...)
+	priority.observeDirectories(o, deadline)
 	h.ProjectOperations = resolver.Operations
 	h.GitBytes = resolver.GitBytes
-	h.Pending = len(c.Queue) > 0 || len(c.Retries) > 0
+	h.Pending = len(c.Queue) > 0 || len(c.Retries) > 0 || c.Coverage != nil && c.Coverage.Phase != "complete"
 	if !h.Pending && len(h.Errors) == 0 {
 		h.LastReconciled = now
 	}
 	pruneCatalog(&c)
 	c.Health = h
+	if c.Coverage != nil {
+		if err := c.Coverage.validate(roots); err != nil {
+			return h, err
+		}
+	}
 	if err := local.Write(path, c); err != nil {
 		return h, errors.New("discovery state write failed; retry next scan")
 	}
@@ -500,6 +459,7 @@ func continuationLocator(store *state.Store, agent, native string, source Source
 }
 
 type scan struct {
+	rollouts            *CodexRolloutLookup
 	resolver            *sourcefacts.ProjectResolver
 	store               *state.Store
 	cfg                 config.Config
@@ -533,11 +493,14 @@ func (s scan) visitEntry(d directory, source SourceEntry) (retry, stop bool) {
 		retryDelay = time.Minute
 	}
 	if !hit || entry.Size != source.Fingerprint.Size || entry.Mtime != source.Fingerprint.Mtime || now.Sub(entry.Checked) >= retryDelay || now.Before(entry.Checked) {
-		if h.Probes >= HeaderProbes {
+		if !discoveryProbeAvailable(h, s.rollouts) {
 			return true, true
 		}
 		observation := s.adapter.Inspect(s.ctx, source.Source)
 		h.Probes++
+		if s.rollouts != nil {
+			s.rollouts.probes++
+		}
 		h.Bytes += observation.Bytes
 		entry = cached{Size: source.Fingerprint.Size, Mtime: source.Fingerprint.Mtime, Checked: now, Observation: observation}
 		c.Cache[loc] = entry
@@ -545,6 +508,9 @@ func (s scan) visitEntry(d directory, source SourceEntry) (retry, stop bool) {
 	if s.priority && !entry.ActiveHint {
 		entry.ActiveHint = true
 		c.Cache[loc] = entry
+	}
+	if s.rollouts != nil {
+		s.rollouts.Observe(source.Source, source.Fingerprint, entry.Observation.Identity)
 	}
 	h.Outcomes[string(entry.Observation.Outcome)]++
 	if entry.Observation.Outcome != outcomeUsable {
@@ -719,4 +685,113 @@ func (s scan) admitCandidate(candidate Candidate, loc string) (bool, bool) {
 		h.Registered++
 	}
 	return false, false
+}
+
+func discoveryProbeAvailable(h *Health, rollouts *CodexRolloutLookup) bool {
+	return h.Probes < HeaderProbes && (rollouts == nil || rollouts.probes < HeaderProbes-maxCurrentThreads)
+}
+
+func prepareCatalog(store *state.Store, cfg config.Config, o Options, adapter SourceAdapter, h *Health) (catalog, string, []string, error) {
+	path := filepath.Join(store.Home(), "discovery-catalog.json")
+	var c catalog
+	if err := local.Read(path, &c); err != nil && !errors.Is(err, os.ErrNotExist) {
+		h.Errors = append(h.Errors, "catalog_rebuilt")
+	}
+	roots := approvedRoots(cfg.Discovery.CodexHomes)
+	if c.Coverage != nil && c.Coverage.Version != 1 {
+		return c, path, roots, errors.New("native coverage requires a newer writer")
+	}
+	if catalogNeedsReset(c, roots) {
+		c = catalog{}
+	}
+	if o.Rollouts != nil {
+		if o.Rollouts.coverage != nil && o.Rollouts.coverage.validate(roots) == nil {
+			c.Coverage = o.Rollouts.coverage
+		}
+		if c.Coverage == nil || c.Coverage.validate(roots) != nil {
+			c.Coverage = newCoverage(roots)
+		}
+		o.Rollouts.coverage = c.Coverage
+		if c.Coverage.Phase == "complete" {
+			c.Coverage.restart()
+			c.Queue = nil
+		}
+	}
+	c.Version = catalogVersion
+	c.Roots = roots
+	if c.Cache == nil {
+		c.Cache = map[string]cached{}
+	}
+	h.LastReconciled = c.Health.LastReconciled
+	if len(c.Queue) == 0 && (c.Coverage == nil || c.Coverage.Phase == "observe") {
+		for _, root := range roots {
+			for _, path := range adapter.InitialDirectories() {
+				c.Queue = append(c.Queue, directory{Root: root, Path: path})
+			}
+		}
+	}
+	return c, path, roots, nil
+}
+
+func (s scan) observeDirectories(o Options, deadline time.Time) {
+	c, h := s.catalog, s.health
+	// Retry unavailable directories before the remaining backlog next pass,
+	// without revisiting them in this pass or consuming forward queue slots.
+	var unavailable []directory
+	for (c.Coverage == nil || c.Coverage.Phase == "observe") && len(c.Queue) > 0 && discoveryProbeAvailable(h, o.Rollouts) && h.Entries < 2048 && time.Now().Before(deadline) {
+		if scanStopped(s.ctx, o) {
+			break
+		}
+		d := c.Queue[0]
+		c.Queue = c.Queue[1:]
+		batch, err := s.adapter.Enumerate(s.ctx, d.Root, d.Path, d.Offset)
+		next, finished := batch.Continuation, batch.Complete
+		if err != nil {
+			if s.ctx.Err() != nil {
+				c.Queue = append(c.Queue, d)
+				break
+			}
+			h.Errors = appendUnique(h.Errors, "source_root_unavailable")
+			unavailable = append(unavailable, d)
+			continue
+		}
+		worker := scan{resolver: s.resolver, store: s.store, cfg: s.cfg, catalog: c, health: h, now: s.now, adapter: s.adapter, ctx: s.ctx, reservedDirectories: len(unavailable), rollouts: o.Rollouts}
+		advanced := true
+		for _, source := range batch.Entries {
+			if scanStopped(s.ctx, o) || time.Now().After(deadline) {
+				finished = false
+				next = d.Offset
+				advanced = false
+				break
+			}
+			retry, stop := worker.visitEntry(d, source)
+			if retry {
+				finished = false
+				next = d.Offset
+				advanced = false
+			}
+			if stop {
+				break
+			}
+		}
+
+		if c.Coverage != nil {
+			if batch.coverage == nil {
+				c.Coverage.Failed = true
+			} else {
+				c.Coverage.recordBatch(d, *batch.coverage, next, finished, advanced)
+			}
+		}
+		if !finished {
+			d.Offset = next
+			c.Queue = append(c.Queue, d)
+		}
+	}
+	c.Queue = append(unavailable, c.Queue...)
+	if c.Coverage != nil {
+		if c.Coverage.Phase == "observe" && len(c.Queue) == 0 {
+			c.Coverage.beginValidation()
+		}
+		advanceCoverageValidation(s.ctx, c, h, s.adapter, deadline, o)
+	}
 }

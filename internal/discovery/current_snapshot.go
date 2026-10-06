@@ -14,6 +14,7 @@ import (
 )
 
 const currentSnapshotLimit int64 = 128 << 20
+const indexVerificationScratch int64 = 64 << 10
 
 var errIndexChanged = errors.New("native index changed during snapshot")
 
@@ -45,7 +46,7 @@ func snapshotCurrentIndex(ctx context.Context, root string, step func(string)) (
 	}
 	defer func() { _ = main.Close() }()
 	before, err := main.Stat()
-	if err != nil || before.Size() < 100 || before.Size() > currentSnapshotLimit {
+	if err != nil || before.Size() < 100 || before.Size()+indexVerificationScratch > currentSnapshotLimit {
 		return nil, errIndexChanged
 	}
 	wal, header, walBefore, err := openSnapshotWAL(root, mainPath+"-wal")
@@ -68,7 +69,7 @@ func snapshotCurrentIndex(ctx context.Context, root string, step func(string)) (
 	}
 	var walBytes []byte
 	if wal != nil {
-		if before.Size()+walBefore.Size() > currentSnapshotLimit {
+		if before.Size()+walBefore.Size()+indexVerificationScratch > currentSnapshotLimit {
 			return nil, errIndexChanged
 		}
 		walBytes, err = readIndexExtent(ctx, wal, walBefore.Size(), &metrics)
@@ -76,7 +77,7 @@ func snapshotCurrentIndex(ctx context.Context, root string, step func(string)) (
 			return nil, errIndexChanged
 		}
 	}
-	metrics.PeakBuffers = int64(len(mainBytes) + len(walBytes))
+	metrics.PeakBuffers = int64(len(mainBytes)+len(walBytes)) + indexVerificationScratch
 	committed, pages, pageSize, err := committedWAL(walBytes)
 	if err != nil {
 		return nil, err
@@ -311,7 +312,9 @@ func replayCommittedWAL(main *[]byte, wal []byte, pages uint32, pageSize int) er
 		return errIndexChanged
 	}
 	if size > int64(len(*main)) {
-		*main = append(*main, make([]byte, int(size)-len(*main))...)
+		grown := make([]byte, int(size))
+		copy(grown, *main)
+		*main = grown
 	} else {
 		*main = (*main)[:int(size)]
 	}
