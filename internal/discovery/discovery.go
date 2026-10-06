@@ -203,13 +203,8 @@ func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config,
 		}
 		return h, nil
 	}
-	write := func() error { return local.WriteCompact(path, c) }
-	if o.Rollouts != nil {
-		write = func() error { return o.Rollouts.writeCatalog(ctx, path, c) }
-	}
-	if err := write(); err != nil {
+	if err := persistNativeCatalog(ctx, o.Rollouts, path, c); err != nil {
 		return h, errors.Join(errors.New("discovery state write failed; retry next scan"), err)
-
 	}
 	if o.Rollouts != nil {
 		o.Rollouts.catalog = &c
@@ -1130,4 +1125,11 @@ func hasValidatedCoverage(coverage *coverageInventory) bool {
 
 func catalogPending(c catalog, nativeOnly bool) bool {
 	return len(c.Queue) > 0 || !nativeOnly && len(c.Retries) > 0 || c.Coverage != nil && c.Coverage.Phase != coverageComplete
+}
+
+func persistNativeCatalog(ctx context.Context, lookup *CodexRolloutLookup, path string, c catalog) error {
+	if lookup != nil {
+		return lookup.writeCatalog(ctx, path, c)
+	}
+	return local.WriteCompact(path, c)
 }
