@@ -284,7 +284,7 @@ func TestS3LocationUsesTheListedBucketAndItsOwnRegion(t *testing.T) {
 	if !reflect.DeepEqual(opened, []string{"work us-east-1"}) {
 		t.Fatalf("finder opened with %q", opened)
 	}
-	for _, want := range []string{"  1) photos\n  2) team-archive\nEnter 1-2, or another bucket name: ", "Bucket team-archive is in ap-southeast-2; using that region.\n"} {
+	for _, want := range []string{"  1) photos\n  2) team-archive", "Bucket team-archive is in ap-southeast-2; using that region.\n"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("output %q, want %q", &out, want)
 		}
@@ -301,9 +301,9 @@ func TestS3LocationBucketDefault(t *testing.T) {
 		want   string
 		prompt string
 	}{
-		{"named like agent-archive", "", "agent-archive-alex", "Enter 1-3, or another bucket name [2]: "},
-		{"saved bucket listed", "photos", "photos", "Enter 1-3, or another bucket name [1]: "},
-		{"saved bucket not listed", "elsewhere", "elsewhere", "Enter 1-3, or another bucket name [elsewhere]: "},
+		{"named like agent-archive", "", "agent-archive-alex", "> Choose [2]: "},
+		{"saved bucket listed", "photos", "photos", "> Choose [1]: "},
+		{"saved bucket not listed", "elsewhere", "elsewhere", "> Choose [elsewhere]: "},
 	} {
 		cfg := credentials.Config{AWSProfile: "work", Bucket: tc.saved}
 		env := s3LocationEnv([]AWSProfile{{Name: "work"}}, fakeBuckets{names: names, regions: regions})
@@ -329,7 +329,7 @@ func TestS3LocationListsAtMostTwentyBuckets(t *testing.T) {
 	if err := promptS3Location(newPrompter(strings.NewReader("\nbucket-25\n"), &out), &cfg, env, ""); err != nil || cfg.Bucket != "bucket-25" || cfg.Region != "us-west-2" {
 		t.Fatalf("cfg=%+v err=%v", cfg, err)
 	}
-	if !strings.Contains(out.String(), "  20) bucket-20\n  (5 more not listed)\nEnter 1-20, or another bucket name: ") || strings.Contains(out.String(), "21) ") {
+	if !strings.Contains(out.String(), "  20) bucket-20\n  5 more available by name") || strings.Contains(out.String(), "21) ") {
 		t.Fatalf("output %q", &out)
 	}
 }
@@ -347,12 +347,12 @@ func TestS3LocationFallsBackToTyping(t *testing.T) {
 		{
 			"listing denied, region found", fakeBuckets{listErr: errAccessDenied, regions: map[string]string{"typed": "us-west-2"}},
 			"\ntyped\n", "us-west-2",
-			[]string{"Couldn't list buckets for profile work (access denied). Type the bucket name.\nBucket name: ", "Bucket typed is in us-west-2; using that region."},
+			[]string{"Couldn't list buckets for profile work (access denied). Type the bucket name.", "Bucket typed is in us-west-2; using that region."},
 		},
 		{
 			"no buckets", fakeBuckets{regions: map[string]string{"typed": "us-west-2"}},
 			"\ntyped\n", "us-west-2",
-			[]string{"Profile work can't see any buckets. Type the bucket name; to create one instead, choose Amazon S3 at the storage question and continue with creation.\nBucket name:"},
+			[]string{"Profile work can't see any buckets. Type the bucket name; to create one instead, choose Amazon S3 at the storage question and continue with creation."},
 		},
 		{
 			"region denied, profile's used", fakeBuckets{names: []string{"typed"}, regionErr: errAccessDenied},
@@ -607,7 +607,7 @@ func TestStorageDefaultsFollowAWSProfileVariable(t *testing.T) {
 	if err == nil {
 		t.Fatal("setup went past the bucket question")
 	}
-	want := "Which AWS profile has access to the bucket?\n  1) bare (no credentials configured)\nEnter 1-1, or another profile name [1]: "
+	want := "1) bare · (no credentials configured)"
 	if !strings.Contains(out.String(), storageMenuPromptS3()) || !strings.Contains(out.String(), want) {
 		t.Fatalf("output %q, want %q", &out, want)
 	}

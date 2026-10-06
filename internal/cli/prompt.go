@@ -14,11 +14,20 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
 // prompter handles terminal and redirected input without echoing secrets.
 type prompter struct {
+	reviewModel *setupReviewModel
+
+	tokenHelpers      []string
+	projectScan       *setupProjectSearch
+	projectConfig     config.Config
+	projectCurrent    string
+	projectBackfilled map[string]bool
+
 	tokenCommand []string
 	in           *bufio.Reader
 	out          io.Writer
@@ -48,15 +57,6 @@ type prompter struct {
 	// person's Cloudflare account in this run.
 	guided  *r2Handoff
 	created []*r2Created
-}
-
-// step prints a wizard step heading, set apart from the prompts above it.
-func (p *prompter) step(n int, title string) {
-	heading := fmt.Sprintf("Step %d of 3 · %s", n, title)
-	if p.singleArea {
-		heading = title
-	}
-	terminal.Printf(p.out, "\n%s\n\n", p.style.bold(heading))
 }
 
 // warn and note print one review item. Continuation lines, such as a link,

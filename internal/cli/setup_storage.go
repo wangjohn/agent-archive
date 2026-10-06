@@ -33,17 +33,11 @@ func promptStorage(p *prompter, existing credentials.Config, env Env, failedRegi
 	offerKeep := len(keepInstalled) == 0 || keepInstalled[0]
 	var secret credentials.R2Credentials
 	if offerKeep && existing.Bucket != "" {
-		terminal.Println(p.out, "Current storage: "+existing.Provider+" / "+existing.Bucket)
-		choice, err := p.actions("Keep your current storage?", "keep", nil, []actionOption{{"keep", "", "Keep current storage"}, {"change", "c", "Change storage"}})
-		if err != nil {
-			return existing, secret, false, err
+		cfg, key, saved, kept, err := promptKeepStorage(p, existing, env)
+		if kept || err != nil {
+			return cfg, key, saved, err
 		}
-		if choice == "keep" {
-			if existing.Provider == credentials.ProviderR2 && !storedCredentialReadable(env, existing.R2CredentialRef) {
-				return promptExistingR2(p, existing, env)
-			}
-			return existing, secret, false, nil
-		}
+
 	}
 	def := existing.Provider
 	if def == "" {
@@ -101,7 +95,11 @@ func promptStorage(p *prompter, existing credentials.Config, env Env, failedRegi
 			mode = "existing"
 		}
 		if provider == credentials.ProviderR2 {
-			return promptExistingR2(p, cfg, env)
+			connected, key, save, e := promptExistingR2(p, cfg, env)
+			if errors.Is(e, errChooseStorageAgain) {
+				continue
+			}
+			return connected, key, save, e
 		}
 		err = promptS3Bucket(p, &cfg, env, failedRegion, mode == "new")
 		if errors.Is(err, errChooseStorageAgain) {
@@ -135,13 +133,11 @@ func storageIntroduction(p *prompter, provider string) (string, error) {
 		title := "Set up Amazon S3"
 		explanation := "Setup will create a bucket with Block Public Access using an AWS profile."
 		def := "new"
-		options := []actionOption{{"new", "", "Continue"}, {"existing", "e", "Use an existing bucket"}, {"back", "b", "Back"}, {"help", "h", "Setup instructions"}}
 		if provider == credentials.ProviderR2 {
 			title = "Set up Cloudflare R2"
 			explanation = "Setup will create a private bucket and archive key. You'll provide a setup token once; it won't be saved."
 		}
-		terminal.Println(p.out, explanation)
-		choice, err := p.actions(title, def, nil, options)
+		choice, err := p.guidedChoice(promptModel{Question: title, Helpers: []string{explanation}, Default: def, Primary: []option{{"new", "Create a new bucket"}, {"existing", "Use an existing bucket"}}, Secondary: []actionOption{{"back", "b", "Back to storage options"}, {"help", "h", "Setup instructions"}}})
 		if err != nil {
 			return "", err
 		}
@@ -164,7 +160,7 @@ func promptExistingR2(p *prompter, cfg credentials.Config, env Env) (credentials
 		return cfg, secret, false, e
 	}
 	if !fromURL {
-		if cfg.Bucket, err = p.required("Bucket name", cfg.Bucket); err != nil {
+		if cfg.Bucket, err = p.setupStorageRequired("Bucket name", cfg.Bucket); err != nil {
 			return cfg, secret, false, err
 		}
 	}
@@ -177,7 +173,7 @@ func promptExistingR2(p *prompter, cfg credentials.Config, env Env) (credentials
 		// stored; offering to keep it would only fail after the
 		// questions, so ask for the key again right away.
 		if storedCredentialReadable(env, cfg.R2CredentialRef) {
-			reuse, err = p.yesNo("Keep stored R2 credentials?", true)
+			reuse, err = p.setupYesNo("Keep stored R2 credentials?", true)
 			if err != nil {
 				return cfg, secret, false, err
 			}
@@ -186,7 +182,7 @@ func promptExistingR2(p *prompter, cfg credentials.Config, env Env) (credentials
 		}
 	}
 	if !reuse {
-		secret.AccessKeyID, err = p.required("Access key ID", "")
+		secret.AccessKeyID, err = p.setupStorageRequired("Access key ID", "")
 		if err != nil {
 			return cfg, secret, false, err
 		}
@@ -214,4 +210,26 @@ func storageProviderLabel(key string) string {
 		return "Setup instructions"
 	}
 	return key
+}
+
+// promptKeepStorage returns kept only when current storage can be reused or the
+// replacement credential field completed. Back returns to the provider menu.
+func promptKeepStorage(p *prompter, existing credentials.Config, env Env) (credentials.Config, credentials.R2Credentials, bool, bool, error) {
+	var key credentials.R2Credentials
+	terminal.Println(p.out, "Current storage: "+existing.Provider+" / "+existing.Bucket)
+	choice, err := p.setupActions("Keep your current storage?", "keep", nil, []actionOption{{"keep", "", "Keep current storage"}, {"change", "c", "Change storage"}})
+	if err != nil {
+		return existing, key, false, false, err
+	}
+	if choice != "keep" {
+		return existing, key, false, false, nil
+	}
+	if existing.Provider != credentials.ProviderR2 || storedCredentialReadable(env, existing.R2CredentialRef) {
+		return existing, key, false, true, nil
+	}
+	cfg, key, saved, err := promptExistingR2(p, existing, env)
+	if errors.Is(err, errChooseStorageAgain) {
+		return existing, key, false, false, nil
+	}
+	return cfg, key, saved, true, err
 }

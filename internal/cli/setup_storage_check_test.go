@@ -59,14 +59,14 @@ func TestSetupContinueAfterAccessFailureAsksForStorage(t *testing.T) {
 	env := failingStorageEnv(t, home, &failure)
 	input := strings.TrimSuffix(s3SetupInput("bucket", "us-east-1", "profile", true, false, false, t.TempDir()), "y\n")
 	output := setupRun(t, env, input+"cancel\n", 1)
-	if !strings.Contains(output, "Access denied.") {
+	if !setupContainsText(output, "Access denied.") {
 		t.Fatalf("no diagnosis:\n%s", output)
 	}
 
 	failure = nil
 	// Continue, then keep every storage answer, and start archiving.
 	output = setupRun(t, env, "continue\n\n\n\ny\n", 0)
-	if !strings.Contains(output, storageQuestion) {
+	if !setupContainsText(output, storageQuestion) {
 		t.Fatalf("continuing did not ask for storage:\n%s", output)
 	}
 	if cfg, found, err := config.Load(home); err != nil || !found || cfg.Storage.Bucket != "bucket" {
@@ -105,7 +105,7 @@ func TestSetupStorageFailureMenu(t *testing.T) {
 			if n := strings.Count(output, "Access denied."); n != 2 {
 				t.Fatalf("diagnosis printed %d times, want once per check:\n%s", n, output)
 			}
-			if !strings.Contains(output, "What next?\n  1) Change storage settings\n") || !strings.Contains(output, "Enter 1-4 [1]") {
+			if !setupContainsText(output, "1) Change storage settings (default)") || !setupContainsText(output, "> Choose [1]") {
 				t.Fatalf("menu does not default to the fix:\n%s", output)
 			}
 		})
@@ -142,7 +142,7 @@ func TestSetupStorageFailurePrintsTheErrorOnlyWhenVerbose(t *testing.T) {
 			if n := strings.Count(output, raw); n != want {
 				t.Fatalf("storage error printed %d times, want %d:\n%s", n, want, output)
 			}
-			if !strings.Contains(output, "Setup incomplete: the storage check failed; your answers are kept\n") {
+			if !setupContainsText(output, "Setup incomplete: the storage check failed; your answers are kept\n") {
 				t.Fatalf("last line:\n%s", output)
 			}
 		})
@@ -168,7 +168,7 @@ func TestSetupWrongRegionFixAsksForTheRegion(t *testing.T) {
 	}
 	input := strings.TrimSuffix(s3SetupInput("bucket", "us-east-1", "profile", true, false, false, t.TempDir()), "y\n")
 	output := setupRun(t, env, input+"\n\ny\n", 0)
-	if !strings.Contains(output, "1) Change the region") || !strings.Contains(output, "Bucket region [eu-west-1]") {
+	if !setupContainsText(output, "1) Change the region") || !setupContainsText(output, "? Bucket region") {
 		t.Fatalf("the fix did not ask for the region:\n%s", output)
 	}
 	if strings.Count(output, storageQuestion) != 1 {
@@ -191,15 +191,15 @@ func TestStorageDiagnosisGivesR2NoRegionHint(t *testing.T) {
 		t.Fatalf("cause %q", d.Cause)
 	}
 	for _, text := range []string{d.Explanation, d.Fix, storageFailureHeadline(r2, d), storageFixLabel(r2, d)} {
-		if strings.Contains(strings.ToLower(text), "region") {
+		if setupContainsText(strings.ToLower(text), "region") {
 			t.Errorf("R2 diagnosis mentions a region: %q", text)
 		}
 	}
-	if !strings.Contains(d.Fix, "account ID") {
+	if !setupContainsText(d.Fix, "account ID") {
 		t.Errorf("fix %q does not point at the account", d.Fix)
 	}
 	s3 := credentials.Config{Provider: credentials.ProviderS3, Bucket: "b"}
-	if got := storageDiagnosis(s3, err); !strings.Contains(got.Fix, "region") {
+	if got := storageDiagnosis(s3, err); !setupContainsText(got.Fix, "region") {
 		t.Errorf("S3 fix %q lost its region hint", got.Fix)
 	}
 }
@@ -246,7 +246,7 @@ func TestSetupContinueAfterWrongRegionUsesTheBucketsRegion(t *testing.T) {
 
 	// Continue, keep every storage answer, and start archiving.
 	output := setupRun(t, env, "continue\n\n\n\ny\n", 0)
-	if strings.Contains(output, "The bucket is in another region.") || !strings.Contains(output, "Using region eu-west-1.") || strings.Contains(output, "Bucket region [") {
+	if setupContainsText(output, "The bucket is in another region.") || !setupContainsText(output, "Using region eu-west-1.") || setupContainsText(output, "Bucket region [") {
 		t.Fatalf("continuing repeated the failed check:\n%s", output)
 	}
 	if cfg, _, _ := config.Load(home); cfg.Storage.Region != "eu-west-1" {
@@ -285,7 +285,7 @@ func TestSetupWrongRegionAnswerMustBeARegion(t *testing.T) {
 			} else {
 				output = setupRun(t, env, input+tc.then, 0)
 			}
-			if !strings.Contains(output, `"~/code/api" isn't an AWS region.`) {
+			if !setupContainsText(output, `"~/code/api" isn't an AWS region.`) {
 				t.Fatalf("the path was not turned away:\n%s", output)
 			}
 			if cfg, _, _ := config.Load(home); cfg.Storage.Region != "eu-west-1" {
@@ -336,7 +336,7 @@ func TestSetupWrongRegionFixLooksUpTheRegion(t *testing.T) {
 	}
 	input := strings.TrimSuffix(s3SetupInput("bucket", "us-east-1", "profile", true, false, false, t.TempDir()), "y\n")
 	output := setupRun(t, env, input+"\n\ny\n", 0)
-	if !strings.Contains(output, "Bucket bucket is in eu-west-1.\nBucket region [eu-west-1]") {
+	if !setupContainsText(output, "Bucket bucket is in eu-west-1.") {
 		t.Fatalf("the fix did not offer the looked-up region:\n%s", output)
 	}
 	if cfg, _, _ := config.Load(home); cfg.Storage.Region != "eu-west-1" {
@@ -367,7 +367,7 @@ func TestSetupWrongRegionThenR2AsksNoRegion(t *testing.T) {
 	input := strings.TrimSuffix(s3SetupInput("bucket", "us-east-1", "profile", true, false, false, t.TempDir()), "y\n")
 	setupRun(t, env, input+"cancel\n", 1)
 	output := setupRun(t, env, "continue\nr2-existing\n0123456789abcdef0123456789abcdef\ntest-bucket\nACCESS\nsecret\ny\n", 0)
-	if strings.Contains(output, "Bucket region") {
+	if setupContainsText(output, "Bucket region") {
 		t.Fatalf("R2 was asked an AWS region:\n%s", output)
 	}
 	if cfg, _, _ := config.Load(home); cfg.Storage.Provider != credentials.ProviderR2 {
@@ -385,10 +385,10 @@ func TestSetupR2CredentialFixAsksForTheKey(t *testing.T) {
 	// The fix, the kept provider, account and bucket, a new key, and the
 	// second failure stops.
 	output := setupRun(t, env, input+"\n\n\n\nACCESS2\nsecond-secret\ncancel\n", 1)
-	if !strings.Contains(output, "1) Enter the R2 access key again") {
+	if !setupContainsText(output, "1) Enter the R2 access key again") {
 		t.Fatalf("fix label:\n%s", output)
 	}
-	if strings.Contains(output, "Keep stored R2 credentials?") || strings.Count(output, "Access key ID") != 2 {
+	if setupContainsText(output, "Keep stored R2 credentials?") || strings.Count(output, "? Access key ID") != 2 {
 		t.Fatalf("the fix did not ask for the key:\n%s", output)
 	}
 }
@@ -406,7 +406,7 @@ func TestSetupVerboseWithholdsCredentialProcessOutput(t *testing.T) {
 	if code := Run([]string{"setup", "--verbose"}, strings.NewReader(input+"cancel\n"), &out, &out, env); code != 1 {
 		t.Fatalf("exit %d\n%s", code, &out)
 	}
-	if strings.Contains(out.String(), secret) || !strings.Contains(out.String(), "Details: not shown") {
+	if setupContainsText(out.String(), secret) || !setupContainsText(out.String(), "Details: not shown") {
 		t.Fatalf("credential_process output printed:\n%s", &out)
 	}
 }
@@ -423,7 +423,7 @@ func TestSetupYesStorageDiagnosisGoesToStandardError(t *testing.T) {
 	if code := Run(args, strings.NewReader(""), &out, &errOut, env); code != 1 {
 		t.Fatalf("exit %d\n%s\n%s", code, &out, &errOut)
 	}
-	if !strings.Contains(errOut.String(), "Access denied.") || strings.Contains(out.String(), "refused") {
+	if !setupContainsText(errOut.String(), "Access denied.") || setupContainsText(out.String(), "refused") {
 		t.Fatalf("stdout:\n%s\nstderr:\n%s", &out, &errOut)
 	}
 }
@@ -441,13 +441,13 @@ func TestStorageDiagnosisNamesTheReadBack(t *testing.T) {
 		"missing": fmt.Errorf("setup test read: %w", storage.ErrNotFound),
 	} {
 		d := storageDiagnosis(s3, err)
-		if d.Cause != storage.CauseOther || !strings.Contains(d.Explanation, "test file") || !strings.Contains(d.Explanation, "read back") {
+		if d.Cause != storage.CauseOther || !setupContainsText(d.Explanation, "test file") || !setupContainsText(d.Explanation, "read back") {
 			t.Errorf("%s: %+v", name, d)
 		}
 	}
 	// storage.Diagnose itself says nothing of a test file: its other
 	// callers' reads share these sentinels.
-	if d := storage.Diagnose(storage.ErrNotFound); strings.Contains(d.Explanation, "test file") {
+	if d := storage.Diagnose(storage.ErrNotFound); setupContainsText(d.Explanation, "test file") {
 		t.Errorf("Diagnose(ErrNotFound) = %+v", d)
 	}
 }
@@ -481,12 +481,12 @@ func TestSetupContinueAfterEachFailureAsksBeforeChecking(t *testing.T) {
 		// bucket region lookup with eu-west-2.
 		lookupAsk string
 	}{
-		{name: "no credentials", failure: &smithy.OperationError{ServiceID: "S3", OperationName: "PutObject", Err: &smithy.OperationError{ServiceID: "ec2imds", OperationName: "GetMetadata", Err: errors.New("host is down")}}, ask: "AWS profile [profile]"},
+		{name: "no credentials", failure: &smithy.OperationError{ServiceID: "S3", OperationName: "PutObject", Err: &smithy.OperationError{ServiceID: "ec2imds", OperationName: "GetMetadata", Err: errors.New("host is down")}}, ask: "? AWS profile"},
 		{name: "R2 key refused", r2: true, failure: &smithy.GenericAPIError{Code: "InvalidAccessKeyId"}, ask: "Access key ID"},
 		{name: "access denied", failure: &smithy.GenericAPIError{Code: "AccessDenied"}, ask: storageQuestion},
-		{name: "no such bucket", failure: &smithy.GenericAPIError{Code: "NoSuchBucket"}, ask: "Bucket name [bucket]"},
-		{name: "wrong region named", failure: redirect(http.Header{"X-Amz-Bucket-Region": {"eu-west-1"}}), ask: "Using region eu-west-1.", lookupAsk: "Bucket region [eu-west-2]"},
-		{name: "wrong region unnamed", failure: redirect(http.Header{}), ask: "The last storage check failed with region us-east-1.\nBucket region [us-east-1]", lookupAsk: "The last storage check failed with region eu-west-2.\nBucket region [eu-west-2]"},
+		{name: "no such bucket", failure: &smithy.GenericAPIError{Code: "NoSuchBucket"}, ask: "? Bucket name"},
+		{name: "wrong region named", failure: redirect(http.Header{"X-Amz-Bucket-Region": {"eu-west-1"}}), ask: "Using region eu-west-1.", lookupAsk: "? Bucket region"},
+		{name: "wrong region unnamed", failure: redirect(http.Header{}), ask: "The last storage check failed with region us-east-1.", lookupAsk: "The last storage check failed with region eu-west-2."},
 		{name: "network", failure: &smithyhttp.RequestSendError{Err: errors.New("no such host")}, ask: storageQuestion},
 		{name: "other", failure: errors.New("incorrect region or folder"), ask: storageQuestion},
 		{name: "read-back", open: func(bucket storage.ObjectStore) (storage.ObjectStore, error) {
@@ -527,7 +527,7 @@ func TestSetupContinueAfterEachFailureAsksBeforeChecking(t *testing.T) {
 					ask = firstNonEmpty(tc.lookupAsk, tc.ask)
 				}
 				first := setupRun(t, env, strings.TrimSuffix(input, "y\n")+"cancel\n", 1)
-				if lookup && !strings.Contains(first, "Bucket bucket is in eu-west-2; using that region.") {
+				if lookup && !setupContainsText(first, "Bucket bucket is in eu-west-2; using that region.") {
 					t.Fatalf("setup did not use the looked-up region:\n%s", first)
 				}
 
@@ -540,13 +540,27 @@ func TestSetupContinueAfterEachFailureAsksBeforeChecking(t *testing.T) {
 					t.Fatalf("Continue checked before asking %q:\n%s", ask, output)
 				}
 				// Setup doesn't promise to keep a region it is about to ask.
-				if strings.Contains(ask, "The last storage check failed") && strings.Contains(output, "You can change it at the final review.") {
+				if setupContainsText(ask, "The last storage check failed") && setupContainsText(output, "You can change it at the final review.") {
 					t.Fatalf("Continue said it would use the region it then asked for:\n%s", output)
 				}
-				if tc.r2 && strings.Contains(output, "Keep stored R2 credentials?") {
+				if tc.r2 && setupContainsText(output, "Keep stored R2 credentials?") {
 					t.Fatalf("Continue offered to keep the refused key:\n%s", output)
 				}
 			})
 		}
+	}
+}
+
+func TestSetupStorageDiagnosticDetailsDoesNotRetry(t *testing.T) {
+	t.Parallel()
+	var failure error = errors.New("synthetic storage transport failure")
+	env := failingStorageEnv(t, t.TempDir(), &failure)
+	open := env.OpenStore
+	calls := 0
+	env.OpenStore = func(cfg config.Config) (storage.ObjectStore, error) { calls++; return open(cfg) }
+	input := strings.TrimSuffix(s3SetupInput("bucket", "us-east-1", "profile", true, false, false, t.TempDir()), "y\n")
+	out := setupRun(t, env, input+"details\ncancel\n", 1)
+	if calls != 1 || strings.Count(out, "Checking your storage connection") != 1 || !setupContainsText(out, "synthetic storage transport failure") || strings.Count(out, "? What next?") != 2 {
+		t.Fatalf("details retried or left recovery: opens=%d\n%s", calls, out)
 	}
 }

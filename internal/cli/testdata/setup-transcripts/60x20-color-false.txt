@@ -1,0 +1,194 @@
+Checking installed applications...
+  ✓ Codex hooks: ~/.codex/hooks.json
+  ✓ Claude Code hooks: ~/.claude/settings.json
+  ✓ Cursor hooks: ~/.cursor/hooks.json
+  ✓ Background job: launchctl responds
+Choose Cloudflare R2 or Amazon S3 for private archive storage. Setup will guide you through connecting your account.
+
+Step 1 of 3 · Choose what to capture
+
+? Capture sessions from Codex, Claude Code, and Cursor?
+
+  1) Yes (default)
+  2) No
+
+› Choose [1]:
+✓ Yes
+
+? Codex capture scope
+
+  1) Included projects only (Codex) (default)
+  2) All current and future projects (Codex only)
+
+› Choose [1]:
+✓ Included projects only (Codex)
+
+? Which projects?
+
+  Found 2 projects:
+  1) ~/src/web-app · this folder · 1 session · today
+  2) ~/src/長い-project-with-a-long-name · 1 session · today
+
+  1) All 2 found projects (default)
+  2) Choose specific projects
+
+  [p] Add a project path
+  [r] Retry search
+
+› Choose [1]:
+✓ Projects All 2 found projects
+
+Step 2 of 3 · Connect storage
+
+? Where should your archive live?
+
+  1) Cloudflare R2 (default)
+  2) Amazon S3
+
+  [h] Setup instructions
+
+› Choose [1]:
+✓ Provider Amazon S3
+
+? AWS profile
+
+› Answer:
+✓ AWS profile work
+
+? Which bucket should sessions be stored in?
+
+  1) photos
+  2) team-archive
+  Enter a number or bucket name.
+  [:back] Back to storage options
+
+› Choose:
+✓ team-archive
+
+Bucket team-archive is in us-east-1; using that region.
+
+Checking your storage connection…
+✓ Connected to your storage.
+
+Step 3 of 3 · Review and start
+  Apps      Codex, Claude Code, Cursor
+  Projects  ~/src/web-app
+            ~/src/長い-project-with-a-long-name
+  Codex     Included projects only
+  Skills    Metadata, including user folders
+  Storage   s3://team-archive/agent-archive/
+  Keep for  90 days
+  ✓ Storage connected
+  ! Bucket privacy unknown · public-access settings could not be read
+    Make sure public access is off:
+    https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
+  ! History import is separate.
+  ! Sensitive text may remain after filtering.
+
+? Start archiving?
+
+  1) Start archiving (default)
+  2) Edit a setting
+
+  [d] Full settings and privacy
+  [q] Cancel; keep draft
+  [m] Name this machine
+
+› Choose [1]:
+✓ Full settings and privacy
+
+
+Full settings and privacy
+  Apps           Codex 0.121.0 · Claude Code 2.1.90 · Cursor 3.21.13
+  Projects       ~/src/web-app
+                 ~/src/長い-project-with-a-long-name
+  Codex capture  Automatic discovery plus hooks when approved
+  Codex scope    Included projects only
+  Exceptions     None configured · Nearest explicit project rule wins
+  Codex sources  /Users/alex/.codex
+  Starts         After local consent, outside pause or exclusion
+  History        Old sessions require deliberate backfill
+  Copies         Qualifying recent native copies may be captured
+  Hooks          Optional for discovery; approval and observation are separate
+  Skills         metadata · User skill roots outside selected projects may be scanned; change with Edit a setting
+  Storage        s3://team-archive/agent-archive/ · us-east-1 · profile work
+  Keep for       90 days
+  Hook files     Codex: ~/.codex/hooks.json
+                 Claude Code: ~/.claude/settings.json
+                 Cursor: ~/.cursor/hooks.json
+  ✓ Storage connected       write, read, list, delete
+  ! Bucket privacy unknown  public-access settings could not be read
+    Make sure public access is off: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
+  ✓ Hook files are valid    ~/.codex/hooks.json, ~/.claude/settings.json, ~/.cursor/hooks.json
+  ✓ Codex discovery         supported new tasks do not require hook approval
+
+  Filtering is best effort; sensitive text may remain in archived sessions.
+  What leaves your machine: https://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md
+
+Step 3 of 3 · Review and start
+  Apps      Codex, Claude Code, Cursor
+  Projects  ~/src/web-app
+            ~/src/長い-project-with-a-long-name
+  Codex     Included projects only
+  Skills    Metadata, including user folders
+  Storage   s3://team-archive/agent-archive/
+  Keep for  90 days
+  ✓ Storage connected
+  ! Bucket privacy unknown · public-access settings could not be read
+    Make sure public access is off:
+    https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
+  ! History import is separate.
+  ! Sensitive text may remain after filtering.
+
+? Start archiving?
+
+  1) Start archiving (default)
+  2) Edit a setting
+
+  [d] Full settings and privacy
+  [q] Cancel; keep draft
+  [m] Name this machine
+
+› Choose [1]:
+✓ Start archiving
+
+✓ Setup complete · Automatic capture is on
+Installed /handoff, which continues a session in another agent: ~/.claude/skills/handoff/SKILL.md, ~/.agents/skills/handoff/SKILL.md
+Installed the agent-archive skill, which lets your agents look up and pull in past sessions: ~/.claude/skills/agent-archive/SKILL.md, ~/.agents/skills/agent-archive/SKILL.md
+To remove the agent skills and keep them off, run agent-archive setup --no-skills.
+
+Next, in each app
+  Codex: start a supported new task in an included project; automatic discovery does not require hook approval.
+  Optional hook capture: Codex: run /hooks and approve the archive hooks, then start a new session (or /clear).
+  Claude Code: nothing to approve; start a new session (or /clear).
+  Cursor: nothing to approve; start a new Agent chat.
+Sessions already open are not captured. Start a new one in an included project.
+Check progress with agent-archive status.
+
+Optional · Import past sessions
+
+Looking for past sessions in these projects… 2 found.
+
+? Import these sessions?
+
+  Found 2 sessions in 2 selected projects.
+  90-day retention applies.
+
+  1) Import 2 sessions (default)
+  2) Skip for now
+
+› Choose [1]:
+✓ Skip for now
+
+Not imported. Setup is complete. Import them later with agent-archive backfill.
+  · Another machine: agent-archive machines pair
+
+? More next steps?
+
+  1) Finish setup (default)
+
+  [d] Machine transfer details
+
+› Choose [1]:
+✓ Finish setup
+

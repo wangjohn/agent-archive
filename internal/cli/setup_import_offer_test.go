@@ -18,7 +18,7 @@ import (
 // setupImportAnswers set Claude Code up in ~/src/web-app, storing in S3,
 // and answer the import offer with importAnswer.
 func setupImportAnswers(importAnswer string) string {
-	return strings.Join([]string{"", "s3-existing", "work", "2", "", importAnswer}, "\n") + "\n"
+	return strings.Join([]string{"", "specific", "2", "", "s3-existing", "work", "2", "", importAnswer}, "\n") + "\n"
 }
 
 // newImportOfferFixture is a Mac with Claude Code, run from ~/src/web-app,
@@ -65,7 +65,7 @@ func TestSetupImportsPastSessionsWhenAsked(t *testing.T) {
 	t.Parallel()
 	f := newImportOfferFixture(t)
 	out := f.runSetup(t, setupImportAnswers("y"))
-	if !strings.Contains(out, "Import the 2 past sessions from these projects? [Y/n]") || !strings.Contains(out, "Uploaded 2 sessions") {
+	if !strings.Contains(out, "Import these sessions?") || !strings.Contains(out, "Uploaded 2 sessions") {
 		t.Fatalf("no import:\n%s", out)
 	}
 	ids := importedSessions(t, f.home)
@@ -103,7 +103,7 @@ func TestSetupLeavesPastSessionsWhenDeclined(t *testing.T) {
 	t.Parallel()
 	f := newImportOfferFixture(t)
 	out := f.runSetup(t, setupImportAnswers("n"))
-	if !strings.Contains(out, "Import the 2 past sessions") || !strings.Contains(out, "Not imported. Import them later with agent-archive backfill.") {
+	if !strings.Contains(out, "Import these sessions?") || !strings.Contains(out, "Setup is complete. Import them later with agent-archive backfill.") {
 		t.Fatalf("offer:\n%s", out)
 	}
 	if ids := importedSessions(t, f.home); len(ids) != 0 {
