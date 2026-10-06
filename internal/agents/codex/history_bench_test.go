@@ -2,6 +2,7 @@ package codex
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"runtime"
@@ -18,10 +19,11 @@ import (
 
 type historyIO struct {
 	transcriptio.OS
-	bytes  int64
-	reads  int64
-	opens  int64
-	closes int64
+	bytes    int64
+	reads    int64
+	opens    int64
+	closes   int64
+	closeErr error
 }
 
 type historyCountedFile struct {
@@ -36,7 +38,10 @@ func (f historyCountedFile) ReadAt(p []byte, off int64) (int, error) {
 	return n, e
 }
 
-func (f historyCountedFile) Close() error { f.owner.closes++; return f.File.Close() }
+func (f historyCountedFile) Close() error {
+	f.owner.closes++
+	return errors.Join(f.File.Close(), f.owner.closeErr)
+}
 
 func (f *historyIO) OpenRegular(path string) (transcriptio.File, error) {
 	v, e := f.OS.OpenRegular(path)
@@ -58,7 +63,6 @@ func BenchmarkRelatedHistoryRecords(b *testing.B) {
 
 // A benchmark operation assembles self-contained retained bundles sequentially.
 // Raw file bytes are charged once per pass; safe records/maps remain outside that budget.
-
 func benchmarkHistory(b *testing.B, n, children int) {
 	b.Helper()
 	dir := b.TempDir()

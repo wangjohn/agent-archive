@@ -25,13 +25,11 @@ import (
 const relatedRawBudget int64 = 128 << 20
 
 // Describe retains ordinary append protection; revision publication is separately fenced.
-
 func (SourceProvider) Describe(ref agentapi.SourceRef) (agentapi.SourceSemantics, error) {
 	return (sourceio.FileProvider{}).Describe(ref)
 }
 
 // OpenPass owns a bounded shared dependency cache and every descriptor it opens.
-
 func (SourceProvider) OpenPass(ctx context.Context, e agentapi.SourceEnvironment) (agentapi.SourcePass, error) {
 	legacy, err := (sourceio.FileProvider{}).OpenPass(ctx, e)
 	if err != nil {
@@ -44,7 +42,6 @@ func (SourceProvider) OpenPass(ctx context.Context, e agentapi.SourceEnvironment
 }
 
 // Activities preserves cheap file ordering independently of history selection.
-
 func (SourceProvider) Activities(ctx context.Context, e agentapi.SourceEnvironment, refs []agentapi.SourceRef) (map[agentapi.SourceRef]time.Time, error) {
 	return (sourceio.FileProvider{}).Activities(ctx, e, refs)
 }
@@ -69,6 +66,7 @@ type relatedSourcePass struct {
 	bytes     int64
 	cacheHits int64
 	closed    bool
+	closeErr  error
 }
 
 func sourceFailure(kind agentapi.FailureKind, message string) error {
@@ -98,7 +96,7 @@ func (p *relatedSourcePass) open(ctx context.Context, ref agentapi.SourceRef) (*
 		p.bytes -= old.charge()
 		delete(p.files, ref.Path)
 		if err := old.file.Close(); err != nil {
-			return nil, err
+			return nil, agentapi.Wrap(agentapi.Cleanup, err)
 		}
 	}
 	if len(p.files) >= archive.MaxHistorySpans {
@@ -150,7 +148,7 @@ func (p *relatedSourcePass) evict() error {
 	var err error
 	for path, f := range p.files {
 		if f.refs == 0 {
-			err = errors.Join(err, f.file.Close())
+			err = errors.Join(err, agentapi.Wrap(agentapi.Cleanup, f.file.Close()))
 			p.bytes -= f.charge()
 			delete(p.files, path)
 		}
@@ -160,7 +158,7 @@ func (p *relatedSourcePass) evict() error {
 
 func (p *relatedSourcePass) Close() error {
 	if p.closed {
-		return nil
+		return p.closeErr
 	}
 	p.closed = true
 	err := p.legacy.Close()
@@ -168,12 +166,13 @@ func (p *relatedSourcePass) Close() error {
 		err = errors.Join(err, s.Close())
 	}
 	for _, f := range p.files {
-		err = errors.Join(err, f.file.Close())
+		err = errors.Join(err, agentapi.Wrap(agentapi.Cleanup, f.file.Close()))
 		f.prefix = nil
 		f.validated = nil
 	}
 	p.files = nil
 	p.bytes = 0
+	p.closeErr = err
 	return err
 }
 
@@ -238,6 +237,11 @@ func (p *relatedSourcePass) selectSource(ctx context.Context, ref agentapi.Sourc
 		selected.leaf = current
 		return selected, nil
 	}
+	return p.selectLineage(ctx, selected)
+}
+
+func (p *relatedSourcePass) selectLineage(ctx context.Context, selected sourceSelection) (sourceSelection, error) {
+	set := selected.set
 	if !set.Complete {
 		return selected, sourceFailure(agentapi.Unavailable, "rollout lineage incomplete")
 	}
@@ -339,10 +343,13 @@ func (p *relatedSourcePass) graph(ctx context.Context, leaf *rolloutFile) ([]phy
 		if base.identity.RolloutID != id.HistoryBase.RolloutID {
 			return nil, sourceFailure(agentapi.Unsafe, "history dependency identity mismatch")
 		}
-		if id.HistoryBase.EndByteOffset > uint64(base.boundary) || id.HistoryBase.EndByteOffset == 0 {
+		if id.HistoryBase.EndByteOffset > math.MaxInt64 || id.HistoryBase.EndByteOffset == 0 {
 			return nil, sourceFailure(agentapi.Unsafe, "invalid history byte boundary")
 		}
 		end = int64(id.HistoryBase.EndByteOffset)
+		if end > base.boundary {
+			return nil, sourceFailure(agentapi.Unsafe, "invalid history byte boundary")
+		}
 		var last [1]byte
 		if _, err := base.file.ReadAt(last[:], end-1); err != nil || last[0] != '\n' {
 			return nil, sourceFailure(agentapi.Unsafe, "split history record boundary")
@@ -584,7 +591,7 @@ func (s *historySnapshot) Next(ctx context.Context) (agentapi.NativeRecord, bool
 		span := s.spans[s.span]
 		if s.scanner == nil {
 			s.scanner = bufio.NewScanner(io.NewSectionReader(span.reader(), 0, span.end))
-			s.scanner.Buffer(make([]byte, 4096), int(s.recordLimit)+1)
+			s.scanner.Buffer(make([]byte, min(int64(4096), s.recordLimit+1)), int(s.recordLimit)+1)
 			s.nextOrdinal = span.startOrdinal
 		}
 		if s.scanner.Scan() {
@@ -597,6 +604,9 @@ func (s *historySnapshot) Next(ctx context.Context) (agentapi.NativeRecord, bool
 			return agentapi.NativeRecord{Kind: agentapi.CodexHistoryRecord, Key: span.file.identity.RolloutID, Raw: raw, Ordinal: ordinal}, true, nil
 		}
 		if err := s.scanner.Err(); err != nil {
+			if errors.Is(err, bufio.ErrTooLong) {
+				return agentapi.NativeRecord{}, false, agentapi.Wrap(agentapi.Limit, archive.ErrRecordTooLarge)
+			}
 			return agentapi.NativeRecord{}, false, sourceio.Classify(err)
 		}
 		s.scanner = nil
@@ -606,7 +616,6 @@ func (s *historySnapshot) Next(ctx context.Context) (agentapi.NativeRecord, bool
 }
 
 // ordinarySnapshot retains file framing while accepting verified later appends.
-
 type ordinarySnapshot struct {
 	owner    *relatedSourcePass
 	source   *rolloutFile
@@ -668,7 +677,6 @@ func (f ordinaryFile) Check() error {
 }
 
 // newlineBoundary excludes even valid JSON until its producer commits the newline.
-
 func newlineBoundary(file io.ReaderAt, size int64) (int64, error) {
 	if size == 0 {
 		return 0, nil
@@ -860,12 +868,15 @@ func (s *historySnapshot) validateSpan(ctx context.Context, span *physicalSpan) 
 	facts := prefixValidation{startOrdinal: span.startOrdinal, endOrdinal: span.startOrdinal}
 	h := sha256.New()
 	scanner := bufio.NewScanner(io.TeeReader(io.NewSectionReader(span.reader(), 0, span.end), h))
-	scanner.Buffer(make([]byte, 4096), int(s.recordLimit)+1)
+	scanner.Buffer(make([]byte, min(int64(4096), s.recordLimit+1)), int(s.recordLimit)+1)
 	for scanner.Scan() {
 		if err := ctx.Err(); err != nil {
 			return facts, err
 		}
 		facts.maxRecordBytes = max(facts.maxRecordBytes, int64(len(scanner.Bytes())))
+		if facts.maxRecordBytes > s.recordLimit {
+			return facts, agentapi.Wrap(agentapi.Limit, archive.ErrRecordTooLarge)
+		}
 		line := bytes.TrimSpace(scanner.Bytes())
 		if len(line) == 0 {
 			continue
@@ -892,6 +903,9 @@ func (s *historySnapshot) validateSpan(ctx context.Context, span *physicalSpan) 
 		}
 	}
 	if err := scanner.Err(); err != nil {
+		if errors.Is(err, bufio.ErrTooLong) {
+			return facts, agentapi.Wrap(agentapi.Limit, archive.ErrRecordTooLarge)
+		}
 		return facts, sourceio.Classify(err)
 	}
 	copy(facts.digest[:], h.Sum(nil))
