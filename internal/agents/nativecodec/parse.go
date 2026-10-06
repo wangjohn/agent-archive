@@ -37,13 +37,7 @@ func parse(ctx context.Context, bundle archive.SourceBundle, agent nativeProfile
 		if err := ctx.Err(); err != nil {
 			return archive.Analysis{}, err
 		}
-		if agent == profileCodex && !ownCodexRecord(bundle, i, record, &codexModel, &codexReasoning) {
-			continue
-		}
-		if agent == profileClaude && isClaudeTitleRecord(record) {
-			if !isSidechainRecord(record) {
-				names.AddFacts(claudeTitlePreview(record), true)
-			}
+		if skipNativeRecord(bundle, i, record, agent, &names, &codexModel, &codexReasoning) {
 			continue
 		}
 		collectFacts(&analysis.Facts, bundle, record, agent)
@@ -368,4 +362,19 @@ func observeRecordTokens(bundle archive.SourceBundle, record map[string]any, age
 func isClaudeTitleRecord(r map[string]any) bool {
 	kind := firstString(r, "type")
 	return kind == "custom-title" || kind == "ai-title"
+}
+
+// skipNativeRecord applies agent ownership and handles naming-only evidence
+// before conversation facts can affect activity or counts.
+func skipNativeRecord(bundle archive.SourceBundle, index int, record map[string]any, agent nativeProfile, names *archive.PreviewAccumulator, model, reasoning *string) bool {
+	if agent == profileCodex {
+		return !ownCodexRecord(bundle, index, record, model, reasoning)
+	}
+	if agent == profileClaude && isClaudeTitleRecord(record) {
+		if !isSidechainRecord(record) {
+			names.AddFacts(claudeTitlePreview(record), true)
+		}
+		return true
+	}
+	return false
 }
