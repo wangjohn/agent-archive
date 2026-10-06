@@ -110,12 +110,21 @@ func NewSourceBundle(reg SessionRegistration, adapter Adapter, transcript Filter
 }
 
 func deriveLinkedSessions(evidence []SupplementalEvidence) []LinkedSessionReference {
+	unverified := map[string]bool{}
+	for _, item := range evidence {
+		if item.Kind == EvidenceKindLinkedSession && item.Provenance == NativeLegacyUnverifiedLinkProvenance {
+			unverified[firstString(item.Payload, "archive_session_id")] = true
+		}
+	}
 	latest := map[string]LinkedSessionReference{}
 	for _, item := range evidence {
 		if item.Kind != EvidenceKindLinkedSession {
 			continue
 		}
 		id := firstString(item.Payload, "archive_session_id")
+		if unverified[id] {
+			continue
+		}
 		relationship := firstString(item.Payload, "relationship")
 		status := LinkedSessionStatus(firstString(item.Payload, "status"))
 		if id == "" || relationship != "subagent" || (status != LinkedSessionPending && status != LinkedSessionPublished && status != LinkedSessionUnavailable) {
@@ -427,3 +436,8 @@ func safeObjectComponent(value string) bool {
 	}
 	return true
 }
+
+// NativeLegacyUnverifiedLinkProvenance marks a positively identified legacy
+// composite reservation without independent native admission. Historical raw
+// evidence stays retained, but this identity is excluded from current links.
+const NativeLegacyUnverifiedLinkProvenance = "native:legacy-unverified-composite"

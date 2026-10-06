@@ -371,6 +371,7 @@
             "sensitive_or_hidden_field_omitted",
             "subagent_final_not_reconciled",
             "native_parent_link_pending",
+            "native_child_link_unverified",
             "subagent_identity_unavailable",
             "subagent_transcript_never_written",
             "supplemental_evidence_omitted",

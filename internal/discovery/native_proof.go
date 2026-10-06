@@ -12,12 +12,13 @@ import (
 // One serial agent-owned pass per authorized source home shares handles and
 // immutable ancestor summaries. No parent-scoped enumeration occurs here.
 type nativeProofPasses struct {
-	sources agentapi.SourcesLookup
-	lookup  agentapi.CodexRolloutLookup
-	passes  map[string]agentapi.SourcePass
-	bytes   int64
-	reads   int64
-	opens   int64
+	sources  agentapi.SourcesLookup
+	lookup   agentapi.CodexRolloutLookup
+	passes   map[string]agentapi.SourcePass
+	bytes    int64
+	reads    int64
+	opens    int64
+	attempts int64
 }
 
 func (p *nativeProofPasses) Close() error {
@@ -30,6 +31,7 @@ func (p *nativeProofPasses) Close() error {
 }
 
 func (p *nativeProofPasses) Prove(ctx context.Context, c Candidate) (out Candidate, resultErr error) {
+	p.attempts++
 	pass := p.passes[c.Source.Root]
 	if pass == nil {
 		// Keep only one home active: each provider enforces 128 MiB, so closing
@@ -73,6 +75,10 @@ func (p *nativeProofPasses) Prove(ctx context.Context, c Candidate) (out Candida
 	}
 	if facts.NativeThreadID != c.NativeSessionID {
 		return c, agentapi.Wrap(agentapi.Unsafe, errors.New("native thread identity changed"))
+	}
+	if facts.FirstNativeTaskAt.IsZero() {
+		facts.FirstNativeTaskAt = task.StartedAt
+		facts.FirstNativeTaskID = task.TurnID
 	}
 	c.Binding = &facts
 	c.NativeChild, c.ParentNativeID, c.RootNativeID, c.OwnStart = facts.Child, facts.ParentID, facts.RootID, facts.OwnStart

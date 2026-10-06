@@ -120,3 +120,13 @@ Initial discovery shares one serial native source pass for the active authorized
 home. Switching homes closes the previous pass, preserving the aggregate 128 MiB
 provider data charge. Actual source read calls/bytes/opens are counted separately
 from bounded metadata probes; this is not an RSS or heap cap.
+
+Legacy Codex composite links are reconsidered with one exact local index lookup
+for `parent:subagent:child` when the independently admitted native child and parent
+are known. An unadmitted matching reservation receives an existing linked-evidence
+provenance marker, `native:legacy-unverified-composite`, and a content-free
+`native_child_link_unverified` gap. Raw historical supplemental evidence stays
+retained; current derived links exclude only that positively identified ghost.
+Unknown local evidence and legitimate unavailable links stay explicit. A private
+`native_link_version` registration marker makes this migration idempotent across
+restart, without deleting identities or reading parent source bundles.

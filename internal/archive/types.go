@@ -356,9 +356,11 @@ type SessionRegistration struct {
 	// first-seen time published in LastHead. Local only; absent on older state.
 	LastHeadSeenAt *time.Time `json:"last_head_seen_at,omitempty"`
 	// NativeChild identifies independently admitted native Codex children, including unresolved links.
-	NativeChild           bool      `json:"native_child,omitempty"`
-	NativeRootSessionID   string    `json:"native_root_session_id,omitempty"`
-	NativeSourceHome      string    `json:"native_source_home,omitempty"`
+	NativeChild         bool   `json:"native_child,omitempty"`
+	NativeRootSessionID string `json:"native_root_session_id,omitempty"`
+	NativeSourceHome    string `json:"native_source_home,omitempty"`
+	// NativeLinkVersion records bounded native relationship/legacy-link reconciliation.
+	NativeLinkVersion     int       `json:"native_link_version,omitempty"`
 	ParentSessionID       string    `json:"parent_session_id,omitempty"`
 	ParentNativeSessionID string    `json:"parent_native_session_id,omitempty"`
 	SubagentID            string    `json:"subagent_id,omitempty"`
@@ -431,7 +433,7 @@ func (r SessionRegistration) Validate() error {
 
 	if r.CodexBinding != nil {
 		if r.Harness.Name != "codex" || r.CodexBinding.NativeThreadID != r.NativeSessionID {
-			return errors.New("Codex binding requires matching Codex registration")
+			return errors.New("codex binding requires matching codex registration")
 		}
 		if err := r.CodexBinding.Validate(); err != nil {
 			return err

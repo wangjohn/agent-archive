@@ -1,6 +1,7 @@
 package collector
 
 import (
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"reflect"
@@ -85,5 +86,74 @@ func TestNativeLinksRespectHomeProjectDestinationExclusionAndRemoval(t *testing.
 				t.Fatalf("scope/tombstone bypass mode %s: %v", mode, err)
 			}
 		})
+	}
+}
+
+func TestLegacyCodexCompositeGhostKeepsRawEvidenceWithoutDoubleCounting(t *testing.T) {
+	local := newTestStore(t)
+	at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	home := t.TempDir()
+	parent := nativeLinkRegistration("parent", "00000000-0000-0000-0000-000000000001", "", home, at)
+	child := nativeLinkRegistration("child", "00000000-0000-0000-0000-000000000002", parent.NativeSessionID, home, at)
+	for _, reg := range []archive.SessionRegistration{parent, child} {
+		if err := local.SaveRegistration(reg); err != nil {
+			t.Fatal(err)
+		}
+	}
+	oldID, _, err := local.EnsureArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.Codex, NativeID: parent.NativeSessionID + ":subagent:" + child.NativeSessionID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ghost, err := archive.NewLinkedSessionEvidence(oldID, archive.LinkedSessionUnavailable, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unavailable, err := archive.NewLinkedSessionEvidence("legitimate-unavailable", archive.LinkedSessionUnavailable, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := local.SaveRequest(parent.ArchiveSessionID, "legacy-stop", at, ghost, unavailable); err != nil {
+		t.Fatal(err)
+	}
+	p := &pass{local: local, registrations: []archive.SessionRegistration{child, parent}, now: at.Add(time.Minute)}
+	if err := p.reconcileNativeLinks(); err != nil {
+		t.Fatal(err)
+	}
+	request, found, err := local.LoadRequest(parent.ArchiveSessionID)
+	if err != nil || !found {
+		t.Fatal(err)
+	}
+	adapter, err := sourceAdapter(testSources, "codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := archive.NewSourceBundle(parent, adapter, archive.FilteredTranscript{Format: "codex-jsonl", Records: [][]byte{[]byte(`{"type":"session_meta","payload":{"id":"00000000-0000-0000-0000-000000000001","cwd":"/synthetic/project"}}`)}}, p.now, request.HookEvidence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bundle.LinkedSessions) != 1 || bundle.LinkedSessions[0].SessionID != "legitimate-unavailable" {
+		t.Fatalf("ghost or unknown link incorrectly derived: %+v", bundle.LinkedSessions)
+	}
+	retained := false
+	for _, item := range bundle.SupplementalEvidence {
+		if item.Kind == archive.EvidenceKindLinkedSession && item.Provenance == ghost.Provenance && item.Payload["archive_session_id"] == oldID {
+			retained = true
+		}
+	}
+	if !retained {
+		t.Fatal("raw historical composite observation deleted")
+	}
+	// A restart uses durable link-version evidence and performs no new session writes.
+	regs, err := local.LoadRegistrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	restarted := &pass{local: local, registrations: regs, now: at.Add(2 * time.Minute)}
+	before := snapshotMtimes(t, local.Home())
+	if err := restarted.reconcileNativeLinks(); err != nil || !reflect.DeepEqual(before, snapshotMtimes(t, local.Home())) {
+		t.Fatalf("legacy migration repeated writes after restart: %v", err)
+	}
+	if _, registered, err := local.LoadRegistration(oldID); err != nil || registered {
+		t.Fatal("ghost was registered or state lookup failed", err)
 	}
 }

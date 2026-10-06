@@ -38,26 +38,27 @@ const (
 // Health separates scan coverage from upload and hook health. Codes never
 // include native IDs, paths or native operating-system errors.
 type Health struct {
-	Enabled               bool                `json:"enabled"`
-	Supported             bool                `json:"supported"`
-	LastAttempt           time.Time           `json:"last_attempt,omitzero"`
-	LastReconciled        time.Time           `json:"last_reconciled,omitzero"`
-	Pending               bool                `json:"pending"`
-	ProjectOperations     int                 `json:"project_metadata_operations"`
-	GitBytes              int                 `json:"git_metadata_bytes"`
-	Probes                int                 `json:"header_probes"`
-	Entries               int                 `json:"directory_entries"`
-	IndexBytes            int64               `json:"index_bytes_read,omitempty"`
-	IndexQueries          int                 `json:"index_queries,omitempty"`
-	IndexLocators         int                 `json:"index_locators,omitempty"`
-	Bytes                 int64               `json:"bytes_read"`
-	NativeValidationBytes int64               `json:"native_validation_bytes_read,omitempty"`
-	NativeValidationReads int64               `json:"native_validation_reads,omitempty"`
-	NativeValidationOpens int64               `json:"native_validation_opens,omitempty"`
-	Registered            int                 `json:"registered"`
-	Outcomes              map[string]int      `json:"outcomes,omitempty"`
-	Errors                []string            `json:"errors,omitempty"`
-	Formats               []FormatObservation `json:"observed_formats,omitempty"`
+	Enabled                  bool                `json:"enabled"`
+	Supported                bool                `json:"supported"`
+	LastAttempt              time.Time           `json:"last_attempt,omitzero"`
+	LastReconciled           time.Time           `json:"last_reconciled,omitzero"`
+	Pending                  bool                `json:"pending"`
+	ProjectOperations        int                 `json:"project_metadata_operations"`
+	GitBytes                 int                 `json:"git_metadata_bytes"`
+	Probes                   int                 `json:"header_probes"`
+	Entries                  int                 `json:"directory_entries"`
+	IndexBytes               int64               `json:"index_bytes_read,omitempty"`
+	IndexQueries             int                 `json:"index_queries,omitempty"`
+	IndexLocators            int                 `json:"index_locators,omitempty"`
+	Bytes                    int64               `json:"bytes_read"`
+	NativeValidationBytes    int64               `json:"native_validation_bytes_read,omitempty"`
+	NativeValidationReads    int64               `json:"native_validation_reads,omitempty"`
+	NativeValidationAttempts int64               `json:"native_validation_attempts,omitempty"`
+	NativeValidationOpens    int64               `json:"native_validation_opens,omitempty"`
+	Registered               int                 `json:"registered"`
+	Outcomes                 map[string]int      `json:"outcomes,omitempty"`
+	Errors                   []string            `json:"errors,omitempty"`
+	Formats                  []FormatObservation `json:"observed_formats,omitempty"`
 }
 
 type directory struct {
@@ -147,6 +148,7 @@ func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config,
 
 	priority.observeDirectories(o, deadline)
 	h.NativeValidationBytes, h.NativeValidationReads, h.NativeValidationOpens = proofs.bytes, proofs.reads, proofs.opens
+	h.NativeValidationAttempts = proofs.attempts
 	h.ProjectOperations = resolver.Operations
 	h.GitBytes = resolver.GitBytes
 	h.Pending = len(c.Queue) > 0 || len(c.Retries) > 0 || c.Coverage != nil && c.Coverage.Phase != "complete"
@@ -665,6 +667,13 @@ func (s scan) admitCandidate(candidate Candidate, loc string) (bool, bool) {
 			}
 			if prior.CodexAdmission != nil {
 				physical = true
+			}
+			// Continuing an already bound registration does not establish new
+			// admission. The collector validates every ongoing source read.
+			if prior.CodexBinding != nil {
+				candidate.SnapshotProven = true
+				candidate.Binding = prior.CodexBinding
+				candidate.StartedAt = prior.CodexBinding.NativeCreatedAt
 			}
 		}
 	}
