@@ -119,6 +119,7 @@ type firstTargetLabels struct {
 	attempted []string
 	groups    map[string]string
 }
+
 type firstTargetProvider struct{ *firstTargetLabels }
 
 func (p firstTargetProvider) LookupLabels(_ context.Context, _ agentapi.LabelEnvironment, requests []agentapi.LabelRequest) map[string]archive.SessionLabel {

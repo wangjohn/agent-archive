@@ -11,6 +11,7 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"maps"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -36,7 +37,14 @@ const labelIndexRecords = 32768
 var labelNativeUUID = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
 // LabelContract pins native file interpretation independently of generic retained labels.
-const LabelContract = "codex-files-159.2-v2"
+const LabelContract = string(currentLabelInterpretation)
+
+type labelInterpretation string
+
+const (
+	legacyLabelInterpretation  labelInterpretation = "codex-files-159.2-v1"
+	currentLabelInterpretation labelInterpretation = "codex-files-159.2-v2"
+)
 
 // LabelContextVersion identifies the provider's content-free interpretation.
 func (LabelProvider) LabelContextVersion() string { return LabelContract }
@@ -80,9 +88,7 @@ func (p LabelProvider) LookupLabels(ctx context.Context, env agentapi.LabelEnvir
 				return lookupLabelHome(ctx, root, batch, slices.Contains(env.VerifiedLegacyStorageHomes, root))
 			}
 		}
-		for id, label := range lookup(ctx, root, batch) {
-			out[id] = label
-		}
+		maps.Copy(out, lookup(ctx, root, batch))
 
 	}
 	return out
@@ -530,7 +536,8 @@ func labelOpenRegular(root, path string) (*os.File, error) {
 }
 
 func supportedLabelContract(contract string) bool {
-	return contract == LabelContract || contract == "codex-files-159.2-v1"
+	interpretation := labelInterpretation(contract)
+	return interpretation == currentLabelInterpretation || interpretation == legacyLabelInterpretation
 }
 
 // LabelRequestGroup shares lookup priority for targets in one verified native home.
