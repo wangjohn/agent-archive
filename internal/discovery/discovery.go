@@ -99,6 +99,7 @@ type catalog struct {
 // source format support or authorize capture.
 type Options struct {
 	nativeOnly    bool
+	inventoryOnly bool
 	Sources       agentapi.SourcesLookup
 	CodexRollouts agentapi.CodexRolloutLookup
 	Now           func() time.Time
@@ -160,14 +161,14 @@ func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config,
 	resolver := sourcefacts.NewProjectResolver()
 	recovery := sourcefacts.NewRecoveryResolver(cfg.Archive.Projects, nil, canonicalProjectPath, o.RepositoryIdentity, &c.Recovery)
 	recovery.Validate = o.RepositoryIdentityCurrent
-	priority := scan{nativeOnly: o.nativeOnly, proofs: proofs, resolver: resolver, recovery: recovery, store: store, cfg: cfg, catalog: &c, health: &h, now: now, adapter: adapter, priority: true, ctx: ctx, rollouts: o.Rollouts}
+	priority := scan{nativeOnly: o.nativeOnly, inventoryOnly: o.inventoryOnly, proofs: proofs, resolver: resolver, recovery: recovery, store: store, cfg: cfg, catalog: &c, health: &h, now: now, adapter: adapter, priority: true, ctx: ctx, rollouts: o.Rollouts}
 	// The shared lookup owns the only native index projection. Production
 	// observation uses the shared directory worker rather than opening native
 	// SQLite via the legacy settled-only scheduling hint adapter.
 	if o.Rollouts == nil {
 		priority.observeIndexHints(ctx, o, roots, deadline)
 	}
-	if !o.nativeOnly {
+	if !o.nativeOnly && !o.inventoryOnly {
 		priority.observeActiveHints(ctx, o, roots, deadline)
 		priority.observeRetries(o)
 	}
@@ -175,7 +176,7 @@ func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config,
 	priority.observeDirectories(o, deadline)
 	// A just-validated inventory can prove deferred native ownership before the
 	// next pass starts a new coverage epoch. The same deadline/ledger still applies.
-	if !o.nativeOnly && hasValidatedCoverage(c.Coverage) {
+	if !o.nativeOnly && !o.inventoryOnly && hasValidatedCoverage(c.Coverage) {
 		priority.observeRetries(o)
 	}
 	h.NativeValidationBytes, h.NativeValidationReads, h.NativeValidationOpens = proofs.bytes, proofs.reads, proofs.opens
@@ -527,6 +528,7 @@ func continuationLocator(store *state.Store, agent, native string, source Source
 
 type scan struct {
 	nativeOnly          bool
+	inventoryOnly       bool
 	proofs              *nativeProofPasses
 	rollouts            *CodexRolloutLookup
 	resolver            *sourcefacts.ProjectResolver
@@ -595,7 +597,7 @@ func (s scan) visitEntry(d directory, source SourceEntry) (retry, stop bool) {
 	if s.rollouts != nil {
 		s.rollouts.Observe(source.Source, source.Fingerprint, entry.Observation.Identity)
 	}
-	if s.nativeOnly {
+	if s.nativeOnly || s.inventoryOnly {
 		return false, false
 	}
 	return s.admitObservation(source, entry)
@@ -933,7 +935,7 @@ func (s scan) observeDirectories(o Options, deadline time.Time) {
 			unavailable = append(unavailable, d)
 			continue
 		}
-		worker := scan{nativeOnly: s.nativeOnly, proofs: s.proofs, resolver: s.resolver, recovery: s.recovery, store: s.store, cfg: s.cfg, catalog: c, health: h, now: s.now, adapter: s.adapter, ctx: s.ctx, reservedDirectories: len(unavailable), rollouts: o.Rollouts}
+		worker := scan{nativeOnly: s.nativeOnly, inventoryOnly: s.inventoryOnly, proofs: s.proofs, resolver: s.resolver, recovery: s.recovery, store: s.store, cfg: s.cfg, catalog: c, health: h, now: s.now, adapter: s.adapter, ctx: s.ctx, reservedDirectories: len(unavailable), rollouts: o.Rollouts}
 		advanced := true
 		for _, source := range batch.Entries {
 			if scanStopped(s.ctx, o) || time.Now().After(deadline) {

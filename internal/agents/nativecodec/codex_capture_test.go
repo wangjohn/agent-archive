@@ -2,6 +2,7 @@ package nativecodec
 
 import (
 	"errors"
+	"io"
 	"reflect"
 	"strings"
 	"testing"
@@ -51,4 +52,14 @@ func TestCodexParserUsesThreadIdentityInsteadOfRootIdentity(t *testing.T) {
 	if !f.IdentityConflict {
 		t.Fatal("actual thread mismatch accepted")
 	}
+}
+
+// FilterCodexCaptureJSONL is the legacy assertion helper; production uses the
+// same codec with explicit optional encoder/row ownership hooks.
+func FilterCodexCaptureJSONL(r io.Reader, filename string, bounds ...archive.CaptureBoundary) (archive.FilteredTranscript, error) {
+	boundary := archive.CaptureBoundary{}
+	if len(bounds) > 0 {
+		boundary = bounds[0]
+	}
+	return FilterCodexCaptureEncodedJSONL(r, filename, nil, nil, boundary)
 }

@@ -37,6 +37,7 @@ func TestBoundSupportsActualWireTypes(t *testing.T) {
 		}
 	}
 }
+
 func TestBoundRefusesUnboundedValuesAndCancellation(t *testing.T) {
 	if _, err := Bound(t.Context(), arbitraryMarshaler{}, 1024); !errors.Is(err, ErrUnsupported) {
 		t.Fatal(err)
@@ -55,6 +56,7 @@ func TestBoundRefusesUnboundedValuesAndCancellation(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
 func FuzzStringBound(f *testing.F) {
 	f.Add("<&>\u2028\xff\x00")
 	f.Fuzz(func(t *testing.T, s string) {

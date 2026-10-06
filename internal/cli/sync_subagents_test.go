@@ -63,7 +63,13 @@ func statusOutput(t *testing.T, env Env, args ...string) string {
 func TestSyncPassesWithOnlyWaitingSubagents(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 9, 24, 21, 24, 0, 0, time.UTC)
-	env, home, _, _ := publishedClaudeThroughSync(t, now)
+	env, home, parent, cloud := publishedClaudeThroughSync(t, now)
+	if _, err := os.Stat(parent); err != nil {
+		t.Fatal(err)
+	}
+	if objects, err := cloud.List(t.Context(), ""); err != nil || len(objects) == 0 {
+		t.Fatalf("published parent objects: %v %v", objects, err)
+	}
 	stagePhantomSubagent(t, home, now)
 
 	code, out, errOut := syncAt(t, env, now.Add(time.Minute))

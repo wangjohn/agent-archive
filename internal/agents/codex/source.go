@@ -55,12 +55,13 @@ func (f Filter) RefilterBounded(ctx context.Context, b archive.SourceBundle, _ t
 }
 
 type boundedRetainedFilter struct {
-	boundary archive.CaptureBoundary
-	encoder  func(map[string]any) ([]byte, error)
+	boundary     archive.CaptureBoundary
+	encoder      func(map[string]any) ([]byte, error)
+	beforeRecord func(int) (func(), error)
 }
 
 func (f boundedRetainedFilter) FilterJSONL(r io.Reader) (archive.FilteredTranscript, error) {
-	return nativecodec.FilterCodexRetainedEncodedJSONL(r, f.encoder, f.boundary)
+	return nativecodec.FilterCodexRetainedEncodedJSONL(r, f.encoder, f.beforeRecord, f.boundary)
 }
 
 // EvidenceExtends compares retained native facts under unchanged codec versions.
@@ -98,6 +99,10 @@ func retainedEncoder(ctx context.Context, limits agentapi.ReadLimits) func(map[s
 // owners before serialization. Returned immutable rows remain charged until the
 // caller releases them. Native input continues to belong to its SourceSnapshot.
 func (f Filter) FilterLeased(ctx context.Context, in agentapi.NativeInput, c agentapi.FilterContext, budget *agentapi.NativeReadBudget) (archive.FilteredTranscript, func(), error) {
+	return f.filterLeased(ctx, in, c, budget, nil)
+}
+
+func (f Filter) filterLeased(ctx context.Context, in agentapi.NativeInput, c agentapi.FilterContext, budget *agentapi.NativeReadBudget, retained *archive.SourceBundle) (archive.FilteredTranscript, func(), error) {
 	var total int64
 	if in.File != nil {
 		scanner, err := nativeScannerCharge(ctx, in.File, c.Limits, budget)
@@ -163,10 +168,35 @@ func (f Filter) FilterLeased(ctx context.Context, in agentapi.NativeInput, c age
 		total += actual + ordinalBytes
 		return data, nil
 	}
-	out, err := f.filterEncoded(ctx, in, c, encoder, before)
+	var out archive.FilteredTranscript
+	var err error
+	if retained != nil && retained.History == nil {
+		out, err = sourceio.RefilterJSONL(ctx, boundedRetainedFilter{boundary: archive.CaptureBoundary{RetainedRecords: c.Limits.Records, RetainedBytes: int(c.Limits.FilteredBytes)}, encoder: encoder, beforeRecord: before}, *retained)
+	} else {
+		out, err = f.filterEncoded(ctx, in, c, encoder, before)
+	}
 	if err != nil {
 		release()
 		return archive.FilteredTranscript{}, func() {}, err
 	}
 	return out, release, nil
 }
+
+// RefilterLeased grows the owned output charge per safe row rather than holding
+// the maximum output ceiling for a small retained snapshot.
+func (f Filter) RefilterLeased(ctx context.Context, b archive.SourceBundle, _ time.Time, budget *agentapi.NativeReadBudget) (archive.FilteredTranscript, func(), error) {
+	if err := b.ValidateHistory(); err != nil {
+		return archive.FilteredTranscript{}, func() {}, err
+	}
+	var input agentapi.RecordInput
+	if b.History != nil {
+		input = &retainedHistory{bundle: b}
+	}
+	in := agentapi.NativeInput{Records: input}
+	c := agentapi.FilterContext{Limits: agentapi.ReadLimits{Records: archive.MaxHistoryRecords, FilteredBytes: 32 << 20}}
+	return f.filterLeased(ctx, in, c, budget, &b)
+}
+
+// LeasedFilterFor admits this concrete codec instance. A decorator must opt in
+// explicitly and preserve its own Filter behavior through FilterLeased.
+func (Filter) LeasedFilterFor(adapter archive.Adapter) bool { _, ok := adapter.(Filter); return ok }

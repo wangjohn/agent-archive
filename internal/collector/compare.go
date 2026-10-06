@@ -19,6 +19,10 @@ import (
 // bundles, which cost two copies of a bundle tens of megabytes long every
 // pass; the rest is small and is compared as JSON.
 func bundleEvidenceEqual(a, b archive.SourceBundle) (bool, error) {
+	return bundleEvidenceEqualWith(a, b, jsonEncodingsEqual)
+}
+
+func bundleEvidenceEqualWith(a, b archive.SourceBundle, equal func(any, any) (bool, error)) (bool, error) {
 	if len(a.NativeRecords) != len(b.NativeRecords) || (a.NativeRecords == nil) != (b.NativeRecords == nil) || len(a.NativeText) != len(b.NativeText) {
 		return false, nil
 	}
@@ -28,14 +32,14 @@ func bundleEvidenceEqual(a, b archive.SourceBundle) (bool, error) {
 		}
 	}
 	for i := range a.NativeRecords {
-		if same, err := jsonValuesEqual(a.NativeRecords[i], b.NativeRecords[i]); err != nil || !same {
+		if same, err := jsonValuesEqualWith(a.NativeRecords[i], b.NativeRecords[i], equal); err != nil || !same {
 			return false, err
 		}
 	}
 	a.Capture.CapturedAt, b.Capture.CapturedAt = time.Time{}, time.Time{}
 	a.NativeRecords, b.NativeRecords = nil, nil
 	a.NativeText, b.NativeText = nil, nil
-	return jsonEncodingsEqual(a, b)
+	return equal(a, b)
 }
 
 // jsonValuesEqual reports whether a and b encode to the same JSON, without
@@ -43,6 +47,10 @@ func bundleEvidenceEqual(a, b archive.SourceBundle) (bool, error) {
 // strings, numbers, booleans, null) of the same kinds. Anything else is
 // encoded and compared.
 func jsonValuesEqual(a, b any) (bool, error) {
+	return jsonValuesEqualWith(a, b, jsonEncodingsEqual)
+}
+
+func jsonValuesEqualWith(a, b any, equal func(any, any) (bool, error)) (bool, error) {
 	switch x := a.(type) {
 	case map[string]any:
 		if y, ok := b.(map[string]any); ok {
@@ -54,9 +62,9 @@ func jsonValuesEqual(a, b any) (bool, error) {
 				if !found {
 					// Keys that differ as strings can still encode alike
 					// (invalid UTF-8): only an encoding can tell.
-					return jsonEncodingsEqual(a, b)
+					return equal(a, b)
 				}
-				if same, err := jsonValuesEqual(xv, yv); err != nil || !same {
+				if same, err := jsonValuesEqualWith(xv, yv, equal); err != nil || !same {
 					return false, err
 				}
 			}
@@ -68,7 +76,7 @@ func jsonValuesEqual(a, b any) (bool, error) {
 				return false, nil
 			}
 			for i := range x {
-				if same, err := jsonValuesEqual(x[i], y[i]); err != nil || !same {
+				if same, err := jsonValuesEqualWith(x[i], y[i], equal); err != nil || !same {
 					return false, err
 				}
 			}
@@ -76,7 +84,13 @@ func jsonValuesEqual(a, b any) (bool, error) {
 		}
 	case string:
 		if y, ok := b.(string); ok {
-			return jsonStringsEqual(x, y), nil
+			if x == y {
+				return true, nil
+			}
+			if utf8.ValidString(x) && utf8.ValidString(y) {
+				return false, nil
+			}
+			return equal(x, y)
 		}
 	case float64:
 		// Every float64 JSON can hold has one encoding, and 0 and -0 have
@@ -93,7 +107,7 @@ func jsonValuesEqual(a, b any) (bool, error) {
 			return true, nil
 		}
 	}
-	return jsonEncodingsEqual(a, b)
+	return equal(a, b)
 }
 
 // jsonStringsEqual reports whether two strings encode to the same JSON.

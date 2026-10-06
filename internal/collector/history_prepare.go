@@ -86,11 +86,14 @@ func (s *sessionScan) loadHistoryInput(identity archive.Metadata, input state.Hi
 	selected.CapturedAt = input.CapturedAt
 	selected.FilterVersion = input.FilterVersion
 	// Original inputs remain live even after their stage leaves final Sources.
+	mark := len(s.retainedReleases)
 	data, err := s.readRetainedInputBytes(input.Reference)
 	if err != nil {
 		return archive.SourceBundle{}, err
 	}
 	bundle, err := s.decodeReferenced(selected, data)
+	// Decode owns independent records; compressed input is no longer used.
+	s.releaseRetainedIndex(mark)
 	if err == nil && input.SourceSchemaVersion != 0 && bundle.SchemaVersion != input.SourceSchemaVersion {
 		return archive.SourceBundle{}, errors.New("frozen input source schema differs from retained bytes")
 	}
@@ -167,7 +170,7 @@ func (s *sessionScan) prepareHistoryInput(p *state.PendingPublication, metadata 
 	observationsChanged := false
 	if input.RevisionID == metadata.History.CurrentRevision {
 		observations := mergeSupplementalEvidence(bundle.SupplementalEvidence, p.Bundle.SupplementalEvidence)
-		same, err := jsonEncodingsEqual(observations, bundle.SupplementalEvidence)
+		same, err := s.jsonEncodingsEqual(observations, bundle.SupplementalEvidence)
 		if err != nil {
 			return err
 		}

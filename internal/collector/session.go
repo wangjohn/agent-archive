@@ -448,7 +448,7 @@ func (s *sessionScan) compare(read sourceRead, candidate *archive.SourceBundle) 
 	cached, _, status, haveCached := s.published.Cached()
 	changed := true
 	if haveCached {
-		same, err := bundleEvidenceEqual(cached, *candidate)
+		same, err := s.bundleEvidenceEqual(cached, *candidate)
 		if err != nil {
 			return false, fmt.Errorf("compare source bundles: %w", err)
 		}
@@ -514,7 +514,7 @@ func (s *sessionScan) refilteredUnchanged(read sourceRead, cached, candidate arc
 		return false, nil
 	}
 	if len(cached.SupplementalEvidence) > 0 || len(candidate.SupplementalEvidence) > 0 {
-		same, err := jsonEncodingsEqual(cached.SupplementalEvidence, candidate.SupplementalEvidence)
+		same, err := s.jsonEncodingsEqual(cached.SupplementalEvidence, candidate.SupplementalEvidence)
 		if err != nil {
 			return false, fmt.Errorf("compare supplemental evidence: %w", err)
 		}
@@ -608,15 +608,19 @@ func (s *sessionScan) publish(read sourceRead, candidate archive.SourceBundle) (
 	// A publication due now is uploaded straight after it is saved, so it is
 	// saved already marked attempted (see publishPending): marking it
 	// separately would write the whole file a second time.
+	var frozenSignature *state.ScanSignature
+	if s.revisions != nil && (candidate.History != nil || len(s.revisions.Preserved) > 0) {
+		proof := s.scanSignature(read.observed, candidate)
+		frozenSignature = &proof
+	}
 	pending := state.PendingPublication{
+		ScanSignature: frozenSignature,
 		SkillEvidence: string(s.opts.skillEvidence()),
 		Bundle:        candidate, SourceKey: rendered.source.Key, MetadataKey: rendered.metadataKey,
 		SourceSHA256: rendered.source.SHA256, SourceBytes: rendered.sourceBytes, MetadataBytes: rendered.metadata,
 		RequestToken: s.req.Token, ReadyAt: readyAt, Attempted: !readyAt.After(s.now),
 	}
 	if s.revisions != nil && (candidate.History != nil || len(s.revisions.Preserved) > 0) {
-		proof := s.scanSignature(read.observed, candidate)
-		pending.ScanSignature = &proof
 		if err := s.freezeRevisionPublication(&pending); err != nil {
 			return outcomeSkipped, err
 		}

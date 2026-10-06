@@ -801,3 +801,47 @@ func (l *CodexRolloutLookup) ObserveReadOnly(ctx context.Context) (Health, error
 	l.probes = 0
 	return runWithAdapters(ctx, l.store, config.Config{}, Options{Rollouts: l, nativeOnly: true}, registeredAdapters())
 }
+
+// PrepareRegistered requests qualified history coverage only for already admitted
+// owners, then advances one shared observation slice before source snapshots open.
+// Requests and incomplete work survive refusal; observations grant no admission.
+func (l *CodexRolloutLookup) PrepareRegistered(ctx context.Context, cfg config.Config, regs []archive.SessionRegistration, o Options) error {
+	if l.closed {
+		return agentapi.ErrClosed
+	}
+	needed := false
+	for _, reg := range regs {
+		if reg.Harness.Name != "codex" || !cfg.AcceptSession(reg) || l.homeFor(reg.TranscriptPath) == "" {
+			continue
+		}
+		id := reg.NativeSessionID
+		if reg.CodexBinding != nil {
+			id = reg.CodexBinding.NativeThreadID
+		}
+		if codexmeta.RolloutID(id+".jsonl") != id || id == "" {
+			continue
+		}
+		if l.coverage == nil {
+			l.coverage = newCoverage(l.roots)
+		}
+		before := l.coverage.Sequence
+		if !l.coverage.request(id) {
+			continue
+		}
+		if before != l.coverage.Sequence {
+			l.coverageDirty = true
+		}
+		request := l.coverage.Requests[id]
+		if request.CompleteEpoch != l.coverage.Epoch || l.coverage.proofEpoch != l.coverage.Epoch || l.coverage.Failed {
+			needed = true
+		}
+	}
+	if !needed {
+		return nil
+	}
+	o.Rollouts = l
+	o.inventoryOnly = true
+	_, err := runWithAdapters(ctx, l.store, cfg, o, registeredAdapters())
+	return err
+
+}

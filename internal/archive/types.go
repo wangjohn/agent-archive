@@ -309,12 +309,6 @@ const (
 	StartedAtSourceCursorComposer StartedAtSource = "cursor_composer" // phase 2: composerData.createdAt
 )
 
-// SessionRegistration is the small hook-produced observation a later collector
-// needs. TranscriptPath is local operational data and is never placed in a
-// SourceBundle or Metadata document.
-//
-// SessionStartedAt is when the conversation began. It is not the capture
-// boundary: project activation and the storage destination compare Admitted().
 // CodexAdmissionProof is immutable evidence of fresh blanket admission.
 type CodexAdmissionProof struct {
 	Cwd        string `json:"cwd"`
@@ -335,6 +329,12 @@ type ProjectResolution struct {
 	InventoryDigest string `json:"inventory_digest,omitempty"`
 }
 
+// SessionRegistration is the small hook-produced observation a later collector
+// needs. TranscriptPath is local operational data and is never placed in a
+// SourceBundle or Metadata document.
+//
+// SessionStartedAt is when the conversation began. It is not the capture
+// boundary: project activation and the storage destination compare Admitted().
 type SessionRegistration struct {
 	ProjectResolution  *ProjectResolution   `json:"project_resolution,omitempty"`
 	CodexBinding       *CodexSourceBinding  `json:"codex_binding,omitempty"`
@@ -826,11 +826,12 @@ type Metadata struct {
 	Replay *Replay `json:"replay,omitempty"`
 }
 
-// CaptureGapImportedWithoutHookEvidence marks an imported session: no hook
-// ran while it happened, so it has no lifecycle events, final-response text,
-// or skill inventory.
+// CaptureGapDiscoveredWithoutHookEvidence marks admitted background capture
+// without hook lifecycle events or a contemporaneous skill inventory.
 const CaptureGapDiscoveredWithoutHookEvidence = "discovered_without_hook_evidence"
 
+// CaptureGapImportedWithoutHookEvidence marks a historical import without
+// contemporaneous hook lifecycle events or a skill inventory.
 const CaptureGapImportedWithoutHookEvidence = "imported_without_hook_evidence"
 
 // ApplyRegistrationProvenance records how the session entered the archive.

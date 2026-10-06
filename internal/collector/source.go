@@ -622,7 +622,7 @@ func (r providerReader) snapshotBinding(ctx context.Context, snap agentapi.Sourc
 }
 
 func (r providerReader) filterOwned(ctx context.Context, filter agentapi.TranscriptFilter, in agentapi.NativeInput, c agentapi.FilterContext) (archive.FilteredTranscript, error) {
-	if leased, ok := filter.(agentapi.LeasedTranscriptFilter); ok && r.resourceOwner != nil {
+	if leased, ok := filter.(agentapi.LeasedTranscriptFilter); ok && r.resourceOwner != nil && leased.LeasedFilterFor(filter) {
 		out, release, err := leased.FilterLeased(ctx, in, c, r.resourceOwner.readBudget())
 		if err == nil {
 			r.resourceOwner.retainedReleases = append(r.resourceOwner.retainedReleases, release)

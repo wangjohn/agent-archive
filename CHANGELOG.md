@@ -44,6 +44,10 @@ follow [Semantic Versioning](https://semver.org/).
   facts. Cached discovery facts for missing directories are reprobed before
   admitting new ownership, including headers without recorded repository keys.
   Configured subdirectory identities invalidate when a nearer repository appears.
+
+- CLI help makes machine pairing discoverable and separates pairing instructions
+  from machine-listing options.
+
 - Status distinguishes installed hooks from observed execution and shows Codex
   automatic capture with archived and verified session counts. Optional hook
   evidence and detailed scan diagnostics move to verbose output; capture warnings

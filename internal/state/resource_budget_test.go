@@ -51,6 +51,7 @@ func TestLocalBudgetRefusalPreservesPendingAndIndependentProgress(t *testing.T) 
 		t.Fatalf("close leaked %d", used)
 	}
 }
+
 func TestLocalBudgetCancelAndEncodingRefusalRelease(t *testing.T) {
 	s := newTestStore(t).ForCollectorPass()
 	path := s.pendingPath("cancel")

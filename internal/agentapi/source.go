@@ -142,7 +142,16 @@ type TranscriptFilter interface {
 // LeasedTranscriptFilter transfers filtered-output ownership to its caller.
 // The caller releases only after all users of the filtered records have ended.
 type LeasedTranscriptFilter interface {
+	// LeasedFilterFor must attest the injected adapter; embedding must not
+	// silently bypass a decorator that overrides its ordinary Filter method.
+	LeasedFilterFor(archive.Adapter) bool
 	FilterLeased(context.Context, NativeInput, FilterContext, *NativeReadBudget) (archive.FilteredTranscript, func(), error)
+}
+
+// LeasedTranscriptRefilter charges retained output incrementally and transfers
+// ownership of rows and graph metadata through the same pass ledger.
+type LeasedTranscriptRefilter interface {
+	RefilterLeased(context.Context, archive.SourceBundle, time.Time, *NativeReadBudget) (archive.FilteredTranscript, func(), error)
 }
 
 // BoundedTranscriptRefilter accepts output ceilings before retained records accumulate.

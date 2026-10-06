@@ -72,11 +72,13 @@ func (s *sessionScan) restoreReferenceAuthority() error {
 			s.releaseRetainedAfter(mark)
 		}
 	}
+	activeBytes := len(s.retainedReleases)
 	data, err := s.historyGet(metadata.SourceBundle.Key, int64(metadata.SourceBundle.CompressedBytes))
 	if err != nil {
 		return err
 	}
 	bundle, err := s.decodeReferenced(metadata, data)
+	s.releaseRetainedIndex(activeBytes)
 	if err != nil {
 		return err
 	}

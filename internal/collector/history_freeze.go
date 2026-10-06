@@ -198,7 +198,7 @@ func (s *sessionScan) settleRevisionCandidate(read sourceRead, candidate *archiv
 	if err != nil || !found || prior.History == nil || prior.History.CurrentRevision != s.revisions.Current {
 		return false, err
 	}
-	same, err := jsonEncodingsEqual(prior.History.Preserved, s.revisions.Preserved)
+	same, err := s.jsonEncodingsEqual(prior.History.Preserved, s.revisions.Preserved)
 	if err != nil || !same {
 		return false, err
 	}

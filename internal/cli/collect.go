@@ -191,6 +191,9 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (result collector.Resu
 		previousScanAt = previous.LastScanAt
 	}
 	result, err = collector.Run(ctx, localStore, objectStore, collector.Options{
+		PrepareCodexCoverage: func(ctx context.Context, regs []archive.SessionRegistration) error {
+			return rollouts.PrepareRegistered(ctx, cfg, regs, discovery.Options{Now: env.Now, Stop: stop})
+		},
 		SkipSessionIndexRecovery: true,
 		CodexRollouts:            rollouts,
 		ConfiguredCodexHomes:     readHomes,

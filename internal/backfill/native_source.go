@@ -57,7 +57,7 @@ func filterImportSource(ctx context.Context, env Environment, w *work, started t
 	if evidence.Binding.Child && (!evidence.Task.Seen || !evidence.Task.Native || !evidence.Task.LocalExecution || evidence.Task.StartedAt.IsZero()) {
 		return out, release, agentapi.Wrap(agentapi.Unavailable, errors.New("native own task unavailable"))
 	}
-	if leased, ok := filter.(agentapi.LeasedTranscriptFilter); ok {
+	if leased, ok := filter.(agentapi.LeasedTranscriptFilter); ok && leased.LeasedFilterFor(filter) {
 		out, release, err = leased.FilterLeased(ctx, snapshot.Input(), agentapi.FilterContext{Filename: ref.Path, StartedAt: started, Limits: limits}, environment.ReadBudget)
 	} else {
 		out, err = filter.Filter(ctx, snapshot.Input(), agentapi.FilterContext{Filename: ref.Path, StartedAt: started, Limits: limits})
