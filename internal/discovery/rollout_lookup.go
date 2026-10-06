@@ -31,14 +31,19 @@ const maxCurrentThreads = 64
 // Neither the SQLite current locator nor a cached identity grants admission.
 // Observation-cache membership never implies complete filesystem coverage.
 type CodexRolloutLookup struct {
-	store        *state.Store
-	roots        []string
-	deadline     time.Time
-	observations map[string]rolloutObservation
-	threads      map[string]agentapi.CodexRolloutSet
-	indexes      map[string]*currentIndexView
-	probes       int
-	closed       bool
+	store         *state.Store
+	coverage      *coverageInventory
+	coverageDirty bool
+	roots         []string
+	deadline      time.Time
+	remaining     time.Duration
+	observations  map[string]rolloutObservation
+	byThread      map[string]map[string]struct{}
+	byPhysical    map[string]map[string]struct{}
+	threads       map[string]agentapi.CodexRolloutSet
+	indexes       map[string]*currentIndexView
+	probes        int
+	closed        bool
 }
 
 type rolloutObservation struct {
@@ -64,13 +69,24 @@ func NewCodexRolloutLookup(ctx context.Context, store *state.Store, homes []stri
 	if len(roots) > 1024 {
 		return nil, agentapi.Wrap(agentapi.Limit, errors.New("native home limit"))
 	}
-	lookup := &CodexRolloutLookup{store: store, roots: roots, deadline: time.Now().Add(Budget), observations: map[string]rolloutObservation{}, threads: map[string]agentapi.CodexRolloutSet{}, indexes: map[string]*currentIndexView{}}
+	lookup := &CodexRolloutLookup{store: store, roots: roots, deadline: time.Now().Add(Budget), remaining: Budget, coverage: newCoverage(roots), observations: map[string]rolloutObservation{}, byThread: map[string]map[string]struct{}{}, byPhysical: map[string]map[string]struct{}{}, threads: map[string]agentapi.CodexRolloutSet{}, indexes: map[string]*currentIndexView{}}
 	var prior catalog
 	if err := local.Read(filepath.Join(store.Home(), "discovery-catalog.json"), &prior); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return lookup, nil
 	}
+	if prior.Coverage != nil && prior.Coverage.Version != 1 {
+		return nil, errors.New("native coverage requires a newer writer")
+	}
 	if catalogNeedsReset(prior, roots) {
 		return lookup, nil
+	}
+	if prior.Coverage != nil {
+		if err := prior.Coverage.validate(roots); err != nil {
+			return nil, err
+		}
+		lookup.coverage = prior.Coverage
+	} else {
+		lookup.coverage = newCoverage(roots)
 	}
 	for path, entry := range prior.Cache {
 		root := lookup.homeFor(path)
@@ -79,6 +95,7 @@ func NewCodexRolloutLookup(ctx context.Context, store *state.Store, homes []stri
 		}
 		lookup.Observe(SourceDescriptor{Kind: archive.SourceKindFile, Root: root, Locator: path, StableKey: entry.Observation.Identity.RolloutID}, Fingerprint{Size: entry.Size, Mtime: entry.Mtime}, entry.Observation.Identity)
 	}
+	lookup.coverageDirty = false
 	return lookup, nil
 }
 
@@ -86,9 +103,6 @@ func NewCodexRolloutLookup(ctx context.Context, store *state.Store, homes []stri
 // them so caller mutations cannot silently alter a lookup revision token.
 func (l *CodexRolloutLookup) Observe(source SourceDescriptor, stamp Fingerprint, identity *codexmeta.CodexIdentity) {
 	if l.closed || identity == nil || identity.ThreadID == "" || identity.RolloutID == "" || source.Kind != archive.SourceKindFile || l.homeFor(source.Locator) != source.Root {
-		return
-	}
-	if _, present := l.observations[source.Locator]; !present && len(l.observations) >= maxCatalog {
 		return
 	}
 	raw, err := json.Marshal(identity)
@@ -99,7 +113,24 @@ func (l *CodexRolloutLookup) Observe(source SourceDescriptor, stamp Fingerprint,
 	if json.Unmarshal(raw, &copyID) != nil {
 		return
 	}
+	if l.coverage != nil {
+		l.coverage.observe(source, stamp, copyID)
+	}
+	if prior, present := l.observations[source.Locator]; present {
+		delete(l.byThread[prior.identity.ThreadID], source.Locator)
+		delete(l.byPhysical[prior.identity.RolloutID], source.Locator)
+	} else if len(l.observations) >= maxCatalog {
+		return
+	}
 	l.observations[source.Locator] = rolloutObservation{source: source, stamp: stamp, identity: copyID}
+	if l.byThread[copyID.ThreadID] == nil {
+		l.byThread[copyID.ThreadID] = map[string]struct{}{}
+	}
+	l.byThread[copyID.ThreadID][source.Locator] = struct{}{}
+	if l.byPhysical[copyID.RolloutID] == nil {
+		l.byPhysical[copyID.RolloutID] = map[string]struct{}{}
+	}
+	l.byPhysical[copyID.RolloutID][source.Locator] = struct{}{}
 }
 
 func (l *CodexRolloutLookup) homeFor(path string) string {
@@ -121,7 +152,7 @@ func (l *CodexRolloutLookup) checkBudget(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if time.Now().After(l.deadline) {
+	if l.remaining <= 0 {
 		return agentapi.Wrap(agentapi.Limit, errors.New("native lookup pass deadline"))
 	}
 	return nil
@@ -153,14 +184,20 @@ func (l *CodexRolloutLookup) inspect(ctx context.Context, path, thread string) (
 
 // Rollout returns known physical locators, revalidated by the source provider.
 func (l *CodexRolloutLookup) Rollout(ctx context.Context, id string) ([]agentapi.SourceRef, error) {
+	var done func()
+	var operationErr error
+	ctx, done, operationErr = l.beginOperation(ctx)
+	if operationErr != nil {
+		return nil, operationErr
+	}
+	defer done()
 	if err := l.checkBudget(ctx); err != nil {
 		return nil, err
 	}
 	var refs []agentapi.SourceRef
-	for _, observation := range l.observations {
-		if observation.identity.RolloutID == id {
-			refs = append(refs, agentapi.SourceRef{Kind: archive.SourceKindFile, Path: observation.source.Locator, Key: observation.identity.ThreadID})
-		}
+	for path := range l.byPhysical[id] {
+		observation := l.observations[path]
+		refs = append(refs, agentapi.SourceRef{Kind: archive.SourceKindFile, Path: path, Key: observation.identity.ThreadID})
 	}
 	if len(refs) > archive.MaxHistorySpans {
 		return nil, agentapi.Wrap(agentapi.Limit, errors.New("physical locator limit"))
@@ -171,6 +208,13 @@ func (l *CodexRolloutLookup) Rollout(ctx context.Context, id string) ([]agentapi
 
 // Thread supplies current facts, plus bounded known same-thread candidates.
 func (l *CodexRolloutLookup) Thread(ctx context.Context, id string) (agentapi.CodexRolloutSet, error) {
+	var done func()
+	var operationErr error
+	ctx, done, operationErr = l.beginOperation(ctx)
+	if operationErr != nil {
+		return agentapi.CodexRolloutSet{}, operationErr
+	}
+	defer done()
 	if err := l.checkBudget(ctx); err != nil {
 		return agentapi.CodexRolloutSet{}, err
 	}
@@ -186,6 +230,13 @@ func (l *CodexRolloutLookup) Thread(ctx context.Context, id string) (agentapi.Co
 	if len(l.threads) >= maxCurrentThreads {
 		return agentapi.CodexRolloutSet{}, agentapi.Wrap(agentapi.Limit, errors.New("current thread query limit"))
 	}
+	if l.coverage == nil {
+		l.coverage = newCoverage(l.roots)
+	}
+	if !l.coverage.request(id) {
+		return agentapi.CodexRolloutSet{}, agentapi.Wrap(agentapi.Limit, errors.New("native requested coverage limit"))
+	}
+	l.coverageDirty = true
 	l.registrationHint(ctx, id)
 	var current *agentapi.SourceRef
 	for _, root := range l.roots {
@@ -240,18 +291,27 @@ func (l *CodexRolloutLookup) registrationHint(ctx context.Context, id string) {
 
 func (l *CodexRolloutLookup) withCandidates(id string, set agentapi.CodexRolloutSet) agentapi.CodexRolloutSet {
 	set.Candidates = nil
-	for _, o := range l.observations {
-		if o.identity.ThreadID == id {
-			set.Candidates = append(set.Candidates, agentapi.SourceRef{Kind: archive.SourceKindFile, Path: o.source.Locator, Key: id})
-		}
+	for path := range l.byThread[id] {
+		set.Candidates = append(set.Candidates, agentapi.SourceRef{Kind: archive.SourceKindFile, Path: path, Key: id})
 	}
 	slices.SortFunc(set.Candidates, func(a, b agentapi.SourceRef) int { return strings.Compare(a.Path, b.Path) })
-	// Complete deliberately remains false until independent catalog coverage exists.
 	set.Complete = false
+	if l.coverage != nil {
+		if request, present := l.coverage.Requests[id]; present && request.CompleteEpoch == l.coverage.Epoch && !request.Overflow && l.coverage.Phase == "complete" && !l.coverage.Failed {
+			set.Candidates = nil
+			for _, candidate := range request.Candidates {
+				set.Candidates = append(set.Candidates, agentapi.SourceRef{Kind: archive.SourceKindFile, Path: candidate.Source.Locator, Key: id})
+			}
+			slices.SortFunc(set.Candidates, func(a, b agentapi.SourceRef) int { return strings.Compare(a.Path, b.Path) })
+			set.Complete = true
+		}
+	}
 	data, _ := json.Marshal(struct {
 		Current      *agentapi.SourceRef
+		Complete     bool
+		Candidates   []agentapi.SourceRef
 		Observations []rolloutObservationDigest
-	}{Current: set.Current, Observations: l.candidateDigests(id)})
+	}{Current: set.Current, Complete: set.Complete, Candidates: set.Candidates, Observations: l.candidateDigests(id)})
 	sum := sha256.Sum256(data)
 	set.Revision = hex.EncodeToString(sum[:])
 	return set
@@ -265,10 +325,18 @@ type rolloutObservationDigest struct {
 
 func (l *CodexRolloutLookup) candidateDigests(id string) []rolloutObservationDigest {
 	var out []rolloutObservationDigest
-	for _, o := range l.observations {
-		if o.identity.ThreadID == id {
-			out = append(out, rolloutObservationDigest{o.source.Locator, o.stamp, o.identity})
+	if l.coverage != nil && l.coverage.Phase == "complete" && !l.coverage.Failed {
+		if request, present := l.coverage.Requests[id]; present && request.CompleteEpoch == l.coverage.Epoch && !request.Overflow {
+			for path, candidate := range request.Candidates {
+				out = append(out, rolloutObservationDigest{path, candidate.Stamp, candidate.Identity})
+			}
+			slices.SortFunc(out, func(a, b rolloutObservationDigest) int { return strings.Compare(a.Path, b.Path) })
+			return out
 		}
+	}
+	for path := range l.byThread[id] {
+		o := l.observations[path]
+		out = append(out, rolloutObservationDigest{path, o.stamp, o.identity})
 	}
 	slices.SortFunc(out, func(a, b rolloutObservationDigest) int { return strings.Compare(a.Path, b.Path) })
 	return out
@@ -277,6 +345,13 @@ func (l *CodexRolloutLookup) candidateDigests(id string) []rolloutObservationDig
 // Check revalidates selection within the pass. One private refresh per home is
 // allowed; subsequent changes remain pending instead of making unbounded copies.
 func (l *CodexRolloutLookup) Check(ctx context.Context, id, revision string) error {
+	var done func()
+	var operationErr error
+	ctx, done, operationErr = l.beginOperation(ctx)
+	if operationErr != nil {
+		return operationErr
+	}
+	defer done()
 	if err := l.checkBudget(ctx); err != nil {
 		return err
 	}
@@ -468,7 +543,37 @@ func (l *CodexRolloutLookup) Close() error {
 			errs = append(errs, view.snapshot.close())
 		}
 	}
+	if l.coverageDirty {
+		if err := l.coverage.validate(l.roots); err != nil {
+			return errors.Join(append(errs, err)...)
+		}
+		var current catalog
+		err := local.Read(filepath.Join(l.store.Home(), "discovery-catalog.json"), &current)
+		if err == nil || errors.Is(err, os.ErrNotExist) {
+			if current.Coverage != nil && current.Coverage.Version != 1 {
+				errs = append(errs, errors.New("native coverage requires a newer writer"))
+			} else {
+				current.Version = catalogVersion
+				current.Roots = slices.Clone(l.roots)
+				current.Coverage = l.coverage
+				errs = append(errs, local.Write(filepath.Join(l.store.Home(), "discovery-catalog.json"), current))
+			}
+		} else {
+			errs = append(errs, err)
+		}
+	}
 	return errors.Join(errs...)
 }
 
 var _ agentapi.CodexRolloutLookup = (*CodexRolloutLookup)(nil)
+
+func (l *CodexRolloutLookup) beginOperation(ctx context.Context) (context.Context, func(), error) {
+	if err := l.checkBudget(ctx); err != nil {
+		return ctx, nil, err
+	}
+	started := time.Now()
+	deadline := started.Add(l.remaining)
+	l.deadline = deadline
+	operation, cancel := context.WithDeadline(ctx, deadline)
+	return operation, func() { cancel(); l.remaining -= time.Since(started) }, nil
+}
