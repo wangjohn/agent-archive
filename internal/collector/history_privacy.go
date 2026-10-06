@@ -147,6 +147,7 @@ func (s *sessionScan) stricterHistorySuccessor(p state.PendingPublication, commi
 	}
 	var total int
 	for _, input := range inputs {
+		mark := len(s.retainedReleases)
 		filtered, ref, stage, err := s.prepareStricterHistoryInput(metadata, input, append(append([]state.HistoryInput(nil), finalInputs...), ackInputs...), adapter, pendingSkillMode(p.SkillEvidence), &total)
 		if err != nil {
 			return state.PendingPublication{}, err
@@ -172,6 +173,7 @@ func (s *sessionScan) stricterHistorySuccessor(p state.PendingPublication, commi
 		}
 		next.History.Sources = append(next.History.Sources, stage)
 		next.History.Inputs = append(next.History.Inputs, input)
+		s.releaseStricterAlternative(mark, input.RevisionID, metadata.History.CurrentRevision)
 	}
 	if err := retireStricterHistoryReferences(&next, metadata, append(append(append([]state.HistoryInput(nil), inputs...), finalInputs...), ackInputs...), s.now); err != nil {
 		return state.PendingPublication{}, err
@@ -315,10 +317,12 @@ func (s *sessionScan) prepareRetainedHistoryWork() (sessionOutcome, bool, error)
 }
 
 func (s *sessionScan) prepareStricterHistoryInput(metadata archive.Metadata, input state.HistoryInput, others []state.HistoryInput, adapter agentapi.TranscriptFilter, ceiling config.SkillEvidence, total *int) (archive.SourceBundle, archive.SourceReference, state.PendingSource, error) {
+	scope := len(s.retainedReleases)
 	bundle, err := s.loadHistoryInput(metadata, input)
 	if err != nil {
 		return archive.SourceBundle{}, archive.SourceReference{}, state.PendingSource{}, err
 	}
+	originalBytes := len(s.retainedReleases)
 	original, err := s.readRetainedInputBytes(input.Reference)
 	if err != nil {
 		return archive.SourceBundle{}, archive.SourceReference{}, state.PendingSource{}, err
@@ -330,6 +334,7 @@ func (s *sessionScan) prepareStricterHistoryInput(metadata archive.Metadata, inp
 	if _, err := s.local.StagePendingSource(s.id(), input.Reference, original); err != nil {
 		return archive.SourceBundle{}, archive.SourceReference{}, state.PendingSource{}, err
 	}
+	s.releaseRetainedIndex(originalBytes)
 	// Retained originals preserve interrupted work, but a broader later policy
 	// cannot restore evidence the frozen policy already removed.
 	bundle.SupplementalEvidence = limitSkillEvidence(bundle.SupplementalEvidence, ceiling)
@@ -344,6 +349,7 @@ func (s *sessionScan) prepareStricterHistoryInput(metadata archive.Metadata, inp
 		if other.RevisionID != input.RevisionID || other.Reference == input.Reference {
 			continue
 		}
+		otherMark := len(s.retainedReleases)
 		candidate, err := s.loadHistoryInput(metadata, other)
 		if err != nil {
 			return archive.SourceBundle{}, archive.SourceReference{}, state.PendingSource{}, err
@@ -358,11 +364,25 @@ func (s *sessionScan) prepareStricterHistoryInput(metadata archive.Metadata, inp
 		}
 		filtered.SupplementalEvidence = archive.MergeSupplementalEvidence(filtered.SupplementalEvidence, candidate.SupplementalEvidence)
 		filtered.Capture.Gaps = mergeCaptureGaps(filtered.Capture.Gaps, candidate.Capture.Gaps)
+		// Merged supplemental/header values become an independently owned
+		// envelope before the discarded alternative ends its lifetime.
+		keep := len(s.retainedReleases)
+		filtered, err = s.detachRetainedEnvelope(filtered)
+		if err != nil {
+			return archive.SourceBundle{}, archive.SourceReference{}, state.PendingSource{}, err
+		}
+		s.keepRetainedFrom(otherMark, keep)
 	}
+	returned := len(s.retainedReleases)
 	filtered, err = s.refilterRetained(adapter, filtered)
 	if err != nil {
 		return archive.SourceBundle{}, archive.SourceReference{}, state.PendingSource{}, err
 	}
+	filtered, err = s.detachRetainedEnvelope(filtered)
+	if err != nil {
+		return archive.SourceBundle{}, archive.SourceReference{}, state.PendingSource{}, err
+	}
+	s.keepRetainedFrom(scope, returned)
 	packed, err := s.compressSource(filtered)
 	if err != nil {
 		return archive.SourceBundle{}, archive.SourceReference{}, state.PendingSource{}, err
@@ -412,6 +432,7 @@ func (s *sessionScan) freezeRetainedMaintenance(authority archive.Metadata, bund
 		return state.PendingPublication{}, err
 	}
 	for _, input := range inputs {
+		mark := len(s.retainedReleases)
 		raw, err := s.readRetainedInputBytes(input.Reference)
 		if err != nil {
 			return state.PendingPublication{}, err
@@ -423,6 +444,8 @@ func (s *sessionScan) freezeRetainedMaintenance(authority archive.Metadata, bund
 		p.History.Sources = append(p.History.Sources, stage)
 		if input.RevisionID == authority.History.CurrentRevision {
 			p.SourceKey, p.SourceSHA256, p.SourceBytes = input.Reference.Key, input.Reference.SHA256, raw
+		} else {
+			s.releaseRetainedAfter(mark)
 		}
 	}
 	if err := s.local.SavePending(s.id(), p); err != nil {
@@ -473,4 +496,10 @@ func retireStricterHistoryReferences(next *state.PendingPublication, metadata ar
 	}
 	next.History.Retired = retired
 	return nil
+}
+
+func (s *sessionScan) releaseStricterAlternative(mark int, revision, current string) {
+	if revision != current {
+		s.releaseRetainedAfter(mark)
+	}
 }

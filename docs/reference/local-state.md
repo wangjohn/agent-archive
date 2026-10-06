@@ -167,6 +167,25 @@ Unchanged frozen history costs no source decode or per-session scan journal;
 feedback, policy or version changes and interrupted publications still trigger
 maintenance from retained evidence.
 
+History publication also freezes the consumed native scan signature in its
+existing pending journal. Only exact acknowledged publication installs that
+signature; a newer source still fails its equality check. Retained privacy
+successors clear the native proof because they did not consume current native
+input under their new policy. This keeps both same-pass and interrupted
+publication cheap after restart without acknowledging newer work.
+
+A collector pass shares one 128 MiB logical data ledger across native/index
+reads, retained compressed and decoded inputs, filtered output, comparison and
+encoding scratch, and local pending/published input. Reservations precede the
+bounded reads or output accumulation and belong to the data's consumer until
+release. Resource refusal leaves valid journals and requests pending; it is not
+corruption. This ledger bounds charged data, not Go map/allocator overhead or
+process RSS. Those are measured separately. Source framing preflights add
+bounded reads to measure the actual largest line before scanner allocation;
+they do not persist native content. Small retained refilters grow their output
+charge per safe row instead of reserving the maximum output ceiling.
+
+
 Recovery holds `collector.lock`, then `hooks.lock`. Registration, request and
 index commits use the existing staging helpers: disk syncs occur outside
 request locks, and membership commits retain request-before-membership order.
@@ -193,3 +212,5 @@ override, while ordinary hook lookups retain their fail-closed checks. Active-ti
 expiry retires generation routing before removing content, then prunes packed
 identities after request locks release. Retired generations use an explicit
 absence override rather than redirecting native hooks to a retained ancestor.
+
+The scheduled collector primes qualified history requests from accepted existing registrations before opening native snapshots. The CLI advances one shared inventory observation and validation slice with the same lookup deadline and read budget. That slice cannot admit owners; scheduled IDs never replace provider identity, confinement, project or consent checks. Preview planning remains read-only.

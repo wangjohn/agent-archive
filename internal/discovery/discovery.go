@@ -93,6 +93,7 @@ type catalog struct {
 // Options contains injectable clocks and stop signals; it cannot override
 // source format support or authorize capture.
 type Options struct {
+	inventoryOnly             bool
 	RepositoryIdentity        sourcefacts.RepositoryLookup
 	RepositoryIdentityCurrent func(sourcefacts.RepositoryIdentity) bool
 	// Rollouts receives the same validated observations and bounded coverage state.
@@ -147,15 +148,17 @@ func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config,
 	resolver := sourcefacts.NewProjectResolver()
 	recovery := sourcefacts.NewRecoveryResolver(cfg.Archive.Projects, nil, canonicalProjectPath, o.RepositoryIdentity, &c.Recovery)
 	recovery.Validate = o.RepositoryIdentityCurrent
-	priority := scan{resolver: resolver, recovery: recovery, store: store, cfg: cfg, catalog: &c, health: &h, now: now, adapter: adapter, priority: true, ctx: ctx, rollouts: o.Rollouts}
+	priority := scan{inventoryOnly: o.inventoryOnly, resolver: resolver, recovery: recovery, store: store, cfg: cfg, catalog: &c, health: &h, now: now, adapter: adapter, priority: true, ctx: ctx, rollouts: o.Rollouts}
 	// The shared lookup owns the only native index projection. Production
 	// observation uses the shared directory worker rather than opening native
 	// SQLite via the legacy settled-only scheduling hint adapter.
 	if o.Rollouts == nil {
 		priority.observeIndexHints(ctx, o, roots, deadline)
 	}
-	priority.observeActiveHints(ctx, o, roots, deadline)
-	priority.observeRetries(o)
+	if !o.inventoryOnly {
+		priority.observeActiveHints(ctx, o, roots, deadline)
+		priority.observeRetries(o)
+	}
 
 	priority.observeDirectories(o, deadline)
 	h.ProjectOperations = resolver.Operations
@@ -495,6 +498,7 @@ func continuationLocator(store *state.Store, agent, native string, source Source
 }
 
 type scan struct {
+	inventoryOnly       bool
 	rollouts            *CodexRolloutLookup
 	resolver            *sourcefacts.ProjectResolver
 	recovery            *sourcefacts.RecoveryResolver
@@ -683,6 +687,13 @@ func pruneCatalog(c *catalog) {
 }
 
 func (s scan) admitCandidate(candidate Candidate, loc string) (bool, bool) {
+	if s.inventoryOnly {
+		return false, false
+	}
+	return s.admitOwnedCandidate(candidate, loc)
+}
+
+func (s scan) admitOwnedCandidate(candidate Candidate, loc string) (bool, bool) {
 	cfg, store, h, c, now := s.cfg, s.store, s.health, s.catalog, s.now
 	var facts sourcefacts.ProjectFacts
 	var root string
@@ -862,7 +873,7 @@ func (s scan) observeDirectories(o Options, deadline time.Time) {
 			unavailable = append(unavailable, d)
 			continue
 		}
-		worker := scan{resolver: s.resolver, recovery: s.recovery, store: s.store, cfg: s.cfg, catalog: c, health: h, now: s.now, adapter: s.adapter, ctx: s.ctx, reservedDirectories: len(unavailable), rollouts: o.Rollouts}
+		worker := scan{inventoryOnly: s.inventoryOnly, resolver: s.resolver, recovery: s.recovery, store: s.store, cfg: s.cfg, catalog: c, health: h, now: s.now, adapter: s.adapter, ctx: s.ctx, reservedDirectories: len(unavailable), rollouts: o.Rollouts}
 		advanced := true
 		for _, source := range batch.Entries {
 			if scanStopped(s.ctx, o) || time.Now().After(deadline) {

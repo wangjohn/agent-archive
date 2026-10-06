@@ -46,13 +46,9 @@ $ agent-archive status --verbose --json
         "project_metadata_operations": 0,
         "git_metadata_bytes": 0,
         "header_probes": 0,
-        "directory_entries": 0,
+        "directory_entries": 2,
         "bytes_read": 0,
-        "registered": 0,
-        "outcomes": {
-          "index_hints_missing": 1,
-          "index_locator_rejected": 0
-        }
+        "registered": 0
       },
       "published_sessions": 1,
       "verified_sessions": 1,

@@ -33,6 +33,8 @@ import (
 // local.Lock(home) around Run; Run itself does not acquire it, so it stays
 // simple to call directly from tests.
 type Options struct {
+	// PrepareCodexCoverage advances caller-owned qualified coverage once after admission work loads.
+	PrepareCodexCoverage func(context.Context, []archive.SessionRegistration) error
 	// CodexRollouts is one caller-owned bounded locator view shared by the pass.
 	CodexRollouts agentapi.CodexRolloutLookup
 	// ConfiguredCodexHomes supplies confined migration roots from configuration,
@@ -253,6 +255,11 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	// is informational, and each parent's capture gap is already saved.
 	if err := p.loadWork(); err != nil {
 		return Result{}, err
+	}
+	if p.opts.PrepareCodexCoverage != nil {
+		if err := p.opts.PrepareCodexCoverage(ctx, p.registrations); err != nil {
+			p.result.Errors["native-coverage"] = err
+		}
 	}
 	p.repairListingIndex()
 	orderOldestRequestsFirst(p.registrations, p.requests)

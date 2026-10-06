@@ -135,7 +135,7 @@ func (s *sessionScan) maintainFrozen() (sessionOutcome, error) {
 		}
 	}
 	updated := mergeSupplementalEvidence(bundle.SupplementalEvidence, retained)
-	sameLinks, err := jsonEncodingsEqual(bundle.SupplementalEvidence, updated)
+	sameLinks, err := s.jsonEncodingsEqual(bundle.SupplementalEvidence, updated)
 	if err != nil {
 		return outcomeSkipped, err
 	}

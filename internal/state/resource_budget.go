@@ -73,7 +73,7 @@ func (s *Store) readBudgeted(path string, value any, retain bool) error {
 		return err
 	}
 	var extra [1]byte
-	if count, err := f.Read(extra[:]); count != 0 || err != io.EOF {
+	if count, err := f.Read(extra[:]); count != 0 || !errors.Is(err, io.EOF) {
 		return errStateBudget
 	}
 	if err := s.resourceContext.Err(); err != nil {

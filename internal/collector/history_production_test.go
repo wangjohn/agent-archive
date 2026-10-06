@@ -239,8 +239,9 @@ func TestRunCommittedHistoryCleanupFailuresRetainRetry(t *testing.T) {
 		pointCache0         pointVariant0 = "cache"
 		pointRequest0       pointVariant0 = "request"
 		pointPrivateStages0 pointVariant0 = "private-stages"
+		pointSignature0     pointVariant0 = "native-signature"
 	)
-	for _, point := range []pointVariant0{pointRetiredLedger0, pointCache0, pointRequest0, pointPrivateStages0} {
+	for _, point := range []pointVariant0{pointRetiredLedger0, pointCache0, pointRequest0, pointPrivateStages0, pointSignature0} {
 		t.Run(string(point), func(t *testing.T) {
 			scan, p := privacyJournal(t)
 			older := p.Bundle
@@ -263,6 +264,9 @@ func TestRunCommittedHistoryCleanupFailuresRetainRetry(t *testing.T) {
 				t.Fatal(err)
 			}
 			p.RequestToken = req.Token
+			if point == pointSignature0 {
+				p.ScanSignature = &state.ScanSignature{SourceSetVersion: 2, ParserVersion: scan.parserVersion(), FilterVersion: p.Bundle.Capture.FilterVersion, AdapterVersion: p.Bundle.Capture.AdapterVersion}
+			}
 			if err := scan.local.SavePending(scan.id(), p); err != nil {
 				t.Fatal(err)
 			}
@@ -287,6 +291,8 @@ func TestRunCommittedHistoryCleanupFailuresRetainRetry(t *testing.T) {
 					if err := os.Remove(path); err != nil {
 						t.Fatal(err)
 					}
+				case pointSignature0:
+					path = filepath.Join(scan.local.Home(), "scan-signatures", scan.id()+".json")
 				case pointPrivateStages0:
 					path = filepath.Join(scan.local.Home(), "sessions", scan.id(), "pending-sources", "unsafe-obligation")
 				}

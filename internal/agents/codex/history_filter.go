@@ -12,10 +12,6 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 )
 
-func filterHistory(ctx context.Context, in agentapi.RecordInput, bounds ...archive.CaptureBoundary) (archive.FilteredTranscript, error) {
-	return filterHistoryEncoded(ctx, in, nil, nil, bounds...)
-}
-
 func filterHistoryEncoded(ctx context.Context, in agentapi.RecordInput, encoder func(map[string]any) ([]byte, error), beforeRecord func(int) (func(), error), bounds ...archive.CaptureBoundary) (archive.FilteredTranscript, error) {
 	descriptor, more, err := in.Next(ctx)
 	if err != nil {

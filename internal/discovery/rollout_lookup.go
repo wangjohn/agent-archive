@@ -18,6 +18,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/codexmeta"
+	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 	"github.com/wangjohn/agent-archive/internal/state"
@@ -789,3 +790,46 @@ func (l *CodexRolloutLookup) beginOperation(ctx context.Context) (context.Contex
 
 // NativeReadBudget is the pass-owned shared native/source/cache charge ledger.
 func (l *CodexRolloutLookup) NativeReadBudget() *agentapi.NativeReadBudget { return l.readBudget }
+
+// PrepareRegistered requests qualified history coverage only for already admitted
+// owners, then advances one shared observation slice before source snapshots open.
+// Requests and incomplete work survive refusal; observations grant no admission.
+func (l *CodexRolloutLookup) PrepareRegistered(ctx context.Context, cfg config.Config, regs []archive.SessionRegistration, o Options) error {
+	if l.closed {
+		return agentapi.ErrClosed
+	}
+	needed := false
+	for _, reg := range regs {
+		if reg.Harness.Name != "codex" || !cfg.AcceptSession(reg) || l.homeFor(reg.TranscriptPath) == "" {
+			continue
+		}
+		id := reg.NativeSessionID
+		if reg.CodexBinding != nil {
+			id = reg.CodexBinding.NativeThreadID
+		}
+		if codexmeta.RolloutID(id+".jsonl") != id || id == "" {
+			continue
+		}
+		if l.coverage == nil {
+			l.coverage = newCoverage(l.roots)
+		}
+		before := l.coverage.Sequence
+		if !l.coverage.request(id) {
+			continue
+		}
+		if before != l.coverage.Sequence {
+			l.coverageDirty = true
+		}
+		request := l.coverage.Requests[id]
+		if request.CompleteEpoch != l.coverage.Epoch || l.coverage.proofEpoch != l.coverage.Epoch || l.coverage.Failed {
+			needed = true
+		}
+	}
+	if !needed {
+		return nil
+	}
+	o.Rollouts = l
+	o.inventoryOnly = true
+	_, err := runWithAdapters(ctx, l.store, cfg, o, registeredAdapters())
+	return err
+}
