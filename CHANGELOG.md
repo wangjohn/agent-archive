@@ -8,6 +8,12 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Setup groups the storage provider question and R2 secret fields, replacing
+  answered prompts with short receipts when terminal rows can be safely owned.
+  `NO_COLOR` keeps live interaction; dumb and redirected terminals use static
+  prompts. Hidden fields share buffered input and restore terminal modes on
+  EOF, interrupts and suspend/resume.
+
 - Readers understand self-contained Codex fork, child and revised histories,
   preserve exact raw ordinal boundaries and count only the chat's own activity.
   Related-history writes and cleanup remain protected pending revision-aware

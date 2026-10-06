@@ -1,6 +1,7 @@
 # Setup and CLI experience implementation plan
 
-Status: Accepted design; implementation has not started.
+Status: Accepted design; step 1 shared rendering is implemented. Steps 2–6
+remain pending. See the [renderer contract](../contributing/prompt-rendering.md).
 
 Make guided commands clearly distinguish completed answers, explanatory text,
 and the current question. Initial onboarding and later interactive setup use
@@ -415,7 +416,7 @@ work; investigate any implementation that changes archived content.
 
 ## Delivery checklist
 
-- [ ] Shared prompt renderer and terminal capability handling.
+- [x] Shared prompt renderer and terminal capability handling.
 - [ ] All found projects default and one selector for every setup entry point.
 - [ ] Complete candidate set, paginated display, and honest discovery coverage.
 - [ ] Consistent storage menus, retries, diagnostics, and navigation.

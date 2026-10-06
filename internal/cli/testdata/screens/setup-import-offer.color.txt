@@ -6,18 +6,22 @@ Choose Cloudflare R2 or Amazon S3 for private archive storage. Setup will guide 
 
 \e[1mStep 1 of 3 · Choose what to capture\e[0m
 
-\e[1mArchive Claude Code sessions in ~/src/web-app?\e[0m [\e[1mY\e[0m/n] › 
+\e[1mArchive Claude Code sessions in ~/src/web-app?\e[0m [\e[1mY\e[0m/n] ›
 
 Looking for your other projects...
 On the review screen: Edit a setting adds projects, drops apps, and changes how long sessions are kept.
 
 \e[1mStep 2 of 3 · Connect storage\e[0m
 
-\e[1mWhere should your archive live?\e[0m
-  1) Cloudflare R2
+? Where should your archive live?
+
+  1) Cloudflare R2 (default)
   2) Amazon S3
-[h] Setup instructions
-Choose [\e[1m1\e[0m] › s3-existing
+
+  [h] Setup instructions
+
+› Choose [1]: s3-existing
+\e[2m✓ Provider Amazon S3\e[0m
 
 \e[1mAWS profile\e[0m › work
 
@@ -54,7 +58,7 @@ Checking your storage connection…
   2) Edit a setting
   3) Cancel (your setup draft is kept)
   4) Name this machine (optional)
-Enter 1-4 [\e[1m1\e[0m] › 
+Enter 1-4 [\e[1m1\e[0m] ›
 
 
 Configuration saved.
@@ -68,13 +72,13 @@ Sessions already open are not captured. Start a new one in an included project.
 Check progress with \e[36magent-archive status\e[0m.
 
 Looking for past sessions in these projects… 2 found.
-\e[1mImport the 2 past sessions from these projects?\e[0m [\e[1mY\e[0m/n] › 
+\e[1mImport the 2 past sessions from these projects?\e[0m [\e[1mY\e[0m/n] ›
 
 Registered 2 sessions as import 2026-09-25-1.
 Uploading: 2 of 2 sessions, 4 KB of 4 KB
 Uploaded 2 sessions (4 KB).
-See them with \e[36magent-archive list --imported\e[0m.
-Undo with \e[36magent-archive backfill undo 2026-09-25-1\e[0m.
+See them with agent-archive list --imported.
+Undo with agent-archive backfill undo 2026-09-25-1.
 
 To set up another machine with this storage, run there:
   \e[36magent-archive setup --yes --provider s3 --bucket team-archive --aws-profile work --region us-east-1 --apps claude --prefix agent-archive/ --retention-days 90 --no-require-skill-use --skill-evidence metadata --skills --project ~/src/web-app\e[0m

@@ -6,18 +6,22 @@ Choose Cloudflare R2 or Amazon S3 for private archive storage. Setup will guide 
 
 \e[1mStep 1 of 3 · Choose what to capture\e[0m
 
-\e[1mArchive Claude Code sessions in ~/src/web-app?\e[0m [\e[1mY\e[0m/n] › 
+\e[1mArchive Claude Code sessions in ~/src/web-app?\e[0m [\e[1mY\e[0m/n] ›
 
 Looking for your other projects...
 On the review screen: Edit a setting adds projects, drops apps, and changes how long sessions are kept.
 
 \e[1mStep 2 of 3 · Connect storage\e[0m
 
-\e[1mWhere should your archive live?\e[0m
-  1) Cloudflare R2
+? Where should your archive live?
+
+  1) Cloudflare R2 (default)
   2) Amazon S3
-[h] Setup instructions
-Choose [\e[1m1\e[0m] › r2-existing
+
+  [h] Setup instructions
+
+› Choose [1]: r2-existing
+\e[2m✓ Provider Cloudflare R2\e[0m
 
 Find your Account ID or S3 API endpoint in Cloudflare Dashboard > Storage & databases > R2 > Overview:
 https://developers.cloudflare.com/r2/get-started/s3/
@@ -28,7 +32,10 @@ Example bucket URL: https://<account-id>.r2.cloudflarestorage.com/<bucket>
 
 \e[1mAccess key ID\e[0m › ACCESSKEYID
 
-\e[1mSecret access key (hidden)\e[0m › SECRET
+? Secret access key (hidden)
+
+› Credential:
+\e[2m✓ Credential received\e[0m
 
 
 Checking your storage connection…

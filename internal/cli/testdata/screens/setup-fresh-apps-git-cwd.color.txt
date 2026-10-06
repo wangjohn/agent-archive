@@ -8,7 +8,7 @@ Choose Cloudflare R2 or Amazon S3 for private archive storage. Setup will guide 
 
 \e[1mStep 1 of 3 · Choose what to capture\e[0m
 
-\e[1mArchive Codex, Claude Code, and Cursor sessions in ~/src/web-app?\e[0m [\e[1mY\e[0m/n] › 
+\e[1mArchive Codex, Claude Code, and Cursor sessions in ~/src/web-app?\e[0m [\e[1mY\e[0m/n] ›
 
 Looking for your other projects...
 On the review screen: Edit a setting adds projects, drops apps, and changes how long sessions are kept.
@@ -20,11 +20,15 @@ Enter 1-2 [\e[1m1\e[0m] › included-projects
 
 \e[1mStep 2 of 3 · Connect storage\e[0m
 
-\e[1mWhere should your archive live?\e[0m
-  1) Cloudflare R2
+? Where should your archive live?
+
+  1) Cloudflare R2 (default)
   2) Amazon S3
-[h] Setup instructions
-Choose [\e[1m1\e[0m] › s3-existing
+
+  [h] Setup instructions
+
+› Choose [1]: s3-existing
+\e[2m✓ Provider Amazon S3\e[0m
 
 \e[1mAWS profile\e[0m › work
 
@@ -71,7 +75,7 @@ Checking your storage connection…
   2) Edit a setting
   3) Cancel (your setup draft is kept)
   4) Name this machine (optional)
-Enter 1-4 [\e[1m1\e[0m] › 
+Enter 1-4 [\e[1m1\e[0m] ›
 
 
 Configuration saved.

@@ -14,19 +14,24 @@ Enter 1-5 [1]: 1
 Step 2 of 3 · Connect storage
 
 Continue connecting the saved bucket, or choose a replacement.
-Where should your archive live?
-  1) Cloudflare R2
-  2) Amazon S3
-[h] Setup instructions
-[n] Create a replacement S3 bucket
-Choose [2]: s3-existing
 
-AWS profile [work]: 
+? Where should your archive live?
+
+  1) Cloudflare R2
+  2) Amazon S3 (default)
+
+  [h] Setup instructions
+  [n] Create a replacement S3 bucket
+
+› Choose [2]: s3-existing
+✓ Provider Amazon S3
+
+AWS profile [work]:
 
 Which bucket should sessions be stored in?
   1) photos
   2) team-archive
-Enter 1-2, or another bucket name [2]: 
+Enter 1-2, or another bucket name [2]:
 
 Couldn't look up the region of bucket team-archive (access denied).
 The last storage check failed with region us-east-1.

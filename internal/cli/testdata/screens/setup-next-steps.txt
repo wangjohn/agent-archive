@@ -22,16 +22,20 @@ Projects to archive (✓ included):
   1) ✓ ~/src/web-app  this folder
 a includes all listed projects. Or enter 1 to include or leave it out, or a path to add a project.
 Enter a blank line when finished.
-Projects: 
+Projects:
 
 
 Step 2 of 3 · Connect storage
 
-Where should your archive live?
-  1) Cloudflare R2
+? Where should your archive live?
+
+  1) Cloudflare R2 (default)
   2) Amazon S3
-[h] Setup instructions
-Choose [1]: s3-existing
+
+  [h] Setup instructions
+
+› Choose [1]: s3-existing
+✓ Provider Amazon S3
 
 AWS profile: work
 
@@ -77,7 +81,7 @@ Start archiving?
   2) Edit a setting
   3) Cancel (your setup draft is kept)
   4) Name this machine (optional)
-Enter 1-4 [1]: 
+Enter 1-4 [1]:
 
 
 Configuration saved.

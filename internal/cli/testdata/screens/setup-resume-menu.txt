@@ -15,11 +15,15 @@ Enter 1-5 [1]: 1
 
 Step 2 of 3 · Connect storage
 
-Where should your archive live?
-  1) Cloudflare R2
+? Where should your archive live?
+
+  1) Cloudflare R2 (default)
   2) Amazon S3
-[h] Setup instructions
-Choose [1]: s3-existing
+
+  [h] Setup instructions
+
+› Choose [1]: s3-existing
+✓ Provider Amazon S3
 
 AWS profile: work
 

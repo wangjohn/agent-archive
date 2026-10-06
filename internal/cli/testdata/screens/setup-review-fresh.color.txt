@@ -19,11 +19,15 @@ Enter 1-2 [\e[1m1\e[0m] › included-projects
 
 \e[1mStep 2 of 3 · Connect storage\e[0m
 
-\e[1mWhere should your archive live?\e[0m
-  1) Cloudflare R2
+? Where should your archive live?
+
+  1) Cloudflare R2 (default)
   2) Amazon S3
-[h] Setup instructions
-Choose [\e[1m1\e[0m] › s3-existing
+
+  [h] Setup instructions
+
+› Choose [1]: s3-existing
+\e[2m✓ Provider Amazon S3\e[0m
 
 \e[1mAWS profile\e[0m › work
 

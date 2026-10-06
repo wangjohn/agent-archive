@@ -211,6 +211,9 @@ type lockedWriter struct {
 // underlyingWriter is w without a lockedWriter around it, for terminal
 // checks.
 func underlyingWriter(w io.Writer) io.Writer {
+	if p, ok := w.(*promptWriter); ok {
+		return underlyingWriter(p.w)
+	}
 	if l, ok := w.(*lockedWriter); ok {
 		return l.w
 	}

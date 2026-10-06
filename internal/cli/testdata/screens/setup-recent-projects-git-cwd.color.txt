@@ -8,7 +8,7 @@ Choose Cloudflare R2 or Amazon S3 for private archive storage. Setup will guide 
 
 \e[1mArchive Claude Code sessions in ~/src/web-app?\e[0m [\e[1mY\e[0m/n] › n
 
-\e[1mInclude Claude Code?\e[0m [\e[1mY\e[0m/n] › 
+\e[1mInclude Claude Code?\e[0m [\e[1mY\e[0m/n] ›
 
 Projects to archive (✓ included):
   1) \e[32m✓\e[0m ~/src/web-app  \e[2mthis folder · 2 sessions · today\e[0m
@@ -19,15 +19,18 @@ Enter a blank line when finished.
 \e[1mProjects\e[0m › 3
 
 Included: ~/src/web-app, ~/src/docs
-\e[1mProjects\e[0m › 
+\e[1mProjects\e[0m ›
 
 
 \e[1mStep 2 of 3 · Connect storage\e[0m
 
-\e[1mWhere should your archive live?\e[0m
-  1) Cloudflare R2
+? Where should your archive live?
+
+  1) Cloudflare R2 (default)
   2) Amazon S3
-[h] Setup instructions
-Choose [\e[1m1\e[0m] › Setup incomplete: no more input: EOF
+
+  [h] Setup instructions
+
+› Choose [1]: Setup incomplete: no more input: EOF
 Run agent-archive setup to continue.
 [exit 1]

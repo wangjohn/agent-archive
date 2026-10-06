@@ -17,7 +17,7 @@ Current storage: s3 / team-archive
 Keep your current storage?
 [Enter] Keep current storage
 [c] Change storage
-Choose: 
+Choose:
 
 
 Checking your storage connection…

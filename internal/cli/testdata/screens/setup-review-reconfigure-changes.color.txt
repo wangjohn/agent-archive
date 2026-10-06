@@ -24,7 +24,7 @@ Also found on this computer: Claude Code and Cursor.
 Add project directories, one per line. Enter a blank line when finished.
 \e[1mProject path\e[0m › ~/src/api
 
-\e[1mProject path\e[0m › 
+\e[1mProject path\e[0m ›
 
 
 \e[1mStep 2 of 3 · Connect storage\e[0m
@@ -33,7 +33,7 @@ Current storage: s3 / team-archive
 \e[1mKeep your current storage?\e[0m
 [Enter] Keep current storage
 [c] Change storage
-Choose › 
+Choose ›
 
 
 Checking your storage connection…
@@ -130,7 +130,7 @@ Enter 1-11 [\e[1m11\e[0m] › 5
   1) Yes, save
   2) Edit a setting
   3) Cancel (your setup draft is kept)
-Enter 1-3 [\e[1m1\e[0m] › 
+Enter 1-3 [\e[1m1\e[0m] ›
 
 
 Configuration saved.

@@ -55,6 +55,10 @@ type colorOutput interface{ colorTerminal() bool }
 // styleFor returns the style for writing to out: plain unless out is a
 // terminal, and without color when NO_COLOR is set or TERM is dumb.
 func styleFor(out io.Writer) textStyle {
+	if c, ok := out.(promptOutput); ok {
+		capabilities := c.promptCapabilities()
+		return textStyle{color: capabilities.Color, live: capabilities.Redraw}
+	}
 	if c, ok := out.(colorOutput); ok {
 		return textStyle{color: c.colorTerminal()}
 	}
