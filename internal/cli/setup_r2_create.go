@@ -42,23 +42,11 @@ import (
 // (finishGuidedCreation). The ordinary storage check then runs on the stored
 // key as it does for any R2 key.
 //
-// The feature is experimental until every box of "Live acceptance: guided R2
-// creation" in dev/contributing/testing.md is ticked. Provider introduction
-// and explicit creation shortcuts are gated by experimentalR2Create.
+// Guided creation is available in ordinary setup. Live provider coverage is
+// tracked in dev/contributing/testing.md.
 
 // guidedR2Choice is the explicit interactive shortcut for R2 creation.
 const guidedR2Choice = "r2-create"
-
-// experimentalR2CreateVar is the environment variable that turns the guided
-// R2 option on.
-const experimentalR2CreateVar = "AGENT_ARCHIVE_EXPERIMENTAL_R2_CREATE"
-
-// experimentalR2Create reports whether guided R2 creation is switched on. It
-// is the whole gate.
-func experimentalR2Create(env Env) bool {
-	value, _ := env.lookupEnv(experimentalR2CreateVar)
-	return value == "1"
-}
 
 // errChooseStorageAgain ends guided creation without a bucket: the person
 // asked for another storage option, or gave nothing to create one with.

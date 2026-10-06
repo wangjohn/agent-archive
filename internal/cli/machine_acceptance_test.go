@@ -18,14 +18,6 @@ func TestMachineTwoHomeFakeAcceptance(t *testing.T) {
 	source, _, _, _, _ := ownKeyFixture(t)
 	store := storagetest.NewMemoryStore()
 	source.OpenStore = func(config.Config) (storage.ObjectStore, error) { return store, nil }
-	lookup := source.LookupEnv
-	source.LookupEnv = func(k string) (string, bool) {
-		enabled := map[string]bool{"AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_REVOKE": true, "AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_VERIFY": true}
-		if enabled[k] {
-			return "1", true
-		}
-		return lookup(k)
-	}
 	var output, diagnostics bytes.Buffer
 	if code := Run([]string{"machines", "own-key", "--yes"}, nil, &output, &diagnostics, source); code != 0 {
 		t.Fatalf("own-key %d %s", code, diagnostics.String())

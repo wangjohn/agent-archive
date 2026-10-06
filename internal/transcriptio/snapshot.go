@@ -81,8 +81,13 @@ func (OS) OpenRegularFile(p string) (*os.File, error) {
 }
 
 // unchanged compares identity and observable metadata across verification.
-func unchanged(before, after fs.FileInfo) bool {
-	return os.SameFile(before, after) && before.Size() == after.Size() && before.ModTime().Equal(after.ModTime())
+func unchanged(before, after fs.FileInfo) bool { return SameObservation(before, after) }
+
+// SameObservation binds interpreted facts to the regular file that produced them.
+// Identity, size and modification time are practical observations, not a lock
+// against external writers or a detector of deliberately restored timestamps.
+func SameObservation(before, after fs.FileInfo) bool {
+	return before != nil && after != nil && before.Mode().IsRegular() && after.Mode().IsRegular() && os.SameFile(before, after) && before.Size() == after.Size() && before.ModTime().Equal(after.ModTime())
 }
 
 // Stamp retains real file identity privately, alongside ordering facts.
@@ -183,6 +188,10 @@ func (s *Snapshot) Close() error {
 	s.closeErr = s.file.Close()
 	return s.closeErr
 }
+
+// SourceInfo returns the initial observation for transient admission checks.
+// Callers must not persist the operating-system identity.
+func (s *Snapshot) SourceInfo() fs.FileInfo { return s.stamp.identity }
 
 // Stamp returns the initial identity and boundary.
 func (s *Snapshot) Stamp() Stamp { return s.stamp }

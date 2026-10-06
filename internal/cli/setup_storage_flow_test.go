@@ -53,14 +53,14 @@ func TestStorageProviderNumbersAndModeAliases(t *testing.T) {
 	}
 }
 
-func TestStorageR2CreationGateDoesNotPromiseCreation(t *testing.T) {
+func TestStorageR2CreationAvailableWithoutFlags(t *testing.T) {
 	t.Parallel()
 	var out bytes.Buffer
-	mode, err := storageIntroduction(newPrompter(strings.NewReader("\n"), &out), "r2", Env{})
-	if err != nil || mode != "existing" {
+	mode, err := storageIntroduction(newPrompter(strings.NewReader("\n"), &out), "r2")
+	if err != nil || mode != "new" {
 		t.Fatalf("%q %v", mode, err)
 	}
-	if strings.Contains(out.String(), "Setup will create") || !strings.Contains(out.String(), "isn't enabled") {
+	if !strings.Contains(out.String(), "Setup will create a private bucket") {
 		t.Fatal(out.String())
 	}
 }

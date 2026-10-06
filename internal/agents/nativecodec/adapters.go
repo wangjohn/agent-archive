@@ -400,10 +400,10 @@ func filterJSONL(r io.Reader, format string, knownTypes map[string]bool, lead ma
 }
 
 func filterRecords(format string, knownTypes map[string]bool, lead map[string]any, next func() ([]byte, bool), readError func() error, validateMeta func([]byte) error, bounds ...archive.CaptureBoundary) (archive.FilteredTranscript, error) {
-	return filterRecordsObserved(format, knownTypes, lead, next, readError, validateMeta, nil, bounds...)
+	return filterRecordsObserved(format, knownTypes, lead, next, readError, validateMeta, nil, nil, bounds...)
 }
 
-func filterRecordsObserved(format string, knownTypes map[string]bool, lead map[string]any, next func() ([]byte, bool), readError func() error, validateMeta func([]byte) error, retained func(int), bounds ...archive.CaptureBoundary) (archive.FilteredTranscript, error) {
+func filterRecordsObserved(format string, knownTypes map[string]bool, lead map[string]any, next func() ([]byte, bool), readError func() error, validateMeta func([]byte) error, retained func(int), own func(string) bool, bounds ...archive.CaptureBoundary) (archive.FilteredTranscript, error) {
 	next, readError = boundRecordSource(next, readError, bounds)
 	result := archive.FilteredTranscript{Format: format, NativeStartComplete: true}
 	lineNo, recognized := 0, 0
@@ -452,8 +452,8 @@ func filterRecordsObserved(format string, knownTypes map[string]bool, lead map[s
 			addGap("incomplete_or_invalid_record", lineNo, "jsonl record omitted")
 			continue
 		}
-		noteNativeIdentity(&result, raw)
 		kind, _ := raw["type"].(string)
+		noteOwnedNativeIdentity(&result, raw, kind, own)
 		if err := validateMetadata(kind, line, validateMeta); err != nil {
 			return archive.FilteredTranscript{}, err
 		}
@@ -798,4 +798,10 @@ func filteredReadComplete(err error, lines, recognized int) error {
 		return archive.ErrUnsafeSourceFormat
 	}
 	return nil
+}
+
+func noteOwnedNativeIdentity(result *archive.FilteredTranscript, raw map[string]any, kind string, own func(string) bool) {
+	if own == nil || own(kind) {
+		noteNativeIdentity(result, raw)
+	}
 }

@@ -16,6 +16,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/discovery"
 	"github.com/wangjohn/agent-archive/internal/evidence"
+	"github.com/wangjohn/agent-archive/internal/gitremote"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/retention"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
@@ -171,7 +172,7 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (result collector.Resu
 		return collector.Result{}, err
 	}
 	defer func() { resultErr = errors.Join(resultErr, rollouts.Close()) }()
-	_, discoveryErr := discovery.Run(ctx, localStore, cfg, discovery.Options{Now: env.Now, Stop: stop, Rollouts: rollouts})
+	_, discoveryErr := discovery.Run(ctx, localStore, cfg, discovery.Options{Now: env.Now, Stop: stop, Rollouts: rollouts, RepositoryIdentity: gitremote.ProjectIdentity, RepositoryIdentityCurrent: gitremote.ProjectIdentityCurrent})
 	if discoveryErr != nil {
 		recordPreflightError(localStore, errors.Join(recoveryErr, discoveryErr))
 	}

@@ -50,7 +50,7 @@ func promptStorage(p *prompter, existing credentials.Config, env Env, failedRegi
 		def = defaultStorageProvider(env)
 	}
 	for {
-		aliases, secondary := storageProviderActions(existing, env)
+		aliases, secondary := storageProviderActions(existing)
 		if existing.Bucket != "" {
 			terminal.Println(p.out, "Continue connecting the saved bucket, or choose a replacement.")
 		}
@@ -73,7 +73,7 @@ func promptStorage(p *prompter, existing credentials.Config, env Env, failedRegi
 				mode = "existing"
 				break
 			}
-			mode, err = storageIntroduction(p, provider, env)
+			mode, err = storageIntroduction(p, provider)
 			if err != nil {
 				return existing, secret, false, err
 			}
@@ -116,23 +116,21 @@ func promptStorage(p *prompter, existing credentials.Config, env Env, failedRegi
 }
 
 // storageProviderActions exposes replacement creation only for a saved destination.
-func storageProviderActions(existing credentials.Config, env Env) ([]option, []actionOption) {
+func storageProviderActions(existing credentials.Config) ([]option, []actionOption) {
 	aliases := []option{{"r2-existing", ""}, {"s3-existing", ""}, {storageChoiceS3New, ""}}
-	if experimentalR2Create(env) {
-		aliases = append(aliases, option{guidedR2Choice, ""})
-	}
+	aliases = append(aliases, option{guidedR2Choice, ""})
 	secondary := []actionOption{{"help", "h", "Setup instructions"}}
 	if existing.Bucket != "" {
 		if existing.Provider == credentials.ProviderS3 {
 			secondary = append(secondary, actionOption{storageChoiceS3New, "n", "Create a replacement S3 bucket"})
-		} else if experimentalR2Create(env) {
+		} else {
 			secondary = append(secondary, actionOption{guidedR2Choice, "n", "Create a replacement R2 bucket"})
 		}
 	}
 	return aliases, secondary
 }
 
-func storageIntroduction(p *prompter, provider string, env Env) (string, error) {
+func storageIntroduction(p *prompter, provider string) (string, error) {
 	for {
 		title := "Set up Amazon S3"
 		explanation := "Setup will create a bucket with Block Public Access using an AWS profile."
@@ -141,11 +139,6 @@ func storageIntroduction(p *prompter, provider string, env Env) (string, error) 
 		if provider == credentials.ProviderR2 {
 			title = "Set up Cloudflare R2"
 			explanation = "Setup will create a private bucket and archive key. You'll provide a setup token once; it won't be saved."
-			if !experimentalR2Create(env) {
-				explanation = "Automatic R2 bucket creation is experimental and isn't enabled. Connect an existing private bucket, or follow the setup instructions to create one."
-				def = "existing"
-				options = options[1:]
-			}
 		}
 		terminal.Println(p.out, explanation)
 		choice, err := p.actions(title, def, nil, options)

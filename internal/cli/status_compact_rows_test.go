@@ -172,7 +172,7 @@ func TestStatusAppPrefersTheConfiguredApp(t *testing.T) {
 	t.Parallel()
 	view := mixedStatusView()
 	view.importedApps = []appStatus{{Name: "claude", ImportedSessions: 9, Uploading: []uploadingSession{}}}
-	if text := renderClaudeStatus(t, view); !strings.Contains(text, "  ✓ Claude Code 2.1.283   hooks on   212 sessions") || strings.Contains(text, "imported only") {
+	if text := renderClaudeStatus(t, view); !strings.Contains(text, "  ✓ Claude Code 2.1.283   hooks installed   212 sessions") || strings.Contains(text, "imported only") {
 		t.Fatalf("status claude:\n%s", text)
 	}
 }

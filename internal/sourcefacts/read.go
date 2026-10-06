@@ -25,6 +25,7 @@ const (
 
 // Header is a content-free, bounded observation of one Codex source.
 type Header struct {
+	SourceInfo os.FileInfo `json:"-"`
 	// Identity survives understood history-pending outcomes as lookup evidence only.
 	Identity             *codexmeta.CodexIdentity
 	NativeCreatedAt      time.Time
@@ -80,6 +81,7 @@ func ReadHeader(ctx context.Context, root, path string) Header {
 	if snapshot.Check() != nil || ctx.Err() != nil {
 		return Header{Outcome: "source_changed", Bytes: h.Bytes, NativeReadBytes: h.NativeReadBytes, NativeReadOperations: h.NativeReadOperations}
 	}
+	h.SourceInfo = snapshot.SourceInfo()
 	return h
 }
 

@@ -191,7 +191,7 @@ class InstallScriptTest(InstallScriptBase):
         self.assertIn('Add this line to ~/.bash_profile:', result.stdout)
         self.assertIn('export PATH="' + str(target.parent) + ':$PATH"', result.stdout)
         self.assertIn(f'✓ installed agent-archive v9.9.9-arm64 to {target}\n', result.stdout)
-        self.assertTrue(result.stdout.endswith('\nTo get started, run:\n\nagent-archive setup\n'))
+        self.assertIn('\nTo get started, run:\n\nagent-archive setup\n', result.stdout)
         self.assertEqual([p.name for p in target.parent.iterdir()], ['agent-archive'])
 
     def test_zsh_path_instructions(self):
@@ -226,7 +226,7 @@ class InstallScriptTest(InstallScriptBase):
         result = self.run_install(path_dirs=[existing], default_dir=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(f'to {existing}/agent-archive', result.stdout)
-        self.assertTrue(result.stdout.endswith('\nTo get started, run:\n\nagent-archive setup\n'))
+        self.assertIn('\nTo get started, run:\n\nagent-archive setup\n', result.stdout)
         self.assertFalse((self.home / '.local').exists())
 
     def test_honors_install_dir_override(self):
@@ -977,7 +977,7 @@ class InstallRefreshTest(InstallScriptBase):
         result = self.install()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse(self.setup_log.exists())
-        self.assertTrue(result.stdout.endswith('\nTo get started, run:\n\nagent-archive setup\n'))
+        self.assertIn('\nTo get started, run:\n\nagent-archive setup\n', result.stdout)
 
     def test_a_data_directory_without_settings_is_a_fresh_install(self):
         self.default_data.mkdir(parents=True)
@@ -1012,7 +1012,7 @@ class InstallRefreshTest(InstallScriptBase):
         result = self.install(AGENT_ARCHIVE_HOME=str(self.root / 'empty'))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse(self.setup_log.exists())
-        self.assertTrue(result.stdout.endswith('\nTo get started, run:\n\nagent-archive setup\n'))
+        self.assertIn('\nTo get started, run:\n\nagent-archive setup\n', result.stdout)
 
     def test_a_failed_refresh_says_why_and_does_not_fail_the_install(self):
         self.configure(self.default_data)

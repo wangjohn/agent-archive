@@ -30,7 +30,7 @@ func ownKeyFixture(t *testing.T) (Env, string, *cloudflaretest.Server, *fakeKeyc
 	cfg.MachineAssignment = &config.MachineAssignment{DestinationID: cfg.DestinationID(), Kind: config.MachineAssignmentR2Shared, AccessKeyID: strings.Repeat("e", 32), SharedWith: strings.Repeat("b", 32)}
 	must(t, config.Save(home, cfg))
 	env.LookupEnv = func(key string) (string, bool) {
-		values := map[string]string{"AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_KEYS": "1", "CLOUDFLARE_API_TOKEN": bootstrapCanary}
+		values := map[string]string{"CLOUDFLARE_API_TOKEN": bootstrapCanary}
 		value, ok := values[key]
 		return value, ok
 	}
@@ -469,7 +469,7 @@ func TestOwnKeyCompletedRetryPublishesWithoutMinting(t *testing.T) {
 	store := storagetest.NewMemoryStore()
 	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return store, nil }
 	// Retry committed publication independently, without another management token.
-	env.LookupEnv = func(key string) (string, bool) { return "1", key == "AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_KEYS" }
+	env.LookupEnv = func(string) (string, bool) { return "", false }
 	creates := cf.Calls(cloudflaretest.RouteCreateToken)
 	output.Reset()
 	if code := Run([]string{"machines", "own-key", "--yes"}, nil, &output, &output, env); code != 0 || cf.Calls(cloudflaretest.RouteCreateToken) != creates {
@@ -580,7 +580,7 @@ func TestOwnKeyRecoversExactCommittedSlotBeforeCheckpointPromotion(t *testing.T)
 	must(t, applySetup(home, userHome, executable, cfg, &next, nil, env))
 	// The setup commit succeeded, but the process stopped before marking its
 	// checkpoint committed. Exact-slot recovery needs no management token.
-	env.LookupEnv = func(key string) (string, bool) { return "1", key == "AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_KEYS" }
+	env.LookupEnv = func(string) (string, bool) { return "", false }
 	creates := cf.Calls(cloudflaretest.RouteCreateToken)
 	var output bytes.Buffer
 	if code := Run([]string{"machines", "own-key", "--yes"}, nil, &output, &output, env); code != 0 || cf.Calls(cloudflaretest.RouteCreateToken) != creates || cf.Calls(cloudflaretest.RouteDeleteToken) != 0 {
@@ -637,7 +637,7 @@ func TestOwnKeyPreSlotCheckpointCanCancelAfterSetupChanges(t *testing.T) {
 				wantCode = 0
 			} else {
 				// Stop a restart at token acquisition, after local retirement.
-				env.LookupEnv = func(key string) (string, bool) { return "1", key == "AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_KEYS" }
+				env.LookupEnv = func(string) (string, bool) { return "", false }
 			}
 			if code := Run(args, nil, &output, &output, env); code != wantCode || providerCalls != 0 || tokenReads != 0 || cf.Calls(cloudflaretest.RouteCreateToken) != 0 || cf.Calls(cloudflaretest.RouteDeleteToken) != 0 {
 				t.Fatalf("pre-slot cancellation blocked or called provider: %d %s", code, output.String())

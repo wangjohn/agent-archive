@@ -2,9 +2,8 @@ $ agent-archive status --verbose
 Agent Archive  ● Ready
 
 Capture
-  ✓ Codex   discovery: no supported task observed in last scan; included projects   1 session
+  ✓ Codex   discovery: no supported task observed in last scan; included projects   1 session · 1 archived (1 verified)
     · Last discovery attempt just now; 1 registered → 0 queued → 1 published → 1 read-back verified
-    · Optional hooks: hooks on; actual hook observation is separate evidence.
     · 1 session archived, verified just now
   · Identity recovery: complete
   · Projects: ~/src/web-app
@@ -34,6 +33,8 @@ Details
   Codex: published; source verified (published_source_verified; 1 session(s)); hooks installed
     Automatic discovery: no supported task observed in last scan.
     Last attempt: 2026-09-25T12:00:00Z; registered 0 in that scan.
+    Hooks installed; execution observed.
+    Hook approval is optional while automatic discovery is enabled.
     Hook trust: unknown here; it is granted inside the app and is not observable from this machine's files.
     Installed version: unknown; support unknown.
     Project /Users/alex/src/web-app: verified_at_recorded_time.

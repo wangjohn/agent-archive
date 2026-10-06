@@ -322,7 +322,21 @@ type CodexAdmissionProof struct {
 	Revision   string `json:"revision"`
 }
 
+// ProjectResolution is private, bounded evidence retained with local ownership.
+// Root is the selected configured spelling; Context is a content-free policy digest.
+type ProjectResolution struct {
+	OriginalCwd     string `json:"original_cwd"`
+	CanonicalCwd    string `json:"canonical_cwd,omitempty"`
+	Root            string `json:"root"`
+	Method          string `json:"method"`
+	RecordedRepoKey string `json:"recorded_repo_key,omitempty"`
+	Context         string `json:"context"`
+	PolicyContext   string `json:"policy_context"`
+	InventoryDigest string `json:"inventory_digest,omitempty"`
+}
+
 type SessionRegistration struct {
+	ProjectResolution  *ProjectResolution   `json:"project_resolution,omitempty"`
 	CodexBinding       *CodexSourceBinding  `json:"codex_binding,omitempty"`
 	CodexCandidatePath string               `json:"codex_candidate_path,omitempty"`
 	CodexAdmission     *CodexAdmissionProof `json:"codex_admission,omitempty"`

@@ -4,14 +4,14 @@ agent-archive stores sessions in a private bucket you own. Create it once;
 every machine you set up can share it. You need a Cloudflare or AWS account for
 the bucket; there is no agent-archive account or hosted service. Cloudflare
 R2 is the quickest to set up. `agent-archive setup` can create an S3 bucket
-for you and, experimentally, an R2 one (both below), and links here when you
+for you and an R2 one (both below), and links here when you
 choose "Setup instructions" at its storage question.
 
 ## Cloudflare R2 (recommended)
 
 Choose the route that matches what you need:
 
-- **A new bucket:** [let setup create it](#let-setup-create-it-experimental).
+- **A new bucket:** [let setup create it](#let-setup-create-it).
   You provide one temporary Cloudflare API token; setup creates the bucket
   and its archive key.
 - **An existing bucket:** start at step 2 of [the manual instructions](#create-it-by-hand),
@@ -21,12 +21,9 @@ Cloudflare has two different token forms: **R2 → Manage API Tokens** creates
 R2 credentials, while **Manage account → Account API tokens** lets you choose
 custom account permissions. Automatic bucket creation below needs the latter.
 
-### Let setup create it (experimental)
+### Let setup create it
 
-`agent-archive setup` can create the bucket for you. This is **experimental**:
-it has not yet been run against every kind of Cloudflare account, so the
-creation flow is disabled unless you turn it on by setting
-`AGENT_ARCHIVE_EXPERIMENTAL_R2_CREATE=1` in the shell that runs setup. Then, at
+`agent-archive setup` can create the bucket for you. At
 the storage question, choose **Cloudflare R2**, then **Continue**. You
 make one Cloudflare API token by hand, once; setup does the rest. R2 must
 already be enabled on your Cloudflare account (Cloudflare may ask for a
@@ -58,7 +55,7 @@ pricing](https://developers.cloudflare.com/r2/pricing/)).
    hold themselves ([Cloudflare's account token requirements](https://developers.cloudflare.com/fundamentals/api/get-started/account-owned-tokens/)).
    If the custom permissions aren't available, ask an account administrator
    or use the manual route below.
-2. Run `AGENT_ARCHIVE_EXPERIMENTAL_R2_CREATE=1 agent-archive setup`, choose
+2. Run `agent-archive setup`, choose
    **Cloudflare R2**, then **Continue**, and paste the token when
    asked (it is hidden). If your shell sets `CLOUDFLARE_API_TOKEN` and
    `CLOUDFLARE_ACCOUNT_ID`, as Cloudflare's own tools expect, setup uses them

@@ -140,3 +140,5 @@ staged=
 
 printf 'Installed %s at %s\n' "$version" "$destination"
 printf 'Try: "%s" status\n' "$destination"
+printf '\nIf you want to pull in older sessions, you can import them with:\n'
+printf '  %q backfill\n' "$destination"
