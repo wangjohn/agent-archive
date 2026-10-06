@@ -85,7 +85,7 @@ func TestCompatibleFormatsPublishAndReadBackAmongRejectedRecords(t *testing.T) {
 		compatibilityRollout(t, root, cfg.Archive.Projects[0].Root, fixtures[2], "0.999.0", 100+i, alter)
 	}
 	h, err := runWithCensus(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(2 * time.Minute) }}, registeredAdapters())
-	if err != nil || h.Registered != len(versions) || !h.Supported || h.Outcomes["unsupported_history"] != 2 || h.Outcomes["unsupported_producer"] != 1 || h.Outcomes["inherited_history"] != 4 {
+	if err != nil || h.Registered != len(versions) || !h.Supported || h.Outcomes["unsupported_history"] != 2 || h.Outcomes["unsupported_producer"] != 1 || h.Outcomes["inherited_history"] != 2 || h.Outcomes["child_history_pending"] != 1 || h.Outcomes["invalid_relationship"] != 1 {
 		t.Fatalf("mixed scan: %+v %v", h, err)
 	}
 	if len(h.Formats) != len(versions) {
@@ -268,5 +268,30 @@ func TestCompatibleProducerVersionIsImmutableAtPublication(t *testing.T) {
 	regs, err := store.LoadRegistrations()
 	if err != nil || len(regs) != 1 || regs[0].Harness.Version != "0.999.0-alpha.1" {
 		t.Fatal("original producer evidence rewritten", err)
+	}
+}
+
+func TestRelatedCodexHistoriesStayPendingWithoutRegistrations(t *testing.T) {
+	t.Parallel()
+	store, cfg, at, root := fixture(t)
+	const ancestor = "00000000-0000-0000-0000-000000000001"
+	const parent = "00000000-0000-0000-0000-000000000002"
+	for i, alter := range []func(map[string]any, map[string]any){
+		func(m, _ map[string]any) { m["session_id"] = ancestor; m["parent_thread_id"] = ancestor },
+		func(m, _ map[string]any) { m["session_id"] = ancestor; m["parent_thread_id"] = parent },
+		func(m, _ map[string]any) { m["forked_from_id"] = ancestor; m["forked_from_ordinal_exclusive"] = 0 },
+		func(m, _ map[string]any) {
+			m["history_base"] = map[string]any{"thread_id": ancestor, "end_ordinal_exclusive": 0, "end_byte_offset": 0}
+		},
+	} {
+		compatibilityRollout(t, root, cfg.Archive.Projects[0].Root, "codex-155-alpha-paginated.jsonl", "0.999.0", 20+i, alter)
+	}
+	h, err := runWithCensus(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(2 * time.Minute) }}, registeredAdapters())
+	if err != nil || h.Registered != 0 || h.Outcomes["child_history_pending"] != 2 || h.Outcomes["fork_history_pending"] != 1 || h.Outcomes["related_history_pending"] != 1 || h.Outcomes["invalid_identity"] != 0 {
+		t.Fatalf("related history: %+v %v", h, err)
+	}
+	regs, err := store.LoadRegistrations()
+	if err != nil || len(regs) != 0 {
+		t.Fatalf("incomplete histories registered: %v %v", regs, err)
 	}
 }

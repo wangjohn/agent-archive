@@ -24,6 +24,7 @@ const (
 
 // Header is a content-free, bounded observation of one Codex source.
 type Header struct {
+	SourceInfo  os.FileInfo `json:"-"`
 	Meta        CodexMeta
 	Started     time.Time
 	FirstTaskAt time.Time
@@ -72,6 +73,7 @@ func ReadHeader(ctx context.Context, root, path string) Header {
 	if snapshot.Check() != nil || ctx.Err() != nil {
 		return Header{Outcome: "source_changed", Bytes: h.Bytes}
 	}
+	h.SourceInfo = snapshot.SourceInfo()
 	return h
 }
 
@@ -118,12 +120,8 @@ func ReadCodexHeader(reader io.Reader, path string) (h Header) {
 				h.Outcome = "oversized_metadata"
 				return h
 			}
-			if !meta.ValidateIdentity(path) {
-				h.Outcome = "invalid_identity"
-				return h
-			}
-			if outcome := meta.Classification(); outcome != "native_format" {
-				h.Outcome = outcome
+			if outcome := meta.CaptureOutcome(path); outcome != "native_format" {
+				h.Outcome = string(outcome)
 				return h
 			}
 			continue

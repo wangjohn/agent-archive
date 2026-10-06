@@ -30,7 +30,7 @@ func (CodexAdapter) FilterJSONL(r io.Reader) (archive.FilteredTranscript, error)
 	return filterJSONL(r, "codex-jsonl", map[string]bool{
 		"session_meta": true, "turn_context": true, "response_item": true,
 		"event_msg": true, "message": true, "token_usage_record": true,
-	}, nil)
+	}, nil, nil)
 }
 
 // ClaudeAdapter handles a small, explicit subset of Claude Code JSONL event
@@ -69,7 +69,7 @@ func filterClaudeJSONL(r io.Reader, lead map[string]any) (archive.FilteredTransc
 	return filterJSONL(r, "claude-jsonl", map[string]bool{
 		"user": true, "assistant": true, "tool_use": true, "tool_result": true,
 		"message": true, "summary": true,
-	}, lead)
+	}, lead, nil)
 }
 
 // CursorAdapter filters hook-provided JSONL records, a hook-provided text
@@ -90,7 +90,7 @@ func (CursorAdapter) FilterJSONL(r io.Reader) (archive.FilteredTranscript, error
 	return filterJSONL(r, "cursor-jsonl", map[string]bool{
 		"session": true, "message": true, "tool_call": true, "tool_result": true,
 		"event": true, "turn_ended": true,
-	}, nil)
+	}, nil, nil)
 }
 
 // textRole is the lower-case role name of a Cursor text transcript section
@@ -382,7 +382,7 @@ func (CursorAdapter) FilterText(r io.Reader, freshStartedAt time.Time) (archive.
 	return result, nil
 }
 
-func filterJSONL(r io.Reader, format string, knownTypes map[string]bool, lead map[string]any) (archive.FilteredTranscript, error) {
+func filterJSONL(r io.Reader, format string, knownTypes map[string]bool, lead map[string]any, validateMeta func([]byte) error) (archive.FilteredTranscript, error) {
 	scanner := bufio.NewScanner(r)
 	// Individual native JSONL records can contain tool output. A hard limit keeps
 	// filtering bounded; exceeding it is refused rather than silently
@@ -396,10 +396,10 @@ func filterJSONL(r io.Reader, format string, knownTypes map[string]bool, lead ma
 			return scanner.Bytes(), true
 		}
 		return nil, false
-	}, scanner.Err)
+	}, scanner.Err, validateMeta)
 }
 
-func filterRecords(format string, knownTypes map[string]bool, lead map[string]any, next func() ([]byte, bool), readError func() error) (archive.FilteredTranscript, error) {
+func filterRecords(format string, knownTypes map[string]bool, lead map[string]any, next func() ([]byte, bool), readError func() error, validateMeta func([]byte) error) (archive.FilteredTranscript, error) {
 	result := archive.FilteredTranscript{Format: format, NativeStartComplete: true}
 	lineNo, recognized := 0, 0
 	gapSet := map[string]bool{}
@@ -448,6 +448,9 @@ func filterRecords(format string, knownTypes map[string]bool, lead map[string]an
 		}
 		noteNativeIdentity(&result, raw)
 		kind, _ := raw["type"].(string)
+		if err := validateMetadata(kind, line, validateMeta); err != nil {
+			return archive.FilteredTranscript{}, err
+		}
 		if format == "claude-jsonl" && isCompactBoundary(raw) {
 			recognized++
 			if err := retainSafeIdentityRecord(&result, compactBoundaryRecord(raw, omittedKeys.add)); err != nil {
@@ -472,7 +475,7 @@ func filterRecords(format string, knownTypes map[string]bool, lead map[string]an
 			retain(&result, encoded)
 			continue
 		}
-		cursorRoleContent := format == "cursor-jsonl" && kind == "" && firstString(raw, "role") != ""
+		cursorRoleContent := cursorRoleRecord(format, kind, raw)
 		if !recordTypeAllowed(knownTypes, kind, cursorRoleContent) {
 			addGap("unknown_record_type", lineNo, "record omitted")
 			continue
@@ -512,6 +515,17 @@ func filterRecords(format string, knownTypes map[string]bool, lead map[string]an
 	}
 	sort.SliceStable(result.Gaps, func(i, j int) bool { return result.Gaps[i].Code < result.Gaps[j].Code })
 	return result, nil
+}
+
+func cursorRoleRecord(format, kind string, raw map[string]any) bool {
+	return format == "cursor-jsonl" && kind == "" && firstString(raw, "role") != ""
+}
+
+func validateMetadata(kind string, line []byte, validate func([]byte) error) error {
+	if kind == "session_meta" && validate != nil {
+		return validate(line)
+	}
+	return nil
 }
 
 func retain(t *archive.FilteredTranscript, encoded []byte) {

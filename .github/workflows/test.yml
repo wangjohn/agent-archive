@@ -160,8 +160,6 @@ jobs:
       # cross-built for GOOS=linux.
       # Listed exceptions: the test helper packages, a cgo probe (test files
       # cannot use cgo), a load counter other packages' cost tests read, the
-      # history-mode JSON decoder (encoding/json invokes its pointer method
-      # through reflection on a nested field, which deadcode does not trace),
       # redacting String methods of cloudflare.S3Credentials (only fmt calls
       # them, and only if someone formats the key), and
       # the terminal UI layer in internal/cli/ui.go, whose parts the
@@ -170,7 +168,7 @@ jobs:
       - name: No unreachable production code
         run: |
           GOBIN="$RUNNER_TEMP/bin" go install golang.org/x/tools/cmd/deadcode@v0.50.0
-          shared='^internal/(state/statetest|storage/storagetest|cloudflare/cloudflaretest|testutil)/|^internal/credentials/keychain_darwin\.go:[0-9]+:[0-9]+: unreachable func: lookupForbidsUI$|^internal/nativesessions/codex\.go:[0-9]+:[0-9]+: unreachable func: codexHistoryMode\.UnmarshalJSON$|^internal/state/published\.go:[0-9]+:[0-9]+: unreachable func: PublishedStateLoads$|^internal/cli/ui\.go:[0-9]+:[0-9]+: unreachable func: (textStyle\.(spin|spinEvery)|spinner\.stop)$|^internal/cloudflare/r2\.go:[0-9]+:[0-9]+: unreachable func: S3Credentials\.(String|GoString)$'
+          shared='^internal/(state/statetest|storage/storagetest|cloudflare/cloudflaretest|testutil)/|^internal/credentials/keychain_darwin\.go:[0-9]+:[0-9]+: unreachable func: lookupForbidsUI$|^internal/state/published\.go:[0-9]+:[0-9]+: unreachable func: PublishedStateLoads$|^internal/cli/ui\.go:[0-9]+:[0-9]+: unreachable func: (textStyle\.(spin|spinEvery)|spinner\.stop)$|^internal/cloudflare/r2\.go:[0-9]+:[0-9]+: unreachable func: S3Credentials\.(String|GoString)$'
           linux_only='|^internal/credentials/keychain_errors\.go:[0-9]+:[0-9]+: unreachable func: errorForOSStatus$'
           # check LABEL EXCEPTIONS: deadcode's output for the current
           # GOOS/CGO_ENABLED, minus the exceptions, must be empty.

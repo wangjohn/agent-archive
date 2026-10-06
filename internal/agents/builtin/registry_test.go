@@ -287,3 +287,14 @@ func TestNativeDecodeEvidenceAndInputSnapshots(t *testing.T) {
 		}
 	}
 }
+
+// Native parser policy changes must not refresh unrelated agents' metadata.
+func TestCodexIdentityParserVersionIsScoped(t *testing.T) {
+	t.Parallel()
+	for name, want := range map[string]string{"codex": "0.21.0", "claude": "0.20.0", "cursor": "0.20.0"} {
+		parser, ok := NewBuiltins().LookupParser(name)
+		if !ok || parser.Version() != want {
+			t.Fatalf("%s parser version: %v", name, parser)
+		}
+	}
+}

@@ -22,6 +22,15 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Deleted Codex worktrees can recover an existing configured project from a
+  unique recorded repository identity, or an exact historical backfill mapping.
+  Excluded clones, ambiguous scope and damaged live checkouts remain pending;
+  recovery preserves original creation consent and retained ownership.
+  Backfill and automatic discovery retry a source rewritten or replaced during
+  header inspection or repository recovery instead of admitting earlier project
+  facts. Cached discovery facts for missing directories are reprobed before
+  admitting new ownership, including headers without recorded repository keys.
+  Configured subdirectory identities invalidate when a nearer repository appears.
 - Status distinguishes installed hooks from observed execution and shows Codex
   automatic capture with archived and verified session counts. Optional hook
   evidence and detailed scan diagnostics move to verbose output; capture warnings
@@ -31,6 +40,13 @@ follow [Semantic Versioning](https://semver.org/).
   manual project paths. Retired keys with exact local deletion confirmations no
   longer block revoking a replacement key after re-pairing; unverified absence
   remains unresolved.
+
+- Codex metadata distinguishes stable threads, root conversations, immediate
+  parents, forks and physical rollout segments. Valid child, fork and revised
+  histories report that capture support is pending instead of conflicting IDs;
+  incomplete related histories are not imported or newly captured.
+- Backfill reports a transcript that changed during reading as retryable,
+  rather than an unsafe format, while continuing other imports.
 
 ## [0.2.0]
 
