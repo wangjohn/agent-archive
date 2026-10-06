@@ -119,7 +119,7 @@ func (s *sessionScan) publishPending(pending state.PendingPublication) (sessionO
 	}
 	if pending.History != nil {
 		for _, retired := range pending.History.Retired {
-			if err := s.local.RecordSupersededWithPrivacy(s.id(), retired.Reference.Key, s.now, retired.PrivacySensitive); err != nil {
+			if err := s.local.RecordSupersededWithPrivacy(s.id(), retired.Reference.Key, retired.RetiredAt, retired.PrivacySensitive); err != nil {
 				return outcomeSkipped, fmt.Errorf("record retired revision cleanup: %w", err)
 			}
 		}

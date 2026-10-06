@@ -10,19 +10,23 @@ import (
 // Producer versions may change between physical revisions. Native identity,
 // creation and ownership facts remain fixed after they become known.
 type CodexSourceBinding struct {
-	Child             bool      `json:"child"`
-	NativeThreadID    string    `json:"native_thread_id"`
-	Version           int       `json:"version"`
-	NativeCreatedAt   time.Time `json:"native_created_at"`
-	SelectedCwd       string    `json:"selected_cwd,omitempty"`
-	Cwd               string    `json:"cwd"`
-	ProducerSource    string    `json:"producer_source"`
-	RootID            string    `json:"root_id,omitempty"`
-	ParentID          string    `json:"parent_id,omitempty"`
-	OwnStart          *uint64   `json:"own_start_ordinal,omitempty"`
-	PhysicalRolloutID string    `json:"physical_rollout_id"`
-	Path              string    `json:"path"`
-	Home              string    `json:"home,omitempty"`
+	FirstNativeTaskAt          time.Time `json:"first_native_task_at,omitzero"`
+	FirstNativeTaskID          string    `json:"first_native_task_id,omitempty"`
+	PhysicalProducerVersion    string    `json:"physical_producer_version,omitempty"`
+	PhysicalProducerOriginator string    `json:"physical_producer_originator,omitempty"`
+	Child                      bool      `json:"child"`
+	NativeThreadID             string    `json:"native_thread_id"`
+	Version                    int       `json:"version"`
+	NativeCreatedAt            time.Time `json:"native_created_at"`
+	SelectedCwd                string    `json:"selected_cwd,omitempty"`
+	Cwd                        string    `json:"cwd"`
+	ProducerSource             string    `json:"producer_source"`
+	RootID                     string    `json:"root_id,omitempty"`
+	ParentID                   string    `json:"parent_id,omitempty"`
+	OwnStart                   *uint64   `json:"own_start_ordinal,omitempty"`
+	PhysicalRolloutID          string    `json:"physical_rollout_id"`
+	Path                       string    `json:"path"`
+	Home                       string    `json:"home,omitempty"`
 }
 
 // Validate checks the bounded private binding before using its locator.
@@ -44,5 +48,5 @@ func (b *CodexSourceBinding) PreservesFacts(previous *CodexSourceBinding) bool {
 	if previous == nil {
 		return true
 	}
-	return b.Child == previous.Child && b.NativeThreadID == previous.NativeThreadID && b.NativeCreatedAt.Equal(previous.NativeCreatedAt) && b.Cwd == previous.Cwd && b.ProducerSource == previous.ProducerSource && (previous.RootID == "" || b.RootID == previous.RootID) && (previous.ParentID == "" || b.ParentID == previous.ParentID) && (previous.OwnStart == nil || b.OwnStart != nil && *b.OwnStart == *previous.OwnStart) && (previous.Home == "" || b.Home == previous.Home)
+	return (previous.FirstNativeTaskAt.IsZero() || b.FirstNativeTaskAt.Equal(previous.FirstNativeTaskAt) && b.FirstNativeTaskID == previous.FirstNativeTaskID) && b.Child == previous.Child && b.NativeThreadID == previous.NativeThreadID && b.NativeCreatedAt.Equal(previous.NativeCreatedAt) && b.Cwd == previous.Cwd && b.ProducerSource == previous.ProducerSource && (previous.RootID == "" || b.RootID == previous.RootID) && (previous.ParentID == "" || b.ParentID == previous.ParentID) && (previous.OwnStart == nil || b.OwnStart != nil && *b.OwnStart == *previous.OwnStart) && (previous.Home == "" || b.Home == previous.Home)
 }
