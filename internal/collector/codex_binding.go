@@ -21,35 +21,11 @@ func (s *sessionScan) persistCodexBinding(binding *archive.CodexSourceBinding) e
 	if binding == nil {
 		return nil
 	}
-	if err := binding.Validate(); err != nil {
+	changed, err := s.nativeBindingChanged(binding)
+	if err != nil || !changed {
 		return err
 	}
-	if s.reg.CodexBinding == nil && s.reg.CodexAdmission != nil {
-		cwd, err := canonicalBindingCwd(binding.Cwd)
-		if err != nil {
-			return err
-		}
-		if cwd != s.reg.CodexAdmission.Cwd {
-			facts, known := sourcefacts.PhysicalProject(binding.Cwd)
-			if !known || facts.Root != s.reg.ProjectRoot {
-				return errors.New("native cwd contradicts admitted physical project evidence")
-			}
-		}
-	}
-	if !binding.PreservesFacts(s.reg.CodexBinding) {
-		return errors.New("Codex native binding facts changed")
-	}
-	before, err := json.Marshal(s.reg.CodexBinding)
-	if err != nil {
-		return err
-	}
-	after, err := json.Marshal(binding)
-	if err != nil {
-		return err
-	}
-	if string(before) == string(after) {
-		return nil
-	}
+
 	canonicalCwd := ""
 	if s.reg.CodexAdmission != nil {
 		selectedCwd := binding.SelectedCwd
@@ -96,6 +72,9 @@ func (s *sessionScan) persistCodexBinding(binding *archive.CodexSourceBinding) e
 		if !binding.PreservesFacts(current.CodexBinding) {
 			return errors.New("Codex binding facts changed before update")
 		}
+		if err := applyNativeChildBinding(current, binding); err != nil {
+			return err
+		}
 		current.CodexBinding = binding
 		current.TranscriptPath = binding.Path
 		updated = *current
@@ -135,4 +114,67 @@ func canonicalBindingCwd(path string) (string, error) {
 		path = parent
 	}
 	return "", errors.New("native cwd ancestor limit exceeded")
+}
+
+func nativeBindingRelationshipsMatch(reg archive.SessionRegistration, binding *archive.CodexSourceBinding) bool {
+	if !binding.Child {
+		return true
+	}
+	return reg.NativeChild && (binding.ParentID == "" || reg.ParentNativeSessionID == binding.ParentID) && (binding.RootID == "" || reg.NativeRootSessionID == binding.RootID) && (binding.Home == "" || reg.NativeSourceHome == binding.Home)
+}
+
+func applyNativeChildBinding(reg *archive.SessionRegistration, binding *archive.CodexSourceBinding) error {
+	if !binding.Child {
+		return nil
+	}
+	if reg.ParentNativeSessionID != "" && binding.ParentID != "" && reg.ParentNativeSessionID != binding.ParentID {
+		return errors.New("native child parent facts conflict")
+	}
+	if reg.NativeRootSessionID != "" && binding.RootID != "" && reg.NativeRootSessionID != binding.RootID {
+		return errors.New("native child root facts conflict")
+	}
+	reg.NativeChild = true
+	if binding.ParentID != "" {
+		reg.ParentNativeSessionID = binding.ParentID
+	}
+	if binding.RootID != "" {
+		reg.NativeRootSessionID = binding.RootID
+	}
+	if binding.Home != "" {
+		reg.NativeSourceHome = binding.Home
+	}
+	return nil
+}
+
+func (s *sessionScan) nativeBindingChanged(binding *archive.CodexSourceBinding) (bool, error) {
+	if err := binding.Validate(); err != nil {
+		return false, err
+	}
+	if s.reg.CodexBinding == nil && s.reg.CodexAdmission != nil {
+		cwd, err := canonicalBindingCwd(binding.Cwd)
+		if err != nil {
+			return false, err
+		}
+		if cwd != s.reg.CodexAdmission.Cwd {
+			facts, known := sourcefacts.PhysicalProject(binding.Cwd)
+			if !known || facts.Root != s.reg.ProjectRoot {
+				return false, errors.New("native cwd contradicts admitted physical project evidence")
+			}
+		}
+	}
+	if !binding.PreservesFacts(s.reg.CodexBinding) {
+		return false, errors.New("Codex native binding facts changed")
+	}
+	before, err := json.Marshal(s.reg.CodexBinding)
+	if err != nil {
+		return false, err
+	}
+	after, err := json.Marshal(binding)
+	if err != nil {
+		return false, err
+	}
+	if string(before) == string(after) && nativeBindingRelationshipsMatch(s.reg, binding) {
+		return false, nil
+	}
+	return true, nil
 }

@@ -74,7 +74,7 @@ func TestProductionScanAdmitsStructurallyCompatibleUntestedProducer(t *testing.T
 	t.Parallel()
 	store, cfg, at, root := fixture(t)
 	writeRollout(t, root, cfg.Archive.Projects[0].Root, at.Add(time.Minute), 1, "sessions")
-	h, err := runWithCensus(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(2 * time.Minute) }}, registeredAdapters())
+	h, err := runWithCensus(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(2 * time.Minute) }}, registeredAdapters())
 	if err != nil || h.Registered != 1 || !h.Supported || h.Outcomes["unsupported_producer"] != 0 || len(h.Formats) != 1 || h.Formats[0].Evidence != sourcefacts.CodexCompatibleUntested {
 		t.Fatalf("health=%#v err=%v", h, err)
 	}
@@ -88,7 +88,7 @@ func TestSyntheticDiscoveryUsesFilteredPublicationAndPreservesHookEvidence(t *te
 	t.Parallel()
 	store, cfg, at, root := fixture(t)
 	id := writeRollout(t, root, cfg.Archive.Projects[0].Root, at.Add(time.Minute), 1, "sessions")
-	h, err := run(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(2 * time.Minute) }}, syntheticSupport)
+	h, err := run(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(2 * time.Minute) }}, syntheticSupport)
 	if err != nil || h.Registered != 1 {
 		t.Fatalf("health=%#v err=%v", h, err)
 	}
@@ -129,7 +129,7 @@ func TestSyntheticDiscoveryUsesFilteredPublicationAndPreservesHookEvidence(t *te
 	if strings.Contains(string(raw), "SYNTHETIC_BODY_ONLY") {
 		t.Fatal("catalog retained conversation")
 	}
-	h, err = run(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(5 * time.Minute) }}, syntheticSupport)
+	h, err = run(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(5 * time.Minute) }}, syntheticSupport)
 	if err != nil || h.Registered != 0 || h.Probes != 0 {
 		t.Fatalf("unchanged source repeated work: %#v %v", h, err)
 	}
@@ -146,7 +146,7 @@ func TestBoundedScanContinuesFairlyAcrossActiveAndArchivedSources(t *testing.T) 
 	seen := 0
 	completed := false
 	for range 12 {
-		h, err := runScheduledSynthetic(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(2 * time.Minute) }})
+		h, err := runScheduledSynthetic(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(2 * time.Minute) }})
 		if err != nil || h.Probes > HeaderProbes || h.Entries > 2200 {
 			t.Fatalf("unbounded pass %#v %v", h, err)
 		}
@@ -219,7 +219,7 @@ func TestDiscoveryCrashRecoveryAndRemovalNeverResurrect(t *testing.T) {
 	if _, found, err := store.ArchiveSessionID(sessionKey("codex", native)); err != nil || found {
 		t.Fatalf("removed source reserved a new identity: %v %v", found, err)
 	}
-	health, err := runWithAdapters(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(5 * time.Minute) }}, []SourceAdapter{codexAdapter{supported: syntheticSupport}})
+	health, err := runWithAdapters(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(5 * time.Minute) }}, []SourceAdapter{codexAdapter{supported: syntheticSupport}})
 	if err != nil || health.Registered != 0 || health.Outcomes["removed_session"] == 0 || health.Outcomes["admission_retry"] != 0 {
 		t.Fatalf("removed source repeatedly requested recovery: %#v %v", health, err)
 	}
@@ -258,7 +258,7 @@ func BenchmarkCodexCatalog(b *testing.B) {
 			b.ResetTimer()
 			probes, bytes, entries := 0, int64(0), 0
 			for range b.N {
-				h, err := Run(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(time.Hour) }})
+				h, err := Run(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(time.Hour) }})
 				if err != nil {
 					b.Fatal(err)
 				}
@@ -315,7 +315,7 @@ func TestRejectedMetadataPayloadNeverEntersCatalog(t *testing.T) {
 			if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0600); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := Run(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(2 * time.Minute) }}); err != nil {
+			if _, err := Run(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(2 * time.Minute) }}); err != nil {
 				t.Fatal(err)
 			}
 			catalogBytes, _ := os.ReadFile(filepath.Join(store.Home(), "discovery-catalog.json"))
@@ -331,7 +331,7 @@ func TestDiscoveryRelocatesValidatedContinuationWithoutNewGeneration(t *testing.
 	store, cfg, at, root := fixture(t)
 	project := cfg.Archive.Projects[0].Root
 	id := writeRollout(t, root, project, at.Add(time.Minute), 1, "sessions")
-	h, err := run(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(2 * time.Minute) }}, syntheticSupport)
+	h, err := run(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(2 * time.Minute) }}, syntheticSupport)
 	if err != nil || h.Registered != 1 {
 		t.Fatal("initial admission", err)
 	}
@@ -367,7 +367,7 @@ func TestDiscoveryRelocatesValidatedContinuationWithoutNewGeneration(t *testing.
 		t.Fatal(err)
 	}
 	for range 3 {
-		_, err = run(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(4 * time.Minute) }}, syntheticSupport)
+		_, err = run(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(4 * time.Minute) }}, syntheticSupport)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -386,7 +386,7 @@ func TestDiscoveryRelocatesValidatedContinuationWithoutNewGeneration(t *testing.
 	// A validated active copy is preferred when both locations exist.
 	writeRollout(t, root, project, at.Add(time.Minute), 1, "sessions")
 	for range 3 {
-		_, err = run(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(5 * time.Minute) }}, syntheticSupport)
+		_, err = run(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(5 * time.Minute) }}, syntheticSupport)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -405,13 +405,13 @@ func TestNativeDateHintFindsFreshTaskAheadOfColdHistory(t *testing.T) {
 		writeRollout(t, root, project, at.Add(-time.Hour), i, "sessions/2026/09/30")
 	}
 	writeRollout(t, root, project, at.Add(time.Minute), 9000, "sessions/2026/10/01")
-	h, err := run(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(2 * time.Minute) }}, syntheticSupport)
+	h, err := run(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(2 * time.Minute) }}, syntheticSupport)
 	if err != nil || h.Registered != 1 || h.Probes > HeaderProbes || !h.Pending {
 		t.Fatalf("priority missed or erased backlog: %#v %v", h, err)
 	}
 	// A date-shaped location cannot authorize an old start or an unknown producer.
 	writeRollout(t, root, project, at.Add(-time.Hour), 9001, "sessions/2026/10/01")
-	h, err = run(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(3 * time.Minute) }}, syntheticSupport)
+	h, err = run(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(3 * time.Minute) }}, syntheticSupport)
 	if err != nil || h.Registered != 0 {
 		t.Fatal("date hint became eligibility", err)
 	}
@@ -427,7 +427,7 @@ func TestHookContinuationPreservesValidatedDiscoveryLocator(t *testing.T) {
 			store, cfg, at, root := fixture(t)
 			project := cfg.Archive.Projects[0].Root
 			native := writeRollout(t, root, project, at.Add(time.Minute), 1, "sessions")
-			h, err := run(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(2 * time.Minute) }}, syntheticSupport)
+			h, err := run(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(2 * time.Minute) }}, syntheticSupport)
 			if err != nil || h.Registered != 1 {
 				t.Fatalf("initial discovery: %#v %v", h, err)
 			}
@@ -480,7 +480,7 @@ func TestCollectorRejectsChangedDiscoveryProducer(t *testing.T) {
 			t.Parallel()
 			store, cfg, at, root := fixture(t)
 			writeRollout(t, root, cfg.Archive.Projects[0].Root, at.Add(time.Minute), 1, "sessions")
-			h, err := run(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(2 * time.Minute) }}, syntheticSupport)
+			h, err := run(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(2 * time.Minute) }}, syntheticSupport)
 			if err != nil || h.Registered != 1 {
 				t.Fatalf("admission: %#v %v", h, err)
 			}

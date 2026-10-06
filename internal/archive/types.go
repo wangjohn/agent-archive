@@ -861,3 +861,9 @@ func (r SessionRegistration) validateNativeChild() error {
 	}
 	return nil
 }
+
+// IsChild reports source child ownership even when the archive parent is unresolved.
+func (b SourceBundle) IsChild() bool { return b.NativeChild || b.ParentSessionID != "" }
+
+// IsChild reports metadata child ownership independently of parent-link availability.
+func (m Metadata) IsChild() bool { return m.NativeChild || m.ParentSessionID != "" }

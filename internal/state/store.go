@@ -901,6 +901,10 @@ type Status struct {
 	// each is registered once its transcript appears, or rejected when it
 	// never does, so only status --verbose and --json show it.
 	WaitingSubagents int `json:"waiting_subagents,omitempty"`
+	// PendingNativeLinks counts unresolved native child parent links without capture failures.
+	PendingNativeLinks int `json:"pending_native_links,omitempty"`
+	// NativeLinkPendingReasons contains fixed content-free link reconciliation reasons.
+	NativeLinkPendingReasons map[string]int `json:"native_link_pending_reasons,omitempty"`
 	// RunningSubagents counts the subagents that were resumed after their
 	// last SubagentStop and were still writing at the last pass. It is not
 	// a problem: each publishes after its next stop, or once its transcript

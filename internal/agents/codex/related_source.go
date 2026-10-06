@@ -781,9 +781,13 @@ func bindingFacts(f *rolloutFile, home string, own *uint64) (archive.CodexSource
 		return archive.CodexSourceBinding{}, sourceFailure(agentapi.Unavailable, "native creation evidence unavailable")
 	}
 	var source string
-	if json.Unmarshal(f.meta.Source, &source) != nil && len(f.meta.Source) > 0 {
+	rawSource := f.meta.Source
+	if projected, known := f.meta.ExecutionSourceFacts(); known {
+		rawSource = projected
+	}
+	if json.Unmarshal(rawSource, &source) != nil && len(rawSource) > 0 {
 		var value any
-		if err := json.Unmarshal(f.meta.Source, &value); err != nil {
+		if err := json.Unmarshal(rawSource, &value); err != nil {
 			return archive.CodexSourceBinding{}, err
 		}
 		encoded, err := json.Marshal(value)

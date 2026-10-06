@@ -25,7 +25,7 @@ func TestMovedDiscoveryContinuationRecoversOwnerOutsideNewStartWindow(t *testing
 	store, cfg, at, root := fixture(t)
 	project := cfg.Archive.Projects[0].Root
 	native := writeRollout(t, root, project, at.Add(time.Minute), 1, "sessions")
-	if h, err := run(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(2 * time.Minute) }}, syntheticSupport); err != nil || h.Registered != 1 {
+	if h, err := run(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(2 * time.Minute) }}, syntheticSupport); err != nil || h.Registered != 1 {
 		t.Fatalf("initial admission: %#v %v", h, err)
 	}
 	regs, err := store.LoadRegistrations()
@@ -68,7 +68,7 @@ func TestMovedDiscoveryContinuationRecoversOwnerOutsideNewStartWindow(t *testing
 	// An unrelated pre-consent original must remain unregistered even when
 	// census repair restores the existing admitted owner's derived indexes.
 	unknown := writeRollout(t, root, project, at.Add(-time.Hour), 2, "sessions")
-	options := Options{Now: func() time.Time { return at.Add(4 * time.Minute) }}
+	options := Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(4 * time.Minute) }}
 	for range 4 {
 		if h, err := runScheduledSynthetic(context.Background(), store, cfg, options); err != nil || h.Registered != 0 {
 			t.Fatalf("recovery allocated new identity: %#v %v", h, err)
@@ -108,7 +108,7 @@ func TestCompletedEmptyCensusDoesNotRepeatForHistoricalUnknownSources(t *testing
 		writeRollout(t, root, cfg.Archive.Projects[0].Root, at.Add(-time.Hour), n, "sessions")
 	}
 	var priorGeneration string
-	options := Options{Now: func() time.Time { return at.Add(4 * time.Minute) }}
+	options := Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(4 * time.Minute) }}
 	for pass := range 5 {
 		if h, err := runScheduledSynthetic(context.Background(), store, cfg, options); err != nil || h.Registered != 0 {
 			t.Fatalf("historical unknown admitted: %#v %v", h, err)

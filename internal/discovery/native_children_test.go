@@ -3,6 +3,7 @@ package discovery
 import (
 	"context"
 	"encoding/json"
+	"github.com/wangjohn/agent-archive/internal/agents/builtin"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/sourcefacts"
@@ -46,7 +47,7 @@ func TestNativeChildAdmissionUsesOwnTaskBeyondHeaderWindowWithoutParent(t *testi
 			if err := os.WriteFile(path, []byte(raw), 0600); err != nil {
 				t.Fatal(err)
 			}
-			h, err := runWithCensus(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(2 * time.Minute) }}, registeredAdapters())
+			h, err := runWithCensus(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(2 * time.Minute) }}, registeredAdapters())
 			if err != nil {
 				t.Fatal(err)
 			}

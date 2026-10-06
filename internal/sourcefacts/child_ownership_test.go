@@ -49,3 +49,16 @@ func TestUnknownChildSourceCannotClaimLocalExecution(t *testing.T) {
 		}
 	}
 }
+
+func TestChildExecutionFactsDropLargeAdditiveSourceContent(t *testing.T) {
+	const parent = "22222222-2222-4222-8222-222222222222"
+	meta := map[string]any{"id": testID, "timestamp": "2026-10-01T12:00:00Z", "cwd": "/synthetic", "source": map[string]any{"subagent": map[string]any{"thread_spawn": map[string]any{"parent_thread_id": parent, "depth": 1, "additive_private_field": strings.Repeat("PRIVATE_UNKNOWN_SOURCE_FIELD", 1024)}}}, "originator": "new-client", "cli_version": "dev"}
+	h := ReadCodexHeader(strings.NewReader(testRecords(t, meta, nil)), "rollout-"+testID+".jsonl")
+	if h.Outcome != "native_format" || !SupportedCodexProducer(h.Meta) || len(h.Meta.Source) > 256 || h.FormatFacts == nil {
+		t.Fatalf("bounded compatible source projection failed: %+v", h)
+	}
+	encoded, _ := json.Marshal(h)
+	if strings.Contains(string(encoded), "PRIVATE_UNKNOWN_SOURCE_FIELD") {
+		t.Fatal("unknown source text retained in bounded catalog facts")
+	}
+}

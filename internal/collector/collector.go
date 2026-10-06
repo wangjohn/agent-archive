@@ -182,8 +182,11 @@ type Result struct {
 	// RejectedSubagents maps each subagent candidate rejected this pass to
 	// its code. A rejection that lost nothing (the transcript was never
 	// written, say) is only counted here; any other is in Errors too.
-	RejectedSubagents map[string]string
-	Errors            map[string]error
+	// PendingNativeLinks counts unresolved conversational links separately from capture failures.
+	PendingNativeLinks       int
+	NativeLinkPendingReasons map[string]int
+	RejectedSubagents        map[string]string
+	Errors                   map[string]error
 }
 
 // Run performs one collector pass over every registered session: for each,
@@ -524,8 +527,9 @@ func (p *pass) saveStatus() error {
 		LastPublishedAt:        lastPublishedAt,
 		QuarantinedFiles:       p.local.QuarantinedFiles(),
 		UnrefreshableSummaries: p.countRefreshSkips(),
-		WaitingSubagents:       len(p.result.WaitingSubagents),
-		RunningSubagents:       len(p.result.RunningSubagents),
+		PendingNativeLinks:     p.result.PendingNativeLinks, NativeLinkPendingReasons: p.result.NativeLinkPendingReasons,
+		WaitingSubagents: len(p.result.WaitingSubagents),
+		RunningSubagents: len(p.result.RunningSubagents),
 		// The pass rebuilds everything else from scratch; this list is a
 		// week of history, so it carries the previous pass's forward.
 		ExpiredSubagents: state.CarryExpiredSubagents(previous.ExpiredSubagents, p.expiredSubagents, p.now),

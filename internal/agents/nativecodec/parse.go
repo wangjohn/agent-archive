@@ -28,7 +28,7 @@ func parse(ctx context.Context, bundle archive.SourceBundle, agent nativeProfile
 	view := archive.NormalizedView{}
 	analysis := archive.Analysis{}
 	setAvailability(&analysis, bundle, agent)
-	isParentBundle := bundle.ParentSessionID == ""
+	isParentBundle := !bundle.IsChild()
 	var codexModel, codexReasoning string
 	var candidates []toolCallCandidate
 	tokens := archive.TokenAccumulator{}

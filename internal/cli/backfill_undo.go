@@ -379,7 +379,7 @@ func commitUndo(env Env, home string, batch *backfill.Batch, plan backfill.UndoP
 func reportUndo(stdout, stderr io.Writer, batch backfill.Batch, plan backfill.UndoPlan, changes backfill.UndoChanges, result backfill.UndoResult) int {
 	subagents := map[string]bool{}
 	for _, s := range plan.Sessions {
-		if s.Registration.ParentSessionID != "" {
+		if s.Registration.IsChild() {
 			subagents[s.Registration.ArchiveSessionID] = true
 		}
 	}

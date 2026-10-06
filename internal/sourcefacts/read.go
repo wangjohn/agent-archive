@@ -168,18 +168,12 @@ func ReadCodexHeader(reader io.Reader, path string) (h Header) {
 }
 
 func safeMeta(m CodexMeta) CodexMeta {
-	var source string
-	if m.LocalExecutionSource() {
-		if json.Unmarshal(m.Source, &source) != nil {
-			var v any
-			_ = json.Unmarshal(m.Source, &v)
-			m.Source, _ = json.Marshal(v)
-		} else {
-			m.Source, _ = json.Marshal(source)
-		}
+	if source, known := m.ExecutionSourceFacts(); known {
+		m.Source = source
 	} else {
 		m.Source = nil
 	}
+
 	// Relationships live in the separately validated typed identity. Format
 	// projections must not substitute booleans for native relationship fields.
 	m.ForkedFrom, m.ForkOrdinal, m.Parent, m.HistoryBase, m.SubagentOrdinal = nil, nil, nil, nil, nil

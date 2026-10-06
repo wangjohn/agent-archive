@@ -1289,7 +1289,7 @@ func collectorLockHeld(home string) bool {
 // reported here. owed holds every import's Outstanding.
 func importedSessionCounts(cfg config.Config, regs []archive.SessionRegistration, owed map[string]state.Outstanding, issues map[string]string) (imported, pending, withIssues int) {
 	for _, reg := range regs {
-		if !reg.Imported() || reg.IsChild() {
+		if !reg.Imported() || !independentImportedSession(reg) {
 			continue
 		}
 		imported++
@@ -2590,6 +2590,9 @@ func printStatusDetails(out io.Writer, view statusView) {
 // wrote them, counted by type.
 func subagentDetailLines(collector state.Status) []string {
 	var lines []string
+	if n := collector.PendingNativeLinks; n > 0 {
+		lines = append(lines, fmt.Sprintf("%d native child parent links unresolved; children capture independently", n))
+	}
 	if n := collector.WaitingSubagents; n > 0 {
 		lines = append(lines, fmt.Sprintf("%d waiting for their transcripts", n))
 	}

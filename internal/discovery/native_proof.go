@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"github.com/wangjohn/agent-archive/internal/agentapi"
-	"github.com/wangjohn/agent-archive/internal/agents/builtin"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 	"github.com/wangjohn/agent-archive/internal/transcriptio"
@@ -40,7 +39,7 @@ func (p *nativeProofPasses) Prove(ctx context.Context, c Candidate) (out Candida
 		}
 		p.passes = map[string]agentapi.SourcePass{}
 		if p.sources == nil {
-			p.sources = builtin.NewBuiltins()
+			return c, agentapi.Wrap(agentapi.Unavailable, errors.New("native source lookup unavailable"))
 		}
 		provider, _, ok := p.sources.LookupSources(c.Agent)
 		if !ok {
@@ -59,29 +58,16 @@ func (p *nativeProofPasses) Prove(ctx context.Context, c Candidate) (out Candida
 		return c, err
 	}
 	defer func() { resultErr = errors.Join(resultErr, snapshot.Close()) }()
-	validator, ok := snapshot.(agentapi.SourceAdmissionValidator)
+	evidenceReader, ok := snapshot.(agentapi.SourceAdmissionEvidence)
 	if !ok {
-		return c, agentapi.Wrap(agentapi.Unavailable, errors.New("native admission validation unavailable"))
+		return c, agentapi.Wrap(agentapi.Unavailable, errors.New("native admission evidence unavailable"))
 	}
-	if err := validator.ValidateAdmission(ctx, agentapi.SourceAdmission{NativeID: c.NativeSessionID}); err != nil {
-		return c, err
-	}
-	factsReader, ok := snapshot.(agentapi.SourceAdmissionFacts)
-	if !ok {
-		return c, agentapi.Wrap(agentapi.Unavailable, errors.New("native creation facts unavailable"))
-	}
-	facts, err := factsReader.AdmissionFacts(ctx)
+	evidence, err := evidenceReader.AdmissionEvidence(ctx, agentapi.SourceAdmission{NativeID: c.NativeSessionID})
 	if err != nil {
 		return c, err
 	}
-	taskReader, ok := snapshot.(agentapi.SourceOwnTaskFacts)
-	if !ok {
-		return c, agentapi.Wrap(agentapi.Unavailable, errors.New("native own task unavailable"))
-	}
-	task, err := taskReader.FirstOwnTask(ctx)
-	if err != nil {
-		return c, err
-	}
+	facts, task := evidence.Binding, evidence.Task
+
 	if !task.Seen || !task.Native || !task.LocalExecution || task.StartedAt.IsZero() {
 		return c, agentapi.Wrap(agentapi.Unavailable, errors.New("native own task unavailable"))
 	}

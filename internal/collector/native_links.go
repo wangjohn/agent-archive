@@ -38,18 +38,33 @@ func (p *pass) reconcileNativeLinks() error {
 		parents[key] = reg
 	}
 	for i, reg := range p.registrations {
-		if !reg.NativeChild || reg.ParentNativeSessionID == "" || reg.ParentSessionID != "" || nativeRegistrationHome(reg) == "" {
+		if !reg.NativeChild || reg.ParentSessionID != "" {
+			continue
+		}
+		if reg.ParentNativeSessionID == "" {
+			p.nativeLinkPending("native_parent_not_recorded")
+			continue
+		}
+		if nativeRegistrationHome(reg) == "" {
+			p.nativeLinkPending("source_home_pending")
 			continue
 		}
 		key := nativeParentKey(reg, reg.ParentNativeSessionID)
 		parent, found := parents[key]
-		if !found || ambiguous[key] || parent.ArchiveSessionID == reg.ArchiveSessionID {
+		if !found {
+			p.nativeLinkPending("parent_registration_pending")
+			continue
+		}
+		if ambiguous[key] || parent.ArchiveSessionID == reg.ArchiveSessionID {
+			p.nativeLinkPending("parent_identity_conflict")
 			continue
 		}
 		// Removal records are authoritative even during a partial retention/undo.
 		if _, removed, err := p.local.Removal("codex", parent.NativeSessionID); err != nil {
-			return err
+			p.nativeLinkPending("relationship_state_retry")
+			continue
 		} else if removed {
+			p.nativeLinkPending("parent_removed")
 			continue
 		}
 		found, err := p.local.UpdateRegistration(reg.ArchiveSessionID, func(current *archive.SessionRegistration) error {
@@ -63,7 +78,8 @@ func (p *pass) reconcileNativeLinks() error {
 			return nil
 		})
 		if err != nil {
-			return err
+			p.nativeLinkPending("relationship_state_retry")
+			continue
 		}
 		if !found {
 			continue
@@ -71,8 +87,16 @@ func (p *pass) reconcileNativeLinks() error {
 		reg.ParentSessionID = parent.ArchiveSessionID
 		p.registrations[i] = reg
 		if err := p.local.SaveRequest(reg.ArchiveSessionID, "native-parent-linked", p.now); err != nil {
-			return err
+			p.nativeLinkPending("relationship_state_retry")
 		}
 	}
 	return nil
+}
+
+func (p *pass) nativeLinkPending(reason string) {
+	p.result.PendingNativeLinks++
+	if p.result.NativeLinkPendingReasons == nil {
+		p.result.NativeLinkPendingReasons = map[string]int{}
+	}
+	p.result.NativeLinkPendingReasons[reason]++
 }

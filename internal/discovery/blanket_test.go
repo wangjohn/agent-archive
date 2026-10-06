@@ -71,7 +71,7 @@ func TestBlanketUnknownPhysicalProjectsPublishAndReadBackWithoutConfigGrowth(t *
 				writeRollout(t, codex, project, at.Add(time.Minute), i+1, "sessions")
 			}
 			if ingress == "discovery" {
-				h, e := run(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(2 * time.Minute) }}, syntheticSupport)
+				h, e := run(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(2 * time.Minute) }}, syntheticSupport)
 				if e != nil || h.Registered != 4 {
 					t.Fatalf("scan %#v %v", h, e)
 				}
@@ -133,7 +133,7 @@ func TestBlanketDiscoveryRespectsSourceReenableAndLegacyIdentity(t *testing.T) {
 		t.Fatal(e)
 	}
 	native := writeRollout(t, codex, child, at.Add(time.Minute), 1, "sessions")
-	h, e := run(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(2 * time.Minute) }}, syntheticSupport)
+	h, e := run(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(2 * time.Minute) }}, syntheticSupport)
 	if e != nil || h.Registered != 1 {
 		t.Fatalf("selected admission %#v %v", h, e)
 	}
@@ -149,7 +149,7 @@ func TestBlanketDiscoveryRespectsSourceReenableAndLegacyIdentity(t *testing.T) {
 	}
 	// Change the file to force observation under the new physical resolver.
 	writeRollout(t, codex, child, at.Add(time.Minute), 1, "sessions")
-	_, e = run(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(5 * time.Minute) }}, syntheticSupport)
+	_, e = run(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(5 * time.Minute) }}, syntheticSupport)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -170,7 +170,7 @@ func TestBlanketDiscoveryRespectsSourceReenableAndLegacyIdentity(t *testing.T) {
 	cfg.Discovery = &d
 	_ = config.ReconcileDiscovery(&cfg, old, at.Add(8*time.Minute))
 	_ = config.Save(store.Home(), cfg)
-	h, e = run(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(9 * time.Minute) }}, syntheticSupport)
+	h, e = run(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(9 * time.Minute) }}, syntheticSupport)
 	if e != nil || h.Registered != 0 {
 		t.Fatalf("source off-period swept %#v %v", h, e)
 	}
@@ -191,7 +191,7 @@ func TestBlanketExistingProofResumesAfterExclusionLiftAndScopeReduction(t *testi
 		t.Fatal(e)
 	}
 	native := writeRollout(t, codex, project, at.Add(time.Minute), 1, "sessions")
-	h, e := run(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(2 * time.Minute) }}, syntheticSupport)
+	h, e := run(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(2 * time.Minute) }}, syntheticSupport)
 	if e != nil || h.Registered != 1 {
 		t.Fatalf("admission %#v %v", h, e)
 	}
@@ -211,7 +211,7 @@ func TestBlanketExistingProofResumesAfterExclusionLiftAndScopeReduction(t *testi
 	cfg.Archive.Projects = nil
 	_ = config.ReconcileDiscovery(&cfg, old, at.Add(6*time.Minute))
 	_ = config.Save(store.Home(), cfg)
-	h, e = run(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(7 * time.Minute) }}, syntheticSupport)
+	h, e = run(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(7 * time.Minute) }}, syntheticSupport)
 	if e != nil || h.Registered != 0 {
 		t.Fatalf("lift admission %#v %v", h, e)
 	}
@@ -237,7 +237,7 @@ func TestBlanketExistingProofResumesAfterExclusionLiftAndScopeReduction(t *testi
 	if e != nil {
 		t.Fatal(e)
 	}
-	h, e = run(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(10 * time.Minute) }}, syntheticSupport)
+	h, e = run(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(10 * time.Minute) }}, syntheticSupport)
 	if e != nil || h.Registered != 0 {
 		t.Fatalf("selected continuation %#v %v", h, e)
 	}
@@ -288,7 +288,7 @@ func TestBlanketLegacyOwnerPublicationHonorsStoredCwdExceptions(t *testing.T) {
 				t.Fatal(err)
 			}
 			writeRollout(t, codex, cwd, at.Add(time.Minute), 1, "sessions")
-			h, err := run(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(2 * time.Minute) }}, syntheticSupport)
+			h, err := run(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(2 * time.Minute) }}, syntheticSupport)
 			if err != nil || h.Registered != 1 {
 				t.Fatalf("legacy admission %#v %v", h, err)
 			}
@@ -400,7 +400,7 @@ func TestBlanketWorktreeMainExclusionSurvivesUnrelatedCheckoutInclusion(t *testi
 		t.Fatal(e)
 	}
 	writeRollout(t, codex, checkout, at.Add(time.Minute), 1, "sessions")
-	h, e := run(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(2 * time.Minute) }}, syntheticSupport)
+	h, e := run(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(2 * time.Minute) }}, syntheticSupport)
 	if e != nil || h.Registered != 0 {
 		t.Fatalf("mapped main exclusion bypassed %#v %v", h, e)
 	}
@@ -420,7 +420,7 @@ func TestBlanketWorktreeMainExclusionSurvivesUnrelatedCheckoutInclusion(t *testi
 		t.Fatal(e)
 	}
 	writeRollout(t, codex, allowed, at.Add(3*time.Minute), 3, "sessions")
-	h, e = run(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(4 * time.Minute) }}, syntheticSupport)
+	h, e = run(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(4 * time.Minute) }}, syntheticSupport)
 	if e != nil || h.Registered != 1 {
 		t.Fatalf("deliberate child inclusion rejected %#v %v", h, e)
 	}
@@ -505,7 +505,7 @@ func TestBlanketHookLocatorDiscoveryRejectsExcludedCwdAndDifferentPhysicalProjec
 					t.Fatal(err)
 				}
 			}
-			if _, err := run(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(4 * time.Minute) }}, syntheticSupport); err != nil {
+			if _, err := run(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(4 * time.Minute) }}, syntheticSupport); err != nil {
 				t.Fatal(err)
 			}
 			after, found, err := store.LoadRegistration(before.ArchiveSessionID)
@@ -546,7 +546,7 @@ func TestBlanketLegacyContinuationResumesAfterExclusionLiftWithoutAdmittingExclu
 			native := writeRollout(t, codex, cwd, start, 1, "sessions")
 			scanAt := func(now time.Time) {
 				t.Helper()
-				if _, err := run(context.Background(), store, cfg, Options{Now: func() time.Time { return now }}, syntheticSupport); err != nil {
+				if _, err := run(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return now }}, syntheticSupport); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -673,7 +673,7 @@ func TestBlanketPausedConsentFloorFlowsThroughHookDiscoveryAndPublication(t *tes
 				writeRollout(t, codex, project, started, i+1, "sessions")
 			}
 			if ingress == "discovery" {
-				h, err := run(context.Background(), store, cfg, Options{Now: func() time.Time { return floor.Add(3 * time.Minute) }}, syntheticSupport)
+				h, err := run(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return floor.Add(3 * time.Minute) }}, syntheticSupport)
 				if err != nil || h.Registered != 1 {
 					t.Fatalf("floor discovery %#v %v", h, err)
 				}
