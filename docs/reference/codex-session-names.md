@@ -10,10 +10,18 @@ journal. A matching row must carry the admitted rollout path and producer.
 Paginated history uses `threads.name`; legacy history uses a distinct native
 title or the last usable physical `session_index.jsonl` record, suppressing
 the native preview fallback. Index-only resolution requires verified legacy
-source context and absent default database. Unknown producers, relocated
+source context and absent default database. Unknown producers, known relocated
 SQLite storage, ambiguous homes, incomplete files and related histories are
 unavailable. This support does not promise parity with a running desktop
 sidebar. No native API process is launched.
+
+Storage guards observe the collector's current `CODEX_SQLITE_HOME` and the
+native home's local configuration. A local default cannot prove that historical,
+system or runtime configuration never redirected SQLite elsewhere. Index-only
+interpretation therefore assumes default storage for the producing legacy
+session; a settled matching database row supplies stronger canonical evidence.
+Known unsupported placement is refused. This limitation remains an acceptance
+concern if a supported configuration can produce a false canonical name.
 
 Unavailable observations preserve the last verified name. Confirmed absence
 clears it; an index-only miss cannot clear a previous canonical database name.
@@ -41,5 +49,5 @@ hashes, timestamps and scheduling counters. A name-only change publishes a
 new filtered source and metadata through normal durable pending publication,
 including the listing revision. Capture permission, frozen generations and
 retention policy continue to govern whether retained evidence can be used.
-The lookup cache holds at most2,048 entries and4MiB of compact JSON. Eviction
+The lookup cache holds at most 2,048 entries and 4 MiB of compact JSON. Eviction
 does not remove a name already retained in published source evidence.

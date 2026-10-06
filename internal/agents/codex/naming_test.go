@@ -15,6 +15,9 @@ func TestNamingOnlyChangePreservesRealEvidenceAcrossCodecUpgrade(t *testing.T) {
 	next.Capture.AdapterVersion = "0.17.0"
 	next.Capture.FilterVersion = "17"
 	next.Capture.CapturedAt = old.Capture.CapturedAt.Add(time.Hour)
+	if (Filter{}).NamingOnlyChange(old, next) {
+		t.Fatal("codec change without a changed name claimed naming-only proof")
+	}
 	label := archive.SessionLabel{NativeID: labelTestID, State: "present", Name: "Renamed", Source: "database", Contract: archive.SessionLabelContract}
 	next.SupplementalEvidence = []archive.SupplementalEvidence{label.Evidence(next.Capture.CapturedAt)}
 	if !(Filter{}).NamingOnlyChange(old, next) {
