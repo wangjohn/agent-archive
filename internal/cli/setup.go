@@ -185,7 +185,7 @@ func runSetupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 		return 0
 	}
 	if err := setup(stdin, stdout, stderr, env, opts.verbose, opts.skillsChoice(), opts.allowNetworkHome); err != nil {
-		var pairingRequest *setupPairingRequest
+		var pairingRequest *setupPairingRedirectError
 		if errors.As(err, &pairingRequest) {
 			opts.pair = true
 			opts.pairingInput = pairingRequest.input
@@ -291,7 +291,7 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env, verbose bool, skills
 		return err
 	}
 	if pairOptions.pair {
-		return &setupPairingRequest{input: pairInput, source: stdin}
+		return &setupPairingRedirectError{input: pairInput, source: stdin}
 	}
 	p.in = newPrompter(pairInput, out).in
 	// A saved draft that names a bucket has already been past this.

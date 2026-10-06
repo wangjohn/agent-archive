@@ -46,6 +46,7 @@ func TestFirstSetupPairingSkipsNonFreshAndNoninteractiveInvocations(t *testing.T
 				return true
 			}
 			opts := setupOptions{}
+			//lint:ignore LV1001 These are test-case labels selecting fixture setup, not production domain states.
 			switch name {
 			case "scripted":
 				opts.yes = true
@@ -74,7 +75,7 @@ func TestFreshSetupPairingRedirectReleasesSetupLock(t *testing.T) {
 	env.IsTerminal = func(any) bool { return true }
 	var output bytes.Buffer
 	err := setup(strings.NewReader("yes\nbundle\n"), &output, &output, env, false, skillsUnchanged, false)
-	var request *setupPairingRequest
+	var request *setupPairingRedirectError
 	if !errors.As(err, &request) {
 		t.Fatalf("expected pairing redirect: %v %s", err, &output)
 	}

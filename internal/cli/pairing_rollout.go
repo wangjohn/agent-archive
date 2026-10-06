@@ -6,15 +6,15 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 )
 
-// setupPairingRequest hands the buffered input to pairing after ordinary setup
+// setupPairingRedirectError hands the buffered input to pairing after ordinary setup
 // releases its lock. It is an internal redirect, not a setup failure.
-type setupPairingRequest struct {
+type setupPairingRedirectError struct {
 	input  io.Reader
 	source io.Reader
 }
 
 // Error describes the internal setup redirect.
-func (*setupPairingRequest) Error() string { return "pairing selected" }
+func (*setupPairingRedirectError) Error() string { return "pairing selected" }
 
 func firstSetupPairingQuestion(opts setupOptions, stdin io.Reader, out io.Writer, env Env) (setupOptions, io.Reader, error) {
 	if opts.yes || opts.pair || opts.pairFile != "" || !env.interactive(stdin) || !env.interactive(out) {
@@ -29,10 +29,9 @@ func firstSetupPairingQuestion(opts setupOptions, stdin io.Reader, out io.Writer
 		return opts, stdin, err
 	}
 	// Resume ordinary setup and its recovery before offering another onboarding path.
-	if _, draftFound, _, draftErr := readDraft(home); draftErr != nil || draftFound {
-		return opts, stdin, nil
-	}
-	if pairingAgentRefusal(env) != nil {
+	_, draftFound, _, draftErr := readDraft(home)
+	pairingEligible := !draftFound && draftErr == nil && pairingAgentRefusal(env) == nil
+	if !pairingEligible {
 		return opts, stdin, nil
 	}
 	p := newPrompter(stdin, out)
