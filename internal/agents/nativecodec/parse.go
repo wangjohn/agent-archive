@@ -360,8 +360,8 @@ func observeRecordTokens(bundle archive.SourceBundle, record map[string]any, age
 }
 
 func isClaudeTitleRecord(r map[string]any) bool {
-	kind := firstString(r, "type")
-	return kind == "custom-title" || kind == "ai-title"
+	kind := claudeLabelKind(firstString(r, "type"))
+	return kind == claudeCustomTitleType || kind == claudeAITitleType
 }
 
 // skipNativeRecord applies agent ownership and handles naming-only evidence

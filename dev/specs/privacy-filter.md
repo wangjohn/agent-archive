@@ -31,8 +31,9 @@ below are admitted on those records only:
   Code appends a record for each name a session is given, and every one is
   kept, so a renamed session keeps its earlier names too. Custom titles take
   precedence over generated titles regardless of record order. Present session
-  IDs must match the owning native session; legacy missing IDs are accepted
-  only within that source. Sidechain titles are excluded from naming. Name
+  IDs must match the owning native session; malformed or sanitizer-rewritten
+  ownership is rejected rather than treated as absent. Legacy missing IDs are
+  accepted only within that source. Sidechain titles are excluded from naming. Name
   records do not establish identity, activity or archive eligibility.
 - Claude Code `pr-link`: `type`, `prNumber`, `prRepository`, `prUrl`, and
   `sessionId` and `timestamp` when they are strings. `prRepository` is

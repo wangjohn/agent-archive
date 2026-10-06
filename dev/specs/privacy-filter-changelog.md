@@ -37,10 +37,12 @@ parser 0.23.0 derive the corrected labels and prompt fallback.
 - The latest matching custom title wins over every generated title; otherwise
   the latest matching generated title wins. A present session ID must match
   the owning bundle/verified preview candidate. Legacy records without an ID
-  remain usable from that source. Inlined sidechain titles are excluded.
+  remain usable from that source. Malformed or sanitizer-rewritten ownership
+  fields are rejected; inlined sidechain titles are excluded. Title-only
+  source publications keep the original capture time and retention basis.
 - **Codex open-page context.** The injected `external_codex_apps_open_page`
   leading XML context wrapper is stripped with nested/unclosed-block rules.
-  Quoted markup, code examples and mentions in human prose remain intact. Human
+  Quoted markup, fenced and indented code examples and mentions in human prose remain intact. Human
   text outside the block remains a prompt; context-only text is omitted.
 - Head/tail previews keep name class precedence and report partial coverage
   when records between their bounded windows were not read.

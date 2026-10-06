@@ -58,3 +58,9 @@ func Analyze(ctx context.Context, parser TranscriptParser, bundle archive.Source
 	}
 	return archive.Analysis{}, &archive.ParseError{Reason: err.Error()}
 }
+
+// NamingChangeComparator identifies a native name update that carries no new
+// conversation or supplemental activity. It cannot establish source ownership.
+type NamingChangeComparator interface {
+	NamingOnlyChange(previous, candidate archive.SourceBundle) bool
+}

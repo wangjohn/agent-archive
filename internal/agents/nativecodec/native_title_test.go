@@ -1,6 +1,7 @@
 package nativecodec
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -21,6 +22,10 @@ func TestClaudeNativeTitlePrecedenceAndOwnership(t *testing.T) {
 		{"fork prefix", []string{`{"type":"ai-title","aiTitle":"Own","sessionId":"s"}`, `{"type":"custom-title","customTitle":"Parent","sessionId":"parent"}`}, "Own"},
 		{"sidechain", []string{`{"type":"ai-title","aiTitle":"Own","sessionId":"s"}`, `{"type":"custom-title","customTitle":"Child","sessionId":"s","isSidechain":true}`}, "Own"},
 		{"legacy", []string{`{"type":"custom-title","customTitle":"Legacy"}`, `{"type":"ai-title","aiTitle":"Generated"}`}, "Legacy"},
+		{"malformed ID", []string{`{"type":"ai-title","aiTitle":"Own","sessionId":"s"}`, `{"type":"custom-title","customTitle":"Bad","sessionId":42}`}, "Own"},
+		{"empty ID", []string{`{"type":"ai-title","aiTitle":"Own","sessionId":"s"}`, `{"type":"custom-title","customTitle":"Bad","sessionId":""}`}, "Own"},
+		{"malformed sidechain", []string{`{"type":"ai-title","aiTitle":"Own","sessionId":"s"}`, `{"type":"custom-title","customTitle":"Bad","sessionId":"s","isSidechain":"true"}`}, "Own"},
+		{"filtered ID", []string{`{"type":"ai-title","aiTitle":"Own","sessionId":"s"}`, `{"type":"custom-title","customTitle":"Bad","sessionId":"<system-reminder>hidden</system-reminder>"}`}, "Own"},
 		{"invalid latest", []string{`{"type":"ai-title","aiTitle":"Own","sessionId":"s"}`, `{"type":"ai-title","aiTitle":42}`}, "Own"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -30,8 +35,7 @@ func TestClaudeNativeTitlePrecedenceAndOwnership(t *testing.T) {
 			if labels.Name != tc.want || labels.Title != "Rename the widget parser" {
 				t.Fatalf("labels %+v", labels)
 			}
-			var previews archive.PreviewAccumulator
-			previews.NativeID = "s"
+			previews := archive.PreviewAccumulator{NativeID: "s"}
 			for _, line := range tc.lines {
 				facts, err := PreviewRecord("claude", []byte(line))
 				if err != nil {
@@ -105,10 +109,17 @@ func TestClaudeAITitleIsTypedAndRedacted(t *testing.T) {
 
 func TestCodexOpenPageContextIsNotAPromptFallback(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct{ name, input, want string }{
+	for _, tc := range []struct {
+		name  string
+		input string
+		want  string
+	}{
 		{"context only", "<external_codex_apps_open_page>Selected page</external_codex_apps_open_page>", ""},
 		{"mixed", "<external_codex_apps_open_page>Selected page</external_codex_apps_open_page>Review this page.", "Review this page."},
 		{"quoted markup", "Why does `<external_codex_apps_open_page>...</external_codex_apps_open_page>` appear?", "Why does `<external_codex_apps_open_page>...</external_codex_apps_open_page>` appear?"},
+		{"indented code", "    <external_codex_apps_open_page>example</external_codex_apps_open_page>", "<external_codex_apps_open_page>example</external_codex_apps_open_page>"},
+		{"indented suffix", "<external_codex_apps_open_page>Context</external_codex_apps_open_page>\n    <external_codex_apps_open_page>example</external_codex_apps_open_page>", "<external_codex_apps_open_page>example</external_codex_apps_open_page>"},
+		{"indented example with other injected context", "    <external_codex_apps_open_page>example</external_codex_apps_open_page>\n<system-reminder>Injected</system-reminder>", "<external_codex_apps_open_page>example</external_codex_apps_open_page>"},
 		{"ordinary example", "Explain external_codex_apps_open_page with examples.", "Explain external_codex_apps_open_page with examples."},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -117,6 +128,11 @@ func TestCodexOpenPageContextIsNotAPromptFallback(t *testing.T) {
 			filtered, err := (CodexAdapter{}).FilterJSONL(strings.NewReader(string(record)))
 			if err != nil {
 				t.Fatal(err)
+			}
+			retained := bytes.Join(filtered.Records, []byte("\n"))
+			refiltered, err := (CodexAdapter{}).FilterJSONL(bytes.NewReader(retained))
+			if err != nil || !bytes.Equal(retained, bytes.Join(refiltered.Records, []byte("\n"))) {
+				t.Fatalf("filter did not preserve its output: %v", err)
 			}
 			bundle := parserTestBundle(t, "codex", CodexAdapter{}, filtered)
 			analysis, err := ParseCodex(context.Background(), bundle)
@@ -132,6 +148,41 @@ func TestCodexOpenPageContextIsNotAPromptFallback(t *testing.T) {
 			}
 			if facts.Title != tc.want {
 				t.Fatalf("preview %+v", facts)
+			}
+		})
+	}
+}
+
+func TestClaudeNamingOnlyChangeAcrossCodecUpgradeRejectsOtherEvidence(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		change func(*archive.SourceBundle)
+		want   bool
+	}{
+		{"codec provenance", func(b *archive.SourceBundle) {}, true},
+		{"conversation", func(b *archive.SourceBundle) {
+			b.NativeRecords[0]["message"].(map[string]any)["content"] = "New human request"
+		}, false},
+		{"owner", func(b *archive.SourceBundle) { b.NativeSessionID = "other" }, false},
+		{"harness", func(b *archive.SourceBundle) { b.Capture.Harness.Version = "different" }, false},
+		{"supplemental", func(b *archive.SourceBundle) {
+			b.SupplementalEvidence = []archive.SupplementalEvidence{{Kind: archive.EvidenceKindLifecycleHook}}
+		}, false},
+		{"source format", func(b *archive.SourceBundle) { b.Capture.SourceFormat = "codex-jsonl" }, false},
+		{"links", func(b *archive.SourceBundle) {
+			b.LinkedSessions = []archive.LinkedSessionReference{{SessionID: "child"}}
+		}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			before := claudeLabelLines(t)
+			before.Capture.FilterVersion = "15"
+			before.Capture.AdapterVersion = "0.15.0"
+			after := claudeLabelLines(t, `{"type":"ai-title","aiTitle":"Generated","sessionId":"s"}`)
+			tc.change(&after)
+			if got := ClaudeNamingOnlyChange(before, after); got != tc.want {
+				t.Fatalf("naming-only = %v, want %v", got, tc.want)
 			}
 		})
 	}
