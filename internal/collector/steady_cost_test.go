@@ -184,6 +184,35 @@ func TestGapsAreSkippedOnlyWhileTheTranscriptIsUntouched(t *testing.T) {
 	local := newTestStore(t)
 	remote := storagetest.NewMemoryStore()
 	reg := settledSession(t, local, codexTranscript)
+	// The settled fixture published into its own temporary store. Seed this
+	// test's store with that exact committed body and source before mutation.
+	published, err := local.LoadPublishedState(reg.ArchiveSessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle, _, found := published.LastPublished()
+	if !found {
+		t.Fatal("fixture has no publication")
+	}
+	compressed, err := archive.BuildCompressedSource(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref, found := published.LastPublishedSource()
+	if !found || compressed.SHA256 != ref.SHA256 {
+		t.Fatal("fixture source differs")
+	}
+	if err := remote.Put(t.Context(), ref.Key, compressed.Bytes); err != nil {
+		t.Fatal(err)
+	}
+	key, err := archive.MetadataObjectKey(reg.Harness.Name, reg.ArchiveSessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := remote.Put(t.Context(), key, published.Metadata()); err != nil {
+		t.Fatal(err)
+	}
+
 	rewritten := strings.Replace(codexTranscript, "visible", "VISIBLE", 1)
 	if err := os.WriteFile(reg.TranscriptPath, []byte(rewritten), 0o600); err != nil {
 		t.Fatal(err)

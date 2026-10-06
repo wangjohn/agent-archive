@@ -266,3 +266,98 @@ func TestPublicationMetadataCompletionRestoresMissingLocalCache(t *testing.T) {
 		t.Fatal(refs, err)
 	}
 }
+
+func TestPublicationLegacyMetadataSaveDoesNotKeepStaleCommit(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending := publicationFixture(t, publicationThread, time.Date(2026, 10, 6, 0, 0, 0, 0, time.UTC))
+	sealed, err := PreparePublication(pending, PublicationPredecessor{State: PredecessorAbsent}, "d", "a", "p", PublicationCapture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	published, err := store.LoadPublishedState(pending.Bundle.ArchiveSessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := published.SaveCommittedPublication(sealed, pending.Bundle.Capture.CapturedAt); err != nil {
+		t.Fatal(err)
+	}
+	var m archive.Metadata
+	if err := json.Unmarshal(pending.MetadataBytes, &m); err != nil {
+		t.Fatal(err)
+	}
+	m.MetadataDerivedAt = m.MetadataDerivedAt.Add(time.Hour)
+	pending.MetadataBytes, err = json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := published.SaveRepublishedMetadata(pending, m.MetadataDerivedAt); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := store.LoadPublishedState(pending.Bundle.ArchiveSessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if refs, err := reloaded.CommittedSources(); err != nil || len(refs) != 1 || refs[0] != pending.SourceReference() {
+		t.Fatal("legacy method left stale source-set digest", refs, err)
+	}
+	if prior := reloaded.PublicationPredecessor(); prior.State != PredecessorPresent || string(prior.Body) != string(pending.MetadataBytes) {
+		t.Fatal("committed legacy method lost exact authority", prior.State)
+	}
+}
+
+func TestPublicationRejectsMissingMetadataIdentityAndTimestamps(t *testing.T) {
+	for _, field := range []string{"machine_id", "native_session_id", "project_id", "started_at", "captured_at", "metadata_derived_at"} {
+		t.Run(field, func(t *testing.T) {
+			pending := publicationFixture(t, publicationThread, time.Date(2026, 10, 6, 0, 0, 0, 0, time.UTC))
+			var m map[string]any
+			if err := json.Unmarshal(pending.MetadataBytes, &m); err != nil {
+				t.Fatal(err)
+			}
+			delete(m, field)
+			var err error
+			pending.MetadataBytes, err = json.Marshal(m)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := PreparePublication(pending, PublicationPredecessor{State: PredecessorAbsent}, "d", "a", "p", PublicationCapture); err == nil {
+				t.Fatal("incomplete metadata sealed")
+			}
+		})
+	}
+}
+
+func TestPublicationRemoteReferencesCanExceedInlineReplayBudget(t *testing.T) {
+	at := time.Date(2026, 10, 6, 0, 0, 0, 0, time.UTC)
+	pending := publicationFixture(t, publicationThread, at)
+	old := publicationFixture(t, "22222222-2222-4222-8222-222222222222", at.Add(-time.Hour))
+	preservePublication(t, &pending, old, old.Bundle.History.ActiveRolloutID)
+	var m archive.Metadata
+	if err := json.Unmarshal(pending.MetadataBytes, &m); err != nil {
+		t.Fatal(err)
+	}
+	m.SourceBundle.CompressedBytes = 80 << 20
+	m.History.Preserved[0].Source.CompressedBytes = 80 << 20
+	var err error
+	pending.MetadataBytes, err = json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending.SourceBytes, pending.Sources = nil, nil
+	pending.SourceSize = m.SourceBundle.CompressedBytes
+	pending.MetadataOnly = true
+	sealed, err := PreparePublication(pending, PublicationPredecessor{State: PredecessorAbsent}, "d", "a", "p", PublicationMetadata)
+	if err != nil || len(sealed.Sources) != 2 || sealed.ValidatePublication() != nil {
+		t.Fatal("remote-only total was confused with inline replay cap", err)
+	}
+	m.History.Preserved[0].Source.CompressedBytes = (128 << 20) + 1
+	pending.MetadataBytes, err = json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := PreparePublication(pending, PublicationPredecessor{State: PredecessorAbsent}, "d", "a", "p", PublicationMetadata); err == nil {
+		t.Fatal("per-object bound was not enforced")
+	}
+}

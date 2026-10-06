@@ -25,7 +25,7 @@ func PublicationIdentity(raw []byte, destination, admission, policy, purpose str
 	if err != nil {
 		return "", nil, err
 	}
-	if m.NativeSessionID == "" || m.ProjectID == "" || m.CapturedAt.IsZero() {
+	if strings.TrimSpace(m.NativeSessionID) == "" || strings.TrimSpace(m.ProjectID) == "" || strings.TrimSpace(m.MachineID) == "" || m.StartedAt.IsZero() || m.CapturedAt.IsZero() || m.MetadataDerivedAt.IsZero() {
 		return "", nil, errors.New("publication metadata identity is incomplete")
 	}
 	if _, err := MetadataObjectKey(m.Harness.Name, m.SessionID); err != nil {

@@ -10,6 +10,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/state"
+	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
 // parserFor resolves one immutable capability per agent during a collector pass.
@@ -196,7 +197,7 @@ func (s *sessionScan) lastPublication(metadataKey string) (lastPublication, bool
 		// A missing or unreachable copy is not fatal: nothing can be refreshed
 		// from it, and normal capture keeps working without it.
 		var err error
-		if encoded, err = s.remote.Get(s.ctx, metadataKey); err != nil {
+		if encoded, err = storage.ReadPublicationMetadata(s.ctx, s.remote, metadataKey); err != nil {
 			return lastPublication{}, false
 		}
 	}

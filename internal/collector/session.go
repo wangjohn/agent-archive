@@ -187,6 +187,10 @@ func (s *sessionScan) resume() (outcome sessionOutcome, handled bool, err error)
 	if pendingSkillMode(pending.SkillEvidence) != s.opts.skillEvidence() {
 		return outcomeSkipped, true, errors.New("pending source privacy policy changed; retain evidence for refilter and reconcile")
 	}
+	// Validate policy and frozen context before a new request may replace replay evidence.
+	if err := s.sealPending(&pending); err != nil {
+		return outcomeSkipped, true, err
+	}
 	if !pending.Attempted && s.req.Token != "" && s.req.Token != pending.RequestToken {
 		// A stop/end request is a natural debounce flush. A merely rate-limited,
 		// never-attempted candidate can be safely replaced by a richer one;

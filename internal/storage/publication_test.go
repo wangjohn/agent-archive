@@ -53,33 +53,45 @@ func sourceSetFixture() []storage.SourcePublication {
 	return out
 }
 
+type sourceSetBoundary string
+
+const (
+	sourceSetCurrent   sourceSetBoundary = "current"
+	sourceSetPreserved sourceSetBoundary = "preserved"
+	sourceSetMetadata  sourceSetBoundary = "metadata"
+	sourceSetUncertain sourceSetBoundary = "uncertain"
+	sourceSetCompleted sourceSetBoundary = "completed"
+)
+
 func TestSourceSetInterruptionAndExactNextReplay(t *testing.T) {
-	for _, boundary := range []string{"current", "preserved", "metadata", "uncertain", "completed"} {
-		t.Run(boundary, func(t *testing.T) {
+	for _, boundary := range []sourceSetBoundary{sourceSetCurrent, sourceSetPreserved, sourceSetMetadata, sourceSetUncertain, sourceSetCompleted} {
+		t.Run(string(boundary), func(t *testing.T) {
 			sources := sourceSetFixture()
 			key := "sessions/codex/s/metadata.json"
 			remote := &publicationFaultStore{MemoryStore: storagetest.NewMemoryStore(), metadataKey: key}
 			switch boundary {
-			case "current":
+			case sourceSetCurrent:
 				remote.failKey = sources[0].Key
-			case "preserved":
+			case sourceSetPreserved:
 				remote.failKey = sources[1].Key
-			case "metadata":
+			case sourceSetMetadata:
 				remote.failKey = key
-			case "uncertain":
+			case sourceSetUncertain:
 				remote.uncertain = true
+			case sourceSetCompleted:
+				// The uninterrupted publication is the successful control.
 			}
 			next := []byte("exact frozen next metadata")
 			prior := storage.MetadataPredecessor{Known: true}
 			err := storage.PutSourceSetThenMetadata(t.Context(), remote, sources, key, next, prior, storage.RetryPolicy{MaxAttempts: 1})
-			if boundary == "completed" {
+			if boundary == sourceSetCompleted {
 				if err != nil {
 					t.Fatal(err)
 				}
 			} else if err == nil {
 				t.Fatal("interruption did not surface")
 			}
-			if boundary != "uncertain" && boundary != "completed" {
+			if boundary != sourceSetUncertain && boundary != sourceSetCompleted {
 				if _, err := remote.Get(t.Context(), key); !errors.Is(err, storage.ErrNotFound) {
 					t.Fatal("metadata preceded complete source verification", err)
 				}

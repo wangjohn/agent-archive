@@ -95,13 +95,15 @@ func (s *sessionScan) publishPending(pending state.PendingPublication) (sessionO
 	if err != nil {
 		return outcomeSkipped, err
 	}
+	if storage.SHA256Hex(body) != pending.Commit.MetadataSHA256 {
+		// Leave repair journaled; the repair path verifies the winner's complete set.
+		return outcomeSkipped, storage.ErrPublicationConflict
+	}
+	listingPublished := false
 	if err := listingindex.PublishRevision(s.ctx, s.remote, pending.MetadataKey, body); err != nil {
 		s.warn(fmt.Errorf("listing maintenance pending: %w", err))
-	} else if err := s.local.RemoveListingRepair(s.id()); err != nil {
-		s.warn(err)
-	}
-	if storage.SHA256Hex(body) != pending.Commit.MetadataSHA256 {
-		return outcomeSkipped, storage.ErrPublicationConflict
+	} else {
+		listingPublished = true
 	}
 	// Record only references absent from the complete next set. Preserved revisions
 	// stay live; privacy-sensitive predecessor ledger failure keeps replay evidence.
@@ -136,6 +138,11 @@ func (s *sessionScan) publishPending(pending state.PendingPublication) (sessionO
 	}
 	if err := s.published.SaveCommittedPublication(pending, s.now); err != nil {
 		return outcomeSkipped, fmt.Errorf("update published cache: %w", err)
+	}
+	if listingPublished {
+		if err := s.local.RemoveListingRepair(s.id()); err != nil {
+			s.warn(err)
+		}
 	}
 	// Whatever kept this session's metadata from being refreshed described
 	// the publication just replaced.
@@ -186,6 +193,9 @@ func (s *sessionScan) sealPending(p *state.PendingPublication) error {
 		return p.ValidatePublication()
 	}
 	prior := s.published.PublicationPredecessor()
+	if err := s.bindPublicationContinuity(&prior, *p); err != nil {
+		return err
+	}
 	purpose := state.PublicationCapture
 	if p.MetadataOnly {
 		purpose = state.PublicationMetadata
@@ -222,12 +232,40 @@ func (s *sessionScan) publicationPolicy(bundle archive.SourceBundle) (string, er
 
 func (s *sessionScan) publicationAdmission() string {
 	body, _ := json.Marshal(struct {
-		Session   string
-		Native    string
-		Project   string
-		Admission string
-		Origin    archive.SessionOrigin
-		Batch     archive.ImportBatch
+		Session   string                `json:"Session"`
+		Native    string                `json:"Native"`
+		Project   string                `json:"Project"`
+		Admission string                `json:"Admission"`
+		Origin    archive.SessionOrigin `json:"Origin"`
+		Batch     archive.ImportBatch   `json:"Batch"`
 	}{Session: s.reg.ArchiveSessionID, Native: s.reg.NativeSessionID, Project: s.reg.ProjectID, Admission: s.reg.Admitted().UTC().Format("2006-01-02T15:04:05.999999999Z07:00"), Origin: s.reg.Origin, Batch: s.reg.ImportBatch})
 	return storage.SHA256Hex(body)
+}
+
+// bindPublicationContinuity consults only the injected native retained comparator.
+// The proof certifies filtered continuation, never raw dependency availability.
+func (s *sessionScan) bindPublicationContinuity(prior *state.PublicationPredecessor, pending state.PendingPublication) error {
+	if prior.State != state.PredecessorPresent || prior.Bundle.History == nil || pending.Bundle.History == nil || prior.Bundle.History.ActiveRolloutID != pending.Bundle.History.ActiveRolloutID {
+		return nil
+	}
+	var previous archive.Metadata
+	if err := json.Unmarshal(prior.Body, &previous); err != nil {
+		return err
+	}
+	if previous.SourceBundle.SHA256 == pending.SourceSHA256 {
+		return nil
+	}
+	a, b := prior.Bundle.Capture, pending.Bundle.Capture
+	if a.FilterVersion != b.FilterVersion || a.AdapterVersion != b.AdapterVersion || a.SourceFormat != b.SourceFormat || a.AdapterName != b.AdapterName {
+		return errors.New("same revision continuation requires matching filter and codec")
+	}
+	adapter, err := sourceAdapter(s.opts.Sources, s.reg.Harness.Name)
+	if err != nil {
+		return err
+	}
+	if a.FilterVersion != archive.FilterVersion || a.AdapterVersion != adapter.Version() || !adapter.EvidenceExtends(prior.Bundle, pending.Bundle) {
+		return errors.New("native retained comparator refused same revision continuation")
+	}
+	prior.SameRevisionContinuity = &state.PublicationContinuity{PreviousSourceSHA256: previous.SourceBundle.SHA256, NextSourceSHA256: pending.SourceSHA256}
+	return nil
 }

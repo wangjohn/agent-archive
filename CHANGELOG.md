@@ -31,8 +31,10 @@ follow [Semantic Versioning](https://semver.org/).
 
 - Publication retries verify the complete selected source set and exact committed
   metadata before acknowledging capture. A different remote winner or unknown
-  predecessor stays pending instead of overwriting retained evidence. History
-  writers remain protected pending admission and lifecycle support.
+  predecessor stays pending instead of overwriting retained evidence. A recorded
+  predecessor that is now missing also requires reconciliation; queued evidence
+  stays local and pending. History writers remain protected pending admission
+  and lifecycle support.
 
 - Deleted Codex worktrees can recover an existing configured project from a
   unique recorded repository identity, or an exact historical backfill mapping.

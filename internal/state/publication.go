@@ -89,39 +89,8 @@ func PreparePublication(p PendingPublication, prior PublicationPredecessor, dest
 	if purpose != PublicationCapture && purpose != PublicationMetadata {
 		return p, errors.New("unsupported publication purpose")
 	}
-	switch prior.State {
-	case PredecessorPresent:
-		if len(prior.Body) == 0 {
-			return p, errors.New("publication predecessor body is unavailable")
-		}
-		var previous, next archive.Metadata
-		if err := json.Unmarshal(prior.Body, &previous); err != nil {
-			return p, err
-		}
-		if err := json.Unmarshal(p.MetadataBytes, &next); err != nil {
-			return p, err
-		}
-		if _, _, err := archive.PublicationIdentity(prior.Body, destination, admission, policy, string(purpose)); err != nil {
-			return p, fmt.Errorf("invalid publication predecessor: %w", err)
-		}
-		if previous.SessionID != next.SessionID || previous.NativeSessionID != next.NativeSessionID || previous.ProjectID != next.ProjectID || previous.MachineID != next.MachineID {
-			return p, errors.New("publication cannot change committed ownership")
-		}
-		if previous.History != nil && next.History != nil && previous.History.CurrentRevision == next.History.CurrentRevision && previous.SourceBundle != next.SourceBundle {
-			proof := prior.SameRevisionContinuity
-			if proof == nil || proof.PreviousSourceSHA256 != previous.SourceBundle.SHA256 || proof.NextSourceSHA256 != next.SourceBundle.SHA256 {
-				return p, errors.New("same revision update requires provider-approved continuity; retry selection validation")
-			}
-		}
-		if err := archive.ValidateRevisionTransition(previous, next, prior.Bundle, p.Bundle); err != nil {
-			return p, err
-		}
-	case PredecessorAbsent, PredecessorUnknown:
-		if len(prior.Body) != 0 {
-			return p, errors.New("unexpected publication predecessor body")
-		}
-	default:
-		return p, errors.New("publication predecessor evidence is required")
+	if err := p.validatePublicationPredecessor(prior, destination, admission, policy, purpose); err != nil {
+		return p, err
 	}
 	digest, refs, err := archive.PublicationIdentity(p.MetadataBytes, destination, admission, policy, string(purpose))
 	if err != nil {
@@ -154,6 +123,44 @@ func PreparePublication(p PendingPublication, prior PublicationPredecessor, dest
 		p.Commit.PredecessorSHA256 = publicationSHA256(prior.Body)
 	}
 	return p, p.ValidatePublication()
+}
+
+func (p PendingPublication) validatePublicationPredecessor(prior PublicationPredecessor, destination, admission, policy string, purpose PublicationPurpose) error {
+	switch prior.State {
+	case PredecessorPresent:
+		if len(prior.Body) == 0 {
+			return errors.New("publication predecessor body is unavailable")
+		}
+		var previous, next archive.Metadata
+		if err := json.Unmarshal(prior.Body, &previous); err != nil {
+			return err
+		}
+		if err := json.Unmarshal(p.MetadataBytes, &next); err != nil {
+			return err
+		}
+		if _, _, err := archive.PublicationIdentity(prior.Body, destination, admission, policy, string(purpose)); err != nil {
+			return fmt.Errorf("invalid publication predecessor: %w", err)
+		}
+		if previous.SessionID != next.SessionID || previous.NativeSessionID != next.NativeSessionID || previous.ProjectID != next.ProjectID || previous.MachineID != next.MachineID {
+			return errors.New("publication cannot change committed ownership")
+		}
+		if previous.History != nil && next.History != nil && previous.History.CurrentRevision == next.History.CurrentRevision && previous.SourceBundle != next.SourceBundle {
+			proof := prior.SameRevisionContinuity
+			if proof == nil || proof.PreviousSourceSHA256 != previous.SourceBundle.SHA256 || proof.NextSourceSHA256 != next.SourceBundle.SHA256 {
+				return errors.New("same revision update requires provider-approved continuity; retry selection validation")
+			}
+		}
+		if err := archive.ValidateRevisionTransition(previous, next, prior.Bundle, p.Bundle); err != nil {
+			return err
+		}
+	case PredecessorAbsent, PredecessorUnknown:
+		if len(prior.Body) != 0 {
+			return errors.New("unexpected publication predecessor body")
+		}
+	default:
+		return errors.New("publication predecessor evidence is required")
+	}
+	return nil
 }
 
 // ValidatePublication checks every local replay payload and exact metadata binding.
