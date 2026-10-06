@@ -51,7 +51,8 @@ type LabelsLookup interface {
 }
 
 // LabelRequestGrouper identifies a provider's shared work unit without I/O.
-// The key is an opaque content-free SHA-256 hash; an empty key defers to ID priority.
+// The opaque key is bounded to 256 bytes and is hashed by the collector before
+// persistence; an empty key defers to ID priority.
 type LabelRequestGrouper interface {
 	LabelRequestGroup(LabelEnvironment, LabelRequest) string
 }

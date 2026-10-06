@@ -1,6 +1,7 @@
 package state
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -43,5 +44,29 @@ func TestLabelContextReadBudgetRejectsOversizeBeforeDecode(t *testing.T) {
 	}
 	if _, n, err := store.LoadLabelPublication("synthetic", 512); err == nil || n != 0 {
 		t.Fatal("over-budget retained source was read")
+	}
+}
+
+func TestLabelTargetCursorRejectsRawGroupsAndUnboundedState(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache := LabelCache{Version: 1, Entries: map[string]LabelEntry{}, TargetCursors: map[string]string{strings.Repeat("a", 64): "admitted-id"}}
+	if err := store.SaveLabels(cache); err != nil {
+		t.Fatal(err)
+	}
+	for _, cursors := range []map[string]string{{"/private/native/home": "admitted-id"}, {strings.Repeat("a", 64): "../foreign"}, {strings.Repeat("a", 64): strings.Repeat("x", 257)}} {
+		cache.TargetCursors = cursors
+		if store.SaveLabels(cache) == nil {
+			t.Fatal("invalid cursor persisted")
+		}
+	}
+	cache.TargetCursors = map[string]string{}
+	for i := range MaxLabelTargetCursors + 1 {
+		cache.TargetCursors[fmt.Sprintf("%064x", i)] = "admitted-id"
+	}
+	if store.SaveLabels(cache) == nil {
+		t.Fatal("over-budget cursors persisted")
 	}
 }

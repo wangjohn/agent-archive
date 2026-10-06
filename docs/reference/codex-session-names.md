@@ -38,7 +38,11 @@ Each pass budgets 64 admitted targets, 16 configured homes and two seconds.
 Index scans are limited to 4 MiB and 32,768 lines; a database read is limited
 to 100 ms and 8 MiB of reads per home. Homes are visited in persistent target order. A separate durable priority
 cursor skips the previous first work group across ID-order wraparound, so
-interleaved IDs in a slow home cannot monopolize later homes’ priority. The target cursor advances
+interleaved IDs in a slow home cannot monopolize later homes’ priority. A bounded
+per-group archive-ID cursor also rotates the first target within each prioritized
+group, preserving deferred-ID opportunity after lookup backoff expires. Group
+identities are hashed by the collector before persistence; removed targets
+retire their cursor, while temporary backoff preserves progress. The target cursor advances
 over deferred targets, with bounded backoff for unavailable observations.
 Lookup context is content-free and keyed to retained source checksum and codec
 contract. Migration reads at most 8 MiB per retained JSON publication and

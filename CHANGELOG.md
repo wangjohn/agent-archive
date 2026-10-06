@@ -14,7 +14,8 @@ follow [Semantic Versioning](https://semver.org/).
 - Refresh Codex names for already admitted ordinary sessions from verified
   0.159.2 settled storage, including verified legacy database/index fallback. Changes publish filtered
   source evidence without renewing activity or retention; unavailable live-WAL
-  storage preserves the last verified name. No native process is started.
+  storage preserves the last verified name. Deferred lookup targets rotate within
+  prioritized homes even after backoff expires. No native process is started.
 
 
 ### Added
