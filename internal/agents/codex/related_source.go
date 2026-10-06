@@ -343,7 +343,7 @@ func (p *relatedSourcePass) graph(ctx context.Context, leaf *rolloutFile) ([]phy
 		if base.identity.RolloutID != id.HistoryBase.RolloutID {
 			return nil, sourceFailure(agentapi.Unsafe, "history dependency identity mismatch")
 		}
-		if id.HistoryBase.EndByteOffset > math.MaxInt64 || id.HistoryBase.EndByteOffset == 0 {
+		if id.HistoryBase.EndByteOffset > math.MaxInt64 {
 			return nil, sourceFailure(agentapi.Unsafe, "invalid history byte boundary")
 		}
 		end = int64(id.HistoryBase.EndByteOffset)
@@ -351,8 +351,10 @@ func (p *relatedSourcePass) graph(ctx context.Context, leaf *rolloutFile) ([]phy
 			return nil, sourceFailure(agentapi.Unsafe, "invalid history byte boundary")
 		}
 		var last [1]byte
-		if _, err := base.file.ReadAt(last[:], end-1); err != nil || last[0] != '\n' {
-			return nil, sourceFailure(agentapi.Unsafe, "split history record boundary")
+		if end > 0 {
+			if _, err := base.file.ReadAt(last[:], end-1); err != nil || last[0] != '\n' {
+				return nil, sourceFailure(agentapi.Unsafe, "split history record boundary")
+			}
 		}
 		current = base
 	}
@@ -376,8 +378,11 @@ func (p *relatedSourcePass) Signature(ctx context.Context, ref agentapi.SourceRe
 		}
 		return agentapi.SourceObservation{}, err
 	}
-	if !hasRelated(selection.leaf) && p.env.CodexRollouts == nil {
-		return p.legacy.Signature(ctx, ref)
+	if !hasRelated(selection.leaf) {
+		if p.env.CodexRollouts == nil {
+			return p.legacy.Signature(ctx, ref)
+		}
+		return p.observation(ctx, selection, []physicalSpan{{file: selection.leaf, end: selection.leaf.boundary}})
 	}
 	spans, err := p.graph(ctx, selection.leaf)
 	if err != nil {
@@ -433,8 +438,12 @@ func (p *relatedSourcePass) Read(ctx context.Context, ref agentapi.SourceRef, li
 
 func (p *relatedSourcePass) readSelection(ctx context.Context, ref agentapi.SourceRef, limits agentapi.ReadLimits, selection sourceSelection) (agentapi.SourceSnapshot, error) {
 	fail := func(err error) (agentapi.SourceSnapshot, error) { return nil, errors.Join(err, p.evict()) }
-	if !hasRelated(selection.leaf) && p.env.CodexRollouts == nil {
-		return p.ordinary(ctx, ref, limits, selection.leaf)
+	if !hasRelated(selection.leaf) {
+		snapshot, err := p.ordinary(ctx, limits, selection)
+		if err != nil {
+			return fail(err)
+		}
+		return snapshot, nil
 	}
 	spans, err := p.graph(ctx, selection.leaf)
 	if err != nil {
@@ -627,16 +636,18 @@ func (s *historySnapshot) Next(ctx context.Context) (agentapi.NativeRecord, bool
 
 // ordinarySnapshot retains file framing while accepting verified later appends.
 type ordinarySnapshot struct {
-	owner    *relatedSourcePass
-	source   *rolloutFile
-	ctx      context.Context
-	length   int64
-	digest   [32]byte
-	closed   bool
-	observed agentapi.SourceObservation
+	owner     *relatedSourcePass
+	source    *rolloutFile
+	selection sourceSelection
+	ctx       context.Context
+	length    int64
+	digest    [32]byte
+	closed    bool
+	observed  agentapi.SourceObservation
 }
 
-func (p *relatedSourcePass) ordinary(ctx context.Context, _ agentapi.SourceRef, limits agentapi.ReadLimits, f *rolloutFile) (agentapi.SourceSnapshot, error) {
+func (p *relatedSourcePass) ordinary(ctx context.Context, limits agentapi.ReadLimits, selection sourceSelection) (agentapi.SourceSnapshot, error) {
+	f := selection.leaf
 	if limits.RawBytes > 0 && f.file.Length() > limits.RawBytes {
 		return nil, agentapi.Wrap(agentapi.Limit, agentapi.ErrRawLimit)
 	}
@@ -645,8 +656,15 @@ func (p *relatedSourcePass) ordinary(ctx context.Context, _ agentapi.SourceRef, 
 		return nil, err
 	}
 	stamp := f.file.Stamp()
-	out := &ordinarySnapshot{owner: p, source: f, ctx: ctx, length: f.boundary, observed: agentapi.SourceObservation{Signature: sourceio.FileSignature(stamp.Size, stamp.ModifiedAt.UnixNano()), Present: true, Empty: f.boundary == 0, Activity: stamp.ModifiedAt, Size: stamp.Size}}
+	out := &ordinarySnapshot{owner: p, source: f, selection: selection, ctx: ctx, length: f.boundary, observed: agentapi.SourceObservation{Signature: sourceio.FileSignature(stamp.Size, stamp.ModifiedAt.UnixNano()), Present: true, Empty: f.boundary == 0, Activity: stamp.ModifiedAt, Size: stamp.Size}}
 	copy(out.digest[:], h.Sum(nil))
+	if p.env.CodexRollouts != nil {
+		var err error
+		out.observed, err = p.observation(ctx, selection, []physicalSpan{{file: f, end: f.boundary}})
+		if err != nil {
+			return nil, err
+		}
+	}
 	f.refs++
 	return out, nil
 }
@@ -683,7 +701,7 @@ func (f ordinaryFile) Check() error {
 	if f.s.closed || f.s.owner.closed {
 		return agentapi.ErrClosed
 	}
-	return sourceio.Classify(f.s.source.file.CheckPrefix(f.s.ctx, f.s.length, f.s.digest))
+	return f.s.check(f.s.ctx)
 }
 
 // newlineBoundary excludes even valid JSON until its producer commits the newline.
@@ -735,7 +753,17 @@ func (s *ordinarySnapshot) ValidateAdmission(ctx context.Context, a agentapi.Sou
 	if a.NativeID != s.source.identity.ThreadID || a.Cwd != "" && a.Cwd != s.source.meta.Cwd {
 		return sourceFailure(agentapi.Unsafe, "source admission identity changed")
 	}
-	return sourceio.Classify(s.source.file.CheckPrefix(ctx, s.length, s.digest))
+	return s.check(ctx)
+}
+
+func (s *ordinarySnapshot) check(ctx context.Context) error {
+	if err := s.source.file.CheckPrefix(ctx, s.length, s.digest); err != nil {
+		return sourceio.Classify(err)
+	}
+	if s.owner.env.CodexRollouts != nil {
+		return sourceio.Classify(s.owner.env.CodexRollouts.Check(ctx, s.selection.thread, s.selection.set.Revision))
+	}
+	return ctx.Err()
 }
 
 func bindingFacts(f *rolloutFile, home string, own *uint64) (archive.CodexSourceBinding, error) {
@@ -998,7 +1026,19 @@ func (s *ordinarySnapshot) RevisionCandidates(ctx context.Context) ([]agentapi.S
 	if _, err := s.AdmissionFacts(ctx); err != nil {
 		return nil, err
 	}
-	return []agentapi.SourceRef{s.source.ref}, nil
+	out := []agentapi.SourceRef{s.source.ref}
+	seen := map[string]bool{s.source.ref.Path: true}
+	for _, ref := range s.selection.set.Candidates {
+		if seen[ref.Path] {
+			continue
+		}
+		if len(out) >= archive.MaxHistorySpans {
+			return nil, sourceFailure(agentapi.Limit, "historical candidate limit")
+		}
+		seen[ref.Path] = true
+		out = append(out, ref)
+	}
+	return out, nil
 }
 
 func (p *relatedSourcePass) historyBindingFacts(ctx context.Context, selection sourceSelection, spans []physicalSpan, own *uint64, known *archive.CodexSourceBinding) (archive.CodexSourceBinding, error) {

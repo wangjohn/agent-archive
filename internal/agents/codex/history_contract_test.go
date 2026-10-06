@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -413,5 +414,91 @@ func TestRelatedMillionRecordLimit(t *testing.T) {
 	}
 	if p.(*relatedSourcePass).bytes != 0 {
 		t.Fatal("record count failure retained budget")
+	}
+}
+
+func TestOrdinaryCurrentLookupKeepsLegacySourceAndRevalidates(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	ref, _ := historyFile(t, dir, threadA, threadA, 0, nil, "own")
+	lookup := &historyLookup{thread: agentapi.CodexRolloutSet{Current: &ref, Revision: "one"}}
+	p := historyPass(t, dir, lookup)
+	observed, err := p.Signature(t.Context(), ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := p.Read(t.Context(), ref, agentapi.ReadLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Close() }()
+	if s.Observation().Signature != observed.Signature {
+		t.Fatal("read and scan signatures disagree")
+	}
+	out, err := (Filter{}).Filter(t.Context(), s.Input(), agentapi.FilterContext{})
+	if err != nil || out.History != nil || len(out.Records) != 2 {
+		t.Fatalf("ordinary capture: %+v %v", out, err)
+	}
+	at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	reg := archive.SessionRegistration{ArchiveSessionID: "synthetic", NativeSessionID: threadA, ProjectID: "project", ProjectRoot: dir, Harness: archive.Harness{Name: "codex"}, SessionStartedAt: at}
+	bundle, err := archive.NewSourceBundle(reg, Filter{}, out, at, nil)
+	if err != nil || bundle.SchemaVersion != archive.SourceSchemaVersion {
+		t.Fatalf("ordinary schema: %d %v", bundle.SchemaVersion, err)
+	}
+	if err := archive.CheckHistoryMutation(bundle, archive.Metadata{}); err != nil {
+		t.Fatal(err)
+	}
+	lookup.changed = true
+	if err := s.Input().File.Check(); agentapi.Failure(err) != agentapi.Changed {
+		t.Fatalf("current locator change: %v", err)
+	}
+	if err := s.(agentapi.SourceAdmissionValidator).ValidateAdmission(t.Context(), agentapi.SourceAdmission{NativeID: threadA}); agentapi.Failure(err) != agentapi.Changed {
+		t.Fatalf("admission locator change: %v", err)
+	}
+}
+
+func TestHistoryEmptyBasePrefixIsValidOnlyAtOrdinalZero(t *testing.T) {
+	t.Parallel()
+	for _, ordinal := range []uint64{0, 1} {
+		t.Run(strconv.FormatUint(ordinal, 10), func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			base, _ := historyFile(t, dir, threadA, threadA, 0, nil, "discarded")
+			leaf, _ := historyFile(t, dir, rolloutC, threadA, ordinal, map[string]any{"history_base": codexmeta.CodexHistoryPosition{RolloutID: threadA, EndOrdinal: ordinal, EndByteOffset: 0}}, "own")
+			lookup := &historyLookup{thread: agentapi.CodexRolloutSet{Current: &leaf}, rollouts: map[string][]agentapi.SourceRef{threadA: {base}}}
+			p := historyPass(t, dir, lookup)
+			if ordinal != 0 {
+				if _, err := p.Read(t.Context(), leaf, agentapi.ReadLimits{}); agentapi.Failure(err) != agentapi.Unsafe {
+					t.Fatalf("contradictory empty boundary: %v", err)
+				}
+				return
+			}
+			bundle := historyRead(t, p, leaf)
+			if len(bundle.NativeRecords) != 2 || bundle.History.Spans[0].EndRecord != 0 {
+				t.Fatalf("empty prefix: %+v", bundle.History)
+			}
+			parsed, err := (Parser{}).Parse(t.Context(), bundle)
+			if err != nil || len(parsed.View.Turns) != 1 {
+				t.Fatalf("empty revert ownership: %+v %v", parsed.View, err)
+			}
+		})
+	}
+}
+
+func TestOrdinaryFailedReadReleasesCachedResources(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	ref, _ := historyFile(t, dir, threadA, threadA, 0, nil, "own")
+	p, err := (SourceProvider{}).OpenPass(t.Context(), agentapi.SourceEnvironment{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = p.Close() }()
+	if _, err := p.Read(t.Context(), ref, agentapi.ReadLimits{RawBytes: 1}); agentapi.Failure(err) != agentapi.Limit {
+		t.Fatalf("ordinary limit: %v", err)
+	}
+	owned := p.(*relatedSourcePass)
+	if owned.bytes != 0 || len(owned.files) != 0 {
+		t.Fatalf("failed ordinary read retained %d bytes and %d files", owned.bytes, len(owned.files))
 	}
 }
