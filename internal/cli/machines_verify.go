@@ -96,9 +96,6 @@ func providerDestination(cfg credentials.Config) (string, cloudflare.BucketRef, 
 }
 
 func runMachinesVerify(cfg config.Config, listing machines.ListResult, stdin io.Reader, out, errOut io.Writer, env Env, asJSON, unattended bool) int {
-	if env.getenv("AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_VERIFY") != "1" {
-		return machineCommandError(errOut, errors.New("provider verification is experimental; set AGENT_ARCHIVE_EXPERIMENTAL_MACHINE_VERIFY=1 after reviewing its limitations"))
-	}
 	account, bucket, err := providerDestination(cfg.Storage)
 	if err != nil {
 		return machineCommandError(errOut, err)
