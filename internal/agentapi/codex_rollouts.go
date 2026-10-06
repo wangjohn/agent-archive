@@ -57,3 +57,15 @@ type SourceAdmissionFacts interface {
 type SourceAdmissionSignature interface {
 	ValidateSourceAdmission(context.Context, SourceRef, SourceAdmission) error
 }
+
+// SourceRevisions reads validated historical physical segments under existing
+// thread admission, independently of which segment the native row selects now.
+type SourceRevisions interface {
+	ReadRevision(context.Context, SourceRef, SourceAdmission, ReadLimits) (SourceSnapshot, error)
+}
+
+// SourceRevisionCandidates exposes bounded same-thread candidates from validated
+// graph and lookup evidence; these observations never grant capture admission.
+type SourceRevisionCandidates interface {
+	RevisionCandidates(context.Context) ([]SourceRef, error)
+}

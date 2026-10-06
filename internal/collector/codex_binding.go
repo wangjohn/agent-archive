@@ -52,7 +52,11 @@ func (s *sessionScan) persistCodexBinding(binding *archive.CodexSourceBinding) e
 	}
 	canonicalCwd := ""
 	if s.reg.CodexAdmission != nil {
-		canonicalCwd, err = canonicalBindingCwd(binding.Cwd)
+		selectedCwd := binding.SelectedCwd
+		if selectedCwd == "" {
+			selectedCwd = binding.Cwd
+		}
+		canonicalCwd, err = canonicalBindingCwd(selectedCwd)
 		if err != nil {
 			return err
 		}

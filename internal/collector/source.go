@@ -530,7 +530,7 @@ func sourceAdmission(reg archive.SessionRegistration) agentapi.SourceAdmission {
 		cwd = reg.DiscoveryCwd
 	}
 	if reg.CodexBinding != nil {
-		cwd = reg.CodexBinding.Cwd
+		cwd = ""
 	}
 	admission := agentapi.SourceAdmission{NativeID: reg.NativeSessionID, Cwd: cwd, Binding: reg.CodexBinding}
 	if reg.Origin == archive.SessionOriginDiscovery && reg.CodexBinding == nil {

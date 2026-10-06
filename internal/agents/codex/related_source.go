@@ -428,6 +428,11 @@ func (p *relatedSourcePass) Read(ctx context.Context, ref agentapi.SourceRef, li
 		}
 		return fail(err)
 	}
+	return p.readSelection(ctx, ref, limits, selection)
+}
+
+func (p *relatedSourcePass) readSelection(ctx context.Context, ref agentapi.SourceRef, limits agentapi.ReadLimits, selection sourceSelection) (agentapi.SourceSnapshot, error) {
+	fail := func(err error) (agentapi.SourceSnapshot, error) { return nil, errors.Join(err, p.evict()) }
 	if !hasRelated(selection.leaf) && p.env.CodexRollouts == nil {
 		return p.ordinary(ctx, ref, limits, selection.leaf)
 	}
@@ -475,6 +480,7 @@ func (p *relatedSourcePass) Read(ctx context.Context, ref agentapi.SourceRef, li
 }
 
 type historySnapshot struct {
+	admission    *archive.CodexSourceBinding
 	owner        *relatedSourcePass
 	selection    sourceSelection
 	spans        []physicalSpan
@@ -551,6 +557,10 @@ func (s *historySnapshot) Close() error {
 }
 
 func (s *historySnapshot) ValidateAdmission(ctx context.Context, a agentapi.SourceAdmission) error {
+	s.admission = a.Binding
+	if s.history.OwnStart == nil && a.Binding != nil {
+		s.history.OwnStart = a.Binding.OwnStart
+	}
 	facts, err := s.AdmissionFacts(ctx)
 	if err != nil {
 		return err
@@ -745,7 +755,11 @@ func bindingFacts(f *rolloutFile, home string, own *uint64) (archive.CodexSource
 		}
 		source = string(encoded)
 	}
-	facts := archive.CodexSourceBinding{Version: 1, NativeThreadID: f.identity.ThreadID, NativeCreatedAt: created, Cwd: f.meta.Cwd, ProducerSource: source, RootID: f.identity.RootID, ParentID: f.identity.ParentID, OwnStart: own, PhysicalRolloutID: f.identity.RolloutID, Path: f.ref.Path, Home: home}
+	root := f.identity.RootID
+	if root == "" && !f.identity.Child {
+		root = f.identity.ThreadID
+	}
+	facts := archive.CodexSourceBinding{Version: 1, Child: f.identity.Child, NativeThreadID: f.identity.ThreadID, NativeCreatedAt: created, Cwd: f.meta.Cwd, SelectedCwd: f.meta.Cwd, ProducerSource: source, RootID: root, ParentID: f.identity.ParentID, OwnStart: own, PhysicalRolloutID: f.identity.RolloutID, Path: f.ref.Path, Home: home}
 	return facts, facts.Validate()
 }
 
@@ -766,7 +780,8 @@ func (s *historySnapshot) AdmissionFacts(ctx context.Context) (archive.CodexSour
 	if err := s.check(ctx); err != nil {
 		return archive.CodexSourceBinding{}, err
 	}
-	return bindingFacts(s.selection.leaf, s.owner.env.Policy.Root, s.history.OwnStart)
+	return s.owner.historyBindingFacts(ctx, s.selection, s.spans, s.history.OwnStart, s.admission)
+
 }
 
 func (p *relatedSourcePass) ValidateSourceAdmission(ctx context.Context, ref agentapi.SourceRef, admission agentapi.SourceAdmission) error {
@@ -794,7 +809,7 @@ func (p *relatedSourcePass) ValidateSourceAdmission(ctx context.Context, ref age
 			return sourceio.Classify(err)
 		}
 	}
-	facts, err := bindingFacts(selection.leaf, p.env.Policy.Root, own)
+	facts, err := p.historyBindingFacts(ctx, selection, spans, own, admission.Binding)
 	if err != nil {
 		return err
 	}
@@ -913,4 +928,146 @@ func (s *historySnapshot) validateSpan(ctx context.Context, span *physicalSpan) 
 		span.file.validated = &facts
 	}
 	return facts, nil
+}
+
+func (p *relatedSourcePass) ReadRevision(ctx context.Context, ref agentapi.SourceRef, admission agentapi.SourceAdmission, limits agentapi.ReadLimits) (agentapi.SourceSnapshot, error) {
+	leaf, err := p.open(ctx, ref)
+	if err != nil {
+		return nil, err
+	}
+	if admission.NativeID == "" || leaf.identity.ThreadID != admission.NativeID {
+		return nil, sourceFailure(agentapi.Unsafe, "historical revision belongs to another thread")
+	}
+	selection := sourceSelection{leaf: leaf, thread: admission.NativeID}
+	if p.env.CodexRollouts != nil {
+		selection.set, err = p.env.CodexRollouts.Thread(ctx, admission.NativeID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	snapshot, err := p.readSelection(ctx, ref, limits, selection)
+	if err != nil {
+		return nil, err
+	}
+	validator, ok := snapshot.(agentapi.SourceAdmissionValidator)
+	if !ok {
+		return nil, errors.Join(sourceFailure(agentapi.Unsafe, "historical admission validator unavailable"), snapshot.Close())
+	}
+	if err := validator.ValidateAdmission(ctx, admission); err != nil {
+		return nil, errors.Join(err, snapshot.Close())
+	}
+	return snapshot, nil
+}
+
+func (s *historySnapshot) RevisionCandidates(ctx context.Context) ([]agentapi.SourceRef, error) {
+	if s.closed || s.owner.closed {
+		return nil, agentapi.ErrClosed
+	}
+	if err := s.check(ctx); err != nil {
+		return nil, err
+	}
+	out := make([]agentapi.SourceRef, 0, len(s.spans)+len(s.selection.set.Candidates))
+	seen := map[string]bool{}
+	add := func(ref agentapi.SourceRef) error {
+		if seen[ref.Path] {
+			return nil
+		}
+		if len(out) >= archive.MaxHistorySpans {
+			return sourceFailure(agentapi.Limit, "historical candidate limit")
+		}
+		seen[ref.Path] = true
+		out = append(out, ref)
+		return nil
+	}
+	for _, span := range s.spans {
+		if span.file.identity.ThreadID == s.selection.thread {
+			if err := add(span.file.ref); err != nil {
+				return nil, err
+			}
+		}
+	}
+	for _, ref := range s.selection.set.Candidates {
+		if err := add(ref); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+func (s *ordinarySnapshot) RevisionCandidates(ctx context.Context) ([]agentapi.SourceRef, error) {
+	if _, err := s.AdmissionFacts(ctx); err != nil {
+		return nil, err
+	}
+	return []agentapi.SourceRef{s.source.ref}, nil
+}
+
+func (p *relatedSourcePass) historyBindingFacts(ctx context.Context, selection sourceSelection, spans []physicalSpan, own *uint64, known *archive.CodexSourceBinding) (archive.CodexSourceBinding, error) {
+	var original *rolloutFile
+	for _, span := range spans {
+		if span.file.identity.ThreadID == selection.thread && span.file.identity.RolloutID == selection.thread {
+			original = span.file
+			break
+		}
+	}
+	if original == nil && known == nil && p.env.CodexRollouts != nil {
+		refs, err := p.env.CodexRollouts.Rollout(ctx, selection.thread)
+		if err != nil {
+			return archive.CodexSourceBinding{}, err
+		}
+		if len(refs) > archive.MaxHistorySpans {
+			return archive.CodexSourceBinding{}, sourceFailure(agentapi.Limit, "original fact candidate limit")
+		}
+		for _, ref := range refs {
+			candidate, err := p.open(ctx, ref)
+			if err != nil {
+				return archive.CodexSourceBinding{}, err
+			}
+			if candidate.identity.ThreadID == selection.thread && candidate.identity.RolloutID == selection.thread {
+				if original != nil && original.ref.Path != candidate.ref.Path {
+					return archive.CodexSourceBinding{}, sourceFailure(agentapi.Unavailable, "original native identity ambiguous")
+				}
+				original = candidate
+			}
+		}
+	}
+	var facts archive.CodexSourceBinding
+	if original != nil {
+		var err error
+		facts, err = bindingFacts(original, p.env.Policy.Root, own)
+		if err != nil {
+			return archive.CodexSourceBinding{}, err
+		}
+	} else if known != nil {
+		facts = *known
+		if own != nil {
+			facts.OwnStart = own
+		}
+	} else {
+		return archive.CodexSourceBinding{}, sourceFailure(agentapi.Unavailable, "original native creation facts unavailable")
+	}
+	for _, span := range spans {
+		id := span.file.identity
+		if id.ThreadID != selection.thread {
+			continue
+		}
+		if id.RootID != "" {
+			if facts.RootID != "" && facts.RootID != id.RootID {
+				return archive.CodexSourceBinding{}, sourceFailure(agentapi.Unsafe, "native root identity conflict")
+			}
+			facts.RootID = id.RootID
+		}
+		if id.ParentID != "" {
+			if facts.ParentID != "" && facts.ParentID != id.ParentID {
+				return archive.CodexSourceBinding{}, sourceFailure(agentapi.Unsafe, "native parent identity conflict")
+			}
+			facts.ParentID = id.ParentID
+		}
+		if id.Child && !facts.Child {
+			return archive.CodexSourceBinding{}, sourceFailure(agentapi.Unsafe, "native child identity conflict")
+		}
+	}
+	facts.PhysicalRolloutID = selection.leaf.identity.RolloutID
+	facts.Path = selection.leaf.ref.Path
+	facts.SelectedCwd = selection.leaf.meta.Cwd
+	return facts, facts.Validate()
 }
