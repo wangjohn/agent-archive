@@ -124,8 +124,10 @@ func TestInventoryCountsPhysicalCandidatesWithoutOverlappingRoles(t *testing.T) 
 func TestDatabaseCandidateDiagnosticsFollowWinningSkip(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		skip                              SkipReason
-		unsafe, tooLarge, missingWorktree bool
+		skip            SkipReason
+		unsafe          bool
+		tooLarge        bool
+		missingWorktree bool
 	}{
 		{skip: SkipUnsafeFormat, unsafe: true},
 		{skip: SkipTooLarge, tooLarge: true},
@@ -136,11 +138,11 @@ func TestDatabaseCandidateDiagnosticsFollowWinningSkip(t *testing.T) {
 			tr := newTree(t)
 			env := tr.env()
 			r := newResolver(env, config.Config{}, Filters{})
-			repo := tr.repo("home/repo")
-			w := &work{t: &transcript{harness: harnessCursor}, c: Candidate{StartedAt: fixedNow.Add(-time.Hour)}, chat: CursorDatabaseChat{Folder: repo}, unsafe: tc.unsafe, tooLarge: tc.tooLarge}
+			folder := tr.repo("home/repo")
 			if tc.missingWorktree {
-				w.chat.Folder = tr.path("home/.cursor/worktrees/gone")
+				folder = tr.path("home/.cursor/worktrees/gone")
 			}
+			w := &work{t: &transcript{harness: harnessCursor}, c: Candidate{StartedAt: fixedNow.Add(-time.Hour)}, chat: CursorDatabaseChat{Folder: folder}, unsafe: tc.unsafe, tooLarge: tc.tooLarge}
 
 			p := Plan{GeneratedAt: fixedNow, Filters: Filters{Harnesses: []string{"cursor"}}, CursorDatabaseChecked: true}
 			appendCursorDatabaseChats(env, r, nil, []*work{w}, &p)
