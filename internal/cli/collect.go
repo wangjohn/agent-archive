@@ -196,8 +196,8 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 		}
 	}
 	result, err := collector.Run(ctx, localStore, objectStore, collector.Options{
-		Labels:                   env.agentRegistry(),
-		LabelEnvironment:         agentapi.LabelEnvironment{Homes: labelHomes, ExternalSQLite: env.getenv("CODEX_SQLITE_HOME") != ""},
+		Labels:                   env.labelProviders(cfg),
+		LabelEnvironment:         env.labelEnvironment(cfg, labelHomes),
 		SkipSessionIndexRecovery: true,
 		Parsers:                  parsersFor(env),
 		Sources:                  registryFor(env),

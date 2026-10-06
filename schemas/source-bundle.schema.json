@@ -306,7 +306,7 @@
                   "native_session_id": {"type": "string", "pattern": "^[A-Za-z0-9_.-]{1,256}$"},
                   "state": {"enum": ["present", "confirmed_absent"]},
                   "name": {"type": "string", "minLength": 1, "maxLength": 512},
-                  "source": {"enum": ["index", "database"]},
+                  "source": {"enum": ["index", "database", "api"]},
                   "contract": {"type": "string", "pattern": "^[A-Za-z0-9_.-]{1,64}$"}
                 },
                 "allOf": [{"if": {"properties": {"state": {"const": "present"}}}, "then": {"required": ["name"]}, "else": {"not": {"required": ["name"]}}}]

@@ -6,6 +6,10 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Add explicit `codex_name_lookup: "native"` opt-in for bounded metadata-only
+  Codex naming requests, with guarded file fallback. Files remain the default.
+  Native startup can write Codex state; desktop coexistence is unverified.
+
 - Capture Claude Code native generated session names and prefer the latest
   explicit rename. Validate title ownership, preserve partial preview coverage,
   and keep naming bookkeeping out of activity and capture eligibility.
@@ -14,7 +18,7 @@ follow [Semantic Versioning](https://semver.org/).
 - Refresh Codex names for already admitted ordinary sessions from verified
   0.159.2 settled storage, including verified legacy database/index fallback. Changes publish filtered
   source evidence without renewing activity or retention; unavailable live-WAL
-  storage preserves the last verified name. No native process is started.
+  storage preserves the last verified name. The default files mode starts no native process.
 
 
 ### Added

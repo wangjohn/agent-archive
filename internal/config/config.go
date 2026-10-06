@@ -58,12 +58,24 @@ func ValidSkillEvidence(mode SkillEvidence) bool {
 	return false
 }
 
+// CodexNameLookup selects the explicitly configured native metadata transport.
+type CodexNameLookup string
+
+const (
+	// CodexNameLookupFiles reads settled local metadata without startup.
+	CodexNameLookupFiles CodexNameLookup = "files"
+	// CodexNameLookupNative explicitly permits bounded native startup.
+	CodexNameLookupNative CodexNameLookup = "native"
+)
+
 // Config is this machine's complete archive configuration. It contains no
 // secrets: R2 secrets live in the credential store (the Keychain on macOS, a
 // private file elsewhere; see destination.Config.R2CredentialRef)
 // and S3 credentials are resolved through the named AWS profile.
 type Config struct {
-	CodexCapture *CodexCaptureConfig `json:"codex_capture,omitempty"`
+	// CodexNameLookup selects files (default) or explicitly opted-in native startup.
+	CodexNameLookup CodexNameLookup     `json:"codex_name_lookup,omitempty"`
+	CodexCapture    *CodexCaptureConfig `json:"codex_capture,omitempty"`
 	// Discovery carries forward-only authorization; absent means disabled.
 	Discovery *DiscoveryConfig `json:"discovery,omitempty"`
 	// SpareKeys is the desired unused key count; nil means two.
@@ -254,6 +266,9 @@ func loadConfigWithCatalog(home string, c agentmeta.Catalog) (cfg Config, found,
 	if !ValidSkillEvidence(cfg.EffectiveSkillEvidence()) {
 		return Config{}, false, false, fmt.Errorf("read %s: unsupported skill_evidence %q; choose none, metadata, or body", path(home), cfg.SkillEvidence)
 	}
+	if err := cfg.ValidateCodexNameLookup(); err != nil {
+		return Config{}, false, false, err
+	}
 	if err := cfg.ValidateCloudflareTokenCommand(); err != nil {
 		return Config{}, false, false, err
 	}
@@ -285,6 +300,9 @@ func SaveWithCatalog(home string, cfg Config, c agentmeta.Catalog) error {
 		PreserveWriterFence(&cfg, previous)
 	}
 	if err := prepareDiscoveryConfig(&cfg); err != nil {
+		return err
+	}
+	if err := cfg.ValidateCodexNameLookup(); err != nil {
 		return err
 	}
 	if err := cfg.ValidateCloudflareTokenCommand(); err != nil {
@@ -465,4 +483,13 @@ func normalizeHandoff(h *HandoffConfig, c agentmeta.Catalog) error {
 		h.DefaultTo = defaults
 	}
 	return nil
+}
+
+// ValidateCodexNameLookup refuses unknown lookup modes.
+func (c Config) ValidateCodexNameLookup() error {
+	switch c.CodexNameLookup {
+	case "", CodexNameLookupFiles, CodexNameLookupNative:
+		return nil
+	}
+	return fmt.Errorf("unsupported codex_name_lookup %q; choose files or native", c.CodexNameLookup)
 }

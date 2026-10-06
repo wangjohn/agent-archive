@@ -12,8 +12,8 @@ func TestNamingOnlyChangePreservesRealEvidenceAcrossCodecUpgrade(t *testing.T) {
 	old := request.Bundle
 	old.Capture.FilterVersion = "16"
 	next := old
-	next.Capture.AdapterVersion = "0.17.0"
-	next.Capture.FilterVersion = "17"
+	next.Capture.AdapterVersion = "0.18.0"
+	next.Capture.FilterVersion = archive.FilterVersion
 	next.Capture.CapturedAt = old.Capture.CapturedAt.Add(time.Hour)
 	if (Filter{}).NamingOnlyChange(old, next) {
 		t.Fatal("codec change without a changed name claimed naming-only proof")
