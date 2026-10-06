@@ -3,6 +3,7 @@ package gitremote
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/sourcefacts"
@@ -286,14 +287,12 @@ func TestLegacyGitIdentityUsesSemanticProofWithoutInventedConfigPaths(t *testing
 	}
 	t.Log(strings.TrimSpace(string(version)))
 	root := initRepo(t, git, "https://example.test/acme/repo")
-	observer := &IdentityObserver{}
 	// Force the capability result to the legacy path independent of CI's Git.
 	scope, ok := identityObservationScope()
 	if !ok {
 		t.Fatal("observer scope")
 	}
-	observer.scope = scope
-	observer.probed, observer.legacy = true, true
+	observer := &IdentityObserver{scope: scope, probed: true, legacy: true}
 	id := observer.Lookup(t.Context(), root)
 	if !id.Known || id.Validation != "semantic" || id.Key != archive.RepoKey("https://example.test/acme/repo") {
 		t.Fatal(id)
@@ -313,7 +312,7 @@ func TestConfigurationInventoryHasItsOwnBoundedOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i < 200; i++ {
+	for i := range 200 {
 		if _, err := fmt.Fprintf(f, "\n[synthetic]\n key%d = ignored\n", i); err != nil {
 			t.Fatal(err)
 		}
@@ -321,7 +320,7 @@ func TestConfigurationInventoryHasItsOwnBoundedOutput(t *testing.T) {
 	if err := f.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ExecRunner(t.Context(), root, "-C", root, "config", "--show-origin", "--name-only", "-z", "--list"); err != ErrOutputLimit {
+	if _, err := ExecRunner(t.Context(), root, "-C", root, "config", "--show-origin", "--name-only", "-z", "--list"); !errors.Is(err, ErrOutputLimit) {
 		t.Fatal("short query cap", err)
 	}
 	if id := ProjectIdentity(t.Context(), root); !id.Known {

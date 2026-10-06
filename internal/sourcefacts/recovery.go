@@ -493,12 +493,14 @@ func (r *RecoveryResolver) semanticCurrent() bool {
 	r.semanticValidated = true
 	return true
 }
+
 func (r *RecoveryResolver) semanticIdentityCurrent(id RepositoryIdentity) bool {
 	if id.Validation != "semantic" {
 		return true
 	}
 	return r.semanticLookupCurrent(id, id.ObservedRoot)
 }
+
 func (r *RecoveryResolver) semanticLookupCurrent(id RepositoryIdentity, root string) bool {
 	if fresh, ok := r.semanticObservations[root]; ok {
 		return semanticIdentityAgrees(id, fresh)

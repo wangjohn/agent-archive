@@ -408,7 +408,7 @@ func TestRecoveredImportRenewsSemanticContextAfterPlanning(t *testing.T) {
 			env := tr.env()
 			observations := 0
 			admitting := false
-			var priorValidationContext context.Context
+			priorValidation := struct{ observed context.Context }{}
 			env.RepositoryIdentity = func(ctx context.Context, path string) sourcefacts.RepositoryIdentity {
 				if ctx.Err() != nil {
 					t.Fatal("Git lookup used expired planning context")
@@ -418,10 +418,10 @@ func TestRecoveredImportRenewsSemanticContextAfterPlanning(t *testing.T) {
 					if remaining := time.Until(deadline); !bounded || remaining <= 0 || remaining > 30*time.Second {
 						t.Fatal("nil-context admission did not bound semantic work per slice", remaining, bounded)
 					}
-					if ctx == priorValidationContext {
+					if ctx == priorValidation.observed {
 						t.Fatal("nil-context admission reused the previous slice's deadline")
 					}
-					priorValidationContext = ctx
+					priorValidation = struct{ observed context.Context }{observed: ctx}
 				}
 				observations++
 				return sourcefacts.RepositoryIdentity{Root: path, Key: key, Known: true, Validation: "semantic", ObservedRoot: path}
