@@ -42,14 +42,6 @@ func bundleEvidenceEqualWith(a, b archive.SourceBundle, equal func(any, any) (bo
 	return equal(a, b)
 }
 
-// jsonValuesEqual reports whether a and b encode to the same JSON, without
-// encoding them when they hold what decoded JSON holds (objects, arrays,
-// strings, numbers, booleans, null) of the same kinds. Anything else is
-// encoded and compared.
-func jsonValuesEqual(a, b any) (bool, error) {
-	return jsonValuesEqualWith(a, b, jsonEncodingsEqual)
-}
-
 func jsonValuesEqualWith(a, b any, equal func(any, any) (bool, error)) (bool, error) {
 	switch x := a.(type) {
 	case map[string]any:
