@@ -19,6 +19,7 @@ import (
 
 // sourceState carries a provider observation and legacy equality facts.
 type sourceState struct {
+	binding     *archive.CodexSourceBinding
 	kind        archive.SourceKind
 	file        transcriptFileInfo
 	cursor      cursorstore.Signature
@@ -71,7 +72,14 @@ func observe(kind archive.SourceKind, o agentapi.SourceObservation) sourceState 
 }
 
 func sourceRef(reg archive.SessionRegistration) agentapi.SourceRef {
-	return agentapi.SourceRef{Kind: reg.SourceKind, Path: reg.TranscriptPath, Key: reg.SourceKey}
+	if reg.CodexBinding != nil {
+		return agentapi.SourceRef{Kind: archive.SourceKindFile, Path: reg.CodexBinding.Path, Key: reg.NativeSessionID}
+	}
+	key := reg.SourceKey
+	if reg.Harness.Name == "codex" && reg.ReadsTranscriptFile() {
+		key = reg.NativeSessionID
+	}
+	return agentapi.SourceRef{Kind: reg.SourceKind, Path: reg.TranscriptPath, Key: key}
 }
 
 // sourceReader remains a small compatibility seam while policy consumes provider values.
@@ -88,6 +96,7 @@ func newSourceReader(reg archive.SessionRegistration, opts Options) (sourceReade
 		ref: sourceRef(reg), harness: reg.Harness.Name, startedAt: reg.SessionStartedAt,
 		subagentMetadata: reg.ParentSessionID != "", sources: opts.Sources,
 		passes: opts.sourcePasses, database: opts.CursorDatabase, rollouts: opts.CodexRollouts,
+		admission: sourceAdmission(reg),
 		discovery: discoveryRegistration(reg),
 	}, true
 }
@@ -95,6 +104,7 @@ func newSourceReader(reg archive.SessionRegistration, opts Options) (sourceReade
 // providerReader keeps only read dependencies; boxing whole registrations and
 // collector options would allocate their unrelated policy fields per source.
 type providerReader struct {
+	admission        agentapi.SourceAdmission
 	rollouts         agentapi.CodexRolloutLookup
 	ref              agentapi.SourceRef
 	harness          string
@@ -108,7 +118,7 @@ type providerReader struct {
 
 // discoveryRegistration retains only discovery authority for strict native reads.
 func discoveryRegistration(reg archive.SessionRegistration) *archive.SessionRegistration {
-	if reg.Origin != archive.SessionOriginDiscovery {
+	if reg.Origin != archive.SessionOriginDiscovery && (reg.CodexBinding == nil || reg.CodexBinding.Home == "") {
 		return nil
 	}
 	return &reg
@@ -119,10 +129,14 @@ func discoveryRegistration(reg archive.SessionRegistration) *archive.SessionRegi
 func sourceEnvironment(reg *archive.SessionRegistration, database string) agentapi.SourceEnvironment {
 	db := (Options{CursorDatabase: database}).cursorDatabase()
 	if reg != nil {
+		root := reg.DiscoveryRoot
+		if reg.CodexBinding != nil && reg.CodexBinding.Home != "" {
+			root = reg.CodexBinding.Home
+		}
 		return agentapi.SourceEnvironment{
 			Database: db,
-			Files:    sourcefacts.RootOpener{Root: reg.DiscoveryRoot},
-			Policy:   transcriptio.OpenPolicy{Root: reg.DiscoveryRoot, RejectSymlinks: true},
+			Files:    sourcefacts.RootOpener{Root: root},
+			Policy:   transcriptio.OpenPolicy{Root: root, RejectSymlinks: true},
 		}
 	}
 	return agentapi.SourceEnvironment{Database: db}
@@ -158,6 +172,9 @@ func (r providerReader) pass(ctx context.Context, p agentapi.SourceProvider, key
 
 func (r providerReader) discoveryRoot() string {
 	if r.discovery != nil {
+		if r.discovery.CodexBinding != nil && r.discovery.CodexBinding.Home != "" {
+			return r.discovery.CodexBinding.Home
+		}
 		return r.discovery.DiscoveryRoot
 	}
 	return ""
@@ -173,23 +190,14 @@ func (r providerReader) Signature(ctx context.Context) (out sourceState, err err
 		return out, err
 	}
 	defer func() { err = errors.Join(err, closePass()) }()
-	if r.discovery != nil {
-		// A stat-only provider signature would skip component symlink checks.
-		snap, readErr := p.Read(ctx, r.ref, agentapi.ReadLimits{})
-		if readErr != nil {
-			return out, translateSourceError(readErr)
-		}
-		defer func() { err = errors.Join(err, snap.Close()) }()
-		file := snap.Input().File
-		if file == nil {
-			return out, errors.New("discovery signature requires a confined file snapshot")
-		}
-		if err := file.Check(); err != nil {
+	if validator, ok := p.(agentapi.SourceAdmissionSignature); ok && r.admission.NativeID != "" {
+		if err := validator.ValidateSourceAdmission(ctx, r.ref, r.admission); err != nil {
 			return out, err
 		}
-		o := snap.Observation()
-		return observe(r.ref.Kind, o), r.validateObservation(provider, o)
+	} else if r.discovery != nil {
+		return out, errors.New("confined source admission validator required")
 	}
+
 	o, err := p.Signature(ctx, r.ref)
 	if err == nil {
 		err = r.validateObservation(provider, o)
@@ -231,11 +239,24 @@ func (r providerReader) Filter(ctx context.Context, adapter archive.Adapter, max
 		transcriptFilters.Add(1)
 	}
 	in := snap.Input()
-	if r.discovery != nil {
-		if err = validateDiscoveryInput(ctx, in.File, *r.discovery); err != nil {
+	if validator, ok := snap.(agentapi.SourceAdmissionValidator); ok && r.admission.NativeID != "" {
+		if err := validator.ValidateAdmission(ctx, r.admission); err != nil {
 			return out, observed, err
 		}
+	} else if r.discovery != nil {
+		return out, observed, errors.New("confined source admission validator required")
 	}
+	if facts, ok := snap.(agentapi.SourceAdmissionFacts); ok && r.admission.NativeID != "" {
+		binding, err := facts.AdmissionFacts(ctx)
+		if err != nil {
+			return out, observed, err
+		}
+		if r.discovery != nil && r.discovery.Origin == archive.SessionOriginDiscovery && !binding.NativeCreatedAt.Equal(r.discovery.SessionStartedAt) {
+			return out, observed, errors.New("native creation evidence changed")
+		}
+		observed.binding = &binding
+	}
+
 	out, err = f.Filter(ctx, in, agentapi.FilterContext{Filename: filepath.Base(r.ref.Path), StartedAt: r.startedAt, Limits: limits})
 	if err != nil {
 		return out, observed, translateSourceError(err)
@@ -495,4 +516,22 @@ func sourceSemantics(sources agentapi.SourcesLookup, reg archive.SessionRegistra
 		return agentapi.SourceSemantics{}, errors.New("source integration unavailable")
 	}
 	return p.Describe(sourceRef(reg))
+}
+
+func sourceAdmission(reg archive.SessionRegistration) agentapi.SourceAdmission {
+	if reg.Harness.Name != "codex" {
+		return agentapi.SourceAdmission{}
+	}
+	cwd := reg.DiscoveryCwd
+	if reg.CodexBinding != nil {
+		cwd = reg.CodexBinding.Cwd
+	}
+	admission := agentapi.SourceAdmission{NativeID: reg.NativeSessionID, Cwd: cwd, Binding: reg.CodexBinding}
+	if reg.Origin == archive.SessionOriginDiscovery && reg.CodexBinding == nil {
+		admission.NativeCreatedAt = reg.SessionStartedAt
+		admission.InitialProducerVersion = reg.Harness.Version
+		admission.InitialProducerOriginator = reg.DiscoveryProducerOriginator
+		admission.InitialProducerSource = reg.DiscoveryProducerSource
+	}
+	return admission
 }

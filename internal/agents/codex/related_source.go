@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"os"
 	"slices"
 	"time"
 
@@ -175,8 +176,22 @@ func (p *relatedSourcePass) selectSource(ctx context.Context, ref agentapi.Sourc
 		}
 	}
 	seed, err := p.open(ctx, ref)
+	if errors.Is(err, os.ErrNotExist) && p.env.CodexRollouts != nil && codexmeta.RolloutID(ref.Key+".jsonl") == ref.Key && ref.Key != "" {
+		set, lookupErr := p.env.CodexRollouts.Thread(ctx, ref.Key)
+		if lookupErr != nil {
+			return sourceSelection{}, lookupErr
+		}
+		if set.Current != nil {
+			seed, err = p.open(ctx, *set.Current)
+		} else if set.Complete && len(set.Candidates) > 0 && len(set.Candidates) <= archive.MaxHistorySpans {
+			seed, err = p.open(ctx, set.Candidates[0])
+		}
+	}
 	if err != nil {
 		return sourceSelection{}, err
+	}
+	if ref.Key != "" && seed.identity.ThreadID != ref.Key {
+		return sourceSelection{}, sourceFailure(agentapi.Unsafe, "registered native thread identity mismatch")
 	}
 	selected := sourceSelection{leaf: seed, thread: seed.identity.ThreadID}
 	if p.env.CodexRollouts == nil {
@@ -513,6 +528,13 @@ func (s *historySnapshot) Close() error {
 	return nil
 }
 func (s *historySnapshot) ValidateAdmission(ctx context.Context, a agentapi.SourceAdmission) error {
+	facts, err := s.AdmissionFacts(ctx)
+	if err != nil {
+		return err
+	}
+	if !validAdmissionFacts(s.selection.leaf, facts, a) {
+		return sourceFailure(agentapi.Unsafe, "source admission facts changed")
+	}
 	if a.NativeID != s.selection.thread || a.Cwd != "" && a.Cwd != s.selection.leaf.meta.Cwd {
 		return sourceFailure(agentapi.Unsafe, "source admission identity changed")
 	}
@@ -657,6 +679,13 @@ func (f ordinaryFile) Records(ctx context.Context, tail bool, windowBytes, recor
 }
 
 func (s *ordinarySnapshot) ValidateAdmission(ctx context.Context, a agentapi.SourceAdmission) error {
+	facts, err := s.AdmissionFacts(ctx)
+	if err != nil {
+		return err
+	}
+	if !validAdmissionFacts(s.source, facts, a) {
+		return sourceFailure(agentapi.Unsafe, "source admission facts changed")
+	}
 	if s.closed || s.owner.closed {
 		return agentapi.ErrClosed
 	}
@@ -664,4 +693,87 @@ func (s *ordinarySnapshot) ValidateAdmission(ctx context.Context, a agentapi.Sou
 		return sourceFailure(agentapi.Unsafe, "source admission identity changed")
 	}
 	return sourceio.Classify(s.source.file.CheckPrefix(ctx, s.length, s.digest))
+}
+
+func bindingFacts(f *rolloutFile, home string, own *uint64) (archive.CodexSourceBinding, error) {
+	_, created, found, err := codexmeta.ParseCodexMeta(f.header)
+	if err != nil || !found || created.IsZero() {
+		return archive.CodexSourceBinding{}, sourceFailure(agentapi.Unavailable, "native creation evidence unavailable")
+	}
+	var source string
+	if json.Unmarshal(f.meta.Source, &source) != nil && len(f.meta.Source) > 0 {
+		var value any
+		if err := json.Unmarshal(f.meta.Source, &value); err != nil {
+			return archive.CodexSourceBinding{}, err
+		}
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			return archive.CodexSourceBinding{}, err
+		}
+		source = string(encoded)
+	}
+	facts := archive.CodexSourceBinding{Version: 1, NativeThreadID: f.identity.ThreadID, NativeCreatedAt: created, Cwd: f.meta.Cwd, ProducerSource: source, RootID: f.identity.RootID, ParentID: f.identity.ParentID, OwnStart: own, PhysicalRolloutID: f.identity.RolloutID, Path: f.ref.Path, Home: home}
+	return facts, facts.Validate()
+}
+
+func (s *ordinarySnapshot) AdmissionFacts(ctx context.Context) (archive.CodexSourceBinding, error) {
+	if s.closed || s.owner.closed {
+		return archive.CodexSourceBinding{}, agentapi.ErrClosed
+	}
+	if err := s.source.file.CheckPrefix(ctx, s.length, s.digest); err != nil {
+		return archive.CodexSourceBinding{}, sourceio.Classify(err)
+	}
+	return bindingFacts(s.source, s.owner.env.Policy.Root, nil)
+}
+
+func (s *historySnapshot) AdmissionFacts(ctx context.Context) (archive.CodexSourceBinding, error) {
+	if s.closed || s.owner.closed {
+		return archive.CodexSourceBinding{}, agentapi.ErrClosed
+	}
+	if err := s.check(ctx); err != nil {
+		return archive.CodexSourceBinding{}, err
+	}
+	return bindingFacts(s.selection.leaf, s.owner.env.Policy.Root, s.history.OwnStart)
+}
+
+func (p *relatedSourcePass) ValidateSourceAdmission(ctx context.Context, ref agentapi.SourceRef, admission agentapi.SourceAdmission) error {
+	selection, err := p.selectSource(ctx, ref)
+	if err != nil {
+		return err
+	}
+	spans, err := p.graph(ctx, selection.leaf)
+	if err != nil {
+		return err
+	}
+	var own *uint64
+	for _, span := range spans {
+		if span.file.identity.ThreadID != selection.thread {
+			continue
+		}
+		for _, boundary := range []*uint64{span.file.identity.ForkOrdinal, span.file.identity.SubagentOrdinal} {
+			if boundary != nil && (own == nil || *boundary > *own) {
+				v := *boundary
+				own = &v
+			}
+		}
+		digest := sha256.Sum256(span.file.header)
+		if err := span.file.file.CheckPrefix(ctx, int64(len(span.file.header)), digest); err != nil {
+			return sourceio.Classify(err)
+		}
+	}
+	facts, err := bindingFacts(selection.leaf, p.env.Policy.Root, own)
+	if err != nil {
+		return err
+	}
+	if selection.thread != admission.NativeID || admission.Cwd != "" && facts.Cwd != admission.Cwd || !validAdmissionFacts(selection.leaf, facts, admission) {
+		return sourceFailure(agentapi.Unsafe, "source admission facts changed")
+	}
+	if p.env.CodexRollouts != nil {
+		return p.env.CodexRollouts.Check(ctx, selection.thread, selection.set.Revision)
+	}
+	return ctx.Err()
+}
+
+func validAdmissionFacts(f *rolloutFile, facts archive.CodexSourceBinding, a agentapi.SourceAdmission) bool {
+	return facts.PreservesFacts(a.Binding) && (a.NativeCreatedAt.IsZero() || facts.NativeCreatedAt.Equal(a.NativeCreatedAt)) && (a.InitialProducerVersion == "" || f.meta.Version == a.InitialProducerVersion) && (a.InitialProducerOriginator == "" || f.meta.Originator == a.InitialProducerOriginator) && (a.InitialProducerSource == "" || facts.ProducerSource == a.InitialProducerSource)
 }

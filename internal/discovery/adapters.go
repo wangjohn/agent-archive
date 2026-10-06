@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/codexmeta"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 )
@@ -54,9 +55,12 @@ const (
 
 // Observation is one bounded metadata probe and its typed outcome.
 type Observation struct {
-	Candidate Candidate
-	Outcome   Outcome
-	Bytes     int64
+	// Identity is validated native lookup evidence, independent of Candidate admission.
+	Identity        *codexmeta.CodexIdentity
+	NativeCreatedAt time.Time
+	Candidate       Candidate
+	Outcome         Outcome
+	Bytes           int64
 }
 
 // Fingerprint is a retry/scheduling hint, never native start evidence.
@@ -152,7 +156,7 @@ func (codexAdapter) Describe(root, path, name string) SourceEntry {
 
 func (a codexAdapter) Inspect(ctx context.Context, source SourceDescriptor) Observation {
 	h := sourcefacts.ReadHeader(ctx, source.Root, source.Locator)
-	o := Observation{Outcome: Outcome(h.Outcome), Bytes: h.Bytes}
+	o := Observation{Outcome: Outcome(h.Outcome), Bytes: h.Bytes, Identity: h.Identity, NativeCreatedAt: h.NativeCreatedAt}
 	if o.Outcome != outcomeUsable {
 		return o
 	}

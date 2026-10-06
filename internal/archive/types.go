@@ -323,8 +323,10 @@ type CodexAdmissionProof struct {
 }
 
 type SessionRegistration struct {
-	CodexAdmission   *CodexAdmissionProof `json:"codex_admission,omitempty"`
-	ArchiveSessionID string               `json:"archive_session_id"`
+	CodexBinding       *CodexSourceBinding  `json:"codex_binding,omitempty"`
+	CodexCandidatePath string               `json:"codex_candidate_path,omitempty"`
+	CodexAdmission     *CodexAdmissionProof `json:"codex_admission,omitempty"`
+	ArchiveSessionID   string               `json:"archive_session_id"`
 	// PreviousGenerationID links recovery generations independently of subagents.
 	PreviousGenerationID string `json:"previous_generation_id,omitempty"`
 	// CaptureFrozen forbids further native capture; retained privacy maintenance remains.
@@ -417,6 +419,17 @@ func (r SessionRegistration) Imported() bool {
 // a missing session ID, project, harness name, or start time, or source
 // fields (SourceKind, SourceKey, TranscriptPath) that do not fit together.
 func (r SessionRegistration) Validate() error {
+	if r.CodexBinding != nil {
+		if r.Harness.Name != "codex" || r.CodexBinding.NativeThreadID != r.NativeSessionID {
+			return errors.New("Codex binding requires matching Codex registration")
+		}
+		if err := r.CodexBinding.Validate(); err != nil {
+			return err
+		}
+	}
+	if r.CodexCandidatePath != "" && (r.Harness.Name != "codex" || !filepath.IsAbs(r.CodexCandidatePath) || len(r.CodexCandidatePath) > 4096) {
+		return errors.New("invalid Codex candidate locator")
+	}
 	if r.PreviousGenerationID == r.ArchiveSessionID && r.PreviousGenerationID != "" {
 		return errors.New("generation cannot precede itself")
 	}

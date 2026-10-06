@@ -1,6 +1,10 @@
 package agentapi
 
-import "context"
+import (
+	"context"
+	"github.com/wangjohn/agent-archive/internal/archive"
+	"time"
+)
 
 // CodexRolloutLookup supplies bounded existing catalog evidence without enumeration.
 // Every locator is an untrusted hint, revalidated by the source provider.
@@ -29,11 +33,27 @@ const (
 
 // SourceAdmission contains immutable native observations, never capture permission.
 type SourceAdmission struct {
-	NativeID string
-	Cwd      string
+	NativeID                  string
+	Cwd                       string
+	Binding                   *archive.CodexSourceBinding
+	NativeCreatedAt           time.Time
+	InitialProducerVersion    string
+	InitialProducerOriginator string
+	InitialProducerSource     string
 }
 
 // SourceAdmissionValidator checks opened source facts without reopening a locator.
 type SourceAdmissionValidator interface {
 	ValidateAdmission(context.Context, SourceAdmission) error
+}
+
+// SourceAdmissionFacts exposes bounded facts from the actual opened snapshot.
+type SourceAdmissionFacts interface {
+	AdmissionFacts(context.Context) (archive.CodexSourceBinding, error)
+}
+
+// SourceAdmissionSignature validates opened native facts without decoding a
+// complete transcript merely to decide whether its signature is unchanged.
+type SourceAdmissionSignature interface {
+	ValidateSourceAdmission(context.Context, SourceRef, SourceAdmission) error
 }

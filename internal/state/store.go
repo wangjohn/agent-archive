@@ -211,6 +211,15 @@ func (s *Store) updateRegistration(archiveSessionID string, update func(*archive
 		if err := json.Unmarshal(current.data, &reg); err != nil {
 			return nil, false, fmt.Errorf("read registration %q: %w", archiveSessionID, err)
 		}
+		originalBinding := reg.CodexBinding
+		if originalBinding != nil {
+			copyBinding := *originalBinding
+			if copyBinding.OwnStart != nil {
+				boundary := *copyBinding.OwnStart
+				copyBinding.OwnStart = &boundary
+			}
+			originalBinding = &copyBinding
+		}
 		var originalProof *archive.CodexAdmissionProof
 		if reg.CodexAdmission != nil {
 			proof := *reg.CodexAdmission
@@ -226,6 +235,9 @@ func (s *Store) updateRegistration(archiveSessionID string, update func(*archive
 		if err := update(&reg); err != nil {
 			updateFailed = true
 			return nil, false, err
+		}
+		if !reg.CodexBinding.PreservesFacts(originalBinding) {
+			return nil, false, errors.New("a registration update cannot change native Codex binding facts")
 		}
 		if !sameCodexAdmission(originalProof, reg.CodexAdmission) {
 			return nil, false, errors.New("a registration update cannot change Codex admission proof")

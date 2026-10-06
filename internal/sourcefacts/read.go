@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/codexmeta"
 	"github.com/wangjohn/agent-archive/internal/transcriptio"
 )
 
@@ -24,12 +25,15 @@ const (
 
 // Header is a content-free, bounded observation of one Codex source.
 type Header struct {
-	Meta        CodexMeta
-	Started     time.Time
-	FirstTaskAt time.Time
-	Profile     CodexProfile
-	Outcome     string
-	Bytes       int64
+	// Identity survives understood history-pending outcomes as lookup evidence only.
+	Identity        *codexmeta.CodexIdentity
+	NativeCreatedAt time.Time
+	Meta            CodexMeta
+	Started         time.Time
+	FirstTaskAt     time.Time
+	Profile         CodexProfile
+	Outcome         string
+	Bytes           int64
 }
 
 // OpenRegular opens within an approved root without blocking on FIFOs or
@@ -117,6 +121,13 @@ func ReadCodexHeader(reader io.Reader, path string) (h Header) {
 				h.Meta = CodexMeta{}
 				h.Outcome = "oversized_metadata"
 				return h
+			}
+			identity, identityOutcome := meta.Identity(path)
+			captureOutcome := meta.CaptureOutcome(path)
+			knownHistory := captureOutcome == codexmeta.NativeFormat || captureOutcome == codexmeta.ChildHistoryPending || captureOutcome == codexmeta.ForkHistoryPending || captureOutcome == codexmeta.RelatedHistoryPending
+			if identityOutcome == "" && knownHistory && !start.IsZero() {
+				h.Identity = &identity
+				h.NativeCreatedAt = start
 			}
 			if outcome := meta.CaptureOutcome(path); outcome != "native_format" {
 				h.Outcome = string(outcome)
