@@ -18,6 +18,11 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Status distinguishes installed hooks from observed execution and shows Codex
+  automatic capture with archived and verified session counts. Optional hook
+  evidence and detailed scan diagnostics move to verbose output; capture warnings
+  and required hook approval instructions stay visible in normal status.
+
 - Pairing recovery preserves exclusions on other clones and accepts home-prefixed
   manual project paths. Retired keys with exact local deletion confirmations no
   longer block revoking a replacement key after re-pairing; unverified absence

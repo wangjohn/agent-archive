@@ -84,12 +84,12 @@ Agent Archive  ● Needs attention
     To change credentials, run agent-archive setup and choose storage.
 
 Capture
-  ✓ Claude Code 2.1.283       hooks on          212 sessions (+40 subagents) · 48 imported · 3 uploading
+  ✓ Claude Code 2.1.283       hooks installed   212 sessions (+40 subagents) · 200 archived (1 verified) · 48 imported · 3 uploading
       ~/agent-archive   started 11:12   waiting for its first upload
       ~/agent-archive   started 11:04
       ~/styleprofile    started 09:24
     · 17 sessions have capture gaps
-  ✓ Cursor 3.21.13            hooks on          14 sessions · 27 imported · 1 uploading
+  ✓ Cursor 3.21.13            hooks installed   14 sessions · 14 archived (14 verified) · 27 imported · 1 uploading
       ~/personal_website   started 11:40
   ! Codex 0.155.0-alpha.9.2   hooks installed   no sessions yet
     Approve the archive hooks with /hooks in Codex.
@@ -102,19 +102,33 @@ Storage
 More: agent-archive status --verbose · agent-archive status claude
 ```
 
-**Capture** has a row per app: its version and hooks, then how many
-sessions its hooks captured (subagents counted apart), how many
-`agent-archive backfill` imported, and how many are uploading, that is,
-have work not yet in the bucket. Under it is each uploading session's
-project and when it started, at most five (`status APP` lists all); only
-something unusual is added: **waiting for its first upload** for a session
-never uploaded, and a ! row with the kind of failure for a session the last
-pass could not update. A session whose transcript can no longer be captured
-is counted under capture gaps instead, and a Cursor chat that never got a
-transcript (transcripts turned off) on a line of its own. **hooks on** means
-the app's hooks are installed; **hooks installed** means they are, but the
-app runs them only once you approve them, and no session has shown that it
-does yet. **Storage** has a row each for the
+**Capture** has a row per app with its version, capture method, and session
+counts. For Codex with automatic discovery enabled, the main row says
+**automatic capture** and names the selected project scope. Waiting or unknown
+capture states remain visible. Optional hooks do not add a setup step to the
+normal status screen.
+
+Session counts distinguish sessions found from sessions **archived** (uploaded)
+and **verified** (the uploaded publication was read back). Archived and verified
+counts cover automatically captured sessions and include subagents where present;
+imported sessions are counted separately. An archived session can still be
+uploading newer changes or have capture gaps; the counts do not promise a complete
+transcript. Imported sessions and sessions waiting to upload have separate counts.
+
+Under each app are at most five uploading sessions (`status APP` lists all),
+with the project, start time, and any failure. A session without its first
+upload says **waiting for its first upload**. Capture gaps and Cursor chats
+without transcripts are reported separately.
+
+**Hooks installed** means the hook configuration is present, not that the
+hooks have run or been approved. `status --verbose` reports hook execution
+as observed or not yet observed, separately from hook trust. Codex hook approval
+instructions remain visible in normal status when discovery is disabled and
+hook execution has not been observed. With discovery enabled, optional hook
+information, scan counts, and source format diagnostics are available in
+verbose output. Skipped scan observations still show a warning in normal status.
+
+**Storage** has a row each for the
 destination with the last upload (! when the last pass failed on storage),
 the background collector, bucket privacy (with the provider's guidance
 when this machine can't inspect the bucket),
