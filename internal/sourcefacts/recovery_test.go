@@ -484,3 +484,44 @@ func TestSemanticCachedSliceHonorsCancellation(t *testing.T) {
 		t.Fatal("cached slice ignored cancellation")
 	}
 }
+
+func TestMappedRecoveryFreezesPlanningIdentityPerRoot(t *testing.T) {
+	key := archive.RepoKey("https://example.test/acme/original")
+	changedKey := archive.RepoKey("https://example.test/acme/changed")
+	currentKey := key
+	calls := 0
+	r := NewRecoveryResolver([]archive.ProjectActivation{{Root: "/synthetic/root", Included: true}}, map[string]string{"/gone/first": "/synthetic/root", "/gone/second": "/synthetic/root"}, filepath.Clean, func(context.Context, string) RepositoryIdentity {
+		calls++
+		return RepositoryIdentity{Known: true, Root: "/synthetic/root", Key: currentKey, Validation: "semantic", ObservedRoot: "/synthetic/root"}
+	}, nil)
+	proof, outcome := r.Recover(t.Context(), "/gone/first", key)
+	if outcome != "" {
+		t.Fatal(outcome)
+	}
+	currentKey = changedKey
+	_, outcome = r.Recover(t.Context(), "/gone/second", changedKey)
+	if outcome != RecoveryMappingConflict || calls != 1 {
+		t.Fatalf("later mapping replaced the planning epoch: outcome=%s calls=%d", outcome, calls)
+	}
+	r.ResetValidationContext(t.Context())
+	if r.CurrentSlice(proof) {
+		t.Fatal("original mapping admitted after destination identity changed")
+	}
+}
+
+func TestSemanticRecoveryRejectsChangedObserverScope(t *testing.T) {
+	key := archive.RepoKey("https://example.test/acme/repo")
+	scope := "planned-observer"
+	r := NewRecoveryResolver([]archive.ProjectActivation{{Root: "/synthetic/root", Included: true}}, nil, filepath.Clean, func(context.Context, string) RepositoryIdentity {
+		return RepositoryIdentity{Known: true, Root: "/synthetic/root", Key: key, Validation: "semantic", ObservedRoot: "/synthetic/root", ObservationScope: scope}
+	}, nil)
+	proof, outcome := r.Recover(t.Context(), "/synthetic/gone", key)
+	if outcome != "" {
+		t.Fatal(outcome)
+	}
+	scope = "replacement-observer"
+	r.ResetValidationContext(t.Context())
+	if r.CurrentSlice(proof) || r.MetadataExhausted {
+		t.Fatal("changed observer must invalidate the epoch, not exhaust its budget")
+	}
+}

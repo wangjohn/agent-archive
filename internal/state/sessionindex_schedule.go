@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -287,9 +288,7 @@ func (s *Store) applyPackedRecovery(ctx context.Context, cursor *sessionRecovery
 		if cursor.Offset > packedSessionIndexShards {
 			cursor.Offset = 0
 		}
-		complete, err := s.applyRecoveryPhase(ctx, cursor, deadline, packedSessionIndexShards, func(i int) error {
-			return s.recoverPackedShardSlice(ctx, packedShardName(i), marker, owners[i], children[i], deadline)
-		})
+		complete, err := s.applyPackedShardPhase(ctx, cursor, deadline, marker, owners, children)
 		if err != nil || !complete {
 			return candidates, false, err
 		}
@@ -457,4 +456,73 @@ func (cursor sessionRecoveryCursor) validChecksum() bool {
 	checksum := cursor.Checksum
 	cursor.Checksum = ""
 	return checksum != "" && checksum == phaseFingerprint(cursor)
+}
+
+// applyPackedShardPhase retains a durable contiguous cursor prefix while at most
+// two shards overlap native file and directory sync. The allowance is shared by
+// the entire phase, and all publications finish before checkpoint or return.
+func (s *Store) applyPackedShardPhase(ctx context.Context, cursor *sessionRecoveryCursor, deadline time.Time, marker sessionIndexMarker, owners [packedSessionIndexShards]map[agentmeta.SessionKey][]string, children [packedSessionIndexShards][]SubagentCandidate) (bool, error) {
+	for cursor.Offset < packedSessionIndexShards {
+		batch := make([]packedPublication, 0, 2)
+		var prepareErr error
+		for i := cursor.Offset; i < min(cursor.Offset+2, packedSessionIndexShards); i++ {
+			if !time.Now().Before(deadline) {
+				prepareErr = errPackedSlicePending
+				break
+			}
+			if prepareErr = ctx.Err(); prepareErr != nil {
+				break
+			}
+			shard := packedShardName(i)
+			data, err := s.preparePackedShardSlice(ctx, marker, owners[i], children[i], deadline)
+			if err != nil {
+				prepareErr = fmt.Errorf("packed shard %s: %w", shard, err)
+				break
+			}
+			path := packedIndexPath(s.home, shard)
+			before, err := readSnapshot(path)
+			if err != nil {
+				prepareErr = err
+				break
+			}
+			batch = append(batch, packedPublication{path: path, before: before, data: data})
+		}
+		// An exhausted allowance is control flow, not a preparation failure.
+		// Unwrap only single-cause wrappers: joined real failures must survive.
+		pendingCause := prepareErr
+		for errors.Unwrap(pendingCause) != nil {
+			pendingCause = errors.Unwrap(pendingCause)
+		}
+		_, joinedCause := pendingCause.(interface{ Unwrap() []error })
+		slicePending := !joinedCause && errors.Is(pendingCause, errPackedSlicePending)
+		if slicePending {
+			prepareErr = nil
+		}
+		errs := s.publishPackedBatch(ctx, marker, batch)
+		for _, err := range errs {
+			if err != nil {
+				break
+			}
+			cursor.Offset++
+		}
+		publicationErr := errors.Join(errs...)
+		if publicationErr != nil {
+			// A canceled later commit must retain the already durable prefix,
+			// including any checkpoint failure, after every worker is joined.
+			if errors.Is(publicationErr, context.Canceled) || errors.Is(publicationErr, context.DeadlineExceeded) {
+				return false, errors.Join(publicationErr, prepareErr, s.saveRecoveryCursor(cursor))
+			}
+			return false, errors.Join(publicationErr, prepareErr)
+		}
+		if slicePending {
+			return false, errors.Join(ctx.Err(), s.saveRecoveryCursor(cursor))
+		}
+		if prepareErr != nil {
+			if errors.Is(prepareErr, context.Canceled) || errors.Is(prepareErr, context.DeadlineExceeded) {
+				return false, errors.Join(prepareErr, s.saveRecoveryCursor(cursor))
+			}
+			return false, prepareErr
+		}
+	}
+	return true, nil
 }

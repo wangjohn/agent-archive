@@ -288,15 +288,11 @@ func TestLegacyGitIdentityUsesSemanticProofWithoutInventedConfigPaths(t *testing
 	root := initRepo(t, git, "https://example.test/acme/repo")
 	observer := &IdentityObserver{}
 	// Force the capability result to the legacy path independent of CI's Git.
-	executable, err := realLocator.find()
-	if err != nil {
-		t.Fatal(err)
-	}
-	stamp, ok := repositoryStamp(executable)
+	scope, ok := identityObservationScope()
 	if !ok {
-		t.Fatal("executable stamp")
+		t.Fatal("observer scope")
 	}
-	observer.scope = stamp + "\x00" + executable + "\x00" + strings.Join(environment(os.Environ()), "\x00")
+	observer.scope = scope
 	observer.probed, observer.legacy = true, true
 	id := observer.Lookup(t.Context(), root)
 	if !id.Known || id.Validation != "semantic" || id.Key != archive.RepoKey("https://example.test/acme/repo") {
@@ -371,5 +367,83 @@ func TestOptionalCapabilitiesAreProbedOnceAndScopedToEnvironment(t *testing.T) {
 	}
 	if probes != 2 {
 		t.Fatal("environment change reused capability cache", probes)
+	}
+}
+
+func TestProjectIdentityRejectsChangedObserverEnvironment(t *testing.T) {
+	for _, modern := range []bool{false, true} {
+		t.Run(fmt.Sprintf("modern=%v", modern), func(t *testing.T) {
+			git := gitOrSkip(t)
+			root := initRepo(t, git, "https://example.test/acme/repo")
+			observer := &IdentityObserver{Run: func(ctx context.Context, dir string, args ...string) ([]byte, error) {
+				if len(args) >= 4 && args[2] == "var" {
+					if modern {
+						return []byte(filepath.Join(os.Getenv("HOME"), ".gitconfig") + "\n"), nil
+					}
+					return nil, projectExitStatusError(129)
+				}
+				if len(args) >= 4 && args[2] == "rev-parse" && args[3] == "--path-format=absolute" {
+					var paths []string
+					for _, name := range []string{"HEAD", "config", "config.worktree", "commondir"} {
+						paths = append(paths, filepath.Join(root, ".git", name))
+					}
+					return []byte(strings.Join(paths, "\n") + "\n"), nil
+				}
+				return ExecRunner(ctx, dir, args...)
+			}}
+			id := observer.Lookup(t.Context(), root)
+			if !id.Known || !ProjectIdentityCurrent(id) {
+				t.Fatal("initial identity unavailable", id)
+			}
+			// No stamped file changes: a different HOME selects a different set
+			// of candidate files, including files absent during planning.
+			t.Setenv("HOME", t.TempDir())
+			if ProjectIdentityCurrent(id) {
+				t.Fatal("changed config environment retained planned evidence")
+			}
+		})
+	}
+}
+
+func TestProjectIdentityRejectsChangedObserverExecutable(t *testing.T) {
+	git := gitOrSkip(t)
+	root := initRepo(t, git, "https://example.test/acme/repo")
+	id := ProjectIdentity(t.Context(), root)
+	if !id.Known {
+		t.Fatal(id)
+	}
+	fakeGitOnPath(t, `exit 129`)
+	if ProjectIdentityCurrent(id) {
+		t.Fatal("replacement executable retained planned evidence")
+	}
+}
+
+func TestProjectIdentityTraversalLimitIsBudgetExhaustion(t *testing.T) {
+	gitOrSkip(t)
+	for _, repository := range []bool{false, true} {
+		t.Run(fmt.Sprintf("repository=%v", repository), func(t *testing.T) {
+			top := t.TempDir()
+			root := top
+			for range 65 {
+				root = filepath.Join(root, "nested")
+			}
+			if err := os.MkdirAll(root, 0700); err != nil {
+				t.Fatal(err)
+			}
+			observer := &IdentityObserver{Run: func(_ context.Context, _ string, args ...string) ([]byte, error) {
+				if !repository {
+					return nil, projectExitStatusError(128)
+				}
+				if args[2] == "rev-parse" {
+					return []byte(top + "\n"), nil
+				}
+				return []byte("https://example.test/acme/repo\n"), nil
+			}, ConfigRun: func(context.Context, string, ...string) ([]byte, error) {
+				return []byte("file:" + filepath.Join(top, ".git", "config") + "\x00remote.origin.url\x00"), nil
+			}}
+			if id := observer.Lookup(t.Context(), root); id.Known || !id.BudgetExhausted {
+				t.Fatal("bounded traversal must remain a budget retry", id)
+			}
+		})
 	}
 }

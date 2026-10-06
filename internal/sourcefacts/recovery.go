@@ -38,6 +38,8 @@ type RepositoryIdentity struct {
 	// Validation is semantic when Git cannot expose every candidate config path.
 	Validation   string
 	ObservedRoot string
+	// ObservationScope binds temporary evidence to its executable/config environment.
+	ObservationScope string
 	// BudgetExhausted distinguishes bounded observation failure from unknown evidence.
 	BudgetExhausted bool
 }
@@ -243,11 +245,19 @@ func (r *RecoveryResolver) recoverMapped(ctx context.Context, key, target string
 		if !p.Included || (owned && !owner.Included) || r.Lookup == nil {
 			return proof, RecoveryMappingConflict
 		}
-		if ctx.Err() != nil || r.Operations >= r.MaxOperations {
+		id, cached := r.mappedIdentities[p.Root]
+		if !cached {
+			// Freeze one planning observation per target so later mappings cannot
+			// replace the baseline used to validate earlier candidates.
+			if ctx.Err() != nil || r.Operations >= r.MaxOperations {
+				return proof, RecoveryBudgetExhausted
+			}
+			id = safeRepositoryIdentity(r.Lookup(ctx, p.Root))
+			r.Operations++
+		}
+		if ctx.Err() != nil {
 			return proof, RecoveryBudgetExhausted
 		}
-		id := safeRepositoryIdentity(r.Lookup(ctx, p.Root))
-		r.Operations++
 		if id.BudgetExhausted {
 			return proof, RecoveryBudgetExhausted
 		}
@@ -334,6 +344,9 @@ func safeRepositoryIdentity(id RepositoryIdentity) RepositoryIdentity {
 	if id.Validation == "semantic" && !validRecoveryPath(id.ObservedRoot) {
 		return RepositoryIdentity{}
 	}
+	if len(id.ObservationScope) > 128 {
+		return RepositoryIdentity{}
+	}
 	if len(id.Dependencies) > 128 {
 		return RepositoryIdentity{}
 	}
@@ -346,7 +359,7 @@ func safeRepositoryIdentity(id RepositoryIdentity) RepositoryIdentity {
 }
 
 // Current rechecks content-free proof dependencies outside admission locks.
-// Stale evidence stays pending until the next pass; it never triggers extra Git.
+// Semantic evidence gets one bounded second sweep; stale evidence stays pending.
 func (r *RecoveryResolver) Current(proof archive.ProjectResolution) bool {
 	if proof.ValidationMethod == "semantic" && (r.observationContext == nil || r.observationContext.Err() != nil) {
 		r.MetadataExhausted = true
@@ -514,5 +527,5 @@ func (r *RecoveryResolver) ResetValidationContext(ctx context.Context) {
 }
 
 func semanticIdentityAgrees(planned, fresh RepositoryIdentity) bool {
-	return fresh.Known && !fresh.BudgetExhausted && fresh.Root == planned.Root && fresh.Key == planned.Key && fresh.Validation == planned.Validation
+	return fresh.Known && !fresh.BudgetExhausted && fresh.Root == planned.Root && fresh.Key == planned.Key && fresh.Validation == planned.Validation && fresh.ObservationScope == planned.ObservationScope
 }
