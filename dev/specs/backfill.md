@@ -1084,8 +1084,12 @@ ancestors with no Git metadata and absent nearer checkout markers for configured
 Git subdirectories. A documented no-value result establishes that no config path
 applies. Optional `git var GIT_CONFIG_GLOBAL`/`GIT_CONFIG_SYSTEM` usage errors
 select semantic validation instead of making otherwise known identity unknown.
-The capability cache belongs to one pass and is invalidated by executable
-metadata or effective environment changes; version strings are never authority.
+The capability cache and retained root observations belong to one pass and are
+invalidated by executable metadata or effective environment changes; version
+strings are never authority. A content-free observer-scope digest binds temporary
+inventory evidence to that executable and environment. Exact mappings share a
+single planned identity per destination root; a later candidate cannot overwrite
+the observation on which an earlier proof depends.
 Name/origin enumeration has a 256 KiB output cap; URLs and short queries retain
 the 4 KiB cap. Each command has the existing 500 ms timeout and dependency
 collection has a shared 500 ms deadline, at most 128 paths and 64 ancestors.

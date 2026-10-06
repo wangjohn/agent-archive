@@ -34,15 +34,10 @@ type IdentityObserver struct {
 
 // Lookup observes one root; observers are used serially by a recovery sweep.
 func (o *IdentityObserver) Lookup(ctx context.Context, root string) sourcefacts.RepositoryIdentity {
-	executable, err := realLocator.find()
-	if err != nil {
-		return sourcefacts.RepositoryIdentity{}
-	}
-	stamp, ok := repositoryStamp(executable)
+	scope, ok := identityObservationScope()
 	if !ok {
 		return sourcefacts.RepositoryIdentity{}
 	}
-	scope := stamp + "\x00" + executable + "\x00" + strings.Join(environment(os.Environ()), "\x00")
 	if o.scope != scope {
 		*o = IdentityObserver{scope: scope, Run: o.Run, ConfigRun: o.ConfigRun}
 	}
@@ -53,7 +48,7 @@ func (o *IdentityObserver) Lookup(ctx context.Context, root string) sourcefacts.
 	}
 	if top != "" {
 		key, known := ProjectKey(ctx, root, o.shortRunner())
-		id := sourcefacts.RepositoryIdentity{Root: top, Key: key, Known: known}
+		id := sourcefacts.RepositoryIdentity{Root: top, Key: key, Known: known, ObservationScope: scope}
 		if !known {
 			id.BudgetExhausted = o.budget
 			return id
@@ -103,17 +98,21 @@ func (o *IdentityObserver) Lookup(ctx context.Context, root string) sourcefacts.
 		if parent == p {
 			stamp, ok := repositoryStamp(root)
 			dependencies = append(dependencies, sourcefacts.RepositoryDependency{Path: root, Stamp: stamp})
-			return sourcefacts.RepositoryIdentity{Known: ok, Dependencies: dependencies}
+			return sourcefacts.RepositoryIdentity{Known: ok, Dependencies: dependencies, ObservationScope: scope}
 		}
 		p = parent
 	}
-	return sourcefacts.RepositoryIdentity{}
+	return sourcefacts.RepositoryIdentity{BudgetExhausted: true}
 }
 
 // ProjectIdentityCurrent validates enumerated metadata without spawning Git.
 // Semantic identities also require the recovery resolver's second full sweep.
 func ProjectIdentityCurrent(id sourcefacts.RepositoryIdentity) bool {
 	if !id.Known || len(id.Dependencies) == 0 {
+		return false
+	}
+	scope, ok := identityObservationScope()
+	if !ok || id.ObservationScope != scope {
 		return false
 	}
 	for _, dep := range id.Dependencies {
@@ -123,6 +122,21 @@ func ProjectIdentityCurrent(id sourcefacts.RepositoryIdentity) bool {
 		}
 	}
 	return true
+}
+
+// Bind retained root evidence as well as capabilities to the effective observer.
+// Only a digest enters temporary inventory state, never environment values.
+func identityObservationScope() (string, bool) {
+	executable, err := realLocator.find()
+	if err != nil {
+		return "", false
+	}
+	stamp, ok := repositoryStamp(executable)
+	if !ok {
+		return "", false
+	}
+	digest := sha256.Sum256([]byte(stamp + "\x00" + executable + "\x00" + strings.Join(environment(os.Environ()), "\x00")))
+	return hex.EncodeToString(digest[:]), true
 }
 
 func repositoryStamp(path string) (string, bool) {
@@ -156,7 +170,7 @@ func (o *IdentityObserver) projectDependencies(ctx context.Context, root, top st
 		return nil, false, false
 	}
 	paths := map[string]bool{root: true, filepath.Join(root, ".git"): true}
-	if !checkoutAncestorDependencies(root, top, paths) {
+	if !o.checkoutAncestorDependencies(root, top, paths) {
 		return nil, false, false
 	}
 	if !o.probed {
@@ -291,7 +305,7 @@ func topLevelConfigDependencies(ctx context.Context, root string, paths map[stri
 // A configured subtree inherits Git identity only while no nearer checkout
 // marker appears. Stamp every candidate through the observed top level so a
 // new nested repository invalidates the inventory before it can prove uniqueness.
-func checkoutAncestorDependencies(root, top string, paths map[string]bool) bool {
+func (o *IdentityObserver) checkoutAncestorDependencies(root, top string, paths map[string]bool) bool {
 	canonical, err := filepath.EvalSymlinks(root)
 	if err != nil {
 		return false
@@ -307,6 +321,7 @@ func checkoutAncestorDependencies(root, top string, paths map[string]bool) bool 
 		}
 		path = parent
 	}
+	o.budget = true
 	return false
 }
 
