@@ -165,6 +165,9 @@ func (r Registration) Run(candidates []Candidate) (RegistrationResult, error) {
 			}
 		}
 		cancelValidation()
+		if ctx.Err() != nil || (r.Stop != nil && r.Stop()) {
+			return result, ErrStopped
+		}
 		err := r.hold(works, &i, &result)
 		if flushErr := flush(); err == nil {
 			err = flushErr

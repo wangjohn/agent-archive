@@ -348,6 +348,10 @@ func safeRepositoryIdentity(id RepositoryIdentity) RepositoryIdentity {
 // Current rechecks content-free proof dependencies outside admission locks.
 // Stale evidence stays pending until the next pass; it never triggers extra Git.
 func (r *RecoveryResolver) Current(proof archive.ProjectResolution) bool {
+	if proof.ValidationMethod == "semantic" && (r.observationContext == nil || r.observationContext.Err() != nil) {
+		r.MetadataExhausted = true
+		return false
+	}
 	if r.Validate == nil && proof.ValidationMethod != "semantic" {
 		if proof.Method == "explicit_mapping" {
 			id, ok := r.mappedIdentities[proof.Root]
@@ -419,6 +423,10 @@ func (r *RecoveryResolver) ResetValidation() {
 // CurrentSlice coalesces common inventory validation for one short import hold.
 // Call ResetValidation before assembling each slice, outside admission locks.
 func (r *RecoveryResolver) CurrentSlice(proof archive.ProjectResolution) bool {
+	if proof.ValidationMethod == "semantic" && (r.observationContext == nil || r.observationContext.Err() != nil) {
+		r.MetadataExhausted = true
+		return false
+	}
 	if r.Validate != nil || proof.ValidationMethod == "semantic" {
 		if r.MetadataOperations >= r.metadataLimit() {
 			r.MetadataExhausted = true

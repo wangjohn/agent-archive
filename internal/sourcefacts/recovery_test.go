@@ -406,6 +406,11 @@ func TestSemanticRecoveryRechecksWholeInventoryOncePerSlice(t *testing.T) {
 	if calls != 6 {
 		t.Fatal("failed sweep was repeated per candidate", calls)
 	}
+	changed = false
+	r.ResetValidation()
+	if !r.CurrentSlice(proof) || calls != 8 {
+		t.Fatal("new slice did not retry failed inventory", calls)
+	}
 }
 
 func TestSemanticRecoveryCancellationNeverAdmits(t *testing.T) {
@@ -461,5 +466,21 @@ func TestRepositoryObservationBudgetKeepsInventoryProgress(t *testing.T) {
 	_, outcome := r.Recover(t.Context(), "/synthetic/gone", key)
 	if outcome != RecoveryBudgetExhausted || calls != 2 || r.Inventory.Cursor != 2 {
 		t.Fatal(outcome, calls, r.Inventory.Cursor)
+	}
+}
+
+func TestSemanticCachedSliceHonorsCancellation(t *testing.T) {
+	key := archive.RepoKey("https://example.test/acme/repo")
+	ctx, cancel := context.WithCancel(t.Context())
+	r := NewRecoveryResolver([]archive.ProjectActivation{{Root: "/synthetic/root", Included: true}}, nil, filepath.Clean, func(context.Context, string) RepositoryIdentity {
+		return RepositoryIdentity{Known: true, Root: "/synthetic/root", Key: key, Validation: "semantic", ObservedRoot: "/synthetic/root"}
+	}, nil)
+	proof, outcome := r.Recover(ctx, "/synthetic/gone", key)
+	if outcome != "" || !r.CurrentSlice(proof) {
+		t.Fatal(outcome)
+	}
+	cancel()
+	if r.CurrentSlice(proof) || !r.MetadataExhausted {
+		t.Fatal("cached slice ignored cancellation")
 	}
 }
