@@ -421,7 +421,7 @@ func retentionDeletes(store *state.Store, cfg config.Config, regs []archive.Sess
 func sessionsOutsideBatch(regs []archive.SessionRegistration, b Batch) int {
 	n := 0
 	for _, reg := range regs {
-		if !reg.InBatch(b.ID) || reg.ParentSessionID != "" || reg.AdmittedAt.IsZero() {
+		if !reg.InBatch(b.ID) || !independentImportOwner(reg) || reg.AdmittedAt.IsZero() {
 			continue
 		}
 		if reg.AdmittedAt.Before(b.StartedAt) || b.CompletedAt != nil && reg.AdmittedAt.After(*b.CompletedAt) {
@@ -467,7 +467,7 @@ func undoProjects(cfg config.Config, regs []archive.SessionRegistration, batches
 		candidate := slices.Contains(b.ProjectsAdded, project.ProjectID)
 		var from []string
 		if !candidate && slices.ContainsFunc(regs, func(reg archive.SessionRegistration) bool {
-			return reg.InBatch(b.ID) && reg.ParentSessionID == "" && inside(reg, project)
+			return reg.InBatch(b.ID) && independentImportOwner(reg) && inside(reg, project)
 		}) {
 			// b takes the project over from each earlier undo that kept it
 			// for b: one that names b among the imports it kept it for, or,
@@ -501,7 +501,7 @@ func undoProjects(cfg config.Config, regs []archive.SessionRegistration, batches
 		}
 		kept := KeptProject{Project: project}
 		for _, reg := range regs {
-			if reg.Imported() && !reg.ImportBatch.IsZero() && !reg.InBatch(b.ID) && reg.ParentSessionID == "" && inside(reg, project) {
+			if reg.Imported() && !reg.ImportBatch.IsZero() && !reg.InBatch(b.ID) && independentImportOwner(reg) && inside(reg, project) {
 				kept.Sessions++
 				kept.Imports = addUnique(kept.Imports, reg.ImportBatch.Recorded())
 			}
@@ -1088,4 +1088,10 @@ func orderUndoChildrenFirst(sessions []UndoSession) ([]UndoSession, error) {
 		return depth[b.Registration.ArchiveSessionID] - depth[a.Registration.ArchiveSessionID]
 	})
 	return sessions, nil
+}
+
+// Native Codex children own their import permission and project responsibility.
+// Other subagents continue to follow their imported parent.
+func independentImportOwner(reg archive.SessionRegistration) bool {
+	return reg.NativeChild || reg.ParentSessionID == ""
 }

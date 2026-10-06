@@ -1,6 +1,7 @@
 package backfill
 
 import (
+	"errors"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/state"
@@ -90,5 +91,63 @@ func TestNestedUndoRejectsOverdepthRegardlessOfMemoizedParentOrder(t *testing.T)
 		if _, err := orderUndoChildrenFirst(sessions); err == nil {
 			t.Fatal("overdepth relationship accepted")
 		}
+	}
+}
+
+func TestUndoProjectsPreservesExternalNativeChildAndTransfersResponsibility(t *testing.T) {
+	for _, resolved := range []bool{false, true} {
+		t.Run(strconv.FormatBool(resolved), func(t *testing.T) {
+			f := newUndoFixture(t)
+			root := "/synthetic/project"
+			pid := f.include(root)
+			older := f.batch("2026-09-20-1", fixedNow.Add(-72*time.Hour), pid)
+			newer := f.batch("2026-09-21-1", fixedNow.Add(-48*time.Hour))
+			parent := ""
+			if resolved {
+				parent = "external-parent"
+			}
+			child := archive.SessionRegistration{ArchiveSessionID: "native-child", NativeSessionID: "00000000-0000-0000-0000-000000000002", Harness: archive.Harness{Name: "codex"}, NativeChild: true, ParentSessionID: parent, ProjectRoot: root, ProjectID: pid, TranscriptPath: "/synthetic/child.jsonl", SessionStartedAt: newer.StartedAt, RegisteredAt: newer.StartedAt, AdmittedAt: newer.StartedAt, Origin: archive.SessionOriginImport, ImportBatch: archive.NewImportBatch(newer.ID)}
+			if err := f.store.SaveRegistration(child); err != nil {
+				t.Fatal(err)
+			}
+			env := Environment{Home: f.home, Now: func() time.Time { return fixedNow }}
+			plan, err := PlanUndo(env, f.store, f.cfg, []Batch{older, newer}, older, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(plan.ExcludeProjects) != 0 || len(plan.KeepProjects) != 1 || plan.KeepProjects[0].Sessions != 1 || len(plan.Sessions) != 0 {
+				t.Fatalf("external native child lost project permission: %+v", plan)
+			}
+			plan.ApplyToConfig(&f.cfg)
+			if !f.cfg.Archive.Projects[0].Included {
+				t.Fatal("undo disabled external child's project")
+			}
+			older.RecordKept(plan.KeepProjects)
+			undone := fixedNow.Add(-time.Hour)
+			older.UndoneAt = &undone
+			plan, err = PlanUndo(env, f.store, f.cfg, []Batch{older, newer}, newer, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(plan.ExcludeProjects) != 1 || len(plan.Sessions) != 1 || len(plan.TakenOver[pid]) != 1 || plan.TakenOver[pid][0] != older.ID {
+				t.Fatalf("native child batch could not finish kept project cleanup: %+v", plan)
+			}
+		})
+	}
+}
+
+func TestUndoRefusesReusedBatchWithEarlierIndependentNativeChild(t *testing.T) {
+	f := newUndoFixture(t)
+	root := "/synthetic/project"
+	f.include(root)
+	batch := f.batch("2026-09-23-1", fixedNow.Add(time.Hour))
+	child := archive.SessionRegistration{ArchiveSessionID: "earlier-native-child", NativeSessionID: "00000000-0000-0000-0000-000000000002", Harness: archive.Harness{Name: "codex"}, NativeChild: true, ParentSessionID: "external-parent", ProjectRoot: root, ProjectID: archive.ProjectID(root), TranscriptPath: "/synthetic/child.jsonl", SessionStartedAt: fixedNow, RegisteredAt: fixedNow, AdmittedAt: fixedNow, Origin: archive.SessionOriginImport, ImportBatch: archive.NewImportBatch(batch.ID)}
+	if err := f.store.SaveRegistration(child); err != nil {
+		t.Fatal(err)
+	}
+	_, err := PlanUndo(Environment{Home: f.home}, f.store, f.cfg, []Batch{batch}, batch, "")
+	var shared *SharedBatchIDError
+	if !errors.As(err, &shared) || shared.Sessions != 1 {
+		t.Fatalf("reused batch allowed deletion of earlier independent child: %v", err)
 	}
 }

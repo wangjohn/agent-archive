@@ -70,4 +70,6 @@ Codex database rows are source facts, not proof of originating local execution.
 A child first imported by a new backfill run belongs to that new import batch,
 even if its parent came from an older batch. Undo removes only that batch’s
 members, with nested children removed before their selected parents. Children
-keep their own source, so removing a parent does not break child readback.
+keep their own source, so removing a parent does not break child readback. Undo
+keeps a project included while another batch has independently imported native
+children there, including children whose parent link has resolved.
