@@ -66,6 +66,9 @@ func NewCodexRolloutLookup(ctx context.Context, store *state.Store, homes []stri
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	if err := sweepPrivateIndexes(ctx, indexSnapshotRoot(os.TempDir()), time.Now()); err != nil {
+		return nil, agentapi.Wrap(agentapi.Cleanup, err)
+	}
 	roots := approvedRoots(homes)
 	if len(roots) > 1024 {
 		return nil, agentapi.Wrap(agentapi.Limit, errors.New("native home limit"))
@@ -177,6 +180,11 @@ func (l *CodexRolloutLookup) inspect(ctx context.Context, path, thread string) (
 	if l.probes >= HeaderProbes {
 		return nil, agentapi.Wrap(agentapi.Limit, errors.New("native header probe limit"))
 	}
+	const headerCharge = int64(sourcefacts.HeaderBytes + 128<<10)
+	if !l.readBudget.Reserve(headerCharge) {
+		return nil, agentapi.Wrap(agentapi.Limit, errors.New("shared native header budget exhausted"))
+	}
+	defer l.readBudget.Release(headerCharge)
 	l.probes++
 	header := sourcefacts.ReadHeader(ctx, root, path)
 	if header.Identity == nil {
@@ -314,7 +322,7 @@ func (l *CodexRolloutLookup) withCandidates(id string, set agentapi.CodexRollout
 	slices.SortFunc(set.Candidates, func(a, b agentapi.SourceRef) int { return strings.Compare(a.Path, b.Path) })
 	set.Complete = false
 	if l.coverage != nil {
-		if request, present := l.coverage.Requests[id]; present && request.CompleteEpoch == l.coverage.Epoch && !request.Overflow && l.coverage.Phase == "complete" && !l.coverage.Failed {
+		if request, present := l.coverage.Requests[id]; present && request.CompleteEpoch == l.coverage.Epoch && l.coverage.proofEpoch == l.coverage.Epoch && !request.Overflow && l.coverage.Phase == "complete" && !l.coverage.Failed {
 			set.Candidates = nil
 			for _, candidate := range request.Candidates {
 				set.Candidates = append(set.Candidates, agentapi.SourceRef{Kind: archive.SourceKindFile, Path: candidate.Source.Locator, Key: id})
@@ -342,7 +350,7 @@ type rolloutObservationDigest struct {
 
 func (l *CodexRolloutLookup) candidateDigests(id string) []rolloutObservationDigest {
 	var out []rolloutObservationDigest
-	if l.coverage != nil && l.coverage.Phase == "complete" && !l.coverage.Failed {
+	if l.coverage != nil && l.coverage.Phase == "complete" && l.coverage.proofEpoch == l.coverage.Epoch && !l.coverage.Failed {
 		if request, present := l.coverage.Requests[id]; present && request.CompleteEpoch == l.coverage.Epoch && !request.Overflow {
 			for path, candidate := range request.Candidates {
 				out = append(out, rolloutObservationDigest{path, candidate.Stamp, candidate.Identity})
@@ -452,8 +460,9 @@ func (l *CodexRolloutLookup) index(ctx context.Context, root string, refresh boo
 			return nil, errIndexChanged
 		}
 		if view.db != nil {
-			_ = view.db.Close()
-			_ = view.snapshot.close()
+			if err := errors.Join(view.db.Close(), view.snapshot.close()); err != nil {
+				return nil, agentapi.Wrap(agentapi.Cleanup, err)
+			}
 		}
 		view = &currentIndexView{refreshed: true}
 		l.indexes[root] = view
@@ -477,9 +486,9 @@ func (l *CodexRolloutLookup) index(ctx context.Context, root string, refresh boo
 	params := url.Values{"mode": {"ro"}, "immutable": {"1"}}
 	db, err := sql.Open("sqlite", (&url.URL{Scheme: "file", Path: snapshot.path, RawQuery: params.Encode()}).String())
 	if err != nil {
-		_ = snapshot.close()
+		cleanupErr := snapshot.close()
 		view.unavailable = true
-		return nil, err
+		return nil, errors.Join(err, cleanupErr)
 	}
 	db.SetMaxOpenConns(1)
 	view.db = db

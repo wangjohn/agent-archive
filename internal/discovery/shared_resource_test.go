@@ -111,3 +111,51 @@ func TestSourceAndLiveIndexShareChargeBeforeCopyAndRelease(t *testing.T) {
 		t.Fatalf("successful copy charge leaked/exceeded: %d %d", used, peak)
 	}
 }
+
+func TestCurrentHeaderRequiresSharedScratchBeforeProbe(t *testing.T) {
+	t.Parallel()
+	store, cfg, at, root := fixture(t)
+	id := writeRollout(t, root, cfg.Archive.Projects[0].Root, at, 1, "sessions")
+	path := filepath.Join(root, "sessions", "rollout-2026-10-01T12-00-00-"+id+".jsonl")
+	lookup, err := NewCodexRolloutLookup(t.Context(), store, []string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = lookup.Close() }()
+	if !lookup.readBudget.Reserve(currentSnapshotLimit) {
+		t.Fatal("reserve")
+	}
+	_, err = lookup.inspect(t.Context(), path, id)
+	if agentapi.Failure(err) != agentapi.Limit || lookup.probes != 0 {
+		t.Fatal("header read without reserved scratch", err, lookup.probes)
+	}
+	lookup.readBudget.Release(currentSnapshotLimit)
+	if _, err := lookup.inspect(t.Context(), path, id); err != nil {
+		t.Fatal(err)
+	}
+	if used, _ := lookup.readBudget.Charged(); used != 0 {
+		t.Fatal("header scratch leaked", used)
+	}
+}
+
+func TestDiscoveryHeaderCannotReadWithExhaustedSharedScratch(t *testing.T) {
+	t.Parallel()
+	store, cfg, at, root := fixture(t)
+	writeRollout(t, root, cfg.Archive.Projects[0].Root, at, 1, "sessions")
+	lookup, err := NewCodexRolloutLookup(t.Context(), store, []string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = lookup.Close() }()
+	if !lookup.readBudget.Reserve(currentSnapshotLimit) {
+		t.Fatal("reserve")
+	}
+	health, err := run(t.Context(), store, cfg, Options{Now: func() time.Time { return at }, Rollouts: lookup}, syntheticSupport)
+	lookup.readBudget.Release(currentSnapshotLimit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if health.Probes != 0 || !health.Pending {
+		t.Fatal("discovery read without scratch", health)
+	}
+}

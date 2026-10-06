@@ -496,7 +496,14 @@ func (s scan) visitEntry(d directory, source SourceEntry) (retry, stop bool) {
 		if !discoveryProbeAvailable(h, s.rollouts) {
 			return true, true
 		}
+		headerCharge := int64(sourcefacts.HeaderBytes + 128<<10)
+		if s.rollouts != nil && !s.rollouts.readBudget.Reserve(headerCharge) {
+			return true, true
+		}
 		observation := s.adapter.Inspect(s.ctx, source.Source)
+		if s.rollouts != nil {
+			s.rollouts.readBudget.Release(headerCharge)
+		}
 		h.Probes++
 		if s.rollouts != nil {
 			s.rollouts.probes++

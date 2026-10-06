@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/codexmeta"
 )
 
@@ -53,6 +54,7 @@ func TestCoverageRejectsUnrelatedHeaderRewriteWithUnchangedDirectoryStamp(t *tes
 	c.request("requested")
 	c.restart()
 	collectCoverageDirectory(t, c, root, "sessions", false)
+	collectCoverageDirectory(t, c, root, "archived_sessions", false)
 	c.beginValidation()
 	before := directoryCoverageStamp(root, "sessions")
 	if err := os.WriteFile(path, []byte("now belongs to requested thread"), 0600); err != nil {
@@ -66,7 +68,9 @@ func TestCoverageRejectsUnrelatedHeaderRewriteWithUnchangedDirectoryStamp(t *tes
 		t.Fatal("fixture changed directory metadata")
 	}
 	collectCoverageDirectory(t, c, root, "sessions", true)
+	collectCoverageDirectory(t, c, root, "archived_sessions", true)
 	c.Validation = nil
+	c.FinalOffset = len(c.Directories)
 	if c.finishValidation() || c.Requests["requested"].CompleteEpoch != 0 {
 		t.Fatal("certified incomplete thread inventory")
 	}
@@ -88,14 +92,17 @@ func TestCoverageNeedsWholeRequestedEpochAndValidation(t *testing.T) {
 		t.Fatal("midround fact claimed fresh coverage")
 	}
 	c.restart()
-	c.observe(SourceDescriptor{Locator: "current"}, Fingerprint{}, codexmeta.CodexIdentity{ThreadID: "thread"})
+	c.observe(SourceDescriptor{Root: root, Locator: filepath.Join(root, "sessions", "current")}, Fingerprint{}, codexmeta.CodexIdentity{ThreadID: "thread"})
 	collectCoverageDirectory(t, c, root, "sessions", false)
+	collectCoverageDirectory(t, c, root, "archived_sessions", false)
 	if c.Requests["thread"].CompleteEpoch != 0 {
 		t.Fatal("observation certified before validation")
 	}
 	c.beginValidation()
 	collectCoverageDirectory(t, c, root, "sessions", true)
+	collectCoverageDirectory(t, c, root, "archived_sessions", true)
 	c.Validation = nil
+	c.FinalOffset = len(c.Directories)
 	if !c.finishValidation() || c.Requests["thread"].CompleteEpoch != c.Epoch {
 		t.Fatal(c)
 	}
@@ -124,9 +131,7 @@ func TestCoverageRequestAndCandidateOverflowNeverCertifiesAbsence(t *testing.T) 
 		t.Fatal(c.Requests["thread-0"])
 	}
 	c.beginValidation()
-	if !c.finishValidation() {
-		t.Fatal("unrelated empty requests should validate")
-	}
+	c.finishValidation()
 	if c.Requests["thread-0"].CompleteEpoch != 0 {
 		t.Fatal("overflow certified complete")
 	}
@@ -194,4 +199,21 @@ func TestRequestedCoverageKeepsMatchesBeyondPrunableObservationCache(t *testing.
 		t.Fatal("prunable cache discarded requested evidence")
 	}
 	_ = lookup.Close()
+}
+
+func TestCompleteCoverageRefusesMissingOrInconsistentEpochProof(t *testing.T) {
+	t.Parallel()
+	c := newCoverage([]string{"/synthetic"})
+	c.request("thread")
+	c.Phase = "complete"
+	request := c.Requests["thread"]
+	request.CompleteEpoch = c.Epoch
+	c.Requests["thread"] = request
+	if err := c.validate([]string{"/synthetic"}); err == nil {
+		t.Fatal("restored complete flag certified no enumeration")
+	}
+	lookup := &CodexRolloutLookup{coverage: c, byThread: map[string]map[string]struct{}{}, observations: map[string]rolloutObservation{}}
+	if lookup.withCandidates("thread", agentapi.CodexRolloutSet{}).Complete {
+		t.Fatal("unvalidated proof issued completeness")
+	}
 }

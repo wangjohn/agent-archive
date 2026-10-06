@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/codexmeta"
+	"github.com/wangjohn/agent-archive/internal/local"
 )
 
 const maxCoverageRequests = 256
@@ -34,7 +35,8 @@ type coverageInventory struct {
 	Directories map[string]coverageDirectory `json:"directories"`
 	Validation  []directory                  `json:"validation"`
 	FinalOffset int                          `json:"final_offset,omitempty"`
-	Failed      bool                         `json:"failed,omitempty"`
+	proofEpoch  uint64
+	Failed      bool `json:"failed,omitempty"`
 }
 
 type coverageRequest struct {
@@ -118,6 +120,12 @@ func (c *coverageInventory) validate(roots []string) error {
 		if entry.Offset < 0 || !slices.Contains(roots, entry.Directory.Root) || filepath.IsAbs(entry.Directory.Path) || filepath.Clean(entry.Directory.Path) != entry.Directory.Path {
 			return errors.New("invalid native coverage directory")
 		}
+	}
+	if err := c.validateCompleteProof(); err != nil {
+		return err
+	}
+	if c.Phase == "complete" && !c.Failed {
+		c.proofEpoch = c.Epoch
 	}
 	return nil
 }
@@ -245,6 +253,11 @@ func (c *coverageInventory) finishValidation() bool {
 		}
 	}
 	c.Phase = "complete"
+	if err := c.validateCompleteProof(); err != nil {
+		c.Failed = true
+	} else if !c.Failed {
+		c.proofEpoch = c.Epoch
+	}
 	for key, request := range c.Requests {
 		if request.TargetEpoch <= c.Epoch && !request.Overflow && !c.Failed {
 			request.CompleteEpoch = c.Epoch
@@ -258,6 +271,7 @@ func (c *coverageInventory) finishValidation() bool {
 
 func (c *coverageInventory) restart() {
 	c.Epoch++
+	c.proofEpoch = 0
 	c.Phase = "observe"
 	c.Failed = false
 	c.Directories = map[string]coverageDirectory{}
@@ -324,4 +338,52 @@ func finishCoverageDirectoryCheck(ctx context.Context, c *coverageInventory, h *
 	if c.FinalOffset == len(keys) {
 		c.finishValidation()
 	}
+}
+
+// validateCompleteProof cross-checks the persisted epoch structure. A phase
+// flag alone is never absence authority after damaged local state is restored.
+func (c *coverageInventory) validateCompleteProof() error {
+	if c.Failed {
+		return nil
+	}
+	if c.Phase != "complete" {
+		return nil
+	}
+	if len(c.Roots) == 0 || len(c.Directories) == 0 || len(c.Validation) != 0 || c.FinalOffset != len(c.Directories) {
+		return errors.New("incomplete native coverage proof")
+	}
+	for _, root := range c.Roots {
+		for _, path := range []string{"sessions", "archived_sessions"} {
+			if _, present := c.Directories[filepath.Join(root, path)]; !present {
+				return errors.New("native coverage root proof missing")
+			}
+		}
+	}
+	for key, entry := range c.Directories {
+		if key != coverageKey(entry.Directory) || !entry.Complete || !entry.Validated || entry.ValidationDigest != entry.Digest || len(entry.Stamp) != 64 || len(entry.Digest) != 64 {
+			return errors.New("native coverage directory proof inconsistent")
+		}
+		for _, value := range []string{entry.Stamp, entry.Digest} {
+			raw, err := hex.DecodeString(value)
+			if err != nil || len(raw) != sha256.Size {
+				return errors.New("native coverage digest invalid")
+			}
+		}
+	}
+	return c.validateCompleteRequests()
+
+}
+
+func (c *coverageInventory) validateCompleteRequests() error {
+	for id, request := range c.Requests {
+		if request.CompleteEpoch != 0 && (request.CompleteEpoch != c.Epoch || request.TargetEpoch > c.Epoch || request.Overflow) {
+			return errors.New("native coverage request proof inconsistent")
+		}
+		for path, candidate := range request.Candidates {
+			if path != candidate.Source.Locator || candidate.Source.Kind != "" || !slices.Contains(c.Roots, candidate.Source.Root) || !filepath.IsAbs(path) || filepath.Clean(path) != path || (!local.PathWithin(path, filepath.Join(candidate.Source.Root, "sessions")) && !local.PathWithin(path, filepath.Join(candidate.Source.Root, "archived_sessions"))) || candidate.Identity.ThreadID != id && candidate.Identity.RolloutID != id {
+				return errors.New("native coverage candidate proof inconsistent")
+			}
+		}
+	}
+	return nil
 }

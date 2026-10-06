@@ -36,6 +36,9 @@ func (SourceProvider) OpenPass(ctx context.Context, e agentapi.SourceEnvironment
 	if err != nil {
 		return nil, err
 	}
+	if shared, ok := e.CodexRollouts.(agentapi.CodexRolloutResourceBudget); ok && shared.NativeReadBudget() != nil && e.ReadBudget != nil && e.ReadBudget != shared.NativeReadBudget() {
+		return nil, errors.Join(sourceFailure(agentapi.Unavailable, "source and lookup require the same charge ledger"), legacy.Close())
+	}
 	if e.ReadBudget == nil {
 		if shared, ok := e.CodexRollouts.(agentapi.CodexRolloutResourceBudget); ok {
 			e.ReadBudget = shared.NativeReadBudget()
@@ -46,7 +49,7 @@ func (SourceProvider) OpenPass(ctx context.Context, e agentapi.SourceEnvironment
 	if e.Files == nil {
 		e.Files = transcriptio.OS{}
 	}
-	return &relatedSourcePass{env: e, legacy: legacy, files: map[string]*rolloutFile{}, live: map[*historySnapshot]bool{}}, nil
+	return &relatedSourcePass{env: e, legacy: legacy, files: map[string]*rolloutFile{}, live: map[*historySnapshot]bool{}, ordinaryLive: map[*ordinarySnapshot]bool{}}, nil
 }
 
 // Activities preserves cheap file ordering independently of history selection.
@@ -67,14 +70,15 @@ type rolloutFile struct {
 }
 
 type relatedSourcePass struct {
-	env       agentapi.SourceEnvironment
-	legacy    agentapi.SourcePass
-	files     map[string]*rolloutFile
-	live      map[*historySnapshot]bool
-	bytes     int64
-	cacheHits int64
-	closed    bool
-	closeErr  error
+	env          agentapi.SourceEnvironment
+	legacy       agentapi.SourcePass
+	files        map[string]*rolloutFile
+	live         map[*historySnapshot]bool
+	ordinaryLive map[*ordinarySnapshot]bool
+	bytes        int64
+	cacheHits    int64
+	closed       bool
+	closeErr     error
 }
 
 func sourceFailure(kind agentapi.FailureKind, message string) error {
@@ -151,7 +155,7 @@ func (p *relatedSourcePass) open(ctx context.Context, ref agentapi.SourceRef) (*
 	if outcome != "" {
 		return fail(sourceFailure(agentapi.FormatMismatch, string(outcome)))
 	}
-	boundary, err := transcriptio.CompleteJSONLBoundary(f, f.Length(), archive.MaxRecordBytes)
+	boundary, err := p.chargedBoundary(f)
 	if err != nil {
 		return fail(sourceio.Classify(err))
 	}
@@ -179,6 +183,9 @@ func (p *relatedSourcePass) Close() error {
 	p.closed = true
 	err := p.legacy.Close()
 	for s := range p.live {
+		err = errors.Join(err, s.Close())
+	}
+	for s := range p.ordinaryLive {
 		err = errors.Join(err, s.Close())
 	}
 	for _, f := range p.files {
@@ -666,17 +673,28 @@ func (s *historySnapshot) Next(ctx context.Context) (agentapi.NativeRecord, bool
 
 // ordinarySnapshot retains file framing while accepting verified later appends.
 type ordinarySnapshot struct {
-	owner     *relatedSourcePass
-	source    *rolloutFile
-	selection sourceSelection
-	ctx       context.Context
-	length    int64
-	digest    [32]byte
-	closed    bool
-	observed  agentapi.SourceObservation
+	bufferCharge int64
+	owner        *relatedSourcePass
+	source       *rolloutFile
+	selection    sourceSelection
+	ctx          context.Context
+	length       int64
+	digest       [32]byte
+	closed       bool
+	observed     agentapi.SourceObservation
 }
 
 func (p *relatedSourcePass) ordinary(ctx context.Context, limits agentapi.ReadLimits, selection sourceSelection) (agentapi.SourceSnapshot, error) {
+	bufferCharge := min(int64(archive.MaxRecordBytes)+1, selection.leaf.file.Length()+1) + 64<<10
+	if !p.reserve(bufferCharge) {
+		return nil, sourceFailure(agentapi.Unavailable, "ordinary native scanner budget exhausted")
+	}
+	transferred := false
+	defer func() {
+		if !transferred {
+			p.release(bufferCharge)
+		}
+	}()
 	f := selection.leaf
 	if limits.RawBytes > 0 && f.file.Length() > limits.RawBytes {
 		return nil, agentapi.Wrap(agentapi.Limit, agentapi.ErrRawLimit)
@@ -686,7 +704,7 @@ func (p *relatedSourcePass) ordinary(ctx context.Context, limits agentapi.ReadLi
 		return nil, err
 	}
 	stamp := f.file.Stamp()
-	out := &ordinarySnapshot{owner: p, source: f, selection: selection, ctx: ctx, length: f.boundary, observed: agentapi.SourceObservation{Signature: sourceio.FileSignature(stamp.Size, stamp.ModifiedAt.UnixNano()), Present: true, Empty: f.boundary == 0, Activity: stamp.ModifiedAt, Size: stamp.Size}}
+	out := &ordinarySnapshot{bufferCharge: bufferCharge, owner: p, source: f, selection: selection, ctx: ctx, length: f.boundary, observed: agentapi.SourceObservation{Signature: sourceio.FileSignature(stamp.Size, stamp.ModifiedAt.UnixNano()), Present: true, Empty: f.boundary == 0, Activity: stamp.ModifiedAt, Size: stamp.Size}}
 	copy(out.digest[:], h.Sum(nil))
 	if p.env.CodexRollouts != nil {
 		var err error
@@ -696,6 +714,8 @@ func (p *relatedSourcePass) ordinary(ctx context.Context, limits agentapi.ReadLi
 		}
 	}
 	f.refs++
+	p.ordinaryLive[out] = true
+	transferred = true
 	return out, nil
 }
 
@@ -708,6 +728,9 @@ func (s *ordinarySnapshot) Input() agentapi.NativeInput {
 func (s *ordinarySnapshot) Close() error {
 	if !s.closed {
 		s.closed = true
+		delete(s.owner.ordinaryLive, s)
+		s.owner.release(s.bufferCharge)
+		s.bufferCharge = 0
 		s.source.refs--
 	}
 	return nil
@@ -766,6 +789,11 @@ func (f ordinaryFile) Records(ctx context.Context, tail bool, windowBytes, recor
 	if f.s.closed || f.s.owner.closed {
 		return transcriptio.RecordWindow{}, agentapi.ErrClosed
 	}
+	charge := max(int64(4096), min(f.s.length, max(recordBytes, windowBytes))) + max(windowBytes, 0) + 64<<10
+	if !f.s.owner.reserve(charge) {
+		return transcriptio.RecordWindow{}, sourceFailure(agentapi.Unavailable, "native record window budget exhausted")
+	}
+	defer f.s.owner.release(charge)
 	return f.FileInput.Records(ctx, tail, windowBytes, recordBytes, visit)
 }
 
@@ -1218,56 +1246,48 @@ func (s *historySnapshot) gatherOwnTask(ctx context.Context) (agentapi.OwnTaskFa
 			continue
 		}
 		ordinal := span.startOrdinal
-		scanner := bufio.NewScanner(io.NewSectionReader(span.file.file, 0, span.end))
-		scanner.Buffer(make([]byte, min(4096, int(s.recordLimit)+1)), int(s.recordLimit)+1)
-		for scanner.Scan() {
-			if err := ctx.Err(); err != nil {
-				return agentapi.OwnTaskFacts{}, err
-			}
-			line := bytes.TrimSpace(scanner.Bytes())
+		facts := agentapi.OwnTaskFacts{}
+		err := s.owner.scanChargedLines(ctx, io.NewSectionReader(span.file.file, 0, span.end), s.recordLimit+1, func(line []byte) bool {
+			line = bytes.TrimSpace(line)
 			if len(line) == 0 {
-				continue
+				return false
 			}
 			current := ordinal
 			ordinal++
 			if s.history.OwnStart != nil && current < *s.history.OwnStart {
-				continue
+				return false
 			}
-			facts := ownTaskFacts(line, localExecutionShape(span.file))
-			if facts.Seen {
-				s.firstOwnTask = &facts
-				return facts, nil
-			}
+			facts = ownTaskFacts(line, localExecutionShape(span.file))
+			return facts.Seen
+		})
+		if err != nil {
+			return agentapi.OwnTaskFacts{}, err
 		}
-		if err := scanner.Err(); err != nil {
-			return agentapi.OwnTaskFacts{}, sourceio.Classify(err)
+		if facts.Seen {
+			s.firstOwnTask = &facts
+			return facts, nil
 		}
+
 	}
-	return agentapi.OwnTaskFacts{}, ctx.Err()
+	facts := agentapi.OwnTaskFacts{}
+	s.firstOwnTask = &facts
+	return facts, ctx.Err()
 }
 
 func (s *ordinarySnapshot) FirstOwnTask(ctx context.Context) (agentapi.OwnTaskFacts, error) {
 	if s.closed || s.owner.closed {
 		return agentapi.OwnTaskFacts{}, agentapi.ErrClosed
 	}
-	scanner := bufio.NewScanner(io.NewSectionReader(s.source.file, 0, s.length))
-	scanner.Buffer(make([]byte, 4096), archive.MaxRecordBytes+1)
-	for scanner.Scan() {
-		if err := ctx.Err(); err != nil {
-			return agentapi.OwnTaskFacts{}, err
-		}
-		facts := ownTaskFacts(bytes.TrimSpace(scanner.Bytes()), localExecutionShape(s.source))
-		if facts.Seen {
-			if err := (ordinaryFile{FileInput: s.source.file, s: s}).Check(); err != nil {
-				return agentapi.OwnTaskFacts{}, err
-			}
-			return facts, nil
-		}
+	facts := agentapi.OwnTaskFacts{}
+	err := s.owner.scanChargedLines(ctx, io.NewSectionReader(s.source.file, 0, s.length), archive.MaxRecordBytes+1, func(line []byte) bool {
+		facts = ownTaskFacts(bytes.TrimSpace(line), localExecutionShape(s.source))
+		return facts.Seen
+	})
+	if err != nil {
+		return agentapi.OwnTaskFacts{}, err
 	}
-	if err := scanner.Err(); err != nil {
-		return agentapi.OwnTaskFacts{}, sourceio.Classify(err)
-	}
-	return agentapi.OwnTaskFacts{}, (ordinaryFile{FileInput: s.source.file, s: s}).Check()
+	return facts, (ordinaryFile{FileInput: s.source.file, s: s}).Check()
+
 }
 
 func (s *historySnapshot) AdmissionEvidence(ctx context.Context, admission agentapi.SourceAdmission) (agentapi.AdmissionEvidence, error) {
@@ -1349,4 +1369,23 @@ func (p *relatedSourcePass) initialLookupRef(ctx context.Context, ref agentapi.S
 		}
 	}
 	return ref, nil
+}
+
+func (p *relatedSourcePass) chargedBoundary(f *transcriptio.Snapshot) (int64, error) {
+	if f.Length() == 0 {
+		return 0, nil
+	}
+	var last [1]byte
+	if _, err := f.ReadAt(last[:], f.Length()-1); err != nil {
+		return 0, err
+	}
+	if last[0] == '\n' {
+		return f.Length(), nil
+	}
+	charge := min(f.Length(), int64(archive.MaxRecordBytes)) + 64<<10
+	if !p.reserve(charge) {
+		return 0, sourceFailure(agentapi.Unavailable, "native boundary scratch budget exhausted")
+	}
+	defer p.release(charge)
+	return transcriptio.CompleteJSONLBoundary(f, f.Length(), archive.MaxRecordBytes)
 }

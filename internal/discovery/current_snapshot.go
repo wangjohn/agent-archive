@@ -26,9 +26,18 @@ type indexCopyMetrics struct{ NativeBytes, PrivateBytes, PeakBuffers int64 }
 type privateIndex struct {
 	dir, path string
 	metrics   indexCopyMetrics
+	lock      *os.File
 }
 
-func (p *privateIndex) close() error { return os.RemoveAll(p.dir) }
+func (p *privateIndex) close() error {
+	removeErr := os.RemoveAll(p.dir)
+	var closeErr error
+	if p.lock != nil {
+		closeErr = p.lock.Close()
+		p.lock = nil
+	}
+	return errors.Join(removeErr, closeErr)
+}
 
 // snapshotCurrentIndex never opens native files through SQLite. A WAL generation
 // is captured BEFORE the main copy; both main content and the committed prefix
@@ -139,16 +148,24 @@ func snapshotCurrentIndexBudget(ctx context.Context, root string, step func(stri
 }
 
 func writePrivateIndex(mainBytes []byte, metrics indexCopyMetrics) (_ *privateIndex, resultErr error) {
-	dir, err := os.MkdirTemp("", "agent-archive-codex-index-")
+	root, err := prepareIndexSnapshotRoot()
+	if err != nil {
+		return nil, err
+	}
+	dir, err := os.MkdirTemp(root, privateIndexPrefix)
 	if err != nil {
 		return nil, err
 	}
 	out := &privateIndex{dir: dir, path: filepath.Join(dir, "current.sqlite"), metrics: metrics}
 	defer func() {
 		if resultErr != nil {
-			_ = out.close()
+			resultErr = errors.Join(resultErr, out.close())
 		}
 	}()
+	out.lock, err = lockPrivateIndex(dir)
+	if err != nil {
+		return nil, err
+	}
 	if err := os.WriteFile(out.path, mainBytes, 0600); err != nil {
 		return nil, err
 	}
