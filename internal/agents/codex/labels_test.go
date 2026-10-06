@@ -2,10 +2,12 @@ package codex
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -92,6 +94,52 @@ func TestLabelsIndexRequiresVerifiedLegacyContext(t *testing.T) {
 	request.Bundle.NativeRecords[0]["payload"].(map[string]any)["history_mode"] = "paginated"
 	if _, ok := lookupLabel(root, request); ok {
 		t.Fatal("missing paginated DB was interpreted as legacy index")
+	}
+}
+
+func TestLabelsSettledReadDoesNotMutateNativeHome(t *testing.T) {
+	t.Parallel()
+	root, request := labelFixture(t)
+	labelIndex(t, root, "Index name")
+	db := labelDB(t, root, request, "paginated", "Database name", "Preview title")
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	type fileState struct {
+		Size     int64
+		Modified time.Time
+		SHA      [32]byte
+	}
+	snapshot := func() map[string]fileState {
+		t.Helper()
+		entries, err := os.ReadDir(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := map[string]fileState{}
+		for _, entry := range entries {
+			info, err := entry.Info()
+			if err != nil {
+				t.Fatal(err)
+			}
+			value := fileState{Size: info.Size(), Modified: info.ModTime()}
+			if info.Mode().IsRegular() {
+				data, err := os.ReadFile(filepath.Join(root, entry.Name()))
+				if err != nil {
+					t.Fatal(err)
+				}
+				value.SHA = sha256.Sum256(data)
+			}
+			out[entry.Name()] = value
+		}
+		return out
+	}
+	before := snapshot()
+	if label, ok := lookupLabel(root, request); !ok || label.Name != "Database name" {
+		t.Fatalf("%+v %v", label, ok)
+	}
+	if !reflect.DeepEqual(before, snapshot()) {
+		t.Fatal("read-only resolver changed native contents, metadata or directory entries")
 	}
 }
 

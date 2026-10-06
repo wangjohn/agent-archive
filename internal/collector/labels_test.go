@@ -43,8 +43,11 @@ func (p mutableLabelLookup) LookupLabels(string) (agentapi.LabelProvider, bool) 
 }
 
 func TestExternalRenamePublishesRetainedSourceWithoutReadingTranscript(t *testing.T) {
-	for _, missing := range []bool{false, true} {
-		t.Run(map[bool]string{false: "unchanged", true: "rotated"}[missing], func(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		missing, upgrade bool
+	}{{name: "unchanged"}, {name: "rotated", missing: true}, {name: "filter upgrade", upgrade: true}} {
+		t.Run(tc.name, func(t *testing.T) {
 			local := newTestStore(t)
 			path := writeTranscript(t, t.TempDir(), "session.jsonl", codexTranscript)
 			reg := registration(t, path)
@@ -64,7 +67,10 @@ func TestExternalRenamePublishesRetainedSourceWithoutReadingTranscript(t *testin
 			}
 			before := fetchMetadata(t, remote, "codex", reg.ArchiveSessionID)
 			beforeBundle := fetchBundle(t, remote, before)
-			if missing {
+			if tc.upgrade {
+				simulateFilterUpgrade(t, local)
+			}
+			if tc.missing {
 				if err := os.Remove(path); err != nil {
 					t.Fatal(err)
 				}
@@ -79,8 +85,11 @@ func TestExternalRenamePublishesRetainedSourceWithoutReadingTranscript(t *testin
 			}
 			after := fetchMetadata(t, remote, "codex", reg.ArchiveSessionID)
 			afterBundle := fetchBundle(t, remote, after)
-			if filter.calls != 0 {
+			if !tc.upgrade && filter.calls != 0 {
 				t.Fatalf("name-only refresh filtered native input %d times", filter.calls)
+			}
+			if tc.upgrade && filter.calls != 1 {
+				t.Fatalf("codec upgrade did not normally refilter native input: %d", filter.calls)
 			}
 			if after.Name != "Invented native rename" || after.Title != before.Title || after.SourceBundle == before.SourceBundle || !after.CapturedAt.Equal(before.CapturedAt) || !after.StartedAt.Equal(before.StartedAt) || !reflect.DeepEqual(after.EndedAt, before.EndedAt) || !reflect.DeepEqual(before.Counts, after.Counts) || !reflect.DeepEqual(beforeBundle.NativeRecords, afterBundle.NativeRecords) {
 				t.Fatalf("rename changed conversation facts: before=%+v after=%+v", before, after)

@@ -41,3 +41,5 @@ hashes, timestamps and scheduling counters. A name-only change publishes a
 new filtered source and metadata through normal durable pending publication,
 including the listing revision. Capture permission, frozen generations and
 retention policy continue to govern whether retained evidence can be used.
+The lookup cache holds at most2,048 entries and4MiB of compact JSON. Eviction
+does not remove a name already retained in published source evidence.

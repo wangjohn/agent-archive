@@ -91,13 +91,13 @@ func (p *pass) observeLabels() {
 		}
 	}
 	// The cache is a bounded set of observations, never a native inventory.
-	if len(cache.Entries) > 4096 {
+	if len(cache.Entries) > state.MaxLabelCacheEntries {
 		keys := make([]string, 0, len(cache.Entries))
 		for id := range cache.Entries {
 			keys = append(keys, id)
 		}
 		sort.Strings(keys)
-		for _, id := range keys[:len(keys)-4096] {
+		for _, id := range keys[:len(keys)-state.MaxLabelCacheEntries] {
 			delete(cache.Entries, id)
 		}
 	}
@@ -220,6 +220,12 @@ func (s *sessionScan) refreshLabels() (sessionOutcome, bool, error) {
 		} else if err != nil {
 			return outcomeSkipped, false, err
 		}
+	}
+	// The narrow summary is only a lookup fast path. Before source-backed
+	// publication, verify all retained bytes against the committed reference.
+	compressed, err := archive.BuildCompressedSource(last.bundle)
+	if err != nil || compressed.SHA256 != last.metadata.SourceBundle.SHA256 || len(compressed.Bytes) != last.metadata.SourceBundle.CompressedBytes {
+		return outcomeSkipped, true, errors.New("retained source cannot be verified for session name refresh")
 	}
 	candidate := last.bundle
 	candidate.SupplementalEvidence = s.applyLabels(candidate.SupplementalEvidence)

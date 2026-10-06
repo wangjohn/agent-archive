@@ -121,6 +121,9 @@ type LabelCache struct {
 	Entries map[string]LabelEntry `json:"entries"`
 }
 
+// MaxLabelCacheEntries bounds persisted observations independently of admission.
+const MaxLabelCacheEntries = 2048
+
 // LoadLabels reads safe lookup state without native source access.
 func (s *Store) LoadLabels() (LabelCache, error) {
 	cache := LabelCache{Version: 1, Entries: map[string]LabelEntry{}}
@@ -133,14 +136,14 @@ func (s *Store) LoadLabels() (LabelCache, error) {
 	}
 	defer func() { _ = f.Close() }()
 	reader := io.LimitReader(f, 4<<20)
-	if json.NewDecoder(reader).Decode(&cache) != nil || cache.Version != 1 || len(cache.Entries) > 4096 {
+	if json.NewDecoder(reader).Decode(&cache) != nil || cache.Version != 1 || len(cache.Entries) > MaxLabelCacheEntries || len(cache.Cursor) > 256 {
 		return LabelCache{}, errors.New("invalid session label cache")
 	}
 	if cache.Entries == nil {
 		cache.Entries = map[string]LabelEntry{}
 	}
 	for id, entry := range cache.Entries {
-		if !safeFileComponent(id) || !validLabelContext(entry) {
+		if !safeFileComponent(id) || len(id) > 256 || !validLabelContext(entry) {
 			delete(cache.Entries, id)
 			continue
 		}
@@ -160,11 +163,11 @@ func (s *Store) LoadLabels() (LabelCache, error) {
 
 // SaveLabels atomically persists already-filtered observations under the collector lock.
 func (s *Store) SaveLabels(cache LabelCache) error {
-	if cache.Version != 1 || len(cache.Entries) > 4096 {
+	if cache.Version != 1 || len(cache.Entries) > MaxLabelCacheEntries || len(cache.Cursor) > 256 {
 		return errors.New("invalid session label cache")
 	}
 	for id, entry := range cache.Entries {
-		if !safeFileComponent(id) || !validLabelContext(entry) {
+		if !safeFileComponent(id) || len(id) > 256 || !validLabelContext(entry) {
 			return errors.New("invalid session label cache identity")
 		}
 		if entry.Label.State == "" && !reflect.DeepEqual(entry.Label, archive.SessionLabel{}) {
@@ -181,7 +184,11 @@ func (s *Store) SaveLabels(cache LabelCache) error {
 	if err == nil && reflect.DeepEqual(prior, cache) {
 		return nil
 	}
-	return local.Write(filepath.Join(s.home, "session-labels.json"), cache)
+	encoded, err := json.Marshal(cache)
+	if err != nil || len(encoded)+1 > 4<<20 {
+		return errors.New("session label cache exceeds byte budget")
+	}
+	return local.WriteCompact(filepath.Join(s.home, "session-labels.json"), cache)
 }
 
 // The checksum is the first summary field in new state; older state uses the stat fallback.
