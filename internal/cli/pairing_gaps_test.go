@@ -318,7 +318,7 @@ func TestPairingClipboardUnavailableDeliberateFallback(t *testing.T) {
 				return errors.New("clipboard unavailable")
 			}
 			p := newPrompter(strings.NewReader(choice+"\n"), &output)
-			code := deliverPairingBundle(home, "aa-pair1:SYNTHETIC", &ledger, &issuance.Slot{}, nil, env, &output, &output, pairingAddOptions{prompt: p})
+			code := deliverPairingBundle(home, "aa-pair1:SYNTHETIC", &ledger, &issuance.Slot{}, env, &output, &output, pairingAddOptions{prompt: p})
 			if choice == "cancel" {
 				if code != 1 || ledger.State != pairingDeliveryIntent {
 					t.Fatal("uncertain delivery released")
