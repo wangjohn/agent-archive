@@ -69,3 +69,19 @@ type SourceRevisions interface {
 type SourceRevisionCandidates interface {
 	RevisionCandidates(context.Context) ([]SourceRef, error)
 }
+
+// OwnTaskFacts contains the first owned native task observation, never permission.
+// Seen with Native false refuses a later task as replacement evidence.
+type OwnTaskFacts struct {
+	Seen           bool
+	Native         bool
+	LocalExecution bool
+	StartedAt      time.Time
+	TurnID         string
+}
+
+// SourceOwnTaskFacts observes the first task within the snapshot's own logical
+// boundary, even when a copied model-context prefix exceeds a header window.
+type SourceOwnTaskFacts interface {
+	FirstOwnTask(context.Context) (OwnTaskFacts, error)
+}

@@ -490,6 +490,7 @@ func (p *relatedSourcePass) readSelection(ctx context.Context, ref agentapi.Sour
 
 type historySnapshot struct {
 	admission    *archive.CodexSourceBinding
+	firstOwnTask *agentapi.OwnTaskFacts
 	owner        *relatedSourcePass
 	selection    sourceSelection
 	spans        []physicalSpan
@@ -1110,4 +1111,89 @@ func (p *relatedSourcePass) historyBindingFacts(ctx context.Context, selection s
 	facts.Path = selection.leaf.ref.Path
 	facts.SelectedCwd = selection.leaf.meta.Cwd
 	return facts, facts.Validate()
+}
+
+func ownTaskFacts(line []byte, local bool) agentapi.OwnTaskFacts {
+	seen, native := codexmeta.NativeFirstTask(line)
+	if !seen {
+		return agentapi.OwnTaskFacts{}
+	}
+	var event struct {
+		Payload struct {
+			TurnID string `json:"turn_id"`
+		} `json:"payload"`
+	}
+	_ = json.Unmarshal(line, &event)
+	return agentapi.OwnTaskFacts{Seen: true, Native: native, LocalExecution: local, StartedAt: codexmeta.FirstTaskAt(line), TurnID: event.Payload.TurnID}
+}
+
+func localExecutionShape(f *rolloutFile) bool {
+	return f.meta.LocalExecutionSource()
+}
+
+func (s *historySnapshot) FirstOwnTask(ctx context.Context) (agentapi.OwnTaskFacts, error) {
+	if s.closed || s.owner.closed {
+		return agentapi.OwnTaskFacts{}, agentapi.ErrClosed
+	}
+	if s.firstOwnTask != nil {
+		return *s.firstOwnTask, s.check(ctx)
+	}
+	for _, span := range s.spans {
+		if span.file.identity.ThreadID != s.selection.thread {
+			continue
+		}
+		ordinal := span.startOrdinal
+		scanner := bufio.NewScanner(io.NewSectionReader(span.file.file, 0, span.end))
+		scanner.Buffer(make([]byte, min(4096, int(s.recordLimit)+1)), int(s.recordLimit)+1)
+		for scanner.Scan() {
+			if err := ctx.Err(); err != nil {
+				return agentapi.OwnTaskFacts{}, err
+			}
+			line := bytes.TrimSpace(scanner.Bytes())
+			if len(line) == 0 {
+				continue
+			}
+			current := ordinal
+			ordinal++
+			if s.history.OwnStart != nil && current < *s.history.OwnStart {
+				continue
+			}
+			facts := ownTaskFacts(line, localExecutionShape(span.file))
+			if facts.Seen {
+				if err := s.check(ctx); err != nil {
+					return agentapi.OwnTaskFacts{}, err
+				}
+				s.firstOwnTask = &facts
+				return facts, nil
+			}
+		}
+		if err := scanner.Err(); err != nil {
+			return agentapi.OwnTaskFacts{}, sourceio.Classify(err)
+		}
+	}
+	return agentapi.OwnTaskFacts{}, s.check(ctx)
+}
+
+func (s *ordinarySnapshot) FirstOwnTask(ctx context.Context) (agentapi.OwnTaskFacts, error) {
+	if s.closed || s.owner.closed {
+		return agentapi.OwnTaskFacts{}, agentapi.ErrClosed
+	}
+	scanner := bufio.NewScanner(io.NewSectionReader(s.source.file, 0, s.length))
+	scanner.Buffer(make([]byte, 4096), archive.MaxRecordBytes+1)
+	for scanner.Scan() {
+		if err := ctx.Err(); err != nil {
+			return agentapi.OwnTaskFacts{}, err
+		}
+		facts := ownTaskFacts(bytes.TrimSpace(scanner.Bytes()), localExecutionShape(s.source))
+		if facts.Seen {
+			if err := (ordinaryFile{FileInput: s.source.file, s: s}).Check(); err != nil {
+				return agentapi.OwnTaskFacts{}, err
+			}
+			return facts, nil
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return agentapi.OwnTaskFacts{}, sourceio.Classify(err)
+	}
+	return agentapi.OwnTaskFacts{}, (ordinaryFile{FileInput: s.source.file, s: s}).Check()
 }
