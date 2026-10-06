@@ -40,11 +40,14 @@ type DiscoveryRequest struct {
 // DiscoveryCandidate contains local evidence, never an admitted registration.
 // IdentityError remains local and must not be serialized into diagnostics.
 type DiscoveryCandidate struct {
-	Session           NativeSession
-	Source            SourceRef
-	Root              string
-	Bytes             int64
-	Header            NativeHeader
+	Session NativeSession
+	Source  SourceRef
+	Root    string
+	Bytes   int64
+	Header  NativeHeader
+	// SourceInfo is the local file observation taken before header inspection.
+	// Consumers must verify it again before using header facts for admission.
+	SourceInfo        fs.FileInfo
 	IdentityInspected bool
 	IdentityError     error
 	WorkspaceKey      string

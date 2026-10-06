@@ -187,6 +187,9 @@ main() {
     say ""
     say "agent-archive setup"
   fi
+  say ""
+  say "If you want to pull in older sessions, you can import them with:"
+  say "  $(shell_quote "$target") backfill"
 }
 
 # existing_installation succeeds when this machine already has a completed

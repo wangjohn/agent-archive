@@ -33,6 +33,8 @@ type Candidate struct {
 	FirstTaskAt        time.Time
 	StartEvidence      string
 	WorkingDirectory   string
+	RecordedRepoKey    string
+	ProjectResolution  *archive.ProjectResolution
 	HarnessVersion     string
 	ProducerOriginator string
 	ProducerSource     string
@@ -54,9 +56,11 @@ const (
 
 // Observation is one bounded metadata probe and its typed outcome.
 type Observation struct {
-	Candidate Candidate
-	Outcome   Outcome
-	Bytes     int64
+	// SourceInfo is the transient observation that produced the header.
+	SourceInfo os.FileInfo `json:"-"`
+	Candidate  Candidate
+	Outcome    Outcome
+	Bytes      int64
 }
 
 // Fingerprint is a retry/scheduling hint, never native start evidence.
@@ -152,7 +156,7 @@ func (codexAdapter) Describe(root, path, name string) SourceEntry {
 
 func (a codexAdapter) Inspect(ctx context.Context, source SourceDescriptor) Observation {
 	h := sourcefacts.ReadHeader(ctx, source.Root, source.Locator)
-	o := Observation{Outcome: Outcome(h.Outcome), Bytes: h.Bytes}
+	o := Observation{Outcome: Outcome(h.Outcome), Bytes: h.Bytes, SourceInfo: h.SourceInfo}
 	if o.Outcome != outcomeUsable {
 		return o
 	}
@@ -163,7 +167,7 @@ func (a codexAdapter) Inspect(ctx context.Context, source SourceDescriptor) Obse
 func candidateFromHeader(h sourcefacts.Header, source SourceDescriptor) Candidate {
 	var producerSource string
 	_ = json.Unmarshal(h.Meta.Source, &producerSource)
-	return Candidate{Agent: "codex", NativeSessionID: h.Meta.ID, Source: source, StartedAt: h.Started, FirstTaskAt: h.FirstTaskAt, StartEvidence: "native_start", WorkingDirectory: h.Meta.Cwd, HarnessVersion: h.Meta.Version, ProducerOriginator: h.Meta.Originator, ProducerSource: producerSource, FormatProfile: h.Profile, Execution: "native"}
+	return Candidate{Agent: "codex", NativeSessionID: h.Meta.ID, Source: source, StartedAt: h.Started, FirstTaskAt: h.FirstTaskAt, StartEvidence: "native_start", WorkingDirectory: h.Meta.Cwd, RecordedRepoKey: archive.RepoKey(h.Meta.Git.RepositoryURL), HarnessVersion: h.Meta.Version, ProducerOriginator: h.Meta.Originator, ProducerSource: producerSource, FormatProfile: h.Profile, Execution: "native"}
 }
 
 func (codexAdapter) PriorityDirectories(now time.Time) []string {

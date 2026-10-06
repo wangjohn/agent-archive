@@ -775,6 +775,7 @@ confirm. Projects the import needs are added to capture. Prints project
 folders and counts only, never conversation content.
   --harness NAME        Only claude, codex, or cursor (repeatable)
   --project DIR         Only this project; it need not still exist (repeatable)
+  --map-project OLD=ROOT Exact missing cwd to included root (repeatable)
   --since DATE|TIME|AGE Sessions started on or after this local day (list's
                         --since uses UTC): a date (2026-09-01), an RFC 3339
                         time, or an age (7d, 12h); a time or age selects
@@ -801,6 +802,7 @@ Example: agent-archive backfill --dry-run --since 30d
 | `--include-removed` | no value | — |
 | `--include-temp` | no value | — |
 | `--json` | no value | — |
+| `--map-project` | a value; repeatable | — |
 | `--project` | a value; repeatable | — |
 | `--since` | a value | — |
 | `--until` | a value | — |

@@ -108,7 +108,8 @@ func TestHookContinuationOfLegacyRegistrationKeepsNoDestinationID(t *testing.T) 
 	if _, err := store.RegisterNewSession(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("claude")), NativeID: "native-1"}, func(id string) archive.SessionRegistration {
 		return archive.SessionRegistration{
 			ArchiveSessionID: id, NativeSessionID: "native-1", ProjectID: archive.ProjectID("/work/widget"), ProjectRoot: "/work/widget",
-			Harness: archive.Harness{Name: "claude"}, TranscriptPath: "/tmp/old.jsonl", SessionStartedAt: start, RegisteredAt: start,
+			ProjectResolution: &archive.ProjectResolution{OriginalCwd: "/deleted/codex/worktree", Root: "/work/widget", Method: "explicit_mapping", Context: "synthetic-policy", PolicyContext: "synthetic-scope"},
+			Harness:           archive.Harness{Name: "claude"}, TranscriptPath: "/tmp/old.jsonl", SessionStartedAt: start, RegisteredAt: start,
 		}
 	}); err != nil {
 		t.Fatal(err)
@@ -153,7 +154,8 @@ func TestHookResumeOfImportKeepsProvenanceAndUpdatesPath(t *testing.T) {
 	imported, err := store.RegisterNewSession(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("claude")), NativeID: "native-1"}, func(id string) archive.SessionRegistration {
 		return archive.SessionRegistration{
 			ArchiveSessionID: id, NativeSessionID: "native-1", ProjectID: archive.ProjectID("/work/widget"), ProjectRoot: "/work/widget",
-			Harness: archive.Harness{Name: "claude"}, TranscriptPath: "/tmp/old.jsonl",
+			ProjectResolution: &archive.ProjectResolution{OriginalCwd: "/deleted/codex/worktree", Root: "/work/widget", Method: "explicit_mapping", Context: "synthetic-policy", PolicyContext: "synthetic-scope"},
+			Harness:           archive.Harness{Name: "claude"}, TranscriptPath: "/tmp/old.jsonl",
 			SessionStartedAt: time.Date(2025, 3, 1, 0, 0, 0, 0, time.UTC), RegisteredAt: importedAt,
 			AdmittedAt: importedAt, Origin: archive.SessionOriginImport, StartedAtSource: archive.StartedAtSourceTranscript, ImportBatch: archive.NewImportBatch("2026-09-01-1"),
 		}

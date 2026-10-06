@@ -24,7 +24,14 @@ func TestStatusCompatibilityUsesRecordedVersionsAndDoesNotSkipUntestedFormats(t 
 	for _, verbose := range []bool{false, true} {
 		var out bytes.Buffer
 		printStatus(&out, view, statusScreen{style: styleFor(&out), now: at, verbose: verbose})
-		for _, expected := range []string{"Recorded session formats:", "0.159.3 (cli, codex_jsonl_legacy, runtime tested)", "0.155.0-alpha.9.2 (vscode, codex_jsonl_paginated, source inspected)", "0.999.0-alpha.1 (vscode, codex_jsonl_paginated, compatible untested)", "skipped 1", "unsupported history: 1", "capture still requires consent and publication/read-back"} {
+		expectedText := []string{"Recorded session formats:", "0.159.3 (cli, codex_jsonl_legacy, runtime tested)", "0.155.0-alpha.9.2 (vscode, codex_jsonl_paginated, source inspected)", "0.999.0-alpha.1 (vscode, codex_jsonl_paginated, compatible untested)", "skipped 1", "unsupported history: 1", "capture still requires consent and publication/read-back"}
+		if !verbose {
+			expectedText = []string{"automatic capture", "skipped 1", "status --verbose"}
+			if strings.Contains(out.String(), "Recorded session formats:") {
+				t.Fatal("basic status includes verbose format diagnostics")
+			}
+		}
+		for _, expected := range expectedText {
 			if !strings.Contains(out.String(), expected) {
 				t.Errorf("missing %q in status:\n%s", expected, out.String())
 			}

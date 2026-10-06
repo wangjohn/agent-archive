@@ -5,7 +5,7 @@ Agent Archive  ● Needs attention
     To change credentials, run agent-archive setup and choose storage.
 
 Capture
-  ✓ Claude Code 2.1.283       hooks on          212 sessions (+40 subagents) · 48 imported · 3 uploading
+  ✓ Claude Code 2.1.283       hooks installed   212 sessions (+40 subagents) · 200 archived (1 verified) · 48 imported · 3 uploading
     · uploaded, read-back pending (1 of 10 projects verified)
     ✓ ~/agent-archive: verified
     · ~/styleprofile: uploaded, read-back pending
@@ -21,7 +21,7 @@ Capture
       ~/agent-archive   started 11:04
       ~/styleprofile    started 09:24
     · 17 sessions with a capture gap (109 gaps recorded; details in status --json)
-  ✓ Cursor 3.21.13            hooks on          14 sessions · 27 imported · 1 uploading
+  ✓ Cursor 3.21.13            hooks installed   14 sessions · 14 archived (14 verified) · 27 imported · 1 uploading
     · 14 sessions archived, verified 1 hour ago
       ~/personal_website   started 11:40
   ! Codex 0.155.0-alpha.9.2   hooks installed   no sessions yet
@@ -65,6 +65,7 @@ Details
   Skill evidence: body
   Imported:      75 session(s), 0 waiting to upload; last import 2026-09-27-1
   Claude Code: published; read-back pending (published; 252 session(s); 17 with a capture gap); hooks installed
+    Hooks installed; execution observed.
     Installed version: 2.1.283 (Claude Code); support unverified.
     Project /Users/alex/agent-archive: not_verified.
     Project /Users/alex/styleprofile: not_verified.
@@ -79,6 +80,7 @@ Details
     Last read-back: 2026-09-25T11:00:00Z (1 of 10 projects verified).
     Capture gaps: 109 recorded across 17 session(s); see status --json for details.
   Cursor: published; source verified (published_source_verified; 14 session(s)); hooks installed
+    Hooks installed; execution observed.
     Installed version: 3.21.13; support unverified.
     Project /Users/alex/agent-archive: not_verified.
     Project /Users/alex/styleprofile: not_verified.
@@ -92,6 +94,7 @@ Details
     Project /Users/alex/scratch: not_verified.
     Read-back verified: 2026-09-25T11:00:00Z; evidence is for that publication.
   Codex: waiting for first session (awaiting_session; 0 session(s)); hooks installed
+    Hooks installed; execution not yet observed.
     Installed version: codex-cli 0.155.0-alpha.9.2; support unverified.
     Project /Users/alex/agent-archive: not_verified.
     Project /Users/alex/styleprofile: not_verified.
