@@ -1469,7 +1469,7 @@ func promptR2Location(p *prompter, cfg *credentials.Config) (fromURL bool, err e
 				_, e = credentials.R2Endpoint(loc.Endpoint, loc.AccountID)
 			}
 			if e != nil {
-				return fmt.Errorf("That isn't an R2 account ID or bucket URL (%w). Paste the Account ID or a URL for only the bucket.", e)
+				return fmt.Errorf("that isn't an R2 account ID or bucket URL (%w). Paste the Account ID or a URL for only the bucket", e)
 			}
 			return nil
 		}})

@@ -123,7 +123,7 @@ func TestSetupShowsImportedOnlyAppsAndCanStopPublishingThem(t *testing.T) {
 	if err := config.Save(home, saved); err != nil {
 		t.Fatal(err)
 	}
-	if out := setupRun(t, env, "retention\n\ny\n", 0); setupContainsText(out, "Imported   ") {
+	if out := setupRun(t, env, "retention\n\ny\n", 0); strings.Contains(out, "\n  Imported ") || strings.Contains(out, "\n* Imported ") {
 		t.Fatalf("empty imported list shown:\n%s", out)
 	}
 }

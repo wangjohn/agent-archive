@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -19,9 +21,14 @@ func TestSetupSelectorTerminalChild(t *testing.T) {
 	fmt.Fprintln(p.out, "UNRELATED SENTINEL")
 	got, err := selectSetupProjects(p, nil, nil, roots, "", "", nil)
 	must(t, err)
-	if len(got) != 13 || includedProjects(got) != 13 {
-		t.Fatalf("selection %+v", got)
+	var names []string
+	for _, rule := range got {
+		names = append(names, filepath.Base(rule.Root))
 	}
+	if len(got) != 13 || includedProjects(got) != 13 || got[0].Root == roots[0].Root {
+		t.Fatalf("selection count=%d included=%d roots=%v", len(got), includedProjects(got), names)
+	}
+	fmt.Fprintln(p.out, "SELECTION ROOTS "+strings.Join(names, ","))
 	fmt.Fprintln(p.out, "SELECTION SAVED 13")
 }
 
@@ -72,5 +79,6 @@ while select.select([master],[],[],.05)[0]:
 assert p.returncode==0,out
 assert b'UNRELATED SENTINEL' in out,out
 assert b'Projects 13 selected' in out,out
+assert b'SELECTION ROOTS '+','.join('project-%02d'%i for i in range(2,15)).encode() in out,out
 print('selector',mode,'passed')
 `

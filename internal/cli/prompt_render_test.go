@@ -80,7 +80,7 @@ func TestGuidedPromptCollapseRequiresOwnedVisibleRows(t *testing.T) {
 				release()
 			case promptModeLongEcho:
 				echo = strings.Repeat("a", 2000) + "\n"
-			case promptModeNormal, promptModeNoColor, promptModeWide, promptModeLong, promptModeDefaultLong, promptModeRetry, promptModeScroll, promptModeTypedAhead, promptModeTypedAheadTwo, promptModePager, promptModeEof, promptModeSecretEof, promptModeInterrupt, promptModeTerm, promptModeHup, promptModeQuit, promptModePairingOutput, promptModeLive, promptModeContinued, promptModeRedirect, promptModeDumb:
+			case promptModeNormal, promptModeNoColor, promptModeWide, promptModeControlEcho, promptModeLong, promptModeDefaultLong, promptModeRetry, promptModeScroll, promptModeTypedAhead, promptModeTypedAheadTwo, promptModePager, promptModeEof, promptModeSecretEof, promptModeInterrupt, promptModeTerm, promptModeHup, promptModeQuit, promptModePairingOutput, promptModeLive, promptModeContinued, promptModeRedirect, promptModeDumb:
 				// These modes retain the original block; only capability/read flags differ.
 			}
 			r.finish(region, "Provider Amazon S3", echo, false, mode == promptModeTypedAhead, mode == promptModeContinued)
@@ -331,5 +331,21 @@ func TestPromptEchoStartsAtTheActualWrappedCursorColumn(t *testing.T) {
 	// preceding row instead.
 	if want := fmt.Sprintf("\x1b[%dA\r", region.rows); !strings.Contains(out.String(), want) {
 		t.Fatalf("wrapped cursor over-erased: %q, want %q", out.String(), want)
+	}
+}
+
+// Canonical ECHOCTL expands controls to caret notation; terminal modes can also
+// give them cursor effects. Their raw rune widths cannot prove ownership.
+func TestGuidedControlEchoPreservesHistoryAndSanitizesReceipt(t *testing.T) {
+	t.Parallel()
+	for _, control := range []string{"\x01", "\b", "\f", "\x7f"} {
+		out := &promptScreen{caps: promptCapabilities{InputTerminal: true, OutputTerminal: true, SharedTerminal: true, Redraw: true, Width: 80, Height: 24}}
+		p := newPrompter(strings.NewReader(""), out)
+		r := p.renderer()
+		region := r.begin(promptModel{Question: "Profile"})
+		r.finish(region, "Profile work"+control, strings.Repeat(control, 170)+"\n", false, false, false)
+		if strings.Contains(out.String(), "\x1b[2K") || strings.Contains(out.String(), control) || !strings.Contains(out.String(), "✓ Profile work") {
+			t.Fatalf("unsafe control echo or receipt: %q", out.String())
+		}
 	}
 }

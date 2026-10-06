@@ -417,10 +417,15 @@ work; investigate any implementation that changes archived content.
 ## Delivery checklist
 
 - [x] Shared prompt renderer and terminal capability handling.
-- [ ] All found projects default and one selector for every setup entry point.
-- [ ] Complete candidate set, paginated display, and honest discovery coverage.
-- [ ] Consistent storage menus, retries, diagnostics, and navigation.
-- [ ] Compact final review, complete details, and preserved blocked actions.
-- [ ] Setup completion separated from optional import and pairing guidance.
+- [x] All found projects default and one selector for every setup entry point.
+- [x] Complete candidate set, paginated display, and honest discovery coverage.
+- [x] Consistent storage menus, retries, diagnostics, and navigation.
+- [x] Compact final review, complete details, and preserved blocked actions.
+- [x] Setup completion separated from optional import and pairing guidance.
 - [ ] Pairing, handoff, backfill, uninstall, purge, recovery, and machine listing migration.
 - [ ] Full transcript goldens, PTY checks, documentation, and platform acceptance.
+
+The setup portion is implemented with focused CLI/backfill regression checks,
+setup transcript goldens, and selector PTY coverage on macOS. Independent P2
+review and hosted platform gates remain pending; the other guided flows and
+full cross-platform acceptance are tracked separately above.

@@ -107,11 +107,14 @@ func setupProjectCandidates(result, existing []archive.ProjectActivation, known 
 		}
 	}
 	selected := map[string]bool{}
+	for _, rule := range existing {
+		selected[local.CanonicalPath(rule.Root)] = rule.Included
+	}
 	for _, rule := range result {
 		selected[local.CanonicalPath(rule.Root)] = rule.Included
 	}
 	for i := range out {
-		out[i].selected = selected[out[i].evidence.Root]
+		out[i].selected, _ = nearestSetupProjectRule(selected, out[i].evidence.Root)
 	}
 	for _, project := range known {
 		index := -1
@@ -273,27 +276,53 @@ func projectCandidateLines(candidates []setupProjectCandidate, current, home str
 func applyProjectCandidates(candidates []setupProjectCandidate, existing []archive.ProjectActivation, backfilled map[string]bool) []archive.ProjectActivation {
 	result := slices.Clone(existing)
 	indexes := map[string]int{}
+	rules := map[string]bool{}
 	for i, rule := range result {
-		indexes[local.CanonicalPath(rule.Root)] = i
+		root := local.CanonicalPath(rule.Root)
+		indexes[root] = i
+		rules[root] = rule.Included
 	}
+	// Apply saved explicit choices before deriving inherited ownership.
 	for _, c := range candidates {
-		index, found := indexes[c.evidence.Root]
-		if !found {
-			index = -1
+		if i, found := indexes[c.evidence.Root]; found {
+			result[i].Included = c.selected
+			rules[c.evidence.Root] = c.selected
 		}
-		if index >= 0 {
-			if c.selected {
-				result[index].Included = true
-			} else { // Explicit exclusions preserve nearest-rule and imported ownership.
-				result[index].Included = false
-			}
+	}
+	// Covered selected descendants retain their owner's activation time.
+	for _, c := range candidates {
+		if _, found := indexes[c.evidence.Root]; found || !c.selected {
 			continue
 		}
-		if c.selected {
-			result = append(result, archive.ProjectActivation{Root: c.evidence.Root, ProjectID: archive.ProjectID(c.evidence.Root), Included: true})
+		if included, _ := nearestSetupProjectRule(rules, c.evidence.Root); included {
+			continue
+		}
+		result = append(result, archive.ProjectActivation{Root: c.evidence.Root, ProjectID: archive.ProjectID(c.evidence.Root), Included: true})
+		rules[c.evidence.Root] = true
+	}
+	// An unchecked child must override an included parent. Imported roots
+	// retain an explicit exclusion even when no parent currently includes them.
+	for _, c := range candidates {
+		if _, found := indexes[c.evidence.Root]; found || c.selected {
+			continue
+		}
+		included, _ := nearestSetupProjectRule(rules, c.evidence.Root)
+		if included || backfilled[archive.ProjectID(c.evidence.Root)] {
+			result = append(result, archive.ProjectActivation{Root: c.evidence.Root, ProjectID: archive.ProjectID(c.evidence.Root), Included: false})
+			rules[c.evidence.Root] = false
 		}
 	}
 	return result
+}
+
+func nearestSetupProjectRule(rules map[string]bool, root string) (included, found bool) {
+	length := -1
+	for parent, choice := range rules {
+		if len(parent) > length && local.PathWithin(root, parent) {
+			included, found, length = choice, true, len(parent)
+		}
+	}
+	return included, found
 }
 
 // setupDiscoveryApps restricts discovery to the applications being configured.
@@ -412,14 +441,13 @@ func chooseSpecificSetupProjects(p *prompter, candidates *[]setupProjectCandidat
 func includeAllSetupProjects(p *prompter, candidates []setupProjectCandidate, existing []archive.ProjectActivation) {
 	included := map[string]bool{}
 	for _, rule := range existing {
-		if rule.Included {
-			included[local.CanonicalPath(rule.Root)] = true
-		}
+		included[local.CanonicalPath(rule.Root)] = rule.Included
 	}
 	added := 0
 	for i := range candidates {
 		candidates[i].selected = true
-		if !included[candidates[i].evidence.Root] {
+		wasIncluded, _ := nearestSetupProjectRule(included, candidates[i].evidence.Root)
+		if !wasIncluded {
 			added++
 		}
 	}

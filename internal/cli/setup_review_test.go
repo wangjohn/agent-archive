@@ -317,7 +317,7 @@ func TestSetupReviewBlocksStartOnHookFileBrokenAfterPreflight(t *testing.T) {
 	if blocked < 0 || refused < blocked || !setupContainsText(output, "Fix the blocking checks first.") {
 		t.Fatalf("✗ did not block starting:\n%s", output)
 	}
-	if !setupContainsText(output[refused:], "✓ Hook file is valid") || !setupContainsText(output[refused:], "1) Start archiving (default)") {
+	if setupContainsText(output[strings.Index(output, "OK Check again"):], "✗ Codex hook file is invalid") || !setupContainsText(output[refused:], "1) Start archiving (default)") {
 		t.Fatalf("check again did not clear the ✗:\n%s", output)
 	}
 	if _, found, err := config.Load(home); err != nil || !found {

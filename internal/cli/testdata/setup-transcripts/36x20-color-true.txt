@@ -1,13 +1,17 @@
 Checking installed applications...
   \e[32m✓\e[0m Codex hooks: ~/.codex/hooks.json
-  \e[32m✓\e[0m Claude Code hooks: ~/.claude/settings.json
-  \e[32m✓\e[0m Cursor hooks: ~/.cursor/hooks.json
-  \e[32m✓\e[0m Background job: launchctl responds
+  \e[32m✓\e[0m Claude Code hooks:
+    ~/.claude/settings.json
+  \e[32m✓\e[0m Cursor hooks:
+    ~/.cursor/hooks.json
+  \e[32m✓\e[0m Background job: launchctl
+    responds
 Choose Cloudflare R2 or Amazon S3 for private archive storage. Setup will guide you through connecting your account.
 
 \e[1mStep 1 of 3 · Choose what to capture\e[0m
 
-? Capture sessions from Codex, Claude Code, and Cursor?
+? Capture sessions from Codex,
+  Claude Code, and Cursor?
 
   1) Yes (default)
   2) No
@@ -17,8 +21,10 @@ Choose Cloudflare R2 or Amazon S3 for private archive storage. Setup will guide 
 
 ? Codex capture scope
 
-  1) Included projects only (Codex) (default)
-  2) All current and future projects (Codex only)
+  1) Included projects only (Codex)
+     (default)
+  2) All current and future projects
+     (Codex only)
 
 › Choose [1]:
 \e[2m✓ Included projects only (Codex)\e[0m
@@ -26,8 +32,11 @@ Choose Cloudflare R2 or Amazon S3 for private archive storage. Setup will guide 
 ? Which projects?
 
   Found 2 projects:
-  1) ~/src/web-app · this folder · 1 session · today
-  2) ~/src/長い-project-with-a-long-name · 1 session · today
+  1) ~/src/web-app · this folder · 1
+  session · today
+  2)
+  ~/src/長い-project-with-a-long-name
+  · 1 session · today
 
   1) All 2 found projects (default)
   2) Choose specific projects
@@ -57,7 +66,8 @@ Choose Cloudflare R2 or Amazon S3 for private archive storage. Setup will guide 
 › Answer:
 \e[2m✓ AWS profile work\e[0m
 
-? Which bucket should sessions be stored in?
+? Which bucket should sessions be
+  stored in?
 
   1) photos
   2) team-archive
@@ -73,15 +83,23 @@ Checking your storage connection…
 \e[32m✓\e[0m Connected to your storage.
 
 \e[1mStep 3 of 3 · Review and start\e[0m
-  Apps      Codex, Claude Code, Cursor
-  Projects  ~/src/web-app
-            ~/src/長い-project-with-a-long-name
-  Codex     Included projects only
-  Skills    Metadata, including user folders
-  Storage   s3://team-archive/agent-archive/
-  Keep for  90 days
+  Apps
+    Codex, Claude Code, Cursor
+  Projects
+    ~/src/web-app
+    ~/src/長い-project-with-a-long-name
+  Codex
+    Included projects only
+  Skills
+    Metadata, including user folders
+  Storage
+    s3://team-archive/agent-archive/
+  Keep for
+    90 days
   ✓ Storage connected
-  ! Bucket privacy unknown · public-access settings could not be read
+  ! Bucket privacy unknown ·
+    public-access settings could not
+    be read
     Make sure public access is off:
     https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
   \e[33m!\e[0m History import is separate.
@@ -101,45 +119,95 @@ Checking your storage connection…
 
 
 \e[1mFull settings and privacy\e[0m
-  Apps           Codex 0.121.0 · Claude Code 2.1.90 · Cursor 3.21.13
+  Apps           Codex 0.121.0 ·
+                 Claude Code 2.1.90
+                 · Cursor 3.21.13
   Projects       ~/src/web-app
                  ~/src/長い-project-with-a-long-name
-  Codex capture  Automatic discovery plus hooks when approved
-  Codex scope    Included projects only
-  Exceptions     None configured · Nearest explicit project rule wins
+  Codex capture  Automatic discovery
+                 plus hooks when
+                 approved
+  Codex scope    Included projects
+                 only
+  Exceptions     None configured ·
+                 Nearest explicit
+                 project rule wins
   Codex sources  /Users/alex/.codex
-  Starts         After local consent, outside pause or exclusion
-  History        Old sessions require deliberate backfill
-  Copies         Qualifying recent native copies may be captured
-  Hooks          Optional for discovery; approval and observation are separate
-  Skills         metadata · User skill roots outside selected projects may be scanned; change with
-                 Edit a setting
-  Storage        s3://team-archive/agent-archive/ · us-east-1 · profile work
+  Starts         After local
+                 consent, outside
+                 pause or exclusion
+  History        Old sessions
+                 require deliberate
+                 backfill
+  Copies         Qualifying recent
+                 native copies may
+                 be captured
+  Hooks          Optional for
+                 discovery; approval
+                 and observation are
+                 separate
+  Skills         metadata · User
+                 skill roots outside
+                 selected projects
+                 may be scanned;
+                 change with Edit a
+                 setting
+  Storage        s3://team-archive/agent-archive/
+                 · us-east-1 ·
+                 profile work
   Keep for       90 days
-  Hook files     Codex: ~/.codex/hooks.json
-                 Claude Code: ~/.claude/settings.json
-                 Cursor: ~/.cursor/hooks.json
-  \e[32m✓\e[0m Storage connected       \e[2mwrite, read, list, delete\e[0m
-  \e[33m!\e[0m Bucket privacy unknown  \e[2mpublic-access settings could not be read\e[0m
+  Hook files     Codex:
+                 ~/.codex/hooks.json
+                 Claude Code:
+                 ~/.claude/settings.json
+                 Cursor:
+                 ~/.cursor/hooks.json
+  \e[32m✓\e[0m Storage connected       \e[2mwrite,
+                            read,
+                            list,
+                            delete\e[0m
+  \e[33m!\e[0m Bucket privacy unknown  \e[2mpublic-access
+                            settings
+                            could
+                            not be
+                            read\e[0m
     Make sure public access is off:
     \e[36mhttps://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html\e[0m
-  \e[32m✓\e[0m Hook files are valid    \e[2m~/.codex/hooks.json, ~/.claude/settings.json, ~/.cursor/hooks.json\e[0m
-  \e[32m✓\e[0m Codex discovery         \e[2msupported new tasks do not require hook approval\e[0m
+  \e[32m✓\e[0m Hook files are valid    \e[2m~/.codex/hooks.json,
+                            ~/.claude/settings.json,
+                            ~/.cursor/hooks.json\e[0m
+  \e[32m✓\e[0m Codex discovery         \e[2msupported
+                            new
+                            tasks do
+                            not
+                            require
+                            hook
+                            approval\e[0m
 
-\e[2m  Filtering is best effort; sensitive text may remain in archived sessions.\e[0m
+\e[2m  Filtering is best effort;
+  sensitive text may remain in
+  archived sessions.\e[0m
   \e[2mWhat leaves your machine:\e[0m
   \e[36mhttps://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md\e[0m
 
 \e[1mStep 3 of 3 · Review and start\e[0m
-  Apps      Codex, Claude Code, Cursor
-  Projects  ~/src/web-app
-            ~/src/長い-project-with-a-long-name
-  Codex     Included projects only
-  Skills    Metadata, including user folders
-  Storage   s3://team-archive/agent-archive/
-  Keep for  90 days
+  Apps
+    Codex, Claude Code, Cursor
+  Projects
+    ~/src/web-app
+    ~/src/長い-project-with-a-long-name
+  Codex
+    Included projects only
+  Skills
+    Metadata, including user folders
+  Storage
+    s3://team-archive/agent-archive/
+  Keep for
+    90 days
   ✓ Storage connected
-  ! Bucket privacy unknown · public-access settings could not be read
+  ! Bucket privacy unknown ·
+    public-access settings could not
+    be read
     Make sure public access is off:
     https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
   \e[33m!\e[0m History import is separate.
@@ -163,12 +231,18 @@ Installed the agent-archive skill, which lets your agents look up and pull in pa
 To remove the agent skills and keep them off, run \e[36magent-archive setup --no-skills\e[0m.
 
 \e[1mNext, in each app\e[0m
-  Codex: start a supported new task in an included project; automatic discovery does not require
-  hook approval.
-  Optional hook capture: Codex: run \e[36m/hooks\e[0m and approve the archive hooks, then start a new session
+  Codex: start a supported new task
+  in an included project; automatic
+  discovery does not require hook
+  approval.
+  Optional hook capture: Codex: run
+  \e[36m/hooks\e[0m and approve the archive
+  hooks, then start a new session
   (or \e[36m/clear\e[0m).
-  Claude Code: nothing to approve; start a new session (or \e[36m/clear\e[0m).
-  Cursor: nothing to approve; start a new Agent chat.
+  Claude Code: nothing to approve;
+  start a new session (or \e[36m/clear\e[0m).
+  Cursor: nothing to approve; start
+  a new Agent chat.
 Sessions already open are not captured. Start a new one in an included project.
 Check progress with \e[36magent-archive status\e[0m.
 
@@ -178,7 +252,8 @@ Looking for past sessions in these projects… 2 found.
 
 ? Import these sessions?
 
-  Found 2 sessions in 2 selected projects.
+  Found 2 sessions in 2 selected
+  projects.
   90-day retention applies.
 
   1) Import 2 sessions (default)
