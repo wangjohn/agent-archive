@@ -51,7 +51,7 @@ func (s *sessionScan) persistCodexBinding(binding *archive.CodexSourceBinding) e
 		return err
 	}
 	if !found || cfg.Paused || !cfg.AcceptSession(s.reg) {
-		return errors.New("Codex binding requires current capture permission")
+		return errors.New("codex binding requires current capture permission")
 	}
 	if s.reg.CodexAdmission != nil {
 		if !cfg.CodexContinuationAllowed(s.reg.ProjectRoot, canonicalCwd) {
@@ -67,10 +67,10 @@ func (s *sessionScan) persistCodexBinding(binding *archive.CodexSourceBinding) e
 	var updated archive.SessionRegistration
 	found, err = s.local.UpdateRegistration(s.id(), func(current *archive.SessionRegistration) error {
 		if current.NativeSessionID != s.reg.NativeSessionID || !cfg.AcceptSession(*current) {
-			return errors.New("Codex registration changed before binding")
+			return errors.New("codex registration changed before binding")
 		}
 		if !binding.PreservesFacts(current.CodexBinding) {
-			return errors.New("Codex binding facts changed before update")
+			return errors.New("codex binding facts changed before update")
 		}
 		if err := applyNativeChildBinding(current, binding); err != nil {
 			return err
@@ -84,7 +84,7 @@ func (s *sessionScan) persistCodexBinding(binding *archive.CodexSourceBinding) e
 		return err
 	}
 	if !found {
-		return errors.New("Codex registration disappeared before binding")
+		return errors.New("codex registration disappeared before binding")
 	}
 	s.reg = updated
 	return nil
@@ -163,7 +163,7 @@ func (s *sessionScan) nativeBindingChanged(binding *archive.CodexSourceBinding) 
 		}
 	}
 	if !binding.PreservesFacts(s.reg.CodexBinding) {
-		return false, errors.New("Codex native binding facts changed")
+		return false, errors.New("codex native binding facts changed")
 	}
 	before, err := json.Marshal(s.reg.CodexBinding)
 	if err != nil {

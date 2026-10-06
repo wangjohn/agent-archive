@@ -242,40 +242,9 @@ func (r providerReader) Filter(ctx context.Context, adapter archive.Adapter, max
 		transcriptFilters.Add(1)
 	}
 	in := snap.Input()
-	if evidenceReader, ok := snap.(agentapi.SourceAdmissionEvidence); ok && r.admission.NativeID != "" {
-		evidence, evidenceErr := evidenceReader.AdmissionEvidence(ctx, r.admission)
-		if evidenceErr != nil {
-			return out, observed, evidenceErr
-		}
-		if evidence.Binding.Child && evidence.Task.Seen && (!evidence.Task.Native || !evidence.Task.LocalExecution) {
-			return out, observed, agentapi.Wrap(agentapi.Unavailable, errors.New("first own task does not establish native execution"))
-		}
-		if r.admission.Binding != nil && !r.admission.Binding.FirstNativeTaskAt.IsZero() {
-			evidence.Binding.FirstNativeTaskAt = r.admission.Binding.FirstNativeTaskAt
-			evidence.Binding.FirstNativeTaskID = r.admission.Binding.FirstNativeTaskID
-		} else if evidence.Task.Native && evidence.Task.LocalExecution {
-			evidence.Binding.FirstNativeTaskAt = evidence.Task.StartedAt
-			evidence.Binding.FirstNativeTaskID = evidence.Task.TurnID
-		}
-		observed.binding = &evidence.Binding
-	} else {
-		if validator, ok := snap.(agentapi.SourceAdmissionValidator); ok && r.admission.NativeID != "" {
-			if err := validator.ValidateAdmission(ctx, r.admission); err != nil {
-				return out, observed, err
-			}
-		} else if r.discovery != nil {
-			return out, observed, errors.New("confined source admission validator required")
-		}
-		if facts, ok := snap.(agentapi.SourceAdmissionFacts); ok && r.admission.NativeID != "" {
-			binding, err := facts.AdmissionFacts(ctx)
-			if err != nil {
-				return out, observed, err
-			}
-			observed.binding = &binding
-		}
-	}
-	if observed.binding != nil && r.discovery != nil && r.discovery.Origin == archive.SessionOriginDiscovery && !observed.binding.NativeCreatedAt.Equal(r.discovery.SessionStartedAt) {
-		return out, observed, errors.New("native original creation evidence changed")
+	observed.binding, err = r.snapshotBinding(ctx, snap)
+	if err != nil {
+		return out, observed, err
 	}
 
 	out, err = f.Filter(ctx, in, agentapi.FilterContext{Filename: filepath.Base(r.ref.Path), StartedAt: r.startedAt, Limits: limits})
@@ -558,4 +527,45 @@ func sourceAdmission(reg archive.SessionRegistration) agentapi.SourceAdmission {
 		admission.InitialProducerSource = reg.DiscoveryProducerSource
 	}
 	return admission
+}
+
+func (r providerReader) snapshotBinding(ctx context.Context, snap agentapi.SourceSnapshot) (*archive.CodexSourceBinding, error) {
+	var binding *archive.CodexSourceBinding
+	if evidenceReader, ok := snap.(agentapi.SourceAdmissionEvidence); ok && r.admission.NativeID != "" {
+		evidence, evidenceErr := evidenceReader.AdmissionEvidence(ctx, r.admission)
+		if evidenceErr != nil {
+			return nil, evidenceErr
+		}
+		if evidence.Binding.Child && evidence.Task.Seen && (!evidence.Task.Native || !evidence.Task.LocalExecution) {
+			return nil, agentapi.Wrap(agentapi.Unavailable, errors.New("first own task does not establish native execution"))
+		}
+		if r.admission.Binding != nil && !r.admission.Binding.FirstNativeTaskAt.IsZero() {
+			evidence.Binding.FirstNativeTaskAt = r.admission.Binding.FirstNativeTaskAt
+			evidence.Binding.FirstNativeTaskID = r.admission.Binding.FirstNativeTaskID
+		} else if evidence.Task.Native && evidence.Task.LocalExecution {
+			evidence.Binding.FirstNativeTaskAt = evidence.Task.StartedAt
+			evidence.Binding.FirstNativeTaskID = evidence.Task.TurnID
+		}
+		binding = &evidence.Binding
+	} else {
+		if validator, ok := snap.(agentapi.SourceAdmissionValidator); ok && r.admission.NativeID != "" {
+			if err := validator.ValidateAdmission(ctx, r.admission); err != nil {
+				return nil, err
+			}
+		} else if r.discovery != nil {
+			return nil, errors.New("confined source admission validator required")
+		}
+		if facts, ok := snap.(agentapi.SourceAdmissionFacts); ok && r.admission.NativeID != "" {
+			factsBinding, err := facts.AdmissionFacts(ctx)
+			if err != nil {
+				return nil, err
+			}
+			binding = &factsBinding
+		}
+	}
+	if binding != nil && r.discovery != nil && r.discovery.Origin == archive.SessionOriginDiscovery && !binding.NativeCreatedAt.Equal(r.discovery.SessionStartedAt) {
+		return nil, errors.New("native original creation evidence changed")
+	}
+
+	return binding, nil
 }
