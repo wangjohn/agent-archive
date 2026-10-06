@@ -112,6 +112,28 @@ func (c *counter) value(v reflect.Value, depth int) error {
 }
 
 func (c *counter) special(v reflect.Value) (bool, error) {
+	// ImportBatch is the archive's one bounded string wrapper. Keep this helper
+	// standard-library-only and size its recorded field without invoking its
+	// marshaler (or accepting arbitrary custom encoding behavior).
+	batch := v
+	if batch.Kind() == reflect.Pointer {
+		batch = batch.Elem()
+	}
+	typ := v.Type()
+	if typ.Kind() == reflect.Pointer {
+		typ = typ.Elem()
+	}
+	if typ.PkgPath() == "github.com/wangjohn/agent-archive/internal/archive" && typ.Name() == "ImportBatch" {
+		if !batch.IsValid() {
+			return true, c.add(4)
+		}
+		id := batch.FieldByName("id")
+		if !id.IsValid() || id.Kind() != reflect.String {
+			return true, ErrUnsupported
+		}
+		return true, c.text(id.String())
+	}
+
 	if v.CanInterface() {
 		switch x := v.Interface().(type) {
 		case *time.Time:

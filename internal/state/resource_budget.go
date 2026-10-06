@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -44,7 +45,16 @@ func (s *Store) readBudgeted(path string, value any, retain bool) error {
 	if err := s.resourceContext.Err(); err != nil {
 		return err
 	}
-	f, err := os.Open(path)
+	owner, err := os.OpenRoot(s.home)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = owner.Close() }()
+	rel, err := filepath.Rel(s.home, path)
+	if err != nil {
+		return err
+	}
+	f, err := owner.Open(rel)
 	if err != nil {
 		return err
 	}

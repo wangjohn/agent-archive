@@ -743,6 +743,13 @@ func (l *CodexRolloutLookup) Close() error {
 	return l.closeWithContext(context.Background())
 }
 
+// CloseReadOnly releases a preview's private resources without checkpointing
+// newly requested coverage or observations into the capture catalog.
+func (l *CodexRolloutLookup) CloseReadOnly() error {
+	l.coverageDirty = false
+	return l.closeWithContext(context.Background())
+}
+
 func (l *CodexRolloutLookup) closeWithContext(ctx context.Context) error {
 	if l.closed {
 		return nil
