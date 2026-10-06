@@ -76,10 +76,7 @@ func recoveryWitnessInventory(ctx context.Context, r *resolver, items []*work) (
 	}
 	observed := map[string]bool{}
 	witnesses := map[string][]*work{}
-	incomplete := false
-	if r.inventoryCurrent != nil && !r.inventoryCurrent(ctx) {
-		incomplete = true
-	}
+	incomplete := r.inventoryCurrent != nil && !r.inventoryCurrent(ctx)
 	for _, w := range items {
 		if w.vanished || w.sourceChanged || w.unsafe || w.t.identityMismatch {
 			incomplete = true

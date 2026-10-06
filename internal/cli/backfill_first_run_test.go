@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/backfill"
@@ -146,6 +148,49 @@ func TestFirstRunImportConfirmationFailureDoesNotCommitProposedProjects(t *testi
 					t.Fatal("failed confirmation admitted session")
 				}
 			}
+		})
+	}
+}
+
+func TestImportConfirmationValidationDeadlineStartsAfterCollectorWait(t *testing.T) {
+	for _, recovered := range []bool{false, true} {
+		t.Run(map[bool]string{false: "ordinary", true: "recovered"}[recovered], func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				f, p, cfg, _ := firstRunImportPlan(t)
+				if !recovered {
+					for i := range p.Candidates {
+						p.Candidates[i].ProjectResolution = nil
+					}
+				}
+				release, err := lockCollector(f.data, "synthetic collector", f.env.now())
+				if err != nil {
+					t.Fatal(err)
+				}
+				go func() {
+					time.Sleep(35 * time.Second)
+					release()
+				}()
+				// Stop after the configuration commit, before registration. The
+				// real collector lock outlives the validation allowance but
+				// stays within the supported wait.
+				committed := false
+				f.env.backfillCheckpoint = func(step string) error {
+					if step == "committed" {
+						committed = true
+						return errors.New("synthetic stop after confirmation")
+					}
+					return nil
+				}
+				var out, stderr bytes.Buffer
+				code := importPlanLocked(f.env, &out, &stderr, f.data, p, configFingerprint(cfg), true)
+				if code != 1 || !committed {
+					t.Fatalf("collector wait consumed validation deadline: %s", &stderr)
+				}
+				after, _, err := config.Load(f.data)
+				if err != nil || len(after.Archive.Projects) != 1 {
+					t.Fatal("confirmation did not commit the reviewed project", after.Archive.Projects, err)
+				}
+			})
 		})
 	}
 }
