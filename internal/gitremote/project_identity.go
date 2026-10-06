@@ -17,23 +17,61 @@ import (
 // ProjectIdentity supplies bounded, local checkout evidence for configured-root recovery.
 // Existing non-Git scratch roots are known absent; unreadable/missing roots stay unknown.
 func ProjectIdentity(ctx context.Context, root string) sourcefacts.RepositoryIdentity {
-	top := ProjectRoot(ctx, root, nil)
+	return (&IdentityObserver{}).Lookup(ctx, root)
+}
+
+// IdentityObserver scopes optional command capability results to one observation pass.
+// A change of executable or effective environment discards the cached capability.
+type IdentityObserver struct {
+	// Run and ConfigRun replace bounded executors in synthetic capability tests.
+	Run       Runner
+	ConfigRun Runner
+	scope     string
+	legacy    bool
+	probed    bool
+	budget    bool
+}
+
+// Lookup observes one root; observers are used serially by a recovery sweep.
+func (o *IdentityObserver) Lookup(ctx context.Context, root string) sourcefacts.RepositoryIdentity {
+	executable, err := realLocator.find()
+	if err != nil {
+		return sourcefacts.RepositoryIdentity{}
+	}
+	stamp, ok := repositoryStamp(executable)
+	if !ok {
+		return sourcefacts.RepositoryIdentity{}
+	}
+	scope := stamp + "\x00" + executable + "\x00" + strings.Join(environment(os.Environ()), "\x00")
+	if o.scope != scope {
+		*o = IdentityObserver{scope: scope, Run: o.Run, ConfigRun: o.ConfigRun}
+	}
+	o.budget = false
+	top := ProjectRoot(ctx, root, o.shortRunner())
+	if o.budget {
+		return sourcefacts.RepositoryIdentity{BudgetExhausted: true}
+	}
 	if top != "" {
-		key, known := ProjectKey(ctx, root, nil)
+		key, known := ProjectKey(ctx, root, o.shortRunner())
 		id := sourcefacts.RepositoryIdentity{Root: top, Key: key, Known: known}
 		if !known {
+			id.BudgetExhausted = o.budget
 			return id
 		}
-		dependencies, ok := projectDependencies(ctx, root, top)
+		dependencies, semantic, ok := o.projectDependencies(ctx, root, top)
 		if !ok {
-			return sourcefacts.RepositoryIdentity{}
+			return sourcefacts.RepositoryIdentity{BudgetExhausted: o.budget}
 		}
 		id.Dependencies = dependencies
+		id.ObservedRoot = root
+		if semantic {
+			id.Validation = "semantic"
+		}
 		// The final reads must agree with the earlier identity under unchanged metadata.
-		verifiedRoot := ProjectRoot(ctx, root, nil)
-		verifiedKey, verifiedKnown := ProjectKey(ctx, root, nil)
+		verifiedRoot := ProjectRoot(ctx, root, o.shortRunner())
+		verifiedKey, verifiedKnown := ProjectKey(ctx, root, o.shortRunner())
 		if !verifiedKnown || verifiedRoot != top || verifiedKey != key || !ProjectIdentityCurrent(id) {
-			return sourcefacts.RepositoryIdentity{}
+			return sourcefacts.RepositoryIdentity{BudgetExhausted: o.budget}
 		}
 		return id
 	}
@@ -72,7 +110,8 @@ func ProjectIdentity(ctx context.Context, root string) sourcefacts.RepositoryIde
 	return sourcefacts.RepositoryIdentity{}
 }
 
-// ProjectIdentityCurrent validates cached Git metadata without spawning Git.
+// ProjectIdentityCurrent validates enumerated metadata without spawning Git.
+// Semantic identities also require the recovery resolver's second full sweep.
 func ProjectIdentityCurrent(id sourcefacts.RepositoryIdentity) bool {
 	if !id.Known || len(id.Dependencies) == 0 {
 		return false
@@ -105,44 +144,64 @@ func repositoryStamp(path string) (string, bool) {
 	return hex.EncodeToString(digest[:]), true
 }
 
-func projectDependencies(ctx context.Context, root, top string) ([]sourcefacts.RepositoryDependency, bool) {
+func (o *IdentityObserver) projectDependencies(ctx context.Context, root, top string) ([]sourcefacts.RepositoryDependency, bool, bool) {
 	bounded, cancel := context.WithTimeout(ctx, Timeout)
 	defer cancel()
-	raw, err := ExecRunner(bounded, root, "-C", root, "config", "--show-origin", "--name-only", "-z", "--list")
+	raw, err := o.configRunner()(bounded, root, "-C", root, "config", "--show-origin", "--name-only", "-z", "--list")
 	if err != nil || bounded.Err() != nil {
-		return nil, false
+		return nil, false, false
 	}
 	parts := strings.Split(strings.TrimSuffix(string(raw), "\x00"), "\x00")
 	if len(parts)%2 != 0 {
-		return nil, false
+		return nil, false, false
 	}
 	paths := map[string]bool{root: true, filepath.Join(root, ".git"): true}
 	if !checkoutAncestorDependencies(root, top, paths) {
-		return nil, false
+		return nil, false, false
 	}
-	// HEAD controls onbranch includes; the worktree/common metadata controls
-	// which config Git reads. Ask Git for paths rather than interpreting it.
-	metadata, err := ExecRunner(bounded, root, "-C", root, "rev-parse", "--path-format=absolute", "--git-path", "HEAD", "--git-path", "config", "--git-path", "config.worktree", "--git-path", "commondir")
-	if err != nil || bounded.Err() != nil {
-		return nil, false
-	}
-	names := strings.Split(strings.TrimSuffix(string(metadata), "\n"), "\n")
-	if len(names) != 4 {
-		return nil, false
-	}
-	for _, path := range names {
-		if !filepath.IsAbs(path) || strings.ContainsAny(path, "\x00\r\n") {
-			return nil, false
+	if !o.probed {
+		var unsupported bool
+		run := func(ctx context.Context, dir string, args ...string) ([]byte, error) {
+			raw, err := o.shortRunner()(ctx, dir, args...)
+			var status interface{ ExitCode() int }
+			unsupported = unsupported || (errors.As(err, &status) && status.ExitCode() == 129 && len(raw) == 0)
+			return raw, err
 		}
-		paths[filepath.Clean(path)] = true
+		if !topLevelConfigDependencies(bounded, root, paths, run) {
+			if !unsupported || bounded.Err() != nil {
+				return nil, false, false
+			}
+			o.legacy = true
+		}
+		o.probed = true
+	} else if !o.legacy && !topLevelConfigDependencies(bounded, root, paths, o.shortRunner()) {
+		return nil, false, false
 	}
-	if !topLevelConfigDependencies(bounded, root, paths, ExecRunner) || !includeDependencies(bounded, root, paths) {
-		return nil, false
+	if !o.legacy {
+		// HEAD controls onbranch includes; the worktree/common metadata controls
+		// which config Git reads. Ask Git for paths rather than interpreting it.
+		metadata, err := o.shortRunner()(bounded, root, "-C", root, "rev-parse", "--path-format=absolute", "--git-path", "HEAD", "--git-path", "config", "--git-path", "config.worktree", "--git-path", "commondir")
+		if err != nil || bounded.Err() != nil {
+			return nil, false, false
+		}
+		names := strings.Split(strings.TrimSuffix(string(metadata), "\n"), "\n")
+		if len(names) != 4 {
+			return nil, false, false
+		}
+		for _, path := range names {
+			if !filepath.IsAbs(path) || strings.ContainsAny(path, "\x00\r\n") {
+				return nil, false, false
+			}
+			paths[filepath.Clean(path)] = true
+		}
+	}
+	if !includeDependencies(bounded, root, paths, o.configRunner()) {
+		return nil, false, false
 	}
 	for i := 0; i < len(parts); i += 2 {
 		path, ok := strings.CutPrefix(parts[i], "file:")
 		if !ok {
-			return nil, false
+			return nil, false, false
 		}
 		if !filepath.IsAbs(path) {
 			path = filepath.Join(root, path)
@@ -150,7 +209,8 @@ func projectDependencies(ctx context.Context, root, top string) ([]sourcefacts.R
 		paths[filepath.Clean(path)] = true
 	}
 	if len(paths) > 128 {
-		return nil, false
+		o.budget = true
+		return nil, false, false
 	}
 	ordered := make([]string, 0, len(paths))
 	for path := range paths {
@@ -161,18 +221,18 @@ func projectDependencies(ctx context.Context, root, top string) ([]sourcefacts.R
 	for _, path := range ordered {
 		stamp, ok := repositoryStamp(path)
 		if !ok {
-			return nil, false
+			return nil, false, false
 		}
 		dependencies = append(dependencies, sourcefacts.RepositoryDependency{Path: path, Stamp: stamp})
 	}
-	return dependencies, true
+	return dependencies, o.legacy, true
 }
 
-func includeDependencies(ctx context.Context, root string, paths map[string]bool) bool {
+func includeDependencies(ctx context.Context, root string, paths map[string]bool, run Runner) bool {
 	// An empty or absent include contributes no origin-name entry. Git's
 	// typed path query expands home/prefix syntax; relative values use the
 	// containing config's directory, as Git does.
-	includes, err := ExecRunner(ctx, root, "-C", root, "config", "--show-origin", "--type=path", "-z", "--get-regexp", `^(include|includeif\..*)\.path$`)
+	includes, err := run(ctx, root, "-C", root, "config", "--show-origin", "--type=path", "-z", "--get-regexp", `^(include|includeif\..*)\.path$`)
 	var status interface{ ExitCode() int }
 	absent := errors.As(err, &status) && status.ExitCode() == 1 && len(includes) == 0
 	if (err != nil && !absent) || ctx.Err() != nil {
@@ -248,4 +308,28 @@ func checkoutAncestorDependencies(root, top string, paths map[string]bool) bool 
 		path = parent
 	}
 	return false
+}
+
+func (o *IdentityObserver) shortRunner() Runner {
+	run := o.Run
+	if run == nil {
+		run = ExecRunner
+	}
+	return o.budgetRunner(run)
+}
+func (o *IdentityObserver) configRunner() Runner {
+	run := o.ConfigRun
+	if run == nil {
+		run = ConfigRunner
+	}
+	return o.budgetRunner(run)
+}
+func (o *IdentityObserver) budgetRunner(run Runner) Runner {
+	return func(ctx context.Context, dir string, args ...string) ([]byte, error) {
+		raw, err := run(ctx, dir, args...)
+		if errors.Is(err, ErrOutputLimit) || ctx.Err() != nil {
+			o.budget = true
+		}
+		return raw, err
+	}
 }

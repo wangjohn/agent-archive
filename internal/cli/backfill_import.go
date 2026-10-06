@@ -86,7 +86,9 @@ func importPlanLocked(env Env, stdout, stderr io.Writer, home string, plan backf
 	// once, after removing any copy of Cursor's database this process made.
 	stdout = &lockedWriter{w: stdout}
 	var activity activityStop
-	interrupt := watchSignals(env, stdout, "Stopping after the current session; press Ctrl-C again to quit.", activity.invoke)
+	registrationCtx, cancelRegistration := context.WithCancel(context.Background())
+	defer cancelRegistration()
+	interrupt := watchSignals(env, stdout, "Stopping after the current session; press Ctrl-C again to quit.", func() { cancelRegistration(); activity.invoke() })
 	defer interrupt.release()
 
 	// Step 5: register, in short holds of hooks.lock.
@@ -99,6 +101,7 @@ func importPlanLocked(env Env, stdout, stderr io.Writer, home string, plan backf
 	stopRegister := startActivity(stdout, "Registering sessions…")
 	activity.set(stopRegister)
 	registration := backfill.Registration{
+		Context: registrationCtx,
 		Sources: env.agentRegistry(),
 		Home:    home, Store: store, Batch: batch.ID, AdmittedAt: admittedAt, DestinationID: batch.DestinationID,
 		MaxHoldSteps: env.backfillHoldSteps, CursorDatabase: env.cursorDatabase(), RepoKey: env.repoKeyResolver(),

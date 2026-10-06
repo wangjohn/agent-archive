@@ -29,6 +29,11 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Deleted-worktree project recovery supports Git installations without optional
+  configuration-path introspection, including Git 2.39.2. Bounded semantic
+  revalidation preserves clone ambiguity and exclusions, and larger Git config
+  inventories no longer consume the short remote-URL output limit.
+
 - Deleted Codex worktrees can recover an existing configured project from a
   unique recorded repository identity, or an exact historical backfill mapping.
   Excluded clones, ambiguous scope and damaged live checkouts remain pending;

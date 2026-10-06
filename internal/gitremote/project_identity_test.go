@@ -25,7 +25,7 @@ func TestProjectIdentityTracksIncludedConfiguration(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := ProjectIdentity(context.Background(), root)
-	if !id.Known || id.Key != archive.RepoKey("git@example.test:acme/repo.git") || !ProjectIdentityCurrent(id) {
+	if !id.Known || id.Key != archive.RepoKey("git@example.test:acme/repo.git") || !identityEvidenceCurrent(id) {
 		t.Fatalf("%+v", id)
 	}
 	raw, err := json.Marshal(id)
@@ -35,7 +35,7 @@ func TestProjectIdentityTracksIncludedConfiguration(t *testing.T) {
 	if err := os.WriteFile(include, []byte("[remote \"origin\"]\n url = https://example.test/acme/other.git\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if ProjectIdentityCurrent(id) {
+	if identityEvidenceCurrent(id) {
 		t.Fatal("included remote change left stale identity")
 	}
 	changed := ProjectIdentity(context.Background(), root)
@@ -83,13 +83,13 @@ func TestProjectIdentityTracksBranchConditionalConfiguration(t *testing.T) {
 		t.Fatal(err, closeErr)
 	}
 	id := ProjectIdentity(t.Context(), root)
-	if !id.Known || !ProjectIdentityCurrent(id) {
+	if !id.Known || !identityEvidenceCurrent(id) {
 		t.Fatalf("initial identity unavailable: %+v", id)
 	}
 	if err := os.WriteFile(filepath.Join(root, ".git", "HEAD"), []byte("ref: refs/heads/selected\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if ProjectIdentityCurrent(id) {
+	if identityEvidenceCurrent(id) {
 		t.Fatal("branch conditional origin changed without invalidating cached identity")
 	}
 	if changed := ProjectIdentity(t.Context(), root); !changed.Known || changed.Key != archive.RepoKey("https://example.test/acme/branch") {
@@ -113,13 +113,13 @@ func TestProjectIdentityTracksEmptyIncludeConfiguration(t *testing.T) {
 		t.Fatal(err, closeErr)
 	}
 	id := ProjectIdentity(t.Context(), root)
-	if !id.Known || !ProjectIdentityCurrent(id) {
+	if !id.Known || !identityEvidenceCurrent(id) {
 		t.Fatalf("initial identity unavailable: %+v", id)
 	}
 	if err := os.WriteFile(include, []byte("[remote \"origin\"]\n url = https://example.test/acme/changed\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if ProjectIdentityCurrent(id) {
+	if identityEvidenceCurrent(id) {
 		t.Fatal("empty included file changed without invalidating cached identity")
 	}
 }
@@ -132,13 +132,13 @@ func TestProjectIdentityTracksScratchAncestor(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := ProjectIdentity(t.Context(), root)
-	if !id.Known || !ProjectIdentityCurrent(id) {
+	if !id.Known || !identityEvidenceCurrent(id) {
 		t.Fatal(id)
 	}
 	if err := os.Mkdir(filepath.Join(parent, ".git"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if ProjectIdentityCurrent(id) {
+	if identityEvidenceCurrent(id) {
 		t.Fatal("scratch gained a Git ancestor without invalidating known absence")
 	}
 }
@@ -164,13 +164,13 @@ func TestProjectIdentityTracksAbsentGlobalConfiguration(t *testing.T) {
 				}
 				root := initRepo(t, git, "")
 				id := ProjectIdentity(t.Context(), root)
-				if !id.Known || id.Key != "" || !ProjectIdentityCurrent(id) {
+				if !id.Known || id.Key != "" || !identityEvidenceCurrent(id) {
 					t.Fatalf("initial identity unavailable: %+v", id)
 				}
 				if err := os.WriteFile(configPath, []byte("[remote \"origin\"]\n url = https://example.test/acme/new\n"), 0600); err != nil {
 					t.Fatal(err)
 				}
-				if ProjectIdentityCurrent(id) {
+				if identityEvidenceCurrent(id) {
 					t.Fatal("new global configuration did not invalidate known absence")
 				}
 				if changed := ProjectIdentity(t.Context(), root); !changed.Known || changed.Key != archive.RepoKey("https://example.test/acme/new") {
@@ -262,5 +262,114 @@ func TestProjectIdentityTracksNewNestedRepositoryAncestor(t *testing.T) {
 	}
 	if _, outcome := r.Recover(t.Context(), gone, key); outcome != sourcefacts.RecoveryInventoryUnavailable {
 		t.Fatalf("stale cached uniqueness must stay pending: %s", outcome)
+	}
+}
+
+// Semantic evidence needs a second Git observation; stamps alone cannot detect
+// the creation of a previously absent top-level config on legacy Git.
+func identityEvidenceCurrent(id sourcefacts.RepositoryIdentity) bool {
+	if !ProjectIdentityCurrent(id) {
+		return false
+	}
+	if id.Validation != "semantic" {
+		return true
+	}
+	fresh := ProjectIdentity(context.Background(), id.ObservedRoot)
+	return fresh.Known && fresh.Root == id.Root && fresh.Key == id.Key
+}
+
+func TestLegacyGitIdentityUsesSemanticProofWithoutInventedConfigPaths(t *testing.T) {
+	git := gitOrSkip(t)
+	version, err := exec.CommandContext(t.Context(), git, "--version").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Log(strings.TrimSpace(string(version)))
+	root := initRepo(t, git, "https://example.test/acme/repo")
+	observer := &IdentityObserver{}
+	// Force the capability result to the legacy path independent of CI's Git.
+	executable, err := realLocator.find()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stamp, ok := repositoryStamp(executable)
+	if !ok {
+		t.Fatal("executable stamp")
+	}
+	observer.scope = stamp + "\x00" + executable + "\x00" + strings.Join(environment(os.Environ()), "\x00")
+	observer.probed, observer.legacy = true, true
+	id := observer.Lookup(t.Context(), root)
+	if !id.Known || id.Validation != "semantic" || id.Key != archive.RepoKey("https://example.test/acme/repo") {
+		t.Fatal(id)
+	}
+	for _, dep := range id.Dependencies {
+		if strings.HasSuffix(dep.Path, ".gitconfig") {
+			t.Fatal("invented absent config stamp", dep)
+		}
+	}
+}
+
+func TestConfigurationInventoryHasItsOwnBoundedOutput(t *testing.T) {
+	git := gitOrSkip(t)
+	root := initRepo(t, git, "https://example.test/acme/repo")
+	config := filepath.Join(root, ".git", "config")
+	f, err := os.OpenFile(config, os.O_WRONLY|os.O_APPEND, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 200; i++ {
+		if _, err := fmt.Fprintf(f, "\n[synthetic]\n key%d = ignored\n", i); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ExecRunner(t.Context(), root, "-C", root, "config", "--show-origin", "--name-only", "-z", "--list"); err != ErrOutputLimit {
+		t.Fatal("short query cap", err)
+	}
+	if id := ProjectIdentity(t.Context(), root); !id.Known {
+		t.Fatal("large name inventory lost identity", id)
+	}
+	f, err = os.OpenFile(config, os.O_WRONLY|os.O_APPEND, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("\n[remote \"origin\"]\n url = https://example.test/" + strings.Repeat("x", 5000) + "\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, known := ProjectKey(t.Context(), root, nil); known {
+		t.Fatal("oversized origin bypassed short cap")
+	}
+}
+
+func TestOptionalCapabilitiesAreProbedOnceAndScopedToEnvironment(t *testing.T) {
+	git := gitOrSkip(t)
+	roots := []string{initRepo(t, git, "https://example.test/acme/one"), initRepo(t, git, "https://example.test/acme/two")}
+	probes := 0
+	observer := &IdentityObserver{Run: func(ctx context.Context, dir string, args ...string) ([]byte, error) {
+		if len(args) >= 4 && args[2] == "var" {
+			probes++
+			return nil, projectExitStatusError(129)
+		}
+		return ExecRunner(ctx, dir, args...)
+	}}
+	for _, root := range roots {
+		if id := observer.Lookup(t.Context(), root); !id.Known || id.Validation != "semantic" {
+			t.Fatal(id)
+		}
+	}
+	if probes != 1 {
+		t.Fatalf("optional capability probed %d times", probes)
+	}
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	if id := observer.Lookup(t.Context(), roots[0]); !id.Known {
+		t.Fatal(id)
+	}
+	if probes != 2 {
+		t.Fatal("environment change reused capability cache", probes)
 	}
 }

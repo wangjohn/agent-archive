@@ -361,3 +361,100 @@ func TestRecoveryProofRetainsCanonicalWorkingDirectoryFreshness(t *testing.T) {
 		t.Fatal("changed original cwd reused")
 	}
 }
+
+func TestSemanticRecoveryRechecksWholeInventoryOncePerSlice(t *testing.T) {
+	key := archive.RepoKey("https://example.test/acme/repo")
+	projects := []archive.ProjectActivation{{Root: "/synthetic/first", Included: true}, {Root: "/synthetic/second", Included: false}}
+	calls := 0
+	changed := false
+	lookup := func(_ context.Context, root string) RepositoryIdentity {
+		calls++
+		k := key
+		if root == "/synthetic/second" {
+			k = archive.RepoKey("https://example.test/acme/other")
+			if changed {
+				k = key
+			}
+		}
+		return RepositoryIdentity{Known: true, Root: root, Key: k, Validation: "semantic", ObservedRoot: root}
+	}
+	r := NewRecoveryResolver(projects, nil, filepath.Clean, lookup, nil)
+	r.Validate = func(RepositoryIdentity) bool { return true }
+	proof, outcome := r.Recover(t.Context(), "/synthetic/gone", key)
+	if outcome != "" || proof.ValidationMethod != "semantic" {
+		t.Fatal(proof, outcome)
+	}
+	r.ResetValidation()
+	for i := 0; i < 100; i++ {
+		if !r.CurrentSlice(proof) {
+			t.Fatal("stable inventory rejected")
+		}
+	}
+	if calls != 4 {
+		t.Fatalf("100 sessions require two inventory sweeps, got %d root observations", calls)
+	}
+	changed = true
+	r.ResetValidation()
+	if r.CurrentSlice(proof) {
+		t.Fatal("new excluded clone did not invalidate unique match")
+	}
+	if calls != 6 {
+		t.Fatal(calls)
+	}
+}
+
+func TestSemanticRecoveryCancellationNeverAdmits(t *testing.T) {
+	key := archive.RepoKey("https://example.test/acme/repo")
+	ctx, cancel := context.WithCancel(t.Context())
+	r := NewRecoveryResolver([]archive.ProjectActivation{{Root: "/synthetic/root", Included: true}}, nil, filepath.Clean, func(context.Context, string) RepositoryIdentity {
+		return RepositoryIdentity{Known: true, Root: "/synthetic/root", Key: key, Validation: "semantic", ObservedRoot: "/synthetic/root"}
+	}, nil)
+	proof, outcome := r.Recover(ctx, "/synthetic/gone", key)
+	if outcome != "" {
+		t.Fatal(outcome)
+	}
+	cancel()
+	r.ResetValidation()
+	if r.CurrentSlice(proof) || !r.MetadataExhausted {
+		t.Fatal("cancelled epoch admitted")
+	}
+}
+
+func TestSemanticAdmissionRenewsCancelledPlanningContext(t *testing.T) {
+	key := archive.RepoKey("https://example.test/acme/repo")
+	planning, cancel := context.WithCancel(t.Context())
+	lookups := 0
+	r := NewRecoveryResolver([]archive.ProjectActivation{{Root: "/synthetic/root", Included: true}}, nil, filepath.Clean, func(ctx context.Context, _ string) RepositoryIdentity {
+		if ctx.Err() != nil {
+			t.Fatal("renewed admission used cancelled planning context")
+		}
+		lookups++
+		return RepositoryIdentity{Known: true, Root: "/synthetic/root", Key: key, Validation: "semantic", ObservedRoot: "/synthetic/root"}
+	}, nil)
+	proof, outcome := r.Recover(planning, "/synthetic/gone", key)
+	if outcome != "" {
+		t.Fatal(outcome)
+	}
+	cancel()
+	r.ResetValidationContext(t.Context())
+	if !r.CurrentSlice(proof) || lookups != 2 {
+		t.Fatal("admission did not renew full sweep", lookups)
+	}
+}
+
+func TestRepositoryObservationBudgetKeepsInventoryProgress(t *testing.T) {
+	key := archive.RepoKey("https://example.test/acme/repo")
+	projects := []archive.ProjectActivation{{Root: "/synthetic/a", Included: true}, {Root: "/synthetic/b", Included: true}}
+	calls := 0
+	r := NewRecoveryResolver(projects, nil, filepath.Clean, func(_ context.Context, root string) RepositoryIdentity {
+		calls++
+		if root == "/synthetic/a" {
+			return RepositoryIdentity{BudgetExhausted: true}
+		}
+		return RepositoryIdentity{Known: true, Root: root, Key: key}
+	}, nil)
+	_, outcome := r.Recover(t.Context(), "/synthetic/gone", key)
+	if outcome != RecoveryBudgetExhausted || calls != 2 || r.Inventory.Cursor != 2 {
+		t.Fatal(outcome, calls, r.Inventory.Cursor)
+	}
+}

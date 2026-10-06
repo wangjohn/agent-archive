@@ -32,7 +32,7 @@ type resolution struct {
 // worktrees are followed through their .git files.
 type resolutionCheck struct {
 	valid func() bool
-	reset func()
+	reset func(context.Context)
 }
 
 type resolver struct {
@@ -142,7 +142,7 @@ func (r *resolver) resolveEvidence(ctx context.Context, cwd, key string) resolut
 		proof, outcome := r.recovery.Recover(ctx, cwd, key)
 		if outcome == "" {
 			checked, valid := false, false
-			check := &resolutionCheck{reset: func() { checked = false; r.recovery.ResetValidation() }, valid: func() bool {
+			check := &resolutionCheck{reset: func(ctx context.Context) { checked = false; r.recovery.ResetValidationContext(ctx) }, valid: func() bool {
 				if !checked {
 					checked = true
 					valid = !r.env.exists(cwd) && r.env.exists(proof.Root) && !r.hasRepositoryEvidence(cwd) && r.recovery.CurrentSlice(proof)
