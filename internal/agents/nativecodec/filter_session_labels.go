@@ -76,6 +76,22 @@ func claudeLabelRecord(raw map[string]any, omit func(string)) (map[string]any, b
 	rawKind, _ := raw["type"].(string)
 	kind := claudeLabelKind(rawKind)
 	out := map[string]any{"type": rawKind}
+	// A present malformed ownership field must not become a legacy missing field.
+	if kind == claudeCustomTitleType || kind == claudeAITitleType {
+		if id, present := raw["sessionId"]; present {
+			text, valid := id.(string)
+			if !valid || strings.TrimSpace(text) == "" {
+				omit("sessionId")
+				return nil, false
+			}
+		}
+		if flag, present := raw["isSidechain"]; present {
+			if _, valid := flag.(bool); !valid {
+				omit("isSidechain")
+				return nil, false
+			}
+		}
+	}
 	for _, key := range sortedKeys(raw) {
 		value := raw[key]
 		switch {
@@ -160,6 +176,10 @@ func claudeLabelSurvived(label, safe map[string]any, omit func(string)) bool {
 		key := "customTitle"
 		if label["type"] == string(claudeAITitleType) {
 			key = "aiTitle"
+		}
+		// Sanitization cannot erase or rewrite ownership into legacy evidence.
+		if id, present := label["sessionId"]; present && safe["sessionId"] != id {
+			return false
 		}
 		title, ok := safe[key].(string)
 		return ok && strings.TrimSpace(title) != ""

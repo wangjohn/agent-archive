@@ -38,6 +38,11 @@ func stripInjectedInstructions(value string) (bool, string) {
 	// Native open-page context is a leading wrapper. A mention in prose or a
 	// quoted/code example is user text, not proof of injected page context.
 	for {
+		// Four spaces or a tab starts a Markdown code example.
+		line := strings.TrimLeft(safe, "\r\n")
+		if strings.HasPrefix(line, "    ") || strings.HasPrefix(line, "\t") {
+			break
+		}
 		leading := strings.TrimLeft(safe, " \t\r\n")
 		open := injectedInstructionOpenByTag["external_codex_apps_open_page"].FindStringIndex(leading)
 		if open == nil || open[0] != 0 {
@@ -49,7 +54,7 @@ func stripInjectedInstructions(value string) (bool, string) {
 			safe = ""
 			break
 		}
-		safe = strings.TrimSpace(leading[end:])
+		safe = leading[end:]
 	}
 	return changed, safe
 }
