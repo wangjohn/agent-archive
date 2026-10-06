@@ -141,8 +141,10 @@ func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config,
 		h.Formats = slices.Clone(c.Health.Formats)
 	}
 	allowance := Budget
+	checkpointAllowance := Budget
 	if o.Rollouts != nil {
-		allowance = min(Budget-time.Second, o.Rollouts.remaining-time.Second)
+		checkpointAllowance = min(Budget, o.Rollouts.remaining)
+		allowance = checkpointAllowance - time.Second
 		if allowance <= 0 {
 			return h, agentapi.Wrap(agentapi.Limit, errors.New("native observation budget exhausted"))
 		}
@@ -151,8 +153,13 @@ func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config,
 	if o.Rollouts != nil {
 		defer func() { o.Rollouts.remaining -= time.Since(started) }()
 	}
+	// Observation may exhaust its slice while the durable queue/proofs still
+	// need saving. Keep the reserved checkpoint second inside the same pass
+	// allowance and under the original caller's cancellation.
+	checkpointCtx, cancelCheckpoint := context.WithDeadline(ctx, started.Add(checkpointAllowance))
+	defer cancelCheckpoint()
 	deadline := started.Add(allowance)
-	ctx, cancel := context.WithDeadline(ctx, deadline)
+	ctx, cancel := context.WithDeadline(checkpointCtx, deadline)
 	defer cancel()
 	if o.CodexRollouts == nil && o.Rollouts != nil {
 		o.CodexRollouts = o.Rollouts
@@ -203,7 +210,7 @@ func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config,
 		}
 		return h, nil
 	}
-	if err := persistNativeCatalog(ctx, o.Rollouts, path, c); err != nil {
+	if err := persistNativeCatalog(checkpointCtx, o.Rollouts, path, c); err != nil {
 		return h, errors.Join(errors.New("discovery state write failed; retry next scan"), err)
 	}
 	if o.Rollouts != nil {

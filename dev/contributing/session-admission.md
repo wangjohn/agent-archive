@@ -172,7 +172,10 @@ Requested coverage keeps at most 256 requests and 64 candidates per request,
 with conservative bounds before accumulation and serialization: 1 MiB per
 request and 16 MiB combined requested proofs and lookup hints. Hints use at most
 half that allowance so they cannot monopolize request progress. They are also
-charged to the shared native read ledger. The prunable observation cache remains
+charged to the shared native read ledger. Observation leaves one second of the
+same pass allowance for its durable checkpoint. The checkpoint inherits the
+original caller's cancellation, so expiry of the observation slice preserves
+queued requests and proofs without extending the pass deadline. The prunable observation cache remains
 at most 2048 entries. Completed attempts rotate only after their consumer receives
 the result; unfinished and undelivered work stays enrolled. Physical dependencies
 use the same worker and requested facts, including those outside the hint cache.
