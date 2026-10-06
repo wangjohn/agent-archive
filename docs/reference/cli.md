@@ -263,7 +263,7 @@ agent, even with --yes or AGENT_ARCHIVE_NONINTERACTIVE=0.
   --spares N     Save unused R2 key target, 0..5 (default 2)
                  Refill with an available management token
   --expires DURATION  Lifetime from 5m to 24h (default: 15m)
-  --print        Print the encrypted bundle instead of choosing a transfer method
+  --print        Print the encrypted bundle in this terminal
   --file PATH    Create a private 0600 bundle file; never overwrite a file
   --yes          Require --name and deliberately print bundle and code
                  (with --file, print only the separately delivered code)
