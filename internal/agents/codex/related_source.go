@@ -531,6 +531,10 @@ func (s *historySnapshot) validate(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		if s.firstOwnTask == nil && span.file.identity.ThreadID == s.selection.thread && facts.firstTask.Seen {
+			task := facts.firstTask
+			s.firstOwnTask = &task
+		}
 		count += facts.records
 		if count > archive.MaxHistoryRecords {
 			return sourceFailure(agentapi.Limit, "history record limit")
@@ -745,6 +749,10 @@ func (s *ordinarySnapshot) ValidateAdmission(ctx context.Context, a agentapi.Sou
 	if err != nil {
 		return err
 	}
+	if a.Binding != nil {
+		facts.FirstNativeTaskAt = a.Binding.FirstNativeTaskAt
+		facts.FirstNativeTaskID = a.Binding.FirstNativeTaskID
+	}
 	if !validAdmissionFacts(s.source, facts, a) {
 		return sourceFailure(agentapi.Unsafe, "source admission facts changed")
 	}
@@ -788,7 +796,7 @@ func bindingFacts(f *rolloutFile, home string, own *uint64) (archive.CodexSource
 	if root == "" && !f.identity.Child {
 		root = f.identity.ThreadID
 	}
-	facts := archive.CodexSourceBinding{Version: 1, Child: f.identity.Child, NativeThreadID: f.identity.ThreadID, NativeCreatedAt: created, Cwd: f.meta.Cwd, SelectedCwd: f.meta.Cwd, ProducerSource: source, RootID: root, ParentID: f.identity.ParentID, OwnStart: own, PhysicalRolloutID: f.identity.RolloutID, Path: f.ref.Path, Home: home}
+	facts := archive.CodexSourceBinding{Version: 1, Child: f.identity.Child, NativeThreadID: f.identity.ThreadID, NativeCreatedAt: created, Cwd: f.meta.Cwd, SelectedCwd: f.meta.Cwd, ProducerSource: source, PhysicalProducerVersion: f.meta.Version, PhysicalProducerOriginator: f.meta.Originator, RootID: root, ParentID: f.identity.ParentID, OwnStart: own, PhysicalRolloutID: f.identity.RolloutID, Path: f.ref.Path, Home: home}
 	return facts, facts.Validate()
 }
 
@@ -852,11 +860,19 @@ func (p *relatedSourcePass) ValidateSourceAdmission(ctx context.Context, ref age
 }
 
 func validAdmissionFacts(f *rolloutFile, facts archive.CodexSourceBinding, a agentapi.SourceAdmission) bool {
+	if a.Binding != nil && a.Binding.PhysicalRolloutID == f.identity.RolloutID {
+		if a.Binding.PhysicalProducerVersion != "" && a.Binding.PhysicalProducerVersion != f.meta.Version || a.Binding.PhysicalProducerOriginator != "" && a.Binding.PhysicalProducerOriginator != f.meta.Originator {
+			return false
+		}
+	}
 	return facts.PreservesFacts(a.Binding) && (a.NativeCreatedAt.IsZero() || facts.NativeCreatedAt.Equal(a.NativeCreatedAt)) && (a.InitialProducerVersion == "" || f.meta.Version == a.InitialProducerVersion) && (a.InitialProducerOriginator == "" || f.meta.Originator == a.InitialProducerOriginator) && (a.InitialProducerSource == "" || facts.ProducerSource == a.InitialProducerSource)
 }
 
 // prefixValidation is cached only for one immutable, fully captured ancestor prefix.
 type prefixValidation struct {
+	taskOwned      bool
+	taskBoundary   uint64
+	firstTask      agentapi.OwnTaskFacts
 	startOrdinal   uint64
 	endOrdinal     uint64
 	records        int
@@ -907,9 +923,22 @@ func (s *historySnapshot) validateSpan(ctx context.Context, span *physicalSpan) 
 			return prefixValidation{}, agentapi.Wrap(agentapi.Limit, archive.ErrRecordTooLarge)
 		}
 		s.owner.cacheHits++
-		return *cached, ctx.Err()
+		result := *cached
+		boundary := uint64(0)
+		if s.history.OwnStart != nil {
+			boundary = *s.history.OwnStart
+		}
+		if span.file.identity.ThreadID != s.selection.thread || !cached.taskOwned || cached.taskBoundary != boundary {
+			result.firstTask = agentapi.OwnTaskFacts{}
+		}
+		return result, ctx.Err()
 	}
 	facts := prefixValidation{startOrdinal: span.startOrdinal, endOrdinal: span.startOrdinal}
+	facts.taskOwned = span.file.identity.ThreadID == s.selection.thread
+	if s.history.OwnStart != nil {
+		facts.taskBoundary = *s.history.OwnStart
+	}
+
 	h := sha256.New()
 	scanner := bufio.NewScanner(io.TeeReader(io.NewSectionReader(span.reader(), 0, span.end), h))
 	scanner.Buffer(make([]byte, min(int64(4096), s.recordLimit+1)), int(s.recordLimit)+1)
@@ -939,6 +968,9 @@ func (s *historySnapshot) validateSpan(ctx context.Context, span *physicalSpan) 
 		}
 		if facts.endOrdinal == math.MaxUint64 {
 			return facts, sourceFailure(agentapi.Limit, "history ordinal overflow")
+		}
+		if facts.taskOwned && !facts.firstTask.Seen && facts.endOrdinal >= facts.taskBoundary {
+			facts.firstTask = ownTaskFacts(line, localExecutionShape(span.file))
 		}
 		facts.endOrdinal++
 		facts.records++
@@ -1107,9 +1139,15 @@ func (p *relatedSourcePass) historyBindingFacts(ctx context.Context, selection s
 			return archive.CodexSourceBinding{}, sourceFailure(agentapi.Unsafe, "native child identity conflict")
 		}
 	}
+	if known != nil {
+		facts.FirstNativeTaskAt = known.FirstNativeTaskAt
+		facts.FirstNativeTaskID = known.FirstNativeTaskID
+	}
 	facts.PhysicalRolloutID = selection.leaf.identity.RolloutID
 	facts.Path = selection.leaf.ref.Path
 	facts.SelectedCwd = selection.leaf.meta.Cwd
+	facts.PhysicalProducerVersion = selection.leaf.meta.Version
+	facts.PhysicalProducerOriginator = selection.leaf.meta.Originator
 	return facts, facts.Validate()
 }
 
@@ -1132,11 +1170,19 @@ func localExecutionShape(f *rolloutFile) bool {
 }
 
 func (s *historySnapshot) FirstOwnTask(ctx context.Context) (agentapi.OwnTaskFacts, error) {
+	facts, err := s.gatherOwnTask(ctx)
+	if err != nil {
+		return facts, err
+	}
+	return facts, s.check(ctx)
+}
+
+func (s *historySnapshot) gatherOwnTask(ctx context.Context) (agentapi.OwnTaskFacts, error) {
 	if s.closed || s.owner.closed {
 		return agentapi.OwnTaskFacts{}, agentapi.ErrClosed
 	}
 	if s.firstOwnTask != nil {
-		return *s.firstOwnTask, s.check(ctx)
+		return *s.firstOwnTask, ctx.Err()
 	}
 	for _, span := range s.spans {
 		if span.file.identity.ThreadID != s.selection.thread {
@@ -1160,9 +1206,6 @@ func (s *historySnapshot) FirstOwnTask(ctx context.Context) (agentapi.OwnTaskFac
 			}
 			facts := ownTaskFacts(line, localExecutionShape(span.file))
 			if facts.Seen {
-				if err := s.check(ctx); err != nil {
-					return agentapi.OwnTaskFacts{}, err
-				}
 				s.firstOwnTask = &facts
 				return facts, nil
 			}
@@ -1171,7 +1214,7 @@ func (s *historySnapshot) FirstOwnTask(ctx context.Context) (agentapi.OwnTaskFac
 			return agentapi.OwnTaskFacts{}, sourceio.Classify(err)
 		}
 	}
-	return agentapi.OwnTaskFacts{}, s.check(ctx)
+	return agentapi.OwnTaskFacts{}, ctx.Err()
 }
 
 func (s *ordinarySnapshot) FirstOwnTask(ctx context.Context) (agentapi.OwnTaskFacts, error) {
@@ -1196,4 +1239,50 @@ func (s *ordinarySnapshot) FirstOwnTask(ctx context.Context) (agentapi.OwnTaskFa
 		return agentapi.OwnTaskFacts{}, sourceio.Classify(err)
 	}
 	return agentapi.OwnTaskFacts{}, (ordinaryFile{FileInput: s.source.file, s: s}).Check()
+}
+
+func (s *historySnapshot) AdmissionEvidence(ctx context.Context, admission agentapi.SourceAdmission) (agentapi.AdmissionEvidence, error) {
+	if s.closed || s.owner.closed {
+		return agentapi.AdmissionEvidence{}, agentapi.ErrClosed
+	}
+	s.admission = admission.Binding
+	if s.history.OwnStart == nil && admission.Binding != nil && admission.Binding.OwnStart != nil {
+		s.history.OwnStart = admission.Binding.OwnStart
+		s.firstOwnTask = nil
+	}
+	binding, err := s.owner.historyBindingFacts(ctx, s.selection, s.spans, s.history.OwnStart, s.admission)
+	if err != nil {
+		return agentapi.AdmissionEvidence{}, err
+	}
+	if admission.NativeID != s.selection.thread || admission.Cwd != "" && admission.Cwd != s.selection.leaf.meta.Cwd || !validAdmissionFacts(s.selection.leaf, binding, admission) {
+		return agentapi.AdmissionEvidence{}, sourceFailure(agentapi.Unsafe, "source admission facts changed")
+	}
+	task, err := s.gatherOwnTask(ctx)
+	if err != nil {
+		return agentapi.AdmissionEvidence{}, err
+	}
+	evidence := agentapi.AdmissionEvidence{Binding: binding, Task: task}
+	return evidence, s.check(ctx)
+}
+
+func (s *ordinarySnapshot) AdmissionEvidence(ctx context.Context, admission agentapi.SourceAdmission) (agentapi.AdmissionEvidence, error) {
+	if s.closed || s.owner.closed {
+		return agentapi.AdmissionEvidence{}, agentapi.ErrClosed
+	}
+	binding, err := bindingFacts(s.source, s.owner.env.Policy.Root, nil)
+	if err != nil {
+		return agentapi.AdmissionEvidence{}, err
+	}
+	if admission.Binding != nil {
+		binding.FirstNativeTaskAt = admission.Binding.FirstNativeTaskAt
+		binding.FirstNativeTaskID = admission.Binding.FirstNativeTaskID
+	}
+	if admission.NativeID != s.source.identity.ThreadID || admission.Cwd != "" && admission.Cwd != s.source.meta.Cwd || !validAdmissionFacts(s.source, binding, admission) {
+		return agentapi.AdmissionEvidence{}, sourceFailure(agentapi.Unsafe, "source admission facts changed")
+	}
+	task, err := s.FirstOwnTask(ctx)
+	if err != nil {
+		return agentapi.AdmissionEvidence{}, err
+	}
+	return agentapi.AdmissionEvidence{Binding: binding, Task: task}, nil
 }

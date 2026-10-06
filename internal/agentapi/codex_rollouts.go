@@ -85,3 +85,15 @@ type OwnTaskFacts struct {
 type SourceOwnTaskFacts interface {
 	FirstOwnTask(context.Context) (OwnTaskFacts, error)
 }
+
+// AdmissionEvidence combines facts from one opened snapshot before admission.
+type AdmissionEvidence struct {
+	Binding archive.CodexSourceBinding
+	Task    OwnTaskFacts
+}
+
+// SourceAdmissionEvidence gathers original facts and first-owned task evidence,
+// validates supplied immutable constraints, and performs one final shared check.
+type SourceAdmissionEvidence interface {
+	AdmissionEvidence(context.Context, SourceAdmission) (AdmissionEvidence, error)
+}

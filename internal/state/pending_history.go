@@ -26,6 +26,7 @@ var stagedSourceName = regexp.MustCompile(`^[0-9a-f]{64}\.gz$`)
 // are staged individually before this descriptor, outside the journal JSON.
 type PendingHistory struct {
 	// Preparing performs private sequential privacy work before any remote write.
+	PreparedAt             time.Time       `json:"prepared_at,omitzero"`
 	Preparing              bool            `json:"preparing,omitempty"`
 	PrivacyCursor          int             `json:"privacy_cursor,omitempty"`
 	Inputs                 []HistoryInput  `json:"inputs,omitempty"`
@@ -52,6 +53,7 @@ type PendingSource struct {
 
 // RetiredSource retains every cleanup obligation until acknowledgement succeeds.
 type RetiredSource struct {
+	RetiredAt        time.Time               `json:"retired_at"`
 	Reference        archive.SourceReference `json:"reference"`
 	PrivacySensitive bool                    `json:"privacy_sensitive,omitempty"`
 }
@@ -113,7 +115,7 @@ func (p PendingPublication) ValidateHistory(id string) error {
 		prior.SchemaVersion = archive.MetadataSchemaVersion
 		prior.History = nil
 		prior.SourceBundle = retired.Reference
-		if prior.ValidateSourceReference() != nil || known[retired.Reference] {
+		if prior.ValidateSourceReference() != nil || known[retired.Reference] || (retired.RetiredAt.IsZero() && !p.History.Preparing) {
 			return errors.New("invalid retired history reference")
 		}
 	}
