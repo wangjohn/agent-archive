@@ -68,7 +68,6 @@ type RecoveryResolver struct {
 	MetadataOperations int
 	MetadataExhausted  bool
 	sliceValidated     map[string]bool
-	cwdSnapshots       map[string]string
 	digest             string
 	results            map[string]recoveryDecision
 	Inventory          *RecoveryInventory
@@ -150,11 +149,13 @@ func (r *RecoveryResolver) Recover(ctx context.Context, cwd, key string) (proof 
 		}
 	}()
 	proof = archive.ProjectResolution{OriginalCwd: cwd, RecordedRepoKey: key, Context: r.Context, PolicyContext: r.PolicyContext}
-	if len(cwd) > 4096 || !filepath.IsAbs(cwd) || strings.ContainsAny(cwd, "\x00\r\n") {
+	if !validRecoveryPath(cwd) {
 		return proof, RecoveryUnavailable
 	}
-	if !r.rememberCwd(cwd) {
-		return proof, RecoveryBudgetExhausted
+	proof.CanonicalCwd = r.rawResolve(cwd)
+	if !validRecoveryPath(proof.CanonicalCwd) {
+		proof.CanonicalCwd = ""
+		return proof, RecoveryUnavailable
 	}
 	cwd = filepath.Clean(cwd)
 	if p, ok := ConfiguredOwner(r.Projects, r.ResolvePath(cwd), r.ResolvePath); ok {
@@ -323,7 +324,7 @@ func (r *RecoveryResolver) Current(proof archive.ProjectResolution) bool {
 	}
 	r.MetadataOperations += len(r.Projects)
 	r.MetadataOperations++
-	if canonical, ok := r.cwdSnapshots[proof.OriginalCwd]; ok && r.rawResolve(proof.OriginalCwd) != canonical {
+	if proof.CanonicalCwd == "" || r.rawResolve(proof.OriginalCwd) != proof.CanonicalCwd {
 		return false
 	}
 	if RecoveryContext(r.Projects, nil, r.rawResolve) != r.pathContext {
@@ -380,7 +381,7 @@ func (r *RecoveryResolver) CurrentSlice(proof archive.ProjectResolution) bool {
 			return false
 		}
 		r.MetadataOperations++
-		if canonical, ok := r.cwdSnapshots[proof.OriginalCwd]; ok && r.rawResolve(proof.OriginalCwd) != canonical {
+		if proof.CanonicalCwd == "" || r.rawResolve(proof.OriginalCwd) != proof.CanonicalCwd {
 			return false
 		}
 	}
@@ -401,15 +402,6 @@ func (r *RecoveryResolver) CurrentSlice(proof archive.ProjectResolution) bool {
 	return true
 }
 
-func (r *RecoveryResolver) rememberCwd(cwd string) bool {
-	if r.cwdSnapshots == nil {
-		r.cwdSnapshots = map[string]string{}
-	}
-	if _, exists := r.cwdSnapshots[cwd]; !exists {
-		if len(r.cwdSnapshots) >= 4096 {
-			return false
-		}
-		r.cwdSnapshots[cwd] = r.rawResolve(cwd)
-	}
-	return true
+func validRecoveryPath(path string) bool {
+	return len(path) <= 4096 && filepath.IsAbs(path) && !strings.ContainsAny(path, "\x00\r\n")
 }

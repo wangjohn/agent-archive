@@ -326,6 +326,7 @@ type CodexAdmissionProof struct {
 // Root is the selected configured spelling; Context is a content-free policy digest.
 type ProjectResolution struct {
 	OriginalCwd     string `json:"original_cwd"`
+	CanonicalCwd    string `json:"canonical_cwd,omitempty"`
 	Root            string `json:"root"`
 	Method          string `json:"method"`
 	RecordedRepoKey string `json:"recorded_repo_key,omitempty"`

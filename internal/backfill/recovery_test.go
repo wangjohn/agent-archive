@@ -2,6 +2,7 @@ package backfill
 
 import (
 	"context"
+	"fmt"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/sourcefacts"
@@ -196,5 +197,37 @@ func TestRecordedRecoveryKeepsBrokenWorktreePending(t *testing.T) {
 		if result.skip != SkipWorktreeUnresolved || result.root == target || calls != 0 {
 			t.Fatal(result, calls)
 		}
+	}
+}
+
+func TestDeletedWorktreePlanningContinuesPastRecoveryCache(t *testing.T) {
+	tr := newTree(t)
+	root := tr.repo("home/repo")
+	key := archive.RepoKey("https://example.test/acme/repo")
+	env := tr.env()
+	calls := 0
+	env.RepositoryIdentity = func(context.Context, string) sourcefacts.RepositoryIdentity {
+		calls++
+		return sourcefacts.RepositoryIdentity{Root: root, Key: key, Known: true}
+	}
+	env.RepositoryIdentityCurrent = func(sourcefacts.RepositoryIdentity) bool { return true }
+	cfg := config.Config{Archive: archive.Config{Projects: []archive.ProjectActivation{project(root, true)}}}
+	for range 2 {
+		r := newResolver(env, cfg, Filters{})
+		var last resolution
+		for i := range 4097 {
+			cwd := tr.path(fmt.Sprintf("home/.codex/worktrees/deleted-%d/repo", i))
+			last = r.resolveEvidence(t.Context(), cwd, key)
+			if last.skip != "" || last.root != root || last.proof == nil {
+				t.Fatalf("candidate %d: %+v", i, last)
+			}
+		}
+		last.current.reset()
+		if !last.current.valid() {
+			t.Fatal("last candidate lost freshness proof")
+		}
+	}
+	if calls != 2 {
+		t.Fatalf("inventory re-read per cwd: %d", calls)
 	}
 }

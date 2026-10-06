@@ -1071,8 +1071,10 @@ permission generations reject configuration changes.
 most 128 mappings and 4,096 bytes per absolute path. The first equals sign is
 the delimiter. Its canonical sorted digest participates in `BatchFilters`
 equality. Local registrations retain original cwd, method, normalized key and
-policy/inventory context, independently of timestamps and destination. No raw
-repository URL enters durable evidence. A mapping targets an existing included
+policy/inventory context and bounded canonical cwd evidence, independently of
+timestamps and destination. Canonical cwd evidence travels with each proof; the
+4096-entry decision cache does not limit the number of distinct import candidates.
+No raw repository URL enters durable evidence. A mapping targets an existing included
 configured root and never overrides configured or live ownership.
 
 Recovery evidence is rechecked before admitting a new owner. Git dependency

@@ -315,3 +315,49 @@ func BenchmarkRecoveryImportSlicesWithStampedEvidence(b *testing.B) {
 		}
 	}
 }
+
+func TestRecoveryDistinctWorkingDirectoriesDoNotStarveLaterImports(t *testing.T) {
+	key := archive.RepoKey("https://example.test/acme/repo")
+	projects := []archive.ProjectActivation{{Root: "/configured", Included: true}}
+	for pass := range 2 {
+		calls := 0
+		r := NewRecoveryResolver(projects, nil, filepath.Clean, func(context.Context, string) RepositoryIdentity {
+			calls++
+			return RepositoryIdentity{Root: "/configured", Key: key, Known: true}
+		}, nil)
+		for i := range 100000 {
+			cwd := fmt.Sprintf("/deleted/worktree/%d", i)
+			proof, outcome := r.Recover(t.Context(), cwd, key)
+			if outcome != "" || proof.Root != "/configured" || proof.OriginalCwd != cwd {
+				t.Fatalf("pass %d candidate %d: %+v %s", pass, i, proof, outcome)
+			}
+		}
+		if calls != 1 || len(r.results) > 4096 {
+			t.Fatalf("unbounded inventory/cache: calls=%d entries=%d", calls, len(r.results))
+		}
+	}
+}
+
+func TestRecoveryProofRetainsCanonicalWorkingDirectoryFreshness(t *testing.T) {
+	key := archive.RepoKey("https://example.test/acme/repo")
+	canonical := "/missing/original"
+	resolve := func(path string) string {
+		if path == "/deleted/alias" {
+			return canonical
+		}
+		return filepath.Clean(path)
+	}
+	r := NewRecoveryResolver([]archive.ProjectActivation{{Root: "/configured", Included: true}}, nil, resolve, func(context.Context, string) RepositoryIdentity {
+		return RepositoryIdentity{Root: "/configured", Key: key, Known: true}
+	}, nil)
+	r.Validate = func(RepositoryIdentity) bool { return true }
+	proof, outcome := r.Recover(t.Context(), "/deleted/alias", key)
+	if outcome != "" || proof.CanonicalCwd != canonical || !r.Current(proof) || !r.CurrentSlice(proof) {
+		t.Fatal(proof, outcome)
+	}
+	canonical = "/missing/changed"
+	r.ResetValidation()
+	if r.Current(proof) || r.CurrentSlice(proof) {
+		t.Fatal("changed original cwd reused")
+	}
+}
