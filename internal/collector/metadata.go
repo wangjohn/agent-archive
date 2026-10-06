@@ -171,18 +171,18 @@ func (s *sessionScan) refreshedMetadata(last lastPublication, source archive.Sou
 	// Unchanged metadata over the same source needs no publication.
 	comparison := next
 	comparison.MetadataDerivedAt = prior.MetadataDerivedAt
-	oldBytes, err := json.Marshal(prior)
+	oldBytes, err := s.marshalRetained(prior)
 	if err != nil {
 		return nil, false, err
 	}
-	comparisonBytes, err := json.Marshal(comparison)
+	comparisonBytes, err := s.marshalRetained(comparison)
 	if err != nil {
 		return nil, false, err
 	}
 	if bytes.Equal(oldBytes, comparisonBytes) {
 		return nil, false, nil
 	}
-	encoded, err = json.Marshal(next)
+	encoded, err = s.marshalRetained(next)
 	return encoded, err == nil, err
 }
 

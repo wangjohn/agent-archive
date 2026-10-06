@@ -8,12 +8,13 @@ import (
 
 // PutVerifiedSource stores immutable bytes only when absent, then verifies them.
 // It never changes a metadata pointer and refuses an existing different object.
-func PutVerifiedSource(ctx context.Context, store ObjectStore, key, sha string, data []byte, retry RetryPolicy) error {
-	if key == "" || !VerifySHA256(data, sha) {
+// verify belongs to the caller so its bounded reads share the source-data lease.
+func PutVerifiedSource(ctx context.Context, store ObjectStore, key, sha string, data []byte, retry RetryPolicy, verify func(context.Context, string, string, int) error) error {
+	if key == "" || !VerifySHA256(data, sha) || verify == nil {
 		return errors.New("invalid immutable source checksum or key")
 	}
 	return retry.run(ctx, func() error {
-		err := verifyStoredObject(ctx, store, key, sha, len(data))
+		err := verify(ctx, key, sha, len(data))
 		if err == nil {
 			return nil
 		}
@@ -23,14 +24,6 @@ func PutVerifiedSource(ctx context.Context, store ObjectStore, key, sha string, 
 		if err := store.Put(ctx, key, data); err != nil {
 			return err
 		}
-		return verifyStoredObject(ctx, store, key, sha, len(data))
+		return verify(ctx, key, sha, len(data))
 	})
-}
-
-// VerifySource verifies an already referenced object before metadata publication.
-func VerifySource(ctx context.Context, store ObjectStore, key, sha string, size int, retry RetryPolicy) error {
-	if key == "" || sha == "" || size <= 0 {
-		return errors.New("invalid source reference")
-	}
-	return retry.run(ctx, func() error { return verifyStoredObject(ctx, store, key, sha, size) })
 }

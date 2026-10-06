@@ -41,6 +41,7 @@ type CodexRolloutLookup struct {
 	deadline         time.Time
 	remaining        time.Duration
 	observationBytes int64
+	catalogCharge    int64
 	observations     map[string]rolloutObservation
 	byThread         map[string]map[string]struct{}
 	byPhysical       map[string]map[string]struct{}
@@ -80,24 +81,29 @@ func NewCodexRolloutLookup(ctx context.Context, store *state.Store, homes []stri
 		return nil, agentapi.Wrap(agentapi.Limit, errors.New("native home limit"))
 	}
 	lookup := &CodexRolloutLookup{store: store, readBudget: agentapi.NewNativeReadBudget(currentSnapshotLimit), roots: roots, deadline: time.Now().Add(Budget), remaining: Budget, coverage: newCoverage(roots), observations: map[string]rolloutObservation{}, byThread: map[string]map[string]struct{}{}, byPhysical: map[string]map[string]struct{}{}, threads: map[string]agentapi.CodexRolloutSet{}, indexes: map[string]*currentIndexView{}}
+	lookup.coverage.reserveFacts = lookup.reserveCatalog
 	var prior catalog
-	if err := local.Read(filepath.Join(store.Home(), "discovery-catalog.json"), &prior); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err := lookup.readCatalog(ctx, filepath.Join(store.Home(), "discovery-catalog.json"), &prior); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if errors.Is(err, agentapi.ErrReadBudget) || ctx.Err() != nil {
+			return nil, errors.Join(err, lookup.Close())
+		}
 		return lookup, nil
 	}
 	if prior.Coverage != nil && prior.Coverage.Version != 1 {
-		return nil, errors.New("native coverage requires a newer writer")
+		return nil, errors.Join(errors.New("native coverage requires a newer writer"), lookup.Close())
 	}
 	if catalogNeedsReset(prior, roots) {
 		return lookup, nil
 	}
 	if prior.Coverage != nil {
 		if err := prior.Coverage.validate(roots); err != nil {
-			return nil, err
+			return nil, errors.Join(err, lookup.Close())
 		}
 		lookup.coverage = prior.Coverage
 	} else {
 		lookup.coverage = newCoverage(roots)
 	}
+	lookup.coverage.reserveFacts = lookup.reserveCatalog
 	for path, entry := range prior.Cache {
 		root := lookup.homeFor(path)
 		if root == "" || entry.Observation.Identity == nil {
@@ -276,6 +282,7 @@ func (l *CodexRolloutLookup) Rollout(ctx context.Context, id string) ([]agentapi
 	if l.coverage == nil {
 		l.coverage = newCoverage(l.roots)
 	}
+	l.coverage.reserveFacts = l.reserveCatalog
 	beforeSequence := l.coverage.Sequence
 	if l.coverage.request(id) && l.coverage.Sequence != beforeSequence {
 		l.coverageDirty = true
@@ -359,6 +366,7 @@ func (l *CodexRolloutLookup) thread(ctx context.Context, id string, native bool)
 	if l.coverage == nil {
 		l.coverage = newCoverage(l.roots)
 	}
+	l.coverage.reserveFacts = l.reserveCatalog
 	beforeSequence := l.coverage.Sequence
 	if native && l.coverage.request(id) && l.coverage.Sequence != beforeSequence {
 		l.coverageDirty = true
@@ -734,6 +742,10 @@ func (l *CodexRolloutLookup) Close() error {
 		return nil
 	}
 	l.closed = true
+	defer func() {
+		l.readBudget.Release(l.catalogCharge)
+		l.catalogCharge = 0
+	}()
 	l.readBudget.Release(l.observationBytes)
 	l.observationBytes = 0
 	if l.coverage != nil {
@@ -757,7 +769,7 @@ func (l *CodexRolloutLookup) Close() error {
 		if l.catalog != nil {
 			current = *l.catalog
 		} else {
-			err = local.Read(filepath.Join(l.store.Home(), "discovery-catalog.json"), &current)
+			err = l.readCatalog(context.Background(), filepath.Join(l.store.Home(), "discovery-catalog.json"), &current)
 		}
 		if err == nil || errors.Is(err, os.ErrNotExist) {
 			if current.Coverage != nil && current.Coverage.Version != 1 {
@@ -766,7 +778,7 @@ func (l *CodexRolloutLookup) Close() error {
 				current.Version = catalogVersion
 				current.Roots = slices.Clone(l.roots)
 				current.Coverage = l.coverage
-				errs = append(errs, local.WriteCompact(filepath.Join(l.store.Home(), "discovery-catalog.json"), current))
+				errs = append(errs, l.writeCatalog(context.Background(), filepath.Join(l.store.Home(), "discovery-catalog.json"), current))
 			}
 		} else {
 			errs = append(errs, err)
@@ -813,6 +825,7 @@ func (l *CodexRolloutLookup) PrepareRegistered(ctx context.Context, cfg config.C
 		if l.coverage == nil {
 			l.coverage = newCoverage(l.roots)
 		}
+		l.coverage.reserveFacts = l.reserveCatalog
 		before := l.coverage.Sequence
 		if !l.coverage.request(id) {
 			continue

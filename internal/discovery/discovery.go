@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
@@ -125,6 +126,7 @@ func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config,
 	h := Health{Enabled: enabled, LastAttempt: now, Outcomes: map[string]int{}}
 	c, path, roots, err := prepareCatalog(store, cfg, o, adapter, &h)
 	if err != nil {
+		h.Pending = true
 		return h, err
 	}
 	if c.Coverage != nil && c.Coverage.Phase == coverageValidate {
@@ -176,8 +178,12 @@ func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config,
 			return h, err
 		}
 	}
-	if err := local.WriteCompact(path, c); err != nil {
-		return h, errors.New("discovery state write failed; retry next scan")
+	write := func() error { return local.WriteCompact(path, c) }
+	if o.Rollouts != nil {
+		write = func() error { return o.Rollouts.writeCatalog(ctx, path, c) }
+	}
+	if err := write(); err != nil {
+		return h, errors.Join(errors.New("discovery state write failed; retry next scan"), err)
 	}
 	if o.Rollouts != nil {
 		o.Rollouts.catalog = &c
@@ -517,8 +523,8 @@ func (s scan) visitEntry(d directory, source SourceEntry) (retry, stop bool) {
 	c, h, now := s.catalog, s.health, s.now
 	h.Entries++
 	if source.Directory != "" {
-		s.enqueueDirectory(d, source.Directory)
-		return false, false
+		queued := s.enqueueDirectory(d, source.Directory)
+		return !queued, !queued
 	}
 	if source.Source.Locator == "" {
 		return false, false
@@ -546,9 +552,6 @@ func (s scan) visitEntry(d directory, source SourceEntry) (retry, stop bool) {
 			return true, true
 		}
 		observation := s.adapter.Inspect(s.ctx, source.Source)
-		if s.rollouts != nil {
-			s.rollouts.readBudget.Release(headerCharge)
-		}
 		h.Probes++
 		if s.rollouts != nil {
 			s.rollouts.probes++
@@ -557,6 +560,9 @@ func (s scan) visitEntry(d directory, source SourceEntry) (retry, stop bool) {
 		h.NativeReadBytes += observation.NativeReadBytes
 		h.NativeReadOperations += observation.NativeReadOperations
 		entry = cached{Size: source.Fingerprint.Size, Mtime: source.Fingerprint.Mtime, Checked: now, Observation: observation}
+		if !s.retainProbedObservation(entry, headerCharge) {
+			return true, true
+		}
 		c.Cache[loc] = entry
 	}
 	if s.priority && !entry.ActiveHint {
@@ -601,6 +607,17 @@ func (s scan) visitEntry(d directory, source SourceEntry) (retry, stop bool) {
 	return s.admitCandidate(candidate, loc)
 }
 
+// retainProbedObservation transfers the probe scratch to a catalog fact owner
+// before returning the scratch, including when retained ownership is refused.
+func (s scan) retainProbedObservation(entry cached, scratch int64) bool {
+	if s.rollouts == nil {
+		return true
+	}
+	retained := s.rollouts.retainObservation(s.ctx, entry)
+	s.rollouts.readBudget.Release(scratch)
+	return retained
+}
+
 // Retained admission retries rotate separately from directory enumeration.
 // One conflicting or contended source must not pin a directory's coverage.
 func (s scan) retainRetry(source SourceDescriptor) {
@@ -636,19 +653,24 @@ func (s scan) observeRetries(o Options) {
 	}
 }
 
-func (s scan) enqueueDirectory(d directory, path string) {
+func (s scan) enqueueDirectory(d directory, path string) bool {
 	if s.priority {
-		return
+		return true
 	}
 	if filepath.IsAbs(path) || filepath.Clean(path) != path || !local.PathWithin(filepath.Join(d.Root, path), d.Root) {
 		s.health.Outcomes["invalid_source"]++
-		return
+		return true
 	}
 	if len(s.catalog.Queue)+s.reservedDirectories >= maxDirectories || strings.Count(d.Path, string(filepath.Separator)) >= 16 {
 		s.health.Errors = appendUnique(s.health.Errors, "directory_limit")
-		return
+		return true
 	}
-	s.catalog.Queue = append(s.catalog.Queue, directory{Root: d.Root, Path: path})
+	next := directory{Root: d.Root, Path: path}
+	if s.rollouts != nil && !s.rollouts.reserveCatalog(directoryByteBound(next)) {
+		return false
+	}
+	s.catalog.Queue = append(s.catalog.Queue, next)
+	return true
 }
 
 // removalBlocks avoids repeat census work for a known removed source. Retention
@@ -806,8 +828,17 @@ func prepareCatalog(store *state.Store, cfg config.Config, o Options, adapter So
 	var c catalog
 	if o.Rollouts != nil && o.Rollouts.catalog != nil {
 		c = *o.Rollouts.catalog
-	} else if err := local.Read(path, &c); err != nil && !errors.Is(err, os.ErrNotExist) {
-		h.Errors = append(h.Errors, "catalog_rebuilt")
+	} else {
+		read := func() error { return local.Read(path, &c) }
+		if o.Rollouts != nil {
+			read = func() error { return o.Rollouts.readCatalog(context.Background(), path, &c) }
+		}
+		if err := read(); err != nil && !errors.Is(err, os.ErrNotExist) {
+			if errors.Is(err, agentapi.ErrReadBudget) {
+				return c, path, nil, err
+			}
+			h.Errors = append(h.Errors, "catalog_rebuilt")
+		}
 	}
 	var roots []string
 	if cfg.Discovery != nil {
@@ -830,6 +861,7 @@ func prepareCatalog(store *state.Store, cfg config.Config, o Options, adapter So
 			c.Coverage = newCoverage(roots)
 		}
 		o.Rollouts.coverage = c.Coverage
+		c.Coverage.reserveFacts = o.Rollouts.reserveCatalog
 		if c.Coverage.Phase == coverageComplete {
 			c.Coverage.restart()
 			c.Queue = nil
@@ -844,7 +876,11 @@ func prepareCatalog(store *state.Store, cfg config.Config, o Options, adapter So
 	if len(c.Queue) == 0 && (c.Coverage == nil || c.Coverage.Phase == coverageObserve) {
 		for _, root := range roots {
 			for _, path := range adapter.InitialDirectories() {
-				c.Queue = append(c.Queue, directory{Root: root, Path: path})
+				next := directory{Root: root, Path: path}
+				if o.Rollouts != nil && !o.Rollouts.reserveCatalog(directoryByteBound(next)) {
+					return c, path, roots, errCatalogBudget
+				}
+				c.Queue = append(c.Queue, next)
 			}
 		}
 	}
