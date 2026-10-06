@@ -12,7 +12,6 @@ import (
 	"reflect"
 	"regexp"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
@@ -42,8 +41,7 @@ func (s *Store) LabelRevision(id string) (string, string, error) {
 		return "", "", errors.New("label publication unavailable")
 	}
 	token := sha256.Sum256([]byte(fmt.Sprintf("%d:%d", info.Size(), info.ModTime().UnixNano())))
-	checksum := ""
-	checksum = readLabelChecksum(s.publishedPath(id))
+	checksum := readLabelChecksum(s.publishedPath(id))
 	return checksum, hex.EncodeToString(token[:]), nil
 }
 
@@ -68,7 +66,6 @@ func (s *Store) LoadLabelPublication(id string, budget int64) (*Published, int64
 	// Retained state is plain JSON, including its native records. Limit the
 	// actual read as well as the stat so growth cannot defeat the byte cap.
 	data, err := io.ReadAll(io.LimitReader(f, info.Size()))
-	labelContextBytes.Add(int64(len(data)))
 	if err != nil || int64(len(data)) != info.Size() {
 		return nil, int64(len(data)), errors.New("label context changed during read")
 	}
@@ -98,7 +95,7 @@ func validLabelContext(entry LabelEntry) bool {
 		return false
 	}
 	if proof.NativeID != "" {
-		_, ok := archive.FilterSessionLabel(archive.SessionLabel{NativeID: proof.NativeID, State: "confirmed_absent", Source: "index", Contract: archive.SessionLabelContract})
+		_, ok := archive.FilterSessionLabel(archive.SessionLabel{NativeID: proof.NativeID, State: archive.SessionLabelAbsent, Source: archive.SessionLabelIndex, Contract: archive.SessionLabelContract})
 		if !ok {
 			return false
 		}
@@ -108,11 +105,6 @@ func validLabelContext(entry LabelEntry) bool {
 		(proof.PreviewDigest == "" || labelHash(proof.PreviewDigest)) &&
 		labelContextContract.MatchString(proof.Contract) && entry.Failures <= 6
 }
-
-var labelContextBytes atomic.Int64
-
-// LabelContextReadBytes counts bounded one-time retained context decodes for cost tests.
-func LabelContextReadBytes() int64 { return labelContextBytes.Load() }
 
 // LabelCache is collector-owned, bounded, and independent of publication retries.
 type LabelCache struct {

@@ -14,6 +14,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/codexmeta"
 	_ "github.com/wangjohn/agent-archive/internal/testutil/golden"
 )
 
@@ -28,8 +29,7 @@ func labelFixture(t *testing.T) (string, agentapi.LabelRequest) {
 	}
 	path := filepath.Join(dir, "rollout.jsonl")
 	reg := archive.SessionRegistration{ArchiveSessionID: "synthetic-label", NativeSessionID: labelTestID, Harness: archive.Harness{Name: "codex", Version: "0.159.2"}, TranscriptPath: path}
-	bundle := archive.SourceBundle{SchemaVersion: archive.SourceSchemaVersion, ArchiveSessionID: reg.ArchiveSessionID, NativeSessionID: labelTestID, ProjectID: "project", Capture: archive.SourceCapture{Harness: reg.Harness, AdapterName: "codex", AdapterVersion: "0.16.0", CapturedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}, NativeRecords: []map[string]any{{"type": "session_meta", "payload": map[string]any{"id": labelTestID, "cli_version": "0.159.2"}}, {"type": "event_msg", "payload": map[string]any{"type": "user_message", "message": "Invented prompt"}}}}
-	bundle.Capture.FilterVersion = archive.FilterVersion
+	bundle := archive.SourceBundle{SchemaVersion: archive.SourceSchemaVersion, ArchiveSessionID: reg.ArchiveSessionID, NativeSessionID: labelTestID, ProjectID: "project", Capture: archive.SourceCapture{Harness: reg.Harness, AdapterName: "codex", AdapterVersion: "0.16.0", FilterVersion: archive.FilterVersion, CapturedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}, NativeRecords: []map[string]any{{"type": "session_meta", "payload": map[string]any{"id": labelTestID, "cli_version": "0.159.2"}}, {"type": "event_msg", "payload": map[string]any{"type": "user_message", "message": "Invented prompt"}}}}
 	return root, agentapi.LabelRequest{Registration: reg, Bundle: bundle}
 }
 
@@ -46,16 +46,16 @@ func labelIndex(t *testing.T, root string, names ...string) {
 	}
 }
 
-func labelDB(t *testing.T, root string, request agentapi.LabelRequest, mode, name, title string) *sql.DB {
+func labelDB(t *testing.T, root string, request agentapi.LabelRequest, mode codexmeta.HistoryMode, name, title string) *sql.DB {
 	t.Helper()
 	db, err := sql.Open("sqlite", filepath.Join(root, "state_5.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec("CREATE TABLE threads(id TEXT PRIMARY KEY,history_mode TEXT,name TEXT,title TEXT,first_user_message TEXT,preview TEXT,source TEXT,cli_version TEXT,rollout_path TEXT)"); err != nil {
+	if _, err := db.ExecContext(context.Background(), "CREATE TABLE threads(id TEXT PRIMARY KEY,history_mode TEXT,name TEXT,title TEXT,first_user_message TEXT,preview TEXT,source TEXT,cli_version TEXT,rollout_path TEXT)"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec("INSERT INTO threads VALUES(?,?,?,?,?,?,?,?,?)", labelTestID, mode, name, title, "Invented prompt", "Invented prompt", "\"cli\"", "0.159.2", request.Registration.TranscriptPath); err != nil {
+	if _, err := db.ExecContext(context.Background(), "INSERT INTO threads VALUES(?,?,?,?,?,?,?,?,?)", labelTestID, mode, name, title, "Invented prompt", "Invented prompt", "\"cli\"", "0.159.2", request.Registration.TranscriptPath); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
@@ -78,7 +78,7 @@ func TestLabelsIndexUsesLastUsablePhysicalRecord(t *testing.T) {
 	}
 	labelIndex(t, root, "Invented prompt")
 	got, ok = lookupLabel(root, request)
-	if !ok || got.State != "confirmed_absent" {
+	if !ok || got.State != archive.SessionLabelAbsent {
 		t.Fatalf("%+v %v", got, ok)
 	}
 }
@@ -127,7 +127,7 @@ func TestLabelsSettledReadDoesNotMutateNativeHome(t *testing.T) {
 	t.Parallel()
 	root, request := labelFixture(t)
 	labelIndex(t, root, "Index name")
-	db := labelDB(t, root, request, "paginated", "Database name", "Preview title")
+	db := labelDB(t, root, request, codexmeta.CodexHistoryPaginated, "Database name", "Preview title")
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -148,15 +148,15 @@ func TestLabelsSettledReadDoesNotMutateNativeHome(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			value := fileState{Size: info.Size(), Modified: info.ModTime()}
+			var sum [32]byte
 			if info.Mode().IsRegular() {
 				data, err := os.ReadFile(filepath.Join(root, entry.Name()))
 				if err != nil {
 					t.Fatal(err)
 				}
-				value.SHA = sha256.Sum256(data)
+				sum = sha256.Sum256(data)
 			}
-			out[entry.Name()] = value
+			out[entry.Name()] = fileState{Size: info.Size(), Modified: info.ModTime(), SHA: sum}
 		}
 		return out
 	}
@@ -170,8 +170,14 @@ func TestLabelsSettledReadDoesNotMutateNativeHome(t *testing.T) {
 }
 
 func TestLabelsSettledCanonicalStoragePrecedence(t *testing.T) {
-	for _, tc := range []struct{ mode, name, title, want string }{{"legacy", "Unused name", "Database title", "Database title"}, {"legacy", "Unused name", "Invented prompt", "Index name"}, {"paginated", "Canonical name", "Stale title", "Canonical name"}, {"paginated", "Invented prompt", "Stale title", "Invented prompt"}, {"paginated", "", "Stale title", ""}} {
-		t.Run(tc.mode+tc.want, func(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		mode  codexmeta.HistoryMode
+		name  string
+		title string
+		want  string
+	}{{codexmeta.CodexHistoryLegacy, "Unused name", "Database title", "Database title"}, {codexmeta.CodexHistoryLegacy, "Unused name", "Invented prompt", "Index name"}, {codexmeta.CodexHistoryPaginated, "Canonical name", "Stale title", "Canonical name"}, {codexmeta.CodexHistoryPaginated, "Invented prompt", "Stale title", "Invented prompt"}, {codexmeta.CodexHistoryPaginated, "", "Stale title", ""}} {
+		t.Run(string(tc.mode)+tc.want, func(t *testing.T) {
 			t.Parallel()
 			root, request := labelFixture(t)
 			labelIndex(t, root, "Index name")
@@ -204,11 +210,11 @@ func TestLabelsUnfinishedIndexAndLiveWALAreUnavailable(t *testing.T) {
 		t.Fatal("unfinished append was authoritative")
 	}
 	labelIndex(t, root, "Name")
-	db := labelDB(t, root, request, "paginated", "Live name", "")
-	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
+	db := labelDB(t, root, request, codexmeta.CodexHistoryPaginated, "Live name", "")
+	if _, err := db.ExecContext(context.Background(), "PRAGMA journal_mode=WAL"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec("UPDATE threads SET name='Changed live name'"); err != nil {
+	if _, err := db.ExecContext(context.Background(), "UPDATE threads SET name='Changed live name'"); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := lookupLabel(root, request); ok {

@@ -12,13 +12,24 @@ import (
 	"unicode/utf8"
 )
 
+type SessionLabelState string
+
+type SessionLabelSource string
+
+const (
+	SessionLabelPresent  SessionLabelState  = "present"
+	SessionLabelAbsent   SessionLabelState  = "confirmed_absent"
+	SessionLabelIndex    SessionLabelSource = "index"
+	SessionLabelDatabase SessionLabelSource = "database"
+)
+
 // SessionLabel is a bounded filtered native observation. Its zero value is unavailable.
 type SessionLabel struct {
-	NativeID string `json:"native_session_id"`
-	State    string `json:"state"`
-	Name     string `json:"name,omitempty"`
-	Source   string `json:"source"`
-	Contract string `json:"contract"`
+	NativeID string             `json:"native_session_id"`
+	State    SessionLabelState  `json:"state"`
+	Name     string             `json:"name,omitempty"`
+	Source   SessionLabelSource `json:"source"`
+	Contract string             `json:"contract"`
 }
 
 // SessionLabelContract identifies the verified Codex file resolution semantics.
@@ -26,7 +37,7 @@ const SessionLabelContract = "codex-files-159.2-v1"
 
 // FilterSessionLabel validates the narrow shape and filters before any persistence.
 func FilterSessionLabel(label SessionLabel) (SessionLabel, bool) {
-	if label.Contract != SessionLabelContract || (label.Source != "index" && label.Source != "database") || (label.State != "present" && label.State != "confirmed_absent") || len(label.NativeID) != 36 {
+	if label.Contract != SessionLabelContract || (label.Source != SessionLabelIndex && label.Source != SessionLabelDatabase) || (label.State != SessionLabelPresent && label.State != SessionLabelAbsent) || len(label.NativeID) != 36 {
 		return SessionLabel{}, false
 	}
 	for i, c := range label.NativeID {
@@ -38,7 +49,7 @@ func FilterSessionLabel(label SessionLabel) (SessionLabel, bool) {
 			return SessionLabel{}, false
 		}
 	}
-	if label.State == "confirmed_absent" {
+	if label.State == SessionLabelAbsent {
 		return label, label.Name == ""
 	}
 	if len(label.Name) > 16384 || !utf8.ValidString(label.Name) {
@@ -83,8 +94,8 @@ func (label SessionLabel) Fingerprint() string {
 
 // Evidence retains the current native label without native paths or response data.
 func (label SessionLabel) Evidence(at time.Time) SupplementalEvidence {
-	payload := map[string]any{"native_session_id": label.NativeID, "state": label.State, "source": label.Source, "contract": label.Contract}
-	if label.State == "present" {
+	payload := map[string]any{"native_session_id": label.NativeID, "state": string(label.State), "source": string(label.Source), "contract": label.Contract}
+	if label.State == SessionLabelPresent {
 		payload["name"] = label.Name
 	}
 	return SupplementalEvidence{Kind: EvidenceKindSessionLabels, ObservedAt: at, Provenance: "native:codex:session_labels", Payload: payload}
@@ -95,15 +106,16 @@ func labelFromEvidence(e SupplementalEvidence) (SessionLabel, bool) {
 		return SessionLabel{}, false
 	}
 	for key := range e.Payload {
-		if key != "native_session_id" && key != "state" && key != "name" && key != "source" && key != "contract" {
+		if !map[string]bool{"native_session_id": true, "state": true, "name": true, "source": true, "contract": true}[key] {
 			return SessionLabel{}, false
 		}
 	}
 	l := SessionLabel{}
+	var state, source string
 	fields := []struct {
 		key    string
 		target *string
-	}{{"native_session_id", &l.NativeID}, {"state", &l.State}, {"source", &l.Source}, {"contract", &l.Contract}}
+	}{{"native_session_id", &l.NativeID}, {"state", &state}, {"source", &source}, {"contract", &l.Contract}}
 	for _, field := range fields {
 		value, ok := e.Payload[field.key].(string)
 		if !ok {
@@ -111,6 +123,7 @@ func labelFromEvidence(e SupplementalEvidence) (SessionLabel, bool) {
 		}
 		*field.target = value
 	}
+	l.State, l.Source = SessionLabelState(state), SessionLabelSource(source)
 	if value, exists := e.Payload["name"]; exists {
 		name, ok := value.(string)
 		if !ok {

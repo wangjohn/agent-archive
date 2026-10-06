@@ -3,6 +3,7 @@ package nativecodec
 import (
 	"encoding/json"
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/codexmeta"
 	"sort"
 	"strings"
 )
@@ -256,5 +257,5 @@ func typedRecordFlagValue(key string, value any) bool {
 		return ok
 	}
 	mode, ok := value.(string)
-	return ok && (mode == "legacy" || mode == "paginated")
+	return ok && (codexmeta.HistoryMode(mode) == codexmeta.CodexHistoryLegacy || codexmeta.HistoryMode(mode) == codexmeta.CodexHistoryPaginated)
 }

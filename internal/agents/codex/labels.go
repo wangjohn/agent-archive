@@ -20,6 +20,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/codexmeta"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"modernc.org/sqlite"
 	sqlite3 "modernc.org/sqlite/lib"
@@ -27,6 +28,7 @@ import (
 )
 
 const labelIndexBytes = 4 << 20
+
 const labelIndexRecords = 32768
 
 // LabelProvider reads only supported settled metadata for admitted sessions.
@@ -74,16 +76,17 @@ func (LabelProvider) LookupLabels(ctx context.Context, env agentapi.LabelEnviron
 
 func resolveLabel(root string, request agentapi.LabelRequest, row labelRow, found, absent bool, index map[string]string, indexComplete bool) (archive.SessionLabel, bool) {
 	reg := request.Registration
-	name, source := "", "index"
+	var name string
+	source := archive.SessionLabelIndex
 	if found {
 		if row.version != "0.159.2" || !labelOwnedPath(root, reg.TranscriptPath, row.path) {
 			return archive.SessionLabel{}, false
 		}
-		source = "database"
+		source = archive.SessionLabelDatabase
 		switch row.mode {
-		case "paginated":
+		case codexmeta.CodexHistoryPaginated:
 			name = strings.TrimSpace(row.name)
-		case "legacy":
+		case codexmeta.CodexHistoryLegacy:
 			title := strings.TrimSpace(row.title)
 			if title != "" && title != strings.TrimSpace(row.first) {
 				// Guardian's derived default requires native source classification.
@@ -113,10 +116,11 @@ func resolveLabel(root string, request agentapi.LabelRequest, row labelRow, foun
 			name = ""
 		}
 	}
-	label := archive.SessionLabel{NativeID: reg.NativeSessionID, State: "confirmed_absent", Source: source, Contract: archive.SessionLabelContract}
+	state := archive.SessionLabelAbsent
 	if strings.TrimSpace(name) != "" {
-		label.State, label.Name = "present", name
+		state = archive.SessionLabelPresent
 	}
+	label := archive.SessionLabel{NativeID: reg.NativeSessionID, State: state, Name: name, Source: source, Contract: archive.SessionLabelContract}
 	return archive.FilterSessionLabel(label)
 }
 
@@ -166,7 +170,7 @@ func labelDefaultStorage(root string) bool {
 	if err != nil || len(b) > 65536 {
 		return false
 	}
-	for _, line := range strings.Split(string(b), "\n") {
+	for line := range strings.SplitSeq(string(b), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
@@ -206,7 +210,7 @@ func readLabelIndex(ctx context.Context, root string, requests []agentapi.LabelR
 			return nil, false
 		}
 		line, err := reader.ReadSlice('\n')
-		if err == io.EOF && len(line) == 0 {
+		if errors.Is(err, io.EOF) && len(line) == 0 {
 			break
 		}
 		// Incomplete tails and overlong lines cannot establish absence or freshness.
@@ -230,7 +234,16 @@ func readLabelIndex(ctx context.Context, root string, requests []agentapi.LabelR
 	return out, true
 }
 
-type labelRow struct{ mode, name, title, first, preview, source, version, path string }
+type labelRow struct {
+	mode    codexmeta.HistoryMode
+	name    string
+	title   string
+	first   string
+	preview string
+	source  string
+	version string
+	path    string
+}
 
 func readLabelDatabase(ctx context.Context, root string, requests []agentapi.LabelRequest) (map[string]labelRow, bool, bool) {
 	out := map[string]labelRow{}
@@ -266,7 +279,10 @@ func readLabelDatabase(ctx context.Context, root string, requests []agentapi.Lab
 		return nil, false, false
 	}
 	defer func() { _ = conn.Close() }()
-	for _, limit := range []struct{ id, value int }{{sqlite3.SQLITE_LIMIT_LENGTH, 16384}, {sqlite3.SQLITE_LIMIT_SQL_LENGTH, 16384}, {sqlite3.SQLITE_LIMIT_ATTACHED, 0}, {sqlite3.SQLITE_LIMIT_VDBE_OP, 20000}} {
+	for _, limit := range []struct {
+		id    int
+		value int
+	}{{sqlite3.SQLITE_LIMIT_LENGTH, 16384}, {sqlite3.SQLITE_LIMIT_SQL_LENGTH, 16384}, {sqlite3.SQLITE_LIMIT_ATTACHED, 0}, {sqlite3.SQLITE_LIMIT_VDBE_OP, 20000}} {
 		if _, err := sqlite.Limit(conn, limit.id, limit.value); err != nil {
 			return nil, false, false
 		}
@@ -282,6 +298,7 @@ func readLabelDatabase(ctx context.Context, root string, requests []agentapi.Lab
 	if err != nil {
 		return nil, false, false
 	}
+	defer func() { _ = plan.Close() }()
 	indexed := false
 	for plan.Next() {
 		var a, b, c int
@@ -413,6 +430,7 @@ func (LabelProvider) LabelContext(bundle archive.SourceBundle) agentapi.LabelCon
 	proof.PreviewDigest = labelPreviewDigest(preview)
 	return proof
 }
+
 func labelPreviewDigest(value string) string {
 	sum := sha256.Sum256([]byte(strings.TrimSpace(value)))
 	return hex.EncodeToString(sum[:])

@@ -17,14 +17,17 @@ import (
 
 func labelScope(reg archive.SessionRegistration, env agentapi.LabelEnvironment) string {
 	b, _ := json.Marshal(struct {
-		ID, Path, Root, Destination string
-		Env                         agentapi.LabelEnvironment
+		ID          string                    `json:"id"`
+		Path        string                    `json:"path"`
+		Root        string                    `json:"root"`
+		Destination string                    `json:"destination"`
+		Env         agentapi.LabelEnvironment `json:"env"`
 	}{reg.NativeSessionID, reg.TranscriptPath, reg.DiscoveryRoot, reg.DestinationID, env})
 	h := sha256.Sum256(b)
 	return hex.EncodeToString(h[:])
 }
 
-func (p *pass) observeLabels() {
+func (p *pass) observeLabels(ctx context.Context) {
 	if p.opts.Labels == nil {
 		return
 	}
@@ -62,7 +65,7 @@ func (p *pass) observeLabels() {
 			p.opts.labels[id] = entry
 		}
 	}
-	ctx, cancel := context.WithTimeout(p.ctx, 2*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	requests := p.prepareLabelRequests(ctx, provider, &cache, ids, eligible)
 	results := provider.LookupLabels(ctx, p.opts.LabelEnvironment, requests)
@@ -72,7 +75,7 @@ func (p *pass) observeLabels() {
 		label, ok := archive.FilterSessionLabel(results[id])
 		if ok && label.NativeID == request.Registration.NativeSessionID {
 			// An index miss is weaker than a previously canonical database observation.
-			if !(label.Source == "index" && label.State == "confirmed_absent" && entry.Label.Source == "database") {
+			if label.Source != archive.SessionLabelIndex || label.State != archive.SessionLabelAbsent || entry.Label.Source != archive.SessionLabelDatabase {
 				if entry.Label.Fingerprint() != label.Fingerprint() {
 					entry.Label, entry.ObservedAt = label, p.now
 				}
@@ -129,6 +132,9 @@ func (p *pass) prepareLabelRequests(ctx context.Context, provider agentapi.Label
 		if !validContext {
 			published, n, err := p.local.LoadLabelPublication(id, (16<<20)-p.labelBytes)
 			p.labelBytes += n
+			if p.opts.labelReadObserver != nil {
+				p.opts.labelReadObserver(n)
+			}
 			if err != nil {
 				continue
 			}

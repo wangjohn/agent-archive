@@ -42,8 +42,7 @@ func TestLabelContextReadBudgetRejectsOversizeBeforeDecode(t *testing.T) {
 	if err := os.WriteFile(store.publishedPath("synthetic"), make([]byte, 1024), 0600); err != nil {
 		t.Fatal(err)
 	}
-	before := LabelContextReadBytes()
-	if _, n, err := store.LoadLabelPublication("synthetic", 512); err == nil || n != 0 || LabelContextReadBytes() != before {
+	if _, n, err := store.LoadLabelPublication("synthetic", 512); err == nil || n != 0 {
 		t.Fatal("over-budget retained source was read")
 	}
 }

@@ -8,8 +8,8 @@ import (
 
 // LabelEnvironment supplies approved native homes without granting admission.
 type LabelEnvironment struct {
-	Homes          []string
-	ExternalSQLite bool
+	Homes          []string `json:"homes"`
+	ExternalSQLite bool     `json:"external_sqlite"`
 }
 
 // LabelRequest identifies an already admitted retained source.

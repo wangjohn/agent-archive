@@ -3,6 +3,7 @@ package nativecodec
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/wangjohn/agent-archive/internal/codexmeta"
 	"testing"
 )
 
@@ -20,7 +21,7 @@ func TestCodexLabelHistoryModeKeepsOnlyNativeEnum(t *testing.T) {
 		payload := child(t, decodeRecords(t, filtered)[0], "payload")
 		mode, kept := payload["history_mode"]
 		text, isString := value.(string)
-		want := isString && (text == "legacy" || text == "paginated")
+		want := isString && (codexmeta.HistoryMode(text) == codexmeta.CodexHistoryLegacy || codexmeta.HistoryMode(text) == codexmeta.CodexHistoryPaginated)
 		if kept != want || (want && mode != value) {
 			t.Fatalf("history mode retained wrong typed shape: kept=%t want=%t", kept, want)
 		}

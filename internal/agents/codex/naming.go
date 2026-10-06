@@ -3,6 +3,7 @@ package codex
 import (
 	"bytes"
 	"encoding/json"
+	"maps"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -54,9 +55,7 @@ func normalizeNamingBundle(bundle, previous, candidate archive.SourceBundle, upg
 			continue
 		}
 		copyRecord := make(map[string]any, len(record))
-		for key, value := range record {
-			copyRecord[key] = value
-		}
+		maps.Copy(copyRecord, record)
 		copyPayload := make(map[string]any, len(payload))
 		for key, value := range payload {
 			if key != "history_mode" {

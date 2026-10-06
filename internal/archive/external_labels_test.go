@@ -8,12 +8,21 @@ import (
 )
 
 func TestSessionLabelFiltersBeforeEvidenceAndFingerprint(t *testing.T) {
-	label := SessionLabel{NativeID: "01900000-0000-7000-8000-000000000001", State: "present", Name: "Name\x1b\n sk-proj-abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789", Source: "database", Contract: SessionLabelContract}
+	label := SessionLabel{NativeID: "01900000-0000-7000-8000-000000000001", State: SessionLabelPresent, Name: "Name\x1b\n sk-proj-abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789", Source: SessionLabelDatabase, Contract: SessionLabelContract}
 	filtered, ok := FilterSessionLabel(label)
 	if !ok || strings.Contains(filtered.Name, "sk-proj-") || strings.ContainsRune(filtered.Name, '\x1b') {
 		t.Fatalf("%+v %v", filtered, ok)
 	}
 	e := filtered.Evidence(time.Now())
+	if got, ok := labelFromEvidence(e); !ok || got != filtered {
+		t.Fatalf("typed label failed direct in-memory evidence round trip: %+v %v", got, ok)
+	}
+	if _, ok := e.Payload["state"].(string); !ok {
+		t.Fatal("state payload is not a plain string")
+	}
+	if _, ok := e.Payload["source"].(string); !ok {
+		t.Fatal("source payload is not a plain string")
+	}
 	out, _, err := FilterSupplementalEvidence([]SupplementalEvidence{e})
 	if err != nil || len(out) != 1 {
 		t.Fatalf("%v %v", out, err)
@@ -32,7 +41,7 @@ func TestSessionLabelFiltersBeforeEvidenceAndFingerprint(t *testing.T) {
 }
 
 func TestSessionLabelReplacementPreservesUnchangedTimeAndOwningID(t *testing.T) {
-	label := SessionLabel{NativeID: "01900000-0000-7000-8000-000000000001", State: "present", Name: "Name", Source: "index", Contract: SessionLabelContract}
+	label := SessionLabel{NativeID: "01900000-0000-7000-8000-000000000001", State: SessionLabelPresent, Name: "Name", Source: SessionLabelIndex, Contract: SessionLabelContract}
 	at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	first := label.Evidence(at)
 	out := MergeSupplementalEvidence([]SupplementalEvidence{first}, []SupplementalEvidence{label.Evidence(at.Add(time.Hour))})

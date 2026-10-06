@@ -44,8 +44,9 @@ func (p mutableLabelLookup) LookupLabels(string) (agentapi.LabelProvider, bool) 
 
 func TestExternalRenamePublishesRetainedSourceWithoutReadingTranscript(t *testing.T) {
 	for _, tc := range []struct {
-		name             string
-		missing, upgrade bool
+		name    string
+		missing bool
+		upgrade bool
 	}{{name: "unchanged"}, {name: "rotated", missing: true}, {name: "filter upgrade", upgrade: true}} {
 		t.Run(tc.name, func(t *testing.T) {
 			local := newTestStore(t)
@@ -76,7 +77,7 @@ func TestExternalRenamePublishesRetainedSourceWithoutReadingTranscript(t *testin
 				}
 			}
 			now = now.Add(time.Hour)
-			provider.label = archive.SessionLabel{State: "present", Name: "Invented native rename", Source: "database", Contract: archive.SessionLabelContract}
+			provider.label = archive.SessionLabel{State: archive.SessionLabelPresent, Name: "Invented native rename", Source: archive.SessionLabelDatabase, Contract: archive.SessionLabelContract}
 			filter.calls = 0
 			remote.keys = nil
 			result, err = Run(context.Background(), local, remote, opts)
@@ -123,7 +124,7 @@ func TestExternalRenameKeepsAttemptedPendingBytesAcrossNewerName(t *testing.T) {
 	if result, err := Run(context.Background(), local, remote, opts); err != nil || len(result.Errors) > 0 {
 		t.Fatalf("%+v %v", result, err)
 	}
-	provider.label = archive.SessionLabel{State: "present", Name: "First rename", Source: "database", Contract: archive.SessionLabelContract}
+	provider.label = archive.SessionLabel{State: archive.SessionLabelPresent, Name: "First rename", Source: archive.SessionLabelDatabase, Contract: archive.SessionLabelContract}
 	now = now.Add(time.Hour)
 	remote.failMetadata = true
 	result, err := Run(context.Background(), local, remote, opts)

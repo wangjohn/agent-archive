@@ -33,6 +33,7 @@ import (
 // local.Lock(home) around Run; Run itself does not acquire it, so it stays
 // simple to call directly from tests.
 type Options struct {
+	labelReadObserver func(int64)
 	// Labels supplies optional bounded native metadata for existing retained sessions.
 	Labels           agentapi.LabelsLookup
 	LabelEnvironment agentapi.LabelEnvironment
@@ -251,7 +252,7 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	if err := p.loadWork(); err != nil {
 		return Result{}, err
 	}
-	p.observeLabels()
+	p.observeLabels(ctx)
 	p.repairListingIndex()
 	orderOldestRequestsFirst(p.registrations, p.requests)
 	closeCursorPass := openCursorPass(p.registrations, &p.opts)

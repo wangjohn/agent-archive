@@ -29,26 +29,28 @@ func TestUnchangedLabelLookupReusesNarrowRetainedContext(t *testing.T) {
 		t.Fatalf("%+v %v", result, err)
 	}
 	opts.Labels = mutableLabelLookup{provider}
+	var readBytes int64
+	opts.labelReadObserver = func(n int64) { readBytes += n }
 	now = now.Add(time.Hour)
 	before := state.PublishedStateLoads()
-	bytesBefore := state.LabelContextReadBytes()
+	bytesBefore := readBytes
 	if result, err := Run(context.Background(), local, remote, opts); err != nil || len(result.Errors) > 0 {
 		t.Fatalf("%+v %v", result, err)
 	}
 	if got := state.PublishedStateLoads() - before; got != 1 {
 		t.Fatalf("migration full decodes %d", got)
 	}
-	if got := state.LabelContextReadBytes() - bytesBefore; got <= 0 || got > 16<<20 {
+	if got := readBytes - bytesBefore; got <= 0 || got > 16<<20 {
 		t.Fatalf("context byte budget %d", got)
 	}
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		now = now.Add(time.Hour)
 		before = state.PublishedStateLoads()
-		bytesBefore = state.LabelContextReadBytes()
+		bytesBefore = readBytes
 		if result, err := Run(context.Background(), local, remote, opts); err != nil || len(result.Errors) > 0 {
 			t.Fatalf("%+v %v", result, err)
 		}
-		if state.PublishedStateLoads() != before || state.LabelContextReadBytes() != bytesBefore {
+		if state.PublishedStateLoads() != before || readBytes != bytesBefore {
 			t.Fatal("unchanged lookup decoded retained conversation again")
 		}
 	}
@@ -58,6 +60,7 @@ type fairLabels struct {
 	requested map[string]bool
 	max       int
 }
+
 type fairLabelProvider struct{ *fairLabels }
 
 func (p fairLabelProvider) LookupLabels(_ context.Context, _ agentapi.LabelEnvironment, r []agentapi.LabelRequest) map[string]archive.SessionLabel {
@@ -69,6 +72,7 @@ func (p fairLabelProvider) LookupLabels(_ context.Context, _ agentapi.LabelEnvir
 	}
 	return nil
 }
+
 func (p *fairLabels) LookupLabels(string) (agentapi.LabelProvider, bool) {
 	return fairLabelProvider{p}, true
 }
@@ -79,7 +83,7 @@ func TestLabelLookupCursorDefersFairlyAcrossRestart(t *testing.T) {
 	base := registration(t, path)
 	remote := storagetest.NewMemoryStore()
 	now := base.RegisteredAt.Add(time.Hour)
-	for i := 0; i < 130; i++ {
+	for i := range 130 {
 		reg := base
 		reg.ArchiveSessionID = fmt.Sprintf("session-%03d", i)
 		reg.NativeSessionID = fmt.Sprintf("01900000-0000-7000-8000-%012d", i)
@@ -93,7 +97,7 @@ func TestLabelLookupCursorDefersFairlyAcrossRestart(t *testing.T) {
 	}
 	provider := &fairLabels{requested: map[string]bool{}}
 	opts.Labels = provider
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		now = now.Add(time.Hour)
 		var err error
 		local, err = state.Open(local.Home())

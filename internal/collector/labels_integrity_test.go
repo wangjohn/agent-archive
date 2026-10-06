@@ -28,7 +28,7 @@ func TestExternalRenameVerifiesWholeRetainedSourceBeforePublication(t *testing.T
 	file := readPublishedStateFile(t, local, reg.ArchiveSessionID)
 	file.Bundle.NativeRecords = append(file.Bundle.NativeRecords, map[string]any{"type": "event_msg", "payload": map[string]any{"type": "user_message", "message": "Uncommitted retained bytes"}})
 	writePublishedStateFile(t, local, reg.ArchiveSessionID, file)
-	provider.label = archive.SessionLabel{State: "present", Name: "New name", Source: "database", Contract: archive.SessionLabelContract}
+	provider.label = archive.SessionLabel{State: archive.SessionLabelPresent, Name: "New name", Source: archive.SessionLabelDatabase, Contract: archive.SessionLabelContract}
 	now = now.Add(time.Hour)
 	remote.keys = nil
 	result, err := Run(context.Background(), local, remote, opts)
