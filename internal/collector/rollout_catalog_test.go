@@ -65,3 +65,41 @@ func TestPendingCatalogIsLazySharedAndDoesNotAdmitHistory(t *testing.T) {
 		}
 	})
 }
+
+func TestPendingCatalogPreservesTypedFailureAndReportsOnlyCounts(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		const id = "11111111-1111-4111-8111-111111111111"
+		homes := []string{t.TempDir(), t.TempDir()}
+		raw := `{"type":"session_meta","payload":{"id":"` + id + `","cwd":"/synthetic/project","timestamp":"2026-10-01T12:00:00Z","cli_version":"0.160.0","originator":"codex_cli_rs","source":"cli"}}` + "\n" + `{"private":"synthetic-private-body"}` + "\n"
+		var path string
+		for _, home := range homes {
+			dir := filepath.Join(home, "sessions")
+			if err := os.MkdirAll(dir, 0700); err != nil {
+				t.Fatal(err)
+			}
+			path = writeTranscript(t, dir, "rollout-"+id+".jsonl", raw)
+		}
+		c := rolloutcatalog.New(homes, rolloutcatalog.Limits{PrefixBytes: 1})
+		calls := 0
+		r := providerReader{harness: "codex", ref: agentapi.SourceRef{Path: path}, pendingRollouts: func() agentapi.CodexRolloutLookup { calls++; return c }}
+		ordinaryError := agentapi.Wrap(agentapi.Unavailable, errors.New("synthetic refusal"))
+		if err := r.observePendingHistory(t.Context(), ordinaryError); err != ordinaryError || calls != 0 {
+			t.Fatal("ordinary source error constructed a catalog")
+		}
+		original := errors.Join(ordinaryError, archive.ErrRelatedHistory)
+		err := r.observePendingHistory(t.Context(), original)
+		var got, want *agentapi.SourceError
+		if !errors.As(ordinaryError, &want) || !errors.As(err, &got) || got != want || !errors.Is(err, archive.ErrRelatedHistory) {
+			t.Fatalf("original typed refusal lost: %v", err)
+		}
+		for _, private := range append(homes, id, "synthetic-private-body", "/synthetic/project") {
+			if strings.Contains(err.Error(), private) {
+				t.Fatal("pending diagnostic exposed private evidence")
+			}
+		}
+		if !strings.Contains(err.Error(), "2 candidate rollout locators") || c.Counters().PrefixBytes != 0 {
+			t.Fatalf("metadata-only diagnostic failed: %v %#v", err, c.Counters())
+		}
+	})
+}

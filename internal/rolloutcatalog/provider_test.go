@@ -108,3 +108,33 @@ func TestProviderUsesSharedCatalogForCrossHomeLineage(t *testing.T) {
 		})
 	}
 }
+
+func TestCatalogDependencyAuthorityDoesNotBroadenSeedPolicy(t *testing.T) {
+	t.Parallel()
+	approved, seedHome := t.TempDir(), t.TempDir()
+	fixture(t, approved, "sessions", thread, thread, nil, "")
+	seed := fixture(t, seedHome, "sessions", revision, thread, nil, "")
+	root, err := filepath.EvalSymlinks(approved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := New([]string{approved, seedHome}, Limits{})
+	pass, err := (codex.SourceProvider{}).OpenPass(t.Context(), agentapi.SourceEnvironment{
+		Files: sourcefacts.RootOpener{Root: root}, Policy: transcriptio.OpenPolicy{Root: root, RejectSymlinks: true}, CodexRollouts: c,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := pass.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
+	if snapshot, err := pass.Read(t.Context(), agentapi.SourceRef{Path: seed}, agentapi.ReadLimits{}); err == nil {
+		_ = snapshot.Close()
+		t.Fatal("catalog authority bypassed original seed policy")
+	}
+	if c.Counters().Headers != 0 {
+		t.Fatal("rejected seed enumerated dependency inventory")
+	}
+}

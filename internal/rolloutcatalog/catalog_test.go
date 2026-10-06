@@ -442,3 +442,105 @@ func TestApprovedHomeReplacementDoesNotWidenExistingOpener(t *testing.T) {
 		t.Fatal("replacement root gained old authority")
 	}
 }
+
+func TestPrefixProofRejectsChangesSinceHeaderCapture(t *testing.T) {
+	t.Parallel()
+	for _, replace := range []bool{false, true} {
+		t.Run(fmt.Sprintf("replace_%t", replace), func(t *testing.T) {
+			t.Parallel()
+			home := t.TempDir()
+			path := fixture(t, home, "sessions", thread, thread, nil, "{\"ordinal\":1}\n")
+			c := New([]string{home}, Limits{})
+			c.readHeader(t.Context(), home, path)
+			if len(c.files) != 1 {
+				t.Fatal("header not captured")
+			}
+			if replace {
+				if err := os.Rename(path, path+".old"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			extra := map[string]any{"cwd": "/synthetic/changed-project"}
+			if replace {
+				extra = nil
+			}
+			fixture(t, home, "sessions", thread, thread, extra, "{\"ordinal\":1}\n")
+			if _, ok := c.prefix(t.Context(), c.files[0], c.files[0].info.Size()); ok {
+				t.Fatal("prefix proof accepted a different header observation")
+			}
+		})
+	}
+}
+
+func TestCheckRejectsRetargetedApprovedHome(t *testing.T) {
+	t.Parallel()
+	parent := t.TempDir()
+	home, other, alias := filepath.Join(parent, "home"), filepath.Join(parent, "other"), filepath.Join(parent, "alias")
+	fixture(t, home, "sessions", thread, thread, nil, "")
+	fixture(t, other, "sessions", thread, thread, nil, "")
+	if err := os.Symlink(home, alias); err != nil {
+		t.Fatal(err)
+	}
+	c := New([]string{alias}, Limits{})
+	s := catalogSet(t, c, thread)
+	if !s.Complete {
+		t.Fatal("initial inventory incomplete")
+	}
+	if err := os.Remove(alias); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(other, alias); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Check(t.Context(), thread, s.Revision); agentapi.Failure(err) != agentapi.Changed {
+		t.Fatalf("retargeted source authority accepted: %v", err)
+	}
+}
+
+func TestAuthorityDescriptorRejectsSymlinkStoreComponents(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	path := fixture(t, home, "sessions", thread, thread, nil, "")
+	c := New([]string{home}, Limits{})
+	c.initializeAuthority()
+	approved := c.authorities[0]
+	if err := os.Rename(filepath.Dir(path), filepath.Join(home, "private")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("private", filepath.Join(home, "sessions")); err != nil {
+		t.Fatal(err)
+	}
+	// Model a component changed after opener canonicalization and before the
+	// descriptor open. The inner capability must reject it before any data read.
+	if f, err := openAuthorityRegular(approved, path); err == nil {
+		_ = f.Close()
+		t.Fatal("descriptor open followed a replaced store component")
+	}
+}
+
+func TestNativeVFSRejectsRetargetedApprovedHome(t *testing.T) {
+	t.Parallel()
+	parent := t.TempDir()
+	home, alias := filepath.Join(parent, "home"), filepath.Join(parent, "alias")
+	fixture(t, home, "sessions", thread, thread, nil, "")
+	if err := os.WriteFile(filepath.Join(home, "state_5.sqlite"), []byte("synthetic database bytes"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(home, alias); err != nil {
+		t.Fatal(err)
+	}
+	c := New([]string{alias}, Limits{})
+	c.initializeAuthority()
+	approved := c.authorities[0]
+	fsys := indexFS{home: approved.home, root: approved.root, info: approved.info, ctx: t.Context()}
+	if err := os.Remove(alias); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(t.TempDir(), alias); err != nil {
+		t.Fatal(err)
+	}
+	if f, err := fsys.Open("state_5.sqlite"); err == nil {
+		_ = f.Close()
+		t.Fatal("native VFS retained retargeted source authority")
+	}
+}

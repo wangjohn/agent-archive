@@ -231,13 +231,13 @@ func (c *Catalog) ensure(ctx context.Context) error {
 			c.fail("membership_changed")
 		}
 	}
+	evidenceByThread := map[string][]string{}
+	for _, e := range c.files {
+		id := strings.ToLower(e.identity.ThreadID)
+		evidenceByThread[id] = append(evidenceByThread[id], e.ref.Path+":"+hex.EncodeToString(e.header[:])+":"+hex.EncodeToString(e.prefix[:]))
+	}
 	for id, refs := range c.threads {
-		var evidence []string
-		for _, e := range c.files {
-			if strings.EqualFold(e.identity.ThreadID, id) {
-				evidence = append(evidence, e.ref.Path+":"+hex.EncodeToString(e.header[:])+":"+hex.EncodeToString(e.prefix[:]))
-			}
-		}
+		evidence := evidenceByThread[id]
 		slices.Sort(evidence)
 		raw, _ := json.Marshal(struct {
 			Refs     []agentapi.SourceRef
@@ -469,6 +469,12 @@ func (c *Catalog) prefix(ctx context.Context, e *entry, n int64) ([32]byte, bool
 		return [32]byte{}, false
 	}
 	defer func() { _ = f.Close() }()
+	// Prefix bytes must come from the same observation as the parsed identity.
+	// A freshly opened, internally consistent replacement is insufficient proof.
+	if !transcriptio.SameObservation(e.info, f.SourceInfo()) {
+		c.fail("source_changed")
+		return [32]byte{}, false
+	}
 	h := sha256.New()
 	reader := bufio.NewReader(io.TeeReader(io.LimitReader(f.Reader(ctx), n), countedRead{Writer: h, bytes: &c.counters.PrefixBytes}))
 	var bytes int64
@@ -495,6 +501,11 @@ func (c *Catalog) prefix(ctx context.Context, e *entry, n int64) ([32]byte, bool
 		}
 	}
 	if bytes != n || f.Check() != nil || ctx.Err() != nil {
+		c.fail("source_changed")
+		return [32]byte{}, false
+	}
+	named, err := c.Files().Lstat(e.ref.Path)
+	if err != nil || !transcriptio.SameObservation(e.info, named) {
 		c.fail("source_changed")
 		return [32]byte{}, false
 	}
@@ -553,6 +564,19 @@ func (c *Catalog) Check(ctx context.Context, id, revision string) error {
 		c.fail("epoch_changed")
 		return agentapi.Wrap(agentapi.Changed, errors.New("rollout evidence changed; renew the catalog"))
 	}
+	for _, approved := range c.authorities {
+		if err := c.checkOperation(ctx); err != nil {
+			return err
+		}
+		resolved, err := filepath.EvalSymlinks(approved.home)
+		if err != nil || resolved != approved.root {
+			return changed()
+		}
+		info, err := os.Lstat(approved.root)
+		if err != nil || !info.IsDir() || !os.SameFile(approved.info, info) {
+			return changed()
+		}
+	}
 	for _, d := range c.dirs {
 		if err := c.checkOperation(ctx); err != nil {
 			return err
@@ -598,11 +622,15 @@ func (c *Catalog) Check(ctx context.Context, id, revision string) error {
 		if err != nil {
 			return changed()
 		}
+		if !transcriptio.SameObservation(info, f.SourceInfo()) {
+			_ = f.Close()
+			return changed()
+		}
 		err = f.CheckPrefix(ctx, e.headerLen, e.header)
 		if err == nil && e.prefixLen > 0 {
 			err = f.CheckPrefix(ctx, e.prefixLen, e.prefix)
 		}
-		err = errors.Join(err, f.Close())
+		err = errors.Join(err, f.Check(), f.Close())
 		if err != nil {
 			return changed()
 		}
@@ -747,16 +775,52 @@ func openAuthorityRegular(o authority, p string) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	before, err := opened.Lstat(relative)
+	if relative == "." || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return nil, fs.ErrPermission
+	}
+	// Bind each directory descriptor without following component symlinks. A
+	// canonical path check before this call cannot fence a later in-root retarget.
+	parts := strings.Split(relative, string(filepath.Separator))
+	parent := opened
+	for _, part := range parts[:len(parts)-1] {
+		before, err := parent.Lstat(part)
+		if err != nil || !before.IsDir() || before.Mode()&os.ModeSymlink != 0 {
+			return nil, transcriptio.ErrChanged
+		}
+		next, err := parent.OpenRoot(part)
+		if err != nil {
+			return nil, err
+		}
+		defer func() { _ = next.Close() }()
+		after, err := next.Stat(".")
+		named, namedErr := parent.Lstat(part)
+		if err != nil || namedErr != nil || !sameDirectory(before, after) || !sameDirectory(before, named) {
+			return nil, transcriptio.ErrChanged
+		}
+		parent = next
+	}
+	name := parts[len(parts)-1]
+	before, err := parent.Lstat(name)
 	if err != nil || !before.Mode().IsRegular() {
 		return nil, transcriptio.ErrNotRegularFile
 	}
-	f, err := opened.OpenFile(relative, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	f, err := parent.OpenFile(name, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return nil, err
 	}
 	after, err := f.Stat()
-	if err != nil || !transcriptio.SameObservation(before, after) {
+	named, namedErr := parent.Lstat(name)
+	if err != nil || namedErr != nil || !transcriptio.SameObservation(before, after) || !transcriptio.SameObservation(before, named) {
+		_ = f.Close()
+		return nil, transcriptio.ErrChanged
+	}
+	rootInfo, err := os.Lstat(o.root)
+	home := o.home
+	if home == "" {
+		home = o.root
+	}
+	resolved, resolveErr := filepath.EvalSymlinks(home)
+	if err != nil || !rootInfo.IsDir() || !os.SameFile(o.info, rootInfo) || resolveErr != nil || resolved != o.root {
 		_ = f.Close()
 		return nil, transcriptio.ErrChanged
 	}

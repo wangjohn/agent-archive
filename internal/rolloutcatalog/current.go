@@ -73,13 +73,15 @@ func (c *Catalog) observeCurrent(parent context.Context, root string) {
 	ctx, cancel := context.WithTimeout(parent, 100*time.Millisecond)
 	defer cancel()
 	var rootInfo fs.FileInfo
+	var home string
 	for _, approved := range c.authorities {
 		if approved.root == root {
 			rootInfo = approved.info
+			home = approved.home
 			break
 		}
 	}
-	fsys := &indexFS{root: root, info: rootInfo, ctx: ctx}
+	fsys := &indexFS{home: home, root: root, info: rootInfo, ctx: ctx}
 	name, registered, err := vfs.New(fsys)
 	if err != nil {
 		c.issues["current_unavailable"]++
@@ -95,6 +97,12 @@ func (c *Catalog) observeCurrent(parent context.Context, root string) {
 	defer func() { _ = db.Close() }()
 	db.SetMaxOpenConns(1)
 	hints := map[string]agentapi.SourceRef{}
+	entriesByPath := map[string]*entry{}
+	for _, e := range c.files {
+		if e.root == root {
+			entriesByPath[e.ref.Path] = e
+		}
+	}
 	err = func() error {
 		conn, err := db.Conn(ctx)
 		if err != nil {
@@ -136,15 +144,12 @@ func (c *Catalog) observeCurrent(parent context.Context, root string) {
 				continue
 			}
 			// Match the opened, identity-validated inventory, never a DB path alone.
-			for _, e := range c.files {
-				if e.root == root && e.ref.Path == canonical && strings.EqualFold(e.identity.ThreadID, id) {
-					ref := e.ref
-					if canonical := c.rollouts[strings.ToLower(e.identity.RolloutID)]; len(canonical) == 1 {
-						ref = canonical[0]
-					}
-					hints[id] = ref
-					break
+			if e := entriesByPath[canonical]; e != nil && strings.EqualFold(e.identity.ThreadID, id) {
+				ref := e.ref
+				if copies := c.rollouts[strings.ToLower(e.identity.RolloutID)]; len(copies) == 1 {
+					ref = copies[0]
 				}
+				hints[id] = ref
 			}
 		}
 		return tx.Commit()
@@ -169,6 +174,7 @@ func (c *Catalog) observeCurrent(parent context.Context, root string) {
 // filesystem opens only the expected confined regular DB, never arbitrary
 // SQLite filenames. Reads are context-aware and have a separate page-I/O cap.
 type indexFS struct {
+	home  string
 	root  string
 	info  fs.FileInfo
 	ctx   context.Context
@@ -179,7 +185,7 @@ func (f *indexFS) Open(name string) (fs.File, error) {
 	if name != "state_5.sqlite" {
 		return nil, fs.ErrNotExist
 	}
-	opened, err := openAuthorityRegular(authority{root: f.root, info: f.info}, filepath.Join(f.root, name))
+	opened, err := openAuthorityRegular(authority{home: f.home, root: f.root, info: f.info}, filepath.Join(f.root, name))
 	if err != nil {
 		return nil, err
 	}
