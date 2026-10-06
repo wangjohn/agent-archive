@@ -52,6 +52,8 @@ Choose Cloudflare R2 or Amazon S3 for private archive storage. Setup will guide 
 
 ? AWS profile
 
+  [:back] Back to storage options
+
 › Answer:
 \e[2m✓ AWS profile work\e[0m
 
@@ -110,7 +112,8 @@ Checking your storage connection…
   History        Old sessions require deliberate backfill
   Copies         Qualifying recent native copies may be captured
   Hooks          Optional for discovery; approval and observation are separate
-  Skills         metadata · User skill roots outside selected projects may be scanned; change with Edit a setting
+  Skills         metadata · User skill roots outside selected projects may be
+                 scanned; change with Edit a setting
   Storage        s3://team-archive/agent-archive/ · us-east-1 · profile work
   Keep for       90 days
   Hook files     Codex: ~/.codex/hooks.json
@@ -118,12 +121,15 @@ Checking your storage connection…
                  Cursor: ~/.cursor/hooks.json
   \e[32m✓\e[0m Storage connected       \e[2mwrite, read, list, delete\e[0m
   \e[33m!\e[0m Bucket privacy unknown  \e[2mpublic-access settings could not be read\e[0m
-    Make sure public access is off: \e[36mhttps://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html\e[0m
-  \e[32m✓\e[0m Hook files are valid    \e[2m~/.codex/hooks.json, ~/.claude/settings.json, ~/.cursor/hooks.json\e[0m
+    Make sure public access is off:
+    \e[36mhttps://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html\e[0m
+  \e[32m✓\e[0m Hook files are valid    \e[2m~/.codex/hooks.json, ~/.claude/settings.json,
+                            ~/.cursor/hooks.json\e[0m
   \e[32m✓\e[0m Codex discovery         \e[2msupported new tasks do not require hook approval\e[0m
 
 \e[2m  Filtering is best effort; sensitive text may remain in archived sessions.\e[0m
-  \e[2mWhat leaves your machine:\e[0m \e[36mhttps://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md\e[0m
+  \e[2mWhat leaves your machine:\e[0m
+  \e[36mhttps://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md\e[0m
 
 \e[1mStep 3 of 3 · Review and start\e[0m
   Apps      Codex, Claude Code, Cursor
@@ -158,8 +164,10 @@ Installed the agent-archive skill, which lets your agents look up and pull in pa
 To remove the agent skills and keep them off, run \e[36magent-archive setup --no-skills\e[0m.
 
 \e[1mNext, in each app\e[0m
-  Codex: start a supported new task in an included project; automatic discovery does not require hook approval.
-  Optional hook capture: Codex: run \e[36m/hooks\e[0m and approve the archive hooks, then start a new session (or \e[36m/clear\e[0m).
+  Codex: start a supported new task in an included project; automatic discovery
+  does not require hook approval.
+  Optional hook capture: Codex: run \e[36m/hooks\e[0m and approve the archive hooks, then
+  start a new session (or \e[36m/clear\e[0m).
   Claude Code: nothing to approve; start a new session (or \e[36m/clear\e[0m).
   Cursor: nothing to approve; start a new Agent chat.
 Sessions already open are not captured. Start a new one in an included project.

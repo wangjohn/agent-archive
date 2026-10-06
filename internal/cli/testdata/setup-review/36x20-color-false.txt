@@ -11,21 +11,7 @@ Step 3 of 3 · Review and start
   Keep for
     90 days
   ✓ Storage connected
-  ! Bucket privacy unknown ·
-    public-access settings could not
-    be read
-    Make sure public access is off:
-    https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
-  ✗ Claude Code hook file is invalid
-    No hook configuration file for
-    claude.
-    Setup edits only plain JSON. Fix
-    the file before you start.
-  ✗ Cursor hook file is invalid
-    No hook configuration file for
-    cursor.
-    Setup edits only plain JSON. Fix
-    the file before you start.
+  ✓ Bucket is private
   ! History import is separate.
   ! Sensitive text may remain after filtering.
 
@@ -38,7 +24,7 @@ Step 3 of 3 · Review and start
   [q] Cancel; keep draft
   [m] Name this machine
 
-› Choose [1]: 
+› Choose [1]:
 ✓ Full settings and privacy
 
 Full settings and privacy
@@ -58,27 +44,20 @@ Full settings and privacy
     · us-east-1 · profile default
   Keep for
     90 days
+  Hook files
+    Claude Code:
+    ~/.claude/settings.json
+    Cursor: ~/.cursor/hooks.json
   ✓ Storage connected       write,
                             read,
                             list,
                             delete
-  ! Bucket privacy unknown  public-access
-                            settings
-                            could
-                            not be
-                            read
-    Make sure public access is off:
-    https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
-  ✗ Claude Code hook file is invalid  
-    No hook configuration file for
-    claude.
-    Setup edits only plain JSON. Fix
-    the file before you start.
-  ✗ Cursor hook file is invalid  
-    No hook configuration file for
-    cursor.
-    Setup edits only plain JSON. Fix
-    the file before you start.
+  ✓ Bucket is private       all
+                            public
+                            access
+                            blocked
+  ✓ Hook files are valid    ~/.claude/settings.json,
+                            ~/.cursor/hooks.json
 
   Filtering is best effort;
   sensitive text may remain in
@@ -98,21 +77,7 @@ Step 3 of 3 · Review and start
   Keep for
     90 days
   ✓ Storage connected
-  ! Bucket privacy unknown ·
-    public-access settings could not
-    be read
-    Make sure public access is off:
-    https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
-  ✗ Claude Code hook file is invalid
-    No hook configuration file for
-    claude.
-    Setup edits only plain JSON. Fix
-    the file before you start.
-  ✗ Cursor hook file is invalid
-    No hook configuration file for
-    cursor.
-    Setup edits only plain JSON. Fix
-    the file before you start.
+  ✓ Bucket is private
   ! History import is separate.
   ! Sensitive text may remain after filtering.
 
@@ -125,6 +90,6 @@ Step 3 of 3 · Review and start
   [q] Cancel; keep draft
   [m] Name this machine
 
-› Choose [1]: 
+› Choose [1]:
 ✓ Cancel; keep draft
 

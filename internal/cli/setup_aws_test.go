@@ -418,7 +418,7 @@ func TestS3LocationRejectsATypedRegionThatIsNotARegion(t *testing.T) {
 	if err := promptS3Location(newPrompter(strings.NewReader("work\nteam-archive\n~/code/api\nus-east-1\n"), &out), &cfg, env, ""); err != nil || cfg.Region != "us-east-1" {
 		t.Fatalf("cfg=%+v err=%v", cfg, err)
 	}
-	if !strings.Contains(out.String(), `"~/code/api" isn't an AWS region. Enter one like us-east-1 or eu-west-2.`) {
+	if !strings.Contains(out.String(), `"~/code/api" isn't an AWS region. Enter one like us-east-1 or eu-west-2`) {
 		t.Fatalf("output %q", &out)
 	}
 	// A saved region that isn't one is asked for again, not reused.

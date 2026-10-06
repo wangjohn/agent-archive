@@ -273,3 +273,35 @@ func TestSetupManualProjectRequiresExplicitPath(t *testing.T) {
 		t.Fatalf("blank input granted project consent: %+v\n%s", got, &out)
 	}
 }
+
+func TestSetupSpecificRespectsInheritedNestedOwnership(t *testing.T) {
+	t.Parallel()
+	parent := selectorRoots(t, 1)[0].Root
+	child := filepath.Join(parent, "child")
+	must(t, os.Mkdir(child, 0700))
+	at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	old := []archive.ProjectActivation{{Root: parent, ProjectID: archive.ProjectID(parent), Included: true, ActivatedAt: at}}
+	candidates := setupProjectCandidates(old, old, nil, child)
+	if len(candidates) != 2 || !candidates[0].selected {
+		t.Fatalf("inherited inclusion not restored: %+v", candidates)
+	}
+	same := applyProjectCandidates(candidates, old, nil)
+	if len(same) != 1 || same[0].ActivatedAt != at {
+		t.Fatalf("confirmation reset inherited activation: %+v", same)
+	}
+	candidates[0].selected = false
+	excluded := applyProjectCandidates(candidates, old, nil)
+	if len(excluded) != 2 || excluded[1].Root != child || excluded[1].Included || excluded[0].ActivatedAt != at {
+		t.Fatalf("unchecked child still inherits parent: %+v", excluded)
+	}
+}
+
+func TestSetupSpecificRetainsImportedExclusionForNewCandidate(t *testing.T) {
+	t.Parallel()
+	roots := selectorRoots(t, 2)
+	candidates := []setupProjectCandidate{{evidence: roots[0], selected: true}, {evidence: roots[1]}}
+	got := applyProjectCandidates(candidates, nil, map[string]bool{archive.ProjectID(roots[1].Root): true})
+	if len(got) != 2 || got[1].Included || got[1].Root != roots[1].Root {
+		t.Fatalf("imported exclusion lost: %+v", got)
+	}
+}

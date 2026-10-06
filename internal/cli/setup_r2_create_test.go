@@ -282,6 +282,10 @@ func TestGuidedR2GroupsTokenInstructionsAfterTheQuestion(t *testing.T) {
 	if ask < 0 || link < ask || create < link || intro < create || !setupContainsText(out, "Account > Account API Tokens > Edit") {
 		t.Fatalf("instructions:\n%s", out)
 	}
+	answer := strings.Index(out[ask:], "> Credential:")
+	if answer < 0 {
+		t.Fatalf("missing credential answer cursor\n%s", out)
+	}
 	for _, want := range []string{
 		"Manage account > Account API tokens",
 		"Name it agent-archive setup",
@@ -294,8 +298,8 @@ func TestGuidedR2GroupsTokenInstructionsAfterTheQuestion(t *testing.T) {
 		"return to Manage account: that is the R2-specific form",
 		"choose existing R2 storage and follow the manual steps: " + bucketDocURL,
 	} {
-		if !setupContainsText(out[:ask], want) {
-			t.Errorf("instructions before token prompt lack %q:\n%s", want, out)
+		if !setupContainsText(out[ask:ask+answer], want) {
+			t.Errorf("instructions before answer cursor lack %q:\n%s", want, out)
 		}
 	}
 }
@@ -498,8 +502,8 @@ func TestGuidedR2RejectsMalformedReplacementBeforeCreatingClient(t *testing.T) {
 	g := newGuidedR2Fixture(t)
 	g.cf.Fail(cloudflaretest.RoutePermissionGroups, cloudflaretest.Failure{Status: http.StatusForbidden, Times: 1})
 	const malformed = "CANARY:invalid-bearer"
-	out := g.run(t, guidedAnswers(bootstrapCanary, "token", malformed, "stop"), 1)
-	if len(g.apis) != 1 || !setupContainsText(out, "management token is empty or malformed") {
+	out := g.run(t, guidedAnswers(bootstrapCanary, "token", malformed, "", "stop"), 1)
+	if len(g.apis) != 1 || !setupContainsText(out, "Credential was not accepted. Try again.") {
 		t.Fatalf("malformed replacement reached client creation: %d clients\n%s", len(g.apis), out)
 	}
 	if !g.apis[0].discarded || g.cf.Calls(cloudflaretest.RouteCreateBucket) != 0 || g.cf.Calls(cloudflaretest.RouteCreateToken) != 0 {
