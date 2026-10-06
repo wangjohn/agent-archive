@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
@@ -22,7 +23,7 @@ func (p forbiddenListLabels) LookupLabels(context.Context, agentapi.LabelEnviron
 func TestListUsesArchivedNamesWithoutNativeLookupOrSourceRead(t *testing.T) {
 	t.Parallel()
 	a := newScopedArchive(t)
-	a.add(t, "named", "Invented prompt", archive.ProjectID(a.dir), func(m *archive.Metadata) { m.Name = "Archived native name" })
+	a.add(t, "named", "Invented prompt", a.label, func(m *archive.Metadata) { m.Name = "Archived native name" })
 	base := builtin.NewBuiltins()
 	integrations := []builtin.Integration{}
 	for _, descriptor := range base.Catalog().All() {
@@ -39,9 +40,12 @@ func TestListUsesArchivedNamesWithoutNativeLookupOrSourceRead(t *testing.T) {
 	a.env.LookPath = func(string) (string, error) { t.Fatal("listing discovered a native executable"); return "", nil }
 	store := &scopeBudgetStore{MemoryStore: a.mem}
 	a.env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return store, nil }
-	_, stderr, code := a.runList(t, "--json")
+	out, stderr, code := a.runList(t, "--json")
 	if code != 0 {
 		t.Fatalf("list failed %d: %s", code, stderr)
+	}
+	if !strings.Contains(out, "Archived native name") {
+		t.Fatal("listing omitted retained native name")
 	}
 	if store.sourceGets.Load() != 0 {
 		t.Fatal("listing read source rather than archived metadata")

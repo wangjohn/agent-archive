@@ -327,28 +327,10 @@ func readLabelDatabase(ctx context.Context, root string, requests []agentapi.Lab
 	}
 	// The primary-key plan and explicit columns refuse incompatible schemas and scans.
 	const statement = "SELECT history_mode,name,title,first_user_message,preview,source,cli_version,rollout_path FROM threads WHERE id=?"
-	plan, err := tx.QueryContext(ctx, "EXPLAIN QUERY PLAN "+statement, "")
-	if err != nil {
+	if !labelDatabaseIndexed(ctx, tx, statement) {
 		return nil, false, false
 	}
-	defer func() { _ = plan.Close() }()
-	indexed := false
-	for plan.Next() {
-		var a, b, c int
-		var detail string
-		if plan.Scan(&a, &b, &c, &detail) != nil {
-			_ = plan.Close()
-			return nil, false, false
-		}
-		if strings.Contains(detail, "SEARCH threads USING INDEX sqlite_autoindex_threads_1 (id=?)") {
-			indexed = true
-		}
-	}
-	planErr := plan.Err()
-	_ = plan.Close()
-	if planErr != nil || !indexed {
-		return nil, false, false
-	}
+
 	for _, request := range requests {
 		var values [8]any
 		err := tx.QueryRowContext(ctx, statement, request.Registration.NativeSessionID).Scan(&values[0], &values[1], &values[2], &values[3], &values[4], &values[5], &values[6], &values[7])
@@ -562,4 +544,27 @@ func (p LabelProvider) LabelRequestGroup(env agentapi.LabelEnvironment, request 
 	}
 	sum := sha256.Sum256([]byte(root))
 	return hex.EncodeToString(sum[:])
+}
+
+func labelDatabaseIndexed(ctx context.Context, tx *sql.Tx, statement string) bool {
+	plan, err := tx.QueryContext(ctx, "EXPLAIN QUERY PLAN "+statement, "")
+	if err != nil {
+		return false
+	}
+	defer func() { _ = plan.Close() }()
+	indexed := false
+	for plan.Next() {
+		var a, b, c int
+		var detail string
+		if plan.Scan(&a, &b, &c, &detail) != nil {
+			_ = plan.Close()
+			return false
+		}
+		if strings.Contains(detail, "SEARCH threads USING INDEX sqlite_autoindex_threads_1 (id=?)") {
+			indexed = true
+		}
+	}
+	planErr := plan.Err()
+	_ = plan.Close()
+	return planErr == nil && indexed
 }
