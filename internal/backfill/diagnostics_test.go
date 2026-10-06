@@ -123,24 +123,28 @@ func TestInventoryCountsPhysicalCandidatesWithoutOverlappingRoles(t *testing.T) 
 // Database-only candidates use the same subordinate diagnostics as file candidates.
 func TestDatabaseCandidateDiagnosticsFollowWinningSkip(t *testing.T) {
 	t.Parallel()
-	tr := newTree(t)
-	env := tr.env()
-	r := newResolver(env, config.Config{}, Filters{})
-	repo := tr.repo("home/repo")
-	for _, skip := range []SkipReason{SkipUnsafeFormat, SkipTooLarge, SkipWorktreeUnresolved} {
-		t.Run(string(skip), func(t *testing.T) {
-			w := &work{t: &transcript{harness: harnessCursor}, c: Candidate{StartedAt: fixedNow.Add(-time.Hour)}, chat: CursorDatabaseChat{Folder: repo}}
-			switch skip {
-			case SkipUnsafeFormat:
-				w.unsafe = true
-			case SkipTooLarge:
-				w.tooLarge = true
-			case SkipWorktreeUnresolved:
+	for _, tc := range []struct {
+		skip                              SkipReason
+		unsafe, tooLarge, missingWorktree bool
+	}{
+		{skip: SkipUnsafeFormat, unsafe: true},
+		{skip: SkipTooLarge, tooLarge: true},
+		{skip: SkipWorktreeUnresolved, missingWorktree: true},
+	} {
+		t.Run(string(tc.skip), func(t *testing.T) {
+			t.Parallel()
+			tr := newTree(t)
+			env := tr.env()
+			r := newResolver(env, config.Config{}, Filters{})
+			repo := tr.repo("home/repo")
+			w := &work{t: &transcript{harness: harnessCursor}, c: Candidate{StartedAt: fixedNow.Add(-time.Hour)}, chat: CursorDatabaseChat{Folder: repo}, unsafe: tc.unsafe, tooLarge: tc.tooLarge}
+			if tc.missingWorktree {
 				w.chat.Folder = tr.path("home/.cursor/worktrees/gone")
 			}
+
 			p := Plan{GeneratedAt: fixedNow, Filters: Filters{Harnesses: []string{"cursor"}}, CursorDatabaseChecked: true}
 			appendCursorDatabaseChats(env, r, nil, []*work{w}, &p)
-			if len(p.Candidates) != 1 || p.Candidates[0].Skip != skip || p.Candidates[0].Diagnostic == nil || len(p.Diagnostics()) != 1 {
+			if len(p.Candidates) != 1 || p.Candidates[0].Skip != tc.skip || p.Candidates[0].Diagnostic == nil || len(p.Diagnostics()) != 1 {
 				t.Fatalf("missing database diagnostic: %+v", p.Candidates)
 			}
 			var output bytes.Buffer
@@ -203,7 +207,7 @@ func TestUnsafeDiagnosticDoesNotInventUnsupportedFormat(t *testing.T) {
 	w := &work{t: &transcript{}, c: Candidate{StartedAt: fixedNow.Add(-time.Hour)}}
 	runAdapter(t.Context(), Environment{}, w)
 	decidePlanCandidates([]*work{w}, time.Time{}, time.Time{}, fixedNow)
-	if w.c.Skip != SkipUnsafeFormat || w.c.Diagnostic == nil || w.c.Diagnostic.Detail != "source_inspection_unavailable" || w.c.Diagnostic.Action != "review_source" {
+	if w.c.Skip != SkipUnsafeFormat || w.c.Diagnostic == nil || w.c.Diagnostic.Detail != "source_inspection_unavailable" || w.c.Diagnostic.Action != ActionReviewSource {
 		t.Fatalf("%+v", w.c)
 	}
 	var output bytes.Buffer

@@ -75,6 +75,13 @@ func candidateDiagnostic(skip SkipReason, outcome sourcefacts.RecoveryOutcome) *
 		detail = "source_inspection_unavailable"
 	case SkipTooLarge:
 		detail = "source_size_limit"
+	case "", SkipAlreadyArchived, SkipDuplicateSession, SkipRegisteredNotAdmitted,
+		SkipRemovedByUndo, SkipRemovedByRetention, SkipFilteredOut, SkipExcludedProject,
+		SkipHomeDirectory, SkipAboveHome, SkipTemporaryDirectory, SkipProjectUnknown,
+		SkipIdentityMismatch, SkipEmpty, SkipStartUnknown, SkipStartInFuture:
+		return nil
+	default:
+		return nil
 	}
 	description, ok := diagnosticDescriptions[detail]
 	if !ok {
@@ -183,6 +190,12 @@ func candidateDisposition(c Candidate) string {
 		if c.Diagnostic != nil && c.Diagnostic.Detail == DiagnosticDetail(sourcefacts.RecoveryExcluded) {
 			return "excluded"
 		}
+	case SkipRegisteredNotAdmitted, SkipProjectUnknown, SkipIdentityMismatch,
+		SkipRelatedHistory, SkipSourceChanged, SkipEmpty, SkipUnsafeFormat,
+		SkipTooLarge, SkipStartUnknown, SkipStartInFuture:
+		return "unresolved"
+	default:
+		return "unresolved"
 	}
 	return "unresolved"
 }
