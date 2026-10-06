@@ -81,7 +81,7 @@ func (m CodexMeta) Relationships() (CodexIdentity, Outcome) {
 		return f, InvalidRelationship
 	}
 	thread, _ := optionalText(m.ThreadSource)
-	f.Child = f.ParentID != "" || f.SubagentOrdinal != nil || thread == "subagent" || present(m.AgentPath) || present(m.AgentRole) || present(m.AgentType) || present(m.AgentNickname) || (f.RootID != "" && !strings.EqualFold(f.RootID, f.ThreadID))
+	f.Child = f.ParentID != "" || f.SubagentOrdinal != nil || thread == "subagent" || present(m.AgentPath) || present(m.AgentRole) || present(m.AgentType) || present(m.AgentNickname) || (f.ForkID == "" && f.RootID != "" && !strings.EqualFold(f.RootID, f.ThreadID))
 	if code := m.relationshipSource(&f); code != "" {
 		return f, code
 	}

@@ -34,7 +34,7 @@ func TestNativeHeaderUnderstandsRelatedIdentitiesWithoutAdmittingCapture(t *test
 }
 
 func expectedHeaderPending(want string, purpose agentapi.DiscoveryPurpose) string {
-	if want == "child_history_pending" && purpose == agentapi.DiscoveryImport {
+	if (want == "child_history_pending" || want == "fork_history_pending") && purpose == agentapi.DiscoveryImport {
 		return ""
 	}
 	return want

@@ -74,7 +74,9 @@ func (NativeHeaders) InspectHeader(r agentapi.NativeHeaderRequest) (agentapi.Nat
 					h.CapturePending = "child_history_pending"
 				}
 			case facts.ForkID != "":
-				h.CapturePending = "fork_history_pending"
+				if r.Purpose != agentapi.DiscoveryImport || facts.HistoryBase != nil || !strings.EqualFold(facts.RolloutID, facts.ThreadID) {
+					h.CapturePending = "fork_history_pending"
+				}
 			case facts.HistoryBase != nil || !strings.EqualFold(facts.RolloutID, facts.ThreadID):
 				h.CapturePending = "related_history_pending"
 			}
