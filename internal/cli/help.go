@@ -104,7 +104,9 @@ destination needs it. Record publication retries independently of commit.
 	"machines add": `Usage: agent-archive machines add [--name NAME] [--share-key] [--spares 0..5]
        [--expires 15m] [--print | --file PATH] [--yes]
 
-Create an encrypted pairing bundle after checking the source storage.
+Create an encrypted pairing file after checking the source storage.
+Interactive setup offers a saved file (recommended) or clipboard transfer,
+then shows the receiver command and a six-word code on a temporary screen.
 An available management token creates
 and checks a fresh key; otherwise use a ledger-backed spare. --yes never shares
 implicitly. --share-key explicitly selects shared-key pairing without
@@ -117,7 +119,7 @@ agent, even with --yes or AGENT_ARCHIVE_NONINTERACTIVE=0.
   --spares N     Save unused R2 key target, 0..5 (default 2)
                  Refill with an available management token
   --expires DURATION  Lifetime from 5m to 24h (default: 15m)
-  --print        Print the encrypted bundle instead of copying it
+  --print        Print the encrypted bundle instead of choosing a transfer method
   --file PATH    Create a private 0600 bundle file; never overwrite a file
   --yes          Require --name and deliberately print bundle and code
                  (with --file, print only the separately delivered code)
@@ -193,7 +195,7 @@ Run again to continue saved setup or edit capture, storage, or retention.
 Credentials are entered privately; never pass them as command arguments.
 Setup asks questions, so it needs a terminal, unless --yes is given.
 An interrupted setup is recovered on the next run.
-  --pair                Receive an encrypted bundle and hidden terminal code
+  --pair                Receive a pairing file or pasted text and a hidden code
   --pair-file PATH|-    Read a bounded bundle file or stdin; with --yes read and
                         unset AGENT_ARCHIVE_PAIRING_CODE. Never a code flag.
                         Pairing refuses inside coding agents. --yes refuses a
