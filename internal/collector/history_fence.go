@@ -1,7 +1,6 @@
 package collector
 
 import (
-	"encoding/json"
 	"errors"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -13,7 +12,7 @@ func (s *sessionScan) checkRetainedHistory() error {
 	b, _, _, _ := s.published.Cached()
 	var m archive.Metadata
 	if raw := s.published.Metadata(); len(raw) > 0 {
-		if err := json.Unmarshal(raw, &m); err != nil {
+		if err := s.unmarshalRetained(raw, &m); err != nil {
 			return err
 		}
 	}
@@ -30,8 +29,10 @@ func (s *sessionScan) checkRetainedHistory() error {
 }
 
 func (s *sessionScan) checkHistoryPublication(p state.PendingPublication) error {
+	mark := len(s.retainedReleases)
+	defer s.releaseRetainedAfter(mark)
 	var next archive.Metadata
-	if err := json.Unmarshal(p.MetadataBytes, &next); err != nil {
+	if err := s.unmarshalRetained(p.MetadataBytes, &next); err != nil {
 		return err
 	}
 	if p.History != nil {
@@ -56,7 +57,7 @@ func (s *sessionScan) checkHistoryPublication(p state.PendingPublication) error 
 		return err
 	}
 	var previous archive.Metadata
-	if err := json.Unmarshal(raw, &previous); err != nil {
+	if err := s.unmarshalRetained(raw, &previous); err != nil {
 		return err
 	}
 	if err := archive.CheckHistoryMutation(archive.SourceBundle{}, previous); err != nil {

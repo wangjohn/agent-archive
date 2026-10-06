@@ -240,8 +240,12 @@ func (p *pass) linkOwed(reg archive.SessionRegistration) (bool, error) {
 // scan consumed, so the next pass can skip it. It is written only at an exit
 // that owes no further work.
 func (s *sessionScan) recordScanSignature(observed sourceState, bundle archive.SourceBundle) error {
+	return s.local.SaveScanSignature(s.id(), s.scanSignature(observed, bundle))
+}
+
+func (s *sessionScan) scanSignature(observed sourceState, bundle archive.SourceBundle) state.ScanSignature {
 	summary := s.published.Summary()
-	return s.local.SaveScanSignature(s.id(), state.ScanSignature{
+	return state.ScanSignature{
 		SourceSetDigest: summary.SourceSetDigest, CurrentRevision: summary.CurrentRevision,
 		SourceSchemaVersion: summary.SourceSchemaVersion, MetadataSchemaVersion: summary.MetadataSchemaVersion,
 		SourceSetComplete: summary.SourceSetComplete, MeaningfulCapturedAt: summary.MeaningfulCapturedAt,
@@ -254,7 +258,7 @@ func (s *sessionScan) recordScanSignature(observed sourceState, bundle archive.S
 		CursorHeaderCount: observed.cursor.HeaderCount, CursorLastBubbleID: observed.cursor.LastBubbleID,
 		CursorMessageRows: observed.cursor.MessageRows, CursorLastMessageHash: observed.cursor.LastMessageHash,
 		PublishedLastHead: s.publishedLastHead(),
-	})
+	}
 }
 
 // recordBlockedSignature marks a session sitting in a recorded gap at the

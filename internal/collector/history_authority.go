@@ -2,7 +2,6 @@ package collector
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -41,7 +40,7 @@ func (s *sessionScan) restoreReferenceAuthority() error {
 	if err != nil {
 		return err
 	}
-	if err := json.Unmarshal(raw, &metadata); err != nil {
+	if err := s.unmarshalRetained(raw, &metadata); err != nil {
 		return err
 	}
 	if err := s.validateAuthorityIdentity(metadata); err != nil {
@@ -62,6 +61,7 @@ func (s *sessionScan) restoreReferenceAuthority() error {
 	// Decode and release preserved alternatives before retaining the active view.
 	if metadata.History != nil {
 		for _, revision := range metadata.History.Preserved {
+			mark := len(s.retainedReleases)
 			data, err := s.historyGet(revision.Source.Key, int64(revision.Source.CompressedBytes))
 			if err != nil {
 				return err
@@ -69,6 +69,7 @@ func (s *sessionScan) restoreReferenceAuthority() error {
 			if _, err := s.decodeRevision(metadata, revision.RevisionID, data); err != nil {
 				return err
 			}
+			s.releaseRetainedAfter(mark)
 		}
 	}
 	data, err := s.historyGet(metadata.SourceBundle.Key, int64(metadata.SourceBundle.CompressedBytes))
@@ -139,7 +140,7 @@ func (s *sessionScan) requiresReferenceRecovery() (bool, error) {
 		var header struct {
 			SchemaVersion int `json:"schema_version"`
 		}
-		if json.Unmarshal(raw, &header) == nil && header.SchemaVersion != archive.MetadataSchemaVersion && header.SchemaVersion != archive.HistoryMetadataSchemaVersion {
+		if s.unmarshalRetained(raw, &header) == nil && header.SchemaVersion != archive.MetadataSchemaVersion && header.SchemaVersion != archive.HistoryMetadataSchemaVersion {
 			return false, fmt.Errorf("unsupported acknowledged metadata schema version %d", header.SchemaVersion)
 		}
 	}
@@ -152,7 +153,7 @@ func (s *sessionScan) ordinaryPrivacyMaintenance() bool {
 		return false
 	}
 	var metadata archive.Metadata
-	if json.Unmarshal(s.published.Metadata(), &metadata) != nil || metadata.SchemaVersion != archive.MetadataSchemaVersion || metadata.History != nil || s.validateAuthorityIdentity(metadata) != nil {
+	if s.unmarshalRetained(s.published.Metadata(), &metadata) != nil || metadata.SchemaVersion != archive.MetadataSchemaVersion || metadata.History != nil || s.validateAuthorityIdentity(metadata) != nil {
 		return false
 	}
 	if metadata.NativeSessionID != bundle.NativeSessionID || metadata.ProjectID != bundle.ProjectID || metadata.Harness != bundle.Capture.Harness || metadata.ParentSessionID != bundle.ParentSessionID || !metadata.CapturedAt.Equal(bundle.Capture.CapturedAt) {

@@ -138,7 +138,7 @@ func (s *Store) checkPendingHistoryVersion(id string) error {
 			Version int `json:"version"`
 		} `json:"history"`
 	}
-	if err := local.Read(s.pendingPath(id), &header); err == nil {
+	if err := s.readBudgeted(s.pendingPath(id), &header, false); err == nil {
 		if header.History != nil && header.History.Version != pendingHistoryVersion {
 			return errors.New("pending history requires a newer writer")
 		}

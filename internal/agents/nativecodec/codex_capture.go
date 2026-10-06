@@ -18,6 +18,11 @@ func FilterCodexCaptureJSONL(r io.Reader, filename string, bounds ...archive.Cap
 	}, nil, func(line []byte) error { return codexCaptureMetadata(line, filename) }, bounds...)
 }
 
+// FilterCodexRetainedJSONL filters already archived Codex records under an explicit output ceiling.
+func FilterCodexRetainedJSONL(r io.Reader, boundary archive.CaptureBoundary) (archive.FilteredTranscript, error) {
+	return filterJSONL(r, "codex-jsonl", map[string]bool{"session_meta": true, "turn_context": true, "response_item": true, "event_msg": true, "message": true, "token_usage_record": true}, nil, nil, boundary)
+}
+
 func codexCaptureMetadata(line []byte, filename string) error {
 	var record struct {
 		Payload codexmeta.CodexMeta `json:"payload"`
@@ -40,4 +45,14 @@ func codexCaptureMetadata(line []byte, filename string) error {
 		return &archive.FilterError{Reason: "unsupported Codex history"}
 	}
 	return nil
+}
+
+// FilterCodexRetainedEncodedJSONL borrows bounded encoding scratch for retained records.
+func FilterCodexRetainedEncodedJSONL(r io.Reader, encoder func(map[string]any) ([]byte, error), boundary archive.CaptureBoundary) (archive.FilteredTranscript, error) {
+	return filterJSONLEncoded(r, "codex-jsonl", map[string]bool{"session_meta": true, "turn_context": true, "response_item": true, "event_msg": true, "message": true, "token_usage_record": true}, nil, nil, encoder, nil, boundary)
+}
+
+// FilterCodexCaptureEncodedJSONL keeps the capture proof while borrowing record resources.
+func FilterCodexCaptureEncodedJSONL(r io.Reader, filename string, encoder func(map[string]any) ([]byte, error), beforeRecord func(int) (func(), error), boundary archive.CaptureBoundary) (archive.FilteredTranscript, error) {
+	return filterJSONLEncoded(r, "codex-jsonl", map[string]bool{"session_meta": true, "turn_context": true, "response_item": true, "event_msg": true, "message": true, "token_usage_record": true}, nil, func(line []byte) error { return codexCaptureMetadata(line, filename) }, encoder, beforeRecord, boundary)
 }

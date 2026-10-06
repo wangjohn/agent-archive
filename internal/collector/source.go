@@ -97,7 +97,7 @@ func newSourceReader(reg archive.SessionRegistration, opts Options) (sourceReade
 	return providerReader{
 		ref: sourceRef(reg), harness: reg.Harness.Name, startedAt: reg.SessionStartedAt,
 		subagentMetadata: reg.ParentSessionID != "", sources: opts.Sources,
-		passes: opts.sourcePasses, database: opts.CursorDatabase, rollouts: opts.CodexRollouts,
+		passes: opts.sourcePasses, resourceOwner: opts.retainedOwner, database: opts.CursorDatabase, rollouts: opts.CodexRollouts,
 		admission: sourceAdmission(reg),
 		discovery: confinedSourceRegistration(reg, opts.ConfiguredCodexHomes),
 	}, true
@@ -106,6 +106,7 @@ func newSourceReader(reg archive.SessionRegistration, opts Options) (sourceReade
 // providerReader keeps only read dependencies; boxing whole registrations and
 // collector options would allocate their unrelated policy fields per source.
 type providerReader struct {
+	resourceOwner    *sessionScan
 	admission        agentapi.SourceAdmission
 	rollouts         agentapi.CodexRolloutLookup
 	ref              agentapi.SourceRef
@@ -289,7 +290,7 @@ func (r providerReader) Filter(ctx context.Context, adapter archive.Adapter, max
 		return out, observed, err
 	}
 
-	out, err = f.Filter(ctx, in, agentapi.FilterContext{Filename: filepath.Base(r.ref.Path), StartedAt: r.startedAt, Limits: limits})
+	out, err = r.filterOwned(ctx, f, in, agentapi.FilterContext{Filename: filepath.Base(r.ref.Path), StartedAt: r.startedAt, Limits: limits})
 	if err != nil {
 		return out, observed, translateSourceError(err)
 	}
@@ -618,4 +619,15 @@ func (r providerReader) snapshotBinding(ctx context.Context, snap agentapi.Sourc
 	}
 
 	return binding, nil
+}
+
+func (r providerReader) filterOwned(ctx context.Context, filter agentapi.TranscriptFilter, in agentapi.NativeInput, c agentapi.FilterContext) (archive.FilteredTranscript, error) {
+	if leased, ok := filter.(agentapi.LeasedTranscriptFilter); ok && r.resourceOwner != nil {
+		out, release, err := leased.FilterLeased(ctx, in, c, r.resourceOwner.readBudget())
+		if err == nil {
+			r.resourceOwner.retainedReleases = append(r.resourceOwner.retainedReleases, release)
+		}
+		return out, err
+	}
+	return filter.Filter(ctx, in, c)
 }

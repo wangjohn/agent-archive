@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/local"
 )
 
 // CacheStatus distinguishes why a bundle sits in the local published cache,
@@ -403,7 +402,7 @@ func (s *Store) LoadPublishedState(archiveSessionID string) (*Published, error) 
 func (p *Published) write(next publishedState) error {
 	summary := next.summary()
 	next.Summary = &summary
-	if err := local.WriteCompact(p.store.publishedPath(p.id), next); err != nil {
+	if err := p.store.writeCompact(p.store.publishedPath(p.id), next); err != nil {
 		return err
 	}
 	p.state, p.found = next, true

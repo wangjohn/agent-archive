@@ -108,7 +108,7 @@ func (r providerReader) filterRevision(ctx context.Context, snapshot agentapi.So
 	if input.Records != nil {
 		input.Records = &revisionRecords{input: input.Records, left: recordsLeft}
 	}
-	filtered, err = adapter.Filter(ctx, input, agentapi.FilterContext{Filename: filepath.Base(ref.Path), StartedAt: r.startedAt, Limits: limits})
+	filtered, err = r.filterOwned(ctx, adapter, input, agentapi.FilterContext{Filename: filepath.Base(ref.Path), StartedAt: r.startedAt, Limits: limits})
 	if err != nil {
 		return filtered, binding, err
 	}

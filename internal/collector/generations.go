@@ -142,7 +142,7 @@ func (s *sessionScan) maintainFrozen() (sessionOutcome, error) {
 	if !sameLinks || bundle.Capture.FilterVersion != archive.FilterVersion || bundle.Capture.AdapterVersion != adapter.Version() || !sourceEvidenceWithinPolicy(bundle.SupplementalEvidence, s.opts.skillEvidence()) {
 		bundle.SupplementalEvidence = updated
 		bundle.SupplementalEvidence = limitSkillEvidence(bundle.SupplementalEvidence, s.opts.skillEvidence())
-		filtered, err := refilterBundle(s.ctx, s.reg, adapter, bundle)
+		filtered, err := s.refilterRetained(adapter, bundle)
 		if err != nil {
 			return outcomeSkipped, fmt.Errorf("refilter frozen retained history: %w", err)
 		}

@@ -1,7 +1,6 @@
 package collector
 
 import (
-	"encoding/json"
 	"errors"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -13,7 +12,7 @@ import (
 // descriptor. Only acknowledged complete authority supplies the predecessor.
 func (s *sessionScan) freezeRevisionPublication(p *state.PendingPublication) error {
 	var final archive.Metadata
-	if err := json.Unmarshal(p.MetadataBytes, &final); err != nil {
+	if err := s.unmarshalRetained(p.MetadataBytes, &final); err != nil {
 		return err
 	}
 	final.SchemaVersion = archive.HistoryMetadataSchemaVersion
@@ -104,7 +103,7 @@ func (s *sessionScan) freezeRevisionPublication(p *state.PendingPublication) err
 			}
 		}
 	}
-	p.MetadataBytes, err = json.Marshal(final)
+	p.MetadataBytes, err = s.marshalRetained(final)
 	if err != nil {
 		return err
 	}

@@ -1,7 +1,6 @@
 package collector
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -34,7 +33,7 @@ func (s *sessionScan) advanceHistoryPreparation(p *state.PendingPublication) err
 		return errors.New("history preparation policy changed; frozen inputs remain pending")
 	}
 	var metadata archive.Metadata
-	if err := json.Unmarshal(p.MetadataBytes, &metadata); err != nil {
+	if err := s.unmarshalRetained(p.MetadataBytes, &metadata); err != nil {
 		return err
 	}
 	if p.History.PrivacyCursor < len(p.History.Inputs) {
@@ -43,7 +42,7 @@ func (s *sessionScan) advanceHistoryPreparation(p *state.PendingPublication) err
 			return err
 		}
 		p.History.PrivacyCursor++
-		encoded, err := json.Marshal(metadata)
+		encoded, err := s.marshalRetained(metadata)
 		if err != nil {
 			return err
 		}
@@ -143,12 +142,12 @@ func (s *sessionScan) derivePreparedHistory(p *state.PendingPublication, metadat
 		return err
 	}
 	var derived archive.Metadata
-	if err := json.Unmarshal(rendered.metadata, &derived); err != nil {
+	if err := s.unmarshalRetained(rendered.metadata, &derived); err != nil {
 		return err
 	}
 	derived.SchemaVersion, derived.History = archive.HistoryMetadataSchemaVersion, metadata.History
 	derived.SourceBundle = metadata.SourceBundle
-	p.MetadataBytes, err = json.Marshal(derived)
+	p.MetadataBytes, err = s.marshalRetained(derived)
 	if err != nil {
 		return err
 	}
@@ -177,11 +176,11 @@ func (s *sessionScan) prepareHistoryInput(p *state.PendingPublication, metadata 
 	}
 	if observationsChanged || bundle.Capture.FilterVersion != archive.FilterVersion || bundle.Capture.AdapterVersion != adapter.Version() || !sourceEvidenceWithinPolicy(bundle.SupplementalEvidence, s.opts.skillEvidence()) {
 		bundle.SupplementalEvidence = limitSkillEvidence(bundle.SupplementalEvidence, s.opts.skillEvidence())
-		filtered, err := refilterBundle(s.ctx, s.reg, adapter, bundle)
+		filtered, err := s.refilterRetained(adapter, bundle)
 		if err != nil {
 			return fmt.Errorf("filter preserved revision: %w", err)
 		}
-		compressed, err := archive.BuildCompressedSource(filtered)
+		compressed, err := s.compressSource(filtered)
 		if err != nil {
 			return err
 		}

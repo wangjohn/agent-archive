@@ -48,6 +48,9 @@ func (s *sessionScan) reconcileRevisions(read sourceRead, active archive.SourceB
 	// migration lane through full remote validation, keeping its newer candidate.
 	previous, _, havePrevious := s.published.LastPublished()
 	cached, _, _, haveCached := s.published.Cached()
+	// A missing-source block records state without a retained bundle. That
+	// bookkeeping is not an outgoing revision and cannot enter the planner.
+	haveCached = haveCached && (cached.SchemaVersion != 0 || cached.ArchiveSessionID != "" || len(cached.NativeRecords) != 0 || len(cached.NativeText) != 0)
 	if havePrevious && revisionID(previous) != current {
 		if err := s.restoreReferenceAuthority(); err != nil {
 			return nil, err
@@ -68,7 +71,7 @@ func (s *sessionScan) reconcileRevisions(read sourceRead, active archive.SourceB
 			}
 		}
 	}
-	planner := revisionPlanner{plan: plan, active: active, adapter: read.adapter, bytesLeft: 128 << 20}
+	planner := revisionPlanner{plan: plan, active: active, adapter: read.adapter, bytesLeft: 128 << 20, compress: s.compressSource}
 	if err := s.addPendingRevision(&planner); err != nil {
 		return nil, err
 	}
@@ -103,6 +106,7 @@ func revisionID(b archive.SourceBundle) string {
 }
 
 type revisionPlanner struct {
+	compress  func(archive.SourceBundle) (archive.CompressedSource, error)
 	plan      *revisionPlan
 	active    archive.SourceBundle
 	adapter   agentapi.TranscriptFilter
@@ -147,7 +151,11 @@ func (p *revisionPlanner) add(bundle archive.SourceBundle) error {
 	if err != nil {
 		return err
 	}
-	compressed, err := archive.BuildCompressedSource(bundle)
+	compress := p.compress
+	if compress == nil {
+		compress = archive.BuildCompressedSource
+	}
+	compressed, err := compress(bundle)
 	if err != nil {
 		return err
 	}
@@ -243,7 +251,7 @@ func (p *revisionPlan) historyInputs() []state.HistoryInput {
 }
 
 func (s *sessionScan) addNativeRevision(planner *revisionPlanner, filtered archive.FilteredTranscript, binding *archive.CodexSourceBinding, metadata archive.Metadata, cached, previous archive.SourceBundle) error {
-	bundle, err := archive.NewSourceBundle(s.reg, planner.adapter, filtered, s.now, nil)
+	bundle, err := s.newSourceBundle(s.reg, planner.adapter, filtered, s.now, nil)
 	if err != nil {
 		return err
 	}
@@ -299,7 +307,7 @@ func (s *sessionScan) addPendingRevision(planner *revisionPlanner) error {
 		return err
 	} else if found {
 		var document archive.Metadata
-		if err := json.Unmarshal(pending.MetadataBytes, &document); err != nil {
+		if err := s.unmarshalRetained(pending.MetadataBytes, &document); err != nil {
 			return err
 		}
 		if err := s.validateAuthorityIdentity(document); err != nil {

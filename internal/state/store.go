@@ -23,6 +23,7 @@
 package state
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -48,6 +49,9 @@ import (
 // never stores credentials or a second copy of conversation content beyond
 // what the published source bundle itself already contains.
 type Store struct {
+	resourceBudget   *agentapi.NativeReadBudget
+	resourceContext  context.Context
+	resourceReleases *[]func()
 	// indexSnapshots uses logical packed authority for qualified-index writes.
 	indexSnapshots bool
 	// onPackedEnumeration observes collector-only physical-index directory probes.
@@ -734,6 +738,9 @@ func (s *Store) CompleteRequest(archiveSessionID, coveredToken string) (bool, er
 // every retry uses the same hash and timestamps even after process restart.
 // Bundle remains available for change detection and future parser-only rebuilds.
 type PendingPublication struct {
+	// ScanSignature freezes the consumed native observation for resumed history
+	// acknowledgement. It never licenses newer input or a privacy successor.
+	ScanSignature *ScanSignature       `json:"scan_signature,omitempty"`
 	History       *PendingHistory      `json:"history,omitempty"`
 	SkillEvidence string               `json:"skill_evidence,omitempty"`
 	MetadataOnly  bool                 `json:"metadata_only,omitempty"`
@@ -785,7 +792,7 @@ func (s *Store) SavePending(id string, pending PendingPublication) error {
 	if err := pending.ValidateHistory(id); err != nil {
 		return err
 	}
-	return local.WriteCompact(s.pendingPath(id), pending)
+	return s.writeCompact(s.pendingPath(id), pending)
 }
 
 // LoadPending returns a session's outstanding publication transaction, if

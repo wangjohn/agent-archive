@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"sync"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -28,7 +29,7 @@ func DecodeRevisionSourceLeased(ctx context.Context, metadata archive.Metadata, 
 	})
 }
 
-var errDecodeBudget = errors.New("retained source exceeds shared data budget")
+var errDecodeBudget = agentapi.ReadBudgetLimit(errors.New("retained source exceeds shared data budget"))
 
 func decodeSourceLeased(ctx context.Context, data []byte, limits Limits, budget *agentapi.NativeReadBudget, decode func() (archive.SourceBundle, error)) (archive.SourceBundle, func(), error) {
 	noop := func() {}
@@ -41,12 +42,19 @@ func decodeSourceLeased(ctx context.Context, data []byte, limits Limits, budget 
 	if !budget.Reserve(preflightScratch) {
 		return archive.SourceBundle{}, noop, errDecodeBudget
 	}
-	wire, err := sourceWireSize(ctx, data, int64(limits.uncompressed()))
+	wire, longest, err := sourceWireSize(ctx, data, int64(limits.uncompressed()))
 	budget.Release(preflightScratch)
 	if err != nil {
 		return archive.SourceBundle{}, noop, err
 	}
-	scratch := int64(archive.MaxSourceLineBytes+1) + preflightScratch
+	// Match the scanner's geometric growth, capped by the format line limit.
+	lineCapacity := int64(64 << 10)
+	for lineCapacity < longest+1 && lineCapacity < int64(archive.MaxSourceLineBytes+1) {
+		lineCapacity = min(lineCapacity*2, int64(archive.MaxSourceLineBytes+1))
+	}
+	// The scanner and the decoded raw record line coexist before its map
+	// is adopted by the returned bundle. Charge both independent byte owners.
+	scratch := lineCapacity + longest + preflightScratch
 	if !budget.Reserve(wire + scratch) {
 		return archive.SourceBundle{}, noop, errDecodeBudget
 	}
@@ -56,38 +64,44 @@ func decodeSourceLeased(ctx context.Context, data []byte, limits Limits, budget 
 		budget.Release(wire)
 		return archive.SourceBundle{}, noop, err
 	}
-	released := false
-	release := func() {
-		if !released {
-			budget.Release(wire)
-			released = true
-		}
-	}
+	var once sync.Once
+	release := func() { once.Do(func() { budget.Release(wire) }) }
 	return bundle, release, nil
 }
 
-func sourceWireSize(ctx context.Context, data []byte, limit int64) (int64, error) {
+func sourceWireSize(ctx context.Context, data []byte, limit int64) (int64, int64, error) {
 	gz, err := gzip.NewReader(bytes.NewReader(data))
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	defer func() { _ = gz.Close() }()
 	var scratch [32 << 10]byte
-	var total int64
+	var total, longest, line int64
 	for {
 		if err := ctx.Err(); err != nil {
-			return 0, err
+			return 0, 0, err
 		}
 		n, err := gz.Read(scratch[:])
 		total += int64(n)
+		for _, b := range scratch[:n] {
+			if b == '\n' {
+				longest = max(longest, line)
+				line = 0
+			} else {
+				line++
+			}
+		}
+		if max(longest, line) > int64(archive.MaxSourceLineBytes) {
+			return 0, 0, archive.ErrSourceTooLarge
+		}
 		if total > limit {
-			return 0, archive.ErrSourceTooLarge
+			return 0, 0, archive.ErrSourceTooLarge
 		}
 		if errors.Is(err, io.EOF) {
-			return total, nil
+			return total, max(longest, line), nil
 		}
 		if err != nil {
-			return 0, err
+			return 0, 0, err
 		}
 	}
 }

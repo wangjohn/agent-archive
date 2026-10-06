@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/state"
@@ -618,5 +619,66 @@ func TestRunReactivationProtectsEveryReferenceAndPreservesMeaningfulCapture(t *t
 		if protected[retired.Key] {
 			t.Fatal("reactivated reference retired")
 		}
+	}
+}
+
+func TestRunNativeHistoryPublicationSettlesAcrossResumeAndRestart(t *testing.T) {
+	scan, lookup := reconciliationFixture(t)
+	nativeHome := t.TempDir()
+	nativeDir := filepath.Join(nativeHome, "sessions")
+	if err := os.MkdirAll(nativeDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for id, refs := range lookup.refs {
+		for i := range refs {
+			next := filepath.Join(nativeDir, filepath.Base(refs[i].Path))
+			if err := os.Rename(refs[i].Path, next); err != nil {
+				t.Fatal(err)
+			}
+			refs[i].Path = next
+		}
+		lookup.refs[id] = refs
+	}
+	scan.reg.TranscriptPath = lookup.refs[revisionThread][0].Path
+	scan.reg.CodexBinding.Home = nativeHome
+	scan.reg.CodexBinding.Path = scan.reg.TranscriptPath
+	if err := scan.local.SaveRegistration(scan.reg); err != nil {
+		t.Fatal(err)
+	}
+	scan.opts.ConfiguredCodexHomes = []string{nativeHome}
+	active := lookup.refs[revisionC][0]
+	lookup.set.Current = &active
+	lookup.set.Candidates = []agentapi.SourceRef{active}
+	opts := scan.opts
+	var first Result
+	var err error
+	for range 3 {
+		first, err = Run(t.Context(), scan.local, scan.remote, opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, issue := range first.Errors {
+			if !errors.Is(issue, archive.ErrHistoryMutationPending) {
+				t.Fatal(issue)
+			}
+		}
+		if len(first.Published) == 1 {
+			break
+		}
+	}
+	if len(first.Published) != 1 {
+		t.Fatalf("history failed to converge: %v", first.Errors)
+	}
+	signature, found, err := scan.local.LoadScanSignature(scan.id())
+	if err != nil || !found || signature.SourceSchemaVersion != archive.HistorySourceSchemaVersion {
+		t.Fatalf("missing immediate settled history proof %#v %t %v", signature, found, err)
+	}
+	reopened, err := state.Open(scan.local.Home())
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, cost := measurePass(t, reopened, scan.remote, opts)
+	if len(next.Errors) != 0 || len(next.Published) != 0 || len(next.Skipped) != 1 || cost.loads != 0 || cost.writes != 0 {
+		t.Fatalf("unchanged restart decoded or rewrote state %#v %#v", next, cost)
 	}
 }

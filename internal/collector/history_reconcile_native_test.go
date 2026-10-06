@@ -633,3 +633,31 @@ func TestNativeRevisionReconciliationUsesRawOrdinalsAfterFilteredOmissions(t *te
 		t.Fatal("historical originals lost validated ordinal framing")
 	}
 }
+
+func TestNativeReconciliationDoesNotTreatMissingSourceBookkeepingAsRevision(t *testing.T) {
+	scan, _ := reconciliationFixture(t)
+	defer scan.releaseRetained()
+	if err := scan.published.SaveBlocked(archive.SourceBundle{}, time.Time{}, state.BlockedReasonTranscriptMissing); err != nil {
+		t.Fatal(err)
+	}
+	read, ok, err := scan.read()
+	if err != nil || !ok {
+		t.Fatal("returned native source", err)
+	}
+	active, _, err := scan.build(read)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := scan.reconcileRevisions(read, active)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Current != revisionC || len(plan.Preserved) != 2 {
+		t.Fatalf("lost real outgoing revisions %#v", plan)
+	}
+	for _, revision := range plan.Preserved {
+		if revision.RevisionID == "" {
+			t.Fatal("invented empty revision")
+		}
+	}
+}
