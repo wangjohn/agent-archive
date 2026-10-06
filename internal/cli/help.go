@@ -129,17 +129,21 @@ attempted exposure. Issuer-local delivered secrets are removed on exit; lineage
 remains. Spare refill failure does not invalidate the delivered pairing.
 `,
 	"machines": `Usage: agent-archive machines [--json] [--verify] [--yes]
+       agent-archive machines add [options]
 
-List informational machine records from this bucket.
---verify requests a read-only Cloudflare metadata check. Account inventory
-completeness remains unknown; matching metadata never proves ownership or access
-removal.
-Anyone with bucket access can forge records; they never authorize revocation.
-Heartbeat is updated at most daily and does not indicate current activity.
-Unreadable records and incomplete listings are reported; those exit with code 1.
+List or add machine records for this bucket. Records are informational and do
+not prove identity, current activity, or access removal.
+
+Pair another machine:
+  agent-archive machines add    On this machine
+  agent-archive setup --pair    On the other machine
+
+Options:
   --json    Write records and observations as JSON
             Never prompt or run a token command
   --verify  Explicit bounded provider metadata check for this R2 bucket
+            Account inventory completeness remains unknown; matching metadata
+            never proves ownership or access removal
   --yes     With --verify, require CLOUDFLARE_API_TOKEN and never prompt
 `,
 	"machines rename": `Usage: agent-archive machines rename [CURRENT_NAME|MACHINE_ID] NEW_NAME
