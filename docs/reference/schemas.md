@@ -7,7 +7,7 @@ The two documents agent-archive writes to the bucket, and the records
 | Schema | `$id` | Describes |
 | --- | --- | --- |
 | [`metadata.schema.json`](../../schemas/metadata.schema.json) | `https://raw.githubusercontent.com/wangjohn/agent-archive/main/schemas/metadata.schema.json` | A session's `metadata.json` sidecar, and each item of `list --json`'s `sessions`. `additionalProperties` is false. |
-| [`source-bundle.schema.json`](../../schemas/source-bundle.schema.json) | `https://raw.githubusercontent.com/wangjohn/agent-archive/main/schemas/source-bundle.schema.json` | One line of a `source.<sha256>.jsonl.gz` bundle (source schema 2): the header, a native record, a text transcript, or a piece of supplemental evidence. Ordering rules a line schema can't express are in its `description`. |
+| [`source-bundle.schema.json`](../../schemas/source-bundle.schema.json) | `https://raw.githubusercontent.com/wangjohn/agent-archive/main/schemas/source-bundle.schema.json` | One line of a `source.<sha256>.jsonl.gz` bundle (source schemas 2 and 3): the header, a native record, a text transcript, or a piece of supplemental evidence. Ordering rules a line schema can't express are in its `description`. |
 | [`eval-export.schema.json`](../../schemas/eval-export.schema.json) | `https://raw.githubusercontent.com/wangjohn/agent-archive/main/schemas/eval-export.schema.json` | One line of `agent-archive eval export` output: a session record or an error record. It refers to `metadata.schema.json` for the fields the two share, so a validator needs both. Its own `schema_version` and stability rules are in the [eval export design](../../dev/specs/eval-export.md#stability). |
 
 The `$id`s resolve to the files on `main`. Pin a commit in the URL if you
@@ -66,3 +66,24 @@ as a single transfer. Repository matching and resolved-path containment are
 runtime checks beyond the JSON schema; these rules are not uploaded.
 The input array has at most 4,096 rules. Transfer also refuses saved or resulting
 destination scopes above that size and unresolved saved symlinks.
+
+## Retained Codex history
+
+Source schema 3 is a self-contained Codex history snapshot. Its bounded `history`
+manifest identifies the selected physical rollout and maps retained records to
+physical spans and raw unsigned ordinal ranges. Each native-record envelope
+carries its exact `ordinal` separately from the filtered native object. Records
+removed for privacy leave ordinal gaps; refiltering recomputes retained span
+indices. Ancestor content remains safe retained evidence, while own activity
+counts exclude inherited records. A same-thread revert prefix remains owned.
+
+Metadata schema 2 points to the active source and up to 64 preserved native
+revision references under that same archive session's prefix. A preserved
+reference may name a legacy source-schema-2 bundle. Readers validate every
+pointer before selecting one. Ordinary sources and sidecars continue using
+schemas 2 and 1. This reader rollout keeps history publication, recovery,
+refilter mutation and deletion fenced until the matching revision lifecycle
+and writer protection are installed.
+
+See the [reader contract](../../dev/specs/codex-history.md) for identity,
+selection, resource limits and compatibility details.

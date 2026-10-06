@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,24 +16,35 @@ import (
 	"github.com/wangjohn/agent-archive/internal/codexmeta"
 )
 
-func appendHistoryRows(t testing.TB, ref agentapi.SourceRef, start uint64, rows ...map[string]any) []byte {
-	t.Helper()
+type accountingScenario string
+
+const (
+	accountingScenarioCarriedTotal        accountingScenario = "carried_total"
+	accountingScenarioResetTotal          accountingScenario = "reset_total"
+	accountingScenarioMixed               accountingScenario = "mixed"
+	accountingScenarioAmbiguousTurn       accountingScenario = "ambiguous_turn"
+	accountingScenarioPerCall             accountingScenario = "per_call"
+	accountingScenarioAbsentChildBoundary accountingScenario = "absent_child_boundary"
+)
+
+func appendHistoryRows(tb testing.TB, ref agentapi.SourceRef, start uint64, rows ...map[string]any) []byte {
+	tb.Helper()
 	f, e := os.OpenFile(ref.Path, os.O_APPEND|os.O_WRONLY, 0600)
 	if e != nil {
-		t.Fatal(e)
+		tb.Fatal(e)
 	}
 	for i, row := range rows {
 		row["ordinal"] = start + uint64(i)
 		if e := json.NewEncoder(f).Encode(row); e != nil {
-			t.Fatal(e)
+			tb.Fatal(e)
 		}
 	}
 	if e := f.Close(); e != nil {
-		t.Fatal(e)
+		tb.Fatal(e)
 	}
 	raw, e := os.ReadFile(ref.Path)
 	if e != nil {
-		t.Fatal(e)
+		tb.Fatal(e)
 	}
 	return raw
 }
@@ -81,12 +93,12 @@ func TestNestedHistoryDropsRemapAndRefilter(t *testing.T) {
 
 func TestHistoryCumulativeAccountingDoesNotBecomeOwnedUsage(t *testing.T) {
 	t.Parallel()
-	for _, kind := range []string{"carried_total", "reset_total", "mixed", "ambiguous_turn", "per_call", "absent_child_boundary"} {
-		t.Run(kind, func(t *testing.T) {
+	for _, kind := range []accountingScenario{accountingScenarioCarriedTotal, accountingScenarioResetTotal, accountingScenarioMixed, accountingScenarioAmbiguousTurn, accountingScenarioPerCall, accountingScenarioAbsentChildBoundary} {
+		t.Run(string(kind), func(t *testing.T) {
 			t.Parallel()
 			dir := t.TempDir()
 			extra := map[string]any{"parent_thread_id": threadA, "subagent_history_start_ordinal": 4}
-			if kind == "absent_child_boundary" {
+			if kind == accountingScenarioAbsentChildBoundary {
 				delete(extra, "subagent_history_start_ordinal")
 			}
 			leaf, _ := historyFile(t, dir, threadB, threadB, 0, extra)
@@ -97,18 +109,18 @@ func TestHistoryCumulativeAccountingDoesNotBecomeOwnedUsage(t *testing.T) {
 			}
 			field := "total_token_usage"
 			value := 105
-			if kind == "reset_total" {
+			if kind == accountingScenarioResetTotal {
 				value = 5
 			}
-			if kind == "per_call" || kind == "absent_child_boundary" {
+			if kind == accountingScenarioPerCall || kind == accountingScenarioAbsentChildBoundary {
 				field = "usage"
 				value = 5
 			}
-			if kind == "ambiguous_turn" {
+			if kind == accountingScenarioAmbiguousTurn {
 				field = "turn_token_usage"
 			}
 			rows = append(rows, map[string]any{"type": "token_usage_record", "payload": map[string]any{field: map[string]any{"input_tokens": value}}})
-			if kind == "mixed" {
+			if kind == accountingScenarioMixed {
 				rows = append(rows, map[string]any{"type": "token_usage_record", "payload": map[string]any{"usage": map[string]any{"input_tokens": 5}}})
 			}
 			appendHistoryRows(t, leaf, 1, rows...)
@@ -119,16 +131,16 @@ func TestHistoryCumulativeAccountingDoesNotBecomeOwnedUsage(t *testing.T) {
 				t.Fatal(e)
 			}
 			want := 0
-			if kind == "mixed" || kind == "per_call" {
+			if kind == accountingScenarioMixed || kind == accountingScenarioPerCall {
 				want = 5
 			}
-			if kind == "absent_child_boundary" {
+			if kind == accountingScenarioAbsentChildBoundary {
 				want = 105
 			}
 			if want == 0 && a.View.Tokens.Input != nil || want > 0 && (a.View.Tokens.Input == nil || *a.View.Tokens.Input != want) {
 				t.Fatalf("own tokens: %+v want %d", a.View.Tokens, want)
 			}
-			unknown := kind != "per_call" && kind != "absent_child_boundary"
+			unknown := kind != accountingScenarioPerCall && kind != accountingScenarioAbsentChildBoundary
 			if a.Facts.TokenScopeUnknown != unknown {
 				t.Fatalf("scope gap=%v want %v", a.Facts.TokenScopeUnknown, unknown)
 			}
@@ -136,7 +148,7 @@ func TestHistoryCumulativeAccountingDoesNotBecomeOwnedUsage(t *testing.T) {
 				t.Fatalf("inherited model context: %+v", a.View.ModelTokens)
 			}
 			tools := 0
-			if kind == "absent_child_boundary" {
+			if kind == accountingScenarioAbsentChildBoundary {
 				tools = 1
 			}
 			if len(a.View.ToolCalls) != tools {
@@ -268,5 +280,79 @@ func TestOrdinaryAdmissionUsesCapturedHandle(t *testing.T) {
 	_ = s.Close()
 	if e := v.ValidateAdmission(t.Context(), agentapi.SourceAdmission{NativeID: threadA}); !errors.Is(e, agentapi.ErrClosed) {
 		t.Fatalf("closed admission: %v", e)
+	}
+}
+
+func TestSharedPrefixCacheStillProvesNativeRewrite(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	base, raw := historyFile(t, dir, threadA, threadA, 0, nil, "before")
+	leaf, _ := historyFile(t, dir, threadB, threadB, 2, map[string]any{"parent_thread_id": threadA, "history_base": codexmeta.CodexHistoryPosition{RolloutID: threadA, EndOrdinal: 2, EndByteOffset: uint64(len(raw))}}, "own")
+	lookup := &historyLookup{thread: agentapi.CodexRolloutSet{Current: &leaf}, rollouts: map[string][]agentapi.SourceRef{threadA: {base}}}
+	p := historyPass(t, dir, lookup)
+	historyRead(t, p, leaf)
+	s, e := p.Read(t.Context(), leaf, agentapi.ReadLimits{})
+	if e != nil {
+		t.Fatal(e)
+	}
+	if p.(*relatedSourcePass).cacheHits != 1 {
+		t.Fatal("validated shared prefix not reused")
+	}
+	changed := bytes.Replace(raw, []byte("before"), []byte("mutate"), 1)
+	if e := os.WriteFile(base.Path, changed, 0600); e != nil {
+		t.Fatal(e)
+	}
+	if _, e := (Filter{}).Filter(t.Context(), s.Input(), agentapi.FilterContext{}); agentapi.Failure(e) != agentapi.Changed {
+		t.Fatalf("cached rewrite escaped native proof: %v", e)
+	}
+	if e := s.Close(); e != nil {
+		t.Fatal(e)
+	}
+	if e := p.Close(); e != nil {
+		t.Fatal(e)
+	}
+	if p.(*relatedSourcePass).bytes != 0 {
+		t.Fatal("charged cache survived close")
+	}
+}
+
+func TestCompleteConnectedLineageSelectsUniqueTip(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	base, raw := historyFile(t, dir, threadA, threadA, 0, nil, "before")
+	leaf, _ := historyFile(t, dir, rolloutC, threadA, 2, map[string]any{"history_base": codexmeta.CodexHistoryPosition{RolloutID: threadA, EndOrdinal: 2, EndByteOffset: uint64(len(raw))}}, "after")
+	lookup := &historyLookup{thread: agentapi.CodexRolloutSet{Complete: true, Candidates: []agentapi.SourceRef{leaf, base}}, rollouts: map[string][]agentapi.SourceRef{threadA: {base}}}
+	b := historyRead(t, historyPass(t, dir, lookup), base)
+	if b.History.ActiveRolloutID != rolloutC || len(b.NativeRecords) != 4 {
+		t.Fatalf("unique tip selection: %+v", b.History)
+	}
+}
+
+func TestHistoryRejectsActualPhysicalCycle(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	offset := uint64(1)
+	var leaf, base agentapi.SourceRef
+	for range 5 {
+		var raw []byte
+		leaf, raw = historyFile(t, dir, rolloutC, threadA, 1, map[string]any{"history_base": codexmeta.CodexHistoryPosition{RolloutID: rolloutD, EndOrdinal: 1, EndByteOffset: offset}})
+		base, _ = historyFile(t, dir, rolloutD, threadA, 1, map[string]any{"history_base": codexmeta.CodexHistoryPosition{RolloutID: rolloutC, EndOrdinal: 1, EndByteOffset: offset}})
+		if offset == uint64(len(raw)) {
+			break
+		}
+		offset = uint64(len(raw))
+	}
+	lookup := &historyLookup{thread: agentapi.CodexRolloutSet{Current: &leaf}, rollouts: map[string][]agentapi.SourceRef{rolloutC: {leaf}, rolloutD: {base}}}
+	p := historyPass(t, dir, lookup)
+	if _, e := p.Read(t.Context(), leaf, agentapi.ReadLimits{}); e != nil {
+		var classified *agentapi.SourceError
+		if !errors.As(e, &classified) || classified.Kind != agentapi.Unsafe || !strings.Contains(classified.Unwrap().Error(), "cycle") {
+			t.Fatalf("physical cycle: %v", e)
+		}
+	} else {
+		t.Fatal("physical cycle accepted")
+	}
+	if p.(*relatedSourcePass).bytes != 0 {
+		t.Fatal("failed graph retained unused dependencies")
 	}
 }

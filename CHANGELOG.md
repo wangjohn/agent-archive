@@ -8,6 +8,11 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Readers understand self-contained Codex fork, child and revised histories,
+  preserve exact raw ordinal boundaries and count only the chat's own activity.
+  Related-history writes and cleanup remain protected pending revision-aware
+  lifecycle support. Active captures can finish while a chat keeps appending.
+
 - Complete non-live experimental pairing/revocation handling: committed retired
   dedicated-key history, healthy issuer labels and private operator bindings,
   unused spare observations and bounded informational operation progress.

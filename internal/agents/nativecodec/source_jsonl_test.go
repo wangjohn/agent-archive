@@ -239,7 +239,7 @@ func TestSourceBundleJSONLRejectsMalformedStreams(t *testing.T) {
 		{"schema 1 document", gzipLines(t, string(v1)), DecodeOptions{}, "unsupported source schema version 1"},
 		{"schema 1 document as written (no newline)", gzipBytes(t, v1), DecodeOptions{}, "unsupported source schema version 1"},
 		{"final line without newline", gzipBytes(t, []byte(headerLine(1, 0)+"\n"+recordLine)), DecodeOptions{}, "truncated"},
-		{"future schema", gzipLines(t, strings.Replace(headerLine(0, 0), `"schema_version":2`, `"schema_version":3`, 1)), DecodeOptions{}, "unsupported source schema version 3"},
+		{"future schema", gzipLines(t, strings.Replace(headerLine(0, 0), `"schema_version":2`, `"schema_version":4`, 1)), DecodeOptions{}, "unsupported source schema version 4"},
 		{"uncompressed limit", valid, DecodeOptions{MaxUncompressedBytes: 64}, ErrSourceTooLarge.Error()},
 		{"trailing bytes after the gzip stream", append(append([]byte{}, valid...), "trailing garbage bytes"...), DecodeOptions{}, "trailing bytes after its gzip stream"},
 		// Fewer trailing bytes than a gzip header is indistinguishable from a

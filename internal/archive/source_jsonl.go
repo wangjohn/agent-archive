@@ -10,7 +10,7 @@ import (
 	"io"
 )
 
-// Source bundle wire format, schema version 2: gzip of newline-delimited JSON.
+// Source bundle wire format, schema versions 2 and 3: gzip of newline-delimited JSON.
 // Every line is one object with a "kind" discriminator, in this order:
 //
 //  1. exactly one "header" line, first, carrying the envelope and the number
@@ -89,7 +89,7 @@ type evidenceLine struct {
 	Evidence SupplementalEvidence `json:"evidence"`
 }
 
-// EncodeSource writes bundle as schema-2 JSONL to w, uncompressed. The output
+// EncodeSource writes bundle as versioned JSONL to w, uncompressed. The output
 // is deterministic: struct fields keep their declared order and map keys are
 // sorted by encoding/json, so identical evidence always yields identical bytes.
 func EncodeSource(w io.Writer, bundle SourceBundle) error {
@@ -154,7 +154,7 @@ type DecodeOptions struct {
 // DecodeOptions.MaxUncompressedBytes.
 var ErrSourceTooLarge = errors.New("source exceeds uncompressed read limit")
 
-// DecodeSource streams a gzip-compressed schema-2 source bundle, calling fn
+// DecodeSource streams a gzip-compressed source bundle, calling fn
 // once per line in order. It holds at most one line in memory, and enforces
 // the format's structure: the header is first and appears once, line kinds
 // arrive in their fixed order, every line is well formed and within the line

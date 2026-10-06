@@ -137,8 +137,14 @@ func defaultMetadataParser(bundle SourceBundle, parser ParserInfo) ParserInfo {
 
 func baseMetadata(bundle SourceBundle, machineID string, startedAt, derivedAt time.Time, reference SourceReference, parser ParserInfo) Metadata {
 	state, outcome := deriveLifecycle(bundle.SupplementalEvidence)
+	schemaVersion := MetadataSchemaVersion
+	var history *RevisionHistory
+	if bundle.History != nil {
+		schemaVersion = HistoryMetadataSchemaVersion
+		history = &RevisionHistory{CurrentRevision: bundle.History.ActiveRolloutID}
+	}
 	m := Metadata{
-		SchemaVersion: MetadataSchemaVersion, SessionID: bundle.ArchiveSessionID, NativeSessionID: bundle.NativeSessionID,
+		History: history, SchemaVersion: schemaVersion, SessionID: bundle.ArchiveSessionID, NativeSessionID: bundle.NativeSessionID,
 		MachineID: machineID, ProjectID: bundle.ProjectID, StartedAt: startedAt.UTC(), CapturedAt: bundle.Capture.CapturedAt.UTC(),
 		MetadataDerivedAt: derivedAt.UTC(), Harness: bundle.Capture.Harness,
 		Adapter: AdapterInfo{Name: bundle.Capture.AdapterName, Version: bundle.Capture.AdapterVersion}, Parser: parser,
@@ -148,10 +154,6 @@ func baseMetadata(bundle SourceBundle, machineID string, startedAt, derivedAt ti
 		CaptureGaps:         append([]CaptureGap(nil), bundle.Capture.Gaps...), SourceBundle: reference,
 		ParentSessionID: bundle.ParentSessionID,
 		LinkedSessions:  append([]LinkedSessionReference(nil), bundle.LinkedSessions...),
-	}
-	if bundle.History != nil {
-		m.SchemaVersion = HistoryMetadataSchemaVersion
-		m.History = &RevisionHistory{CurrentRevision: bundle.History.ActiveRolloutID}
 	}
 	return m
 }

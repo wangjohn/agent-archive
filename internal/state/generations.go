@@ -167,6 +167,9 @@ func validateGenerationSuccessor(old, reg archive.SessionRegistration, pending P
 // A decodable journal must not redirect preserved metadata or carry bytes
 // belonging to another generation, even when its registration is intact.
 func validateGenerationPublication(reg archive.SessionRegistration, pending PendingPublication) error {
+	if err := archive.CheckHistoryMutation(pending.Bundle, archive.Metadata{}); err != nil {
+		return err
+	}
 	bundle := pending.Bundle
 	if pending.MetadataOnly || bundle.NativeSessionID != reg.NativeSessionID || bundle.ProjectID != reg.ProjectID || bundle.Capture.Harness.Name != reg.Harness.Name {
 		return errors.New("recovery publication identity differs from registration")
@@ -191,6 +194,9 @@ func validateGenerationPublication(reg archive.SessionRegistration, pending Pend
 }
 
 func (s *Store) generationRecoveryOriginal(id string) (archive.SessionRegistration, agentmeta.SessionKey, error) {
+	if err := s.CheckHistoryRecovery(id); err != nil {
+		return archive.SessionRegistration{}, agentmeta.SessionKey{}, err
+	}
 	old, found, err := s.LoadRegistration(id)
 	if err != nil || !found {
 		return archive.SessionRegistration{}, agentmeta.SessionKey{}, errors.New("session is not registered on this machine")
