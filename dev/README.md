@@ -34,6 +34,7 @@ implemented design records live in `proposals/implemented/`.
 
 | Proposal | Status |
 | --- | --- |
+| [Setup and CLI experience](proposals/setup-and-cli-ux.md) | Accepted design and implementation plan; consistent onboarding and setup project selection; not implemented. |
 | [Release remediation](proposals/release-remediation.md) | Implementation and release-gate record; disposable provider and per-app acceptance remain open. |
 | [Cloud capture](proposals/cloud-capture.md) | Proposed; not implemented. |
 | [Local session discovery](proposals/local-session-discovery.md) | Proposed; Codex first, with shared discovery and admission rules. |
