@@ -388,7 +388,7 @@ func TestSubagentNameComesFromTheDescription(t *testing.T) {
 	if bareLabels, _ := SessionLabels(bare); bareLabels.Name != "" {
 		t.Fatalf("name = %q, want none", bareLabels.Name)
 	}
-	renamed := subagentBundle(t, `{"description":"Find the retention tests"}`, `{"type":"custom-title","customTitle":"Chosen name","sessionId":"native-parent"}`)
+	renamed := subagentBundle(t, `{"description":"Find the retention tests"}`, `{"type":"custom-title","customTitle":"Chosen name","sessionId":"native-456"}`)
 	if renamedLabels, _ := SessionLabels(renamed); renamedLabels.Name != "Chosen name" {
 		t.Fatalf("name = %q, want the custom-title", renamedLabels.Name)
 	}

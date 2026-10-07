@@ -403,7 +403,8 @@ func (s *sessionScan) build(read sourceRead) (archive.SourceBundle, []archive.Su
 
 	// Observe the filesystem only with session activity. An unrelated skill edit
 	// must not refresh every historical session or extend its retention lifetime.
-	active := !haveCached || s.req.Token != "" || !nativeEvidenceExtends(read.adapter, cached, candidate) || !nativeEvidenceExtends(read.adapter, candidate, cached)
+	nativeChanged := !nativeEvidenceExtends(read.adapter, cached, candidate) || !nativeEvidenceExtends(read.adapter, candidate, cached)
+	active := !haveCached || s.req.Token != "" || (nativeChanged && !bundleChangeIsNamingOnly(read.adapter, cached, candidate))
 	if signature, found, _ := s.local.LoadScanSignature(s.id()); found && pendingSkillMode(signature.SkillEvidence) != s.opts.skillEvidence() {
 		active = true
 	}
@@ -471,7 +472,7 @@ func (s *sessionScan) compare(read sourceRead, candidate *archive.SourceBundle) 
 		// is the exception: it carries no new activity of this session's own,
 		// so it keeps the capture time its evidence was actually observed at.
 		// So does the same evidence re-filtered by a new filter or adapter
-		// version.
+		// version, or a native title change with no conversation activity.
 		candidate.Capture.CapturedAt = s.now
 		if haveCached && !cached.Capture.CapturedAt.IsZero() {
 			linkOnly, err := bundleChangeIsLinkOnly(cached, *candidate)
@@ -482,7 +483,7 @@ func (s *sessionScan) compare(read sourceRead, candidate *archive.SourceBundle) 
 			if err != nil {
 				return false, err
 			}
-			if linkOnly || refiltered {
+			if linkOnly || refiltered || bundleChangeIsNamingOnly(read.adapter, cached, *candidate) {
 				candidate.Capture.CapturedAt = cached.Capture.CapturedAt
 			}
 		}

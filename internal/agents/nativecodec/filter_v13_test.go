@@ -60,7 +60,8 @@ func TestFilterV13CustomTitleKeepsOnlyItsTitle(t *testing.T) {
 		`{"type":"custom-title","customTitle":"   ","sessionId":"s1"}`,
 		`{"type":"custom-title","customTitle":{"text":"SYNTHETIC-OBJECT"},"sessionId":"s1"}`,
 		`{"type":"custom-title","sessionId":"s1"}`,
-		`{"type":"custom-title","customTitle":"Typed ids","sessionId":{"id":"SYNTHETIC-ID"},"timestamp":["SYNTHETIC-TIME"]}`,
+		`{"type":"custom-title","customTitle":"Typed ids","sessionId":"s1","timestamp":["SYNTHETIC-TIME"]}`,
+		`{"type":"custom-title","customTitle":"Malformed owner","sessionId":{"id":"SYNTHETIC-ID"}}`,
 	)
 	titles := claudeRecordsOfType(records, "custom-title")
 	if len(titles) != 2 || titles[0]["customTitle"] != "Named" || titles[1]["customTitle"] != "Typed ids" {
@@ -69,7 +70,7 @@ func TestFilterV13CustomTitleKeepsOnlyItsTitle(t *testing.T) {
 	if got := strings.Join(sortedKeys(titles[0]), " "); got != "customTitle sessionId type" {
 		t.Fatalf("custom-title keys = %q", got)
 	}
-	if got := strings.Join(sortedKeys(titles[1]), " "); got != "customTitle type" {
+	if got := strings.Join(sortedKeys(titles[1]), " "); got != "customTitle sessionId type" {
 		t.Fatalf("custom-title keys = %q", got)
 	}
 	encoded := string(bytes.Join(filtered.Records, []byte("\n")))
@@ -395,6 +396,7 @@ func TestFilterV13NewRecordsChangeOnlyNameAndPullRequests(t *testing.T) {
 		}
 		reg := registration()
 		reg.Harness = Harness{Name: "claude"}
+		reg.NativeSessionID = "native-named"
 		now := time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
 		bundle, err := NewSourceBundle(reg, ClaudeAdapter{}, filtered, now, nil)
 		if err != nil {
