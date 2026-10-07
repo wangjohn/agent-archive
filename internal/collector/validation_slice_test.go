@@ -185,7 +185,10 @@ func TestExplicitCatalogDefaultReadDeadlineFailsClosed(t *testing.T) {
 
 func TestCollectorRealCodexProviderRenewsAcrossManyThreads(t *testing.T) {
 	t.Parallel()
-	home := t.TempDir()
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	dir := filepath.Join(home, "sessions")
 	if err := os.Mkdir(dir, 0700); err != nil {
 		t.Fatal(err)
@@ -198,24 +201,35 @@ func TestCollectorRealCodexProviderRenewsAcrossManyThreads(t *testing.T) {
 		paths = append(paths, writeTranscript(t, dir, "rollout-"+id+".jsonl", raw))
 	}
 	c := newCollectorCatalog(t, []string{home})
-	opts := Options{Sources: testSources, CodexRollouts: c}
+	opts := Options{Sources: testSources, CodexRollouts: c, ConfiguredCodexHomes: []string{home}}
 	closePasses := openCursorPass(nil, &opts)
 	defer func() {
 		if err := closePasses(); err != nil {
 			t.Error(err)
 		}
 	}()
-	for _, path := range paths {
-		reg := archive.SessionRegistration{Harness: archive.Harness{Name: "codex"}, TranscriptPath: path}
+	for i, path := range paths {
+		reg := archive.SessionRegistration{NativeSessionID: fmt.Sprintf("%08x-1111-4111-8111-111111111111", i+1), Harness: archive.Harness{Name: "codex"}, TranscriptPath: path}
 		reader, ok := newSourceReader(reg, opts)
 		if !ok {
 			t.Fatal("missing source reader")
 		}
 		if _, err := reader.Signature(t.Context()); err != nil {
-			t.Fatal(err)
+			old := opts.sourcePasses.slice
+			if agentapi.Failure(err) != agentapi.Limit || old == nil || agentapi.Failure(old.Valid(t.Context())) != agentapi.Limit || opts.sourcePasses.active != 0 {
+				t.Fatalf("read %d unexpected refusal: %v", i, err)
+			}
+			before := c.sweeps
+			if _, retry := reader.Signature(t.Context()); retry != nil {
+				t.Fatal(retry)
+			}
+			if opts.sourcePasses.slice == old || c.sweeps != before+1 {
+				t.Fatal("exhausted slice was not renewed exactly once")
+			}
 		}
+
 	}
-	if c.sweeps != 2 || opts.sourcePasses.active != 0 {
+	if c.sweeps != 4 || opts.sourcePasses.active != 0 {
 		t.Fatalf("real caller did not share and renew sweeps: %d", c.sweeps)
 	}
 }
@@ -225,6 +239,7 @@ func TestCollectorRealCodexProviderRenewsAcrossManyThreads(t *testing.T) {
 type collectorCatalog struct {
 	agentapi.CodexRolloutLookup
 	sweeps  int
+	owner   *discovery.CodexRolloutLookup
 	failure error
 }
 
@@ -243,7 +258,15 @@ func newCollectorCatalog(t *testing.T, homes []string) *collectorCatalog {
 			t.Error(err)
 		}
 	})
-	return &collectorCatalog{CodexRolloutLookup: owner.MetadataInventory()}
+	return &collectorCatalog{CodexRolloutLookup: owner.MetadataInventory(), owner: owner}
+}
+func (c *collectorCatalog) NativeReadBudget() *agentapi.NativeReadBudget {
+	if owner, ok := c.CodexRolloutLookup.(interface {
+		NativeReadBudget() *agentapi.NativeReadBudget
+	}); ok {
+		return owner.NativeReadBudget()
+	}
+	return nil
 }
 func (c *collectorCatalog) BeginValidationSlice(ctx context.Context, limits agentapi.CodexValidationLimits) (agentapi.CodexRolloutSlice, error) {
 	if err := ctx.Err(); err != nil {
@@ -282,3 +305,42 @@ func (s *collectorScriptSlice) Rollout(ctx context.Context, _ string) ([]agentap
 }
 func (s *collectorScriptSlice) Check(ctx context.Context, _, _ string) error { return s.Valid(ctx) }
 func (s *collectorScriptSlice) Close() error                                 { s.closed = true; return nil }
+
+func TestCollectorActualInventoryLimitCachesFailureAndCloses(t *testing.T) {
+	home := t.TempDir()
+	c := newCollectorCatalog(t, []string{home})
+	budget := c.NativeReadBudget()
+	if !budget.Reserve(128 << 20) {
+		t.Fatal("fixture ledger reservation failed")
+	}
+	opts := Options{Sources: testSources, CodexRollouts: c}
+	closePasses := openCursorPass(nil, &opts)
+	reg := archive.SessionRegistration{Harness: archive.Harness{Name: "codex"}, TranscriptPath: filepath.Join(home, "rollout-11111111-1111-4111-8111-111111111111.jsonl")}
+	reader, ok := newSourceReader(reg, opts)
+	if !ok {
+		t.Fatal("missing reader")
+	}
+	for range 20 {
+		if _, err := reader.Signature(t.Context()); agentapi.Failure(err) != agentapi.Limit {
+			t.Fatal("actual inventory limit not retained", err)
+		}
+	}
+	if c.sweeps != 1 || opts.sourcePasses.active != 0 || len(opts.sourcePasses.passes) != 0 {
+		t.Fatal("failed inventory opened provider or renewed", c.sweeps)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := reader.Signature(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatal("cached failure hid cancellation", err)
+	}
+	if err := closePasses(); err != nil {
+		t.Fatal(err)
+	}
+	budget.Release(128 << 20)
+	if err := c.owner.CloseReadOnly(); err != nil {
+		t.Fatal(err)
+	}
+	if used, _ := budget.Charged(); used != 0 {
+		t.Fatal("actual failed inventory leaked", used)
+	}
+}

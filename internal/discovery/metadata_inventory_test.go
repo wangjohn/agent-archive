@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -45,14 +46,14 @@ func metadataFixture(t *testing.T, count int) (*CodexRolloutLookup, []string, st
 }
 
 func TestMetadataInventorySharesFiveSweepsAtPhysicalScale(t *testing.T) {
-	testMetadataInventoryScale(t, false)
+	testMetadataInventoryScale(t, false, 1100, 256)
 }
 func TestMetadataInventorySharesFiveSweepsWithIndexedWAL(t *testing.T) {
-	testMetadataInventoryScale(t, true)
+	testMetadataInventoryScale(t, true, 1100, 256)
 }
-func testMetadataInventoryScale(t *testing.T, indexed bool) {
+func testMetadataInventoryScale(t *testing.T, indexed bool, logical, pairs int) {
 	t.Helper()
-	lookup, ids, root := metadataFixture(t, 1100)
+	lookup, ids, root := metadataFixture(t, logical)
 	// A second copy for every logical ID exceeds the observation cache while
 	// retaining all physical candidates in the explicitly requested epoch.
 	if err := os.MkdirAll(filepath.Join(root, "archived_sessions/nested"), 0700); err != nil {
@@ -87,14 +88,16 @@ func testMetadataInventoryScale(t *testing.T, indexed bool) {
 	started := time.Now()
 	var slice agentapi.CodexRolloutSlice
 	for i, id := range ids {
-		if i%256 == 0 {
+		if i%pairs == 0 {
 			if slice != nil {
 				if err := slice.Close(); err != nil {
 					t.Fatal(err)
 				}
 			}
 			var err error
+			phaseStart := time.Now()
 			slice, err = view.BeginValidationSlice(t.Context(), agentapi.CodexValidationLimits{})
+			t.Logf("slice=%d acquisition/validation=%s elapsed=%s fullRemaining=%s counts=%+v queries=%d", i/pairs+1, time.Since(phaseStart), time.Since(started), view.remaining, view.counts, lookup.queries)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -104,13 +107,13 @@ func testMetadataInventoryScale(t *testing.T, indexed bool) {
 		}
 		set, err := slice.Thread(t.Context(), id)
 		if err != nil {
-			t.Fatal(err)
+			metadataScaleFailure(t, "thread", err, started, lookup, view)
 		}
 		if !set.Complete || len(set.Candidates) != 2 {
 			t.Fatalf("incomplete physical set: %+v", set)
 		}
 		if err := slice.Check(t.Context(), id, set.Revision); err != nil {
-			t.Fatal(err)
+			metadataScaleFailure(t, "check", err, started, lookup, view)
 		}
 	}
 	if err := slice.Close(); err != nil {
@@ -118,13 +121,13 @@ func testMetadataInventoryScale(t *testing.T, indexed bool) {
 	}
 	runtime.ReadMemStats(&after)
 	_, peak := lookup.readBudget.Charged()
-	if indexed && lookup.queries != 4400 {
+	if indexed && lookup.queries != logical*4 {
 		t.Fatalf("live current SQL=%d", lookup.queries)
 	}
-	if view.counts.sweeps != 5 || view.counts.headers != 2200 || len(view.facts) != 2200 {
+	if view.counts.sweeps != (logical+pairs-1)/pairs || view.counts.headers != logical*2 || len(view.facts) != logical*2 {
 		t.Fatalf("unshared epoch: %+v", view.counts)
 	}
-	t.Logf("physical=2200 logical=1100 sweeps=%d currentSQL=%d counts=%+v chargedPeak=%d allocBytes=%d allocations=%d heap=%d elapsed=%s ordinaryRemaining=%s", view.counts.sweeps, lookup.queries, view.counts, peak, after.TotalAlloc-before.TotalAlloc, after.Mallocs-before.Mallocs, after.HeapAlloc, time.Since(started), lookup.remaining)
+	t.Logf("physical=%d logical=%d sweeps=%d currentSQL=%d counts=%+v chargedPeak=%d allocBytes=%d allocations=%d heap=%d elapsed=%s ordinaryRemaining=%s", logical*2, logical, view.counts.sweeps, lookup.queries, view.counts, peak, after.TotalAlloc-before.TotalAlloc, after.Mallocs-before.Mallocs, after.HeapAlloc, time.Since(started), lookup.remaining)
 	t.Logf("fullRemaining=%s retained=%d headerwork=%d", view.remaining, view.charge, view.headerBytes)
 	for _, index := range lookup.indexes {
 		if index.snapshot != nil {
@@ -212,7 +215,10 @@ func TestMetadataHeaderExactRangesAndResumableMaximum(t *testing.T) {
 	ranges := &metadataReadRanges{reader: f}
 	view.cursor = &metadataCursor{file: f, reader: ranges, source: source, info: info, line: make([]byte, 0, metadataHeaderBytes)}
 	view.queue = nil
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
 	quanta := 0
+	var maxStep time.Duration
 	for view.cursor != nil {
 		n := quanta
 		quanta++
@@ -220,9 +226,11 @@ func TestMetadataHeaderExactRangesAndResumableMaximum(t *testing.T) {
 			t.Fatal("header made no bounded progress")
 		}
 		before := view.counts.operations
-		if err := view.step(t.Context()); err != nil {
+		started := time.Now()
+		if err := view.step(ctx); err != nil {
 			t.Fatal(err)
 		}
+		maxStep = max(maxStep, time.Since(started))
 		if view.counts.operations-before > 1024 {
 			t.Fatal("operation quantum exceeded")
 		}
@@ -238,7 +246,7 @@ func TestMetadataHeaderExactRangesAndResumableMaximum(t *testing.T) {
 			t.Fatalf("body/range read at %d: offset=%d length=%d", i, off, ranges.lengths[i])
 		}
 	}
-	t.Logf("64KiB header quanta=%d operations=%d requested=%d returned=%d", quanta, view.counts.operations, view.counts.requested, view.counts.returned)
+	t.Logf("64KiB header quanta=%d operations=%d requested=%d returned=%d maxStep=%s callerLiveness=30s", quanta, view.counts.operations, view.counts.requested, view.counts.returned, maxStep)
 }
 
 func TestMetadataInventoryGapsAndFailedSliceRenewal(t *testing.T) {
@@ -321,6 +329,9 @@ func TestMetadataInventoryGapsAndFailedSliceRenewal(t *testing.T) {
 					t.Fatal("renewal did not attempt one sweep")
 				}
 			}
+			if mode == "malformed" && view.counts.physical != 1 {
+				t.Fatal("invalid header evaded physical acquisition count")
+			}
 			if view.cursor != nil {
 				t.Fatal("failed operation retained partial header")
 			}
@@ -402,7 +413,7 @@ func TestMetadataFullEpochKeepsOrdinaryDeadlineIndependent(t *testing.T) {
 func TestMetadataInventoryMaximumCopiesAndJointCapacity(t *testing.T) {
 	store, _, _, root := fixture(t)
 	id := "00000000-0000-0000-0000-000000000001"
-	dir := filepath.Join(root, "sessions")
+	dir := filepath.Join(root, "sessions/nested")
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -426,9 +437,26 @@ func TestMetadataInventoryMaximumCopiesAndJointCapacity(t *testing.T) {
 	}
 	defer func() { _ = slice.Close() }()
 	if err := slice.Valid(t.Context()); err != nil {
-		t.Fatalf("maximum fixture gap: %v physical=%d retained=%d header=%d remaining=%s", err, len(view.facts), view.charge, view.headerBytes, view.remaining)
+		if !raceEnabled || agentapi.Failure(err) != agentapi.Limit || view.remaining > 0 || t.Context().Err() != nil {
+			t.Fatalf("maximum fixture gap: %v physical=%d retained=%d header=%d remaining=%s", err, len(view.facts), view.charge, view.headerBytes, view.remaining)
+		}
+		set, refusal := slice.Thread(t.Context(), id)
+		if agentapi.Failure(refusal) != agentapi.Limit || set.Complete || len(set.Candidates) != 0 || view.complete || view.cursor != nil || view.counts.physical > 16384 || view.counts.requested > int64(len(line)*view.counts.physical) {
+			t.Fatal("race refusal retained partial authority", set, refusal)
+		}
+		t.Logf("instrumented maximum owned refusal elapsed=%s remaining=%s retained=%d headerwork=%d counts=%+v", time.Since(started), view.remaining, view.charge, view.headerBytes, view.counts)
+		if err := slice.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if err := lookup.CloseReadOnly(); err != nil {
+			t.Fatal(err)
+		}
+		if used, _ := lookup.readBudget.Charged(); used != 0 {
+			t.Fatal("maximum refusal leaked shared charge", used)
+		}
+		return
 	}
-	if len(view.facts) != 16384 || !view.complete {
+	if len(view.facts) != 16384 || view.counts.physical != 16384 || view.counts.entries != 16385 || !view.complete {
 		t.Fatal("maximum physical metadata truncated")
 	}
 	used, peak := lookup.readBudget.Charged()
@@ -441,8 +469,17 @@ func TestMetadataInventoryMaximumCopiesAndJointCapacity(t *testing.T) {
 	if _, err := slice.Thread(t.Context(), id); agentapi.Failure(err) != agentapi.Limit {
 		t.Fatal("joint cap did not refuse result allocation", err)
 	}
-	if len(view.facts) != 16384 {
-		t.Fatal("capacity refusal evicted physical copies")
+	if len(view.facts) != 16384 || view.counts.requested != int64(len(line)*16384) {
+		t.Fatal("capacity refusal lost physical facts or metadata read body")
+	}
+	if err := slice.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := lookup.CloseReadOnly(); err != nil {
+		t.Fatal(err)
+	}
+	if used, _ := lookup.readBudget.Charged(); used != 0 {
+		t.Fatal("maximum success leaked charge", used)
 	}
 }
 
@@ -652,5 +689,157 @@ func TestMetadataFullProjectionDoesNotExtendOrdinaryLane(t *testing.T) {
 	lookup.remaining = 0
 	if _, err := lookup.Thread(t.Context(), ids[0]); agentapi.Failure(err) != agentapi.Limit {
 		t.Fatal("full view extended ordinary time", err)
+	}
+}
+
+func TestMetadataStableFactsConflictAndMultipleHomes(t *testing.T) {
+	for _, conflict := range []bool{false, true} {
+		t.Run(strconv.FormatBool(conflict), func(t *testing.T) {
+			lookup, ids, root := metadataFixture(t, 1)
+			other := t.TempDir()
+			name := "rollout-2026-10-01T12-00-00-" + ids[0] + ".jsonl"
+			raw, err := os.ReadFile(filepath.Join(root, "sessions/nested", name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if conflict {
+				raw = []byte(strings.ReplaceAll(string(raw), `"originator":"codex-tui"`, `"originator":"codex_cli_rs"`))
+			}
+			if err := os.MkdirAll(filepath.Join(other, "sessions"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(other, "sessions", name), raw, 0600); err != nil {
+				t.Fatal(err)
+			}
+			lookup.homes = append(lookup.homes, other)
+			view := lookup.MetadataInventory().(*metadataInventory)
+			slice, err := view.BeginValidationSlice(t.Context(), agentapi.CodexValidationLimits{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = slice.Close() }()
+			set, err := slice.Thread(t.Context(), ids[0])
+			if conflict {
+				if err == nil || set.Complete {
+					t.Fatal("conflicting stable metadata accepted", set, err)
+				}
+			} else if err != nil || !set.Complete || len(set.Candidates) != 2 {
+				t.Fatal(set, err)
+			}
+		})
+	}
+}
+
+func TestMetadataPhysicalCeilingRefusesBeforeExtraOpen(t *testing.T) {
+	lookup, ids, root := metadataFixture(t, 1)
+	view := lookup.MetadataInventory().(*metadataInventory)
+	if err := view.start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	view.counts.physical = 16384
+	view.batch = []SourceEntry{{Source: SourceDescriptor{Kind: archive.SourceKindFile, Root: root, Locator: filepath.Join(root, "sessions/nested", "rollout-2026-10-01T12-00-00-"+ids[0]+".jsonl")}}}
+	before := view.counts.fileOpens
+	if err := view.step(t.Context()); agentapi.Failure(err) != agentapi.Limit {
+		t.Fatal(err)
+	}
+	if view.counts.fileOpens != before || view.cursor != nil || view.counts.physical != 16384 {
+		t.Fatal("extra physical file opened beyond cap")
+	}
+}
+
+func TestMetadataInventorySmallerIndexedScale(t *testing.T) {
+	testMetadataInventoryScale(t, true, 64, 16)
+}
+func metadataScaleFailure(t *testing.T, phase string, err error, started time.Time, lookup *CodexRolloutLookup, view *metadataInventory) {
+	t.Helper()
+	var sourceErr *agentapi.SourceError
+	var cause error
+	if errors.As(err, &sourceErr) {
+		cause = sourceErr.Err
+	}
+	for _, index := range lookup.indexes {
+		if index.snapshot != nil {
+			t.Logf("failureIndexCopy=%+v", index.snapshot.metrics)
+		}
+	}
+	used, peak := lookup.readBudget.Charged()
+	t.Fatalf("phase=%s failure=%v kind=%s cause=%v elapsed=%s fullRemaining=%s counts=%+v SQL=%d retained=%d headerwork=%d charged=%d peak=%d", phase, err, agentapi.Failure(err), cause, time.Since(started), view.remaining, view.counts, lookup.queries, view.charge, view.headerBytes, used, peak)
+}
+
+func TestMetadataOwnedDeadlineRefusesAndPreservesCaller(t *testing.T) {
+	lookup, ids, root := metadataFixture(t, 1)
+	db := hintDatabase(t, root, true)
+	addHint(t, db, ids[0], filepath.Join(root, "sessions/nested", "rollout-2026-10-01T12-00-00-"+ids[0]+".jsonl"), time.Now())
+	view := lookup.MetadataInventory().(*metadataInventory)
+	slice, err := view.BeginValidationSlice(t.Context(), agentapi.CodexValidationLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	view.remaining = time.Nanosecond
+	set, err := slice.Thread(t.Context(), ids[0])
+	if agentapi.Failure(err) != agentapi.Limit || set.Complete {
+		t.Fatal("expired work did not report typed limit", set, err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := slice.Thread(ctx, ids[0]); !errors.Is(err, context.Canceled) {
+		t.Fatal("caller cancellation lost", err)
+	}
+	ctx, cancel = context.WithDeadline(t.Context(), time.Now().Add(-time.Second))
+	defer cancel()
+	if _, err := slice.Thread(ctx, ids[0]); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatal("caller deadline lost", err)
+	}
+	var failure *agentapi.SourceError
+	var cause error
+	if errors.As(err, &failure) {
+		cause = failure.Err
+	}
+	t.Logf("owned expiration kind=%s cause=%v remaining=%s queries=%d complete=%v", agentapi.Failure(err), cause, view.remaining, lookup.queries, set.Complete)
+	if err := slice.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := lookup.CloseReadOnly(); err != nil {
+		t.Fatal(err)
+	}
+	if used, _ := lookup.readBudget.Charged(); used != 0 {
+		t.Fatal("expired work leaked charge", used)
+	}
+}
+
+func TestMetadataAliasedHomesSharePhysicalFactsButFenceEverySpelling(t *testing.T) {
+	lookup, ids, root := metadataFixture(t, 1)
+	alias := filepath.Join(t.TempDir(), "home")
+	if err := os.Symlink(root, alias); err != nil {
+		t.Fatal(err)
+	}
+	lookup.homes = []string{root, alias}
+	view := lookup.MetadataInventory().(*metadataInventory)
+	slice, err := view.BeginValidationSlice(t.Context(), agentapi.CodexValidationLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	set, err := slice.Thread(t.Context(), ids[0])
+	if err != nil || !set.Complete || len(set.Candidates) != 1 || view.counts.physical != 1 || view.counts.headers != 1 {
+		t.Fatal("alias duplicated physical authority", set, err, view.counts)
+	}
+	if err := slice.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(alias); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(t.TempDir(), alias); err != nil {
+		t.Fatal(err)
+	}
+	slice, err = view.BeginValidationSlice(t.Context(), agentapi.CodexValidationLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := slice.Valid(t.Context()); agentapi.Failure(err) != agentapi.Changed {
+		t.Fatal("secondary approved alias fence lost", err)
+	}
+	if err := slice.Close(); err != nil {
+		t.Fatal(err)
 	}
 }

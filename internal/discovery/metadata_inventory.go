@@ -26,8 +26,8 @@ const metadataHeaderBytes = 64 << 10
 const metadataScratch = 3 * metadataHeaderBytes
 
 type metadataCounts struct {
-	entries, directories, headers, sweeps, stats, rootOpens, fileOpens, resolutions, joins, steps int
-	requested, returned, operations                                                               int64
+	entries, physical, directories, headers, sweeps, stats, rootOpens, fileOpens, resolutions, joins, steps int
+	requested, returned, operations                                                                         int64
 }
 
 type metadataFact struct {
@@ -186,18 +186,30 @@ func (m *metadataInventory) beginOperation(ctx context.Context) (context.Context
 	if err := ctx.Err(); err != nil {
 		return ctx, nil, err
 	}
+	started := time.Now()
 	if !m.started {
 		if err := m.start(ctx); err != nil {
+			m.remaining -= time.Since(started)
 			return ctx, nil, m.fail(err)
 		}
 	}
 	if m.remaining <= 0 {
 		return ctx, nil, metadataLimit()
 	}
-	started := time.Now()
 	m.deadline = started.Add(m.remaining)
 	operation, cancel := context.WithDeadline(ctx, m.deadline)
 	return operation, func() { cancel(); m.remaining -= time.Since(started) }, nil
+}
+
+// operationFailure keeps caller cancellation distinct from the fixed owned limit.
+func (m *metadataInventory) operationFailure(parent context.Context, err error) error {
+	if canceled := parent.Err(); canceled != nil {
+		return canceled
+	}
+	if !m.deadline.IsZero() && !time.Now().Before(m.deadline) {
+		return metadataLimit()
+	}
+	return err
 }
 
 func metadataUnavailable() error {
@@ -297,7 +309,11 @@ func (m *metadataInventory) start(ctx context.Context) error {
 		if !m.reserve(int64(len(home) + len(path) + 512)) {
 			return metadataLimit()
 		}
+		duplicate := slices.ContainsFunc(m.roots, func(prior metadataRoot) bool { return prior.path == path })
 		m.roots = append(m.roots, metadataRoot{home, path, info})
+		if duplicate {
+			continue
+		} // Retain every spelling fence, enumerate each physical root once.
 		for _, store := range (codexAdapter{}).InitialDirectories() {
 			m.queue = append(m.queue, directory{Root: path, Path: store})
 		}
@@ -402,13 +418,21 @@ func (m *metadataInventory) step(ctx context.Context) error {
 		if len(m.batch) > 0 {
 			entry := m.batch[0]
 			m.batch[0] = SourceEntry{}
-			if entry.unsafeMetadata || entry.unknownMetadata {
-				return metadataUnavailable()
-			}
 			m.batch = m.batch[1:]
 			m.counts.entries++
-			if m.counts.entries > 16384 {
+			// Fingerprints include directories and unrelated entries; preserve a
+			// total traversal ceiling separately from physical candidate acquisition.
+			if m.counts.entries > 16384+2048 {
 				return metadataLimit()
+			}
+			if entry.Source.Locator != "" || entry.unknownMetadata {
+				if m.counts.physical >= 16384 {
+					return metadataLimit()
+				}
+				m.counts.physical++
+			}
+			if entry.unsafeMetadata || entry.unknownMetadata {
+				return metadataUnavailable()
 			}
 			if entry.Directory != "" {
 				if len(m.directories)+len(m.queue) >= 2048 {
@@ -497,8 +521,8 @@ func (m *metadataInventory) readHeaderByte(ctx context.Context) error {
 	}
 	var b [1]byte
 	m.counts.requested++
-	m.counts.
-		n, err := c.reader.ReadAt(b[:], int64(len(c.line)))
+	m.counts.operations++
+	n, err := c.reader.ReadAt(b[:], int64(len(c.line)))
 	m.counts.returned += int64(n)
 	m.headerBytes += int64(n)
 	if err != nil || n != 1 {
@@ -542,11 +566,13 @@ func (m *metadataInventory) finishHeader(ctx context.Context) error {
 	logical.HistoryBase = nil
 	logical.HistoryMode = ""
 	stable, err := json.Marshal(struct {
-		Identity               codexmeta.CodexIdentity
-		Created                time.Time
-		Cwd, Version, Producer string
-		Source                 json.RawMessage
-		Git                    codexmeta.GitInfo
+		Identity codexmeta.CodexIdentity `json:"Identity"`
+		Created  time.Time               `json:"Created"`
+		Cwd      string                  `json:"Cwd"`
+		Version  string                  `json:"Version"`
+		Producer string                  `json:"Producer"`
+		Source   json.RawMessage         `json:"Source"`
+		Git      codexmeta.GitInfo       `json:"Git"`
 	}{logical, created, meta.Cwd, meta.Version, meta.Originator, meta.Source, meta.Git})
 	if err != nil {
 		return err
@@ -638,12 +664,19 @@ func (m *metadataInventory) BeginValidationSlice(ctx context.Context, limits age
 	}
 	operation, done, err := m.beginOperation(ctx)
 	if err != nil {
-		return nil, err
+		if ctx.Err() != nil || m.owner.closed {
+			return nil, err
+		}
+		return &metadataSlice{inventory: m, remaining: limits.Steps, expires: time.Now().Add(limits.Duration), failure: err}, nil
 	}
 	defer done()
 	err = m.ensure(operation)
 	if err == nil {
 		err = m.validate(operation)
+	}
+	err = m.operationFailure(ctx, err)
+	if err != nil && m.failure != nil {
+		err = m.fail(err)
 	}
 	return &metadataSlice{inventory: m, remaining: limits.Steps, expires: time.Now().Add(limits.Duration), failure: err}, nil
 }
@@ -677,11 +710,11 @@ func (m *metadataInventory) current(ctx context.Context, id string) (*agentapi.S
 	for _, root := range m.owner.roots {
 		view, err := m.owner.indexDeadline(ctx, root, true, m.deadline)
 		if err != nil {
-			if _, statErr := os.Lstat(filepath.Join(root, "state_5.sqlite")); !errors.Is(statErr, os.ErrNotExist) {
-				return nil, metadataUnavailable()
-			}
 			if agentapi.Failure(err) == agentapi.Limit {
 				return nil, err
+			}
+			if _, statErr := os.Lstat(filepath.Join(root, "state_5.sqlite")); !errors.Is(statErr, os.ErrNotExist) {
+				return nil, metadataUnavailable()
 			}
 			continue
 		}
@@ -776,6 +809,7 @@ func (s *metadataSlice) Thread(ctx context.Context, id string) (agentapi.CodexRo
 	}
 	defer done()
 	set, err := s.inventory.thread(op, id)
+	err = s.inventory.operationFailure(ctx, err)
 	if err != nil {
 		return set, err
 	}
@@ -799,6 +833,7 @@ func (s *metadataSlice) Check(ctx context.Context, id, revision string) error {
 	}
 	defer done()
 	set, err := s.inventory.thread(op, id)
+	err = s.inventory.operationFailure(ctx, err)
 	if err != nil {
 		return err
 	}
