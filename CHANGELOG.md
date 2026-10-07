@@ -29,6 +29,11 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Backfill explains deleted-worktree recovery failures with bounded diagnostic
+  counts and retry/review actions while preserving existing skip codes. Dry-run
+  JSON adds optional diagnostics and physical candidate inventory counts;
+  logical history accounting remains pending.
+
 - Pairing accepts relative filenames beginning with `aa-pair`, including existing
   files named `aa-pair1:backup.txt`, instead of mistaking them for pasted pairing text.
 
