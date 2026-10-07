@@ -6,28 +6,33 @@ import (
 
 // RecordPreview holds only filtered display facts from one complete record.
 type RecordPreview struct {
-	Name     string
-	Title    string
-	Branch   string
-	Activity time.Time
-	Gaps     []CaptureGap
-	Kind     TurnKind
-	Command  string
+	Name         string
+	NameSource   SessionNameSource
+	NameNativeID string
+	Title        string
+	Branch       string
+	Activity     time.Time
+	Gaps         []CaptureGap
+	Kind         TurnKind
+	Command      string
 }
 
 // PreviewAccumulator keeps only filtered display facts and one pending slash
 // command, so an assistant reply can establish that it was a human prompt.
 type PreviewAccumulator struct {
-	Labels   Labels
-	Activity time.Time
-	Gaps     []CaptureGap
-	pending  string
+	Labels     Labels
+	NativeID   string
+	NameSource SessionNameSource
+	Activity   time.Time
+	Gaps       []CaptureGap
+	pending    string
 }
 
 // AddFacts combines bounded safe display facts without native interpretation.
 func (a *PreviewAccumulator) AddFacts(p RecordPreview, head bool) {
-	if p.Name != "" {
+	if p.Name != "" && (p.NameNativeID == "" || p.NameNativeID == a.NativeID) && (a.NameSource != SessionNameCustom || p.NameSource == SessionNameCustom) {
 		a.Labels.Name = p.Name
+		a.NameSource = p.NameSource
 	}
 	if p.Branch != "" {
 		a.Labels.Branch = p.Branch
@@ -66,3 +71,13 @@ func (a *PreviewAccumulator) AddFacts(p RecordPreview, head bool) {
 		}
 	}
 }
+
+// SessionNameSource identifies native title precedence without interpreting raw records.
+type SessionNameSource string
+
+const (
+	// SessionNameCustom is an explicit native rename.
+	SessionNameCustom SessionNameSource = "custom"
+	// SessionNameGenerated is a native generated title.
+	SessionNameGenerated SessionNameSource = "generated"
+)

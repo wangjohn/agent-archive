@@ -77,9 +77,9 @@ func TestEachChooserOpensTheKeyBrowserAndTheLineFallback(t *testing.T) {
 		{name: "show words", args: []string{"show", "flaky"}, heading: flaky, verbs: []string{"Show ·", "Hand off ·"},
 			keys: []string{"\r", "q"}, lines: "1\nq\n", acts: "browse"},
 		{name: "handoff", args: []string{"handoff"}, heading: "Hand off · {label} · 7 sessions", verbs: []string{"Show ·"},
-			keys: []string{"1\r"}, lines: "1\n", answers: "p\n", acts: "Continue in:"},
+			keys: []string{"1\r"}, lines: "1\n", answers: "p\n", acts: "? Continue in"},
 		{name: "handoff words", args: []string{"handoff", "flaky"}, heading: "Hand off · " + flaky, verbs: []string{"Show ·"},
-			keys: []string{"\r"}, lines: "1\n", answers: "p\n", acts: "Continue in:"},
+			keys: []string{"\r"}, lines: "1\n", answers: "p\n", acts: "? Continue in"},
 	}
 	for _, c := range callers {
 		for _, keyed := range []bool{true, false} {
@@ -462,7 +462,7 @@ func TestKeyFilterEnterActsOnTheHighlightInBrowseAndPickModes(t *testing.T) {
 		t.Fatalf("highlight after ↓ on %q:\n%s", got, out)
 	}
 	after := out[strings.LastIndex(out, leaveAltScreenSequence):]
-	if !strings.Contains(after, "Continue in:") || !strings.Contains(after, "Flaky local cleanup") || strings.Contains(after, "Flaky local rewrite") {
+	if !strings.Contains(after, "? Continue in") || !strings.Contains(after, "Flaky local cleanup") || strings.Contains(after, "Flaky local rewrite") {
 		t.Fatalf("handed off a session other than the second match:\n%s", after)
 	}
 }
@@ -684,7 +684,7 @@ func TestHandoffPickedByKeysReadsTheTypedAheadDestination(t *testing.T) {
 		t.Fatalf("code=%d stderr=%s\n%s", code, errOut, out)
 	}
 	after := out[strings.LastIndex(out, leaveAltScreenSequence):]
-	if !strings.Contains(after, "Continue in:") || !strings.Contains(after, "# Handoff: continuing a Codex session") {
+	if !strings.Contains(after, "? Continue in") || !strings.Contains(after, "# Handoff: continuing a Codex session") {
 		t.Fatalf("the typed-ahead answer was not read:\n%s", after)
 	}
 	// With none typed ahead, the prompt reads what comes next from stdin.
@@ -694,7 +694,7 @@ func TestHandoffPickedByKeysReadsTheTypedAheadDestination(t *testing.T) {
 	}
 	// And a person who quits the browser has none of it handed on.
 	out, errOut, code = runOnTerminal(t, f.env, newFakeKeys("q"), "", "handoff")
-	if code != 0 || strings.Contains(out, "Continue in:") {
+	if code != 0 || strings.Contains(out, "? Continue in") {
 		t.Fatalf("quit: code=%d stderr=%s\n%s", code, errOut, out)
 	}
 }

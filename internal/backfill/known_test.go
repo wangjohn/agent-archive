@@ -34,10 +34,11 @@ func TestKnownProjectsNewestFirstWithoutConfiguredOrUnusable(t *testing.T) {
 
 	cfg := config.Config{}
 	cfg.Archive.Projects = append(cfg.Archive.Projects, project(configured, false))
-	got, err := KnownProjects(context.Background(), tr.env(), cfg)
-	if err != nil {
-		t.Fatal(err)
+	result := KnownProjectsBounded(context.Background(), tr.env(), cfg, 128)
+	if result.Incomplete() {
+		t.Fatalf("incomplete project discovery: %+v", result)
 	}
+	got := result.Projects
 	if len(got) != 2 || got[0].Root != newer || got[1].Root != older || got[1].Sessions != 2 || !got[1].LastUsed.Equal(start.Add(time.Hour)) {
 		t.Fatalf("got %+v", got)
 	}

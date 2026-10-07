@@ -1,0 +1,69 @@
+
+\e[1mStep 3 of 3 · Review and start\e[0m
+  Apps      Claude Code, Cursor
+  Projects  ~/src/長い-project-path
+  Skills    Metadata, including user folders
+  Storage   s3://team-archive/agent-archive/
+  Keep for  90 days
+  ✓ Storage connected
+  ✓ Bucket is private
+  \e[33m!\e[0m History import is separate.
+  \e[33m!\e[0m Sensitive text may remain after filtering.
+
+? Start archiving?
+
+  1) Start archiving (default)
+  2) Edit a setting
+
+  [d] Full settings and privacy
+  [q] Cancel; keep draft
+  [m] Name this machine
+
+› Choose [1]:
+\e[2m✓ Full settings and privacy\e[0m
+
+\e[1mFull settings and privacy\e[0m
+  Apps        Claude Code (version not detected) · Cursor
+              (version not detected)
+  Projects    ~/src/長い-project-path
+  Skills      metadata · User skill roots outside selected
+              projects may be scanned; change with Edit a
+              setting
+  Storage     s3://team-archive/agent-archive/ · us-east-1 ·
+              profile default
+  Keep for    90 days
+  Hook files  Claude Code: ~/.claude/settings.json
+              Cursor: ~/.cursor/hooks.json
+  \e[32m✓\e[0m Storage connected       \e[2mwrite, read, list, delete\e[0m
+  \e[32m✓\e[0m Bucket is private       \e[2mall public access blocked\e[0m
+  \e[32m✓\e[0m Hook files are valid    \e[2m~/.claude/settings.json,
+                            ~/.cursor/hooks.json\e[0m
+
+\e[2m  Filtering is best effort; sensitive text may remain in
+  archived sessions.\e[0m
+  \e[2mWhat leaves your machine:\e[0m
+  \e[36mhttps://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md\e[0m
+
+\e[1mStep 3 of 3 · Review and start\e[0m
+  Apps      Claude Code, Cursor
+  Projects  ~/src/長い-project-path
+  Skills    Metadata, including user folders
+  Storage   s3://team-archive/agent-archive/
+  Keep for  90 days
+  ✓ Storage connected
+  ✓ Bucket is private
+  \e[33m!\e[0m History import is separate.
+  \e[33m!\e[0m Sensitive text may remain after filtering.
+
+? Start archiving?
+
+  1) Start archiving (default)
+  2) Edit a setting
+
+  [d] Full settings and privacy
+  [q] Cancel; keep draft
+  [m] Name this machine
+
+› Choose [1]:
+\e[2m✓ Cancel; keep draft\e[0m
+

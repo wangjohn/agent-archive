@@ -6,38 +6,98 @@ Choose Cloudflare R2 or Amazon S3 for private archive storage. Setup will guide 
 
 Step 1 of 3 · Choose what to capture
 
-Archive Claude Code sessions in ~/src/web-app? [Y/n] n
+? Capture sessions from Claude Code?
 
-Include Claude Code? [Y/n] 
+  1) Yes (default)
+  2) No
 
-Projects to archive (✓ included):
-  1) ✓ ~/src/web-app  this folder
-  2)   ~/src/api      1 session · 3 days ago
-a includes all listed projects. Or enter numbers to include or leave out (such as 2 3), or a path.
-Enter a blank line when finished.
-Projects: 1
+› Choose [1]:
+✓ Capture sessions from Claude Code Yes
 
-No project included yet.
-Projects: 
+? Which projects?
 
-! Choose at least one project: only sessions in included projects are archived.
-Projects to archive (✓ included):
-  1)   ~/src/web-app  this folder
-  2)   ~/src/api      1 session · 3 days ago
-a includes all listed projects. Or enter numbers to include or leave out (such as 2 3), or a path.
-Enter a blank line when finished.
-Projects: a
+  Found 2 projects:
+  1) ~/src/web-app · this folder
+  2) ~/src/api · 1 session · 3 days ago
 
-Included: ~/src/web-app, ~/src/api
-Projects: 
+  1) All 2 found projects (default)
+  2) Choose specific projects
 
+  [p] Add a project path
+  [r] Retry search
+
+› Choose [1]: specific
+✓ Projects Choose specific projects
+
+? Choose specific projects
+
+  Found 2 projects:
+  1) [✓] ~/src/web-app · this folder
+  2) [✓] ~/src/api · 1 session · 3 days ago
+  Enter numbers to toggle; numbers stay the same across pages.
+  [a] Select all
+  [p] Add a project path
+  [r] Retry search
+  [n] Next page · [b] Previous page
+  [Enter] Confirm selection
+
+› Projects: 1 2
+✓ Project selection updated
+
+? Choose specific projects
+
+  Found 2 projects:
+  1) [ ] ~/src/web-app · this folder
+  2) [ ] ~/src/api · 1 session · 3 days ago
+  Enter numbers to toggle; numbers stay the same across pages.
+  [a] Select all
+  [p] Add a project path
+  [r] Retry search
+  [n] Next page · [b] Previous page
+  [Enter] Confirm selection
+
+› Projects:
+! choose at least one project
+
+? Choose specific projects
+
+  Found 2 projects:
+  1) [ ] ~/src/web-app · this folder
+  2) [ ] ~/src/api · 1 session · 3 days ago
+  Enter numbers to toggle; numbers stay the same across pages.
+  [a] Select all
+  [p] Add a project path
+  [r] Retry search
+  [n] Next page · [b] Previous page
+  [Enter] Confirm selection
+
+› Projects: a
+✓ Project selection updated
+
+? Choose specific projects
+
+  Found 2 projects:
+  1) [✓] ~/src/web-app · this folder
+  2) [✓] ~/src/api · 1 session · 3 days ago
+  Enter numbers to toggle; numbers stay the same across pages.
+  [a] Select all
+  [p] Add a project path
+  [r] Retry search
+  [n] Next page · [b] Previous page
+  [Enter] Confirm selection
+
+› Projects:
+✓ Projects 2 selected
 
 Step 2 of 3 · Connect storage
 
-Where should your archive live?
-  1) Cloudflare R2
+? Where should your archive live?
+
+  1) Cloudflare R2 (default)
   2) Amazon S3
-[h] Setup instructions
-Choose [1]: Setup incomplete: no more input: EOF
+
+  [h] Setup instructions
+
+› Choose [1]: Setup incomplete: no more input: EOF
 Run agent-archive setup to continue.
 [exit 1]

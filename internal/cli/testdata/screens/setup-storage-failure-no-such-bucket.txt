@@ -4,41 +4,83 @@ Checking installed applications...
 Choose Cloudflare R2 or Amazon S3 for private archive storage. Setup will guide you through connecting your account.
 
 Step 1 of 3 · Choose what to capture
-
 No apps found automatically.
 Choose which apps to include:
-Include Codex? [y/N] y
 
-Include Claude Code? [y/N] n
+? Include Codex?
 
-Include Cursor? [y/N] n
+  1) Yes
+  2) No (default)
 
-Codex capture scope
-  1) Included projects only (Codex)
+› Choose [2]: y
+✓ Include Codex Yes
+
+? Include Claude Code?
+
+  1) Yes
+  2) No (default)
+
+› Choose [2]: n
+✓ Include Claude Code No
+
+? Include Cursor?
+
+  1) Yes
+  2) No (default)
+
+› Choose [2]: n
+✓ Include Cursor No
+
+? Codex capture scope
+
+  1) Included projects only (Codex) (default)
   2) All current and future projects (Codex only)
-Enter 1-2 [1]: included-projects
 
-Projects to archive (✓ included):
-  1) ✓ ~/src/web-app  this folder
-a includes all listed projects. Or enter 1 to include or leave it out, or a path to add a project.
-Enter a blank line when finished.
-Projects: 
+› Choose [1]: included-projects
+✓ Included projects only (Codex)
 
+? Which projects?
+
+  Found 1 projects:
+  1) ~/src/web-app · this folder
+
+  1) All 1 found projects (default)
+  2) Choose specific projects
+
+  [p] Add a project path
+  [r] Retry search
+
+› Choose [1]:
+✓ Projects All 1 found projects
 
 Step 2 of 3 · Connect storage
 
-Where should your archive live?
-  1) Cloudflare R2
+? Where should your archive live?
+
+  1) Cloudflare R2 (default)
   2) Amazon S3
-[h] Setup instructions
-Choose [1]: s3-existing
 
-AWS profile: work
+  [h] Setup instructions
 
-Which bucket should sessions be stored in?
+› Choose [1]: s3-existing
+✓ Provider Amazon S3
+
+? AWS profile
+
+  [:back] Back to storage options
+
+› Answer: work
+✓ AWS profile work
+
+? Which bucket should sessions be stored in?
+
   1) photos
   2) team-archive
-Enter 1-2, or another bucket name: 2
+  Enter a number or bucket name.
+  [:back] Back to storage options
+
+› Choose: 2
+✓ team-archive
 
 Bucket team-archive is in us-east-1; using that region.
 
@@ -48,14 +90,19 @@ Checking your storage connection…
     The bucket doesn't exist, or its name is misspelled.
 
     Fix: Check the bucket name, or create the bucket, then try again.
-    Details: agent-archive setup --verbose
+    [d] Diagnostic details
 
-What next?
-  1) Change the bucket name
+? What next?
+
+  1) Change the bucket name (default)
   2) Retry the check
   3) Change other settings
-  4) Stop for now (your answers are kept)
-Enter 1-4 [1]: 4
+
+  [d] Diagnostic details
+  [q] Stop; keep your draft
+
+› Choose [1]: q
+✓ Stop; keep your draft
 
 Setup incomplete: the storage check failed; your answers are kept
 Run agent-archive setup to continue.

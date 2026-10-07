@@ -5,6 +5,11 @@ page says what that copy contains, what is kept out of it, what the tool
 changes on your machine, and where its protections stop. The per-version history
 of the filter is in the [filter changelog](../../dev/specs/privacy-filter-changelog.md).
 
+Native Codex name lookup is optional and defaults to files. Explicit `native`
+mode can write Codex startup databases and system skills; desktop coexistence
+and native credential behavior remain unverified. Only the filtered owning name
+or confirmed absence is archived. See [Codex session names](../reference/codex-session-names.md).
+
 Before enabling capture, review these choices:
 
 - Included projects are the default. Codex's explicit all-projects scope also
@@ -142,7 +147,8 @@ are filter-derived text stored in the bucket, not a separate redaction pass.
   and message IDs; summaries the app wrote when compacting a conversation;
   the names the app gave the session, which pass the same redaction as
   your prompts: every Claude Code session name the transcript records (set
-  automatically from your prompt or by `/rename`; renaming adds a name and
+  from typed `ai-title` generated names or `custom-title` `/rename` records;
+  explicit names win over generated names. Renaming adds a name and
   does not remove the earlier ones) and Cursor's current chat name; for a
   Claude Code subagent, the description its parent gave the task ("find the
   retention tests"), read from the `agent-<id>.meta.json` file Claude Code
@@ -621,3 +627,17 @@ paused, excluded projects and recognizable unsupported import/fork shapes remain
 ineligible. Discovery reads bounded identity/start/project metadata before
 admission; eligible transcripts then pass through the same privacy filter as
 hook capture. Discovery health and rejection diagnostics contain no prompt text.
+
+Claude name records retain typed session identity and sidechain flags to
+exclude another session’s title. Names alone never admit a session or extend
+activity/retention. Injected Codex `external_codex_apps_open_page` context
+wrappers at the start of a message are omitted; quoted markup and examples in
+human prose/code remain intact. Text outside context remains prompt text.
+
+Codex name refresh reads bounded metadata only for already admitted ordinary
+sessions in approved homes. It retains the filtered current name and typed
+owning-ID evidence, with the same credential redaction as prompt text. Native
+paths, raw index/database rows and unrelated session names are not uploaded.
+Name changes publish new source evidence but preserve conversation activity,
+capture time and retention. Collection never starts a native Codex process to
+retrieve a name; live WAL storage is unavailable to the safe file reader.

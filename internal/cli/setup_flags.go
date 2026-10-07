@@ -254,6 +254,7 @@ func applySetupWithoutQuestions(opts setupOptions, stdin io.Reader, out, errOut 
 		return fmt.Errorf("an unfinished setup is saved in %s; run agent-archive setup to finish or discard it first", draftPath(home))
 	}
 	p := newPrompter(stdin, out)
+	defer p.close()
 	p.now = env.now
 	var matches projectMatchResult
 	opts.projectMatches = &matches

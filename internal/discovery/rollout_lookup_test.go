@@ -43,19 +43,19 @@ func TestRolloutLookupCurrentWALIdentityRefreshAndPrivateCleanup(t *testing.T) {
 		t.Fatal(set, err)
 	}
 	if err := lookup.Check(t.Context(), id, set.Revision); err != nil {
-		t.Fatal(err)
+		t.Fatalf("%v; cause: %v", err, errors.Unwrap(err))
 	}
 	// Unrelated commits do not invalidate the current locator token.
 	addHint(t, db, "unrelated", "unused", at.Add(time.Minute))
 	if err := lookup.Check(t.Context(), id, set.Revision); err != nil {
-		t.Fatal(err)
+		t.Fatalf("%v; cause: %v", err, errors.Unwrap(err))
 	}
 	// Later unrelated commits revalidate and replay into the same private view.
 	privatePath := lookup.indexes[root].snapshot.path
 	for n := range 8 {
 		addHint(t, db, fmt.Sprintf("unrelated-%d", n), "unused", at.Add(time.Minute))
 		if err := lookup.Check(t.Context(), id, set.Revision); err != nil {
-			t.Fatal(err)
+			t.Fatalf("append %d: %v; cause: %v", n, err, errors.Unwrap(err))
 		}
 		if lookup.indexes[root].snapshot.path != privatePath {
 			t.Fatal("second whole refresh")
