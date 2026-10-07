@@ -18,6 +18,8 @@ follow [Semantic Versioning](https://semver.org/).
   copies and recoverable original evidence; unsupported or changed input requires
   settling Cursor or another review. Native descriptor verification retains read
   locks, and rooted quota controls charge oversized or orphaned scratch files.
+  Concurrent first use of the shared quota lock retries transient file absence
+  within its existing deadline.
 
 - Readers understand self-contained Codex fork, child and revised histories,
   preserve exact raw ordinal boundaries and count only the chat's own activity.
