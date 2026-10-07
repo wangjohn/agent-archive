@@ -10,10 +10,12 @@ umask 077
 [[ $AA_ACCEPTANCE_OUTPUT == "$RUNNER_TEMP/acceptance-evidence" && ! -L $AA_ACCEPTANCE_OUTPUT ]] || { echo "evidence must stay in the private runner directory" >&2; exit 2; }
 root=$(git rev-parse --show-toplevel)
 [[ -z $(git status --porcelain) ]] || { echo 'acceptance requires a clean exact candidate' >&2; exit 2; }
+[[ ! -e $RUNNER_TEMP/aa-provider-resources ]] || { echo "prior provider cleanup obligation exists" >&2; exit 2; }
 work=$(mktemp -d "$RUNNER_TEMP/aa-provider.XXXXXXXX")
 prefix=aa-provider-$(basename "$work")
 container=$prefix-service
 image=$prefix-image
+printf '%s\n' "$prefix" > "$RUNNER_TEMP/aa-provider-resources"
 cleanup() {
   status=$?
   trap - EXIT INT TERM
@@ -21,14 +23,7 @@ cleanup() {
     docker logs "$container" > "$AA_ACCEPTANCE_OUTPUT/provider-service.txt" 2>&1 || true
     python3 "$root/scripts/acceptance/provider/sanitize-evidence.py" "$AA_ACCEPTANCE_OUTPUT" || status=1
   fi
-  # Names are assigned only from the private mktemp root, never discovered.
-  if ! docker rm -f "$container" >/dev/null 2>&1; then
-    if docker container inspect "$container" >/dev/null 2>&1; then status=1; fi
-  fi
-  if ! docker image rm "$image" >/dev/null 2>&1; then
-    if docker image inspect "$image" >/dev/null 2>&1; then status=1; fi
-  fi
-  rm -rf "$work"
+  bash "$root/scripts/acceptance/provider/cleanup.sh" || status=1
   echo "provider cleanup finished (status=$status)"
   exit "$status"
 }
@@ -69,6 +64,17 @@ done
 "$work/tools/minio" --version > "$AA_ACCEPTANCE_OUTPUT/provider-version.txt"
 "$work/tools/mc" --config-dir "$work/mc" alias set acceptance "$endpoint" "$access" "$secret" >/dev/null
 "$work/tools/mc" --config-dir "$work/mc" mb acceptance/aa-disposable-acceptance >/dev/null
+peer_access=peer$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')
+peer_secret=$(od -An -N24 -tx1 /dev/urandom | tr -d ' \n')
+echo "::add-mask::$peer_access"
+echo "::add-mask::$peer_secret"
+export AA_PROVIDER_PEER_ACCESS="$peer_access" AA_PROVIDER_PEER_SECRET="$peer_secret"
+cat > "$work/peer-policy.json" <<'POLICY'
+{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:ListBucket","s3:GetBucketLocation"],"Resource":["arn:aws:s3:::aa-disposable-acceptance"]},{"Effect":"Allow","Action":["s3:GetObject","s3:PutObject","s3:DeleteObject"],"Resource":["arn:aws:s3:::aa-disposable-acceptance/*"]}]}
+POLICY
+"$work/tools/mc" --config-dir "$work/mc" admin user add acceptance "$peer_access" "$peer_secret" >/dev/null
+"$work/tools/mc" --config-dir "$work/mc" admin policy create acceptance acceptance-peer "$work/peer-policy.json" >/dev/null
+"$work/tools/mc" --config-dir "$work/mc" admin policy attach acceptance acceptance-peer --user "$peer_access" >/dev/null
 export AGENT_ARCHIVE_PROVIDER_ACCEPTANCE=1 AA_PROVIDER_ENDPOINT="$endpoint"
 export AA_PROVIDER_ACCESS="$access" AA_PROVIDER_SECRET="$secret" AA_PROVIDER_BUCKET=aa-disposable-acceptance
 # Go test source/native/state stays under temporary roots. The provider adapter
@@ -78,4 +84,5 @@ go test -json -race -p 2 -count=1 -timeout=8m -run '^TestProvider' ./internal/co
 python3 scripts/acceptance/provider/verify-results.py "$AA_ACCEPTANCE_OUTPUT/provider-tests.jsonl" \
   TestProviderAdmissionSurvivesNativeLossAndUncertainCommit \
   TestProviderFullSetPrivacyReadbackAndIndependentWinner \
+  TestProviderIndependentOwnersPublishAndReadSeparateSessions \
   TestProviderImmutableMismatchNeverOverwritesSource > "$AA_ACCEPTANCE_OUTPUT/provider-summary.json"

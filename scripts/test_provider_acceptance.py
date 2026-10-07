@@ -79,7 +79,7 @@ class ProviderHarnessPolicyTest(unittest.TestCase):
         self.assertIn('  pull_request:', workflow)
         self.assertEqual(workflow.count('ref: ${{ github.event.pull_request.head.sha || github.sha }}'), 2)
         self.assertEqual(workflow.count('persist-credentials: false'), 2)
-        self.assertEqual(workflow.count('if: always()'), 2)
+        self.assertEqual(workflow.count('if: always()'), 3)
         self.assertIn('macos-15-intel', workflow)
         self.assertIn('macos-14', workflow)
         self.assertIn('ubuntu-24.04', workflow)
@@ -87,7 +87,82 @@ class ProviderHarnessPolicyTest(unittest.TestCase):
         self.assertNotIn('secrets.', workflow)
         self.assertIn('TestDurableLiveCursorAdmissionPublishesAfterSourceDeletion', workflow)
         self.assertIn('scripts/test_published_writer.sh', workflow)
+        self.assertIn("run: bash scripts/acceptance/provider/cleanup.sh", workflow)
         self.assertNotIn('release-candidate/', workflow)
+
+
+class OwnedCleanupTest(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        tools = self.root / 'bin'
+        tools.mkdir()
+        self.prefix = 'aa-provider-aa-provider.A1b2C3d4'
+        self.work = self.root / 'aa-provider.A1b2C3d4'
+        self.work.mkdir()
+        self.control = self.root / 'aa-provider-resources'
+        self.control.write_text(self.prefix + '\n')
+        self.log = self.root / 'calls'
+        for name, body in {
+            'uname': '#!/bin/sh\necho Linux\n',
+            'id': '#!/bin/sh\necho 1000\n',
+            'docker': r"""#!/bin/sh
+printf '%s\n' "$*" >> "$FAKE_LOG"
+case "$1 $2" in
+  'info ') [ -z "$FAKE_DAEMON_ERROR" ]; exit $? ;;
+  'container inspect'|'image inspect')
+    [ -z "$FAKE_INSPECT_ERROR" ] || { echo 'transport failure' >&2; exit 1; }
+    [ ! -e "$RUNNER_TEMP/$3.exists" ] || exit 0
+    echo "Error: No such object: $3" >&2; exit 1 ;;
+  'rm -f')
+    [ -z "$FAKE_REMOVE_ERROR" ] || exit 4
+    rm "$RUNNER_TEMP/$3.exists"; exit $? ;;
+  'image rm')
+    [ -z "$FAKE_REMOVE_ERROR" ] || exit 4
+    rm "$RUNNER_TEMP/$3.exists"; exit $? ;;
+esac
+exit 9
+""",
+        }.items():
+            path = tools / name
+            path.write_text(body)
+            path.chmod(0o700)
+        self.env = dict(os.environ, GITHUB_ACTIONS='true', RUNNER_TEMP=str(self.root),
+                        PATH=str(tools) + ':/usr/bin:/bin', FAKE_LOG=str(self.log))
+        for suffix in ('service', 'image'):
+            (self.root / f'{self.prefix}-{suffix}.exists').touch()
+
+    def run_cleanup(self, **extra):
+        return subprocess.run(['bash', str(PROVIDER / 'cleanup.sh')],
+                              env=dict(self.env, **extra), capture_output=True, text=True)
+
+    def test_success_removes_only_owned_named_resources(self):
+        result = self.run_cleanup()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(self.control.exists())
+        self.assertFalse(self.work.exists())
+        calls = self.log.read_text().splitlines()
+        self.assertIn(f'rm -f {self.prefix}-service', calls)
+        self.assertIn(f'image rm {self.prefix}-image', calls)
+        self.assertFalse(any('prune' in call or call.startswith('ps') for call in calls))
+
+    def test_uncertain_daemon_or_removal_keeps_recovery_control(self):
+        for failure in ('FAKE_DAEMON_ERROR', 'FAKE_REMOVE_ERROR', 'FAKE_INSPECT_ERROR'):
+            result = self.run_cleanup(**{failure: '1'})
+            self.assertNotEqual(result.returncode, 0)
+            self.assertTrue(self.control.exists())
+            self.assertTrue(self.work.exists())
+        result = self.run_cleanup()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(self.control.exists())
+
+    def test_unowned_control_never_runs_docker(self):
+        self.control.write_text('someone-elses-container\n')
+        result = self.run_cleanup()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(self.log.exists())
+        self.assertTrue(self.work.exists())
 
 
 if __name__ == '__main__':

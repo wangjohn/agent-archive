@@ -18,7 +18,19 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-15-intel, macos-14]
+        include:
+          - os: ubuntu-24.04
+            goos: linux
+            goarch: amd64
+          - os: ubuntu-24.04-arm
+            goos: linux
+            goarch: arm64
+          - os: macos-15-intel
+            goos: darwin
+            goarch: amd64
+          - os: macos-14
+            goos: darwin
+            goarch: arm64
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     steps:
@@ -33,10 +45,17 @@ jobs:
       - name: Record exact candidate and native runtime
         env:
           CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          EXPECTED_GOOS: ${{ matrix.goos }}
+          EXPECTED_GOARCH: ${{ matrix.goarch }}
         run: |
           mkdir -p "$RUNNER_TEMP/acceptance-evidence"
           test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
           test "$(id -u)" != 0
+          test "$(go env GOOS)" = "$EXPECTED_GOOS"
+          test "$(go env GOARCH)" = "$EXPECTED_GOARCH"
+          test "$(go env GOHOSTOS)" = "$EXPECTED_GOOS"
+          test "$(go env GOHOSTARCH)" = "$EXPECTED_GOARCH"
+          id -u > "$RUNNER_TEMP/acceptance-evidence/euid.txt"
           go version | grep -q ' go1\.27\.1 '
           git rev-parse HEAD > "$RUNNER_TEMP/acceptance-evidence/candidate.txt"
           uname -sm > "$RUNNER_TEMP/acceptance-evidence/native-platform.txt"
@@ -89,12 +108,16 @@ jobs:
           go version >> "$RUNNER_TEMP/acceptance-evidence/native-platform.txt"
           docker version --format '{{.Server.Version}}' >> "$RUNNER_TEMP/acceptance-evidence/native-platform.txt"
       - name: Execute actual disposable S3-compatible provider
+        timeout-minutes: 25
         env:
           GOMAXPROCS: '2'
           GOFLAGS: '-p=2'
           GOCACHE: ${{ runner.temp }}/provider-runtime-go-cache
           AA_ACCEPTANCE_OUTPUT: ${{ runner.temp }}/acceptance-evidence
         run: bash scripts/acceptance/provider/host.sh
+      - name: Retry cleanup of only this run's disposable resources
+        if: always()
+        run: bash scripts/acceptance/provider/cleanup.sh
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:

@@ -15,7 +15,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
-	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
+	"github.com/wangjohn/agent-archive/internal/testutil/providertest"
 )
 
 // uncertainProviderCommit reports a lost acknowledgement only AFTER a real
@@ -38,7 +38,7 @@ func (s *uncertainProviderCommit) Put(ctx context.Context, key string, body []by
 }
 
 func TestProviderAdmissionSurvivesNativeLossAndUncertainCommit(t *testing.T) {
-	remote := storagetest.NewDisposableS3(t)
+	remote := providertest.NewDisposableS3(t)
 	local, reg := stagedFixture(t)
 	if err := os.Remove(reg.TranscriptPath); err != nil {
 		t.Fatal(err)
@@ -116,7 +116,7 @@ func seedProviderFixture(t *testing.T, target, source storage.ObjectStore) {
 }
 
 func TestProviderFullSetPrivacyReadbackAndIndependentWinner(t *testing.T) {
-	remote := storagetest.NewDisposableS3(t)
+	remote := providertest.NewDisposableS3(t)
 	scan, previous, raw := retainedHistoryFixture(t)
 	seedProviderFixture(t, remote, scan.remote)
 	scan.remote = remote
@@ -160,7 +160,7 @@ func TestProviderFullSetPrivacyReadbackAndIndependentWinner(t *testing.T) {
 	assertProviderIndependentWinner(t, remote, pending, next)
 }
 
-func assertProviderIndependentWinner(t *testing.T, remote *storagetest.DisposableS3, p state.PendingPublication, winner archive.Metadata) {
+func assertProviderIndependentWinner(t *testing.T, remote *providertest.DisposableS3, p state.PendingPublication, winner archive.Metadata) {
 	t.Helper()
 	// A second local owner observes the same actual provider and selects a
 	// different valid sidecar. The stale original owner's exact pending refuses.
@@ -169,7 +169,8 @@ func assertProviderIndependentWinner(t *testing.T, remote *storagetest.Disposabl
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := remote.Put(t.Context(), p.MetadataKey, body); err != nil {
+	peer := remote.IndependentOwner(t)
+	if err := peer.Put(t.Context(), p.MetadataKey, body); err != nil {
 		t.Fatal(err)
 	}
 	if err := storage.PutSourceSetThenMetadata(t.Context(), remote, pendingProviderSources(p), p.MetadataKey, p.MetadataBytes, storage.MetadataPredecessor{Known: true, Exists: true, SHA256: p.Commit.PredecessorSHA256}, storage.RetryPolicy{}); !errors.Is(err, storage.ErrPublicationConflict) {
@@ -197,7 +198,7 @@ func assertProviderIndependentWinner(t *testing.T, remote *storagetest.Disposabl
 }
 
 func TestProviderImmutableMismatchNeverOverwritesSource(t *testing.T) {
-	remote := storagetest.NewDisposableS3(t)
+	remote := providertest.NewDisposableS3(t)
 	body := []byte("synthetic expected immutable source")
 	key := "sources/" + storage.SHA256Hex(body) + ".gz"
 	corrupt := []byte("synthetic different bytes")
@@ -215,4 +216,54 @@ func TestProviderImmutableMismatchNeverOverwritesSource(t *testing.T) {
 	if _, err := remote.Get(t.Context(), "metadata.json"); !errors.Is(err, storage.ErrNotFound) {
 		t.Fatal("corrupt source selected", err)
 	}
+}
+
+func TestProviderIndependentOwnersPublishAndReadSeparateSessions(t *testing.T) {
+	first := providertest.NewDisposableS3(t)
+	second := first.IndependentOwner(t)
+	for i, remote := range []*providertest.DisposableS3{first, second} {
+		owner := []string{"synthetic-first-owner", "synthetic-second-owner"}[i]
+		reg := publishProviderOwner(t, remote, owner)
+		// Both owners independently read retained objects in the shared destination.
+		metadata := fetchMetadata(t, first, reg.Harness.Name, reg.ArchiveSessionID)
+		if metadata.MachineID != owner {
+			t.Fatal("independent owner attribution changed")
+		}
+		for _, readerStore := range []*providertest.DisposableS3{first, second} {
+			bundle, err := reader.LoadSource(t.Context(), readerStore, metadata, reader.Limits{})
+			if err != nil || bundle.ArchiveSessionID != reg.ArchiveSessionID || len(bundle.NativeRecords) == 0 {
+				t.Fatal("paired destination retained session unreadable", err)
+			}
+		}
+	}
+}
+
+func publishProviderOwner(t *testing.T, remote storage.ObjectStore, owner string) archive.SessionRegistration {
+	t.Helper()
+	local := newTestStore(t)
+	reg := registration(t, writeTranscript(t, t.TempDir(), "synthetic.jsonl", codexTranscript))
+	reg.ArchiveSessionID = owner
+	reg.NativeSessionID = owner
+	bundle, err := ReadLocalBundle(t.Context(), local.Home(), reg, reg.RegisteredAt, "", testSources)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg.AdmissionStage, err = local.PrepareAdmissionStage(reg, bundle, "none", reg.RegisteredAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := local.SaveRegistration(reg); err != nil {
+		t.Fatal(err)
+	}
+	if err := local.SaveAdmissionRequest(reg); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(reg.TranscriptPath); err != nil {
+		t.Fatal(err)
+	}
+	result, err := Run(t.Context(), local, remote, Options{Sources: testSources, Parsers: testParsers, MachineID: owner, RepoKey: func(string) string { t.Fatal("independent stage reopened native project"); return "" }})
+	if err != nil || len(result.Errors) != 0 || len(result.Published) != 1 {
+		t.Fatal(result, err)
+	}
+	return reg
 }

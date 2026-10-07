@@ -1,11 +1,11 @@
-package storagetest
+// Package providertest exercises production storage against disposable CI S3.
+package providertest
 
 import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/url"
 	"os"
@@ -22,7 +22,10 @@ import (
 // It cannot resolve ambient credentials or contact a non-loopback endpoint.
 type DisposableS3 struct {
 	*storage.S3Store
-	http *disposableHTTP
+	http     *disposableHTTP
+	endpoint string
+	bucket   string
+	prefix   string
 }
 
 type disposableHTTP struct {
@@ -83,13 +86,30 @@ func NewDisposableS3(t *testing.T) *DisposableS3 {
 	}
 	counter := &disposableHTTP{origin: endpoint, statuses: map[int]int{}, client: &http.Client{Timeout: 15 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
 	cfg := aws.Config{Region: "us-east-1", Credentials: awscredentials.NewStaticCredentialsProvider(access, secret, ""), HTTPClient: counter}
-	remote, err := storage.NewS3Store(storage.S3StoreOptions{Provider: "s3", Client: storage.NewClient(cfg, endpoint, true, 1), Bucket: bucket, Prefix: "run-" + hex.EncodeToString(suffix[:]), MaxGetBytes: 128 << 20})
+	prefix := "run-" + hex.EncodeToString(suffix[:])
+	remote, err := storage.NewS3Store(storage.S3StoreOptions{Provider: "s3", Client: storage.NewClient(cfg, endpoint, true, 1), Bucket: bucket, Prefix: prefix, MaxGetBytes: 128 << 20})
 	if err != nil {
 		t.Fatal(err)
 	}
-	store := &DisposableS3{S3Store: remote, http: counter}
+	store := &DisposableS3{S3Store: remote, http: counter, endpoint: endpoint, bucket: bucket, prefix: prefix}
 	t.Cleanup(func() { cleanupDisposableS3(t, store) })
 	return store
+}
+
+// IndependentOwner creates a distinct credential/client identity in the same
+// disposable destination. The original owner's cleanup still owns the prefix.
+func (s *DisposableS3) IndependentOwner(t *testing.T) *DisposableS3 {
+	t.Helper()
+	access, secret := os.Getenv("AA_PROVIDER_PEER_ACCESS"), os.Getenv("AA_PROVIDER_PEER_SECRET")
+	if access == "" || secret == "" || access == os.Getenv("AA_PROVIDER_ACCESS") {
+		t.Fatal("a separately issued disposable provider identity is required")
+	}
+	cfg := aws.Config{Region: "us-east-1", Credentials: awscredentials.NewStaticCredentialsProvider(access, secret, ""), HTTPClient: s.http}
+	remote, err := storage.NewS3Store(storage.S3StoreOptions{Provider: "s3", Client: storage.NewClient(cfg, s.endpoint, true, 1), Bucket: s.bucket, Prefix: s.prefix, MaxGetBytes: 128 << 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &DisposableS3{S3Store: remote, http: s.http, endpoint: s.endpoint, bucket: s.bucket, prefix: s.prefix}
 }
 
 func cleanupDisposableS3(t *testing.T, s *DisposableS3) {
@@ -112,5 +132,5 @@ func cleanupDisposableS3(t *testing.T, s *DisposableS3) {
 	}
 	s.http.mu.Lock()
 	defer s.http.mu.Unlock()
-	t.Log(fmt.Sprintf("real S3 HTTP requests=%d statuses=%v; prefix cleanup verified", s.http.requests, s.http.statuses))
+	t.Logf("real S3 HTTP requests=%d statuses=%v; prefix cleanup verified", s.http.requests, s.http.statuses)
 }

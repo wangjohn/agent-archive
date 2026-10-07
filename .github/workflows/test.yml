@@ -53,6 +53,7 @@ jobs:
       # Static and fake-Docker checks of the Linux live acceptance scripts;
       # the live run itself needs privileged Docker and is not run in CI.
       - run: python3 scripts/test_linux_acceptance.py
+      - run: python3 scripts/test_provider_acceptance.py
 
   git-identity-compatibility:
     runs-on: ubuntu-24.04

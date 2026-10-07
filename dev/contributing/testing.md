@@ -475,6 +475,25 @@ and diagnose before changing a check: a failure is a finding about the product
 until shown to be the harness's. `KEEP=1` leaves the machine for a look; the
 README says how to get a shell as the user whose manager is running.
 
+## Exact-candidate source-set provider/runtime acceptance
+
+The separate [provider/runtime workflow](../../.github/workflows/provider-runtime.yml)
+runs scoped historical-backfill PR candidates against real disposable MinIO and
+native Linux/Darwin amd64/arm64 runtimes. It checks out the exact head, records
+versions and provider request counts, and rejects skipped or absent required
+checks. [Harness scope and commands](../../scripts/acceptance/provider/README.md)
+distinguish component execution, final enabled-candidate lifecycle evidence,
+provider coverage and old-release artifacts. Existing five Test jobs and
+Levenshtein remain mandatory. Local policy checks require no service:
+
+```sh
+python3 scripts/test_provider_acceptance.py
+```
+
+Provider/runtime success on a prototype does not establish final readiness after
+parent or candidate changes. History fences remain until P4c runs the complete
+newly reachable lifecycle on its exact prospective enabled candidate.
+
 ## Fixtures and goldens
 
 - Adapter fixtures are in `internal/archive/testdata/` as `<app>-<shape>.jsonl`
