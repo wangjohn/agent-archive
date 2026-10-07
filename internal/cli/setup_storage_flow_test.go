@@ -279,8 +279,9 @@ func TestCreateS3MissingCredentialsDefaultsToChoosingAProfile(t *testing.T) {
 func TestStorageCredentialReceiptsHideValuesAndPreserveNavigation(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		input, want string
-		back        bool
+		input string
+		want  string
+		back  bool
 	}{
 		{"\nSYNTHETIC-PRIVATE-ID\nnext\n", "SYNTHETIC-PRIVATE-ID", false},
 		{"back\nnext\n", "back", false},

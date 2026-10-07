@@ -164,7 +164,13 @@ func selectSetupProjects(p *prompter, result, existing []archive.ProjectActivati
 		}
 		p.projectScan.scanned = false
 		known = p.projectScan.projects(p.projectConfig)
-		saved := applyProjectCandidates(candidates, existing, backfilled)
+		// UI choices are broader than persisted ownership rules: unchecked
+		// manual roots and selected inherited children still belong in the
+		// selector after Retry. Retain every transient root and exact choice.
+		saved := make([]archive.ProjectActivation, len(candidates))
+		for i, candidate := range candidates {
+			saved[i] = archive.ProjectActivation{Root: candidate.evidence.Root, Included: candidate.selected}
+		}
 		candidates = setupProjectCandidates(saved, existing, known, current)
 		page = 0
 	}
