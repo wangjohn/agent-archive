@@ -280,7 +280,7 @@ func TestDedicatedRefillFailureKeepsDeliveredBundleValid(t *testing.T) {
 		return "", false
 	}
 	var out, errOut bytes.Buffer
-	if Run([]string{"machines", "add", "--yes", "--name", "laptop"}, strings.NewReader(""), &out, &errOut, env) != 0 || !strings.Contains(errOut.String(), "Pairing remains valid") {
+	if Run([]string{"machines", "add", "--yes", "--name", "laptop"}, strings.NewReader(""), &out, &errOut, env) != 0 || !strings.Contains(errOut.String(), "This pairing is ready") {
 		t.Fatal("refill invalidated delivered pairing")
 	}
 	bundle, code := pairingPieces(out.String())

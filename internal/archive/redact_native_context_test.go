@@ -27,3 +27,23 @@ func TestOpenPageContextStrippingPreservesHumanText(t *testing.T) {
 		}
 	}
 }
+
+func TestOpenPageContextPreservesIndentedTextAfterWhitespaceBlankLines(t *testing.T) {
+	t.Parallel()
+	for _, blank := range []string{" \n", "\t\n", " \t\r\n \n", " \r", "\r"} {
+		for _, indent := range []string{"    ", "\t"} {
+			quoted := blank + indent + "<external_codex_apps_open_page>example</external_codex_apps_open_page>"
+			for _, prefix := range []string{"", "<system-reminder>Injected</system-reminder>", "<external_codex_apps_open_page>Context</external_codex_apps_open_page>", "<system-reminder>Injected</system-reminder><external_codex_apps_open_page>Context</external_codex_apps_open_page>"} {
+				state := PrivacyState{AddGap: func(string, int, string) {}}
+				got, keep := SanitizeValue(prefix+quoted, &state)
+				if !keep || got != quoted {
+					t.Fatalf("sanitize %q: got %q, keep %v; want %q", prefix+quoted, got, keep, quoted)
+				}
+				again, keep := SanitizeValue(got, &state)
+				if !keep || again != quoted {
+					t.Fatalf("refilter: got %q, keep %v; want %q", again, keep, quoted)
+				}
+			}
+		}
+	}
+}

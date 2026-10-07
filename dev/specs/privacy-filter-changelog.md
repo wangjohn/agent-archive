@@ -44,7 +44,8 @@ parser 0.23.0 derive the corrected labels and prompt fallback.
   source publications keep the original capture time and retention basis.
 - **Codex open-page context.** The injected `external_codex_apps_open_page`
   leading XML context wrapper is stripped with nested/unclosed-block rules.
-  Quoted markup, fenced and indented code examples and mentions in human prose remain intact. Human
+  Quoted markup, fenced and indented code examples (including after blank
+  lines containing whitespace), and mentions in human prose remain intact. Human
   text outside the block remains a prompt; context-only text is omitted.
 - Head/tail previews keep name class precedence and report partial coverage
   when records between their bounded windows were not read.
