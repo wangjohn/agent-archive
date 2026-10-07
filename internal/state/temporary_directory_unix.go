@@ -16,7 +16,14 @@ func temporaryQuotaLock(root *os.Root, timeout time.Duration) (func(), error) {
 	for {
 		f, err := root.OpenFile("temporary-quota", os.O_CREATE|os.O_RDWR, 0600)
 		if err != nil {
-			return nil, err
+			// Concurrent first creation through independent roots can race
+			// os.Root's no-follow path walk. Retry that transient absence only
+			// within the original deadline; all other open errors still fail.
+			if !errors.Is(err, os.ErrNotExist) || !time.Now().Before(deadline) {
+				return nil, err
+			}
+			time.Sleep(10 * time.Millisecond)
+			continue
 		}
 		err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
 		if err != nil {

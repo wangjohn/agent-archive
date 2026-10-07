@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -149,5 +150,51 @@ func TestPendingQuotaCorruptStageCannotUndercharge(t *testing.T) {
 	}
 	if _, err = s.admissionStageUsage(); !errors.Is(err, ErrAdmissionStageRecovery) {
 		t.Fatal("undercharged corrupted reservation", err)
+	}
+}
+
+func TestOrdinaryPendingRefusesUnreservedScratchBeforeAllocation(t *testing.T) {
+	t.Parallel()
+	s, _, _ := stageFixture(t)
+	orphan := filepath.Join(s.Home(), temporaryScratchDir, "orphan")
+	if err := os.MkdirAll(orphan, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(orphan, "native.db"), []byte("synthetic"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	p := PendingPublication{SourceKey: "source", MetadataKey: "metadata", SourceSHA256: "synthetic", SourceBytes: []byte("synthetic"), MetadataBytes: []byte("synthetic")}
+	restarted := OpenReadOnly(s.Home())
+	if err := restarted.SavePending("ordinary", p); !errors.Is(err, ErrAdmissionStageRecovery) {
+		t.Fatal("orphan scratch bypassed pending quota", err)
+	}
+	if _, err := os.Stat(restarted.pendingPath("ordinary")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("pending allocated before recovery", err)
+	}
+}
+
+func TestOrdinaryPendingFreshAndEmptyScratchKeepFastPath(t *testing.T) {
+	t.Parallel()
+	s, _, _ := stageFixture(t)
+	p := PendingPublication{SourceKey: "source", MetadataKey: "metadata", SourceSHA256: "synthetic", SourceBytes: []byte("synthetic"), MetadataBytes: []byte("synthetic")}
+	// An unrelated pending body is neither parsed nor enumerated by this path.
+	if err := os.MkdirAll(filepath.Join(s.Home(), "pending"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(s.pendingPath("unrelated"), []byte("invalid pending body"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{"", temporaryScratchDir} {
+		if dir != "" {
+			if err := os.MkdirAll(filepath.Join(s.Home(), dir), 0700); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := s.SavePending("ordinary", p); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(filepath.Join(s.Home(), "temporary-quota")); !errors.Is(err, os.ErrNotExist) {
+			t.Fatal("fresh ordinary publication acquired quota lock", err)
+		}
 	}
 }
