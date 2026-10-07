@@ -7,6 +7,7 @@ import (
 )
 
 const publicationEvidenceDir = "publication-evidence"
+
 const publicationEvidenceControl int64 = 64 << 10
 
 func (s *Store) publicationEvidenceUsage() (int64, error) {

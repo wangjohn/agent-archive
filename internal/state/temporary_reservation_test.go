@@ -35,7 +35,7 @@ func TestTemporaryReservationPersistsAndCleansOwnedScratch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer duplicate.Close()
+	defer func() { _ = duplicate.Close() }()
 	if err = duplicate.Reserve(1); !errors.Is(err, ErrAdmissionStageRecovery) {
 		t.Fatal("duplicate owner", err)
 	}
@@ -65,7 +65,7 @@ func TestTemporaryReservationQuotaBeforeAllocationAndOrphans(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 	if err = r.Reserve(AdmissionStageQuota - temporaryControlBytes); err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +85,7 @@ func TestTemporaryReservationQuotaBeforeAllocationAndOrphans(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer next.Close()
+	defer func() { _ = next.Close() }()
 	if err = next.Reserve(1); !errors.Is(err, ErrAdmissionStageRecovery) {
 		t.Fatal("unreserved orphan ignored", err)
 	}
@@ -117,5 +117,48 @@ func TestTemporaryReservationRootEscapeRetainsCharge(t *testing.T) {
 	}
 	if _, err = os.Stat(filepath.Join(s.Home(), temporaryReservationDir, r.manifest.Token+".json")); err != nil {
 		t.Fatal("lost retained charge", err)
+	}
+}
+
+func TestTemporaryWorkspaceRequiresDurableReservationAndRootConfinement(t *testing.T) {
+	t.Parallel()
+	s, _, _ := stageFixture(t)
+	r, err := NewTemporaryReservation(s, CursorAdmission, "rooted")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = r.Close() }()
+	if root, e := r.OpenWorkspace(); e == nil {
+		_ = root.Close()
+		t.Fatal("workspace allocated without reservation")
+	}
+	if err = r.Reserve(4096); err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	parent := filepath.Join(s.Home(), temporaryScratchDir)
+	if err = os.Symlink(outside, parent); err != nil {
+		t.Fatal(err)
+	}
+	if root, e := r.OpenWorkspace(); e == nil {
+		_ = root.Close()
+		t.Fatal("workspace escaped held home")
+	}
+	entries, err := os.ReadDir(outside)
+	if err != nil || len(entries) != 0 {
+		t.Fatal("outside allocated", entries, err)
+	}
+	if err = os.Remove(parent); err != nil {
+		t.Fatal(err)
+	}
+	root, err := r.OpenWorkspace()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = root.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err = r.Close(); err != nil {
+		t.Fatal(err)
 	}
 }

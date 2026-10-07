@@ -257,7 +257,11 @@ func TestCursorDatabaseReader(t *testing.T) {
 				"ws-empty": {ID: "ws-empty", KeyID: "ws-empty"},
 				"k2":       {ID: "k2", KeyID: "k2"},
 			} {
-				if got := byID[id]; !reflect.DeepEqual(got, w) {
+				got := byID[id]
+				// Codec/relationship facts have dedicated admission regressions;
+				// this fixture continues asserting the legacy catalog fields.
+				got.CursorFacts = agentapi.CursorComposerFacts{}
+				if !reflect.DeepEqual(got, w) {
 					t.Errorf("%s: %+v, want %+v", id, got, w)
 				}
 			}

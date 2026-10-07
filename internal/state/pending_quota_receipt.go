@@ -57,6 +57,7 @@ func (s *Store) heldQuotaStage(id, digest string) (m AdmissionStage, allowance i
 func (s *Store) quotaReceiptPath(id string) string {
 	return filepath.Join(s.home, "pending", id+".quota")
 }
+
 func quotaReceiptDigest(r pendingQuotaReceipt) string {
 	r.Checksum = ""
 	raw, _ := json.Marshal(r)

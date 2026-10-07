@@ -98,18 +98,26 @@ func TestPendingCoveredStageSaturatedQuotaMakesProgress(t *testing.T) {
 	}
 }
 
+type pendingProofFault string
+
+const (
+	pendingFaultDigest pendingProofFault = "digest"
+	pendingFaultSource pendingProofFault = "source"
+	pendingFaultBundle pendingProofFault = "bundle"
+)
+
 func TestPendingCoveredAllowanceRejectsTamperedProof(t *testing.T) {
 	t.Parallel()
-	for _, kind := range []string{"digest", "source", "bundle"} {
-		t.Run(kind, func(t *testing.T) {
+	for _, kind := range []pendingProofFault{pendingFaultDigest, pendingFaultSource, pendingFaultBundle} {
+		t.Run(string(kind), func(t *testing.T) {
 			t.Parallel()
 			s, reg, p := saturatedStagePending(t)
 			switch kind {
-			case "digest":
+			case pendingFaultDigest:
 				p.AdmissionStage = "invalid"
-			case "source":
+			case pendingFaultSource:
 				p.SourceBytes = []byte("different")
-			case "bundle":
+			case pendingFaultBundle:
 				p.Bundle.NativeSessionID = "different"
 			}
 			p.Commit = nil

@@ -380,6 +380,14 @@ folder, on Linux in `~/.cache/agent-archive/cursor-snapshots` (or under
 honor `CACHEDIR.TAG` skip it). The full list, and what uninstall
 removes, is in [setup](../getting-started/setup.md#what-setup-changes-on-your-machine).
 
+Confirmed historical admission uses a separate bounded Cursor copy under private
+archive state (`temporary-scratch`), reserved before allocation and removed after
+its readers close. Durable filtered stages, pending publication copies and private
+original-evidence journals share a 1 GiB quota including atomic write headroom.
+Cleanup failures retain their charge and recovery evidence. Native Cursor files
+remain read-only; external Cursor writers can still grow their WAL while the
+admission transaction temporarily pins a checkpoint.
+
 ## Where credentials are kept
 
 What follows is how the code stores an R2 secret on each platform.
