@@ -48,6 +48,14 @@ import (
 // never stores credentials. Durable imports temporarily retain an additional
 // bounded filtered source until complete local publication is verified.
 type Store struct {
+	// quotaRoot confines a reservation's accounting reads to its held home.
+	quotaRoot *os.Root
+	// onTemporaryRelease injects a directory-sync failure after control removal.
+	onTemporaryRelease func() error
+	// onQuotaBodyRead observes targeted quota reconciliation, never unrelated scans.
+	onQuotaBodyRead func(string)
+	// onQuotaReceipt injects interruption after pending write and before receipt.
+	onQuotaReceipt func() error
 	// onStageCleanup injects failure after release intent is durable.
 	onStageCleanup func() error
 	// indexSnapshots uses logical packed authority for qualified-index writes.
@@ -792,7 +800,7 @@ func (s *Store) SavePending(id string, pending PendingPublication) error {
 			return err
 		}
 	}
-	return local.WriteCompact(s.pendingPath(id), pending)
+	return s.savePendingQuota(id, pending, pending.AdmissionStage != "")
 }
 
 // LoadPending returns a session's outstanding publication transaction, if
@@ -867,7 +875,7 @@ func (s *Store) RemovePending(id string) error {
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("remove pending publication %q: %w", id, err)
 	}
-	return nil
+	return s.removeQuotaReceipt(id)
 }
 
 // Status summarizes the collector's local state for a future `status`

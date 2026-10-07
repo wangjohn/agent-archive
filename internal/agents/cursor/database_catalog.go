@@ -2,11 +2,14 @@ package cursor
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/cursorstore"
 	"net/url"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -109,6 +112,7 @@ func decodeComposerData(key string, value []byte) (composer, bool) {
 		}
 		return raw, true
 	}
+	facts := composerFacts(fields)
 	newer := false
 	if raw, ok := present("_v"); ok {
 		var v int
@@ -190,6 +194,7 @@ func decodeComposerData(key string, value []byte) (composer, bool) {
 	}
 	return composer{
 		chat: agentapi.DatabaseChat{
+			CursorFacts: facts,
 			ID:          id,
 			KeyID:       keyID,
 			CreatedAt:   createdAt,
@@ -246,4 +251,35 @@ func composerWorkspaceFolder(raw json.RawMessage) string {
 		return fromURI(obj.External)
 	}
 	return ""
+}
+
+func composerFacts(fields map[string]json.RawMessage) agentapi.CursorComposerFacts {
+	rawVersion, present := fields["_v"]
+	var version int
+	if present {
+		_ = json.Unmarshal(rawVersion, &version)
+	}
+	facts := agentapi.CursorComposerFacts{Relationships: agentapi.CursorRelationshipsAbsent, VersionPresent: present, Version: version}
+	raw, ok := fields["subagentComposerIds"]
+	if !ok {
+		return facts
+	}
+	facts.Relationships = agentapi.CursorRelationshipsMalformed
+	var ids []string
+	if string(raw) == "null" || json.Unmarshal(raw, &ids) != nil || len(ids) > 64 {
+		return facts
+	}
+	seen := map[string]bool{}
+	for _, id := range ids {
+		if id == "" || len(id) > 1024 || seen[id] {
+			return facts
+		}
+		seen[id] = true
+	}
+	sort.Strings(ids)
+	encoded, _ := json.Marshal(ids)
+	digest := sha256.Sum256(encoded)
+	facts.Relationships = agentapi.CursorRelationshipsValid
+	facts.ChildIDsSHA256 = hex.EncodeToString(digest[:])
+	return facts
 }

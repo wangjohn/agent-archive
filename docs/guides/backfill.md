@@ -179,10 +179,23 @@ transcript disappears, including after restart. Dry runs write no evidence.
 Foreground imports publish completed groups between admissions. Background
 imports retain completed groups and stop when the 1 GiB staging capacity is
 full; run the same backfill options again after pending groups publish. Capacity
-includes pending publication copies and atomic write headroom. Native database
-backups are never charged after the fact: settled Cursor databases use a bounded
-read-only path, and a live or changing database remains unadmitted until a bounded
-snapshot reader is available. Settling Cursor and retrying is actionable.
+includes pending publication copies, private original-evidence journals, reserved
+Cursor scratch and atomic write headroom. Settled Cursor databases use a bounded
+read-only path. Supported live databases use a read-only pinned transaction and
+positive backup steps into a private reserved image of at most 128 MiB. A copy
+has a 30-second deadline, bounded lock retries and a filesystem allocation cap;
+unsupported native access, changed identity, cancellation or exhausted capacity
+leaves the import unadmitted. Settle Cursor and review again when copying cannot
+finish. The pinned read can delay Cursor's WAL checkpoint; external Cursor
+writers' WAL growth is observed but is outside agent-archive's quota.
+
+Review and admission compare the supported native producer version and child
+relationships on the filtered snapshot. A newly discovered parent relationship
+or changed reviewed facts requires another review. Malformed present producer
+versions are refused. Quota controls stay in the held private archive root if an
+ancestor path moves; visible scratch files remain charged after interruption.
+Quota accounting reads compact
+manifests and physical sizes; quota receipts never authorize publication content.
 
 Corrupt evidence or a changed privacy policy remains pending for recovery; it
 does not silently substitute current native content. Stage objects are released

@@ -1,0 +1,200 @@
+package state
+
+import (
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/local"
+)
+
+func saturatedStagePending(t *testing.T) (*Store, archive.SessionRegistration, PendingPublication) {
+	t.Helper()
+	s, reg, bundle := stageFixture(t)
+	digest, err := s.PrepareAdmissionStage(reg, bundle, "none", reg.AdmittedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, _, err := s.ReadAdmissionStage(reg.ArchiveSessionID, digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.ReservedBytes = AdmissionStageQuota
+	encoded, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, _ := s.stagePath(reg.ArchiveSessionID, ".json")
+	if err = local.WriteBytes(manifest, encoded); err != nil {
+		t.Fatal(err)
+	}
+	reg.AdmissionStage = stageDigest(encoded)
+	if err = s.SaveRegistration(reg); err != nil {
+		t.Fatal(err)
+	}
+	object, _ := s.stagePath(reg.ArchiveSessionID, ".source.gz")
+	compressed, err := os.ReadFile(object)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := archive.SourceObjectKey(bundle, m.SHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := archive.SourceReference{Key: key, SHA256: m.SHA256, CompressedBytes: len(compressed)}
+	metadata, err := archive.BuildMetadataWithAnalysis(bundle, archive.Analysis{}, nil, "synthetic", reg.SessionStartedAt, reg.AdmittedAt, ref, archive.ParserInfo{Name: "claude-code", Version: "synthetic"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mk, err := archive.MetadataObjectKey(reg.Harness.Name, reg.ArchiveSessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := PreparePublication(PendingPublication{AdmissionStage: reg.AdmissionStage, Bundle: bundle, SourceKey: key, MetadataKey: mk, SourceSHA256: m.SHA256, SourceBytes: compressed, MetadataBytes: raw, ReadyAt: reg.AdmittedAt}, PublicationPredecessor{State: PredecessorAbsent}, reg.DestinationID, AdmissionStageContext(reg), "synthetic-policy", PublicationCapture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s, reg, p
+}
+
+func TestPendingCoveredStageSaturatedQuotaMakesProgress(t *testing.T) {
+	t.Parallel()
+	s, reg, p := saturatedStagePending(t)
+	if used, err := s.admissionStageUsage(); err != nil || used != AdmissionStageQuota {
+		t.Fatal(used, err)
+	}
+	if err := s.SavePending(reg.ArchiveSessionID, p); err != nil {
+		t.Fatal("held future allowance did not permit publication", err)
+	}
+	p.Attempted = true
+	if err := s.SavePending(reg.ArchiveSessionID, p); err != nil {
+		t.Fatal("old/new replacement deadlocked", err)
+	}
+	if used, err := s.admissionStageUsage(); err != nil || used != AdmissionStageQuota {
+		t.Fatal("undercharged held stage", used, err)
+	}
+	m, _, err := s.ReadAdmissionStage(reg.ArchiveSessionID, reg.AdmissionStage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	published, err := s.LoadPublishedState(reg.ArchiveSessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = published.SaveCommittedPublication(p, reg.AdmittedAt); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReleaseAdmissionStage(reg, m, published, ""); err != nil {
+		t.Fatal(err)
+	}
+	if used, err := s.admissionStageUsage(); err != nil || used >= AdmissionStageQuota {
+		t.Fatal("release made no progress", used, err)
+	}
+}
+
+type pendingProofFault string
+
+const (
+	pendingFaultDigest pendingProofFault = "digest"
+	pendingFaultSource pendingProofFault = "source"
+	pendingFaultBundle pendingProofFault = "bundle"
+)
+
+func TestPendingCoveredAllowanceRejectsTamperedProof(t *testing.T) {
+	t.Parallel()
+	for _, kind := range []pendingProofFault{pendingFaultDigest, pendingFaultSource, pendingFaultBundle} {
+		t.Run(string(kind), func(t *testing.T) {
+			t.Parallel()
+			s, reg, p := saturatedStagePending(t)
+			switch kind {
+			case pendingFaultDigest:
+				p.AdmissionStage = "invalid"
+			case pendingFaultSource:
+				p.SourceBytes = []byte("different")
+			case pendingFaultBundle:
+				p.Bundle.NativeSessionID = "different"
+			}
+			p.Commit = nil
+			if err := s.SavePending(reg.ArchiveSessionID, p); !errors.Is(err, ErrAdmissionStageCapacity) {
+				t.Fatal("borrowed malformed proof", err)
+			}
+			if _, err := os.Stat(s.pendingPath(reg.ArchiveSessionID)); !errors.Is(err, os.ErrNotExist) {
+				t.Fatal("allocated before quota", err)
+			}
+		})
+	}
+}
+
+func TestPendingQuotaCorruptStageCannotUndercharge(t *testing.T) {
+	t.Parallel()
+	s, reg, _ := saturatedStagePending(t)
+	manifest, _ := s.stagePath(reg.ArchiveSessionID, ".json")
+	raw, err := os.ReadFile(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m AdmissionStage
+	if err = json.Unmarshal(raw, &m); err != nil {
+		t.Fatal(err)
+	}
+	m.ReservedBytes = 1
+	if err = local.Write(manifest, m); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.admissionStageUsage(); !errors.Is(err, ErrAdmissionStageRecovery) {
+		t.Fatal("undercharged corrupted reservation", err)
+	}
+}
+
+func TestOrdinaryPendingRefusesUnreservedScratchBeforeAllocation(t *testing.T) {
+	t.Parallel()
+	s, _, _ := stageFixture(t)
+	orphan := filepath.Join(s.Home(), temporaryScratchDir, "orphan")
+	if err := os.MkdirAll(orphan, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(orphan, "native.db"), []byte("synthetic"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	p := PendingPublication{SourceKey: "source", MetadataKey: "metadata", SourceSHA256: "synthetic", SourceBytes: []byte("synthetic"), MetadataBytes: []byte("synthetic")}
+	restarted := OpenReadOnly(s.Home())
+	if err := restarted.SavePending("ordinary", p); !errors.Is(err, ErrAdmissionStageRecovery) {
+		t.Fatal("orphan scratch bypassed pending quota", err)
+	}
+	if _, err := os.Stat(restarted.pendingPath("ordinary")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("pending allocated before recovery", err)
+	}
+}
+
+func TestOrdinaryPendingFreshAndEmptyScratchKeepFastPath(t *testing.T) {
+	t.Parallel()
+	s, _, _ := stageFixture(t)
+	p := PendingPublication{SourceKey: "source", MetadataKey: "metadata", SourceSHA256: "synthetic", SourceBytes: []byte("synthetic"), MetadataBytes: []byte("synthetic")}
+	// An unrelated pending body is neither parsed nor enumerated by this path.
+	if err := os.MkdirAll(filepath.Join(s.Home(), "pending"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(s.pendingPath("unrelated"), []byte("invalid pending body"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{"", temporaryScratchDir} {
+		if dir != "" {
+			if err := os.MkdirAll(filepath.Join(s.Home(), dir), 0700); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := s.SavePending("ordinary", p); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(filepath.Join(s.Home(), "temporary-quota")); !errors.Is(err, os.ErrNotExist) {
+			t.Fatal("fresh ordinary publication acquired quota lock", err)
+		}
+	}
+}
