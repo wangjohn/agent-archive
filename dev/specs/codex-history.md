@@ -30,6 +30,52 @@ usage, titles and timestamps do not become own activity. Cumulative-only token
 counters with uncertain scope produce an explicit gap, without guessing whether
 a child reset its counters. Independent own per-call usage remains useful.
 
+## Shared native catalog
+
+`internal/rolloutcatalog` implements one lazy, serial observation epoch over
+explicitly approved Codex homes. It exhaustively enumerates `sessions` and
+nested `archived_sessions`, with separate root, directory, entry and header
+budgets. Missing stores are observed as absent; unreadable stores, unknown
+headers, cancellation and exhausted budgets cannot establish completeness.
+Thread identity remains Codex-qualified and independent of the source home.
+Creation, producer, relationship, cwd and recorded repository conflicts remain
+unresolved. Physical copies coalesce only after identity and bounded observed
+prefix agreement; lexical order only breaks ties between proven copies.
+
+Settled `state_5.sqlite` files supply optional id-indexed current locators through
+a confined read-only VFS and a bounded read transaction. Schema and indexed
+query-plan probes precede lookup. Missing, stale, unfamiliar or live WAL/journal
+state falls back to complete file-lineage evidence. SQLite paths must match
+opened catalog identity beneath an approved store. No database snapshot or
+sidecar is copied, and no native write is permitted.
+
+Revision tokens bind candidates, header/prefix evidence and current selection.
+`Check` revalidates all observed nested directory membership, file identities,
+changed headers/prefixes and native locator state, within an aggregate budget.
+Unchanged header evidence is shared across lookups; revalidation stats are counted
+separately from enumeration. Single-source appends preserve header evidence;
+appended duplicate copies require a renewed epoch before choosing a copy.
+Filesystem observations use the same practical size/mtime/identity contract as
+verified transcript snapshots; restored timestamps are not a filesystem lock.
+Optional caller-owned validation slices share one complete relevant sweep for
+up to 512 lookup/check calls and 30 seconds after the sweep (hard maxima 512
+calls and 60 seconds). Sweep/read contexts default to 30 seconds when the caller
+has no deadline. Cached sweep failures stop readers within the slice; expiry
+permits fresh validation after all active readers, snapshots and provider passes
+close. Observed epoch changes require a new catalog and reconfirmation.
+Each dependency uses its independently approved root opener, including across
+homes. Catalog metadata grants no authorization to retain ancestor content.
+
+Ordinary collection leaves this catalog unopened. Only a validated pending
+related-history refusal triggers a bounded metadata-only locator diagnostic,
+using approved discovery homes and one shared pass catalog. This diagnostic
+has a 100ms caller deadline and caps inventory at 256 entries, 64 directories
+and 256KiB of header reads; exceeding a cap leaves completeness unavailable. It
+reads no duplicate transcript prefixes and establishes neither recoverability
+nor permission to publish. Explicit source/filter callers can opt into the
+existing lookup port; history admission and mutation remain fenced until the
+later lifecycle and import stages are implemented.
+
 ## Captured-prefix consistency and resources
 
 Each snapshot fixes a newline-complete prefix, validates its raw ordinals and

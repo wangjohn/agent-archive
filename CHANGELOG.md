@@ -8,6 +8,11 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- A bounded shared Codex catalog observes active and archived rollout identity
+  across approved homes, validates optional read-only current locators and
+  independently confines each history dependency. Pending-history diagnostics
+  can report candidate locator evidence; history writes remain disabled and
+  ordinary capture performs no catalog inventory.
 - Confirmed Cursor history imports can copy supported live databases with bounded
   read-only snapshots. Shared private staging capacity includes scratch, pending
   copies and recoverable original evidence; unsupported or changed input requires
@@ -37,6 +42,15 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Long discovery summaries use bounded listing-key components so filesystem-backed
+  S3-compatible stores can publish and repair them without truncating identity.
+  Existing long listing hints retain canonical metadata read validation independent
+  of the stricter bounds for new hint writes.
+
+- Backfill explains deleted-worktree recovery failures with bounded diagnostic
+  counts and retry/review actions while preserving existing skip codes. Dry-run
+  JSON adds optional diagnostics and physical candidate inventory counts;
+  logical history accounting remains pending.
 - Purge and superseded-source cleanup protect the complete validated current and
   preserved source set. Whole-session removal journals its selecting metadata
   before deleting remote or private retained evidence. Interrupted removal keeps

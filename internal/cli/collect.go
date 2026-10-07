@@ -20,6 +20,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/gitremote"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/retention"
+	"github.com/wangjohn/agent-archive/internal/rolloutcatalog"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -186,8 +187,13 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 	if previous, err := localStore.LoadStatus(); err == nil {
 		previousScanAt = previous.LastScanAt
 	}
+	// Approved discovery homes authorize bounded metadata observation only.
+	// Ordinary capture leaves this pass-local catalog unopened. Pending diagnostics
+	// disallow transcript prefix reads; duplicate proofs remain unavailable here.
+	pendingRollouts := pendingCodexRollouts(cfg.Discovery)
 	result, err := collector.Run(ctx, localStore, objectStore, collector.Options{
 		SkipSessionIndexRecovery: true,
+		PendingCodexRollouts:     pendingRollouts,
 		Parsers:                  parsersFor(env),
 		Sources:                  registryFor(env),
 		Decoders:                 env.agentRegistry(),
@@ -545,6 +551,23 @@ func skillEvidenceRoots(env Env, name string, l agentapi.SkillLocations) []agent
 		return p.EvidenceRoots(l)
 	}
 	return nil
+}
+
+// pendingCodexRollouts shares one lazy diagnostic inventory without capture authority.
+func pendingCodexRollouts(discovery *config.DiscoveryConfig) func() agentapi.CodexRolloutLookup {
+	var catalog *rolloutcatalog.Catalog
+	return func() agentapi.CodexRolloutLookup {
+		if discovery == nil || !discovery.Enabled || len(discovery.CodexHomes) == 0 {
+			return nil
+		}
+		if catalog == nil {
+			catalog = rolloutcatalog.New(discovery.CodexHomes, rolloutcatalog.Limits{
+				Entries: 256, Directories: 64, HeaderBytes: 256 << 10,
+				CheckOperations: 1024, PrefixBytes: 1,
+			})
+		}
+		return catalog
+	}
 }
 
 func reconcileCompletedRemoval(localStore *state.Store, cfg config.Config, result *collector.Result, sweep retention.Result, summary string) (string, error) {

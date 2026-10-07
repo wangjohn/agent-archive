@@ -171,6 +171,8 @@ type Candidate struct {
 	// register (collector.CheckImportedSubagent); they are not imported.
 	SubagentsSkipped int
 	Skip             SkipReason
+	// Diagnostic explains the winning skip without retaining source contents or locators.
+	Diagnostic *Diagnostic
 }
 
 // Subagent is one subagent transcript belonging to an imported parent.
