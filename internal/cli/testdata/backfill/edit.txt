@@ -33,10 +33,28 @@ If you continue:
     Choose `edit` to keep them longer.
   • Undo any time with `agent-archive backfill undo`.
 
-Import 12 sessions from 5 projects? [y/N/edit] Retention applies to every session in the archive, not only these.
-Here it can only be raised from 90 days, and undo puts 90 back.
-Shorten it in setup.
-Keep sessions for how many days? [90]: 
+? Import 12 sessions from 5 projects?
+
+  1) Import these sessions
+  2) Skip for now (default)
+
+  [e] Edit retention
+
+> Choose [2]:
+OK Edit retention
+
+Edit retention
+
+Retention applies to every session in the archive, not only these.
+Here it can only be raised from 90 days, and undo puts 90 back. Shorten it in
+setup.
+
+? Keep sessions for how many days?
+
+> Choose [90]:
+OK Keep sessions for how many days? 365
+
+
 Backfill imports every session found on this machine into
 s3 / personal-agent-archive / agent-archive/. Nothing has been uploaded yet.
 
@@ -69,7 +87,17 @@ If you continue:
     Choose `edit` to keep them longer.
   • Undo any time with `agent-archive backfill undo`.
 
-Import 12 sessions from 5 projects? [y/N/edit] Added 4 projects. Registered 12 sessions and 2 subagent transcripts as import 2026-09-23-1.
+? Import 12 sessions from 5 projects?
+
+  1) Import these sessions
+  2) Skip for now (default)
+
+  [e] Edit retention
+
+> Choose [2]:
+OK Import these sessions
+
+Added 4 projects. Registered 12 sessions and 2 subagent transcripts as import 2026-09-23-1.
 The background collector uploads them. Run agent-archive status to follow it.
 See them with agent-archive list --imported.
 Undo with agent-archive backfill undo 2026-09-23-1.

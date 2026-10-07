@@ -652,7 +652,7 @@ func TestBackfillUndoPreviousDestination(t *testing.T) {
 			if code != 0 {
 				t.Fatalf("code %d, %s\n%s", code, errOut, out)
 			}
-			for _, want := range []string{"12 sessions and 2 subagent transcripts from a previous storage destination are forgotten", "Forget 12 sessions? This cannot be undone. [y/N]", "Forgot 12 sessions and 2 subagent transcripts from a previous storage destination"} {
+			for _, want := range []string{"12 sessions and 2 subagent transcripts from a previous storage destination are forgotten", "? Forget 12 sessions? This cannot be undone.", "Forgot 12 sessions and 2 subagent transcripts from a previous storage destination"} {
 				if !strings.Contains(out, want) {
 					t.Fatalf("output lacks %q:\n%s", want, out)
 				}
@@ -743,7 +743,7 @@ func TestBackfillUndoChangesNothingUnlessConfirmed(t *testing.T) {
 	}
 	for _, answer := range []string{"\n", "n\n", "maybe\nno\n"} {
 		out, errOut, code := f.undoRun(t, strings.NewReader(answer), true)
-		if code != 0 || !strings.Contains(out, "Delete 12 sessions from the archive? This cannot be undone. [y/N]") || !strings.Contains(out, "Cancelled. Nothing was changed.") {
+		if code != 0 || !strings.Contains(out, "? Delete 12 sessions from the archive? This cannot be undone.") || !strings.Contains(out, "Cancelled. Nothing was changed.") {
 			t.Fatalf("%q: code %d, %s\n%s", answer, code, errOut, out)
 		}
 		check(answer)
@@ -797,7 +797,7 @@ func TestBackfillUndoStorageCheckFails(t *testing.T) {
 	config0 := mustRead(t, filepath.Join(f.data, "config.json"))
 	f.env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return failingPutStore{bucket}, nil }
 	out, errOut, code := f.undoRun(t, strings.NewReader("y\n"), true)
-	if code != 1 || !strings.Contains(out, "Checking storage… failed.") || strings.Contains(out, "[y/N]") || !strings.Contains(errOut, "nothing was changed") {
+	if code != 1 || !strings.Contains(out, "Checking storage… failed.") || strings.Contains(out, "? Delete ") || !strings.Contains(errOut, "nothing was changed") {
 		t.Fatalf("code %d\n%s\n%s", code, out, errOut)
 	}
 	before.check(t, f, bucket.MemoryStore)
