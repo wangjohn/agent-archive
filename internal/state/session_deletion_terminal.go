@@ -82,6 +82,9 @@ func (s *Store) deletionOrphanStems(directory string) (out []string, err error) 
 				return nil, ErrAdmissionStageRecovery
 			}
 		}
+		if id, source := strings.CutSuffix(entry.Name(), ".source.gz"); directory == admissionStageDir && source && safeFileComponent(id) {
+			out = append(out, id)
+		}
 		if id, final := strings.CutSuffix(entry.Name(), ".json"); final {
 			if safeFileComponent(id) {
 				out = append(out, id)
