@@ -788,7 +788,7 @@ func (s *Store) SavePending(id string, pending PendingPublication) error {
 			return err
 		}
 	}
-	return local.WriteCompact(s.pendingPath(id), pending)
+	return s.savePendingQuota(id, pending, pending.AdmissionStage != "")
 }
 
 // LoadPending returns a session's outstanding publication transaction, if
