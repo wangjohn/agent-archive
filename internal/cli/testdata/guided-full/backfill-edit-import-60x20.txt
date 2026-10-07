@@ -42,7 +42,7 @@ If you continue:
   [e] Edit retention
 
 › Choose [2]: edit
-✓ Edit retention
+\e[8A\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[8A✓ Edit retention
 
 Edit retention
 
@@ -54,7 +54,7 @@ back. Shorten it in setup.
 ? Keep sessions for how many days?
 
 › Choose [90]: 120
-✓ Keep sessions for how many days? 120
+\e[3A\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[3A✓ Keep sessions for how many days? 120
 
 
 Backfill imports every session found on this machine into
@@ -97,10 +97,10 @@ If you continue:
   [e] Edit retention
 
 › Choose [2]: yes
-✓ Import these sessions
+\e[8A\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[8A✓ Import these sessions
 
 Added 4 projects. Registered 12 sessions and 2 subagent transcripts as import 2026-09-23-1.
-Uploading: 1 of 12 sessions, 739 bytes of 8 KB                          Uploading: 2 of 12 sessions, 1 KB of 8 KB                               Uploading: 3 of 12 sessions, 2 KB of 8 KB                               Uploading: 4 of 12 sessions, 3 KB of 8 KB                               Uploading: 5 of 12 sessions, 4 KB of 8 KB                               Uploading: 6 of 12 sessions, 4 KB of 8 KB                               Uploading: 7 of 12 sessions, 5 KB of 8 KB                               Uploading: 8 of 12 sessions, 5 KB of 8 KB                               Uploading: 9 of 12 sessions, 5 KB of 8 KB                               Uploading: 10 of 12 sessions, 6 KB of 8 KB                              Uploading: 11 of 12 sessions, 7 KB of 8 KB                              [KUploading: 11 of 12 sessions, 7 KB of 8 KB                              [KUploading: 12 of 12 sessions, 8 KB of 8 KB                              
+
 Uploaded 12 sessions (8 KB).
 See them with agent-archive list --imported.
 Undo with agent-archive backfill undo 2026-09-23-1.

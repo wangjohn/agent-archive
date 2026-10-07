@@ -85,6 +85,13 @@ func TestGuidedFullCommandTranscripts(t *testing.T) {
 						if strings.Contains(out.String(), bundle) || strings.Contains(out.String(), code) {
 							t.Fatal("pairing input leaked")
 						}
+						beforeCheck, afterCheck, checked := strings.Cut(out.String(), "Checking your storage connection")
+						if !checked || !strings.Contains(beforeCheck, "Storage not checked yet") || strings.Contains(beforeCheck, "Storage connected") {
+							t.Fatal("pairing review claimed an unchecked connection")
+						}
+						if !strings.Contains(afterCheck, "Connected to your storage") || !strings.Contains(afterCheck, "Setup complete") {
+							t.Fatal("pairing did not check storage before completed capture")
+						}
 					case guidedFlowHandoffFile:
 						f := newHandoffFixture(t, false)
 						path := filepath.Join(t.TempDir(), "handoff.md")
@@ -144,17 +151,17 @@ func TestGuidedFullCommandTranscripts(t *testing.T) {
 						must(t, err)
 						run([]string{"purge", "apply", path}, plan.Digest[:12]+"\n", f.env)
 						normalize = func(s string) string {
-							return strings.ReplaceAll(f.normalize(s), plan.Digest[:12], "DIGEST")
+							s = strings.ReplaceAll(f.normalize(s), plan.Digest, "HASH")
+							return strings.ReplaceAll(s, plan.Digest[:12], "DIGEST")
 						}
 					}
 					text := normalize(out.String())
 					text = normalizeGuidedHandoffTranscript(text)
+					text = normalizeGuidedActivityTranscript(text)
 					// Random issued IDs and content hashes are presentation placeholders.
 					text = regexp.MustCompile(`[0-9a-f]{64}`).ReplaceAllString(text, "HASH")
 					text = regexp.MustCompile(`[0-9a-f]{32}`).ReplaceAllString(text, "MACHINE_ID")
-					if color {
-						text = strings.ReplaceAll(text, "\x1b", `\e`)
-					}
+					text = strings.ReplaceAll(text, "\x1b", `\e`)
 					golden.Check(t, filepath.Join("testdata", "guided-full", name+".txt"), []byte(trimScreenLineEnds(text)))
 				})
 			}
@@ -226,4 +233,45 @@ func TestGuidedFullHandoffOutputSurfaces(t *testing.T) {
 func normalizeGuidedHandoffTranscript(text string) string {
 	text = regexp.MustCompile(`handoff-[0-9a-f]{8}\.md`).ReplaceAllString(text, "handoff-SESSION.md")
 	return regexp.MustCompile(`(handoff: wrote .*?) \([0-9]+ bytes\)`).ReplaceAllString(text, "$1 (BYTES bytes)")
+}
+
+// Animation frames and upload counters are transient terminal rows. Their
+// timing varies with the host; retain the command's completed result lines and
+// the exact guided prompt cursor operations instead.
+func normalizeGuidedActivityTranscript(text string) string {
+	text = regexp.MustCompile(`(?:\r(?:\x1b\[[0-9;]*m)?[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏](?:\x1b\[[0-9;]*m)?[^\r\n]*)+\r\x1b\[K`).ReplaceAllString(text, "")
+	return regexp.MustCompile(`\rUploading: [0-9]+ of [0-9]+ sessions, [^\r\n]*(?:\r\x1b\[K)?`).ReplaceAllString(text, "")
+}
+
+func TestGuidedTranscriptNormalizationPreservesPromptOperations(t *testing.T) {
+	t.Parallel()
+	kept := "\x1b[4A\r\x1b[2K\x1b[1B\r\x1b[2K✓ Saved\n\rWarning: storage failed\r\x1b[K\nUploaded 12 sessions.\n"
+	transient := "\r⠋ Registering sessions…\r⠙ Registering sessions…\r\x1b[K\rUploading: 1 of 12 sessions, 1 KB of 8 KB\r\x1b[K"
+	if got := normalizeGuidedActivityTranscript(transient + kept); got != kept {
+		t.Fatalf("normalization changed prompt operations or result: %q", got)
+	}
+}
+
+func TestPairingReviewEditorOffersCurrentProjectWithoutSelectingIt(t *testing.T) {
+	t.Parallel()
+	f := newScreenFixture(t)
+	f.installed(t)
+	current := f.project(t, "src/current-project")
+	f.env.WorkingDir = func() (string, error) { return current, nil }
+	f.env.BackfillTempDirs = []string{}
+	cfg := mustLoadConfig(t, f.home)
+	before, err := json.Marshal(cfg.Archive.Projects)
+	must(t, err)
+	var out bytes.Buffer
+	p := newPrompter(strings.NewReader("edit\nprojects\n"), &out)
+	defer p.close()
+	reviewed, err := reviewPairingSettings(p, pairing.Payload{}, cfg, cfg, true, f.userHome, setupOptions{}, f.env)
+	if err == nil || !strings.Contains(out.String(), "~/src/current-project · this folder") {
+		t.Fatalf("current project missing from pairing editor: %v\n%s", err, &out)
+	}
+	after, err := json.Marshal(reviewed.Archive.Projects)
+	must(t, err)
+	if !bytes.Equal(before, after) {
+		t.Fatal("opening the pairing project editor changed capture rules without selection")
+	}
 }

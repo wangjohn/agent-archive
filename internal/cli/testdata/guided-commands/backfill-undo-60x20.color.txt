@@ -13,6 +13,6 @@ If you continue:
   2) No (default)
 
 › Choose [2]:
-\e[2m✓ Forget 1 session No\e[0m
+\e[6A\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[6A\e[2m✓ Forget 1 session No\e[0m
 
 Cancelled. Nothing was changed.

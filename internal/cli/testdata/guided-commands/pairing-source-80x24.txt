@@ -2,7 +2,7 @@
 ? Name for the new machine
 
 › Choose: laptop
-✓ Name for the new machine laptop
+\e[3A\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[3A✓ Name for the new machine laptop
 
 ? No spare key available
 
@@ -12,7 +12,7 @@
   [Enter] Cancel
 
 › Choose: create
-✓ Paste a Cloudflare token to create a dedicated key
+\e[8A\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[8A✓ Paste a Cloudflare token to create a dedicated key
 
 Bundle expires at 2026-09-25T13:00:00Z. On laptop, run agent-archive setup --pair.
 
@@ -24,5 +24,5 @@ Bundle expires at 2026-09-25T13:00:00Z. On laptop, run agent-archive setup --pai
   [q] Cancel pairing (dedicated cleanup needs management access)
 
 › Choose [1]: done
-✓ Done
+\e[8A\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[8A✓ Done
 

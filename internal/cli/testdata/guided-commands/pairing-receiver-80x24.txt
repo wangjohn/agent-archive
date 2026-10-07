@@ -2,12 +2,12 @@
 ? Paste the encrypted pairing bundle
 
 › Credential:
-✓ Credential received
+\e[3A\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[3A✓ Credential received
 
 ? Pairing code (hidden)
 
 › Credential:
-✓ Credential received
+\e[3A\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[3A✓ Credential received
 
 Pairing destination
 
@@ -22,5 +22,5 @@ Prior destination: s3 bucket prior-archive, folder .
   2) No (default)
 
 › Choose [2]: yes
-✓ Explicitly replace the prior destination with the displayed destination Yes
+\e[6A\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[6A✓ Explicitly replace the prior destination with the displayed destination Yes
 

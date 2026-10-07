@@ -8,5 +8,5 @@
   https://dash.cloudflare.com/?to=%2F%3Aaccount%2Fapi-tokens
 
 › Credential:
-✓ Credential received
+\e[9A\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[9A✓ Credential received
 

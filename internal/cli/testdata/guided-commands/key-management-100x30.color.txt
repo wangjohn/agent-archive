@@ -5,7 +5,7 @@
   2) No (default)
 
 › Choose [2]:
-\e[2m✓ Create and commit a dedicated key No\e[0m
+\e[6A\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[6A\e[2m✓ Create and commit a dedicated key No\e[0m
 
 ? Delete this exact verified key set? Sessions remain; other recipients may lose access
 
@@ -13,5 +13,5 @@
   2) No (default)
 
 › Choose [2]:
-\e[2m✓ Delete this exact verified key set No\e[0m
+\e[6A\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[6A\e[2m✓ Delete this exact verified key set No\e[0m
 

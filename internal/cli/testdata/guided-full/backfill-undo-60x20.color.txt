@@ -24,7 +24,7 @@ If you continue:
   2) No (default)
 
 › Choose [2]: yes
-\e[2m✓ Delete 12 sessions from the archive Yes\e[0m
+\e[7A\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[7A\e[2m✓ Delete 12 sessions from the archive Yes\e[0m
 
 Import 2026-09-23-1: Deleted 12 sessions and 2 subagent transcripts from the archive, excluded 4 projects.
 [exit 0]

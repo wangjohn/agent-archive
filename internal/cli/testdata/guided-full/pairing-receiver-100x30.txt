@@ -3,12 +3,12 @@ $ agent-archive setup --pair --codex-discovery on --codex-capture-scope included
 ? Paste the encrypted pairing bundle
 
 › Credential:
-✓ Credential received
+\e[3A\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[3A✓ Credential received
 
 ? Pairing code (hidden)
 
 › Credential:
-✓ Credential received
+\e[3A\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[3A✓ Credential received
 
 Pairing destination
 
@@ -22,7 +22,7 @@ Step 3 of 3 · Review and start
   Skills    Metadata, including user folders
   Storage   s3://synthetic/agent-archive/
   Keep for  90 days
-  ✓ Storage connected
+  ! Storage not checked yet · Connection will be checked after you confirm these settings
   ! Bucket privacy unknown · public-access settings could not be read
     Make sure public access is off:
     https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
@@ -37,11 +37,10 @@ Step 3 of 3 · Review and start
   [Enter] Cancel
 
 › Choose: save
-✓ Save the displayed destination and capture settings
+\e[8A\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[8A✓ Save the displayed destination and capture settings
 
   ✓ Codex hooks: ~/.codex/hooks.json
   ✓ Background job: launchctl responds
-Checking your storage connection…
 ✓ Connected to your storage.
   · Codex capture: Automatic discovery plus hooks when approved.
   · Codex scope: Included projects only.
@@ -72,7 +71,7 @@ Check progress with agent-archive status.
 
 Optional · Import past sessions
 
-Looking for past sessions in these projects… none to import.
+Looking for past sessions… none to import.
   · Another machine: agent-archive machines pair
 
 ? More next steps?

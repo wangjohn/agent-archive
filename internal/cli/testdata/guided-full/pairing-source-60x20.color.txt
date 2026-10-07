@@ -12,6 +12,6 @@ Bundle expires at 2026-09-25T12:15:00Z. On laptop, run agent-archive setup --pai
       access)
 
 › Choose [1]: done
-\e[2m✓ Done\e[0m
+\e[9A\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[9A\e[2m✓ Done\e[0m
 
 [exit 0]

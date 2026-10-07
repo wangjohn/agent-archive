@@ -16,8 +16,8 @@ OK Handoff write to a file
 
 ? Write to
 
-> Choose [/Users/alex/src/项目-long-project/handoff-52dd43a4.md]: /Users/alex/handoff.md
-OK Write to
+> Choose [/Users/alex/src/项目-long-project/handoff-SESSION.md]: /Users/alex/handoff.md
+OK File
    /Users/alex/handoff.md
 
 handoff: wrote /Users/alex/handoff.md (BYTES bytes)

@@ -26,7 +26,7 @@ If you continue:
   [e] Edit retention
 
 › Choose [2]: edit
-✓ Edit retention
+\e[8A\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[8A✓ Edit retention
 
 Edit retention
 
@@ -36,7 +36,7 @@ setup.
 ? Keep sessions for how many days?
 
 › Choose [90]: 120
-✓ Keep sessions for how many days? 120
+\e[3A\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[3A✓ Keep sessions for how many days? 120
 
 
 Backfill imports every session found on this machine into
@@ -67,5 +67,5 @@ If you continue:
   [e] Edit retention
 
 › Choose [2]: yes
-✓ Import these sessions
+\e[8A\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[8A✓ Import these sessions
 

@@ -5,5 +5,5 @@
   Type 0123456789ab to continue. Any other answer cancels.
 
 › Digest: 0123456789ab
-\e[2m✓ Purge confirmed\e[0m
+\e[6A\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[6A\e[2m✓ Purge confirmed\e[0m
 

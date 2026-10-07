@@ -12,7 +12,7 @@ Also delete owned local state and credentials under /Users/alex/.agent-archive.
   2) No (default)
 
 > Choose [2]: yes
-\e[2mOK Yes\e[0m
+\e[2mOK Remove integrations Yes\e[0m
 
 \e[1mDelete owned local data\e[0m
 
@@ -28,7 +28,8 @@ recovered from the bucket.
   2) No (default)
 
 > Choose [2]: yes
-\e[2mOK Yes\e[0m
+\e[2mOK Delete local data and stored
+   credentials too Yes\e[0m
 
 Bucket machine records and remote credentials remain. Remove access using your storage provider; uninstall does not revoke it.
 Uninstall complete. Remote archives and the CLI executable were kept.

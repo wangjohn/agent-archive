@@ -10,7 +10,7 @@ Also delete owned local state and credentials under /Users/alex/.local/share/age
   2) No (default)
 
 › Choose [2]: yes
-✓ Remove integrations Yes
+\e[6A\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[6A✓ Remove integrations Yes
 
 Delete owned local data
 
@@ -24,6 +24,6 @@ bucket.
   2) No (default)
 
 › Choose [2]:
-✓ Delete local data and stored credentials too No
+\e[6A\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[6A✓ Delete local data and stored credentials too No
 
 Cancelled. No changes were made.

@@ -31,7 +31,9 @@ endpoint .
     s3://synthetic/agent-archive/
   Keep for
     90 days
-  ✓ Storage connected
+  ! Storage not checked yet ·
+    Connection will be checked after
+    you confirm these settings
   ! Bucket privacy unknown ·
     public-access settings could not
     be read

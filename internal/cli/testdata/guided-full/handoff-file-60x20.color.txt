@@ -12,12 +12,12 @@ $ agent-archive handoff SESSION
   [q] quit
 
 › Choose [1]: w
-\e[2m✓ Handoff write to a file\e[0m
+\e[12A\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[12A\e[2m✓ Handoff write to a file\e[0m
 
 ? Write to
 
-› Choose [/Users/alex/src/项目-long-project/handoff-b92789d5.md]: /Users/alex/handoff.md
-\e[2m✓ Write to
+› Choose [/Users/alex/src/项目-long-project/handoff-SESSION.md]: /Users/alex/handoff.md
+\e[7A\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[7A\e[2m✓ File
   /Users/alex/handoff.md\e[0m
 
 handoff: wrote /Users/alex/handoff.md (BYTES bytes)

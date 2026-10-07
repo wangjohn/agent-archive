@@ -10,10 +10,10 @@
   [q] quit
 
 › Choose [1]: w
-✓ Handoff write to a file
+\e[11A\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[11A✓ Handoff write to a file
 
 ? Write to
 
 › Choose [/Users/alex/src/项目-long-directory/handoff-6e340b9c.md]: q
-✓ Handoff file cancelled
+\e[4A\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[4A✓ Handoff file cancelled
 

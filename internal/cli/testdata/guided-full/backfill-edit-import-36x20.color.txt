@@ -104,7 +104,7 @@ If you continue:
 \e[2mOK Import these sessions\e[0m
 
 Added 4 projects. Registered 12 sessions and 2 subagent transcripts as import 2026-09-23-1.
-Uploading: 1 of 12 sessions, 739 bytes of 8 KB                          Uploading: 2 of 12 sessions, 1 KB of 8 KB                               Uploading: 3 of 12 sessions, 2 KB of 8 KB                               Uploading: 4 of 12 sessions, 3 KB of 8 KB                               Uploading: 5 of 12 sessions, 4 KB of 8 KB                               Uploading: 6 of 12 sessions, 4 KB of 8 KB                               Uploading: 7 of 12 sessions, 5 KB of 8 KB                               Uploading: 8 of 12 sessions, 5 KB of 8 KB                               Uploading: 9 of 12 sessions, 5 KB of 8 KB                               Uploading: 10 of 12 sessions, 6 KB of 8 KB                              Uploading: 11 of 12 sessions, 7 KB of 8 KB                              \e[KUploading: 11 of 12 sessions, 7 KB of 8 KB                              \e[KUploading: 12 of 12 sessions, 8 KB of 8 KB                              
+
 Uploaded 12 sessions (8 KB).
 See them with \e[36magent-archive list --imported\e[0m.
 Undo with \e[36magent-archive backfill undo 2026-09-23-1\e[0m.

@@ -16,8 +16,8 @@ $ agent-archive handoff SESSION
 
 ? Write to
 
-> Choose [/Users/alex/src/项目-long-project/handoff-893c1b0e.md]: /Users/alex/handoff.md
-\e[2mOK Write to
+> Choose [/Users/alex/src/项目-long-project/handoff-SESSION.md]: /Users/alex/handoff.md
+\e[2mOK File
    /Users/alex/handoff.md\e[0m
 
 handoff: wrote /Users/alex/handoff.md (BYTES bytes)

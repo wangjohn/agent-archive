@@ -165,9 +165,7 @@ func TestGuidedCommandScreens(t *testing.T) {
 					if strings.Contains(text, "synthetic-private") {
 						t.Fatal("private input leaked into transcript")
 					}
-					if color {
-						text = strings.ReplaceAll(text, "\x1b", `\e`)
-					}
+					text = strings.ReplaceAll(text, "\x1b", `\e`)
 					golden.Check(t, filepath.Join("testdata", "guided-commands", name+".txt"), []byte(trimScreenLineEnds(text)))
 				})
 			}
