@@ -6,7 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"slices"
+	"reflect"
 	"testing"
 	"time"
 
@@ -151,7 +151,7 @@ func TestHistoryPolicyMismatchReplacesDescriptorButKeepsOriginalEvidence(t *test
 				t.Fatal("stricter successor was not persisted", err)
 			}
 			next, found, err := scan.local.LoadPending(scan.id())
-			if err != nil || !found || next.Attempted || next.History.Preparing || !slices.Equal(p.History.Inputs, next.History.Inputs) {
+			if err != nil || !found || next.Attempted || next.History.Preparing || !reflect.DeepEqual(p.History.Inputs, next.History.Inputs) {
 				t.Fatal("original evidence/provenance discarded", err)
 			}
 			for _, stage := range p.History.Sources {

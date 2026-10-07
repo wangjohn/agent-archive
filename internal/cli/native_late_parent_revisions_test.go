@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -23,11 +24,9 @@ import (
 )
 
 func TestNativeLateParentPreservedReadback(t *testing.T) {
-	for _, during := range []bool{false, true} {
-		name := "settled"
-		if during {
-			name = "preparing"
-		}
+	for _, name := range []string{"settled", "preparing", "stronger_policy_during_repair", "stronger_policy_legacy_repair"} {
+		during := name == "preparing"
+		tighten := strings.HasPrefix(name, "stronger_policy_")
 		t.Run(name, func(t *testing.T) {
 			origin := archive.SessionOriginHook
 			canonical := func() string { p, err := filepath.EvalSymlinks(t.TempDir()); must(t, err); return p }
@@ -35,6 +34,9 @@ func TestNativeLateParentPreservedReadback(t *testing.T) {
 			nativeHome := filepath.Join(userHome, ".codex")
 			must(t, os.MkdirAll(filepath.Join(nativeHome, "sessions"), 0700))
 			at := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
+			skill := filepath.Join(project, ".agents", "skills", "synthetic-policy", "SKILL.md")
+			must(t, os.MkdirAll(filepath.Dir(skill), 0700))
+			must(t, os.WriteFile(skill, []byte("---\nname: synthetic-policy\n---\nsynthetic-parent-policy-private-body\n"), 0600))
 			const thread = "11111111-1111-4111-8111-111111111111"
 			const physical = "22222222-2222-4222-8222-222222222222"
 			const parentNative = "44444444-4444-4444-8444-444444444444"
@@ -52,10 +54,10 @@ func TestNativeLateParentPreservedReadback(t *testing.T) {
 			task := []byte(fmt.Sprintf(`{"type":"event_msg","ordinal":1,"timestamp":%q,"payload":{"type":"task_started","turn_id":"11111111-1111-4111-8111-111111111111","root_turn_id":"11111111-1111-4111-8111-111111111111","started_at":%q}}`+"\n", at.Format(time.RFC3339Nano), at.Format(time.RFC3339Nano)))
 			seed := filepath.Join(nativeHome, "sessions", "rollout-2026-10-02T12-00-00-"+thread+".jsonl")
 			prefix := append(meta(nil, 0), task...)
-			must(t, os.WriteFile(seed, append(prefix, []byte(`{"type":"response_item","ordinal":2,"payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"synthetic outgoing-only"}]}}`+"\n")...), 0600))
+			must(t, os.WriteFile(seed, append(prefix, []byte(`{"type":"response_item","ordinal":2,"payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"synthetic outgoing-only DB_PASSWORD=hunter2hunter2"}]}}`+"\n")...), 0600))
 			current := filepath.Join(nativeHome, "sessions", "rollout-2026-10-02T12-00-00-"+physical+".jsonl")
 			raw := meta(map[string]any{"thread_id": thread, "end_ordinal_exclusive": 2, "end_byte_offset": len(prefix)}, 2)
-			must(t, os.WriteFile(current, append(raw, []byte(`{"type":"response_item","ordinal":3,"payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"synthetic current-only"}]}}`+"\n")...), 0600))
+			must(t, os.WriteFile(current, append(raw, []byte(`{"type":"response_item","ordinal":3,"payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"synthetic current-only DB_PASSWORD=hunter2hunter2"}]}}`+"\n")...), 0600))
 			db, err := sql.Open("sqlite", filepath.Join(nativeHome, "state_5.sqlite"))
 			must(t, err)
 			defer func() { _ = db.Close() }()
@@ -70,8 +72,9 @@ func TestNativeLateParentPreservedReadback(t *testing.T) {
 			reg := archive.SessionRegistration{ArchiveSessionID: "admitted-history", NativeSessionID: thread, Harness: archive.Harness{Name: "codex"}, ProjectID: archive.ProjectID(project), ProjectRoot: project, TranscriptPath: seed, SessionStartedAt: at, RegisteredAt: at.Add(time.Second), AdmittedAt: at.Add(time.Second), Origin: origin, NativeChild: true, ParentNativeSessionID: parentNative, NativeSourceHome: nativeHome, DestinationID: cfg.DestinationID()}
 			must(t, local.SaveRegistration(reg))
 			cloud := storagetest.NewMemoryStore()
+			counted := &nativeRepairPutStore{MemoryStore: cloud}
 			env := setupTestEnv(t, home, userHome, newFakeKeychain(), at.Add(2*time.Minute))
-			env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return cloud, nil }
+			env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return counted, nil }
 			published := false
 			var preparing state.PendingPublication
 			for range 12 {
@@ -156,7 +159,11 @@ func TestNativeLateParentPreservedReadback(t *testing.T) {
 			if parentReg.ArchiveSessionID == "" || parentReg.ImportBatch.IsZero() {
 				t.Fatal("parent not independently imported")
 			}
-			for range 8 {
+			policyChanged := false
+			strongerPasses := 0
+			newerToken := ""
+			missingSources := map[string][]byte{}
+			for range 12 {
 				result, err := runOnePass(env, true)
 				must(t, err)
 				for _, issue := range result.Errors {
@@ -164,8 +171,63 @@ func TestNativeLateParentPreservedReadback(t *testing.T) {
 						t.Fatal("late parent maintenance", result)
 					}
 				}
+				if policyChanged && strongerPasses < 2 {
+					strongerPasses++
+					requested, found, err := local.LoadRequest(reg.ArchiveSessionID)
+					must(t, err)
+					if !found || requested.Token != newerToken {
+						t.Fatal("retained successor acknowledged a newer native request", requested)
+					}
+					if strongerPasses == 1 {
+						for _, key := range counted.puts {
+							if strings.HasPrefix(key, "sessions/codex/"+reg.ArchiveSessionID+"/") {
+								t.Fatal("stricter preparation uploaded child publication", key)
+							}
+						}
+					}
+					if strongerPasses == 2 {
+						for path, content := range missingSources {
+							must(t, os.WriteFile(path, content, 0600))
+						}
+					}
+				}
+				if tighten && !policyChanged {
+					pending, found, err := local.LoadPending(reg.ArchiveSessionID)
+					must(t, err)
+					if found && pending.Bundle.ParentSessionID != "" && pending.History.Preparing && pending.History.PrivacyCursor > 0 {
+						if name == "stronger_policy_legacy_repair" {
+							for i := range pending.History.Inputs {
+								pending.History.Inputs[i].ParentSessionID = nil
+							}
+							must(t, local.SavePending(reg.ArchiveSessionID, pending))
+						}
+						for _, path := range []string{seed, current} {
+							content, err := os.ReadFile(path)
+							must(t, err)
+							missingSources[path] = content
+							must(t, os.Remove(path))
+						}
+						must(t, local.SaveRequest(reg.ArchiveSessionID, "synthetic-newer-native-read", env.now().Add(time.Minute)))
+						requested, found, err := local.LoadRequest(reg.ArchiveSessionID)
+						must(t, err)
+						if !found {
+							t.Fatal("newer request not recorded")
+						}
+						newerToken = requested.Token
+						counted.puts = nil
+						local, err = state.Open(home)
+						must(t, err)
+						saved := mustLoadConfig(t, home)
+						saved.SkillEvidence = config.SkillEvidenceNone
+						must(t, config.Save(home, saved))
+						policyChanged = true
+					}
+				}
 			}
 
+			if tighten && !policyChanged {
+				t.Fatal("control never interrupted an actual parent repair cursor")
+			}
 			linked, found, err := local.LoadRegistration(reg.ArchiveSessionID)
 			must(t, err)
 			if !found || linked.ParentSessionID != parentReg.ArchiveSessionID {
@@ -208,6 +270,25 @@ func TestNativeLateParentPreservedReadback(t *testing.T) {
 			if !reflect.DeepEqual(original.NativeRecords, currentBundle.NativeRecords) || !reflect.DeepEqual(original.Ordinals, currentBundle.Ordinals) || !reflect.DeepEqual(original.History.Spans, currentBundle.History.Spans) {
 				t.Fatal("late parent repair changed active native evidence or raw ownership")
 			}
+			verifyPolicy := func(bundle archive.SourceBundle) {
+				t.Helper()
+				encoded, err := json.Marshal(bundle)
+				must(t, err)
+				if bytes.Contains(encoded, []byte("hunter2hunter2")) {
+					t.Fatal("native secret survived")
+				}
+				if tighten {
+					if bytes.Contains(encoded, []byte("synthetic-parent-policy-private-body")) {
+						t.Fatal("stricter policy retained skill body")
+					}
+					for _, item := range bundle.SupplementalEvidence {
+						if item.Kind == archive.EvidenceKindSkillSnapshot || item.Kind == archive.EvidenceKindSkillInventory {
+							t.Fatal("stricter policy incomplete", item.Kind)
+						}
+					}
+				}
+			}
+			verifyPolicy(currentBundle)
 			encoded, err := json.Marshal(currentBundle)
 			must(t, err)
 			if !strings.Contains(string(encoded), "synthetic current-only") || strings.Contains(string(encoded), "synthetic outgoing-only") || metadata.History == nil || len(metadata.History.Preserved) == 0 {
@@ -223,6 +304,7 @@ func TestNativeLateParentPreservedReadback(t *testing.T) {
 			for _, revision := range metadata.History.Preserved {
 				previous, err := reader.LoadRevision(t.Context(), cloud, metadata, revision.RevisionID, reader.Limits{})
 				must(t, err)
+				verifyPolicy(previous)
 				original := originalSources[revision.RevisionID]
 				if !previous.Capture.CapturedAt.Equal(original.Capture.CapturedAt) || !reflect.DeepEqual(original.NativeRecords, previous.NativeRecords) || !reflect.DeepEqual(original.Ordinals, previous.Ordinals) || !reflect.DeepEqual(original.History.Spans, previous.History.Spans) {
 					t.Fatal("late parent repair changed preserved evidence, age or raw ownership")
@@ -248,4 +330,15 @@ func TestNativeLateParentPreservedReadback(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Count actual publication writes without changing bounded object-read ports.
+type nativeRepairPutStore struct {
+	*storagetest.MemoryStore
+	puts []string
+}
+
+func (s *nativeRepairPutStore) Put(ctx context.Context, key string, data []byte) error {
+	s.puts = append(s.puts, key)
+	return s.MemoryStore.Put(ctx, key, data)
 }

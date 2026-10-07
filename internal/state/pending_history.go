@@ -50,6 +50,10 @@ type PendingHistory struct {
 // HistoryInput freezes the capture facts needed to read an earlier reference
 // while the next metadata document is being prepared under newer privacy rules.
 type HistoryInput struct {
+	// ParentSessionID freezes this immutable input's header authority separately
+	// from the output envelope. Nil retains pre-provenance journal compatibility;
+	// a pointer to an empty string positively records an unresolved parent.
+	ParentSessionID     *string                 `json:"parent_session_id,omitempty"`
 	SourceSchemaVersion int                     `json:"source_schema_version,omitempty"`
 	Reference           archive.SourceReference `json:"reference"`
 	RevisionID          string                  `json:"revision_id"`

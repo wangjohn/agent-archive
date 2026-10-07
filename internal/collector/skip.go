@@ -295,6 +295,9 @@ func missingSource(reg archive.SessionRegistration) *sourceState {
 
 func sourceSetVersion(reg archive.SessionRegistration) int {
 	if reg.Harness.Name == "codex" {
+		if reg.NativeChild {
+			return 3 // Revalidate first-task creation evidence from earlier child proofs.
+		}
 		return 2
 	}
 	return 0

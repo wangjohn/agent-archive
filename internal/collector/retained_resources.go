@@ -137,6 +137,9 @@ func (s *sessionScan) refilterRetained(adapter archive.Adapter, bundle archive.S
 }
 
 func (s *sessionScan) refilterRetainedFor(reg archive.SessionRegistration, adapter archive.Adapter, bundle archive.SourceBundle) (archive.SourceBundle, error) {
+	if !retainedParentMatches(reg, bundle) {
+		return archive.SourceBundle{}, errors.New("retained refilter parent identity mismatch")
+	}
 	if reg.Harness.Name != archive.HarnessCodex {
 		return refilterBundle(s.ctx, reg, adapter, bundle)
 	}

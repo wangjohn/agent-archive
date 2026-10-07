@@ -36,6 +36,12 @@ func (s *sessionScan) advanceHistoryPreparation(p *state.PendingPublication) err
 	if err := s.unmarshalRetained(p.MetadataBytes, &metadata); err != nil {
 		return err
 	}
+	for i := range p.History.Inputs {
+		if p.History.Inputs[i].ParentSessionID == nil {
+			parent := metadata.ParentSessionID
+			p.History.Inputs[i].ParentSessionID = &parent
+		}
+	}
 	if p.History.PrivacyCursor < len(p.History.Inputs) {
 		input := p.History.Inputs[p.History.PrivacyCursor]
 		if err := s.prepareHistoryInput(p, &metadata, input); err != nil {
@@ -80,6 +86,9 @@ func (s *sessionScan) advanceHistoryPreparation(p *state.PendingPublication) err
 
 func (s *sessionScan) loadHistoryInput(identity archive.Metadata, input state.HistoryInput) (archive.SourceBundle, error) {
 	selected := identity
+	if input.ParentSessionID != nil {
+		selected.ParentSessionID = *input.ParentSessionID
+	}
 	selected.SchemaVersion = archive.HistoryMetadataSchemaVersion
 	selected.History = &archive.RevisionHistory{CurrentRevision: input.RevisionID}
 	selected.SourceBundle = input.Reference
@@ -91,16 +100,30 @@ func (s *sessionScan) loadHistoryInput(identity archive.Metadata, input state.Hi
 	if err != nil {
 		return archive.SourceBundle{}, err
 	}
-	var bundle archive.SourceBundle
-	if identity.History != nil && input.RevisionID != identity.History.CurrentRevision {
+	preserved := identity.History != nil && input.RevisionID != identity.History.CurrentRevision
+	if preserved {
 		selected.History = &archive.RevisionHistory{CurrentRevision: identity.History.CurrentRevision, Preserved: []archive.RevisionReference{{RevisionID: input.RevisionID, CapturedAt: input.CapturedAt, Source: input.Reference, FilterVersion: input.FilterVersion, SourceSchemaVersion: input.SourceSchemaVersion}}}
 		// Keep the original active pointer separate from the frozen preserved
 		// input so the reader uses that physical revision's producer observations.
 		selected.SourceBundle = identity.SourceBundle
 		selected.CapturedAt = identity.CapturedAt
-		bundle, err = s.decodeRevision(selected, input.RevisionID, data)
-	} else {
-		bundle, err = s.decodeReferenced(selected, data)
+	}
+	decode := func() (archive.SourceBundle, error) {
+		if preserved {
+			return s.decodeRevision(selected, input.RevisionID, data)
+		}
+		return s.decodeReferenced(selected, data)
+	}
+	bundle, err := decode()
+	// Old completed repair journals did not record input parents. Their exact
+	// checksum input can still prove the one allowed unresolved-to-known native
+	// child transition; a different known parent never becomes a candidate.
+	if err != nil && input.ParentSessionID == nil && identity.NativeChild && s.reg.NativeChild && identity.ParentSessionID != "" {
+		selected.ParentSessionID = ""
+		bundle, err = decode()
+		if err == nil && !bundle.NativeChild {
+			err = errors.New("unresolved legacy input is not a native child")
+		}
 	}
 	// Decode owns independent records; compressed input is no longer used.
 	s.releaseRetainedIndex(mark)

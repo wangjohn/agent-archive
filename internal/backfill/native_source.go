@@ -55,7 +55,7 @@ func filterImportSource(ctx context.Context, env Environment, w *work, started t
 	}
 	// Ordinary historical imports retain their established compatibility. Children
 	// independently require their first native own task, including beyond headers.
-	if evidence.Binding.Child && (!evidence.Task.Seen || !evidence.Task.Native || !evidence.Task.LocalExecution || evidence.Task.StartedAt.IsZero()) {
+	if evidence.Binding.Child && !evidence.Task.ValidNativeCreation(evidence.Binding.NativeCreatedAt) {
 		return out, release, agentapi.Wrap(agentapi.Unavailable, errors.New("native own task unavailable"))
 	}
 	if leased, ok := filter.(agentapi.LeasedTranscriptFilter); ok && leased.LeasedFilterFor(filter) {

@@ -74,7 +74,7 @@ func (p *nativeProofPasses) Prove(ctx context.Context, c Candidate) (out Candida
 	}
 	facts, task := evidence.Binding, evidence.Task
 
-	if !task.Seen || !task.Native || !task.LocalExecution || task.StartedAt.IsZero() {
+	if !task.ValidNativeCreation(facts.NativeCreatedAt) {
 		return c, agentapi.Wrap(agentapi.Unavailable, errors.New("native own task unavailable"))
 	}
 	if facts.NativeThreadID != c.NativeSessionID {

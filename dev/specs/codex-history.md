@@ -109,7 +109,13 @@ The global native candidate stream projects the stable thread, root and immediat
 parent from shared Codex metadata. It never creates Claude composite subagent IDs
 or enumerates a native home for each parent. Child root absence remains unknown.
 A validated source snapshot supplies original same-thread creation and the first
-OWN task. The inherited prefix may exceed the bounded catalog header window;
+OWN task. Its timestamp must be no earlier than original native creation, with
+the same one-second tolerance as bounded header admission. A rejected first
+task cannot be replaced by a later native-looking event. Discovery, historical
+import and ongoing capture apply that constraint. Earlier private native-child
+scan proofs are revalidated once; parser, adapter and privacy versions remain
+unchanged by this admission correction. The inherited prefix may
+exceed the bounded catalog header window;
 metadata-only identity/creation/format facts do not authorize capture.
 
 Each native child carries its own origin, admission, destination and import batch.
@@ -128,7 +134,11 @@ positively identified native child evidence; conflicting known parents are refus
 `native_parent_link_pending`. Source-history dependencies remain distinct from
 these conversational relationships. Resolving a parent for an existing revision
 set uses sequential retained maintenance to update every referenced source header
-before the sidecar changes; exact reader identity checks remain in force. Parent deletion does not remove a child's
+before the sidecar changes; exact reader identity checks remain in force. Each
+frozen input retains its original parent header independently of the prepared
+output target, so a policy successor can verify both old and prepared stages.
+Older journals recover that input fact from checksum-matching predecessor
+references, or retain their unchanged header authority. Parent deletion does not remove a child's
 self-contained retained history. Undo uses exact batch membership and orders only
 selected descendants before selected ancestors.
 
