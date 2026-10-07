@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/listingindex"
+	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 	"github.com/wangjohn/agent-archive/internal/testutil/providertest"
 )
@@ -185,5 +186,44 @@ func TestPortableRevisionBudgetIncludesChunkSeparators(t *testing.T) {
 	}
 	if !refused {
 		t.Fatal("unbounded encoded summary accepted")
+	}
+}
+
+func TestPortableWriterRefusesLegacyLongComponentsBeforeStoreWrite(t *testing.T) {
+	store := storagetest.NewMemoryStore()
+	f := providertest.PutRetainedFixture(t, store, 1, time.Now().UTC())
+	key := "sessions/codex/" + f.Registration.ArchiveSessionID + "/metadata.json"
+	r, err := listingindex.NewRevision(key, f.Body, strings.Repeat("e", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, r.Key = historicalRevisionKeys(t, r, f.Body)
+	if _, err := listingindex.ParseRevision(r.Key); err != nil {
+		t.Fatal(err)
+	}
+	if err := listingindex.PutRevision(t.Context(), store, r); err == nil {
+		t.Fatal("new write accepted an unsafe legacy component")
+	}
+	if _, err := store.Get(t.Context(), r.Key); !errors.Is(err, storage.ErrNotFound) {
+		t.Fatal("refused writer allocated historical hint", err)
+	}
+	// Canonical metadata and old hints remain independently readable/deletable.
+	m := f.Metadata
+	longID := strings.Repeat("x", 241)
+	m.SessionID = longID
+	m.SourceBundle.Key = strings.Replace(m.SourceBundle.Key, f.Registration.ArchiveSessionID, longID, 1)
+	for i := range m.History.Preserved {
+		m.History.Preserved[i].Source.Key = strings.Replace(m.History.Preserved[i].Source.Key, f.Registration.ArchiveSessionID, longID, 1)
+	}
+	body, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	longKey := "sessions/codex/" + longID + "/metadata.json"
+	if _, err := listingindex.New(longKey, body); err != nil {
+		t.Fatal("invalid long namespace fixture", err)
+	}
+	if _, err := listingindex.NewRevision(longKey, body, "validator"); err == nil {
+		t.Fatal("writer truncated or accepted long namespace")
 	}
 }

@@ -56,6 +56,24 @@ func NewRevision(key string, data []byte, etag string) (Revision, error) {
 }
 
 func newRevision(key string, data []byte, etag, nonce string) (Revision, error) {
+	r, err := revisionSummary(key, data, etag, nonce)
+	if err != nil {
+		return Revision{}, err
+	}
+	encoded, err := json.Marshal(r)
+	if err != nil {
+		return Revision{}, err
+	}
+	r.Key, err = portableRevisionKey(r.MetadataKey, r.CapturedAt, encoded)
+	if err != nil {
+		return Revision{}, err
+	}
+	return r, nil
+}
+
+// revisionSummary validates canonical metadata independently of new hint write
+// limits, so existing readable single-component hints retain their semantics.
+func revisionSummary(key string, data []byte, etag, nonce string) (Revision, error) {
 	legacy, err := New(key, data)
 	if err != nil {
 		return Revision{}, err
@@ -68,14 +86,6 @@ func newRevision(key string, data []byte, etag, nonce string) (Revision, error) 
 		return Revision{}, err
 	}
 	r := Revision{Nonce: nonce, MetadataKey: key, CapturedAt: m.CapturedAt, ETag: etag, Hash: legacy.Hash, Activity: ActivityTime(m), Parent: m.ParentSessionID, Replay: m.Replay != nil, ProjectID: m.ProjectID, RepoKey: m.RepoKey}
-	encoded, err := json.Marshal(r)
-	if err != nil {
-		return Revision{}, err
-	}
-	r.Key, err = portableRevisionKey(legacy.MetadataKey, legacy.CapturedAt, encoded)
-	if err != nil {
-		return Revision{}, err
-	}
 	return r, nil
 }
 
@@ -185,7 +195,7 @@ func ParseRevision(key string) (Revision, error) {
 // ValidateMetadata checks identity, schema, digest and every discovery field
 // against canonical bytes, preserving this immutable publication identity.
 func (r Revision) ValidateMetadata(data []byte) error {
-	check, err := newRevision(r.MetadataKey, data, r.ETag, r.Nonce)
+	check, err := revisionSummary(r.MetadataKey, data, r.ETag, r.Nonce)
 	if err != nil {
 		return err
 	}
@@ -225,6 +235,17 @@ func PutRevision(ctx context.Context, store storage.ObjectStore, r Revision) err
 	r = parsed
 	if !strings.HasPrefix(r.Key, V3Prefix) {
 		return errors.New("legacy listing revisions are read-only")
+	}
+	encoded, err := json.Marshal(r)
+	if err != nil {
+		return err
+	}
+	portable, err := portableRevisionKey(r.MetadataKey, r.CapturedAt, encoded)
+	if err != nil {
+		return err
+	}
+	if portable != r.Key {
+		return errors.New("listing revision requires portable encoding")
 	}
 	return store.Put(ctx, r.Key, nil)
 }

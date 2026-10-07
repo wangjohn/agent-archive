@@ -44,6 +44,8 @@ follow [Semantic Versioning](https://semver.org/).
 
 - Long discovery summaries use bounded listing-key components so filesystem-backed
   S3-compatible stores can publish and repair them without truncating identity.
+  Existing long listing hints retain canonical metadata read validation independent
+  of the stricter bounds for new hint writes.
 
 - Backfill explains deleted-worktree recovery failures with bounded diagnostic
   counts and retry/review actions while preserving existing skip codes. Dry-run

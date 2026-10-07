@@ -37,6 +37,23 @@ class EvidenceVerifierTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 verifier.verify(path, ['required'])
 
+    def test_later_pass_never_erases_prior_failed_or_skipped_evidence(self):
+        verifier = module('verify-results')
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'events.jsonl'
+            for bad in ('fail', 'skip'):
+                for name in ('required', None):
+                    events = [{'Action': bad, 'Package': 'p'}]
+                    if name:
+                        events[0]['Test'] = name
+                    events.extend((
+                        {'Action': 'pass', 'Package': 'p', 'Test': 'required'},
+                        {'Action': 'pass', 'Package': 'p'},
+                    ))
+                    path.write_text('\n'.join(json.dumps(event) for event in events))
+                    with self.assertRaises(ValueError):
+                        verifier.verify(path, ['required'])
+
     def test_success_requires_actual_named_and_package_pass(self):
         verifier = module('verify-results')
         with tempfile.TemporaryDirectory() as directory:
