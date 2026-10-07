@@ -31,8 +31,10 @@ The rendering state retains only row counts, cursor width, dimensions, output
 generation and an ownership epoch. It never retains entered text.
 
 `ReadAnswer` optionally accepts the **existing** `*bufio.Reader` and returns
-one answer with its existing size limit. For a pairing receiver, use a callback
-that calls `boundedPairingLine(reader, limit)`, preserving its bound. Do not open
+one raw answer, including its newline and EOF, with its existing size limit.
+For a pairing receiver, use a callback that calls
+`boundedPairingAnswer(reader, limit)`, preserving its bound. The trimmed
+`boundedPairingLine` adapter is for legacy consumers outside guided input. Do not open
 another reader, read the file descriptor directly or turn a bounded payload into
 an unbounded `ReadString`. The same buffer supplies legacy line prompts and
 browser hand-back. Empty or whitespace-only EOF is an error and never chooses a default. A final
