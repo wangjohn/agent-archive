@@ -18,7 +18,24 @@ import (
 )
 
 const maintenanceThread = "11111111-1111-4111-8111-111111111111"
+
 const maintenanceRevision = "22222222-2222-4222-8222-222222222222"
+
+type retainedLoadFailure string
+
+type retainedProofFailure string
+
+const (
+	retainedFailureMissing   retainedLoadFailure  = "missing"
+	retainedFailureCorrupt   retainedLoadFailure  = "corrupt"
+	retainedFailureForeign   retainedLoadFailure  = "foreign"
+	retainedFailureCanceled  retainedLoadFailure  = "canceled"
+	retainedFailureOmit      retainedProofFailure = "omit"
+	retainedFailureSwap      retainedProofFailure = "swap"
+	retainedFailureAge       retainedProofFailure = "age"
+	retainedFailureAuthority retainedProofFailure = "authority"
+	retainedFailurePolicy    retainedProofFailure = "policy"
+)
 
 func retainedHistoryFixture(t *testing.T) (*sessionScan, archive.Metadata, []byte) {
 	t.Helper()
@@ -144,23 +161,23 @@ func TestRetainedPrivacyTransformsEveryRevisionWithoutNativeAndPreservesAge(t *t
 }
 
 func TestRetainedRevisionLoaderRejectsMissingCorruptForeignAndCanceledEvidence(t *testing.T) {
-	for _, mode := range []string{"missing", "corrupt", "foreign", "canceled"} {
-		t.Run(mode, func(t *testing.T) {
+	for _, mode := range []retainedLoadFailure{retainedFailureMissing, retainedFailureCorrupt, retainedFailureForeign, retainedFailureCanceled} {
+		t.Run(string(mode), func(t *testing.T) {
 			s, m, _ := retainedHistoryFixture(t)
 			selection := m.History.Preserved[0]
 			ctx := t.Context()
 			switch mode {
-			case "missing":
+			case retainedFailureMissing:
 				if err := s.remote.Delete(ctx, selection.Source.Key); err != nil {
 					t.Fatal(err)
 				}
-			case "corrupt":
+			case retainedFailureCorrupt:
 				if err := s.remote.Put(ctx, selection.Source.Key, []byte("broken")); err != nil {
 					t.Fatal(err)
 				}
-			case "foreign":
+			case retainedFailureForeign:
 				selection.CapturedAt = selection.CapturedAt.Add(time.Minute)
-			case "canceled":
+			case retainedFailureCanceled:
 				c, cancel := context.WithCancel(ctx)
 				cancel()
 				ctx = c
@@ -268,23 +285,23 @@ func TestAdmissionStagePrivacyReceiptReleasesOnlyVerifiedReplacement(t *testing.
 }
 
 func TestRetainedPrivacyProofRejectsIncompleteSwapAgeAndAuthority(t *testing.T) {
-	for _, mode := range []string{"omit", "swap", "age", "authority", "policy"} {
-		t.Run(mode, func(t *testing.T) {
+	for _, mode := range []retainedProofFailure{retainedFailureOmit, retainedFailureSwap, retainedFailureAge, retainedFailureAuthority, retainedFailurePolicy} {
+		t.Run(string(mode), func(t *testing.T) {
 			s, m, raw := retainedHistoryFixture(t)
 			p, err := s.prepareRetainedPrivacy(raw, remoteRetainedLoader(s.remote, m), s.published.PublicationPredecessor(), state.PrivacyCommitted, "", "", "body")
 			if err != nil {
 				t.Fatal(err)
 			}
 			switch mode {
-			case "omit":
+			case retainedFailureOmit:
 				p.Commit.Privacy.Sources = p.Commit.Privacy.Sources[:1]
-			case "swap":
+			case retainedFailureSwap:
 				p.Commit.Privacy.Sources[1].Next = p.Commit.Privacy.Sources[0].Next
-			case "age":
+			case retainedFailureAge:
 				p.Commit.Privacy.Sources[1].Previous.CapturedAt = p.Commit.Privacy.Sources[1].Previous.CapturedAt.Add(time.Minute)
-			case "authority":
+			case retainedFailureAuthority:
 				p.Commit.Privacy.Authority = state.PrivacyStage
-			case "policy":
+			case retainedFailurePolicy:
 				p.Commit.Privacy.Sources[1].NewPolicy.Skill = "body"
 			}
 			if err := p.ValidatePublication(); err == nil {

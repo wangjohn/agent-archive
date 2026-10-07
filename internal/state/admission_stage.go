@@ -251,7 +251,7 @@ func (s *Store) admissionStageUsage() (int64, error) {
 
 func (s *Store) stageQuotaUsage() (int64, error) {
 	var used int64
-	entries, err := os.ReadDir(filepath.Join(s.home, admissionStageDir))
+	entries, err := s.quotaReadDir(filepath.Join(s.home, admissionStageDir))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return 0, err
 	}
@@ -275,7 +275,7 @@ func (s *Store) stageQuotaUsage() (int64, error) {
 		if strings.HasSuffix(entry.Name(), ".json") || seen[entry.Name()] {
 			continue
 		}
-		info, err := entry.Info()
+		info, err := s.quotaLstat(filepath.Join(s.home, admissionStageDir, entry.Name()))
 		if err != nil || !info.Mode().IsRegular() {
 			return 0, ErrAdmissionStageRecovery
 		}
@@ -288,26 +288,26 @@ func (s *Store) stageQuotaUsage() (int64, error) {
 }
 
 func (s *Store) quotaManifestUsage(id string) (int64, error) {
-	path, err := s.stagePath(id, ".json")
+	path, err := s.quotaStagePath(id, ".json")
 	if err != nil {
 		return 0, err
 	}
-	raw, err := readStageFile(path, stageManifestLimit)
+	raw, err := s.quotaReadFile(path, stageManifestLimit)
 	var m AdmissionStage
 	if err != nil || json.Unmarshal(raw, &m) != nil || !validQuotaStage(m, id) {
 		return 0, ErrAdmissionStageRecovery
 	}
 	digest := stageDigest(raw)
-	reg, found, err := s.LoadRegistration(id)
+	reg, found, err := s.quotaRegistration(id)
 	if err != nil || (found && reg.AdmissionStage != "" && (reg.AdmissionStage != digest || CheckAdmissionStageOwnership(reg, m) != nil)) {
 		return 0, ErrAdmissionStageRecovery
 	}
-	released, err := s.AdmissionStageReleased(archive.SessionRegistration{ArchiveSessionID: id, AdmissionStage: digest})
+	released, err := s.quotaStageReleased(archive.SessionRegistration{ArchiveSessionID: id, AdmissionStage: digest})
 	if err != nil {
 		return 0, err
 	}
-	object, _ := s.stagePath(id, ".source.gz")
-	info, err := os.Lstat(object)
+	object, _ := s.quotaStagePath(id, ".source.gz")
+	info, err := s.quotaLstat(object)
 	if released {
 		if errors.Is(err, os.ErrNotExist) {
 			return int64(len(raw)), nil
@@ -325,7 +325,7 @@ func (s *Store) quotaManifestUsage(id string) (int64, error) {
 
 func (s *Store) pendingQuotaUsage() (int64, error) {
 	var used int64
-	pending, err := os.ReadDir(filepath.Join(s.home, "pending"))
+	pending, err := s.quotaReadDir(filepath.Join(s.home, "pending"))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return 0, err
 	}
@@ -334,7 +334,7 @@ func (s *Store) pendingQuotaUsage() (int64, error) {
 		if seenReceipts[e.Name()] {
 			continue
 		}
-		info, err := e.Info()
+		info, err := s.quotaLstat(filepath.Join(s.home, "pending", e.Name()))
 		if err != nil || !info.Mode().IsRegular() {
 			return 0, ErrAdmissionStageRecovery
 		}
@@ -528,11 +528,12 @@ func (s *Store) ReleaseAdmissionStage(reg archive.SessionRegistration, m Admissi
 		}
 	}
 	path, _ := s.stagePath(reg.ArchiveSessionID, ".released")
-	receipt := stageRelease{Digest: reg.AdmissionStage, SourceSHA256: m.SHA256, CoveredToken: coveredToken}
-	if replacement, valid := published.privacyStageSource(reg, m); valid {
-		receipt.ReplacementSHA256 = replacement
-		receipt.SelectingMetadataSHA256 = published.state.Commit.MetadataSHA256
+	replacement, valid := published.privacyStageSource(reg, m)
+	selecting := ""
+	if valid {
+		selecting = published.state.Commit.MetadataSHA256
 	}
+	receipt := stageRelease{Digest: reg.AdmissionStage, SourceSHA256: m.SHA256, CoveredToken: coveredToken, ReplacementSHA256: replacement, SelectingMetadataSHA256: selecting}
 	if err = writeStageRelease(path, receipt); err != nil {
 		return err
 	}

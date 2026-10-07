@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/reader"
 	"os"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -55,12 +56,23 @@ func (s *sessionScan) readPrivacyInputJournal() (privacyInputJournal, []byte, er
 
 func replayAuthority(p state.PendingPublication) *state.PrivacyPendingMutation {
 	c := p.Commit
-	return &state.PrivacyPendingMutation{MetadataBytes: p.MetadataBytes, MetadataSHA256: c.MetadataSHA256, SourceSetSHA256: c.SourceSetSHA256, PolicyContext: c.PolicyContext, Purpose: c.Purpose, Predecessor: c.Predecessor, PredecessorSHA256: c.PredecessorSHA256, Continuity: c.Continuity}
+	var receipt *state.PublicationPrivacyEvidence
+	if c.Privacy != nil {
+		retained := *c.Privacy
+		retained.ReplayInput = nil
+		retained.InputJournalSHA256 = ""
+		receipt = &retained
+	}
+	return &state.PrivacyPendingMutation{MetadataBytes: p.MetadataBytes, MetadataSHA256: c.MetadataSHA256, SourceSetSHA256: c.SourceSetSHA256, PolicyContext: c.PolicyContext, Purpose: c.Purpose, Predecessor: c.Predecessor, PredecessorSHA256: c.PredecessorSHA256, Continuity: c.Continuity, Privacy: receipt}
 }
 
 // originalSourcesRecoverable checks actual immutable evidence, never a checksum assertion.
 func (s *sessionScan) originalSourcesRecoverable(p state.PendingPublication) (bool, error) {
-	if p.AdmissionStage != "" && len(p.Sources) == 1 {
+	live, err := s.unreleasedPrivacyStage(p)
+	if err != nil {
+		return false, err
+	}
+	if live && len(p.Sources) == 1 {
 		m, _, err := s.local.ReadAdmissionStage(s.id(), p.AdmissionStage)
 		if err == nil && state.CheckAdmissionStageOwnership(s.reg, m) == nil && p.SourceSHA256 == m.SHA256 && int64(p.SourceReference().CompressedBytes) == m.Bytes {
 			return true, nil
@@ -73,7 +85,7 @@ func (s *sessionScan) originalSourcesRecoverable(p state.PendingPublication) (bo
 	for i, source := range p.Sources {
 		refs[i] = storage.SourcePublication{Key: source.Reference.Key, SHA256: source.Reference.SHA256, Size: source.Reference.CompressedBytes}
 	}
-	err := storage.VerifySourceSet(s.ctx, s.remote, refs, s.opts.Retry)
+	err = storage.VerifySourceSet(s.ctx, s.remote, refs, s.opts.Retry)
 	if errors.Is(err, storage.ErrNotFound) {
 		return false, nil
 	}
@@ -87,7 +99,7 @@ func (s *sessionScan) preservePrivacyInput(original state.PendingPublication, ne
 	}
 	proof := next.Commit.Privacy
 	proof.ReplayInput = replayAuthority(original)
-	if original.Commit.Privacy != nil && original.Commit.Privacy.ReplayInput != nil {
+	if proof.Authority == state.PrivacyPending && original.Commit.Privacy != nil && original.Commit.Privacy.Authority == state.PrivacyPending && original.Commit.Privacy.ReplayInput != nil {
 		proof.ReplayInput = original.Commit.Privacy.ReplayInput
 	}
 	j, raw, err := s.readPrivacyInputJournal()
@@ -301,4 +313,96 @@ func (s *sessionScan) privacyInputRetiredReferences(p state.PendingPublication) 
 		return nil, err
 	}
 	return m.SourceReferences()
+}
+
+// requireNoOrphanPrivacyInput guards all absent-pending maintenance routes.
+func (s *sessionScan) requireNoOrphanPrivacyInput() error {
+	owed, err := s.local.Outstanding(s.reg, false)
+	if err != nil {
+		return err
+	}
+	if owed.Upload {
+		return errors.New("retained original publication evidence requires successor journal recovery; native substitution is forbidden")
+	}
+	return nil
+}
+
+func (s *sessionScan) oldestPrivacyInput(p state.PendingPublication) (*state.PendingPublication, error) {
+	e := p.Commit.Privacy
+	if e.InputJournalSHA256 != "" {
+		j, raw, err := s.readPrivacyInputJournal()
+		if err != nil {
+			return nil, err
+		}
+		if !privacyJournalMatches(j, raw, p) {
+			return nil, errors.New("oldest privacy input journal differs")
+		}
+		if e.ReplayInput != nil && j.Original.Commit.MetadataSHA256 == e.ReplayInput.MetadataSHA256 && j.Original.Commit.SourceSetSHA256 == e.ReplayInput.SourceSetSHA256 {
+			return &j.Original, nil
+		}
+	}
+	input := e.ReplayInput
+	if input == nil {
+		return nil, errors.New("oldest privacy input authority is missing")
+	}
+	var m archive.Metadata
+	if err := json.Unmarshal(input.MetadataBytes, &m); err != nil {
+		return nil, err
+	}
+	refs, err := m.SourceReferences()
+	if err != nil {
+		return nil, err
+	}
+	overlay := pendingSourceStore{ObjectStore: s.remote, payloads: map[string][]byte{}}
+	live, err := s.unreleasedPrivacyStage(p)
+	if err != nil {
+		return nil, err
+	}
+	if live {
+		manifest, bundle, err := s.local.ReadAdmissionStage(s.id(), p.AdmissionStage)
+		if err != nil {
+			return nil, err
+		}
+		if err := state.CheckAdmissionStageOwnership(s.reg, manifest); err != nil {
+			return nil, err
+		}
+		if manifest.SHA256 == m.SourceBundle.SHA256 {
+			compressed, err := archive.BuildCompressedSource(bundle)
+			if err != nil {
+				return nil, err
+			}
+			overlay.payloads[m.SourceBundle.Key] = compressed.Bytes
+		}
+	}
+	bundle, err := reader.LoadSource(s.ctx, overlay, m, reader.Limits{MaxCompressedBytes: 128 << 20, MaxUncompressedBytes: 128 << 20})
+	if err != nil {
+		return nil, err
+	}
+	skill := ""
+	if input.Privacy != nil && len(input.Privacy.Sources) > 0 {
+		skill = input.Privacy.Sources[0].NewPolicy.Skill
+	}
+	root := &state.PendingPublication{SkillEvidence: skill, Bundle: bundle, MetadataBytes: input.MetadataBytes, MetadataKey: p.MetadataKey, SourceKey: refs[0].Key, SourceSHA256: refs[0].SHA256, SourceSize: refs[0].CompressedBytes, MetadataOnly: true, AdmissionStage: p.AdmissionStage,
+		Commit: &state.PublicationCommit{Version: 1, MetadataSHA256: input.MetadataSHA256, SourceSetSHA256: input.SourceSetSHA256, PolicyContext: input.PolicyContext, Purpose: input.Purpose, Predecessor: input.Predecessor, PredecessorSHA256: input.PredecessorSHA256, Continuity: input.Continuity, Privacy: input.Privacy, DestinationID: p.Commit.DestinationID, AdmissionContext: p.Commit.AdmissionContext}}
+	for _, ref := range refs {
+		root.Sources = append(root.Sources, state.PublicationSource{Reference: ref})
+	}
+
+	if err := root.ValidatePublication(); err != nil {
+		return nil, err
+	}
+	return root, nil
+}
+
+// unreleasedPrivacyStage distinguishes immutable live backing from completed
+// cleanup. Completed stages must resolve originals through verified remote refs.
+func (s *sessionScan) unreleasedPrivacyStage(p state.PendingPublication) (bool, error) {
+	if p.AdmissionStage == "" {
+		return false, nil
+	}
+	if p.AdmissionStage != s.reg.AdmissionStage {
+		return false, state.ErrAdmissionStageRecovery
+	}
+	released, err := s.local.AdmissionStageReleased(s.reg)
+	return !released, err
 }

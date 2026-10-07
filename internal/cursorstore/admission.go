@@ -109,10 +109,16 @@ func admissionSourceFiles(src source) (map[string]os.FileInfo, error) {
 }
 
 func withAdmissionSource(ctx context.Context, src source, allowed map[string]os.FileInfo, opts admissionCopyOptions, copyPinned func(*sql.Conn, *sql.Tx) error) (err error) {
+	root, err := os.OpenRoot(filepath.Dir(src.path))
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, root.Close()) }()
 	vfs, err := newAdmissionVFS(allowed, false, 0)
 	if err != nil {
 		return err
 	}
+	vfs.setSourceRoot(root, filepath.Dir(src.path))
 	defer func() { err = errors.Join(err, vfs.Close()) }()
 	if opts.beforeSourceOpen != nil {
 		opts.beforeSourceOpen()
@@ -123,7 +129,7 @@ func withAdmissionSource(ctx context.Context, src source, allowed map[string]os.
 	}
 	defer func() { err = errors.Join(err, db.Close()) }()
 	db.SetMaxOpenConns(1)
-	conn, err := db.Conn(ctx)
+	conn, err := admissionConnection(ctx, db)
 	if err != nil {
 		return err
 	}
@@ -199,7 +205,9 @@ func runAdmissionBackup(ctx context.Context, conn *sql.Conn, dst string, stats *
 		if !ok {
 			return errors.New("bounded cursor admission backup capability unavailable")
 		}
+		unlock := lockAdmissionRegistry()
 		bk, err := b.NewBackup(dst)
+		unlock()
 		if err != nil {
 			return err
 		}
@@ -301,12 +309,17 @@ func verifyAdmissionDestination(ctx context.Context, dsn string, pageSize, pages
 	}
 	defer func() { err = errors.Join(err, db.Close()) }()
 	db.SetMaxOpenConns(1)
+	conn, err := admissionConnection(ctx, db)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, conn.Close()) }()
 	for _, check := range []struct {
 		pragma   string
 		expected string
 	}{{"journal_mode", "memory"}, {"temp_store", "2"}, {"page_size", strconv.FormatInt(pageSize, 10)}, {"max_page_count", strconv.FormatInt(pages, 10)}} {
 		var got string
-		if err = db.QueryRowContext(ctx, "PRAGMA "+check.pragma).Scan(&got); err != nil {
+		if err = conn.QueryRowContext(ctx, "PRAGMA "+check.pragma).Scan(&got); err != nil {
 			return err
 		}
 		if got != check.expected {
@@ -321,4 +334,10 @@ func admissionImageBytes(pageSize, pages int64) (int64, error) {
 		return 0, agentapi.Wrap(agentapi.Limit, agentapi.ErrRawLimit)
 	}
 	return pages * pageSize, nil
+}
+
+func admissionConnection(ctx context.Context, db *sql.DB) (*sql.Conn, error) {
+	unlock := lockAdmissionRegistry()
+	defer unlock()
+	return db.Conn(ctx)
 }
