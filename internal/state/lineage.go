@@ -161,6 +161,10 @@ func (s *Store) ForgetIdleSession(archiveSessionID string, key agentmeta.Session
 	if removal != nil && agentmeta.Canonical(agentmeta.Builtins(), removal.Harness) != string(key.Agent) {
 		return false, ErrSessionIdentityConflict
 	}
+	original, owned, err := s.LoadRegistration(archiveSessionID)
+	if err != nil {
+		return false, err
+	}
 	packedIDs, err := s.packedRemovalIDs(archiveSessionID)
 	if err != nil {
 		return false, err
@@ -195,6 +199,9 @@ func (s *Store) ForgetIdleSession(archiveSessionID string, key agentmeta.Session
 		if err == nil {
 			err = s.recordPackedExpiry(key, archiveSessionID)
 		}
+		if err == nil && owned {
+			err = s.completeLocalDeletion(original)
+		}
 		return err == nil, err
 	}
 	// None of the session's own records are gone, so the record goes back.
@@ -216,6 +223,9 @@ func (s *Store) forgetIdleLocked(archiveSessionID string, key agentmeta.SessionK
 		return false, err
 	}
 	defer unlock()
+	if keep, err := s.keepNewerDeletionWork(archiveSessionID); err != nil || keep {
+		return false, err
+	}
 	if deferForWork {
 		if work, err := s.hasWork(archiveSessionID); err != nil || work {
 			return false, err
@@ -242,8 +252,36 @@ func (s *Store) forgetIdleLocked(archiveSessionID string, key agentmeta.SessionK
 // work the collector will do.
 func (s *Store) hasWork(archiveSessionID string) (bool, error) {
 	_, requested, err := s.LoadRequest(archiveSessionID)
-	if err != nil || requested {
-		return requested, err
+	if err != nil {
+		return true, err
+	}
+	reg, found, err := s.LoadRegistration(archiveSessionID)
+	if err != nil {
+		return false, err
+	}
+	if found {
+		j, have, err := s.LoadSessionDeletion(reg)
+		if err != nil {
+			return true, err
+		}
+		if have && j.CoveredRequest && j.Phase != DeletionRestored && j.Phase != DeletionRestoring {
+			req, haveReq, err := s.LoadRequest(archiveSessionID)
+			if err != nil {
+				return true, err
+			}
+			if haveReq && req.Token == j.RequestToken {
+				return false, nil
+			}
+		}
+	}
+	if requested {
+		return true, nil
+	}
+	if found && reg.AdmissionStage != "" {
+		released, err := s.AdmissionStageReleased(reg)
+		if err != nil || !released {
+			return true, err
+		}
 	}
 	return s.HasPending(archiveSessionID)
 }
@@ -252,7 +290,7 @@ func (s *Store) hasWork(archiveSessionID string) (bool, error) {
 // gone without the session being forgotten: moved aside because it no longer
 // decoded, or lost to a crash in the middle of ForgetSession. They are the
 // files that say the session may have objects in the bucket.
-var orphanDirs = []string{"published", "pending", "superseded"}
+var orphanDirs = []string{"published", "pending", "superseded", admissionStageDir, "session-deletions"}
 
 // OrphanedSessions lists the sessions that have published, pending, or
 // superseded state but no registration file, other than those in keep (the
@@ -263,7 +301,7 @@ func (s *Store) OrphanedSessions(keep map[string]bool) ([]string, error) {
 	seen := map[string]bool{}
 	var out []string
 	for _, dir := range orphanDirs {
-		ids, err := s.listJSONStems(dir)
+		ids, err := s.orphanStems(dir)
 		if err != nil {
 			return nil, fmt.Errorf("list %s: %w", dir, err)
 		}
@@ -273,7 +311,9 @@ func (s *Store) OrphanedSessions(keep map[string]bool) ([]string, error) {
 			}
 			seen[id] = true
 			if _, err := os.Lstat(s.registrationPath(id)); errors.Is(err, os.ErrNotExist) {
-				out = append(out, id)
+				if !s.terminalDeletion(id) {
+					out = append(out, id)
+				}
 			}
 		}
 	}
@@ -373,6 +413,10 @@ func (s *Store) SessionDir(archiveSessionID string) string {
 // to write for the session, UpdateRegistration reports it forgotten, and
 // RegisterNewSession assigns a fresh archive ID instead of reusing this one.
 func (s *Store) ForgetSession(archiveSessionID string, key agentmeta.SessionKey) error {
+	original, owned, err := s.LoadRegistration(archiveSessionID)
+	if err != nil {
+		return err
+	}
 	packedIDs, err := s.packedRemovalIDs(archiveSessionID)
 	if err != nil {
 		return err
@@ -395,42 +439,17 @@ func (s *Store) ForgetSession(archiveSessionID string, key agentmeta.SessionKey)
 	if err == nil {
 		err = s.recordPackedExpiry(key, archiveSessionID)
 	}
+	if err == nil && owned {
+		err = s.completeLocalDeletion(original)
+	}
 	return err
 }
 
 // forgetSession is ForgetSession; withCandidates false is for a caller that
 // already removed the session's subagent candidates under their locks.
-func (s *Store) forgetSession(archiveSessionID string, key agentmeta.SessionKey, withCandidates bool, revision, retirement *local.Staged) error {
+func (s *Store) forgetSession(archiveSessionID string, key agentmeta.SessionKey, withCandidates bool, revision, retirement *local.Staged) (err error) {
 	if !safeFileComponent(archiveSessionID) {
 		return errors.New("archive session ID is not a safe file name component")
-	}
-	if key.NativeID != "" {
-		if err := key.Validate(); err != nil {
-			return err
-		}
-		reg, found, err := s.LoadRegistration(archiveSessionID)
-		if err != nil {
-			return err
-		}
-		if found {
-			actual, err := registrationKey(reg)
-			if err != nil || actual != key || reg.ArchiveSessionID != archiveSessionID {
-				return ErrSessionIdentityConflict
-			}
-		}
-	}
-	if withCandidates {
-		if err := s.removeSubagentCandidatesForSession(archiveSessionID); err != nil {
-			return fmt.Errorf("remove linked subagent candidates: %w", err)
-		}
-	}
-	if retirement != nil {
-		if err := retirement.Commit(); err != nil {
-			return err
-		}
-		if err := s.indexStep("generation-retired"); err != nil {
-			return err
-		}
 	}
 	paths := []string{
 		s.registrationPath(archiveSessionID),
@@ -441,6 +460,7 @@ func (s *Store) forgetSession(archiveSessionID string, key agentmeta.SessionKey,
 		s.scanSignaturePath(archiveSessionID),
 		s.supersededPath(archiveSessionID),
 		s.refreshSkipPath(archiveSessionID),
+		filepath.Join(s.home, listingRepairDir, archiveSessionID+".json"),
 		filepath.Join(s.SessionDir(archiveSessionID), "verification.json"),
 	}
 
@@ -459,7 +479,37 @@ func (s *Store) forgetSession(archiveSessionID string, key agentmeta.SessionKey,
 	// registration would reuse) must already be gone by then.
 	requestLockPath := filepath.Join(s.home, requestLockName(archiveSessionID))
 	paths = append(paths, requestLockPath)
+	records, err := s.pinDeletionRecords(paths)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, records.close()) }()
+	if err := s.prepareForgetEvidence(archiveSessionID, key); err != nil {
+		return err
+	}
+	if withCandidates {
+		if err := s.removeSubagentCandidatesForSession(archiveSessionID); err != nil {
+			return fmt.Errorf("remove linked subagent candidates: %w", err)
+		}
+	}
+	if err := records.currentHome(); err != nil {
+		return err
+	}
+	if retirement != nil {
+		if err := retirement.Commit(); err != nil {
+			return err
+		}
+		if err := s.indexStep("generation-retired"); err != nil {
+			return err
+		}
+	}
+	if err := records.currentHome(); err != nil {
+		return err
+	}
 	for _, path := range paths {
+		if err := records.currentHome(); err != nil {
+			return err
+		}
 		// Keep registration deletion before index deletion: interrupted expiry
 		// must never leave an admitted owner invisible to bounded lookup.
 		if path == requestLockPath && key.NativeID != "" {
@@ -470,28 +520,82 @@ func (s *Store) forgetSession(archiveSessionID string, key agentmeta.SessionKey,
 				return err
 			}
 		}
-		remove := os.Remove
+		remove := records.remove
 		if path == s.registrationPath(archiveSessionID) {
-			remove = func(path string) error { return s.removeRegistrationWithRevision(path, revision) }
+			remove = func(path string) error { return s.removeRegistrationWithRevision(path, revision, records.remove) }
 		}
 		if err := remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return errors.Join(fmt.Errorf("remove %q: %w", path, err), s.MarkSessionIndexRecoveryNeeded())
 		}
 	}
-	// Drop the per-session directory only once nothing else lives in it;
-	// anything unexpected there is preserved rather than deleted blindly.
-	dir := s.SessionDir(archiveSessionID)
-	entries, err := os.ReadDir(dir)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("read session directory %q: %w", dir, err)
-	}
-	if len(entries) == 0 {
-		if err := os.Remove(dir); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("remove session directory %q: %w", dir, err)
+	// Preserve unexpected entries and refuse symlinked/replaced session parents.
+	return records.removeEmptySession(archiveSessionID)
+}
+
+func (s *Store) prepareForgetEvidence(archiveSessionID string, key agentmeta.SessionKey) error {
+	if key.NativeID != "" {
+		if err := key.Validate(); err != nil {
+			return err
+		}
+		reg, found, err := s.LoadRegistration(archiveSessionID)
+		if err != nil {
+			return err
+		}
+		if found {
+			actual, err := registrationKey(reg)
+			if err != nil || actual != key || reg.ArchiveSessionID != archiveSessionID {
+				return ErrSessionIdentityConflict
+			}
 		}
 	}
+	reg, haveReg, err := s.LoadRegistration(archiveSessionID)
+	if err != nil {
+		return err
+	}
+	if haveReg {
+		if err = s.prepareLocalRemoval(reg); err != nil {
+			return err
+		}
+		if err = s.removeDurableSessionEvidence(reg); err != nil {
+			return err
+		}
+	} else if s.terminalDeletion(archiveSessionID) {
+		return nil
+	} else if owed, err := s.HasDurableSessionEvidence(archiveSessionID); err != nil || owed {
+		if err != nil {
+			return err
+		}
+		return ErrAdmissionStageRecovery
+	}
+
 	return nil
+}
+
+func (s *Store) orphanStems(directory string) ([]string, error) {
+	if directory == admissionStageDir {
+		return s.deletionOrphanStems(directory)
+	}
+	if directory == "session-deletions" {
+		return s.deletionOrphanStems(directory)
+	}
+	return s.listJSONStems(directory)
+}
+
+func (s *Store) keepNewerDeletionWork(id string) (bool, error) {
+	reg, found, err := s.LoadRegistration(id)
+	if err != nil || !found {
+		return false, err
+	}
+	j, found, err := s.LoadSessionDeletion(reg)
+	if err != nil {
+		return true, err
+	}
+	if !found || j.Reason != RemovalReasonRetention || j.Phase == DeletionRestored {
+		return false, nil
+	}
+	req, have, err := s.LoadRequest(id)
+	if err != nil {
+		return true, err
+	}
+	return have && req.Token != j.RequestToken, nil
 }

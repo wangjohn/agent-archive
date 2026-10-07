@@ -79,12 +79,12 @@ func pendingSessionCounts(home string, cfg config.Config) (blocking, waiting int
 	}
 	queued := state.QueuedRequests(reqs)
 	for _, r := range regs {
-		if !cfg.AcceptSession(r) {
-			continue
-		}
 		owed, err := store.Outstanding(r, queued[r.ArchiveSessionID])
 		if err != nil {
 			return 0, 0, err
+		}
+		if !cfg.AcceptSession(r) && !owed.Removal {
+			continue
 		}
 		switch {
 		case !owed.Pending():

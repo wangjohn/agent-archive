@@ -116,6 +116,12 @@ const (
 func (s *sessionScan) id() string { return s.reg.ArchiveSessionID }
 
 func (s *sessionScan) run() (sessionOutcome, error) {
+	if err := s.local.DeletionCaptureAllowed(s.reg, s.req); err != nil {
+		if errors.Is(err, state.ErrRemovalPending) {
+			return outcomeSkipped, nil
+		}
+		return outcomeSkipped, err
+	}
 	if err := s.checkRetainedHistory(); err != nil {
 		return outcomeSkipped, err
 	}

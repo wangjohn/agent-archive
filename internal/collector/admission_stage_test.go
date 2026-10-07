@@ -119,7 +119,8 @@ func TestAdmissionStageCorruptionNeverFallsBackToNative(t *testing.T) {
 
 func TestAdmissionStagePrivacyMakesProgressAtSaturatedQuotaAfterNativeDeletion(t *testing.T) {
 	extra := archive.SupplementalEvidence{Kind: archive.EvidenceKindSkillSnapshot, Provenance: "synthetic", Payload: map[string]any{"name": "synthetic", "body": "synthetic skill body"}}
-	local, reg := stagedPolicyFixtureWithReservation(t, config.SkillEvidenceBody, state.AdmissionStageQuota, extra)
+	// Leave the shared cleanup control allowance inside the unchanged pool.
+	local, reg := stagedPolicyFixtureWithReservation(t, config.SkillEvidenceBody, state.AdmissionStageQuota-(64<<10), extra)
 	manifest, _, err := local.ReadAdmissionStage(reg.ArchiveSessionID, reg.AdmissionStage)
 	if err != nil {
 		t.Fatal(err)

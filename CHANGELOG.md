@@ -37,6 +37,17 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Purge and superseded-source cleanup protect the complete validated current and
+  preserved source set. Whole-session removal journals its selecting metadata
+  before deleting remote or private retained evidence. Interrupted removal keeps
+  recovery work visible; a new hook during ordinary retention can restore its
+  exact complete publication without treating missing metadata as a new session.
+  Explicit removal cannot restore through that path. History admission remains
+  protected pending the remaining enablement gates.
+  Superseded cleanup rechecks the selecting winner after source verification.
+  Local removal pins owning directories and regular records, and surviving
+  scratch receipts or corrupt directories keep removal recovery visible.
+
 - Repeated privacy changes can reuse an admitted stage's reserved capacity while
   publication remains pending, including after restart at the staging quota limit.
   Quota receipts keep the immutable original stage identity across transformations.

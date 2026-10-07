@@ -495,15 +495,12 @@ func unpublishedSessions(home string, cfg config.Config, found bool) (count int,
 	regs, reqs, unreadable := statusState(home, store)
 	queued := state.QueuedRequests(reqs)
 	for _, reg := range regs {
-		if !accept(reg) {
-			continue
-		}
 		owed, err := store.Outstanding(reg, queued[reg.ArchiveSessionID])
 		if err != nil {
 			unreadable = append(unreadable, fmt.Sprintf("Local state of session %s could not be read (%v).", reg.ArchiveSessionID, err))
 			continue
 		}
-		if owed.Pending() {
+		if (accept(reg) || owed.Removal) && owed.Pending() {
 			count++
 		}
 	}

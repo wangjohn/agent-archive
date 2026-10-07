@@ -86,6 +86,8 @@ type Config struct {
 	// MCPServerNames supplies display labels for server IDs in stats.
 	MCPServerNames map[string]string `json:"mcp_server_names,omitempty"`
 
+	// HistoryProtection permanently fences writers that cannot preserve full revision lifecycles.
+	HistoryProtection bool `json:"history_protection,omitempty"`
 	// DurableImportProtection permanently fences writers that cannot preserve admitted evidence.
 	DurableImportProtection bool `json:"durable_import_protection,omitempty"`
 	// GenerationProtection permanently fences writers that cannot freeze archive generations.

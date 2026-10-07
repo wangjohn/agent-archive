@@ -2,6 +2,7 @@ package state
 
 import (
 	"errors"
+
 	"github.com/wangjohn/agent-archive/internal/archive"
 )
 
@@ -30,6 +31,8 @@ import (
 // the configuration no longer publishes is the caller's to leave out (see
 // config.Config.AcceptSession); Outstanding does not read the configuration.
 type Outstanding struct {
+	// Removal is unfinished authorized deletion; it is not an upload.
+	Removal bool
 	// Stage is admitted evidence whose verified publication/release is unfinished.
 	Stage bool
 	// Requested: a hook or import request is queued and not yet
@@ -69,7 +72,7 @@ func (o Outstanding) Owed() bool {
 // OwedAfterScan is Owed without the scan journal: what decides, once a scan
 // has run, whether its journal entry may be cleared.
 func (o Outstanding) OwedAfterScan() bool {
-	return o.Stage || o.Requested || o.Upload || o.RateLimited
+	return o.Removal || o.Stage || o.Requested || o.Upload || o.RateLimited
 }
 
 // DefersExpiry reports work that postpones the session's expiry: a queued
@@ -94,7 +97,7 @@ func (o Outstanding) Pending() bool {
 // SyncCanFinish reports a pending session a sync could finish: every pending
 // one except a session only waiting for its transcript.
 func (o Outstanding) SyncCanFinish() bool {
-	return o.Pending() && !o.WaitingForTranscript
+	return o.Pending() && (o.Removal || !o.WaitingForTranscript)
 }
 
 // QueuedRequests is the set of sessions with a queued request, the
@@ -146,7 +149,13 @@ func (s *Store) outstanding(reg archive.SessionRegistration, requested bool, sum
 		}
 		stage = !released
 	}
+	j, haveDeletion, err := s.LoadSessionDeletion(reg)
+	if err != nil {
+		return Outstanding{Removal: true}, err
+	}
+	removal := haveDeletion && !j.LocalRemoved && j.Phase != DeletionRestored && j.Phase != DeletionRestoring
 	o := Outstanding{
+		Removal:       removal,
 		Stage:         stage,
 		Requested:     requested,
 		Scan:          scan,

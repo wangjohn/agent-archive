@@ -110,9 +110,12 @@ func Inventory(ctx context.Context, store storage.ObjectStore, destinationID, bu
 		if path.Dir(meta.SourceBundle.Key) != path.Dir(object.Key) || !validSourceKey(meta.SourceBundle.Key) {
 			return Plan{}, fmt.Errorf("metadata %q has an invalid source reference", object.Key)
 		}
-		current[meta.SourceBundle.Key] = true
-		if !listedSources[meta.SourceBundle.Key] {
-			return Plan{}, fmt.Errorf("metadata %q references a missing source", object.Key)
+		refs, err := checkedReferences(ctx, store, meta, object.Key, listedSources)
+		if err != nil {
+			return Plan{}, err
+		}
+		for _, ref := range refs {
+			current[ref.Key] = true
 		}
 		if numericOlder(meta.FilterVersion, before) {
 			old = append(old, CurrentOldSession{MetadataKey: object.Key, SourceKey: meta.SourceBundle.Key, FilterVersion: meta.FilterVersion})
@@ -330,11 +333,14 @@ func applyNext(ctx context.Context, store storage.ObjectStore, plan Plan, report
 		if path.Dir(meta.SourceBundle.Key) != path.Dir(objects[i].Key) || !validSourceKey(meta.SourceBundle.Key) {
 			return fmt.Errorf("metadata %q has an invalid source reference", objects[i].Key)
 		}
-		if !listedSources[meta.SourceBundle.Key] {
-			return fmt.Errorf("metadata %q references a missing source", objects[i].Key)
+		refs, err := checkedReferences(ctx, store, meta, objects[i].Key, listedSources)
+		if err != nil {
+			return err
 		}
-		if meta.SourceBundle.Key == key {
-			return fmt.Errorf("%q is now a current source", key)
+		for _, ref := range refs {
+			if ref.Key == key {
+				return fmt.Errorf("%q is now a referenced source", key)
+			}
 		}
 	}
 	if listed != nil && (listed.Size != candidate.Size || listed.ETag != candidate.ETag) {
@@ -361,4 +367,28 @@ func findCandidate(candidates []Candidate, key string) (Candidate, bool) {
 		}
 	}
 	return Candidate{}, false
+}
+
+// checkedReferences protects every selecting reference, including preserved revisions.
+func checkedReferences(ctx context.Context, store storage.ObjectStore, meta archive.Metadata, metadataKey string, listed map[string]bool) ([]archive.SourceReference, error) {
+	refs, err := meta.SourceReferences()
+	if err != nil {
+		return nil, fmt.Errorf("invalid selecting metadata %q: %w", metadataKey, err)
+	}
+	for _, ref := range refs {
+		if path.Dir(ref.Key) != path.Dir(metadataKey) || !validSourceKey(ref.Key) {
+			return nil, fmt.Errorf("metadata %q has an invalid source reference", metadataKey)
+		}
+		if !listed[ref.Key] {
+			return nil, fmt.Errorf("metadata %q references a missing source", metadataKey)
+		}
+	}
+	sources := make([]storage.SourcePublication, len(refs))
+	for i, ref := range refs {
+		sources[i] = storage.SourcePublication{Key: ref.Key, SHA256: ref.SHA256, Size: ref.CompressedBytes}
+	}
+	if err := storage.VerifySourceSet(ctx, store, sources, storage.RetryPolicy{}); err != nil {
+		return nil, fmt.Errorf("verify selecting metadata %q: %w", metadataKey, err)
+	}
+	return refs, nil
 }

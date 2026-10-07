@@ -29,7 +29,7 @@ func TestPurgePlanAndApplyRequirePauseAndKeepCurrentSource(t *testing.T) {
 	const id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	current := "sessions/codex/" + id + "/source." + strings.Repeat("a", 64) + ".jsonl.gz"
 	orphan := "sessions/codex/" + id + "/source." + strings.Repeat("b", 64) + ".jsonl.gz"
-	meta := archive.Metadata{SchemaVersion: archive.MetadataSchemaVersion, SourceBundle: archive.SourceReference{Key: current, SHA256: strings.Repeat("a", 64)}, FilterVersion: "9"}
+	meta := archive.Metadata{SchemaVersion: archive.MetadataSchemaVersion, SourceBundle: archive.SourceReference{Key: current, SHA256: storage.SHA256Hex([]byte("current")), CompressedBytes: len("current")}, FilterVersion: "9"}
 	data, err := json.Marshal(meta)
 	if err != nil {
 		t.Fatal(err)
