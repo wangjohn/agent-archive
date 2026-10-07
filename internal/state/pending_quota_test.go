@@ -22,7 +22,7 @@ func saturatedStagePending(t *testing.T) (*Store, archive.SessionRegistration, P
 	if err != nil {
 		t.Fatal(err)
 	}
-	m.ReservedBytes = AdmissionStageQuota
+	m.ReservedBytes = AdmissionStageQuota - deletionControlAllowance
 	encoded, err := json.Marshal(m)
 	if err != nil {
 		t.Fatal(err)

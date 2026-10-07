@@ -46,6 +46,14 @@ follow [Semantic Versioning](https://semver.org/).
   counts and retry/review actions while preserving existing skip codes. Dry-run
   JSON adds optional diagnostics and physical candidate inventory counts;
   logical history accounting remains pending.
+- Purge and superseded-source cleanup protect the complete validated current and
+  preserved source set. Whole-session removal journals its selecting metadata
+  before deleting remote or private retained evidence. Interrupted removal keeps
+  recovery work visible; a new hook during ordinary retention can restore its
+  exact complete publication without treating missing metadata as a new session.
+  Explicit removal cannot restore through that path. History admission remains
+  protected pending the remaining enablement gates.
+
 - Pending privacy maintenance keeps the oldest authenticated uncommitted content
   available across policy changes. A policy increase can refilter that retained
   evidence after an intermediate reduction, without reopening native input.

@@ -73,7 +73,7 @@ func underlyingSkillEvidence(mode SkillEvidence) SkillEvidence {
 }
 
 func prepareDiscoveryConfig(c *Config) error {
-	if c.SchemaVersion > 5 || (c.SchemaVersion == 5 && !c.DurableImportProtection) || (c.SchemaVersion == 4 && !c.GenerationProtection) || (c.SchemaVersion == 3 && c.CodexCapture == nil) {
+	if c.SchemaVersion > 6 || (c.SchemaVersion == 6 && !c.HistoryProtection) || (c.SchemaVersion == 5 && !c.DurableImportProtection) || (c.SchemaVersion == 4 && !c.GenerationProtection) || (c.SchemaVersion == 3 && c.CodexCapture == nil) {
 		return errors.New("configuration requires a newer agent-archive writer")
 	}
 	if c.Discovery != nil {
@@ -105,10 +105,32 @@ func prepareDiscoveryConfig(c *Config) error {
 	if c.DurableImportProtection {
 		c.SchemaVersion = 5
 	}
+	if c.HistoryProtection {
+		c.SchemaVersion = 6
+	}
 	return validateDiscoveryConfig(*c)
 }
 
 func validateDiscoveryConfig(c Config) error {
+	if c.HistoryProtection {
+		if c.SchemaVersion != 6 {
+			return errors.New("history protection requires schema 6")
+		}
+		c.HistoryProtection = false
+		c.SchemaVersion = 1
+		if c.Discovery != nil {
+			c.SchemaVersion = 2
+		}
+		if c.CodexCapture != nil {
+			c.SchemaVersion = 3
+		}
+		if c.GenerationProtection {
+			c.SchemaVersion = 4
+		}
+		if c.DurableImportProtection {
+			c.SchemaVersion = 5
+		}
+	}
 	if c.DurableImportProtection {
 		if c.SchemaVersion != 5 {
 			return errors.New("durable import protection requires schema 5")

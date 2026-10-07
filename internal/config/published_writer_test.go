@@ -33,14 +33,28 @@ func publishedWriterBinary(t *testing.T) string {
 		t.Fatal(err)
 	}
 	digest := sha256.Sum256(raw)
+	release := os.Getenv("AGENT_ARCHIVE_OLD_RELEASE")
+	if release == "" {
+		release = "v0.1.1"
+	}
 	want := ""
 	switch runtime.GOARCH {
 	case "amd64":
+		if release == "v0.1.0" {
+			want = "43fbe6d8d65d2d32ebad66d55d116e10d517c40908032297bd5977beb45ab5ad"
+			break
+		}
 		want = "c8fff68b623a7e0143503adce2d83c6494d7efa55fa0724eb4f76ae54c66255e"
 	case "arm64":
 		want = "09f08430627cc0c867afd41ce7eb2c3e61859b640dfb2994323577847eee06e6"
 	default:
 		t.Fatal("unsupported published Darwin architecture")
+	}
+	if release != "v0.1.0" && release != "v0.1.1" {
+		t.Fatal("unsupported release")
+	}
+	if release == "v0.1.0" && runtime.GOARCH != "amd64" {
+		t.Fatal("v0.1.0 fixture is pinned only on amd64")
 	}
 	if hex.EncodeToString(digest[:]) != want {
 		t.Fatal("published binary checksum differs from pinned v0.1.1 asset")
@@ -139,6 +153,35 @@ func TestPublishedWriterRefusesProtectedConfiguration(t *testing.T) {
 		after, err := os.ReadFile(filepath.Join(home, "config.json"))
 		if err != nil || !bytes.Equal(before, after) {
 			t.Fatalf("published writer changed protected config (enabled=%t): %v", enabled, err)
+		}
+	}
+}
+
+func TestPublishedWriterRefusesHistoryAndStagedConfiguration(t *testing.T) {
+	root, pause := publishedPauseFixture(t, publishedWriterBinary(t))
+	for _, history := range []bool{false, true} {
+		home := filepath.Join(root, "staged")
+		if history {
+			home = filepath.Join(root, "history")
+		}
+		if err := os.Mkdir(home, 0700); err != nil {
+			t.Fatal(err)
+		}
+		cfg := Config{MachineID: "synthetic", Archive: archive.Config{Enabled: true}, DurableImportProtection: true, HistoryProtection: history, GenerationProtection: true}
+		if err := Save(home, cfg); err != nil {
+			t.Fatal(err)
+		}
+		before, err := os.ReadFile(filepath.Join(home, "config.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, err := pause(home)
+		if err == nil || !strings.Contains(string(out), "cannot unmarshal object") {
+			t.Fatal("actual protected writer accepted", string(out), err)
+		}
+		after, err := os.ReadFile(filepath.Join(home, "config.json"))
+		if err != nil || !bytes.Equal(before, after) {
+			t.Fatal("actual old writer changed protected config", err)
 		}
 	}
 }

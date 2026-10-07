@@ -161,6 +161,10 @@ func (s *Store) ForgetIdleSession(archiveSessionID string, key agentmeta.Session
 	if removal != nil && agentmeta.Canonical(agentmeta.Builtins(), removal.Harness) != string(key.Agent) {
 		return false, ErrSessionIdentityConflict
 	}
+	original, owned, err := s.LoadRegistration(archiveSessionID)
+	if err != nil {
+		return false, err
+	}
 	packedIDs, err := s.packedRemovalIDs(archiveSessionID)
 	if err != nil {
 		return false, err
@@ -195,6 +199,9 @@ func (s *Store) ForgetIdleSession(archiveSessionID string, key agentmeta.Session
 		if err == nil {
 			err = s.recordPackedExpiry(key, archiveSessionID)
 		}
+		if err == nil && owned {
+			err = s.completeLocalDeletion(original)
+		}
 		return err == nil, err
 	}
 	// None of the session's own records are gone, so the record goes back.
@@ -216,6 +223,9 @@ func (s *Store) forgetIdleLocked(archiveSessionID string, key agentmeta.SessionK
 		return false, err
 	}
 	defer unlock()
+	if keep, err := s.keepNewerDeletionWork(archiveSessionID); err != nil || keep {
+		return false, err
+	}
 	if deferForWork {
 		if work, err := s.hasWork(archiveSessionID); err != nil || work {
 			return false, err
@@ -242,8 +252,36 @@ func (s *Store) forgetIdleLocked(archiveSessionID string, key agentmeta.SessionK
 // work the collector will do.
 func (s *Store) hasWork(archiveSessionID string) (bool, error) {
 	_, requested, err := s.LoadRequest(archiveSessionID)
-	if err != nil || requested {
-		return requested, err
+	if err != nil {
+		return true, err
+	}
+	reg, found, err := s.LoadRegistration(archiveSessionID)
+	if err != nil {
+		return false, err
+	}
+	if found {
+		j, have, err := s.LoadSessionDeletion(reg)
+		if err != nil {
+			return true, err
+		}
+		if have && j.CoveredRequest && j.Phase != "restored" && j.Phase != "restoring" {
+			req, haveReq, err := s.LoadRequest(archiveSessionID)
+			if err != nil {
+				return true, err
+			}
+			if haveReq && req.Token == j.RequestToken {
+				return false, nil
+			}
+		}
+	}
+	if requested {
+		return true, nil
+	}
+	if found && reg.AdmissionStage != "" {
+		released, err := s.AdmissionStageReleased(reg)
+		if err != nil || !released {
+			return true, err
+		}
 	}
 	return s.HasPending(archiveSessionID)
 }
@@ -252,7 +290,7 @@ func (s *Store) hasWork(archiveSessionID string) (bool, error) {
 // gone without the session being forgotten: moved aside because it no longer
 // decoded, or lost to a crash in the middle of ForgetSession. They are the
 // files that say the session may have objects in the bucket.
-var orphanDirs = []string{"published", "pending", "superseded"}
+var orphanDirs = []string{"published", "pending", "superseded", admissionStageDir, "session-deletions"}
 
 // OrphanedSessions lists the sessions that have published, pending, or
 // superseded state but no registration file, other than those in keep (the
@@ -263,7 +301,7 @@ func (s *Store) OrphanedSessions(keep map[string]bool) ([]string, error) {
 	seen := map[string]bool{}
 	var out []string
 	for _, dir := range orphanDirs {
-		ids, err := s.listJSONStems(dir)
+		ids, err := s.orphanStems(dir)
 		if err != nil {
 			return nil, fmt.Errorf("list %s: %w", dir, err)
 		}
@@ -273,7 +311,9 @@ func (s *Store) OrphanedSessions(keep map[string]bool) ([]string, error) {
 			}
 			seen[id] = true
 			if _, err := os.Lstat(s.registrationPath(id)); errors.Is(err, os.ErrNotExist) {
-				out = append(out, id)
+				if !s.terminalDeletion(id) {
+					out = append(out, id)
+				}
 			}
 		}
 	}
@@ -373,6 +413,10 @@ func (s *Store) SessionDir(archiveSessionID string) string {
 // to write for the session, UpdateRegistration reports it forgotten, and
 // RegisterNewSession assigns a fresh archive ID instead of reusing this one.
 func (s *Store) ForgetSession(archiveSessionID string, key agentmeta.SessionKey) error {
+	original, owned, err := s.LoadRegistration(archiveSessionID)
+	if err != nil {
+		return err
+	}
 	packedIDs, err := s.packedRemovalIDs(archiveSessionID)
 	if err != nil {
 		return err
@@ -395,6 +439,9 @@ func (s *Store) ForgetSession(archiveSessionID string, key agentmeta.SessionKey)
 	if err == nil {
 		err = s.recordPackedExpiry(key, archiveSessionID)
 	}
+	if err == nil && owned {
+		err = s.completeLocalDeletion(original)
+	}
 	return err
 }
 
@@ -404,20 +451,8 @@ func (s *Store) forgetSession(archiveSessionID string, key agentmeta.SessionKey,
 	if !safeFileComponent(archiveSessionID) {
 		return errors.New("archive session ID is not a safe file name component")
 	}
-	if key.NativeID != "" {
-		if err := key.Validate(); err != nil {
-			return err
-		}
-		reg, found, err := s.LoadRegistration(archiveSessionID)
-		if err != nil {
-			return err
-		}
-		if found {
-			actual, err := registrationKey(reg)
-			if err != nil || actual != key || reg.ArchiveSessionID != archiveSessionID {
-				return ErrSessionIdentityConflict
-			}
-		}
+	if err := s.prepareForgetEvidence(archiveSessionID, key); err != nil {
+		return err
 	}
 	if withCandidates {
 		if err := s.removeSubagentCandidatesForSession(archiveSessionID); err != nil {
@@ -494,4 +529,69 @@ func (s *Store) forgetSession(archiveSessionID string, key agentmeta.SessionKey,
 		}
 	}
 	return nil
+}
+
+func (s *Store) prepareForgetEvidence(archiveSessionID string, key agentmeta.SessionKey) error {
+	if key.NativeID != "" {
+		if err := key.Validate(); err != nil {
+			return err
+		}
+		reg, found, err := s.LoadRegistration(archiveSessionID)
+		if err != nil {
+			return err
+		}
+		if found {
+			actual, err := registrationKey(reg)
+			if err != nil || actual != key || reg.ArchiveSessionID != archiveSessionID {
+				return ErrSessionIdentityConflict
+			}
+		}
+	}
+	reg, haveReg, err := s.LoadRegistration(archiveSessionID)
+	if err != nil {
+		return err
+	}
+	if haveReg {
+		if err = s.prepareLocalRemoval(reg); err != nil {
+			return err
+		}
+		if err = s.removeDurableSessionEvidence(reg); err != nil {
+			return err
+		}
+	} else if s.terminalDeletion(archiveSessionID) {
+		return nil
+	} else if owed, err := s.HasDurableSessionEvidence(archiveSessionID); err != nil || owed {
+		if err != nil {
+			return err
+		}
+		return ErrAdmissionStageRecovery
+	}
+
+	return nil
+}
+
+func (s *Store) orphanStems(directory string) ([]string, error) {
+	if directory == admissionStageDir || directory == "session-deletions" {
+		return s.deletionOrphanStems(directory)
+	}
+	return s.listJSONStems(directory)
+}
+
+func (s *Store) keepNewerDeletionWork(id string) (bool, error) {
+	reg, found, err := s.LoadRegistration(id)
+	if err != nil || !found {
+		return false, err
+	}
+	j, found, err := s.LoadSessionDeletion(reg)
+	if err != nil {
+		return true, err
+	}
+	if !found || j.Reason != RemovalReasonRetention || j.Phase == "restored" {
+		return false, nil
+	}
+	req, have, err := s.LoadRequest(id)
+	if err != nil {
+		return true, err
+	}
+	return have && req.Token != j.RequestToken, nil
 }

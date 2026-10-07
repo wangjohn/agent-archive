@@ -161,6 +161,18 @@ func privacyPublicationVerified(home string, cfg config.Config, store *state.Sto
 	if err != nil {
 		return false
 	}
+	var committed archive.Metadata
+	if json.Unmarshal(published.Metadata(), &committed) != nil {
+		return false
+	}
+	actual, _ := json.Marshal(current)
+	expected, _ := json.Marshal(committed)
+	if string(actual) != string(expected) {
+		return false
+	}
+	if _, err := published.CommittedSources(); err != nil {
+		return false
+	}
 	_, publishedAt, found := published.LastPublished()
 	reference, recorded := published.LastPublishedSource()
 	return found && recorded && !publishedAt.IsZero() && record.PublishedAt.Equal(publishedAt) && reference == current.SourceBundle

@@ -289,6 +289,9 @@ func finishPassWithRetention(home string, env Env, cfg config.Config, localStore
 		addStatusProblem(localStore, sweepErr.Error())
 		return result, errors.Join(verifyErr, sweepErr)
 	}
+	if err := reconcileCompletedRemoval(localStore, cfg, &result, sweepResult, summary); err != nil {
+		return result, errors.Join(verifyErr, fmt.Errorf("record completed removal: %w", err))
+	}
 	if len(sweepResult.Errors) > 0 {
 		recordRetentionErrors(localStore, &result, sweepResult, summary)
 	}
@@ -562,4 +565,43 @@ func pendingCodexRollouts(discovery *config.DiscoveryConfig) func() agentapi.Cod
 		}
 		return catalog
 	}
+}
+
+func reconcileCompletedRemoval(localStore *state.Store, cfg config.Config, result *collector.Result, sweep retention.Result, summary string) error {
+	if len(sweep.DeletedSessions)+len(sweep.PrunedSessions) == 0 {
+		return nil
+	}
+	for _, ids := range [][]string{sweep.DeletedSessions, sweep.PrunedSessions} {
+		for _, id := range ids {
+			delete(result.Errors, id)
+		}
+	}
+	if _, err := recordSessionIssues(localStore, result.Errors, subagentLookup(localStore), summary); err != nil {
+		return err
+	}
+	regs, err := localStore.LoadRegistrations()
+	if err != nil {
+		return err
+	}
+	reqs, err := localStore.LoadRequests()
+	if err != nil {
+		return err
+	}
+	queued := state.QueuedRequests(reqs)
+	pending := 0
+	for _, reg := range regs {
+		owed, err := localStore.Outstanding(reg, queued[reg.ArchiveSessionID])
+		if err != nil {
+			return err
+		}
+		if (cfg.AcceptSession(reg) || owed.Removal) && owed.Pending() {
+			pending++
+		}
+	}
+	status, err := localStore.LoadStatus()
+	if err != nil {
+		return err
+	}
+	status.PendingCount = pending
+	return localStore.SaveStatus(status)
 }

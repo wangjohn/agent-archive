@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -76,34 +77,38 @@ func TestHookRequestWrittenMidExpiryRetainsPendingAfterRemoteDeletion(t *testing
 		t.Fatalf("the hook's request was lost: %#v %v", requests, err)
 	}
 
-	// A known-present predecessor becoming absent is a conflict, not permission
-	// to infer first publication. Keep the complete filtered snapshot and request
-	// for deletion-journal reconciliation in the maintenance milestone.
-	resultAfter := collect(t, local, memory, expiry)
-	if !errors.Is(resultAfter.Errors["s1"], storage.ErrPublicationConflict) || len(resultAfter.Published) != 0 {
-		t.Fatal("deleted predecessor was guessed absent", resultAfter.Errors)
+	// Freeze a complete filtered publication, then fail upload and lose the native
+	// file. Restart may use only the exact journaled retention transition.
+	failing := &refuseRestorationPut{ObjectStore: memory}
+	resultAfter := collect(t, local, failing, expiry)
+	if resultAfter.Errors["s1"] == nil {
+		t.Fatal("injected upload failure was ignored")
 	}
 	pending, found, err := local.LoadPending("s1")
-	if err != nil || !found || pending.Commit == nil || pending.Commit.Predecessor != state.PredecessorPresent {
-		t.Fatal("publication evidence lost", found, err)
+	if err != nil || !found || pending.Commit == nil || pending.Commit.Predecessor != state.PredecessorAbsent {
+		t.Fatal("authorized restoration not retained", found, err)
 	}
-	if !pending.Bundle.Capture.CapturedAt.Equal(expiry) {
-		t.Fatal("new evidence lost its capture time")
+	if err = os.Remove(dir + "/s1.jsonl"); err != nil {
+		t.Fatal(err)
 	}
-	kept := false
-	for _, item := range pending.Bundle.SupplementalEvidence {
-		if item.Kind == archive.EvidenceKindFinalResponse && item.Payload["turn_id"] == "late-turn" {
-			kept = true
-		}
+	restarted, err := state.Open(local.Home())
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !kept {
-		t.Fatal("mid-expiry final response lost")
+	completed := collect(t, restarted, memory, expiry.Add(time.Minute))
+	if len(completed.Errors) != 0 || len(completed.Published) != 1 {
+		t.Fatal("durable retention restoration failed", completed.Errors)
 	}
-	if _, found, err := local.LoadRequest("s1"); err != nil || !found {
-		t.Fatal("uncommitted request acknowledged", found, err)
+	m := fetchMetadata(t, memory, "s1")
+	if !m.CapturedAt.Equal(expiry) {
+		t.Fatal("restoration lost evidence age")
 	}
-	if _, err := memory.Get(t.Context(), "sessions/codex/s1/metadata.json"); !errors.Is(err, storage.ErrNotFound) {
-		t.Fatal("sidecar republished without authority", err)
+	if _, found, err = restarted.LoadRequest("s1"); err != nil || found {
+		t.Fatal("covered request not completed", found, err)
+	}
+	j, found, err := restarted.LoadSessionDeletion(registration("s1", dir+"/s1.jsonl"))
+	if err != nil || !found || j.Phase != "restored" {
+		t.Fatal(j, err)
 	}
 
 }
@@ -314,5 +319,88 @@ func TestQueuedRequestKeepsACursorDatabaseSessionPastRetention(t *testing.T) {
 	}
 	if _, found, _ := local.LoadRegistration(reg.ArchiveSessionID); !found {
 		t.Fatal("unpublished work on a Cursor database session was deleted")
+	}
+}
+
+type refuseRestorationPut struct{ storage.ObjectStore }
+
+func (s *refuseRestorationPut) Put(context.Context, string, []byte) error {
+	return errors.New("synthetic offline")
+}
+
+func TestRetentionRestorationLostJournalAfterResealNeverInventsAbsence(t *testing.T) {
+	dir := t.TempDir()
+	local := newTestStore(t)
+	remote := storagetest.NewMemoryStore()
+	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
+	path := writeTranscript(t, dir, "lost.jsonl", codexTranscript)
+	reg := registration("lost", path)
+	if err := local.SaveRegistration(reg); err != nil {
+		t.Fatal(err)
+	}
+	collect(t, local, remote, t0)
+	expiry := t0.Add(91 * 24 * time.Hour)
+	store := &hookDuringDeleteStore{ObjectStore: remote, hook: func() {
+		if err := local.SaveRequest("lost", "stop", expiry, finalResponse(t, expiry)); err != nil {
+			t.Fatal(err)
+		}
+	}}
+	result := sweep(t, local, store, expiry, Options{})
+	if len(result.Errors) != 0 {
+		t.Fatal(result.Errors)
+	}
+	attempted := collect(t, local, &refuseRestorationPut{ObjectStore: remote}, expiry)
+	if attempted.Errors["lost"] == nil {
+		t.Fatal("offline fixture did not fail")
+	}
+	pending, found, err := local.LoadPending("lost")
+	if err != nil || !found || pending.Commit.Retention == nil {
+		t.Fatal("restoration authority missing", found, err)
+	}
+	if err = os.Remove(local.Home() + "/session-deletions/lost.json"); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := state.Open(local.Home())
+	if err != nil {
+		t.Fatal(err)
+	}
+	replay := collect(t, restarted, remote, expiry.Add(time.Minute))
+	if !errors.Is(replay.Errors["lost"], state.ErrAdmissionStageRecovery) || len(replay.Published) != 0 {
+		t.Fatal("lost journal became first-publication authority", replay.Errors)
+	}
+	if _, found, err = restarted.LoadPending("lost"); err != nil || !found {
+		t.Fatal("lost journal forgot durable bytes", found, err)
+	}
+}
+
+func TestExplicitRemovalRefusesRetainedOrNativeRestoration(t *testing.T) {
+	local := newTestStore(t)
+	remote := storagetest.NewMemoryStore()
+	dir := t.TempDir()
+	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
+	reg := registration("removed", writeTranscript(t, dir, "removed.jsonl", codexTranscript))
+	if err := local.SaveRegistration(reg); err != nil {
+		t.Fatal(err)
+	}
+	collect(t, local, remote, t0)
+	if err := DeleteOwnedSession(t.Context(), local, remote, reg, state.RemovalReasonUndo, t0.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := local.SaveRequest(reg.ArchiveSessionID, "stop", t0.Add(2*time.Hour), finalResponse(t, t0.Add(2*time.Hour))); err != nil {
+		t.Fatal(err)
+	}
+	replay := collect(t, local, remote, t0.Add(2*time.Hour))
+	if len(replay.Errors) != 0 || len(replay.Published) != 0 {
+		t.Fatal("explicit removal routed as publication", replay.Errors)
+	}
+	owed, err := local.Outstanding(reg, true)
+	if err != nil || !owed.Removal || owed.Upload || !owed.Pending() {
+		t.Fatal("removal mislabeled as upload", owed, err)
+	}
+	if _, err := remote.Get(t.Context(), "sessions/codex/removed/metadata.json"); !errors.Is(err, storage.ErrNotFound) {
+		t.Fatal(err)
 	}
 }

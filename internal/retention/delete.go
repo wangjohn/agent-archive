@@ -55,3 +55,17 @@ func DeleteWholeSession(ctx context.Context, store storage.ObjectStore, harness,
 	}
 	return nil
 }
+
+func checkDeletionMetadata(raw []byte) error {
+	if len(raw) == 0 {
+		return nil
+	}
+	var metadata archive.Metadata
+	if err := json.Unmarshal(raw, &metadata); err != nil {
+		return err
+	}
+	if err := archive.CheckHistoryMutation(archive.SourceBundle{}, metadata); err != nil {
+		return err
+	}
+	return metadata.ValidateSourceReference()
+}

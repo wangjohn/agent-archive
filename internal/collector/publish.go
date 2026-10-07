@@ -79,6 +79,12 @@ func (s *sessionScan) publishPending(pending state.PendingPublication) (sessionO
 	if err := s.sealPending(&pending); err != nil {
 		return outcomeSkipped, err
 	}
+	if err := s.restoreRetentionPending(&pending); err != nil {
+		return outcomeSkipped, err
+	}
+	if err := s.local.ValidateRetentionRestoration(s.reg, pending); err != nil {
+		return outcomeSkipped, err
+	}
 	if err := s.checkPrivacyInputReplay(pending); err != nil {
 		return outcomeSkipped, err
 	}
@@ -123,6 +129,9 @@ func (s *sessionScan) publishPending(pending state.PendingPublication) (sessionO
 	}
 	if err := s.published.SaveCommittedPublication(pending, s.now); err != nil {
 		return outcomeSkipped, fmt.Errorf("update published cache: %w", err)
+	}
+	if err := s.local.CompleteRetentionRestoration(s.reg, pending, s.published); err != nil {
+		return outcomeSkipped, err
 	}
 	if listingPublished {
 		if err := s.local.RemoveListingRepair(s.id()); err != nil {
@@ -322,6 +331,35 @@ func (s *sessionScan) recordPublicationRetirement(pending state.PendingPublicati
 			}
 			s.warn(fmt.Errorf("record superseded source for cleanup: %w", err))
 		}
+	}
+	return nil
+}
+
+func (s *sessionScan) restoreRetentionPending(p *state.PendingPublication) error {
+	if p.Commit == nil || p.Commit.Predecessor != state.PredecessorPresent {
+		return nil
+	}
+	_, found, err := s.local.LoadSessionDeletion(s.reg)
+	if err != nil || !found {
+		return err
+	}
+	raw, err := storage.ReadPublicationMetadata(s.ctx, s.remote, p.MetadataKey)
+	if err == nil {
+		_ = raw
+		return nil
+	}
+	if !errors.Is(err, storage.ErrNotFound) {
+		return err
+	}
+	next, changed, err := s.local.RestoreAfterRetention(s.reg, *p)
+	if err != nil {
+		return err
+	}
+	if changed {
+		if err = s.local.SavePending(s.id(), next); err != nil {
+			return err
+		}
+		*p = next
 	}
 	return nil
 }

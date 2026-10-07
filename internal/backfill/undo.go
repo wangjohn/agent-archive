@@ -770,7 +770,7 @@ func (p UndoPlan) Remove(ctx context.Context, store *state.Store, bucket storage
 	for _, s := range p.Sessions {
 		reg := s.Registration
 		if s.InCurrentDestination {
-			if err := retention.DeleteWholeSession(ctx, bucket, reg.Harness.Name, reg.ArchiveSessionID); err != nil {
+			if err := retention.DeleteOwnedSession(ctx, store, bucket, reg, state.RemovalReasonUndo, now); err != nil {
 				result.Failed[reg.ArchiveSessionID] = fmt.Errorf("delete from the bucket: %w", err)
 				continue
 			}

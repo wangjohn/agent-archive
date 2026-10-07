@@ -48,6 +48,10 @@ import (
 // never stores credentials. Durable imports temporarily retain an additional
 // bounded filtered source until complete local publication is verified.
 type Store struct {
+	onDeletionBeforeCommit func() error
+	onDeletionCleanup      func() error
+	onDeletionSync         func() error
+
 	// quotaRoot confines a reservation's accounting reads to its held home.
 	quotaRoot *os.Root
 	// onTemporaryRelease injects a directory-sync failure after control removal.
@@ -114,7 +118,7 @@ var storeDirs = []string{"registrations", "requests", "request-locks", "publishe
 
 // lazyStoreDirs are the directories the store creates under home on first
 // use rather than up front.
-var lazyStoreDirs = []string{admissionStageDir, generationHeadsDir, generationNodesDir, generationRecoveryDir, "superseded", "forgotten", refreshSkipDir, listingRepairDir}
+var lazyStoreDirs = []string{"session-deletions", "session-deletions.lock", admissionStageDir, generationHeadsDir, generationNodesDir, generationRecoveryDir, "superseded", "forgotten", refreshSkipDir, listingRepairDir}
 
 // OwnedEntries lists every top-level entry a Store can create under its
 // home: its directories, its status file, and the storage clock reading

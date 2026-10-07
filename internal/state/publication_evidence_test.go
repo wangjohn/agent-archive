@@ -22,7 +22,7 @@ func TestPublicationEvidencePhysicalFilesAndOrphansStayCharged(t *testing.T) {
 	reads := 0
 	s.onQuotaBodyRead = func(string) { reads++ }
 	used, err := s.admissionStageUsage()
-	if err != nil || used != publicationEvidenceControl+4*int64(len("retained")) || reads != 0 {
+	if err != nil || used != deletionControlAllowance+publicationEvidenceControl+4*int64(len("retained")) || reads != 0 {
 		t.Fatal(used, reads, err)
 	}
 	outside := t.TempDir()

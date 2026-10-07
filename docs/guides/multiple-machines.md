@@ -43,6 +43,14 @@ Don't copy the data directory from one machine to another: two machines that
 believe they own the same sessions would publish over each other. The rest of
 this page is about the ways that happens by accident.
 
+Retained-history destinations need every writer and cleanup peer upgraded before
+history admission is enabled. The sticky local writer fence protects the owning
+configuration; it does not remotely disable an older peer or make copied
+same-owner state safe. Published v0.1.0 and v0.1.1 refuse schema-2 history reads
+and ordinary retention, but their older whole-session undo primitive does not
+validate retained references. Global archive cleanup therefore remains a
+coordinated destination operation.
+
 ## Migration Assistant and Time Machine (macOS)
 
 Migration Assistant and a Time Machine restore copy
