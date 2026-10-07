@@ -112,7 +112,7 @@ try:
  wait_for(b'<<drained>>')
  assert p.returncode==(143 if sys.argv[2]=='term' else 0),(p.returncode,output)
  assert b'synthetic-secret-canary' not in output,output
- assert output.index(b'\x1b[?1049h')<output.index(b'Pairing code:')<output.index(b'\x1b[?1049l'),output
+ assert output.index(b'\x1b[?1049h')<output.index(b'2. Enter the pairing code on the other machine')<output.index(b'\x1b[?1049l'),output
  assert output.count(b'aardvark abandoned abbreviate abdomen abhorrence abiding')==(2 if sys.argv[2]=='pairing-suspend' else 1),output
  if sys.argv[2]=='pairing-suspend':
   alternate=False
@@ -120,7 +120,7 @@ try:
    if part==b'\x1b[?1049h': alternate=True
    elif part==b'\x1b[?1049l': alternate=False
    else:
-    if b'Pairing code:' in part: assert alternate,('code escaped alternate screen',output)
+    if b'2. Enter the pairing code on the other machine' in part: assert alternate,('code escaped alternate screen',output)
     if b'SHELL SENTINEL' in part: assert not alternate,('shell remained in pairing screen',output)
   assert output.count(b'\x1b[?1049h')==2,('pairing callbacks survived display exit',output)
  after=termios.tcgetattr(slave)

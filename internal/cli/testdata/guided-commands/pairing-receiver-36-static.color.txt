@@ -1,7 +1,13 @@
 
-? Paste the encrypted pairing bundle
+? Pairing file path or text
 
-> Credential:
+  On your configured machine, run
+  agent-archive machines add.
+  Transfer the pairing file here,
+  then enter its path. You can also
+  paste copied pairing text.
+
+> Choose:
 \e[2mOK Credential received\e[0m
 
 ? Pairing code (hidden)

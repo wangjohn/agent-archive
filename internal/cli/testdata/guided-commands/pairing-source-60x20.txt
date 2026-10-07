@@ -4,27 +4,47 @@
 › Choose: laptop
 \e[3A\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[3A✓ Name for the new machine laptop
 
-? No spare key available
+? Create separate access for this machine?
 
-  1) Paste a Cloudflare token to create a dedicated key
-  2) Share this machine's key (cannot revoke recipient
-     independently)
+  Separate access lets you revoke this machine later without
+  affecting other machines.
 
-  [Enter] Cancel
+  1) Create a Cloudflare key (recommended) (default)
+  2) Share existing access (revoking it affects all machines
+     using it)
 
-› Choose: create
-\e[9A\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[9A✓ Paste a Cloudflare token to create a dedicated key
+  [q] Cancel
 
-Bundle expires at 2026-09-25T13:00:00Z. On laptop, run agent-archive setup --pair.
+› Choose [1]: create
+\e[12A\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[12A✓ Create a Cloudflare key (recommended)
 
-? Pairing code
+? Press Enter when the pairing file or text has arrived on
+  the other machine
 
-  1) Show code on a cleared alternate screen (default)
+› Choose:
+\e[4A\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[4A✓ Press Enter when the pairing file or text has arrived on
+  the other machine
 
-  [d] Done
-  [q] Cancel pairing (dedicated cleanup needs management
-      access)
+\e[?1049h\e[2J\e[H2. Enter the pairing code on the other machine
 
-› Choose [1]: done
-\e[9A\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[9A✓ Done
+aardvark abandoned abbreviate abdomen abhorrence abiding
 
+Keep this screen open while entering the code there.
+The first three characters of each word work (yo- for yo-yo).
+Deliver the code separately from the pairing file. Avoid recording or screen sharing.
+Press Enter to hide.
+
+\e[2J\e[H\e[?1049lFinish setup on laptop before closing this pairing.
+
+? Pairing
+
+  1) Show code again
+
+  [Enter] I'm finished
+  [q] Cancel pairing
+
+› Choose: done
+\e[8A\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[8A✓ I'm finished
+
+Transfer finished. The other machine confirms when setup succeeds.
+Delete any saved pairing files when no longer needed.

@@ -69,9 +69,11 @@ func TestGuidedFullCommandTranscripts(t *testing.T) {
 						env, home, _ := pairingSourceFixture(t)
 						env.Now = func() time.Time { return screenNow }
 						env.Clipboard = func([]byte) error { return nil }
-						run([]string{"machines", "add", "--name", "laptop"}, "done\n", env)
+						env.Interrupts = noInterrupts
+						run([]string{"machines", "add", "--name", "laptop"}, "\n\n\n\ndone\n", env)
 						userHome, _ := env.UserHomeDir()
 						normalize = func(s string) string {
+							s = normalizeGuidedPairingCode(s)
 							s = strings.ReplaceAll(s, userHome, "/Users/alex")
 							return strings.ReplaceAll(s, home, "/Users/alex/.agent-archive")
 						}
@@ -273,5 +275,28 @@ func TestPairingReviewEditorOffersCurrentProjectWithoutSelectingIt(t *testing.T)
 	must(t, err)
 	if !bytes.Equal(before, after) {
 		t.Fatal("opening the pairing project editor changed capture rules without selection")
+	}
+}
+
+// Replace only a complete displayed six-word code, retaining surrounding instructions.
+func normalizeGuidedPairingCode(text string) string {
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		if len(strings.Fields(line)) == 6 {
+			if _, err := pairing.NormalizeCode(line); err == nil {
+				lines[i] = "PAIRING_CODE"
+			}
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func TestGuidedPairingCodeNormalizationPreservesInstructionsAndControls(t *testing.T) {
+	t.Parallel()
+	code := "aardvark abandoned abbreviate abdomen abhorrence abiding"
+	kept := "\x1b[?1049h\x1b[2J\x1b[H2. Enter the pairing code on the other machine\n\n" + code + "\n\nKeep this screen open while entering the code there.\nPress Enter to hide.\n\x1b[?1049l\n? Pairing\n\n[Enter] I'm finished\n"
+	want := strings.Replace(kept, "\n"+code+"\n", "\nPAIRING_CODE\n", 1)
+	if got := normalizeGuidedPairingCode(kept); got != want {
+		t.Fatalf("normalization changed prompt structure: %q", got)
 	}
 }

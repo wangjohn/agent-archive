@@ -129,3 +129,12 @@ func guidedExplanation(out io.Writer, title string, lines ...string) {
 		terminal.Println(out, hangingIndent("", line, width))
 	}
 }
+
+// guidedOK uses the same glyph capability as guided receipts.
+func guidedOK(out io.Writer) string {
+	mark := symbolOK
+	if capabilitiesFor(nil, out).ASCII {
+		mark = "OK"
+	}
+	return styleFor(out).ok(mark)
+}

@@ -1,9 +1,12 @@
 $ agent-archive setup --pair --codex-discovery on --codex-capture-scope included-projects --project /Users/alex/src/项目-long-project
 
-? Paste the encrypted pairing bundle
+? Pairing file path or text
 
-› Credential:
-\e[3A\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[3A\e[2m✓ Credential received\e[0m
+  On your configured machine, run agent-archive machines add.
+  Transfer the pairing file here, then enter its path. You can also paste copied pairing text.
+
+› Choose:
+\e[6A\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[6A\e[2m✓ Credential received\e[0m
 
 ? Pairing code (hidden)
 
@@ -54,7 +57,9 @@ Apps: Codex. Projects: 1. Storage: Amazon S3 bucket synthetic.
 Skill evidence: metadata. User-level skill roots outside selected projects may be scanned.
   \e[33m!\e[0m Bucket privacy not verified: public-access settings could not be read.
     Make sure public access is off: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
-Paired with studio. This machine is laptop. AWS profile/settings transfer.
+\e[32m✓\e[0m laptop is connected. Paired with studio.
+AWS profile/settings transfer.
+You can finish on the source machine and delete the pairing file.
 
 \e[32m✓\e[0m Setup complete · Automatic capture is on
 Installed /handoff, which continues a session in another agent: ~/.agents/skills/handoff/SKILL.md

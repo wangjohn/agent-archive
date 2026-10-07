@@ -1,8 +1,12 @@
 
-? Paste the encrypted pairing bundle
+? Pairing file path or text
 
-› Credential:
-\e[3A\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[3A✓ Credential received
+  On your configured machine, run agent-archive machines add.
+  Transfer the pairing file here, then enter its path. You can also paste copied
+  pairing text.
+
+› Choose:
+\e[7A\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[7A✓ Credential received
 
 ? Pairing code (hidden)
 

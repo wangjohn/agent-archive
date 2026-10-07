@@ -44,20 +44,20 @@ func TestGuidedCommandScreens(t *testing.T) {
 		answers string
 		run     func(*testing.T, *prompter, *guidedCommandOutput)
 	}{
-		{"pairing-source", "laptop\ncreate\ndone\n", func(t *testing.T, p *prompter, out *guidedCommandOutput) {
+		{"pairing-source", "laptop\ncreate\n\n\ndone\n", func(t *testing.T, p *prompter, out *guidedCommandOutput) {
 			t.Helper()
 			_, err := p.guidedDefault("Name for the new machine", "")
 			must(t, err)
-			_, err = p.guidedMenu("No spare key available", "cancel", option{"create", "Paste a Cloudflare token to create a dedicated key"}, option{"share", "Share this machine's key (cannot revoke recipient independently)"}, option{"cancel", "Cancel"})
+			_, err = p.guidedChoice(promptModel{Question: "Create separate access for this machine?", Helpers: []string{"Separate access lets you revoke this machine later without affecting other machines."}, Default: "create", Primary: []option{{"create", "Create a Cloudflare key (recommended)"}, {"share", "Share existing access (revoking it affects all machines using it)"}}, Secondary: []actionOption{{"cancel", "q", "Cancel"}}})
 			must(t, err)
-			code := finishPairingDelivery(p, "aardvark-abandoned-abbreviate-abdomen-abhorrence-abiding", pairingLedger{Name: "laptop", ExpiresAt: screenNow.Add(time.Hour)}, t.TempDir(), false, out, out, Env{}, &issuance.Slot{}, nil)
+			code := finishPairingDelivery(p, "aardvark-abandoned-abbreviate-abdomen-abhorrence-abiding", pairingLedger{Name: "laptop", ExpiresAt: screenNow.Add(time.Hour)}, t.TempDir(), false, out, out, Env{IsTerminal: func(any) bool { return true }, Interrupts: noInterrupts}, &issuance.Slot{}, nil)
 			if code != 0 {
 				t.Fatalf("pairing delivery exit %d", code)
 			}
 		}},
-		{"pairing-receiver", "synthetic-private-bundle\nsynthetic-private-code\nyes\n", func(t *testing.T, p *prompter, out *guidedCommandOutput) {
+		{"pairing-receiver", "aa-pair1:synthetic-private-bundle\nsynthetic-private-code\nyes\n", func(t *testing.T, p *prompter, out *guidedCommandOutput) {
 			t.Helper()
-			_, err := readPairingBundle(p, setupOptions{}, p.source)
+			_, err := readPairingBundle(p, setupOptions{}, p.source, Env{})
 			must(t, err)
 			_, err = readPairingCode(setupOptions{}, p, Env{LookupEnv: noEnv, IsTerminal: func(any) bool { return true }})
 			must(t, err)
@@ -202,7 +202,7 @@ func TestPairingBundleBoundAndSecretReceipts(t *testing.T) {
 	var out bytes.Buffer
 	p := newPrompter(strings.NewReader(strings.Repeat("x", pairing.MaxBundle+3)+"\n"), &out)
 	defer p.close()
-	if _, err := readPairingBundle(p, setupOptions{}, p.source); err == nil {
+	if _, err := readPairingBundle(p, setupOptions{}, p.source, Env{}); err == nil {
 		t.Fatal("oversized bundle accepted")
 	}
 	if strings.Contains(out.String(), strings.Repeat("x", 20)) {
