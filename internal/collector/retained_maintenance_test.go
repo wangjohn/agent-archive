@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -263,5 +264,148 @@ func TestAdmissionStagePrivacyReceiptReleasesOnlyVerifiedReplacement(t *testing.
 	}
 	if _, found, err := local.LoadRequest(reg.ArchiveSessionID); err != nil || found {
 		t.Fatal("covered stage request remains", found, err)
+	}
+}
+
+func TestRetainedPrivacyProofRejectsIncompleteSwapAgeAndAuthority(t *testing.T) {
+	for _, mode := range []string{"omit", "swap", "age", "authority", "policy"} {
+		t.Run(mode, func(t *testing.T) {
+			s, m, raw := retainedHistoryFixture(t)
+			p, err := s.prepareRetainedPrivacy(raw, remoteRetainedLoader(s.remote, m), s.published.PublicationPredecessor(), state.PrivacyCommitted, "", "", "body")
+			if err != nil {
+				t.Fatal(err)
+			}
+			switch mode {
+			case "omit":
+				p.Commit.Privacy.Sources = p.Commit.Privacy.Sources[:1]
+			case "swap":
+				p.Commit.Privacy.Sources[1].Next = p.Commit.Privacy.Sources[0].Next
+			case "age":
+				p.Commit.Privacy.Sources[1].Previous.CapturedAt = p.Commit.Privacy.Sources[1].Previous.CapturedAt.Add(time.Minute)
+			case "authority":
+				p.Commit.Privacy.Authority = state.PrivacyStage
+			case "policy":
+				p.Commit.Privacy.Sources[1].NewPolicy.Skill = "body"
+			}
+			if err := p.ValidatePublication(); err == nil {
+				t.Fatal("unbound privacy mutation accepted")
+			}
+		})
+	}
+}
+
+func TestPendingPrivacyRetainsAuthorizedNewerCandidateWithoutUploadingObsoleteBytes(t *testing.T) {
+	s, m, raw := retainedHistoryFixture(t)
+	before, err := reader.LoadSource(t.Context(), s.remote, m, reader.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate := before
+	candidate.Capture.CapturedAt = before.Capture.CapturedAt.Add(time.Hour)
+	candidate.NativeRecords = append(append([]map[string]any(nil), before.NativeRecords...), map[string]any{"type": "event_msg", "payload": map[string]any{"type": "user_message", "message": "newer authorized candidate"}})
+	candidate.Ordinals = append(append([]uint64(nil), before.Ordinals...), 3)
+	history := *before.History
+	history.Spans = append([]archive.HistorySpan(nil), history.Spans...)
+	history.Spans[0].EndOrdinal = 4
+	history.Spans[0].EndRecord = 4
+	candidate.History = &history
+	compressed, err := archive.BuildCompressedSource(candidate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := archive.SourceObjectKey(candidate, compressed.SHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := archive.SourceReference{Key: key, SHA256: compressed.SHA256, CompressedBytes: len(compressed.Bytes)}
+	next := m
+	next.CapturedAt = candidate.Capture.CapturedAt
+	next.SourceBundle = ref
+	next.MetadataDerivedAt = s.now
+	nextRaw, err := json.Marshal(next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := state.PendingPublication{Bundle: candidate, SourceKey: key, SourceSHA256: ref.SHA256, SourceBytes: compressed.Bytes, MetadataKey: s.mustMetadataKey(), MetadataBytes: nextRaw, SkillEvidence: "body", ReadyAt: s.now, Attempted: true}
+	prior := s.published.PublicationPredecessor()
+	adapter, err := sourceAdapter(s.opts.Sources, s.reg.Harness.Name)
+	if err != nil || !adapter.EvidenceExtends(before, candidate) {
+		t.Fatal("original provider did not authorize continuation", err)
+	}
+	prior.SameRevisionContinuity = &state.PublicationContinuity{PreviousSourceSHA256: m.SourceBundle.SHA256, NextSourceSHA256: ref.SHA256}
+	original, err = state.PreparePublication(original, prior, s.reg.DestinationID, s.publicationAdmission(), "original-filter-policy", state.PublicationCapture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.local.SavePending(s.id(), original); err != nil {
+		t.Fatal(err)
+	}
+	authority, kind, err := s.reconcilePrivacyPending(original)
+	if err != nil || kind != state.PrivacyPending {
+		t.Fatal(kind, err)
+	}
+	loader, err := s.pendingRetainedLoader(original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacement, err := s.prepareRetainedPrivacy(original.MetadataBytes, loader, authority, kind, "", "", original.SkillEvidence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !replacement.Bundle.Capture.CapturedAt.Equal(candidate.Capture.CapturedAt) {
+		t.Fatal("newer pending age lost")
+	}
+	encoded, err := json.Marshal(replacement.Bundle)
+	if err != nil || !bytes.Contains(encoded, []byte("newer authorized candidate")) || bytes.Contains(encoded, []byte("obsolete-private-marker")) {
+		t.Fatal("candidate was discarded or obsolete evidence retained", err, string(encoded))
+	}
+	if replacement.Commit.PredecessorSHA256 != storage.SHA256Hex(raw) || replacement.Commit.Privacy.Authority != state.PrivacyPending {
+		t.Fatal("pending authority guessed", replacement.Commit)
+	}
+	if _, err := s.remote.Get(t.Context(), original.SourceKey); !errors.Is(err, storage.ErrNotFound) {
+		t.Fatal("obsolete candidate was uploaded", err)
+	}
+}
+
+func TestRetainedPrivacyRewritesFullReferenceLimitWithoutEviction(t *testing.T) {
+	s, m, _ := retainedHistoryFixture(t)
+	source, err := reader.LoadRevisionSource(t.Context(), s.remote, m, m.History.Preserved[0], reader.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.History.Preserved = nil
+	for i := range archive.MaxPreservedRevisions {
+		b := source
+		h := *source.History
+		h.Spans = append([]archive.HistorySpan(nil), source.History.Spans...)
+		revision := fmt.Sprintf("%08x-1111-4111-8111-111111111111", i+10)
+		h.ActiveRolloutID = revision
+		h.Spans[0].RolloutID = revision
+		b.History = &h
+		b.Capture.CapturedAt = b.Capture.CapturedAt.Add(-time.Duration(i+1) * time.Hour)
+		compressed, err := archive.BuildCompressedSource(b)
+		if err != nil {
+			t.Fatal(err)
+		}
+		key, err := archive.SourceObjectKey(b, compressed.SHA256)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.remote.Put(t.Context(), key, compressed.Bytes); err != nil {
+			t.Fatal(err)
+		}
+		m.History.Preserved = append(m.History.Preserved, archive.RevisionReference{RevisionID: revision, CapturedAt: b.Capture.CapturedAt, Source: archive.SourceReference{Key: key, SHA256: compressed.SHA256, CompressedBytes: len(compressed.Bytes)}})
+	}
+	raw, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, _, _ := s.published.LastPublished()
+	if err := s.published.SavePublication(current, s.now, m.SourceBundle, raw); err != nil {
+		t.Fatal(err)
+	}
+	pending, err := s.prepareRetainedPrivacy(raw, remoteRetainedLoader(s.remote, m), s.published.PublicationPredecessor(), state.PrivacyCommitted, "", "", "body")
+	if err != nil || len(pending.Sources) != archive.MaxPreservedRevisions+1 || len(pending.Commit.Privacy.Sources) != archive.MaxPreservedRevisions+1 {
+		t.Fatal("capacity evicted retained evidence", len(pending.Sources), err)
 	}
 }

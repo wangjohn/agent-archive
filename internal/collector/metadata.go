@@ -138,19 +138,25 @@ func regenerateMetadata(s *sessionScan) (outcome sessionOutcome, handled bool, e
 // retried on every pass and status can count it.
 func (s *sessionScan) refreshedMetadata(last lastPublication, source archive.SourceReference) (encoded []byte, changed bool, err error) {
 	prior := last.metadata
+	if prior.History != nil {
+		if err := s.verifyRetainedSelection(prior); err != nil {
+			return nil, false, err
+		}
+	}
 	analysis, parseErr := agentapi.Analyze(s.ctx, s.resolveParser(), last.bundle)
 	if errors.Is(parseErr, context.Canceled) || errors.Is(parseErr, context.DeadlineExceeded) {
 		return nil, false, parseErr
 	}
 	next, buildErr := archive.BuildMetadataWithAnalysis(last.bundle, analysis, parseErr, s.opts.MachineID, s.reg.SessionStartedAt, s.now, source, archive.ParserInfo{Version: s.parserVersion()})
-	next.ApplyRegistrationProvenance(s.reg)
-	next.ApplyProjectName(s.reg.ProjectRoot)
-	next.ApplyRepoKey(s.opts.repoKeyOr(s.reg, func() string { return prior.RepoKey }))
-	next.ApplyGitHead(s.reg)
-	next.ApplyReplay(s.reg)
 	if prior.History != nil {
 		preserveRetainedMetadata(&next, prior)
 		next.ApplyGitHead(s.reg)
+	} else {
+		next.ApplyRegistrationProvenance(s.reg)
+		next.ApplyProjectName(s.reg.ProjectRoot)
+		next.ApplyRepoKey(s.opts.repoKeyOr(s.reg, func() string { return prior.RepoKey }))
+		next.ApplyGitHead(s.reg)
+		next.ApplyReplay(s.reg)
 	}
 	if buildErr != nil && !archive.IsParseError(buildErr) {
 		// This build cannot derive metadata from the retained bundle at all

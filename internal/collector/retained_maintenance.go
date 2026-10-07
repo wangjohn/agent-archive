@@ -73,6 +73,14 @@ func (s *sessionScan) prepareRetainedPrivacy(raw []byte, loader retainedSourceLo
 	next := before
 	preserveRetainedMetadata(&next, before)
 	proof := state.PublicationPrivacyEvidence{Authority: authority, StageDigest: stageDigest, StageSourceSHA256: stageSHA, PreviousPolicyContext: storage.SHA256Hex([]byte(before.FilterVersion + "\x00" + before.Adapter.Version + "\x00" + oldSkill))}
+	if authority == state.PrivacyPending {
+		original := prior.PrivacyPendingSource
+		if original == nil || original.Commit == nil {
+			return state.PendingPublication{}, errors.New("sealed pending privacy authority is unavailable")
+		}
+		c := original.Commit
+		proof.PendingMutation = &state.PrivacyPendingMutation{MetadataSHA256: c.MetadataSHA256, SourceSetSHA256: c.SourceSetSHA256, PolicyContext: c.PolicyContext, Purpose: c.Purpose, Predecessor: c.Predecessor, PredecessorSHA256: c.PredecessorSHA256, Continuity: c.Continuity}
+	}
 	pending := state.PendingPublication{AdmissionStage: stageDigest, SkillEvidence: string(s.opts.skillEvidence()), MetadataKey: s.mustMetadataKey(), RequestToken: s.req.Token, ReadyAt: s.now, Attempted: true}
 	total := 0
 	for i, selected := range selections {
@@ -167,7 +175,7 @@ func retainedMaintenanceEvidence(in []archive.SupplementalEvidence) []archive.Su
 }
 
 func validateRetainedPrivacyFacts(prior, next archive.SourceBundle) error {
-	if prior.ArchiveSessionID != next.ArchiveSessionID || prior.NativeSessionID != next.NativeSessionID || prior.ProjectID != next.ProjectID || prior.ParentSessionID != next.ParentSessionID || prior.PreviousGenerationID != next.PreviousGenerationID || !prior.Capture.CapturedAt.Equal(next.Capture.CapturedAt) || (prior.History == nil) != (next.History == nil) {
+	if prior.ArchiveSessionID != next.ArchiveSessionID || prior.NativeSessionID != next.NativeSessionID || prior.ProjectID != next.ProjectID || prior.Capture.Harness != next.Capture.Harness || prior.ParentSessionID != next.ParentSessionID || prior.PreviousGenerationID != next.PreviousGenerationID || !prior.Capture.CapturedAt.Equal(next.Capture.CapturedAt) || (prior.History == nil) != (next.History == nil) {
 		return errors.New("native privacy refilter changed retained ownership, age or history")
 	}
 	if prior.History == nil {
@@ -188,4 +196,18 @@ func validateRetainedPrivacyFacts(prior, next archive.SourceBundle) error {
 		return errors.New("native privacy refilter changed physical history facts")
 	}
 	return next.ValidateHistory()
+}
+
+func (s *sessionScan) verifyRetainedSelection(metadata archive.Metadata) error {
+	refs, err := state.RevisionSelections(metadata)
+	if err != nil {
+		return err
+	}
+	loader := remoteRetainedLoader(s.remote, metadata)
+	for _, ref := range refs {
+		if _, err := loader(s.ctx, ref); err != nil {
+			return err
+		}
+	}
+	return nil
 }

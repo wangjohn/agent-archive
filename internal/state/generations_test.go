@@ -409,3 +409,40 @@ func TestFrozenGenerationRefusesUnsupportedNodeVersion(t *testing.T) {
 		})
 	}
 }
+
+func TestGenerationRecoveryRefusesChangedPriorCommittedSelection(t *testing.T) {
+	s, reg, at := generationFixture(t)
+	s.onIndexStep = func(step string) error {
+		if step == "generation-journal" {
+			return errors.New("synthetic interruption")
+		}
+		return nil
+	}
+	if _, err := s.BeginGenerationRecovery(reg.ArchiveSessionID, at, generationBuilder(at)); err == nil {
+		t.Fatal("journal interruption missing")
+	}
+	p, err := s.LoadPublishedState(reg.ArchiveSessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m archive.Metadata
+	if err := json.Unmarshal(p.Metadata(), &m); err != nil {
+		t.Fatal(err)
+	}
+	m.MetadataDerivedAt = m.MetadataDerivedAt.Add(time.Hour)
+	raw, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.CacheMetadata(raw); err != nil {
+		t.Fatal(err)
+	}
+	s.onIndexStep = nil
+	if err := s.ResumeGenerationRecoveries(t.Context()); !errors.Is(err, ErrSessionIndexRecoveryRequired) {
+		t.Fatal("routing changed after predecessor mutation", err)
+	}
+	current, found, err := s.LoadRegistration(reg.ArchiveSessionID)
+	if err != nil || !found || current.CaptureFrozen {
+		t.Fatal("changed predecessor froze routing", found, err)
+	}
+}

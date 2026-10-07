@@ -47,6 +47,7 @@ type PublicationPredecessor struct {
 	Bundle                 archive.SourceBundle
 	SameRevisionContinuity *PublicationContinuity
 	Privacy                *PublicationPrivacyEvidence
+	PrivacyPendingSource   *PendingPublication
 }
 
 // PublicationContinuity binds a provider-approved continuation to exact source digests.
@@ -68,6 +69,7 @@ type PublicationSource struct {
 // PublicationCommit binds replay to the complete source set and admitted context.
 type PublicationCommit struct {
 	Privacy           *PublicationPrivacyEvidence `json:"privacy,omitempty"`
+	Continuity        *PublicationContinuity      `json:"continuity,omitempty"`
 	Version           int                         `json:"version"`
 	MetadataSHA256    string                      `json:"metadata_sha256"`
 	SourceSetSHA256   string                      `json:"source_set_sha256"`
@@ -122,7 +124,7 @@ func PreparePublication(p PendingPublication, prior PublicationPredecessor, dest
 	if len(provided) != 0 {
 		return p, errors.New("pending payload is not selected by metadata")
 	}
-	p.Commit = &PublicationCommit{Privacy: prior.Privacy, Version: 1, MetadataSHA256: publicationSHA256(p.MetadataBytes), SourceSetSHA256: digest, Predecessor: prior.State, DestinationID: destination, AdmissionContext: admission, PolicyContext: policy, Purpose: purpose}
+	p.Commit = &PublicationCommit{Privacy: prior.Privacy, Continuity: prior.SameRevisionContinuity, Version: 1, MetadataSHA256: publicationSHA256(p.MetadataBytes), SourceSetSHA256: digest, Predecessor: prior.State, DestinationID: destination, AdmissionContext: admission, PolicyContext: policy, Purpose: purpose}
 	if prior.State == PredecessorPresent {
 		p.Commit.PredecessorSHA256 = publicationSHA256(prior.Body)
 	}
@@ -161,7 +163,12 @@ func (p PendingPublication) validatePublicationPredecessor(prior PublicationPred
 			return err
 		}
 	case PredecessorAbsent, PredecessorUnknown:
-		if purpose == PublicationPrivacyRewrite && (prior.Privacy == nil || prior.Privacy.Authority != PrivacyStage || prior.Privacy.StageDigest != p.AdmissionStage) {
+		if purpose == PublicationPrivacyRewrite && prior.Privacy != nil && prior.Privacy.Authority == PrivacyPending {
+			if err := validatePendingPrivacyPreparation(prior, destination, admission, policy); err != nil {
+				return err
+			}
+		}
+		if purpose == PublicationPrivacyRewrite && (prior.Privacy == nil || (prior.Privacy.Authority != PrivacyStage && prior.Privacy.Authority != PrivacyPending) || prior.Privacy.Authority == PrivacyStage && prior.Privacy.StageDigest != p.AdmissionStage) {
 			return errors.New("privacy replacement requires committed predecessor or immutable admitted stage authority")
 		}
 		if len(prior.Body) != 0 {
@@ -194,6 +201,9 @@ func (p PendingPublication) ValidatePublication() error {
 	}
 	if err := p.validatePrivacyEvidence(); err != nil {
 		return err
+	}
+	if c.Continuity != nil && (c.Predecessor != PredecessorPresent || !validPublicationDigest(c.Continuity.PreviousSourceSHA256) || c.Continuity.NextSourceSHA256 != p.SourceSHA256) {
+		return errors.New("publication continuation binding differs")
 	}
 	if err := p.validatePublicationOwnership(refs[0]); err != nil {
 		return err

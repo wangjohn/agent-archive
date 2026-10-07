@@ -18,6 +18,8 @@ const (
 	PrivacyCommitted PrivacyAuthority = "committed"
 	// PrivacyStage is immutable admitted filtered evidence, never a remote predecessor.
 	PrivacyStage PrivacyAuthority = "stage"
+	// PrivacyPending is an exact previously sealed authorized candidate.
+	PrivacyPending PrivacyAuthority = "pending"
 )
 
 // PublicationPolicy records each source's native privacy codec and skill policy.
@@ -39,17 +41,29 @@ type PrivacySource struct {
 
 // PublicationPrivacyEvidence seals the complete correspondence produced by the
 // injected retained filter. It is not append continuity or raw dependency proof.
+// PrivacyPendingMutation retains the original sealed mutation authority without payload duplication.
+type PrivacyPendingMutation struct {
+	MetadataSHA256    string                 `json:"metadata_sha256"`
+	SourceSetSHA256   string                 `json:"source_set_sha256"`
+	PolicyContext     string                 `json:"policy_context"`
+	Purpose           PublicationPurpose     `json:"purpose"`
+	Predecessor       PredecessorState       `json:"predecessor"`
+	PredecessorSHA256 string                 `json:"predecessor_sha256,omitempty"`
+	Continuity        *PublicationContinuity `json:"continuity,omitempty"`
+}
+
 type PublicationPrivacyEvidence struct {
-	Authority              PrivacyAuthority `json:"authority"`
-	StageDigest            string           `json:"stage_digest,omitempty"`
-	StageSourceSHA256      string           `json:"stage_source_sha256,omitempty"`
-	PreviousMetadataSHA256 string           `json:"previous_metadata_sha256"`
-	PreviousSetSHA256      string           `json:"previous_set_sha256"`
-	PreviousPolicyContext  string           `json:"previous_policy_context"`
-	NextMetadataSHA256     string           `json:"next_metadata_sha256"`
-	NextSetSHA256          string           `json:"next_set_sha256"`
-	OwnershipSHA256        string           `json:"ownership_sha256"`
-	Sources                []PrivacySource  `json:"sources"`
+	PendingMutation        *PrivacyPendingMutation `json:"pending_mutation,omitempty"`
+	Authority              PrivacyAuthority        `json:"authority"`
+	StageDigest            string                  `json:"stage_digest,omitempty"`
+	StageSourceSHA256      string                  `json:"stage_source_sha256,omitempty"`
+	PreviousMetadataSHA256 string                  `json:"previous_metadata_sha256"`
+	PreviousSetSHA256      string                  `json:"previous_set_sha256"`
+	PreviousPolicyContext  string                  `json:"previous_policy_context"`
+	NextMetadataSHA256     string                  `json:"next_metadata_sha256"`
+	NextSetSHA256          string                  `json:"next_set_sha256"`
+	OwnershipSHA256        string                  `json:"ownership_sha256"`
+	Sources                []PrivacySource         `json:"sources"`
 }
 
 // RevisionSelections returns current first, then the exact preserved revision tuples.
@@ -124,6 +138,9 @@ func BindPrivacyEvidence(e PublicationPrivacyEvidence, previous, next []byte, de
 
 func validatePrivacyPreparation(p PendingPublication, prior PublicationPredecessor, previous, next archive.Metadata, destination, admission, policy string) error {
 	e := prior.Privacy
+	if e != nil && e.Authority == PrivacyPending {
+		return validatePendingPrivacyPreparation(prior, destination, admission, policy)
+	}
 	if e == nil || e.Authority != PrivacyCommitted || e.PreviousMetadataSHA256 != publicationSHA256(prior.Body) || e.OwnershipSHA256 != privacyOwnership(previous) || privacyOwnership(previous) != privacyOwnership(next) {
 		return errors.New("privacy replacement requires exact complete committed authority")
 	}
@@ -167,8 +184,16 @@ func (p PendingPublication) validatePrivacyEvidence() error {
 		if c.Predecessor == PredecessorPresent || e.StageDigest == "" || e.StageDigest != p.AdmissionStage || !validPublicationDigest(e.StageDigest) || !validPublicationDigest(e.StageSourceSHA256) {
 			return errors.New("stage privacy authority cannot impersonate a committed predecessor")
 		}
+	case PrivacyPending:
+		original := e.PendingMutation
+		if original == nil || original.MetadataSHA256 != e.PreviousMetadataSHA256 || !validPublicationDigest(original.SourceSetSHA256) || original.Predecessor != c.Predecessor || original.PredecessorSHA256 != c.PredecessorSHA256 || original.Predecessor == PredecessorUnknown || (original.Purpose != PublicationCapture && original.Purpose != PublicationMetadata && original.Purpose != PublicationPrivacyRewrite) {
+			return errors.New("pending privacy input is not exact known mutation authority")
+		}
 	default:
 		return errors.New("privacy input authority is unknown")
+	}
+	if e.Authority != PrivacyPending && e.PendingMutation != nil {
+		return errors.New("pending authority cannot authorize another privacy input kind")
 	}
 	if e.StageDigest != "" && (e.StageDigest != p.AdmissionStage || !validPublicationDigest(e.StageDigest) || !validPublicationDigest(e.StageSourceSHA256)) {
 		return errors.New("privacy stage receipt differs from immutable admission")
@@ -245,4 +270,42 @@ func (p *Published) privacyStageSource(reg archive.SessionRegistration, m Admiss
 		}
 	}
 	return "", false
+}
+
+func validatePendingPrivacyPreparation(prior PublicationPredecessor, destination, admission, policy string) error {
+	e, original := prior.Privacy, prior.PrivacyPendingSource
+	if original == nil || original.Commit == nil || e.PendingMutation == nil || original.ValidatePublication() != nil || original.Commit.Predecessor == PredecessorUnknown || original.Commit.DestinationID != destination || original.Commit.AdmissionContext != admission || original.Commit.MetadataSHA256 != e.PreviousMetadataSHA256 || original.Commit.SourceSetSHA256 != e.PendingMutation.SourceSetSHA256 || original.Commit.PolicyContext != e.PendingMutation.PolicyContext || original.Commit.Purpose != e.PendingMutation.Purpose || original.Commit.Predecessor != e.PendingMutation.Predecessor || original.Commit.PredecessorSHA256 != e.PendingMutation.PredecessorSHA256 {
+		return errors.New("privacy pending input differs from original sealed mutation")
+	}
+	check := prior
+	check.Privacy = nil
+	check.PrivacyPendingSource = nil
+	check.SameRevisionContinuity = original.Commit.Continuity
+	if original.Commit.Predecessor != check.State || check.State == PredecessorPresent && publicationSHA256(check.Body) != original.Commit.PredecessorSHA256 {
+		return errors.New("privacy pending predecessor differs from exact retained authority")
+	}
+	if err := original.validatePublicationPredecessor(check, destination, admission, original.Commit.PolicyContext, original.Commit.Purpose); err != nil {
+		return err
+	}
+	var before archive.Metadata
+	if err := json.Unmarshal(original.MetadataBytes, &before); err != nil {
+		return err
+	}
+	selections, err := RevisionSelections(before)
+	if err != nil {
+		return err
+	}
+	if len(selections) != len(e.Sources) {
+		return errors.New("privacy pending correspondence omits candidate revisions")
+	}
+	for i, source := range e.Sources {
+		if source.Previous != selections[i] {
+			return errors.New("privacy input is not the exact pending selection")
+		}
+	}
+	digest, _, err := archive.PublicationIdentity(original.MetadataBytes, destination, admission, e.PreviousPolicyContext, string(PublicationPrivacyRewrite))
+	if err != nil || digest != e.PreviousSetSHA256 {
+		return errors.New("privacy pending selection identity differs")
+	}
+	return nil
 }

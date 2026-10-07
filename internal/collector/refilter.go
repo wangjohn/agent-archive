@@ -82,6 +82,8 @@ func refilterRetainedBundle(ctx context.Context, reg archive.SessionRegistration
 	if err != nil {
 		return archive.SourceBundle{}, err
 	}
+	// Retained producer observations are immutable; codec parsing cannot upgrade them.
+	refiltered.Capture.Harness = bundle.Capture.Harness
 	refiltered.Capture.Gaps = mergeCaptureGaps(bundle.Capture.Gaps, refiltered.Capture.Gaps)
 	return refiltered, nil
 }
