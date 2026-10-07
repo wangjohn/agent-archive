@@ -7,18 +7,17 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/state"
+	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
 // stagePhantomSubagent leaves a subagent candidate for the one session
 // registered in home, as a SubagentStop hook would, observed at observedAt
 // with a transcript path nothing writes, and returns that path.
 //
-// The parent is the Codex session publishedThroughSync archives, though
-// only Claude Code reports subagents: staging a Claude parent would mean
-// setting up Claude Code's hooks too. It makes no difference here. The
-// collector looks up the adapter by name, which Codex has, and a missing
-// transcript fails with ENOENT before any adapter reads a record.
+// The parent uses the real Claude provider and hook relationship semantics.
 func stagePhantomSubagent(t *testing.T, home string, observedAt time.Time) string {
 	t.Helper()
 	local, err := state.Open(home)
@@ -64,7 +63,13 @@ func statusOutput(t *testing.T, env Env, args ...string) string {
 func TestSyncPassesWithOnlyWaitingSubagents(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 9, 24, 21, 24, 0, 0, time.UTC)
-	env, home, _, _ := publishedThroughSync(t, now)
+	env, home, parent, cloud := publishedClaudeThroughSync(t, now)
+	if _, err := os.Stat(parent); err != nil {
+		t.Fatal(err)
+	}
+	if objects, err := cloud.List(t.Context(), ""); err != nil || len(objects) == 0 {
+		t.Fatalf("published parent objects: %v %v", objects, err)
+	}
 	stagePhantomSubagent(t, home, now)
 
 	code, out, errOut := syncAt(t, env, now.Add(time.Minute))
@@ -96,7 +101,7 @@ func TestSyncPassesWithOnlyWaitingSubagents(t *testing.T) {
 func TestSyncFailsOnARealErrorBesideAWaitingSubagent(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 9, 24, 21, 24, 0, 0, time.UTC)
-	env, home, _, _ := publishedThroughSync(t, now)
+	env, home, _, _ := publishedClaudeThroughSync(t, now)
 	stagePhantomSubagent(t, home, now)
 	// Another candidate's file no longer decodes: a real failure.
 	if err := os.WriteFile(filepath.Join(home, "subagent-candidates", "unreadable.json"), []byte("{"), 0o600); err != nil {
@@ -122,7 +127,7 @@ func TestSyncFailsOnARealErrorBesideAWaitingSubagent(t *testing.T) {
 func TestSyncFailsOnceOnAnUnreadableSubagentTranscript(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 9, 24, 21, 24, 0, 0, time.UTC)
-	env, home, _, _ := publishedThroughSync(t, now)
+	env, home, _, _ := publishedClaudeThroughSync(t, now)
 	if err := os.Mkdir(stagePhantomSubagent(t, home, now), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +156,7 @@ func TestSyncFailsOnceOnAnUnreadableSubagentTranscript(t *testing.T) {
 func TestPassClearsIssuesLeftByWaitingSubagents(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 9, 24, 21, 24, 0, 0, time.UTC)
-	env, home, _, _ := publishedThroughSync(t, now)
+	env, home, _, _ := publishedClaudeThroughSync(t, now)
 	stagePhantomSubagent(t, home, now)
 	local, err := state.Open(home)
 	if err != nil {
@@ -173,4 +178,21 @@ func TestPassClearsIssuesLeftByWaitingSubagents(t *testing.T) {
 	if err != nil || status.LastError != "" || len(status.LastErrors) != 0 || len(status.SessionIssues) != 0 || status.WaitingSubagents != 1 {
 		t.Fatalf("status=%+v err=%v", status, err)
 	}
+}
+
+func publishedClaudeThroughSync(t *testing.T, now time.Time) (Env, string, string, storage.ObjectStore) {
+	t.Helper()
+	home, project := t.TempDir(), t.TempDir()
+	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), now)
+	setupRun(t, env, s3SetupInput("bucket", "us-east-1", "profile", false, true, false, project), 0)
+	cloud := storagetest.NewMemoryStore()
+	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return cloud, nil }
+	path := writeTestTranscript(t, "native.jsonl", `{"type":"user","sessionId":"native","message":{"role":"user","content":"Synthetic parent prompt"}}`+"\n")
+	must(t, handleTestHookEvent(home, "claude", map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native", "cwd": project, "transcript_path": path}, now))
+	result, err := runOnePass(env, false)
+	must(t, err)
+	if len(result.Published) != 1 {
+		t.Fatal("Claude fixture did not publish", result)
+	}
+	return env, home, path, cloud
 }

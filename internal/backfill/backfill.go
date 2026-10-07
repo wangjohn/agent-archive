@@ -148,7 +148,7 @@ type Candidate struct {
 	ProjectRoot              string
 	ProjectResolution        *archive.ProjectResolution
 	projectResolutionCurrent func() bool
-	projectResolutionReset   func()
+	projectResolutionReset   func(context.Context)
 	ProjectKind              ProjectKind
 	// ProjectIncluded is set when the root is a configured, included
 	// project; otherwise importing adds it.
@@ -166,6 +166,8 @@ type Candidate struct {
 	// register (collector.CheckImportedSubagent); they are not imported.
 	SubagentsSkipped int
 	Skip             SkipReason
+	// Diagnostic explains the winning skip without retaining source contents or locators.
+	Diagnostic *Diagnostic
 }
 
 // Subagent is one subagent transcript belonging to an imported parent.
@@ -306,6 +308,10 @@ type Environment struct {
 	// Nil means not checked; the CLI uses CursorDatabaseReaderFor. Undo reads
 	// the database under Home instead (see resumedSinceImport).
 	CursorDatabase func(ctx context.Context) (CursorDatabaseResult, error)
+	// CursorRecoveryDatabase supplies a complete, bounded prefilter evidence
+	// catalog. Nil capability keeps automatic deleted-worktree recovery pending
+	// when a database exists; no unbounded catalog fallback is permitted.
+	CursorRecoveryDatabase func(context.Context, int, int64) (CursorDatabaseResult, error)
 	// Workers overrides the filter worker count; zero uses defaultWorkers.
 	Workers int
 	// OS is the operating system whose app locations are looked in: the

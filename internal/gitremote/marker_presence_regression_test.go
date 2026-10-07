@@ -9,13 +9,18 @@ import (
 )
 
 func TestMarkerPresenceInvalidatesAbsentDependency(t *testing.T) {
+	gitOrSkip(t)
+	scope, ok := identityObservationScope()
+	if !ok {
+		t.Fatal("identity observation scope unavailable")
+	}
 	root := t.TempDir()
 	marker := filepath.Join(root, ".git")
 	stamp, ok := repositoryStamp(marker)
 	if !ok {
 		t.Fatal("absent marker observation refused")
 	}
-	id := sourcefacts.RepositoryIdentity{Known: true, Dependencies: []sourcefacts.RepositoryDependency{{Path: marker, Stamp: stamp}}}
+	id := sourcefacts.RepositoryIdentity{Known: true, ObservationScope: scope, Dependencies: []sourcefacts.RepositoryDependency{{Path: marker, Stamp: stamp}}}
 	if !ProjectIdentityCurrent(id) {
 		t.Fatal("unchanged absence invalidated")
 	}

@@ -2,6 +2,7 @@ package state
 
 import (
 	"encoding/json"
+	"errors"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 )
@@ -20,9 +21,22 @@ func (s *Store) CheckHistoryRecovery(id string) error {
 			return err
 		}
 	}
-	if err := archive.CheckHistoryMutation(cached, metadata); err != nil {
-		return err
-	}
 	previous, _, _ := published.LastPublished()
-	return archive.CheckHistoryMutation(previous, archive.Metadata{})
+	if cached.History == nil && previous.History == nil && metadata.History == nil {
+		return archive.CheckHistoryMutation(cached, metadata)
+	}
+	if err := cached.ValidateHistory(); err != nil {
+		return errors.Join(archive.ErrHistoryMutationPending, err)
+	}
+	if err := previous.ValidateHistory(); err != nil {
+		return errors.Join(archive.ErrHistoryMutationPending, err)
+	}
+	if _, err := metadata.SourceReferences(); err != nil {
+		return errors.Join(archive.ErrHistoryMutationPending, err)
+	}
+	reg, found, err := s.LoadRegistration(id)
+	if err != nil || !found || metadata.SessionID != id || metadata.NativeSessionID != reg.NativeSessionID || metadata.ProjectID != reg.ProjectID || metadata.Harness.Name != reg.Harness.Name {
+		return errors.Join(archive.ErrHistoryMutationPending, errors.New("complete recovery history authority required"), err)
+	}
+	return nil
 }
