@@ -121,6 +121,8 @@ Codex history publication now uses verified retained source sets, exact predeces
 
 Implement sequentially so the producer contract and reader support precede publication. Each phase should have a reviewable change with its relevant validation; no native daemon, framework or second scheduler is needed.
 
+The deferred real UI comparisons have a [manual protocol and pending evidence template](../maintainers/native-session-name-comparisons.md). This follow-up work package does not claim those comparisons have run.
+
 ## Tests and release acceptance
 
 Use synthetic fixtures with invented names and IDs. Extend the existing label/privacy/parser tests rather than checking in private transcripts.
