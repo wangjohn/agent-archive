@@ -195,4 +195,3 @@ func (s *Store) RemovePublicationEvidence(id string) (err error) {
 	}
 	return errors.Join(dir.Sync(), dir.Close())
 }
-

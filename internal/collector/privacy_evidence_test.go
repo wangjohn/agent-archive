@@ -2,6 +2,7 @@ package collector
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -203,6 +204,62 @@ func TestPrivacyEmbeddedRemoteSourceLossKeepsPending(t *testing.T) {
 	}
 	if _, found, err := local.LoadRequest(reg.ArchiveSessionID); err != nil || !found {
 		t.Fatal("source loss completed request", found, err)
+	}
+}
+
+type unreadablePrivacySourceStore struct {
+	storage.ObjectStore
+	key string
+}
+
+func (s unreadablePrivacySourceStore) Get(ctx context.Context, key string) ([]byte, error) {
+	if key == s.key {
+		return nil, os.ErrPermission
+	}
+	return s.ObjectStore.Get(ctx, key)
+}
+
+func TestPrivacyEmbeddedOriginalAuthorityMustRemainReadableAndSealed(t *testing.T) {
+	for _, kind := range []string{"unreadable-source", "missing-body", "changed-body"} {
+		t.Run(kind, func(t *testing.T) {
+			local, reg, remote, opts, old := unuploadedPrivacyFixture(t)
+			if err := remote.Put(t.Context(), old.SourceKey, old.SourceBytes); err != nil {
+				t.Fatal(err)
+			}
+			_, _ = Run(t.Context(), local, remote, opts)
+			next, found, err := local.LoadPending(reg.ArchiveSessionID)
+			if err != nil || !found || next.Commit.Privacy.ReplayInput == nil || next.Commit.Privacy.InputJournalSHA256 != "" {
+				t.Fatal(next, found, err)
+			}
+			var target storage.ObjectStore = remote
+			switch kind {
+			case "unreadable-source":
+				target = unreadablePrivacySourceStore{ObjectStore: remote, key: old.SourceKey}
+			case "missing-body":
+				next.Commit.Privacy.ReplayInput.MetadataBytes = nil
+			case "changed-body":
+				next.Commit.Privacy.ReplayInput.MetadataBytes = []byte("{}")
+			}
+			remote.failMetadata = false
+			published, err := local.LoadPublishedState(reg.ArchiveSessionID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			scan := newSessionScan(t.Context(), local, target, reg, state.Request{}, published, opts.Now(), opts)
+			if _, err := scan.publishPending(next); err == nil {
+				t.Fatal("unreadable or unsealed original authorized publication")
+			}
+			if _, err := remote.Get(t.Context(), next.MetadataKey); !errors.Is(err, storage.ErrNotFound) {
+				t.Fatal("invalid original allowed metadata upload", err)
+			}
+			after, found, err := local.LoadPending(reg.ArchiveSessionID)
+			if err != nil || !found || after.Commit.MetadataSHA256 != next.Commit.MetadataSHA256 {
+				t.Fatal("invalid original discarded pending", after, found, err)
+			}
+			if _, found, err := local.LoadRequest(reg.ArchiveSessionID); err != nil || !found {
+				t.Fatal("invalid original acknowledged request", found, err)
+			}
+		})
 	}
 }
 

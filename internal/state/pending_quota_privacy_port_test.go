@@ -1,9 +1,9 @@
 package state
 
 import (
- "errors"
- "os"
- "testing"
+	"errors"
+	"os"
+	"testing"
 )
 
 func TestPendingRAMOnlyPrivacyHandleUsesHeldStageAllowance(t *testing.T) {
@@ -62,4 +62,3 @@ func TestPendingRAMOnlyPrivacyHandleRejectsInvalidOwnership(t *testing.T) {
 		})
 	}
 }
-

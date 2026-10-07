@@ -466,10 +466,10 @@ func validatePrivacySource(source PrivacySource, selected archive.RevisionRefere
 func (p PendingPublication) validatePrivacyReplayInput() error {
 	e := p.Commit.Privacy
 	for _, input := range []*PrivacyPendingMutation{e.ReplayInput, e.PendingMutation} {
-		if input == nil || len(input.MetadataBytes) == 0 {
+		if input == nil {
 			continue
 		}
-		if publicationSHA256(input.MetadataBytes) != input.MetadataSHA256 || input.Predecessor == PredecessorUnknown {
+		if len(input.MetadataBytes) == 0 || publicationSHA256(input.MetadataBytes) != input.MetadataSHA256 || input.Predecessor == PredecessorUnknown {
 			return errors.New("privacy replay original body is not authenticated known authority")
 		}
 		digest, _, err := archive.PublicationIdentity(input.MetadataBytes, p.Commit.DestinationID, p.Commit.AdmissionContext, input.PolicyContext, string(input.Purpose))

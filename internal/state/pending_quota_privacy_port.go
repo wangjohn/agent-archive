@@ -1,9 +1,9 @@
 package state
 
 import (
- "errors"
- "os"
- "path/filepath"
+	"errors"
+	"os"
+	"path/filepath"
 )
 
 // SavePendingWithTemporaryReservation writes pending publication alongside
@@ -42,4 +42,3 @@ func (s *Store) SavePendingWithTemporaryReservation(r *TemporaryReservation, id 
 	}
 	return s.savePendingQuota(id, p, true)
 }
-
