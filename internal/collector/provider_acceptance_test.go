@@ -297,20 +297,26 @@ func TestProviderPublishedSourceSurvivesNativeAndLocalStateLoss(t *testing.T) {
 	if err != nil || len(result.Errors) != 0 || len(result.Published) != 1 {
 		t.Fatal(result, err)
 	}
-	selected := fetchMetadata(t, remote, reg.Harness.Name, reg.ArchiveSessionID)
+	key, err := archive.MetadataObjectKey(reg.Harness.Name, reg.ArchiveSessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected, err := reader.ReadMetadata(t.Context(), remote, key)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Remove(reg.TranscriptPath); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.RemoveAll(local.Home()); err != nil {
 		t.Fatal(err)
 	}
-	metadata := fetchMetadata(t, remote, reg.Harness.Name, reg.ArchiveSessionID)
-	if metadata.SourceBundle != selected.SourceBundle || !metadata.CapturedAt.Equal(selected.CapturedAt) {
-		t.Fatal("remote selection changed after native and local state loss")
-	}
-	bundle, err := reader.LoadSource(t.Context(), remote, metadata, reader.Limits{})
+	metadata, bundle, err := reader.RefreshAndLoad(t.Context(), remote, key, reader.Limits{})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if metadata.SourceBundle != selected.SourceBundle || !metadata.CapturedAt.Equal(selected.CapturedAt) || metadata.MachineID != opts.MachineID || metadata.SessionID != reg.ArchiveSessionID || metadata.NativeSessionID != reg.NativeSessionID || metadata.ProjectID != reg.ProjectID || metadata.Harness != reg.Harness {
+		t.Fatal("remote selection changed after native and local state loss")
 	}
 	body, err := json.Marshal(bundle)
 	if err != nil || !strings.Contains(string(body), "visible") || bundle.NativeSessionID != reg.NativeSessionID {
