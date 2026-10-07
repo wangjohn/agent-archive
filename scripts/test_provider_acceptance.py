@@ -97,12 +97,41 @@ class EvidenceVerifierTest(unittest.TestCase):
             self.assertIn(b'"result":"fail"', path.read_bytes())
 
 
+    def test_admin_credentials_are_sanitized_and_fail_the_gate(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'provider-service.txt'
+            path.write_text('private-admin-secret')
+            result = subprocess.run(['python3', str(PROVIDER / 'sanitize-evidence.py'), directory],
+                                    env=dict(os.environ, AA_PROVIDER_ADMIN_SECRET='private-admin-secret'),
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 1)
+            self.assertNotIn('private-admin-secret', path.read_text())
+            self.assertIn('acceptance failed closed', result.stderr)
+
+
 class ProviderHarnessPolicyTest(unittest.TestCase):
     def test_refuses_local_host_before_any_service_mutation(self):
         env = {'PATH': os.environ['PATH']}
         result = subprocess.run(['bash', str(PROVIDER / 'host.sh')], env=env, capture_output=True, text=True)
         self.assertEqual(result.returncode, 2)
         self.assertIn('disposable non-root Linux CI runner', result.stderr)
+
+    def test_both_sdk_identities_have_only_run_prefix_authority(self):
+        script = (PROVIDER / 'host.sh').read_text()
+        self.assertIn('"$admin_access" "$admin_secret"', script)
+        policy = module('credential-policy').policy('aa-provider-0123456789abcdef')
+        statements = policy['Statement']
+        self.assertEqual(statements[0]['Action'], ['s3:GetBucketLocation'])
+        self.assertEqual(statements[1]['Condition'], {'StringLike': {'s3:prefix': ['aa-provider-0123456789abcdef/*']}})
+        self.assertEqual(statements[2]['Resource'], ['arn:aws:s3:::aa-disposable-acceptance/aa-provider-0123456789abcdef/*'])
+        self.assertEqual(statements[2]['Action'], ['s3:GetObject', 's3:PutObject', 's3:DeleteObject'])
+        self.assertIn('MINIO_ROOT_USER=%s', script)
+        self.assertIn('--user "$access"', script)
+        self.assertIn('--user "$peer_access"', script)
+        self.assertIn('AA_PROVIDER_RUN_PREFIX="$prefix"', script)
+        for invalid in ('', '../outside', 'aa-provider-*', 'aa-provider-0123456789abcdef/other'):
+            with self.assertRaises(ValueError):
+                module('credential-policy').policy(invalid)
 
     def test_script_parses_and_provider_source_versions_are_exact(self):
         subprocess.run(['bash', '-n', str(PROVIDER / 'host.sh')], check=True)

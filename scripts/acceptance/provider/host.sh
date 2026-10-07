@@ -44,12 +44,12 @@ go version -m "$work/tools/mc" > "$AA_ACCEPTANCE_OUTPUT/mc-build.txt"
 cp "$work/tools/minio" "$work/minio"
 printf 'FROM scratch\nCOPY minio /minio\nENTRYPOINT ["/minio"]\n' > "$work/Dockerfile"
 docker build --quiet --tag "$image" "$work" > "$AA_ACCEPTANCE_OUTPUT/provider-image.txt"
-access=acceptance$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')
-secret=$(od -An -N24 -tx1 /dev/urandom | tr -d ' \n')
-echo "::add-mask::$access"
-echo "::add-mask::$secret"
-export AA_PROVIDER_ACCESS="$access" AA_PROVIDER_SECRET="$secret"
-printf 'MINIO_ROOT_USER=%s\nMINIO_ROOT_PASSWORD=%s\nHOME=/data\n' "$access" "$secret" > "$work/service.env"
+admin_access=admin$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')
+admin_secret=$(od -An -N24 -tx1 /dev/urandom | tr -d ' \n')
+echo "::add-mask::$admin_access"
+echo "::add-mask::$admin_secret"
+export AA_PROVIDER_ADMIN_ACCESS="$admin_access" AA_PROVIDER_ADMIN_SECRET="$admin_secret"
+printf 'MINIO_ROOT_USER=%s\nMINIO_ROOT_PASSWORD=%s\nHOME=/data\n' "$admin_access" "$admin_secret" > "$work/service.env"
 docker run -d --name "$container" --user "$(id -u):$(id -g)" \
   --env-file "$work/service.env" --publish 127.0.0.1::9000 \
   --tmpfs /tmp:rw,mode=1777 --mount "type=bind,source=$work/data,target=/data" \
@@ -64,19 +64,22 @@ for _ in $(seq 1 60); do
 done
 [[ $ready == 1 ]] || { echo 'real provider did not become ready' >&2; exit 1; }
 "$work/tools/minio" --version > "$AA_ACCEPTANCE_OUTPUT/provider-version.txt"
-"$work/tools/mc" --config-dir "$work/mc" alias set acceptance "$endpoint" "$access" "$secret" >/dev/null
+"$work/tools/mc" --config-dir "$work/mc" alias set acceptance "$endpoint" "$admin_access" "$admin_secret" >/dev/null
 "$work/tools/mc" --config-dir "$work/mc" mb acceptance/aa-disposable-acceptance >/dev/null
+access=owner$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')
+secret=$(od -An -N24 -tx1 /dev/urandom | tr -d ' \n')
 peer_access=peer$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')
 peer_secret=$(od -An -N24 -tx1 /dev/urandom | tr -d ' \n')
-echo "::add-mask::$peer_access"
-echo "::add-mask::$peer_secret"
+for value in "$access" "$secret" "$peer_access" "$peer_secret"; do echo "::add-mask::$value"; done
+export AA_PROVIDER_ACCESS="$access" AA_PROVIDER_SECRET="$secret"
 export AA_PROVIDER_PEER_ACCESS="$peer_access" AA_PROVIDER_PEER_SECRET="$peer_secret"
-cat > "$work/peer-policy.json" <<'POLICY'
-{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:ListBucket","s3:GetBucketLocation"],"Resource":["arn:aws:s3:::aa-disposable-acceptance"]},{"Effect":"Allow","Action":["s3:GetObject","s3:PutObject","s3:DeleteObject"],"Resource":["arn:aws:s3:::aa-disposable-acceptance/*"]}]}
-POLICY
+export AA_PROVIDER_RUN_PREFIX="$prefix"
+python3 "$root/scripts/acceptance/provider/credential-policy.py" "$prefix" > "$work/client-policy.json"
+"$work/tools/mc" --config-dir "$work/mc" admin policy create acceptance acceptance-clients "$work/client-policy.json" >/dev/null
+"$work/tools/mc" --config-dir "$work/mc" admin user add acceptance "$access" "$secret" >/dev/null
 "$work/tools/mc" --config-dir "$work/mc" admin user add acceptance "$peer_access" "$peer_secret" >/dev/null
-"$work/tools/mc" --config-dir "$work/mc" admin policy create acceptance acceptance-peer "$work/peer-policy.json" >/dev/null
-"$work/tools/mc" --config-dir "$work/mc" admin policy attach acceptance acceptance-peer --user "$peer_access" >/dev/null
+"$work/tools/mc" --config-dir "$work/mc" admin policy attach acceptance acceptance-clients --user "$access" >/dev/null
+"$work/tools/mc" --config-dir "$work/mc" admin policy attach acceptance acceptance-clients --user "$peer_access" >/dev/null
 export AGENT_ARCHIVE_PROVIDER_ACCEPTANCE=1 AA_PROVIDER_ENDPOINT="$endpoint"
 export AA_PROVIDER_ACCESS="$access" AA_PROVIDER_SECRET="$secret" AA_PROVIDER_BUCKET=aa-disposable-acceptance
 # Go test source/native/state stays under temporary roots. The provider adapter

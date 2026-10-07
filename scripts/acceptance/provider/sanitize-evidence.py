@@ -20,7 +20,7 @@ def sanitize(root, secrets):
 
 
 if __name__ == '__main__':
-    values = [os.environ.get(name, '').encode() for name in ('AA_PROVIDER_ACCESS', 'AA_PROVIDER_SECRET', 'AA_PROVIDER_PEER_ACCESS', 'AA_PROVIDER_PEER_SECRET')]
+    values = [os.environ.get(name, '').encode() for name in ('AA_PROVIDER_ADMIN_ACCESS', 'AA_PROVIDER_ADMIN_SECRET', 'AA_PROVIDER_ACCESS', 'AA_PROVIDER_SECRET', 'AA_PROVIDER_PEER_ACCESS', 'AA_PROVIDER_PEER_SECRET')]
     if sanitize(Path(sys.argv[1]), values):
         print('Credential-bearing evidence was sanitized; acceptance failed closed.', file=sys.stderr)
         sys.exit(1)

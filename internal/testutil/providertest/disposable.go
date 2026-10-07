@@ -9,12 +9,14 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awscredentials "github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/smithy-go"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -86,11 +88,17 @@ func NewDisposableS3(t *testing.T) *DisposableS3 {
 	}
 	counter := &disposableHTTP{origin: endpoint, statuses: map[int]int{}, client: &http.Client{Timeout: 15 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
 	cfg := aws.Config{Region: "us-east-1", Credentials: awscredentials.NewStaticCredentialsProvider(access, secret, ""), HTTPClient: counter}
-	prefix := "run-" + hex.EncodeToString(suffix[:])
+	runPrefix := os.Getenv("AA_PROVIDER_RUN_PREFIX")
+	decoded, err := hex.DecodeString(strings.TrimPrefix(runPrefix, "aa-provider-"))
+	if err != nil || !strings.HasPrefix(runPrefix, "aa-provider-") || len(decoded) != 8 {
+		t.Fatal("acceptance requires an exact disposable run prefix")
+	}
+	prefix := runPrefix + "/run-" + hex.EncodeToString(suffix[:])
 	remote, err := storage.NewS3Store(storage.S3StoreOptions{Provider: "s3", Client: storage.NewClient(cfg, endpoint, true, 1), Bucket: bucket, Prefix: prefix, MaxGetBytes: 128 << 20})
 	if err != nil {
 		t.Fatal(err)
 	}
+	verifyCredentialScope(t, cfg, endpoint, bucket, runPrefix)
 	store := &DisposableS3{S3Store: remote, http: counter, endpoint: endpoint, bucket: bucket, prefix: prefix}
 	t.Cleanup(func() { cleanupDisposableS3(t, store) })
 	return store
@@ -109,7 +117,29 @@ func (s *DisposableS3) IndependentOwner(t *testing.T) *DisposableS3 {
 	if err != nil {
 		t.Fatal(err)
 	}
+	verifyCredentialScope(t, cfg, s.endpoint, s.bucket, os.Getenv("AA_PROVIDER_RUN_PREFIX"))
 	return &DisposableS3{S3Store: remote, http: s.http, endpoint: s.endpoint, bucket: s.bucket, prefix: s.prefix}
+}
+
+// Successful out-of-prefix work is a failed gate, even in a disposable service.
+// Require the actual provider's authorization error, not a transport failure.
+func verifyCredentialScope(t *testing.T, cfg aws.Config, endpoint, bucket, runPrefix string) {
+	t.Helper()
+	outside, err := storage.NewS3Store(storage.S3StoreOptions{Provider: "s3", Client: storage.NewClient(cfg, endpoint, true, 1), Bucket: bucket, Prefix: runPrefix + "-outside"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	putErr := outside.Put(ctx, "scope-probe", []byte("synthetic scope probe"))
+	_, listErr := outside.List(ctx, "")
+	for _, denial := range []error{putErr, listErr} {
+		var apiError smithy.APIError
+		if !errors.As(denial, &apiError) || apiError.ErrorCode() != "AccessDenied" {
+			t.Fatal("provider credential did not prove out-of-prefix AccessDenied", denial)
+		}
+	}
+	t.Log("real provider refused out-of-prefix PUT and LIST with AccessDenied")
 }
 
 func cleanupDisposableS3(t *testing.T, s *DisposableS3) {

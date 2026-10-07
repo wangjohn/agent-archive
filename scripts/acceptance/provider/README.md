@@ -40,10 +40,13 @@ from scratch, avoiding previously unavailable unpinned registry images. Source
 or image failure is a failed gate, never a fallback to a fake service.
 
 A loopback-only ephemeral MinIO serves one private disposable bucket. Credentials
-are generated only for this run; a second issued static identity has object and
-listing access to that bucket. Production S3 clients get explicit credentials and
-cannot consult the user's AWS profile or Keychain. Every test receives a random
-prefix, and cleanup inventories/deletes only that prefix. HTTP attempts/statuses
+are generated only for this run. Administration uses a separate identity; both
+SDK identities have object and listing authority restricted to this run prefix.
+Every fixture and independent client must receive actual AccessDenied responses
+for an out-of-prefix PUT and LIST before its lifecycle work can pass. Production
+S3 clients get explicit credentials and cannot consult the user's AWS profile or
+Keychain. Every test receives a random child prefix under that run authority, and
+cleanup inventories/deletes only that prefix. HTTP attempts/statuses
 are counted with a4096-attempt cap per fixture, a15-second request timeout and
 bounded source verification. Cancellation must perform no provider work. The
 single-source verification check has a separate operation budget. The two owners
