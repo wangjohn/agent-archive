@@ -260,3 +260,63 @@ func TestLabelCapabilityUsesRegistrationHarnessAndGenericContext(t *testing.T) {
 		t.Fatalf("generic producer/context not durable: %+v", cache)
 	}
 }
+
+func TestFileAbsenceCannotClearStrongerAPIName(t *testing.T) {
+	previous := archive.SessionLabel{Source: archive.SessionLabelAPI, State: archive.SessionLabelPresent}
+	for _, source := range []archive.SessionLabelSource{archive.SessionLabelIndex, archive.SessionLabelDatabase} {
+		if !weakerLabelAbsence(archive.SessionLabel{Source: source, State: archive.SessionLabelAbsent}, previous) {
+			t.Fatal("file absence can clear API name")
+		}
+	}
+	if weakerLabelAbsence(archive.SessionLabel{Source: archive.SessionLabelAPI, State: archive.SessionLabelAbsent}, previous) {
+		t.Fatal("authoritative API absence blocked")
+	}
+	if weakerLabelAbsence(archive.SessionLabel{Source: archive.SessionLabelDatabase, State: archive.SessionLabelPresent}, previous) {
+		t.Fatal("verified present fallback blocked")
+	}
+}
+
+func TestChangingNamingModeRefreshesLookupWithoutClearingRetainedAPIName(t *testing.T) {
+	local := newTestStore(t)
+	path := writeTranscript(t, t.TempDir(), "session.jsonl", codexTranscript)
+	reg := registration(t, path)
+	reg.NativeSessionID = "01900000-0000-7000-8000-000000000001"
+	if err := local.SaveRegistration(reg); err != nil {
+		t.Fatal(err)
+	}
+	remote := storagetest.NewMemoryStore()
+	now := reg.RegisteredAt.Add(time.Hour)
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "machine", Now: func() time.Time { return now }}
+	if result, err := Run(context.Background(), local, remote, opts); err != nil || len(result.Errors) > 0 {
+		t.Fatal(result, err)
+	}
+	now = now.Add(time.Hour)
+	provider := &mutableLabels{label: archive.SessionLabel{State: archive.SessionLabelPresent, Name: "Verified API name", Source: archive.SessionLabelAPI, Contract: codex.LabelAPIContract}}
+	opts.Labels = mutableLabelLookup{provider}
+	opts.LabelEnvironment = agentapi.LabelEnvironment{Mode: agentapi.LabelLookupNative, ProviderContract: codex.LabelAPIContract}
+	if result, err := Run(context.Background(), local, remote, opts); err != nil || len(result.Errors) > 0 {
+		t.Fatal(result, err)
+	}
+	before := fetchMetadata(t, remote, "codex", reg.ArchiveSessionID)
+	if before.Name != "Verified API name" {
+		t.Fatal(before.Name)
+	}
+	provider.label = archive.SessionLabel{State: archive.SessionLabelAbsent, Source: archive.SessionLabelDatabase, Contract: codex.LabelContract}
+	now = now.Add(time.Second)
+	opts.LabelEnvironment = agentapi.LabelEnvironment{Mode: agentapi.LabelLookupFiles, ProviderContract: codex.LabelContract}
+	if result, err := Run(context.Background(), local, remote, opts); err != nil || len(result.Errors) > 0 || len(result.Published) > 0 {
+		t.Fatal(result, err)
+	}
+	cache, err := local.LoadLabels()
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := cache.Entries[reg.ArchiveSessionID]
+	if entry.Label.Source != archive.SessionLabelAPI || entry.Failures != 0 || !entry.NextAt.Equal(now.Add(time.Minute)) {
+		t.Fatalf("mode migration did not perform guarded fallback: %+v", entry)
+	}
+	after := fetchMetadata(t, remote, "codex", reg.ArchiveSessionID)
+	if after.Name != before.Name || after.SourceBundle != before.SourceBundle || !after.CapturedAt.Equal(before.CapturedAt) {
+		t.Fatal("file fallback erased stronger native evidence")
+	}
+}

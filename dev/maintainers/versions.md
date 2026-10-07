@@ -8,12 +8,12 @@ affects.
 | Version | Where | Recorded in | Current | Changes when |
 | --- | --- | --- | --- | --- |
 | Release | `cli.Version` (set at build time) | `--version` | Build-dependent (`dev-<commit>` from source) | A tag is cut. |
-| Filter | `archive.FilterVersion` | source header `capture.filter_version`, metadata `filter_version` | 17 | What the privacy filter keeps, drops, or redacts changes: any change to filtered output. |
-| Adapter | `adapterVersion` in `internal/archive/adapters.go` | `capture.adapter_version` | 0.17.0 | An adapter's output changes (bumped with the filter in practice). |
+| Filter | `archive.FilterVersion` | source header `capture.filter_version`, metadata `filter_version` | 18 | What the privacy filter keeps, drops, or redacts changes: any change to filtered output. |
+| Adapter | `adapterVersion` in `internal/archive/adapters.go` | `capture.adapter_version` | 0.18.0 | An adapter's output changes (bumped with the filter in practice). |
 | Parser | per-agent `Parser.Version()` / `archive.DefaultParserVersion` | metadata `parser.version` | 0.21.0 | How metadata is derived from a source changes: counts, turns, models, skills, gaps, titles, session names, branch, linked pull requests, tools used, end time, tokens (per model too), tool errors, MCP calls, git activity, the repository key (derived from the project's git origin, not the source). |
 | Source schema | `archive.SourceSchemaVersion` / `HistorySourceSchemaVersion` | source header `schema_version` | 2 | The source bundle's line format changes. Readers refuse other versions. |
 | Metadata schema | `archive.MetadataSchemaVersion` / `HistoryMetadataSchemaVersion` | metadata `schema_version` | 1 | The metadata sidecar changes incompatibly. Optional fields don't bump it. |
-| Codex parser | `codex.Parser.Version()` | metadata `parser.version` | 0.24.0 | Codex identity, ownership or metadata interpretation changes. |
+| Codex parser | `codex.Parser.Version()` | metadata `parser.version` | 0.25.0 | Codex identity, ownership or metadata interpretation changes. |
 | History source schema | `archive.HistorySourceSchemaVersion` | source header `schema_version` | 3 | The self-contained Codex history manifest or record envelopes change. |
 | History metadata schema | `archive.HistoryMetadataSchemaVersion` | metadata `schema_version` | 2 | Preserved native revision references change incompatibly. |
 | Machine record | `machines.SchemaVersion` | `machines/<machine_id>.json` and `machines --json` | 1 | Informational registry format changes incompatibly; independent of session schemas and filtering. |
@@ -137,3 +137,8 @@ this does not change Claude or Cursor parser/adapter behavior. Revision-aware
 history publication now uses verified retained source sets and exact authority
 through the pending journal; config-v5 protects it from older writers. This
 lifecycle work does not change the reader schemas or parser/filter versions.
+
+Opt-in Codex native naming adds a fixed API evidence source/contract with filter
+18, adapter 0.18.0 and Codex parser 0.25.0. Existing file observations remain
+readable. The optional codex_name_lookup setting needs no writer fence: loss by
+an older writer safely returns to files. Source/metadata schemas stay compatible.

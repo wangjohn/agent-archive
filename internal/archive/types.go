@@ -45,9 +45,10 @@ const (
 	// the description the parent gave a Claude Code subagent's task, read
 	// from the sibling .meta.json. Filter 15 redacts aa-pair1 pairing bundles,
 	// including truncated payloads. See dev/specs/privacy-filter.md.
+	// Filter 18 additionally accepts pinned opt-in API label evidence.
 	// Filter 17 retains typed, owning Codex session_labels metadata with
 	// prompt redaction and a bounded display name; it never establishes activity.
-	FilterVersion = "17"
+	FilterVersion = "18"
 	// OpenTelemetryGenAIRevision pins the upstream definitions used by the
 	// three gen_ai.* attributes emitted by BuildMetadata. The archive is not
 	// an OTLP payload; all agent_archive.* attributes are local extensions.

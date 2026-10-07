@@ -15,7 +15,7 @@ Production supplies no such historical placement proof, so index-only homes
 remain unavailable; a settled matching legacy database may use the index fallback. Unknown producers, known relocated
 SQLite storage, ambiguous homes, incomplete files and related histories are
 unavailable. This support does not promise parity with a running desktop
-sidebar. No native API process is launched.
+sidebar. The default `files` mode launches no native process.
 
 Storage guards observe the collector's current `CODEX_SQLITE_HOME` and the
 native home's local configuration, but cannot prove historical, system or
@@ -88,3 +88,47 @@ contract within its integration. A hash of provider interpretation, filter and
 per-agent parser versions invalidates private lookup context. Earlier retained
 file-contract evidence remains readable offline; it does not authorize a new
 native lookup under the current contract.
+
+## Explicit native opt-in
+
+To enable native lookup, pause collection, back up the archive data directory's
+`config.json`, and add `"codex_name_lookup": "native"` to that JSON object,
+preserving all other fields and authorization history. Resume collection after
+checking the JSON. Set `"files"` or remove the optional field to return to files.
+Unknown values are rejected. Configuration schema remains unchanged; older
+writers may drop this optional preference and safely return to files.
+
+Native mode starts `codex app-server` through PATH only during eligible collector
+work. Listing, showing, setup and status do not launch it. One lazy stdio process
+per approved home is reused for a pass and closed afterwards. The only messages
+are initialize, initialized and thread/read with includeTurns false; no thread
+start/resume, turns, rename, tools or inventory requests are sent. The returned
+home, native ID and pinned 0.159.2 protocol/retained producer are checked. Missing
+optional names and unknown versions are unavailable; compatible null is explicit
+absence. Known current environment or local configuration overrides and related
+histories are refused. Managed/system configuration and historical SQLite
+placement remain unverified: the child's `CODEX_SQLITE_HOME` selects the home
+only as a fallback, and Codex's merged `sqlite_home` setting can override it.
+Startup may therefore touch configured native storage beyond that fallback.
+
+Opt-in accepts native startup side effects: disposable 0.159.2 probes observed
+database/state and system-skill writes even with metadata-only requests. One
+initialization exceeded eight seconds. Two synthetic servers coexisted in an
+earlier probe; coexistence with the desktop app, real credential-store behavior,
+live sidebar parity and realistic archive-backed native homes remain unverified.
+This mode does not promise a read-only native host. It respects user native auth
+settings through HOME/CODEX_HOME, but does not forward archive credentials, AWS
+variables or shell API keys, and never executes login or approval requests.
+
+Native work is serial, capped at 64 IDs and two seconds across the pass; startup
+and initialization share that total budget, each read has at most 250 ms.
+Responses are limited to 256 KiB per line and 1 MiB across hosts; stderr is
+discarded with a 16 KiB cap. Cancellation closes pipes, kills and reaps with a
+250 ms grace. Unavailable API reads may use the guarded file provider; file
+absence cannot clear previously retained API evidence. Cache backoff and cursor
+fairness remain the same as files mode. One measured warm lookup using installed
+0.159.2, the production host and an invented owning thread in a disposable home returned the expected name in
+598 ms; actual process reap and both reader exits passed. Cold instrumentation
+failed before a lookup measurement. This single warm observation does not
+establish a startup latency distribution or acceptance of the unresolved live
+cases above; the runtime budgets remain enforced independently of it.
