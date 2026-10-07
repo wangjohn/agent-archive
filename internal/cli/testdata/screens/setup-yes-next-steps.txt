@@ -8,17 +8,15 @@ Skill evidence: metadata. User-level skill roots outside selected projects may b
   ! Bucket privacy not verified: public-access settings could not be read.
     Make sure public access is off: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
 
-Configuration saved.
+✓ Setup complete · Automatic capture is on
 Installed /handoff, which continues a session in another agent: ~/.claude/skills/handoff/SKILL.md
 Installed the agent-archive skill, which lets your agents look up and pull in past sessions: ~/.claude/skills/agent-archive/SKILL.md
 To remove the agent skills and keep them off, run agent-archive setup --no-skills.
 
-Next, in each app:
+Next, in each app
   Claude Code: nothing to approve; start a new session (or /clear).
 Sessions already open are not captured. Start a new one in an included project.
 Import sessions from before setup with agent-archive backfill.
 Check progress with agent-archive status.
-
-To set up another machine with this storage, run there:
-  agent-archive setup --yes --provider s3 --bucket team-archive --aws-profile work --region us-east-1 --apps claude --prefix agent-archive/ --retention-days 90 --no-require-skill-use --skill-evidence metadata --skills --project ~/src/web-app
+  · Another machine: agent-archive machines pair
 [exit 0]

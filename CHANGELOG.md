@@ -26,6 +26,14 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Setup offers All found projects as the visible default in one shared selector,
+  including projects beyond the first page, with bounded discovery coverage,
+  observed session counts, Specific selection and preserved capture rules.
+  Storage prompts and diagnostics use grouped questions and receipts. A compact
+  review keeps essential changes visible with complete settings behind Details.
+  Setup completion, app next steps and optional history import are separate;
+  machine-transfer recipes are available on request.
+
 - Setup groups the storage provider question and R2 secret fields, replacing
   answered prompts with short receipts when terminal rows can be safely owned.
   `NO_COLOR` keeps live interaction; dumb and redirected terminals use static
@@ -53,6 +61,10 @@ follow [Semantic Versioning](https://semver.org/).
   coverage remains tracked for release testing.
 
 ### Fixed
+
+- Codex current-history validation uses the remaining bounded pass allowance
+  for private SQLite queries, avoiding spurious retries after a scheduling delay
+  while retaining caller cancellation and native source identity checks.
 
 - First-time backfill can review live repository destinations and recover matching
   deleted worktree sessions in the same import. Hidden clones and unknown or

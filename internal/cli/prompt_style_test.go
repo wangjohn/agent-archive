@@ -28,9 +28,9 @@ func styledPrompter(input string, out *bytes.Buffer, style textStyle) *prompter 
 // and returns the answers as one string.
 func askAll(t *testing.T, p *prompter) string {
 	t.Helper()
-	yes, err := p.yesNo("Include Codex?", true)
+	yes, err := p.yesNo("Include Codex?")
 	must(t, err)
-	no, err := p.yesNo("Include Cursor?", false)
+	no, err := p.yesNo("Include Cursor?")
 	must(t, err)
 	profile, err := p.withDefault("AWS profile", "work")
 	must(t, err)
@@ -69,7 +69,7 @@ func TestPlainPromptsAreUnchanged(t *testing.T) {
 		if got, want := askAll(t, p), "yes no admin s3 retry 30 ~/src/app"; got != want {
 			t.Errorf("%s: answers %q, want %q", name, got, want)
 		}
-		want := "Include Codex? [Y/n] Include Cursor? [y/N] AWS profile [work]: " +
+		want := "Include Codex? [y/N] Include Cursor? [y/N] AWS profile [work]: " +
 			"Where should your archive live?\n  1) Cloudflare R2\n  2) Amazon S3\nEnter 1-2 [1]: " +
 			"What next?\n  1) Fix it\n  2) Retry the check\nEnter 1-2 [1]: " +
 			"Keep sessions for how many days? [90]: Project path: "
@@ -84,13 +84,13 @@ func TestPlainPromptsAreUnchanged(t *testing.T) {
 func TestColorPromptsBoldTheQuestionAndDefault(t *testing.T) {
 	t.Parallel()
 	var out bytes.Buffer
-	p := styledPrompter("\nyes\n\n\n1\n\n~/src/app\n", &out, textStyle{color: true})
+	p := styledPrompter("yes\nyes\n\n\n1\n\n~/src/app\n", &out, textStyle{color: true})
 	if got, want := askAll(t, p), "yes yes work r2 fix 90 ~/src/app"; got != want {
 		t.Errorf("answers %q, want %q", got, want)
 	}
 	written := out.String()
 	for _, want := range []string{
-		"\x1b[1mInclude Codex?\x1b[0m [\x1b[1mY\x1b[0m/n] › ",
+		"\x1b[1mInclude Codex?\x1b[0m [y/\x1b[1mN\x1b[0m] › ",
 		"\x1b[1mInclude Cursor?\x1b[0m [y/\x1b[1mN\x1b[0m] › ",
 		"\x1b[1mAWS profile\x1b[0m [\x1b[1mwork\x1b[0m] › ",
 		"\x1b[1mWhere should your archive live?\x1b[0m\n",

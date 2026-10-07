@@ -4,25 +4,59 @@ Checking installed applications...
 Choose Cloudflare R2 or Amazon S3 for private archive storage. Setup will guide you through connecting your account.
 
 Step 1 of 3 · Choose what to capture
-
 No apps found automatically.
 Choose which apps to include:
-Include Codex? [y/N] y
 
-Include Claude Code? [y/N] n
+? Include Codex?
 
-Include Cursor? [y/N] n
+  1) Yes
+  2) No (default)
 
-Codex capture scope
-  1) Included projects only (Codex)
+› Choose [2]: y
+✓ Include Codex Yes
+
+? Include Claude Code?
+
+  1) Yes
+  2) No (default)
+
+› Choose [2]: n
+✓ Include Claude Code No
+
+? Include Cursor?
+
+  1) Yes
+  2) No (default)
+
+› Choose [2]: n
+✓ Include Cursor No
+
+? Codex capture scope
+
+  1) Included projects only (Codex) (default)
   2) All current and future projects (Codex only)
-Enter 1-2 [1]: included-projects
 
-Add project directories, one per line. Enter a blank line when finished.
-Project path: ~/src/web-app
+› Choose [1]: included-projects
+✓ Included projects only (Codex)
 
-Project path:
+? Add a project path
 
+› Path: ~/src/web-app
+✓ Project ~/src/web-app
+
+? Which projects?
+
+  Found 1 projects:
+  1) ~/src/web-app
+
+  1) All 1 found projects (default)
+  2) Choose specific projects
+
+  [p] Add a project path
+  [r] Retry search
+
+› Choose [1]:
+✓ Projects All 1 found projects
 
 Step 2 of 3 · Connect storage
 

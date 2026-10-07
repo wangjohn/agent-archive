@@ -118,3 +118,45 @@ func TestFirstRunPairingCommitsUsingOriginalTerminalAndBufferedAnswers(t *testin
 		t.Fatalf("pairing not committed: %+v %v %s", cfg, err, &output)
 	}
 }
+
+// First-run pairing remains opt-in; aliases and a final answer without a newline
+// use the same grouped prompt, while EOF never accepts the default.
+// Regression: 2026-10 setup review P2-R1-12.
+func TestFirstSetupPairingPromptPreservesDefaultAliasesAndEOF(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		answer string
+		paired bool
+		fails  bool
+	}{
+		{"default no", "\n", false, false},
+		{"named no", "no\n", false, false},
+		{"alias no", "n\n", false, false},
+		{"named yes", "yes\n", true, false},
+		{"alias yes", "y\n", true, false},
+		{"final answer", "yes", true, false},
+		{"retry", "unknown\nn\n", false, false},
+		{"EOF", "", false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			env := testEnv(t, t.TempDir(), time.Now())
+			env.IsTerminal = func(any) bool { return true }
+			var out bytes.Buffer
+			opts, _, err := firstSetupPairingQuestion(setupOptions{}, strings.NewReader(tc.answer), &out, env)
+			if opts.pair != tc.paired || (err != nil) != tc.fails || !setupContainsText(out.String(), "2) No (default)") {
+				t.Fatalf("pair=%v err=%v\n%s", opts.pair, err, &out)
+			}
+			if !tc.fails {
+				receipt := "Already set up on another machine No"
+				if tc.paired {
+					receipt = "Already set up on another machine Yes"
+				}
+				if setupReceiptIndex(out.String(), receipt) < 0 {
+					t.Fatalf("missing resolved receipt: %s", &out)
+				}
+			}
+		})
+	}
+}

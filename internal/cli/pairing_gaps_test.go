@@ -71,7 +71,9 @@ func TestMachineRemoteFakeAcceptance(t *testing.T) {
 					return source.LookupEnv(k)
 				}
 				output := run(receiver, bundle, "setup", "--pair-file", "-", "--yes", "--codex-discovery", "off", "--codex-capture-scope", "included-projects", "--project", project)
-				if strings.Index(output, "Paired with") > strings.Index(output, "Configuration saved") {
+				pairedAt := strings.Index(output, "Paired with")
+				completeAt := strings.Index(output, "Setup complete")
+				if pairedAt < 0 || completeAt < 0 || pairedAt > completeAt {
 					t.Fatal("pair success appears after housekeeping")
 				}
 			}
@@ -405,7 +407,7 @@ func TestCommittedPairingHousekeepingFailureRemainsSuccess(t *testing.T) {
 	cfg := config.Config{MachineID: strings.Repeat("a", 32)}
 	must(t, config.Save(home, cfg))
 	var output bytes.Buffer
-	if err := finishSetup(newPrompter(strings.NewReader(""), &output), &output, home, cfg, false, nil, env.now(), setupFinish{env: env, userHome: userHome}); err != nil || !strings.Contains(output.String(), "committed") || !strings.Contains(output.String(), "Configuration saved") {
+	if err := finishSetup(newPrompter(strings.NewReader(""), &output), &output, home, cfg, false, nil, env.now(), setupFinish{env: env, userHome: userHome}); err != nil || !strings.Contains(output.String(), "committed") || !strings.Contains(output.String(), "Setup complete") {
 		t.Fatalf("postcommit cleanup misreported %v %s", err, &output)
 	}
 }

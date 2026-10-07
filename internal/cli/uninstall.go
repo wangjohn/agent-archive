@@ -222,7 +222,7 @@ func confirmUninstall(purge, yes bool, home string, previewCfg config.Config, pr
 		if yes {
 			return true, nil
 		}
-		confirmed, err := p.yesNo(question, false)
+		confirmed, err := p.yesNo(question)
 		if err == nil && !confirmed {
 			terminal.Println(out, "Cancelled. No changes were made.")
 		}

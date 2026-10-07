@@ -5,13 +5,14 @@ import (
 	"context"
 	"errors"
 	"io"
+	"io/fs"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
-	"io/fs"
 )
 
 // KnownProjectsResult preserves usable roots when discovery cannot finish.
@@ -73,7 +74,7 @@ func KnownProjectsBounded(ctx context.Context, env Environment, cfg config.Confi
 			}
 			d.files++
 			if c.IdentityError == nil {
-				d.addProject(c.Header.Directory)
+				d.addProject(c.Header.Directory, c.Source.Path)
 				if d.stopped() {
 					return errProjectLimit
 				}
@@ -98,6 +99,13 @@ func KnownProjectsBounded(ctx context.Context, env Environment, cfg config.Confi
 		}
 	}
 	d.stopped()
+	sort.Slice(d.result.Projects, func(i, j int) bool {
+		a, b := d.result.Projects[i], d.result.Projects[j]
+		if !a.LastUsed.Equal(b.LastUsed) {
+			return a.LastUsed.After(b.LastUsed)
+		}
+		return a.Root < b.Root
+	})
 	return d.result
 }
 
@@ -120,7 +128,7 @@ func (d *projectDiscovery) stopped() bool {
 	return d.result.Capped
 }
 
-func (d *projectDiscovery) addProject(cwd string) {
+func (d *projectDiscovery) addProject(cwd, source string) {
 	if cwd == "" || d.stopped() {
 		return
 	}
@@ -129,7 +137,16 @@ func (d *projectDiscovery) addProject(cwd string) {
 		return
 	}
 	root := d.env.resolved(res.root)
-	if d.stopped() || d.seen[root] {
+	if d.stopped() {
+		return
+	}
+	if d.seen[root] {
+		for i := range d.result.Projects {
+			if d.result.Projects[i].Root == root {
+				d.recordSession(&d.result.Projects[i], source)
+				break
+			}
+		}
 		return
 	}
 	if len(d.result.Projects) >= d.maxRoots {
@@ -137,7 +154,23 @@ func (d *projectDiscovery) addProject(cwd string) {
 		return
 	}
 	d.seen[root] = true
-	d.result.Projects = append(d.result.Projects, KnownProject{Root: root, Kind: res.kind})
+	project := KnownProject{Root: root, Kind: res.kind}
+	d.recordSession(&project, source)
+	d.result.Projects = append(d.result.Projects, project)
+}
+
+func (d *projectDiscovery) recordSession(project *KnownProject, source string) {
+	project.Sessions++
+	info, err := d.env.lstat(source)
+	if err != nil {
+		if d.ctx.Err() == nil {
+			d.result.Unreadable++
+		}
+		return
+	}
+	if info.ModTime().After(project.LastUsed) {
+		project.LastUsed = info.ModTime()
+	}
 }
 
 func projectOperation[T any](ctx context.Context, operation func(string) (T, error)) func(string) (T, error) {

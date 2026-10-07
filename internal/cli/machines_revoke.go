@@ -164,7 +164,7 @@ func confirmRevocation(p *prompter, yes, interactive bool) error {
 	if !interactive {
 		return errors.New("use an interactive terminal or deliberate --yes after reviewing verified ownership")
 	}
-	consent, err := p.yesNo("Delete this exact verified key set? Sessions remain; other recipients may lose access", false)
+	consent, err := p.yesNo("Delete this exact verified key set? Sessions remain; other recipients may lose access")
 	if err != nil || !consent {
 		return errors.New("revocation cancelled; no keys deleted")
 	}

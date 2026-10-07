@@ -6,20 +6,61 @@ Choose Cloudflare R2 or Amazon S3 for private archive storage. Setup will guide 
 
 Step 1 of 3 · Choose what to capture
 
-Include Claude Code? [Y/n]
+? Capture sessions from Claude Code?
 
-Projects with recent sessions:
-  1) ~/src/web-app  1 session · today
-  2) ~/src/api      1 session · 3 days ago
-  3) ~/src/docs     1 session · 40 days ago
-a includes all listed projects (the default). Or enter numbers (for example 1 3)
-or a project path.
-Press Enter to include all, or enter a blank line after a selection to finish.
-Projects [A]: 1 2
+  1) Yes (default)
+  2) No
 
-Included: ~/src/web-app, ~/src/api
-Projects:
+› Choose [1]:
+✓ Capture sessions from Claude Code Yes
 
+? Which projects?
+
+  Found 3 projects:
+  1) ~/src/web-app · 1 session · today
+  2) ~/src/api · 1 session · 3 days ago
+  3) ~/src/docs · 1 session · 40 days ago
+
+  1) All 3 found projects (default)
+  2) Choose specific projects
+
+  [p] Add a project path
+  [r] Retry search
+
+› Choose [1]: specific
+✓ Projects Choose specific projects
+
+? Choose specific projects
+
+  Found 3 projects:
+  1) [✓] ~/src/web-app · 1 session · today
+  2) [✓] ~/src/api · 1 session · 3 days ago
+  3) [✓] ~/src/docs · 1 session · 40 days ago
+  Enter numbers to toggle; numbers stay the same across pages.
+  [a] Select all
+  [p] Add a project path
+  [r] Retry search
+  [n] Next page · [b] Previous page
+  [Enter] Confirm selection
+
+› Projects: 3
+✓ Project selection updated
+
+? Choose specific projects
+
+  Found 3 projects:
+  1) [✓] ~/src/web-app · 1 session · today
+  2) [✓] ~/src/api · 1 session · 3 days ago
+  3) [ ] ~/src/docs · 1 session · 40 days ago
+  Enter numbers to toggle; numbers stay the same across pages.
+  [a] Select all
+  [p] Add a project path
+  [r] Retry search
+  [n] Next page · [b] Previous page
+  [Enter] Confirm selection
+
+› Projects:
+✓ Projects 2 selected
 
 Step 2 of 3 · Connect storage
 

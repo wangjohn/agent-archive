@@ -242,7 +242,7 @@ func writeHandoffChoice(p *prompter, rendered []byte, target handoffTarget, dir 
 			continue
 		}
 		if statErr == nil {
-			replace, err := p.yesNo(path+" already exists. Replace it?", false)
+			replace, err := p.yesNo(path + " already exists. Replace it?")
 			if errors.Is(err, io.EOF) {
 				return nil
 			}

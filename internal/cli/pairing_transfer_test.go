@@ -269,13 +269,35 @@ func TestPairingTransferKeepsSharedPromptInput(t *testing.T) {
 	must(t, err)
 	code, err := p.guidedText(promptModel{Question: "Pairing code (hidden)", Secret: true, ReadAnswer: func(in *bufio.Reader) (string, error) { return boundedPairingLine(in, 512) }})
 	must(t, err)
-	consent, err := p.yesNo("Replace destination?", false)
+	consent, err := p.yesNo("Replace destination?")
 	must(t, err)
 	if got != bundle || code != "synthetic-code" || consent || strings.Contains(out.String(), code) {
 		t.Fatal("pairing buffer lost input or exposed the private code")
 	}
 	if !strings.Contains(out.String(), "Credential received") {
 		t.Fatal("pairing code did not use a fixed secret receipt")
+	}
+}
+
+func TestPairingTransferConsentDefaultsToNoAndKeepsBufferedAnswer(t *testing.T) {
+	t.Parallel()
+	var out bytes.Buffer
+	bundle := pairing.Prefix + "SYNTHETIC"
+	p := newPrompter(strings.NewReader(bundle+"\nsynthetic-code\n\nnext-answer\n"), &out)
+	defer p.close()
+	got, err := readPairingBundle(p, setupOptions{}, p.in, Env{})
+	must(t, err)
+	code, err := p.guidedText(promptModel{Question: "Pairing code (hidden)", Secret: true, ReadAnswer: func(in *bufio.Reader) (string, error) { return boundedPairingLine(in, 512) }})
+	must(t, err)
+	consent, err := p.yesNo("Replace destination?")
+	must(t, err)
+	next, err := p.in.ReadString('\n')
+	must(t, err)
+	if got != bundle || code != "synthetic-code" || consent || next != "next-answer\n" {
+		t.Fatal("pairing consent changed its default or consumed the following answer")
+	}
+	if strings.Contains(out.String(), code) || !strings.Contains(out.String(), "Credential received") || !strings.Contains(out.String(), "Replace destination? [y/N]") {
+		t.Fatal("pairing consent or private-code receipt changed")
 	}
 }
 

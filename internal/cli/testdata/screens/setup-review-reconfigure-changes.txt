@@ -4,83 +4,126 @@ Checking installed applications...
   ✓ Claude Code hooks: ~/.claude/settings.json
   ✓ Cursor hooks: ~/.cursor/hooks.json
   ✓ Background job: launchctl responds
-Agent Archive is already set up. What would you like to change?
-  1) Apps and projects
+
+? Agent Archive is already set up. What would you like to change?
+
+  1) Apps and projects (default)
   2) Storage (bucket and credentials)
   3) How long sessions are kept
   4) All settings
   5) Nothing, exit
-Enter 1-5 [1]: 4
 
+› Choose [1]: 4
+✓ All settings
 
 Step 1 of 3 · Choose what to capture
-
 Included: Codex.
 Also found on this computer: Claude Code and Cursor.
-Add them? [Y/n] y
 
-Keep project /Users/alex/src/web-app? [Y/n] y
+? Add them?
 
-Add project directories, one per line. Enter a blank line when finished.
-Project path: ~/src/api
+  1) Yes (default)
+  2) No
 
-Project path:
+› Choose [1]: y
+✓ Add them Yes
 
+? Which projects?
+
+  Found 1 projects:
+  1) ~/src/web-app
+
+  1) All 1 found projects (default)
+  2) Choose specific projects
+
+  [p] Add a project path
+  [r] Retry search
+
+› Choose [1]: y
+! Enter one of the available choices.
+
+? Which projects?
+
+  Found 1 projects:
+  1) ~/src/web-app
+
+  1) All 1 found projects (default)
+  2) Choose specific projects
+
+  [p] Add a project path
+  [r] Retry search
+
+› Choose [1]: p
+✓ Projects Add a project path
+
+? Add a project path
+
+› Path: ~/src/api
+✓ Project ~/src/api
+
+? Which projects?
+
+  Found 2 projects:
+  1) ~/src/web-app
+  2) ~/src/api
+
+  1) All 2 found projects (default)
+  2) Choose specific projects
+
+  [p] Add a project path
+  [r] Retry search
+
+› Choose [1]:
+✓ Projects All 2 found projects
+
+  · All adds or re-enables 1 projects; review the expanded capture scope before saving.
 
 Step 2 of 3 · Connect storage
-
 Current storage: s3 / team-archive
-Keep your current storage?
-[Enter] Keep current storage
-[c] Change storage
-Choose:
+
+? Keep your current storage?
+
+  1) Keep current storage (default)
+
+  [c] Change storage
+
+› Choose [1]:
+✓ Keep current storage
 
 
 Checking your storage connection…
 ✓ Connected to your storage.
 
 Step 3 of 3 · Review your changes
-
-* Apps       Codex 0.121.0 · Claude Code 2.1.90 · Cursor 3.21.13
-             was Codex 0.121.0
-* Projects   ~/src/web-app
-             ~/src/api
-             was ~/src/web-app
-  Codex capture Automatic discovery plus hooks when approved
-  Codex scope Included projects only
-  Exceptions None configured  Nearest explicit project rule wins
-  Codex sources /Users/alex/.codex
-  Destination s3://team-archive/agent-archive/
-  Starts     After local consent, outside pause or exclusion
-  History    Old sessions require deliberate backfill
-  Copies     Qualifying recent native copies may be captured
-  Hooks      Optional for discovery; approval and observation are separate
-  Skills     metadata  User skill roots outside selected projects may be scanned; change with Edit a setting
-  Storage    s3://team-archive/agent-archive/  us-east-1 · profile work
-  Keep for   90 days
-
-  * changed from your current settings
-
-  ✓ Storage connected       write, read, list, delete
-  ! Bucket privacy unknown  public-access settings could not be read
+* Apps      Codex 0.121.0 · Claude Code 2.1.90 · Cursor 3.21.13
+    was Codex 0.121.0
+* Projects  ~/src/web-app
+            ~/src/api
+    was ~/src/web-app
+  Codex     Included projects only
+  Skills    Metadata, including user folders
+  Storage   s3://team-archive/agent-archive/
+  Keep for  90 days
+  ✓ Storage connected
+  ! Bucket privacy unknown · public-access settings could not be read
     Make sure public access is off:
     https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
-  ✓ Hook files are valid    ~/.codex/hooks.json, ~/.claude/settings.json,
-                            ~/.cursor/hooks.json
-  ✓ Codex discovery         supported new tasks do not require hook approval
+  ! History import is separate.
+  ! Sensitive text may remain after filtering.
 
-  Filtering is best effort; sensitive text may remain in archived sessions.
-  What leaves your machine:
-  https://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md
+? Save these changes?
 
-Save these changes?
-  1) Yes, save
+  1) Save changes (default)
   2) Edit a setting
-  3) Cancel (your setup draft is kept)
-Enter 1-3 [1]: 2
 
+  [d] Full settings and privacy
+  [q] Cancel; keep draft
 
-What would you like to change?
+› Choose [1]: edit
+✓ Edit a setting
+
+? What would you like to change?
+
   1) Apps to include
   2) Projects to include
   3) All sessions or only sessions using skills
@@ -91,60 +134,51 @@ What would you like to change?
   8) AWS bucket region
   9) Automatic Codex discovery
   10) Codex capture scope
-  11) Nothing, go back to the review
-Enter 1-11 [11]: 5
+  11) Nothing, go back to the review (default)
 
-Keep sessions for how many days? [90]: 30
+› Choose [11]: retention
+✓ How long sessions are kept
 
+? Keep sessions for how many days?
+
+› Days [90]: 30
+✓ Retention 30
 
 Step 3 of 3 · Review your changes
-
-* Apps       Codex 0.121.0 · Claude Code 2.1.90 · Cursor 3.21.13
-             was Codex 0.121.0
-* Projects   ~/src/web-app
-             ~/src/api
-             was ~/src/web-app
-  Codex capture Automatic discovery plus hooks when approved
-  Codex scope Included projects only
-  Exceptions None configured  Nearest explicit project rule wins
-  Codex sources /Users/alex/.codex
-  Destination s3://team-archive/agent-archive/
-  Starts     After local consent, outside pause or exclusion
-  History    Old sessions require deliberate backfill
-  Copies     Qualifying recent native copies may be captured
-  Hooks      Optional for discovery; approval and observation are separate
-  Skills     metadata  User skill roots outside selected projects may be scanned; change with Edit a setting
-  Storage    s3://team-archive/agent-archive/  us-east-1 · profile work
-* Keep for   30 days
-             was 90 days
-
-  * changed from your current settings
-
-  ✓ Storage connected       write, read, list, delete
-  ! Bucket privacy unknown  public-access settings could not be read
+* Apps      Codex 0.121.0 · Claude Code 2.1.90 · Cursor 3.21.13
+    was Codex 0.121.0
+* Projects  ~/src/web-app
+            ~/src/api
+    was ~/src/web-app
+  Codex     Included projects only
+  Skills    Metadata, including user folders
+  Storage   s3://team-archive/agent-archive/
+* Keep for  30 days
+    was 90 days
+  ✓ Storage connected
+  ! Bucket privacy unknown · public-access settings could not be read
     Make sure public access is off:
     https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
-  ✓ Hook files are valid    ~/.codex/hooks.json, ~/.claude/settings.json,
-                            ~/.cursor/hooks.json
-  ✓ Codex discovery         supported new tasks do not require hook approval
+  ! History import is separate.
+  ! Sensitive text may remain after filtering.
 
-  Filtering is best effort; sensitive text may remain in archived sessions.
-  What leaves your machine:
-  https://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md
+? Save these changes?
 
-Save these changes?
-  1) Yes, save
+  1) Save changes (default)
   2) Edit a setting
-  3) Cancel (your setup draft is kept)
-Enter 1-3 [1]:
 
+  [d] Full settings and privacy
+  [q] Cancel; keep draft
 
-Configuration saved.
+› Choose [1]:
+✓ Save changes
+
+✓ Setup complete · Automatic capture is on
 Installed /handoff, which continues a session in another agent: ~/.claude/skills/handoff/SKILL.md, ~/.agents/skills/handoff/SKILL.md
 Installed the agent-archive skill, which lets your agents look up and pull in past sessions: ~/.claude/skills/agent-archive/SKILL.md, ~/.agents/skills/agent-archive/SKILL.md
 To remove the agent skills and keep them off, run agent-archive setup --no-skills.
 
-Next, in each app:
+Next, in each app
   Codex: start a supported new task in an included project; automatic discovery
   does not require hook approval.
   Optional hook capture: Codex: run /hooks and approve the archive hooks, then
@@ -154,8 +188,15 @@ Next, in each app:
 Sessions already open are not captured. Start a new one in an included project.
 Check progress with agent-archive status.
 
-Looking for past sessions in these projects… none to import.
+Optional · Import past sessions
 
-To set up another machine with this storage, run there:
-  agent-archive setup --yes --provider s3 --bucket team-archive --aws-profile work --region us-east-1 --apps codex,claude,cursor --codex-discovery on --codex-capture-scope included-projects --prefix agent-archive/ --retention-days 30 --no-require-skill-use --skill-evidence metadata --skills --project ~/src/web-app --project ~/src/api
-[exit 0]
+Looking for past sessions in these projects… none to import.
+  · Another machine: agent-archive machines pair
+
+? More next steps?
+
+  1) Finish setup (default)
+
+  [d] Machine transfer details
+
+› Choose [1]:[exit 0]

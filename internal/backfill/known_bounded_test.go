@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/wangjohn/agent-archive/internal/config"
 )
@@ -308,4 +309,26 @@ func boolReadCount(capped bool) int {
 		return 0
 	}
 	return 1
+}
+
+func TestBoundedProjectsAggregatesObservedSessionsAndLatestUse(t *testing.T) {
+	t.Parallel()
+	tr := newTree(t)
+	root := tr.repo("home/project")
+	start := time.Date(2026, 10, 6, 0, 0, 0, 0, time.UTC)
+	for i := range 2 {
+		path := tr.write(filepath.Join("home", claudeFile("project", strconv.Itoa(i))), claudeTranscript(strconv.Itoa(i), root, start))
+		if err := os.Chtimes(path, start.Add(time.Duration(i)*time.Hour), start.Add(time.Duration(i)*time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := KnownProjectsBounded(t.Context(), tr.env(), config.Config{}, 128)
+	if got.Incomplete() || len(got.Projects) != 1 || got.Projects[0].Sessions != 2 || !got.Projects[0].LastUsed.Equal(start.Add(time.Hour)) {
+		t.Fatalf("evidence %+v", got)
+	}
+	tr.write(filepath.Join("home", claudeFile("project", "broken")), "broken header\n")
+	got = KnownProjectsBounded(t.Context(), tr.env(), config.Config{}, 128)
+	if !got.Incomplete() || got.Unreadable == 0 || got.Projects[0].Sessions != 2 {
+		t.Fatalf("partial evidence %+v", got)
+	}
 }

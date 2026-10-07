@@ -6,33 +6,88 @@ Choose Cloudflare R2 or Amazon S3 for private archive storage. Setup will guide 
 
 \e[1mStep 1 of 3 · Choose what to capture\e[0m
 
-\e[1mArchive Claude Code sessions in ~/src/web-app?\e[0m [\e[1mY\e[0m/n] › n
+? Capture sessions from Claude Code?
 
-\e[1mInclude Claude Code?\e[0m [\e[1mY\e[0m/n] ›
+  1) Yes (default)
+  2) No
 
-Projects to archive (✓ included):
-  1) \e[32m✓\e[0m ~/src/web-app  \e[2mthis folder\e[0m
-  2)   ~/src/api      \e[2m1 session · 3 days ago\e[0m
-a includes all listed projects. Or enter numbers to include or leave out (such
-as 2 3), or a path.
-Enter a blank line when finished.
-\e[1mProjects\e[0m › 1
+› Choose [1]:
+\e[2m✓ Capture sessions from Claude Code Yes\e[0m
 
-No project included yet.
-\e[1mProjects\e[0m ›
+? Which projects?
 
-\e[33m!\e[0m Choose at least one project: only sessions in included projects are archived.
-Projects to archive (✓ included):
-  1)   ~/src/web-app  \e[2mthis folder\e[0m
-  2)   ~/src/api      \e[2m1 session · 3 days ago\e[0m
-a includes all listed projects. Or enter numbers to include or leave out (such
-as 2 3), or a path.
-Enter a blank line when finished.
-\e[1mProjects\e[0m › a
+  Found 2 projects:
+  1) ~/src/web-app · this folder
+  2) ~/src/api · 1 session · 3 days ago
 
-Included: ~/src/web-app, ~/src/api
-\e[1mProjects\e[0m ›
+  1) All 2 found projects (default)
+  2) Choose specific projects
 
+  [p] Add a project path
+  [r] Retry search
+
+› Choose [1]: specific
+\e[2m✓ Projects Choose specific projects\e[0m
+
+? Choose specific projects
+
+  Found 2 projects:
+  1) [✓] ~/src/web-app · this folder
+  2) [✓] ~/src/api · 1 session · 3 days ago
+  Enter numbers to toggle; numbers stay the same across pages.
+  [a] Select all
+  [p] Add a project path
+  [r] Retry search
+  [n] Next page · [b] Previous page
+  [Enter] Confirm selection
+
+› Projects: 1 2
+\e[2m✓ Project selection updated\e[0m
+
+? Choose specific projects
+
+  Found 2 projects:
+  1) [ ] ~/src/web-app · this folder
+  2) [ ] ~/src/api · 1 session · 3 days ago
+  Enter numbers to toggle; numbers stay the same across pages.
+  [a] Select all
+  [p] Add a project path
+  [r] Retry search
+  [n] Next page · [b] Previous page
+  [Enter] Confirm selection
+
+› Projects:
+\e[2m! choose at least one project\e[0m
+
+? Choose specific projects
+
+  Found 2 projects:
+  1) [ ] ~/src/web-app · this folder
+  2) [ ] ~/src/api · 1 session · 3 days ago
+  Enter numbers to toggle; numbers stay the same across pages.
+  [a] Select all
+  [p] Add a project path
+  [r] Retry search
+  [n] Next page · [b] Previous page
+  [Enter] Confirm selection
+
+› Projects: a
+\e[2m✓ Project selection updated\e[0m
+
+? Choose specific projects
+
+  Found 2 projects:
+  1) [✓] ~/src/web-app · this folder
+  2) [✓] ~/src/api · 1 session · 3 days ago
+  Enter numbers to toggle; numbers stay the same across pages.
+  [a] Select all
+  [p] Add a project path
+  [r] Retry search
+  [n] Next page · [b] Previous page
+  [Enter] Confirm selection
+
+› Projects:
+\e[2m✓ Projects 2 selected\e[0m
 
 \e[1mStep 2 of 3 · Connect storage\e[0m
 
