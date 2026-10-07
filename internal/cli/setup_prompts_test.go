@@ -168,16 +168,16 @@ func TestMenuAcceptsNumbersKeysAndPrefixes(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			var out bytes.Buffer
-			got, err := newPrompter(strings.NewReader(tt.input), &out).menu("What would you like to change?", "capture", options...)
+			got, err := newPrompter(strings.NewReader(tt.input), &out).guidedMenu("What would you like to change?", "capture", options...)
 			if err != nil || got != tt.want {
 				t.Fatalf("got %q, %v; want %q\n%s", got, err, tt.want, &out)
 			}
-			for _, want := range []string{"  1) Apps and projects\n", "  4) All settings\n", "Enter 1-4 [1]: "} {
+			for _, want := range []string{"  1) Apps and projects (default)\n", "  4) All settings\n", "Choose [1]: "} {
 				if !setupContainsText(out.String(), want) {
 					t.Fatalf("missing %q in %s", want, &out)
 				}
 			}
-			if setupContainsText(out.String(), "Enter a number from 1 to 4.") != tt.retried {
+			if setupContainsText(out.String(), "Enter one of the available choices.") != tt.retried {
 				t.Fatalf("unexpected retry behavior: %s", &out)
 			}
 		})
@@ -188,8 +188,8 @@ func TestMenuRejectsAmbiguousPrefix(t *testing.T) {
 	t.Parallel()
 	options := []option{{"retention", "Retention"}, {"region", "Region"}}
 	var out bytes.Buffer
-	got, err := newPrompter(strings.NewReader("r\n2\n"), &out).menu("Change?", "", options...)
-	if err != nil || got != "region" || !setupContainsText(out.String(), "Enter 1-2: ") {
+	got, err := newPrompter(strings.NewReader("r\n2\n"), &out).guidedMenu("Change?", "", options...)
+	if err != nil || got != "region" || !setupContainsText(out.String(), "Choose: ") {
 		t.Fatalf("got %q, %v\n%s", got, err, &out)
 	}
 }
