@@ -1,0 +1,28 @@
+
+? Pairing file path or text
+
+  On your configured machine, run agent-archive machines add.
+  Transfer the pairing file here, then enter its path. You can also paste copied pairing text.
+
+› Choose:
+\e[6A\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[6A\e[2m✓ Credential received\e[0m
+
+? Pairing code (hidden)
+
+› Credential:
+\e[3A\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[3A\e[2m✓ Credential received\e[0m
+
+\e[1mPairing destination\e[0m
+
+AWS profile/settings transfer from studio. Proposed machine: laptop.
+Sessions will upload to s3 bucket team-archive, folder agent-archive/, account , endpoint .
+Prior destination: s3 bucket prior-archive, folder .
+
+? Explicitly replace the prior destination with the displayed destination?
+
+  1) Yes
+  2) No (default)
+
+› Choose [2]: yes
+\e[6A\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[6A\e[2m✓ Explicitly replace the prior destination with the displayed destination Yes\e[0m
+

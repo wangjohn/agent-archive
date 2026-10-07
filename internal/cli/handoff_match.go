@@ -145,7 +145,7 @@ func (r handoffResolver) acceptRepoMatch(match repoMatch) error {
 // using the session by accident, and an agent can still run the command it
 // prints. Nothing free-form from the session or the bucket, its ID included
 // unless well formed, is printed there, since an agent is who reads it.
-func newRepoMatchGate(opts handoffOptions, interactive bool, answers io.Reader, stderr io.Writer) repoMatchGate {
+func newRepoMatchGate(opts handoffOptions, interactive bool, answers io.Reader, stderr io.Writer, input ...io.Reader) repoMatchGate {
 	return func(match repoMatch) error {
 		if !interactive {
 			terminal.Printf(stderr, "handoff: matched by repository (remote origin), not by path: %s\n", matchFacts(match, false))
@@ -154,7 +154,12 @@ func newRepoMatchGate(opts handoffOptions, interactive bool, answers io.Reader, 
 		}
 		terminal.Println(stderr, "handoff: matched by repository (remote origin), not by path")
 		terminal.Printf(stderr, "  %s\n", matchFacts(match, true))
-		yes, err := newPrompter(answers, stderr).yesNo("Hand off this session?", false)
+		p := newPrompter(answers, stderr)
+		if len(input) > 0 {
+			p.source = input[0]
+		}
+		defer p.close()
+		yes, err := p.guidedYesNo("Hand off this session?")
 		if err != nil || !yes {
 			terminal.Println(stderr, "handoff: canceled; nothing was launched")
 			return errRepoMatchNotUsed

@@ -1,0 +1,8 @@
+
+? Delete 1 unreferenced sources from team-archive/agent-archive/?
+
+  Type 0123456789ab to continue. Any other answer cancels.
+
+› Digest: 0123456789ab
+\e[5A\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[5A✓ Purge confirmed
+

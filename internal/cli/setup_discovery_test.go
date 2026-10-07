@@ -93,7 +93,7 @@ func TestDiscoveryUpgradePromptDefaultsToNo(t *testing.T) {
 			if draft.Config.Discovery == nil || enabled != (answer == "y\n") || !draft.Config.Discovery.ChoiceRecorded {
 				t.Fatalf("answer %q enabled %v", answer, enabled)
 			}
-			if !strings.Contains(out.String(), "[y/N]") {
+			if !strings.Contains(out.String(), "2) No (default)") {
 				t.Fatalf("opt-in default unclear: %s", &out)
 			}
 			// Explicit off and on survive an unrelated later setup without another

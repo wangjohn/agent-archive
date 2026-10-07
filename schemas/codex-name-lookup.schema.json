@@ -1,0 +1,6 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Optional Codex naming lookup preference",
+  "description": "The config.json codex_name_lookup field; omission means files. Native startup may write Codex state and desktop coexistence is unverified.",
+  "enum": ["files", "native"]
+}

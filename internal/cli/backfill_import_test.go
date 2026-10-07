@@ -162,7 +162,7 @@ func TestBackfillImportGolden(t *testing.T) {
 		t.Fatalf("code %d, stderr %s\n%s", code, errOut, out)
 	}
 	f.checkPrivate(t, "output", out)
-	checkGolden(t, "import.txt", []byte(strings.ReplaceAll(out, f.root, "$ROOT")))
+	checkGolden(t, "import.txt", []byte(strings.ReplaceAll(trimScreenLineEnds(out), f.root, "$ROOT")))
 
 	cfg, _, err := config.Load(f.data)
 	if err != nil {
@@ -267,7 +267,7 @@ func TestBackfillImportGolden(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("second run: code %d, %s", code, errOut)
 	}
-	checkGolden(t, "second-run.txt", []byte(strings.ReplaceAll(out, f.root, "$ROOT")))
+	checkGolden(t, "second-run.txt", []byte(strings.ReplaceAll(trimScreenLineEnds(out), f.root, "$ROOT")))
 	before.check(t, f, bucket)
 }
 
@@ -323,7 +323,7 @@ func TestBackfillDeclineChangesNothing(t *testing.T) {
 		if code != 0 || !strings.Contains(out, "Cancelled. Nothing was changed.") {
 			t.Fatalf("%q: code %d, %s\n%s", answer, code, errOut, out)
 		}
-		if strings.HasPrefix(answer, "maybe") && !strings.Contains(out, "Please enter y, n, or edit.") {
+		if strings.HasPrefix(answer, "maybe") && !strings.Contains(out, "Enter one of the available choices.") {
 			t.Fatalf("%q: no hint", answer)
 		}
 		before.check(t, f, bucket)
@@ -358,8 +358,11 @@ func TestBackfillEditRetention(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("code %d, %s", code, errOut)
 	}
-	checkGolden(t, "edit.txt", []byte(strings.ReplaceAll(out, f.root, "$ROOT")))
-	if strings.Count(out, "Import 12 sessions from 5 projects? [y/N/edit]") != 2 || !strings.Contains(out, "Retention is 365 days, so these sessions are deleted on 2027-09-23.") {
+	if !strings.Contains(normalizeBackfillPromptGlyphs(out), "OK Keep sessions for how many days? 365\n\nBackfill imports") {
+		t.Fatalf("retention receipt must have one blank line before the refreshed plan:\n%s", out)
+	}
+	checkGolden(t, "edit.txt", []byte(strings.ReplaceAll(trimScreenLineEnds(out), f.root, "$ROOT")))
+	if strings.Count(out, "? Import 12 sessions from 5 projects?") != 2 || !strings.Contains(out, "Retention is 365 days, so these sessions are deleted on 2027-09-23.") {
 		t.Fatalf("plan not shown again with the new date:\n%s", out)
 	}
 	cfg, _, _ := config.Load(f.data)
@@ -376,7 +379,7 @@ func TestBackfillStorageCheckFails(t *testing.T) {
 	before := snapshotAll(t, f, bucket)
 	f.env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return failingPutStore{bucket}, nil }
 	out, errOut, code := f.importRun(t, strings.NewReader("y\n"), true)
-	if code != 1 || !strings.Contains(out, "Checking storage… failed.") || strings.Contains(out, "[y/N/edit]") || !strings.Contains(errOut, "nothing was imported") {
+	if code != 1 || !strings.Contains(out, "Checking storage… failed.") || strings.Contains(out, "? Import ") || !strings.Contains(errOut, "nothing was imported") {
 		t.Fatalf("code %d\n%s\n%s", code, out, errOut)
 	}
 	before.check(t, f, bucket)

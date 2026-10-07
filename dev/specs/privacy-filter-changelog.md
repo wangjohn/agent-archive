@@ -5,6 +5,65 @@ rules, as a whole, are in the [filter specification](privacy-filter.md);
 version numbers and bump rules are in [versions](../maintainers/versions.md). Each archived session
 records the filter version that produced it (`filter_version`).
 
+## Source filter version 18
+
+Adapter 0.18.0 and Codex parser 0.25.0 accompany this change.
+
+- The same bounded owning `session_labels` shape accepts the fixed `api` source
+  with `codex-api-159.2-v1`. API responses, paths, diagnostics, turns and unrelated
+  fields are never retained. Explicit compatible null can clear a name; weaker
+  unavailable file fallback cannot clear an API observation.
+- Native lookup is explicit opt-in. Its host may write native startup state;
+  desktop coexistence and real native authentication remain unverified.
+
+## Source filter version 17
+
+Adapter 0.17.0 and Codex parser 0.24.0 accompany this change.
+
+- Typed `session_labels` evidence keeps only an owning native UUID, present or
+  confirmed-absent state, filtered name, source class and pinned contract.
+  Unknown fields and other owners are rejected. Generic evidence validates
+  bounded safe owner IDs and opaque contracts; the Codex integration separately
+  validates native UUID, producer, history and resolver compatibility. Names receive the ordinary
+  credential redaction, control-character removal and a 512-byte UTF-8 cap
+  before fingerprinting or persistence. Names that would change under another
+  privacy pass after presentation normalization are unavailable, preserving
+  earlier verified evidence instead of caching an unpublishable observation.
+  Native paths and metadata responses
+  are omitted. Evidence replacement retains a stable observation timestamp
+  when semantic content is unchanged.
+- Names remain separate from prompt titles. They do not admit sessions, renew
+  capture time, count as conversation activity or extend retention. Related
+  Codex histories remain outside this publication path.
+- Codex session metadata retains only the `legacy`/`paginated` `history_mode`
+  enum, so index-only interpretation cannot mistake a missing paginated
+  database for legacy storage. Older retained output lacking this proof defers
+  index-only resolution until normal refiltering supplies current context.
+
+## Source filter version 16
+
+Adapter version 0.16.0 goes with it. Claude/common parser 0.21.0 and Codex
+parser 0.23.0 derive the corrected labels and prompt fallback.
+
+- **Claude native generated names.** Typed `ai-title` records retain a nonempty
+  string `aiTitle`, string `sessionId`/`timestamp`, and boolean `isSidechain`.
+  Custom titles preserve the same sidechain flag. Other fields are omitted;
+  names receive prompt redaction. Neither title class establishes source
+  identity, activity, native start/end, or archive eligibility.
+- The latest matching custom title wins over every generated title; otherwise
+  the latest matching generated title wins. A present session ID must match
+  the owning bundle/verified preview candidate. Legacy records without an ID
+  remain usable from that source. Malformed or sanitizer-rewritten ownership
+  fields are rejected; inlined sidechain titles are excluded. Title-only
+  source publications keep the original capture time and retention basis.
+- **Codex open-page context.** The injected `external_codex_apps_open_page`
+  leading XML context wrapper is stripped with nested/unclosed-block rules.
+  Quoted markup, fenced and indented code examples (including after blank
+  lines containing whitespace), and mentions in human prose remain intact. Human
+  text outside the block remains a prompt; context-only text is omitted.
+- Head/tail previews keep name class precedence and report partial coverage
+  when records between their bounded windows were not read.
+
 ## Source filter version 15
 
 Adapter version 0.15.0 goes with it; the parser version is unchanged.

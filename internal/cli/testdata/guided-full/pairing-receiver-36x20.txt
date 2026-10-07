@@ -1,0 +1,113 @@
+$ agent-archive setup --pair --codex-discovery on --codex-capture-scope included-projects --project /Users/alex/src/项目-long-project
+
+? Pairing file path or text
+
+  On your configured machine, run
+  agent-archive machines add.
+  Transfer the pairing file here,
+  then enter its path. You can also
+  paste copied pairing text.
+
+> Choose:
+OK Credential received
+
+? Pairing code (hidden)
+
+> Credential:
+OK Credential received
+
+Pairing destination
+
+AWS profile/settings transfer from
+studio. Proposed machine: laptop.
+Sessions will upload to s3 bucket
+synthetic, folder , account ,
+endpoint .
+
+Step 3 of 3 · Review and start
+  Apps
+    Codex
+  Projects
+    ~/src/项目-long-project
+  Codex
+    Included projects only
+  Skills
+    Metadata, including user folders
+  Storage
+    s3://synthetic/agent-archive/
+  Keep for
+    90 days
+  ! Storage not checked yet ·
+    Connection will be checked after
+    you confirm these settings
+  ! Bucket privacy unknown ·
+    public-access settings could not
+    be read
+    Make sure public access is off:
+    https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
+  ! History import is separate.
+  ! Sensitive text may remain after filtering.
+
+? Review pairing settings
+
+  1) Save the displayed destination
+     and capture settings
+  2) Edit settings
+
+  [d] Full settings and privacy
+  [Enter] Cancel
+
+> Choose: save
+OK Save the displayed destination
+   and capture settings
+
+  ✓ Codex hooks: ~/.codex/hooks.json
+  ✓ Background job: launchctl
+    responds
+Checking your storage connection…
+✓ Connected to your storage.
+  · Codex capture: Automatic discovery plus hooks when approved.
+  · Codex scope: Included projects only.
+  · Exceptions: None configured.
+  · Codex sources: /Users/alex/.codex.
+  · Starts: After local consent, outside pause or exclusion.
+  · History: Old sessions require deliberate backfill.
+  · Copies: Qualifying recent native copies may be captured.
+  · Hooks: Optional for discovery; approval and observation are separate.
+Apps: Codex. Projects: 1. Storage: Amazon S3 bucket synthetic.
+Skill evidence: metadata. User-level skill roots outside selected projects may be scanned.
+  ! Bucket privacy not verified: public-access settings could not be read.
+    Make sure public access is off: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
+OK laptop is connected. Paired with studio.
+AWS profile/settings transfer.
+You can finish on the source machine and delete the pairing file.
+
+✓ Setup complete · Automatic capture is on
+Installed /handoff, which continues a session in another agent: ~/.agents/skills/handoff/SKILL.md
+Installed the agent-archive skill, which lets your agents look up and pull in past sessions: ~/.agents/skills/agent-archive/SKILL.md
+To remove the agent skills and keep them off, run agent-archive setup --no-skills.
+
+Next, in each app
+  Codex: start a supported new task
+  in an included project; automatic
+  discovery does not require hook
+  approval.
+  Optional hook capture: Codex: run
+  /hooks and approve the archive
+  hooks, then start a new session
+  (or /clear).
+Sessions already open are not captured. Start a new one in an included project.
+Check progress with agent-archive status.
+
+Optional · Import past sessions
+
+Looking for past sessions in these projects… none to import.
+  · Another machine: agent-archive machines pair
+
+? More next steps?
+
+  1) Finish setup (default)
+
+  [d] Machine transfer details
+
+> Choose [1]: [exit 0]

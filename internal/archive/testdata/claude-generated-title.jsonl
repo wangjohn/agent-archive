@@ -1,0 +1,6 @@
+{"type":"user","uuid":"u1","sessionId":"native-generated","timestamp":"2026-10-06T10:00:00Z","message":{"role":"user","content":"Fix the widget parser."}}
+{"type":"ai-title","aiTitle":"Generated parser title password=hunter2","sessionId":"native-generated"}
+{"type":"custom-title","customTitle":"Chosen parser title","sessionId":"native-generated"}
+{"type":"ai-title","aiTitle":"Later generated title","sessionId":"native-generated"}
+{"type":"custom-title","customTitle":"Foreign title","sessionId":"native-parent"}
+{"type":"ai-title","aiTitle":"Sidechain title","sessionId":"native-generated","isSidechain":true}

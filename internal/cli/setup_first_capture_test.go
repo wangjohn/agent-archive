@@ -14,25 +14,23 @@ import (
 	"github.com/wangjohn/agent-archive/internal/platform"
 )
 
-// Without a repository to pre-select, or without an app setup knows, setup
-// keeps its separate questions.
-func TestOfferFirstCaptureAsksNothingWhenItCannotGuessBoth(t *testing.T) {
+// Without a known app, setup keeps its individual app questions.
+func TestOfferFirstCaptureAsksNothingWithoutKnownApps(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name    string
-		detect  []string
-		current string
+		name   string
+		detect []string
 	}{
-		{"no repository", []string{"claude"}, ""},
-		{"no apps", nil, "/Users/alex/src/app"},
-		{"only apps setup does not know", []string{"windsurf"}, "/Users/alex/src/app"},
+
+		{"no apps", nil},
+		{"only apps setup does not know", []string{"windsurf"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			var out bytes.Buffer
 			p := newPrompter(strings.NewReader(""), &out)
 			cfg := config.Config{}
-			done, err := offerFirstCapture(allHarnesses, p, &cfg, tc.detect, tc.current, "/Users/alex", nil)
+			done, err := offerFirstCapture(allHarnesses, p, &cfg, tc.detect)
 			if done || err != nil || out.Len() != 0 || len(cfg.Harnesses) != 0 || len(cfg.Archive.Projects) != 0 {
 				t.Fatalf("done=%v err=%v cfg=%+v asked:\n%s", done, err, cfg, &out)
 			}
@@ -88,7 +86,7 @@ func TestCurrentProjectRefusesOnlyBroadFolders(t *testing.T) {
 			if got != want {
 				t.Fatalf("currentProject = %q, want %q", got, want)
 			}
-			if (tc.refusal == "") != (refused == "") || !strings.Contains(refused, tc.refusal) || (refused != "" && !strings.HasPrefix(refused, "Not offering ")) {
+			if (tc.refusal == "") != (refused == "") || !setupContainsText(refused, tc.refusal) || (refused != "" && !strings.HasPrefix(refused, "Not offering ")) {
 				t.Fatalf("refusal = %q, want one containing %q", refused, tc.refusal)
 			}
 		})
@@ -181,8 +179,8 @@ func TestOfferFirstCaptureGuessesTheCurrentProject(t *testing.T) {
 	var out bytes.Buffer
 	p := newPrompter(strings.NewReader("\n"), &out)
 	cfg := config.Config{}
-	done, err := offerFirstCapture(allHarnesses, p, &cfg, []string{"claude"}, "/Users/alex/src/app", "/Users/alex", nil)
-	if !done || err != nil || len(cfg.Archive.Projects) != 1 || cfg.Archive.Projects[0].Root != "/Users/alex/src/app" || len(cfg.Harnesses) != 1 {
+	done, err := offerFirstCapture(allHarnesses, p, &cfg, []string{"claude"})
+	if !done || err != nil || len(cfg.Archive.Projects) != 0 || len(cfg.Harnesses) != 1 {
 		t.Fatalf("done=%v err=%v cfg=%+v\n%s", done, err, cfg, &out)
 	}
 }
@@ -226,32 +224,23 @@ func TestChooseCaptureDoesNotPreselectABroadFolder(t *testing.T) {
 	if len(cfg.Archive.Projects) != 1 || cfg.Archive.Projects[0].Root != resolved {
 		t.Fatalf("projects = %+v\n%s", cfg.Archive.Projects, &out)
 	}
-	if !strings.Contains(out.String(), "Not offering ~ as a project: it is your home folder.") {
+	if !setupContainsText(out.String(), "Not offering ~ as a project: it is your home folder.") {
 		t.Fatalf("the refusal was not printed:\n%s", &out)
 	}
 }
 
-// The answer says how many other projects the apps' history holds, and the
-// review repeats where to add them.
-func TestOfferFirstCaptureNamesOtherProjects(t *testing.T) {
+// Selecting apps leaves project consent to the dedicated selector.
+func TestOfferFirstCaptureLeavesProjectConsentSeparate(t *testing.T) {
 	t.Parallel()
-	known := func(config.Config) []backfill.KnownProject {
-		return []backfill.KnownProject{{Root: "/Users/alex/src/app", Sessions: 2}, {Root: "/Users/alex/src/api", Sessions: 1}, {Root: "/Users/alex/src/docs", Sessions: 1}}
-	}
 	var out bytes.Buffer
 	p := newPrompter(strings.NewReader("\n"), &out)
 	cfg := config.Config{}
-	done, err := offerFirstCapture(allHarnesses, p, &cfg, []string{"claude"}, "/Users/alex/src/app", "/Users/alex", known)
+	done, err := offerFirstCapture(allHarnesses, p, &cfg, []string{"claude"})
 	if !done || err != nil {
 		t.Fatalf("done=%v err=%v", done, err)
 	}
-	if !strings.Contains(out.String(), "Your apps also have sessions in 2 other projects. Edit a setting adds them") || !strings.Contains(p.reviewHint, "2 other projects") {
-		t.Fatalf("output:\n%s\nhint: %q", &out, p.reviewHint)
-	}
-	var review bytes.Buffer
-	printReviewNotes(&prompter{out: &review, reviewHint: p.reviewHint})
-	if !strings.Contains(review.String(), "2 other projects") {
-		t.Fatalf("the review does not repeat the hint:\n%s", &review)
+	if len(cfg.Archive.Projects) != 0 || p.reviewHint != "" || !setupContainsText(out.String(), "Capture sessions from Claude Code?") {
+		t.Fatalf("app selection bypassed project consent: %+v\n%s", cfg, &out)
 	}
 }
 
@@ -265,7 +254,7 @@ func TestOfferFirstCaptureSkipsConfiguredSetups(t *testing.T) {
 	} {
 		var out bytes.Buffer
 		p := newPrompter(strings.NewReader(""), &out)
-		done, err := offerFirstCapture(allHarnesses, p, &cfg, []string{"claude"}, "/Users/alex/src/app", "/Users/alex", nil)
+		done, err := offerFirstCapture(allHarnesses, p, &cfg, []string{"claude"})
 		if done || err != nil || out.Len() != 0 {
 			t.Fatalf("%+v: done=%v err=%v asked:\n%s", cfg, done, err, &out)
 		}
@@ -283,7 +272,7 @@ func TestSetupFirstRunFromHomeFolderAsksSeparately(t *testing.T) {
 	f.env.WorkingDir = func() (string, error) { return f.userHome, nil }
 	project := f.project(t, "src/web-app")
 	out := f.runSetup(t, strings.Join([]string{"", project, "", "s3-existing", "work", "2", ""}, "\n")+"\n")
-	if strings.Contains(out, "Archive Claude Code sessions in") || !strings.Contains(out, "Include Claude Code? [Y/n]") {
+	if setupContainsText(out, "Archive Claude Code sessions in") || !setupContainsText(out, "Capture sessions from Claude Code?") {
 		t.Fatalf("home folder was offered on one Enter:\n%s", out)
 	}
 	cfg, _, err := config.Load(f.home)
@@ -308,7 +297,7 @@ func (f *screenFixture) setupOutput(answers ...string) string {
 // never the combined first-run question.
 func TestSetupResumeAndReconfigureSkipTheCombinedQuestion(t *testing.T) {
 	t.Parallel()
-	const combined = "Archive Claude Code sessions in"
+	const combined = "Capture sessions from Claude Code?"
 	t.Run("resumed draft", func(t *testing.T) {
 		t.Parallel()
 		f := newScreenFixture(t)
@@ -316,11 +305,11 @@ func TestSetupResumeAndReconfigureSkipTheCombinedQuestion(t *testing.T) {
 		f.inWebApp(t)
 		// The first run asks the combined question, then stops at the
 		// storage step, leaving a draft.
-		if first := f.setupOutput("", "", ""); !strings.Contains(first, combined) {
+		if first := f.setupOutput("", "", ""); !setupContainsText(first, "Which projects?") {
 			t.Fatalf("the first run did not ask the combined question:\n%s", first)
 		}
 		out := f.setupOutput("capture", "", "", "s3-existing", "work", "2", "3")
-		if strings.Contains(out, combined) || !strings.Contains(out, "Change which apps are included?") {
+		if setupContainsText(out, combined) || !setupContainsText(out, "Change which apps are included?") {
 			t.Fatalf("resuming did not ask the separate questions:\n%s", out)
 		}
 	})
@@ -331,7 +320,7 @@ func TestSetupResumeAndReconfigureSkipTheCombinedQuestion(t *testing.T) {
 		f.withApps(t, "claude")
 		f.inWebApp(t)
 		out := f.setupOutput("capture", "n", "n", "")
-		if strings.Contains(out, combined) || !strings.Contains(out, "Choose what to capture") || !strings.Contains(out, "Included: Codex.") {
+		if setupContainsText(out, combined) || !setupContainsText(out, "Choose what to capture") || !setupContainsText(out, "Included: Codex.") {
 			t.Fatalf("reconfiguring did not ask the separate questions:\n%s", out)
 		}
 	})
@@ -345,9 +334,9 @@ func TestReviewHintIsNotRepeatedAfterAnEdit(t *testing.T) {
 	f := newScreenFixture(t)
 	f.withApps(t, "claude")
 	f.inWebApp(t)
-	out := f.setupOutput("", "s3-existing", "work", "2", "edit", "retention", "30", "")
-	if n := strings.Count(out, "\n  Edit a setting adds projects, drops apps"); n != 1 {
-		t.Fatalf("the review showed the hint %d times, want once (before the edit):\n%s", n, out)
+	out := f.setupOutput("", "", "s3-existing", "work", "2", "edit", "retention", "30", "")
+	if n := strings.Count(out, "\n  Edit a setting adds projects, drops apps"); n != 0 {
+		t.Fatalf("the review showed the hint %d times, want zero (actions are in the question):\n%s", n, out)
 	}
 	if cfg, found, err := config.Load(f.home); err != nil || !found || cfg.RetentionDays != 30 {
 		t.Fatalf("the edit was not saved: %+v %v", cfg, err)
@@ -385,11 +374,11 @@ func TestSetupFirstRunAsksNothingWhereInteractionIsOff(t *testing.T) {
 			f.withApps(t, "claude")
 			f.inWebApp(t)
 			out, errOut, code := ttyRun(t, withEnvironment(f.env, vars), "\n\n\n", "setup")
-			if code != 1 || !strings.Contains(errOut, "Nothing was changed") {
+			if code != 1 || !setupContainsText(errOut, "Nothing was changed") {
 				t.Fatalf("code=%d stdout=%q stderr=%q", code, out, errOut)
 			}
 			for _, text := range []string{"Archive Claude Code sessions in", "Looking for your other projects"} {
-				if strings.Contains(out+errOut, text) {
+				if setupContainsText(out+errOut, text) {
 					t.Fatalf("asked %q:\n%s%s", text, out, errOut)
 				}
 			}

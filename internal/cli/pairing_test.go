@@ -194,7 +194,7 @@ func TestPairingClipboardClearsOnlyUnchangedAndCodeUsesAlternateScreen(t *testin
 	}
 	var out bytes.Buffer
 	p := newPrompter(strings.NewReader("\n"), &out)
-	must(t, showPairingCode(p, "aardvark-abandoned-abbreviate-abdomen-abhorrence-abiding", Env{Interrupts: noInterrupts, IsTerminal: func(any) bool { return true }}))
+	must(t, showPairingCode(p, "aardvark-abandoned-abbreviate-abdomen-abhorrence-abiding", Env{Interrupts: noInterrupts, IsTerminal: func(stream any) bool { return stream == &out }}))
 	s := out.String()
 	start, end := strings.Index(s, "\x1b[?1049h"), strings.Index(s, "\x1b[?1049l")
 	pos := strings.Index(s, "aardvark abandoned abbreviate abdomen abhorrence abiding")

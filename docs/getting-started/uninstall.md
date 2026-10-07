@@ -1,5 +1,8 @@
 # Uninstall
 
+The guided questions default to No. Removing integrations and deleting owned local data remain two separate confirmations. Each question follows the consequences it approves, with numbered Yes/No choices; named `yes` and `no` answers still work. Remote purge separately requires the exact displayed digest unless `--yes` is supplied.
+
+
 ```sh
 agent-archive uninstall
 ```

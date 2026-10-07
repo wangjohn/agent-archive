@@ -309,7 +309,11 @@ func TestDiscoveryCancellationStopsDirectoryReads(t *testing.T) {
 		}
 		var err error
 		if known {
-			_, err = KnownProjects(ctx, env, config.Config{})
+			result := KnownProjectsBounded(ctx, env, config.Config{}, 128)
+			if !result.TimedOut {
+				t.Fatalf("cancellation not reported: %+v", result)
+			}
+			err = ctx.Err()
 		} else {
 			_, err = BuildPlan(ctx, env, states{}, config.Config{}, Filters{})
 		}
