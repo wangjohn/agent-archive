@@ -100,7 +100,7 @@ type passOptions struct {
 	stop     func() bool
 }
 
-func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, error) {
+func runPass(env Env, quietOnBusy bool, pass passOptions) (result collector.Result, resultErr error) {
 	// Read-only until the configuration is found: sync before setup leaves
 	// no data directory behind.
 	home, err := env.readHome()
@@ -166,8 +166,14 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 		recordPreflightError(localStore, recoveryErr)
 	}
 	recoveryCancel()
+	rollouts, readHomes, err := passCodexRollouts(ctx, localStore, cfg, env)
+	if err != nil {
+		recordPreflightError(localStore, err)
+		return collector.Result{}, err
+	}
+	defer func() { resultErr = errors.Join(resultErr, rollouts.Close()) }()
 	observer := &gitremote.IdentityObserver{}
-	_, discoveryErr := discovery.Run(ctx, localStore, cfg, discovery.Options{Now: env.Now, Stop: stop, RepositoryIdentity: observer.Lookup, RepositoryIdentityCurrent: gitremote.ProjectIdentityCurrent})
+	_, discoveryErr := discovery.Run(ctx, localStore, cfg, discovery.Options{Now: env.Now, Stop: stop, Rollouts: rollouts, RepositoryIdentity: observer.Lookup, RepositoryIdentityCurrent: gitremote.ProjectIdentityCurrent})
 	if discoveryErr != nil {
 		recordPreflightError(localStore, errors.Join(recoveryErr, discoveryErr))
 	}
@@ -185,8 +191,14 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 	if previous, err := localStore.LoadStatus(); err == nil {
 		previousScanAt = previous.LastScanAt
 	}
-	result, err := collector.Run(ctx, localStore, objectStore, collector.Options{
+	result, err = collector.Run(ctx, localStore, objectStore, collector.Options{
+		PrepareCodexCoverage: func(ctx context.Context, regs []archive.SessionRegistration) error {
+			return rollouts.PrepareRegistered(ctx, cfg, regs, discovery.Options{Now: env.Now, Stop: stop})
+		},
 		SkipSessionIndexRecovery: true,
+		CodexRollouts:            rollouts,
+		ConfiguredCodexHomes:     readHomes,
+		ResolveCodexReadHomes:    func(current config.Config) ([]string, error) { return trustedCodexReadHomes(current, env) },
 		Parsers:                  parsersFor(env),
 		Sources:                  registryFor(env),
 		Decoders:                 env.agentRegistry(),

@@ -26,14 +26,28 @@ type SourceSemantics struct {
 
 // SourceEnvironment supplies narrow read dependencies and local database location.
 type SourceEnvironment struct {
-	CodexRollouts CodexRolloutLookup
-	Files         transcriptio.Opener
-	Policy        transcriptio.OpenPolicy
-	Database      string
+	// RequireConfinedHistory is set by capture callers. Read-only source facts
+	// remain independent of capture authority and may use explicit inputs.
+	RequireConfinedHistory bool
+
+	// LegacyUnboundRegistration is set only for an already admitted ordinary
+	// registration without a binding or discovery origin. It grants no creation
+	// permission; the provider retains its narrow legacy compatibility checks.
+	LegacyUnboundRegistration bool
+	ReadBudget                *NativeReadBudget
+	CodexRollouts             CodexRolloutLookup
+	Files                     transcriptio.Opener
+	Policy                    transcriptio.OpenPolicy
+	Database                  string
 }
 
 // ReadLimits bounds raw values and each native record before filtering.
 type ReadLimits struct {
+	// ReadBudget optionally shares bounded JSON encoder scratch with the caller.
+	ReadBudget *NativeReadBudget
+	// Records and FilteredBytes optionally bound changed-history preparation.
+	Records          int
+	FilteredBytes    int64
 	RawBytes         int64
 	RecordBytes      int64
 	SubagentMetadata bool
@@ -125,6 +139,27 @@ type TranscriptFilter interface {
 	Refilter(context.Context, archive.SourceBundle, time.Time) (archive.FilteredTranscript, error)
 }
 
+// LeasedTranscriptFilter transfers filtered-output ownership to its caller.
+// The caller releases only after all users of the filtered records have ended.
+type LeasedTranscriptFilter interface {
+	// LeasedFilterFor must attest the injected adapter; embedding must not
+	// silently bypass a decorator that overrides its ordinary Filter method.
+	LeasedFilterFor(archive.Adapter) bool
+	FilterLeased(context.Context, NativeInput, FilterContext, *NativeReadBudget) (archive.FilteredTranscript, func(), error)
+}
+
+// LeasedTranscriptRefilter charges retained output incrementally and transfers
+// ownership of rows and graph metadata through the same pass ledger.
+type LeasedTranscriptRefilter interface {
+	RefilterLeased(context.Context, archive.SourceBundle, time.Time, *NativeReadBudget) (archive.FilteredTranscript, func(), error)
+}
+
+// BoundedTranscriptRefilter accepts output ceilings before retained records accumulate.
+// Exhaustion must return an error; partial output must never be published.
+type BoundedTranscriptRefilter interface {
+	RefilterBounded(context.Context, archive.SourceBundle, time.Time, ReadLimits) (archive.FilteredTranscript, error)
+}
+
 // LocalIdentityResolver owns native filename conventions and identity preference.
 // filename is an observation only; implementations must not open it or inspect
 // raw ownership SessionIDs. The returned identity must come from safe facts.
@@ -157,4 +192,11 @@ type RecoveryReadBudget interface {
 // It never grants admission identity or changes ordinary Signature/Read behavior.
 type RecoverySourcePass interface {
 	ReadRecovery(context.Context, SourceRef, ReadLimits, RecoveryReadBudget) (SourceSnapshot, error)
+}
+
+// CodexRegisteredRolloutLookup observes a legacy registered ID that does not
+// have modern native UUID layout. The implementation checks existing ownership;
+// this port never creates or authorizes a registration.
+type CodexRegisteredRolloutLookup interface {
+	RegisteredThread(context.Context, string) (CodexRolloutSet, error)
 }

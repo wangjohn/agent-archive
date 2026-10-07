@@ -24,6 +24,7 @@ type resolution struct {
 	// included is set when a configured, included project owns the directory.
 	included bool
 	skip     SkipReason
+	outcome  sourcefacts.RecoveryOutcome
 	proof    *archive.ProjectResolution
 	current  *resolutionCheck
 }
@@ -179,7 +180,7 @@ func (r *resolver) resolveEvidence(ctx context.Context, cwd, key string) resolut
 			res = resolution{root: proof.Root, kind: r.kindOf(proof.Root), included: configured && owner.included, proof: &visibleProof, current: check}
 		}
 		if outcome != "" {
-			res = resolution{skip: SkipWorktreeUnresolved}
+			res = resolution{skip: SkipWorktreeUnresolved, outcome: outcome}
 		}
 		if outcome == sourcefacts.RecoveryBudgetExhausted || outcome == sourcefacts.RecoveryInventoryUnavailable {
 			return res

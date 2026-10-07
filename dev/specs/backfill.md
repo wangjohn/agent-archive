@@ -185,6 +185,30 @@ writes nothing; the storage check writes a test object), then
 `cursor_database_newer_format`, `cursor_subagents_not_imported`,
 `subagents_skipped`, `unreadable_folders`, and `unreadable_stores`.
 
+Plans with diagnostic details also include optional `diagnostics` (bounded
+aggregate records with the winning primary `skip`, typed `detail`, `action`,
+and `count`) and `inventory`. Existing skip codes and precedence are unchanged.
+Text renders the same content-free explanation and actionable recovery advice.
+No diagnostic includes native locators, IDs, Git command output or content.
+File and database-only candidates use the same diagnostic vocabulary. The broad
+`unsafe_format` skip has `source_inspection_unavailable` detail and `review_source`
+action: check access and format support, without assuming a format incompatibility.
+Recovery outcomes remain distinct even when their primary skip is
+`worktree_unresolved`; history stays `related_history_pending` with
+`history_lookup_pending` until a shared selection/dependency lookup is available.
+
+`inventory.unique_candidate_files` counts distinct candidate transcript paths;
+`database_candidates` counts database-only candidates separately. Each file has
+one disposition (`planned_import`, `already_archived`, `duplicate_candidate`,
+`excluded`, or `unresolved`), whose counts reconcile to unique candidate files.
+Recorded recovery exclusions count as excluded while keeping `worktree_unresolved`
+as their primary skip. Repeated observations of a selected file do not count that
+file as a discarded duplicate; planned import or archived selection wins, and
+conflicting remaining dispositions are unresolved.
+This foundation does not infer identical bytes, physical dependency roles,
+logical histories or retained revisions. `logical_history_pending` is true.
+Unenumerated stores and unreadable folders retain their separate existing fields.
+
 ### `history` and `undo`
 
 `history` lists each import with its ID, date, session count, projects added,
