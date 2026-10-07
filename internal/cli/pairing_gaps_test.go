@@ -303,8 +303,15 @@ func TestPairingStandaloneAndUnmappableExclusions(t *testing.T) {
 
 func TestPairingClipboardUnavailableDeliberateFallback(t *testing.T) {
 	t.Parallel()
-	for _, choice := range []string{"print", "retry", "cancel"} {
-		t.Run(choice, func(t *testing.T) {
+	type fallbackScenario string
+	const (
+		printFallback     fallbackScenario = "print"
+		retryFallback     fallbackScenario = "retry"
+		fileRetryFallback fallbackScenario = "file-retry"
+		cancelFallback    fallbackScenario = "cancel"
+	)
+	for _, choice := range []fallbackScenario{printFallback, retryFallback, fileRetryFallback, cancelFallback} {
+		t.Run(string(choice), func(t *testing.T) {
 			t.Parallel()
 			env, home, _ := pairingSourceFixture(t)
 			var output bytes.Buffer
@@ -314,14 +321,18 @@ func TestPairingClipboardUnavailableDeliberateFallback(t *testing.T) {
 			calls := 0
 			env.Clipboard = func([]byte) error {
 				calls++
-				if choice == "retry" && calls > 1 {
+				if (choice == retryFallback || choice == fileRetryFallback) && calls > 1 {
 					return nil
 				}
 				return errors.New("clipboard unavailable")
 			}
-			p := newPrompter(strings.NewReader(choice+"\n"), &output)
-			code := deliverPairingBundle(home, "aa-pair1:SYNTHETIC", &ledger, &issuance.Slot{}, nil, env, &output, &output, pairingAddOptions{prompt: p})
-			if choice == "cancel" {
+			input := string(choice) + "\n"
+			if choice == fileRetryFallback {
+				input = "file\n" + filepath.Join(t.TempDir(), "missing", "pairing.txt") + "\n"
+			}
+			p := newPrompter(strings.NewReader(input), &output)
+			code := deliverPairingBundle(home, "aa-pair1:SYNTHETIC", &ledger, &issuance.Slot{}, env, &output, &output, pairingAddOptions{prompt: p})
+			if choice == cancelFallback {
 				if code != 1 || ledger.State != pairingDeliveryIntent {
 					t.Fatal("uncertain delivery released")
 				}
@@ -330,11 +341,14 @@ func TestPairingClipboardUnavailableDeliberateFallback(t *testing.T) {
 			if code != 0 || ledger.State != pairingDelivered {
 				t.Fatalf("fallback: %d %s", code, &output)
 			}
-			if choice == "print" && !strings.Contains(output.String(), "aa-pair1:SYNTHETIC") {
+			if choice == printFallback && !strings.Contains(output.String(), "aa-pair1:SYNTHETIC") {
 				t.Fatal("encrypted bundle not delivered")
 			}
-			if choice == "print" && strings.Contains(output.String(), "bundle copied") {
+			if choice == printFallback && strings.Contains(output.String(), "bundle copied") {
 				t.Fatal("file/print claimed clipboard delivery")
+			}
+			if choice == fileRetryFallback && (strings.Contains(output.String(), "Saved to:") || !strings.Contains(output.String(), "Copied to this machine's clipboard")) {
+				t.Fatal("clipboard retry claimed the failed file delivery")
 			}
 		})
 	}

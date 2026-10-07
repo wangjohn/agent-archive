@@ -323,13 +323,34 @@ proof that a key is unused or safe to revoke.
 First setup asks whether to import a pairing from another machine. On a
 configured source, run `agent-archive machines add --name laptop` to create a
 dedicated R2 pairing or transfer S3 settings. Use `--share-key` explicitly
-when sharing the active R2 key is intended. The source checks storage before creating a
-pairing. Deliver the clipboard bundle to the recipient and the six-word code by a
-separate channel. On the receiver run `agent-archive setup --pair`, paste the
-bundle, and enter the code privately. The first three characters of each word
+when sharing the active R2 key is intended. The source checks storage before
+creating a pairing, then offers **Save a file** (recommended) or **Copy to clipboard**.
+The default file is named `agent-archive-pairing-laptop.txt` in Downloads, or in
+your home directory when Downloads does not exist. Existing files are never overwritten.
+
+Transfer the file to the other machine, for example using AirDrop. The source
+prints a copyable command using the actual filename and the receiving machine's
+home directory. Save the file in Downloads there, then run that command:
+
+```sh
+agent-archive setup --pair-file "$HOME"/Downloads/agent-archive-pairing-laptop.txt
+```
+
+If you save the file elsewhere, use that path with `--pair-file`. Alternatively,
+run `agent-archive setup --pair` and enter the file path or paste copied pairing
+text. Clipboard transfer requires pasting the text into a file or message and
+transferring it before closing the source command; its clipboard is cleared on
+exit if it still contains that text.
+
+After you confirm that the transfer has arrived, the source shows the six-word
+code automatically on a temporary screen. Enter it privately on the receiver;
+deliver the code separately from the pairing file. The first three characters of each word
 are sufficient; use `yo-` for `yo-yo`, including the hyphen.
 Review the destination before capture settings: an existing destination change
 requires explicit consent. Source apps that are absent here are skipped.
+Finish receiver setup before choosing **I'm finished** on the source. Only the
+receiver confirms that the machine is connected. Preparing spare keys for future
+machines happens afterward and does not invalidate this pairing if it fails.
 
 Explicit shared-key pairing shares the active R2 key. Cancelling a pairing, expiry, and deleting a
 machine record do not remove access. Replace the shared key on every machine to
