@@ -185,6 +185,10 @@ tokens remain queued. RAM-only
 transformation allocates no scratch payload; the shared atomic pending gate charges
 all actual coexistence and borrows only the exact validated stage future allowance
 under the unchanged aggregate 1 GiB quota.
+Quota-only pending receipts bind the original immutable stage SHA even when the
+pending source has been transformed. Target validation still checks the complete
+stage transform; aggregate scans can retain that credit across restart without
+reading unrelated pending or source bodies.
 
 Unuploaded original replay bytes remain durably recoverable until that exact local
 successor commit. A bounded per-session `publication-evidence/<id>/journal.json`
