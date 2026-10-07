@@ -48,6 +48,10 @@ func (s *sessionScan) stagedAdmission() (sessionOutcome, bool, error) {
 		return outcome, true, err
 	}
 
+	if err := s.requireNoOrphanPrivacyInput(); err != nil {
+		return outcomeSkipped, true, err
+	}
+
 	adapter, err := sourceAdapter(s.opts.Sources, s.reg.Harness.Name)
 	if err != nil {
 		return outcomeSkipped, true, err

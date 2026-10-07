@@ -44,7 +44,11 @@ func TestPendingRAMOnlyPrivacyHandleRejectsInvalidOwnership(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer handle.Close()
+			defer func() {
+				if err := handle.Close(); err != nil {
+					t.Error(err)
+				}
+			}()
 			if kind == "root" {
 				if err = os.MkdirAll(handle.Root(), 0700); err != nil {
 					t.Fatal(err)

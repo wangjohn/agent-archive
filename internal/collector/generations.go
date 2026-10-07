@@ -110,6 +110,8 @@ func (s *sessionScan) maintainFrozen() (sessionOutcome, error) {
 		} else if _, err := s.publishPending(pending); err != nil {
 			return outcomeSkipped, err
 		}
+	} else if err := s.requireNoOrphanPrivacyInput(); err != nil {
+		return outcomeSkipped, err
 	}
 	bundle, _, found := s.published.LastPublished()
 	if !found {

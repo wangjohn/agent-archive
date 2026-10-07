@@ -29,12 +29,26 @@ func (s *sessionScan) maintainPendingPrivacy(original state.PendingPublication) 
 	if err != nil {
 		return outcomeSkipped, err
 	}
+	if kind == state.PrivacyPending && original.Commit.Privacy != nil && original.Commit.Privacy.Authority == state.PrivacyPending {
+		root, err := s.oldestPrivacyInput(original)
+		if err != nil {
+			return outcomeSkipped, err
+		}
+		prior, err = prior.CheckPrivacyReplayInput(original, *root, s.reg.DestinationID, s.publicationAdmission())
+		if err != nil {
+			return outcomeSkipped, err
+		}
+	}
 	loader, err := s.pendingRetainedLoader(original)
 	if err != nil {
 		return outcomeSkipped, err
 	}
 	stageDigest, stageSHA := "", ""
-	if original.AdmissionStage != "" {
+	live, err := s.unreleasedPrivacyStage(original)
+	if err != nil {
+		return outcomeSkipped, err
+	}
+	if live {
 		manifest, _, err := s.local.ReadAdmissionStage(s.id(), original.AdmissionStage)
 		if err != nil {
 			return outcomeSkipped, err

@@ -27,15 +27,11 @@ func generationFixture(t *testing.T) (*Store, archive.SessionRegistration, time.
 		t.Fatal(err)
 	}
 	at := reg.RegisteredAt.Add(time.Hour)
-	bundle := archive.SourceBundle{SchemaVersion: archive.SourceSchemaVersion, ArchiveSessionID: reg.ArchiveSessionID, NativeSessionID: reg.NativeSessionID, ProjectID: reg.ProjectID, Capture: archive.SourceCapture{Harness: reg.Harness, CapturedAt: reg.RegisteredAt}}
+	bundle := archive.SourceBundle{SchemaVersion: archive.SourceSchemaVersion, ArchiveSessionID: reg.ArchiveSessionID, NativeSessionID: reg.NativeSessionID, ProjectID: reg.ProjectID, Capture: archive.SourceCapture{Harness: reg.Harness, CapturedAt: reg.RegisteredAt, AdapterName: "test", AdapterVersion: "test-v1", FilterVersion: archive.FilterVersion, SourceFormat: "test-jsonl"}}
 	p, err := s.LoadPublishedState(reg.ArchiveSessionID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	bundle.Capture.AdapterName = "test"
-	bundle.Capture.AdapterVersion = "test-v1"
-	bundle.Capture.FilterVersion = archive.FilterVersion
-	bundle.Capture.SourceFormat = "test-jsonl"
 	compressed, err := archive.BuildCompressedSource(bundle)
 	if err != nil {
 		t.Fatal(err)
