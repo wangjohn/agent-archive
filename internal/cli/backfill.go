@@ -713,6 +713,7 @@ func (e Env) backfillEnvironment(userHome string, cfg config.Config) backfill.En
 		Getenv: e.getenv,
 	}
 	env.CursorDatabase = backfill.CursorDatabaseReaderFor(env)
+	env.CursorRecoveryDatabase = backfill.CursorRecoveryDatabaseReaderFor(env)
 	return env
 }
 

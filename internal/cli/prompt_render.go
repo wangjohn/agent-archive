@@ -125,14 +125,16 @@ type promptRenderer struct {
 }
 
 type ownedPromptRegion struct {
-	caps                promptCapabilities
-	rows                int
-	cursorColumns       int
-	generation          uint64
-	epoch               uint64
-	valid               bool
-	inputAlreadyEchoed  bool
-	echoMayBeSuppressed bool
+	caps                     promptCapabilities
+	rows                     int
+	cursorColumns            int
+	generation               uint64
+	epoch                    uint64
+	valid                    bool
+	inputAlreadyEchoed       bool
+	echoMayBeSuppressed      bool
+	charactersEchoSuppressed bool
+	newlineEchoSuppressed    bool
 }
 
 func (p *prompter) renderer() *promptRenderer {
@@ -274,8 +276,8 @@ func (r *promptRenderer) resolve(region ownedPromptRegion, mark, receipt, echoed
 	c := r.capabilities()
 	rows := region.rows
 	echoRows := 0
-	if !secret && region.caps.InputTerminal {
-		// ReadString includes the newline; it moves the cursor to the next row.
+	if !secret && region.caps.InputTerminal && !region.charactersEchoSuppressed {
+		// Count only ordinary character echo; newline echo is tracked separately.
 		echoRows = lineRows(strings.Repeat(" ", region.cursorColumns)+strings.TrimSuffix(echoed, "\n"), region.caps.Width) - lineRows(strings.Repeat(" ", region.cursorColumns), region.caps.Width)
 		rows += echoRows
 	}
@@ -284,7 +286,7 @@ func (r *promptRenderer) resolve(region ownedPromptRegion, mark, receipt, echoed
 	safe := (!region.echoMayBeSuppressed || echoRows == 0) && (secret || strings.HasSuffix(echoed, "\n")) && strings.IndexFunc(strings.TrimSuffix(echoed, "\n"), unicode.IsControl) < 0 && !ambiguousPromptWidth(echoed) && region.valid && c.Redraw && c.Width == region.caps.Width && c.Height == region.caps.Height && rows < c.Height && r.epoch.Load() == region.epoch && r.suspended == 0 && r.writer.generation.Load() == region.generation && !region.inputAlreadyEchoed && !typedAhead && !interrupted
 	// Hidden input and final EOF answers have no echoed newline; redirected
 	// streams have no echo at all. Each static receipt starts on its own row.
-	if secret || !region.caps.SharedTerminal || region.inputAlreadyEchoed || !strings.HasSuffix(echoed, "\n") {
+	if secret || !region.caps.SharedTerminal || region.newlineEchoSuppressed || region.inputAlreadyEchoed || !strings.HasSuffix(echoed, "\n") {
 		terminal.Println(r.writer)
 	}
 	if safe {
@@ -309,6 +311,14 @@ func (p *prompter) beginGuided(m promptModel) (ownedPromptRegion, error) {
 	pending := p.inputPending()
 	r := p.renderer()
 	epoch := r.epoch.Load()
+	var charactersSuppressed, newlineSuppressed bool
+	if !m.Secret && p.lineGuard != nil {
+		var err error
+		charactersSuppressed, newlineSuppressed, err = p.lineGuard.echoSuppressed()
+		if err != nil {
+			return ownedPromptRegion{}, fmt.Errorf("cannot inspect prompt echo: %w", err)
+		}
+	}
 	muted := !m.Secret && p.lineGuard != nil && r.capabilities().Redraw
 	restore := func() {}
 	if muted {
@@ -321,13 +331,15 @@ func (p *prompter) beginGuided(m promptModel) (ownedPromptRegion, error) {
 	}
 	region := r.begin(m, p.lineGuard != nil)
 	// Restore before the final probe: an answer arriving after that probe must
-	// echo at the completed cursor, including its newline.
+	// follow the user's original echo modes at the completed cursor.
 	restore()
 	restore = func() {}
 	// Include a complete line arriving during any part of the output write.
 	// Partial canonical input does not move the cursor while echo is muted.
 	region.inputAlreadyEchoed = pending || (!m.Secret && p.inputPending())
 	region.echoMayBeSuppressed = muted
+	region.charactersEchoSuppressed = charactersSuppressed
+	region.newlineEchoSuppressed = newlineSuppressed
 	region.valid = region.valid && r.epoch.Load() == epoch
 	return region, nil
 }

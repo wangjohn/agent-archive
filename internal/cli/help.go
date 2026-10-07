@@ -667,7 +667,8 @@ Example: agent-archive handoff SESSION_ID --to codex -- --model o3
 Import the Claude Code, Codex, and Cursor sessions already on this machine that
 the archive has not captured. First shows each project with its session count
 per app, and why any session is not imported; nothing is written until you
-confirm. Projects the import needs are added to capture. Prints project
+confirm. Live repositories can be proposed for matching deleted worktrees.
+Projects the import needs are added to capture. Prints project
 folders, counts, and recovery reasons, never conversation content.
   --harness NAME        Only claude, codex, or cursor (repeatable)
   --project DIR         Only this project; it need not still exist (repeatable)

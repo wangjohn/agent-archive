@@ -14,15 +14,16 @@ import (
 type promptEmissionMode string
 
 const (
-	emissionComplete    promptEmissionMode = "complete"
-	emissionPartial     promptEmissionMode = "partial"
-	emissionPartialLong promptEmissionMode = "partial-long"
-	emissionBefore      promptEmissionMode = "before"
-	emissionEOF         promptEmissionMode = "eof"
-	emissionPanic       promptEmissionMode = "panic"
-	emissionWriteError  promptEmissionMode = "write-error"
-	emissionSignal      promptEmissionMode = "signal"
-	emissionSuspend     promptEmissionMode = "suspend"
+	emissionComplete        promptEmissionMode = "complete"
+	emissionEchoOffComplete promptEmissionMode = "echo-off-complete"
+	emissionPartial         promptEmissionMode = "partial"
+	emissionPartialLong     promptEmissionMode = "partial-long"
+	emissionBefore          promptEmissionMode = "before"
+	emissionEOF             promptEmissionMode = "eof"
+	emissionPanic           promptEmissionMode = "panic"
+	emissionWriteError      promptEmissionMode = "write-error"
+	emissionSignal          promptEmissionMode = "signal"
+	emissionSuspend         promptEmissionMode = "suspend"
 )
 
 // splitPromptOutput waits for a separate harness pipe after writing the
@@ -103,7 +104,7 @@ func TestGuidedPromptEmissionPreservesTerminalOwnership(t *testing.T) {
 	}
 	binary, err := os.Executable()
 	must(t, err)
-	for _, mode := range []promptEmissionMode{emissionComplete, emissionPartial, emissionPartialLong, emissionBefore, emissionEOF, emissionPanic, emissionWriteError, emissionSignal, emissionSuspend} {
+	for _, mode := range []promptEmissionMode{emissionEchoOffComplete, emissionComplete, emissionPartial, emissionPartialLong, emissionBefore, emissionEOF, emissionPanic, emissionWriteError, emissionSignal, emissionSuspend} {
 		t.Run(string(mode), func(t *testing.T) {
 			t.Parallel()
 			if out, err := runPTYScript(t, python, promptEmissionPTY, binary, string(mode)); err != nil {
@@ -117,6 +118,10 @@ const promptEmissionPTY = `import os,pty,select,subprocess,sys,termios,fcntl,str
 binary,mode=sys.argv[1:]
 master,slave=pty.openpty()
 fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',24,80,0,0))
+if mode=='echo-off-complete':
+ modes=termios.tcgetattr(slave);modes[3]&=~(termios.ECHO|termios.ECHONL)
+ termios.tcsetattr(slave,termios.TCSANOW,modes)
+initialModes=termios.tcgetattr(slave)
 ackRead,ackWrite=os.pipe()
 env=dict(os.environ,TERM='xterm-256color',NO_COLOR='1',ARCHIVE_PROMPT_EMISSION_CHILD='1',ARCHIVE_PROMPT_ACK_FD=str(ackRead),ARCHIVE_PROMPT_EMISSION_MODE=mode)
 p=subprocess.Popen([binary,'-test.run=^TestGuidedPromptEmissionTerminalChild$'],stdin=slave,stdout=slave,stderr=slave,env=env,pass_fds=(ackRead,))
@@ -179,12 +184,12 @@ try:
    assert termios.tcgetattr(slave)[3]&termios.ECHO,'suspended emission did not restore echo'
    os.write(slave,b'\r\nSHELL SENTINEL\r\n')
    p.send_signal(signal.SIGCONT)
-  if mode=='complete':os.write(master,b'work\n')
+  if mode in ('complete','echo-off-complete'):os.write(master,b'work\n')
   elif mode=='partial':os.write(master,b'wo')
   elif mode=='partial-long':os.write(master,b'x'*170)
   elif mode=='eof':os.write(master,termios.tcgetattr(slave)[6][termios.VEOF])
   os.write(ackWrite,b'b')
-  if mode not in ('complete','eof','panic'):
+  if mode not in ('complete','echo-off-complete','eof','panic'):
    if mode!='write-error':wait(b'Profile [work]: ')
    echo(True)
    if mode=='partial':os.write(master,b'rk\n')
@@ -195,7 +200,8 @@ try:
   if time.monotonic()>limit:raise RuntimeError('child exit',output[-2000:])
   read()
  os.write(slave,b'<<drained>>');wait(b'<<drained>>')
- assert termios.tcgetattr(slave)[3]&termios.ECHO,'emission did not restore echo'
+ if mode=='echo-off-complete':assert termios.tcgetattr(slave)==initialModes,'initial echo-off modes changed'
+ else:assert termios.tcgetattr(slave)[3]&termios.ECHO,'emission did not restore echo'
  expected=143 if mode=='signal' else 2 if mode=='panic' else 1 if mode=='eof' else 0
  assert p.returncode==expected,(p.returncode,expected,output)
  view=cells(output,80)
@@ -203,9 +209,12 @@ try:
  if expected==0:
   assert 'DONE' in view and ('✓ Profile' if mode in ('partial-long','before') else 'Profile work') in view,view
   if mode in ('partial-long','before'):assert b'x'*170 in output,'long input value lost'
-  if mode in ('complete','partial-long','before','write-error','suspend'):
+  if mode in ('complete','echo-off-complete','partial-long','before','write-error','suspend'):
    assert b'\x1b[2K' not in output,'erased a region with unproven echo: '+repr(output)
   if mode in ('partial-long','before'):assert 'AWS profile' in view,view
+  if mode=='echo-off-complete':
+   assert '› Profile [work]:\n✓ Profile work' in view,view
+   assert '› Profile [work]:' not in view[view.index('DONE'):],view
   if mode=='partial':assert 'AWS profile' not in view,view
   if mode=='suspend':assert 'SHELL SENTINEL' in view,view
 finally:
