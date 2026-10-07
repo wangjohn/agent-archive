@@ -73,10 +73,10 @@ func importPlanLocked(env Env, stdout, stderr io.Writer, home string, plan backf
 	if err != nil {
 		return fail("a collector pass is still running; run backfill again. Nothing was changed.")
 	}
-	// collector.lock stays held through registration, so no pass runs
-	// between a session's subagent candidates and its registration.
+	// Each durable parent/child group is admitted while collector.lock is held;
+	// foreground publication releases it only after that group commits.
 	releaseCollector = releaseOnce(releaseCollector)
-	defer releaseCollector()
+	defer func() { releaseCollector() }()
 	// Waiting for the collector has its own allowance. Start the evidence
 	// deadline only after that wait, retaining signal cancellation throughout.
 	confirmationCtx, cancelConfirmation := context.WithTimeout(confirmationCtx, 30*time.Second)
@@ -110,16 +110,36 @@ func importPlanLocked(env Env, stdout, stderr io.Writer, home string, plan backf
 	stopRegister := startActivity(stdout, "Registering sessions…")
 	activity.set(stopRegister)
 	registration := backfill.Registration{
+		Durable: true,
 		Context: registrationCtx,
 		Sources: env.agentRegistry(),
 		Home:    home, Store: store, Batch: batch.ID, AdmittedAt: admittedAt, DestinationID: batch.DestinationID,
 		MaxHoldSteps: env.backfillHoldSteps, CursorDatabase: env.cursorDatabase(), RepoKey: env.repoKeyResolver(),
 		AfterHold: func(sessions, subagents []string) error {
 			batch.AddSessions(sessions, subagents)
+			if len(sessions) > 0 {
+				batch.AdmissionCursor = sessions[len(sessions)-1]
+				batch.StagingStopped = ""
+			}
 			if err := backfill.SaveBatch(home, batch); err != nil {
 				return err
 			}
-			return env.checkpoint("registered")
+			if err := env.checkpoint("registered"); err != nil {
+				return err
+			}
+			if !background {
+				releaseCollector()
+				_, passErr := runPass(env, false, passOptions{stop: interrupt.requested})
+				nextRelease, lockErr := lockCollectorWait(home, "backfill import", env.now(), backfillCollectorWait)
+				if lockErr != nil {
+					return lockErr
+				}
+				releaseCollector = releaseOnce(nextRelease)
+				if passErr != nil {
+					return passErr
+				}
+			}
+			return nil
 		},
 		Stop: interrupt.requested,
 	}
@@ -129,6 +149,11 @@ func importPlanLocked(env Env, stdout, stderr io.Writer, home string, plan backf
 		activity.clear()
 		// Whatever the last hold registered is in the store even if the
 		// batch file missed it; record it before stopping.
+		if errors.Is(err, state.ErrAdmissionStageCapacity) {
+			batch.StagingStopped = "capacity"
+		} else if errors.Is(err, backfill.ErrStopped) {
+			batch.StagingStopped = "cancelled"
+		}
 		if reconcileErr := batch.Reconcile(store); reconcileErr == nil {
 			_ = backfill.SaveBatch(home, batch)
 		}

@@ -100,7 +100,7 @@ func TestFirstRunRecoveryLargeMembershipSharesCallerSlices(t *testing.T) {
 	var identities atomic.Int64
 	var sweeps atomic.Int64
 	var nativeReads atomic.Int64
-	env.Sources = membershipSources{SourcesLookup: env.Sources, reads: &nativeReads}
+	env.Sources = membershipSources{SourcesLookup: env.Sources, ImportsLookup: testSources, NativeHeadersLookup: testSources, reads: &nativeReads}
 	env.Lstat = func(path string) (fs.FileInfo, error) {
 		stats.Add(1)
 		if path == filepath.Join(env.Home, ".codex", "sessions") {
@@ -141,15 +141,17 @@ func TestFirstRunRecoveryLargeMembershipSharesCallerSlices(t *testing.T) {
 		t.Fatal(err)
 	}
 	before, bodyReads, priorSweeps, sourceReads := stats.Load(), opens.Load(), sweeps.Load(), nativeReads.Load()
-	result, err := (Registration{Context: t.Context(), Home: home, Store: store, AdmittedAt: fixedNow}).Run(p.Imported())
+	result, err := (Registration{Context: t.Context(), Sources: env.Sources, Home: home, Store: store, AdmittedAt: fixedNow}).Run(p.Imported())
 	if err != nil || len(result.Sessions) != deletedFiles+1 {
 		t.Fatal(result, err)
 	}
 	// Count the actual slices: the existing wall-clock hold limit may split
 	// reservation and admission, each of which gets one fresh membership sweep.
+	// Durable materialization needs exactly one bounded source read per parent;
+	// recovery renewal must not add any further body reads.
 	cost := stats.Load() - before
 	sliceCount := sweeps.Load() - priorSweeps
-	if sliceCount < 1 || sliceCount > 2*(deletedFiles+1) || cost < liveFiles*sliceCount || cost > (2*liveFiles+200)*sliceCount || opens.Load() != bodyReads || nativeReads.Load() != sourceReads {
+	if sliceCount < 1 || sliceCount > 2*(deletedFiles+1) || cost < liveFiles*sliceCount || cost > (2*liveFiles+200)*sliceCount || opens.Load() != bodyReads || nativeReads.Load()-sourceReads != int64(deletedFiles+1) {
 		t.Fatal("admission repeated transcript reads or per-session membership", cost, opens.Load()-bodyReads)
 	}
 	t.Logf("admission: %d slices, %d native stats, %d body opens", sliceCount, cost, opens.Load()-bodyReads)
@@ -220,6 +222,8 @@ func TestFirstRunRecoveryMembershipOverflowKeepsCallerPending(t *testing.T) {
 // The spy delegates every native operation to the production provider; it only
 // counts full reads so renewal cannot hide a reread behind the source API.
 type membershipSources struct {
+	agentapi.ImportsLookup
+	agentapi.NativeHeadersLookup
 	agentapi.SourcesLookup
 	reads *atomic.Int64
 }
@@ -239,6 +243,14 @@ type membershipProvider struct {
 
 func (p membershipProvider) OpenPass(ctx context.Context, env agentapi.SourceEnvironment) (agentapi.SourcePass, error) {
 	pass, err := p.SourceProvider.OpenPass(ctx, env)
+	if err != nil {
+		return nil, err
+	}
+	return membershipPass{SourcePass: pass, reads: p.reads}, nil
+}
+
+func (p membershipProvider) OpenAdmissionPass(ctx context.Context, env agentapi.SourceEnvironment, ref agentapi.SourceRef) (agentapi.SourcePass, error) {
+	pass, err := p.SourceProvider.(agentapi.AdmissionSourceProvider).OpenAdmissionPass(ctx, env, ref)
 	if err != nil {
 		return nil, err
 	}

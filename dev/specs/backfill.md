@@ -1179,3 +1179,50 @@ separate 1024-root bound above. No-context programmatic import callers get a
 30-second validation deadline per slice. Filesystem proof checks cannot
 prevent a change after their final observation; the next admission slice or
 pass refreshes the evidence.
+
+## Durable admission foundation
+
+All confirmed CLI import entrypoints (backfill, setup and background mode) commit
+`durable_import_protection` through the existing configuration transaction before
+registration. `ApplyToConfig` includes the marker in the projected confirmation
+policy, including first-run recovery. It is a sticky schema version 5 writer
+fence (`staged-imports-v5`), composing with discovery, Codex and generation floors.
+Unused configurations retain their numeric legacy wire format.
+
+Each group materializes one parent and at most 64 selected children, one source
+at a time, outside hooks.lock. The provider owns verified native input, header
+interpretation, identity and filtering. Optional `OpenAdmissionPass` advertises
+admission-safe reads; absent capability fails closed. Nil temporary budget permits
+zero temporary disk. Built-in file paths hold verified descriptors; the settled
+Cursor path reads indexed native values in place and never calls ordinary backup
+or signature paths. Live WAL or changed observations stay unadmitted. The bounded
+Cursor payload ledger covers raw and query metadata bytes, not SQLite page I/O.
+Live bounded snapshots are an explicit remaining acceptance dependency.
+
+The private `admission-stages` directory holds immutable ordinary compressed
+SourceBundle objects and digest-bound prepared manifests. Objects are limited to
+128 MiB compressed and 64 MiB decompressed filtered source. Manifests retain the
+reserved registration, privacy mode, source checksum/size and individual child
+admission pointers. A prepared manifest never grants admission: the atomic
+registration's manifest digest is the linearization point. Request repair and
+child admission repair require that admitted parent pointer.
+
+A 1 GiB aggregate ledger reserves eight times filtered-source plus compressed
+bytes, with manifest headroom, to cover stage/pending/publication atomic copies;
+existing pending files are additionally charged twice. Prepared orphans and
+failed atomic copies remain capacity consumers rather than being guessed safe
+to delete. Foreground imports release collector.lock between completed groups
+and run ordinary publication passes. Background quota/cancellation preserves
+batch membership, a path-free last admitted group cursor and explicit stop cause.
+Restart re-enumerates unresolved candidates under the same filters and reconciles
+registered membership. Completed stages and groups survive partial progress.
+
+Request `StageToken` preserves the token covered by initial staged evidence while
+hooks replace the mutable request token. Pending publication binds the exact
+admitted manifest and publication admission context. Cleanup requires the full
+verified local committed source set to contain the exact stage digest/size, then
+processes only the covered token. An incomplete cleanup journal remains owed and
+resumes even after the object deletion succeeded. Newer requests remain queued.
+Corrupt stages, damaged staged registrations and changed privacy policy remain
+recovery-required and never reopen native sources as fallback. Existing history
+entry fences remain unchanged.

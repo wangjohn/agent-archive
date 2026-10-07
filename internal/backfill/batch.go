@@ -22,6 +22,9 @@ import (
 // and no path: projects are named by project ID and sessions by archive
 // session ID. Registrations point back to it through ImportBatch.
 type Batch struct {
+	// AdmissionCursor is the last committed group archive ID, never a native locator.
+	AdmissionCursor string `json:"admission_cursor,omitempty"`
+	StagingStopped  string `json:"staging_stopped,omitempty"`
 	// ID is <local date>-<n>, n counting that day's imports from 1.
 	ID        string    `json:"id"`
 	StartedAt time.Time `json:"started_at"`

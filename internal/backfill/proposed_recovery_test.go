@@ -69,7 +69,7 @@ func TestFirstRunRecoveryReviewsLiveDestinationBeforeDeletedCandidates(t *testin
 			if err != nil {
 				t.Fatal(err)
 			}
-			result, err := (Registration{Context: t.Context(), Home: home, Store: store, AdmittedAt: fixedNow}).Run(p.Imported())
+			result, err := (Registration{Context: t.Context(), Sources: testSources, Home: home, Store: store, AdmittedAt: fixedNow}).Run(p.Imported())
 			if err != nil || len(result.Sessions) != 2 {
 				t.Fatal(result, err)
 			}
@@ -196,7 +196,7 @@ func TestFirstRunRecoveryRequiresCommittedPolicyAndCurrentAdmissionEvidence(t *t
 			if err != nil {
 				t.Fatal(err)
 			}
-			result, err := (Registration{Context: t.Context(), Home: home, Store: store, AdmittedAt: fixedNow}).Run([]Candidate{candidate(t, p, goneID)})
+			result, err := (Registration{Context: t.Context(), Sources: testSources, Home: home, Store: store, AdmittedAt: fixedNow}).Run([]Candidate{candidate(t, p, goneID)})
 			if err != nil || len(result.Sessions) != 0 || result.NotAdmitted != 1 {
 				t.Fatal(result, err)
 			}

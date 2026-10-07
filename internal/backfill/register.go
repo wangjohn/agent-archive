@@ -33,12 +33,11 @@ const (
 
 // Registration is step 5 of an import: it registers the confirmed plan's
 // sessions, in short holds of hooks.lock. The caller holds setup.lock and
-// collector.lock throughout, so no collector pass runs between a session's
-// subagent candidates and its registration. Holding collector.lock also
-// keeps `pause` out (it takes that lock), so collection cannot be paused
-// while registration runs; each hold still rereads the configuration.
+// collector.lock during each admitted group; AfterHold may release/reacquire
+// collector.lock for foreground publication. Each hold rereads configuration.
 type Registration struct {
 	// Context bounds outside-lock repository validation; nil gets 30 seconds per slice.
+	Durable    bool
 	Context    context.Context
 	Sources    agentapi.SourcesLookup
 	Home       string
@@ -98,11 +97,16 @@ type RegistrationResult struct {
 // leaves the session unregistered, and a rerun plans and registers it again;
 // the candidates it left are reused, or discarded by the collector.
 type parentWork struct {
-	c        Candidate
-	id       string
-	next     int
-	children []string
-	links    []archive.SupplementalEvidence
+	prepared           bool
+	finished           bool
+	stagedRegistration archive.SessionRegistration
+	stageSkillEvidence string
+	childRegistrations []archive.SessionRegistration
+	c                  Candidate
+	id                 string
+	next               int
+	children           []string
+	links              []archive.SupplementalEvidence
 	// chatChecked and chatGone are the result of checking, before the hold,
 	// whether a chat found only in Cursor's database is still there (see
 	// checkChats).
@@ -118,6 +122,13 @@ type parentWork struct {
 // Run registers every candidate, in order.
 func (r Registration) Run(candidates []Candidate) (RegistrationResult, error) {
 	var result RegistrationResult
+	initial, found, err := config.Load(r.Home)
+	if err != nil {
+		return result, err
+	}
+	if found && initial.DurableImportProtection {
+		r.Durable = true
+	}
 	ctx := r.Context
 	if ctx == nil {
 		ctx = context.Background()
@@ -140,13 +151,18 @@ func (r Registration) Run(candidates []Candidate) (RegistrationResult, error) {
 		if ctx.Err() != nil || (r.Stop != nil && r.Stop()) {
 			return result, ErrStopped
 		}
-		if err := r.checkChats(works[i:]); err != nil {
-			return result, err
+		if !r.Durable {
+			if err := r.checkChats(works[i:]); err != nil {
+				return result, err
+			}
 		}
 		r.resolveRepoKeys(works[i:], repoKeys)
 		// Filesystem/Git proof validation belongs before the short lock hold.
 		limit := maxHoldSteps
-		if r.MaxHoldSteps > 0 {
+		if r.Durable {
+			limit = 1
+		}
+		if r.MaxHoldSteps > 0 && !r.Durable {
 			limit = r.MaxHoldSteps
 		}
 		validationCtx := ctx
@@ -165,6 +181,9 @@ func (r Registration) Run(candidates []Candidate) (RegistrationResult, error) {
 			}
 		}
 		cancelValidation()
+		if e := r.prepareAdmission(ctx, works[i], &result); e != nil {
+			return result, e
+		}
 		if ctx.Err() != nil || (r.Stop != nil && r.Stop()) {
 			return result, ErrStopped
 		}
@@ -267,6 +286,9 @@ func (r Registration) hold(works []*parentWork, i *int, result *RegistrationResu
 	if r.MaxHoldSteps > 0 {
 		limit = r.MaxHoldSteps
 	}
+	if r.Durable {
+		limit = 1
+	}
 	start := time.Now()
 	for steps := 0; *i < len(works) && steps < limit && time.Since(start) < maxHold; steps++ {
 		done, err := r.step(cfg, works[*i], result)
@@ -285,6 +307,12 @@ func (r Registration) hold(works []*parentWork, i *int, result *RegistrationResu
 // session is finished, registered or skipped.
 func (r Registration) step(cfg config.Config, w *parentWork, result *RegistrationResult) (done bool, err error) {
 	c := w.c
+	if w.finished {
+		return true, nil
+	}
+	if r.Durable && !w.prepared {
+		return false, nil
+	}
 	if w.id == "" {
 		skip, err := r.skip(cfg, w, result)
 		if err != nil || skip {
@@ -314,12 +342,30 @@ func (r Registration) step(cfg config.Config, w *parentWork, result *Registratio
 		return true, err
 	}
 	reg, err := r.Store.RegisterReservedSession(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(c.Harness)), NativeID: c.NativeSessionID}, w.id, func(id string) archive.SessionRegistration {
+		if w.prepared {
+			return w.stagedRegistration
+		}
 		return r.registration(c, id, w.repoKey)
 	})
 	if err != nil {
 		return true, fmt.Errorf("register an imported session: %w", err)
 	}
-	if err := r.Store.SaveRequest(reg.ArchiveSessionID, "backfill", r.AdmittedAt, w.links...); err != nil {
+	for _, child := range w.childRegistrations {
+		_, err := r.Store.RegisterReservedSession(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(child.Harness.Name)), NativeID: child.NativeSessionID}, child.ArchiveSessionID, func(string) archive.SessionRegistration { return child })
+		if err != nil {
+			return true, err
+		}
+		if err = r.Store.SaveAdmissionRequest(child); err != nil {
+			return true, err
+		}
+	}
+	queue := func() error {
+		if w.prepared {
+			return r.Store.SaveAdmissionRequest(reg, w.links...)
+		}
+		return r.Store.SaveRequest(reg.ArchiveSessionID, "backfill", r.AdmittedAt, w.links...)
+	}
+	if err := queue(); err != nil {
 		return true, fmt.Errorf("queue an imported session: %w", err)
 	}
 	result.Sessions = append(result.Sessions, reg.ArchiveSessionID)
@@ -334,6 +380,10 @@ func (r Registration) step(cfg config.Config, w *parentWork, result *Registratio
 // last is a backstop: no registration ever starts after its admission.
 func (r Registration) skip(cfg config.Config, w *parentWork, result *RegistrationResult) (bool, error) {
 	c := w.c
+	if w.prepared && w.stageSkillEvidence != string(cfg.EffectiveSkillEvidence()) {
+		result.NotAdmitted++
+		return true, nil
+	}
 	if w.projectEvidenceStale {
 		result.NotAdmitted++
 		return true, nil
@@ -342,11 +392,23 @@ func (r Registration) skip(cfg config.Config, w *parentWork, result *Registratio
 		result.NotAdmitted++
 		return true, nil
 	}
-	if !cfg.AcceptSession(r.registration(c, "", "")) {
+	admission := r.registration(c, "", "")
+	if w.prepared {
+		admission = w.stagedRegistration
+	}
+	if cfg.Paused || !cfg.AcceptSession(admission) {
 		result.NotAdmitted++
 		return true, nil
 	}
-	if c.SourceKind == archive.SourceKindCursorSQLite {
+	if w.prepared {
+		for _, child := range w.childRegistrations {
+			if !cfg.AcceptSession(child) {
+				result.NotAdmitted++
+				return true, nil
+			}
+		}
+		// Native evidence is now immutable private staged evidence.
+	} else if c.SourceKind == archive.SourceKindCursorSQLite {
 		// Checked before the hold (checkChats), never under hooks.lock.
 		if w.chatGone {
 			result.Gone++
@@ -482,4 +544,24 @@ func observeSource(ctx context.Context, sources agentapi.SourcesLookup, environm
 func regularFile(path string) bool {
 	info, err := os.Lstat(path)
 	return err == nil && info.Mode().IsRegular()
+}
+
+func (r Registration) prepareAdmission(ctx context.Context, w *parentWork, result *RegistrationResult) error {
+	if !r.Durable {
+		return nil
+	}
+	cfg, found, err := config.Load(r.Home)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return errors.New("configuration disappeared before staging")
+	}
+	if err = r.prepareWork(ctx, cfg, w, result); err != nil {
+		if ctx.Err() != nil {
+			return ErrStopped
+		}
+		return admissionPreparationError{source: w.c.SourceKind, cause: err}
+	}
+	return nil
 }

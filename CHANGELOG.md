@@ -29,6 +29,15 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Confirmed imports retain private, filtered evidence before admission, so the
+  first upload can finish after native transcripts disappear. Imports use bounded
+  groups and disk capacity, and preserve later hook requests during retries.
+  Admission rechecks pause and activation policy, binds the reviewed retained
+  prefix, and verifies prepared evidence against the current batch and child group.
+  Settled Cursor databases can use read-only staging; live databases stay
+  unadmitted pending bounded snapshot support. Protected configuration refuses
+  older writers that cannot preserve durable imports.
+
 - First-time backfill can review live repository destinations and recover matching
   deleted worktree sessions in the same import. Hidden clones and unknown or
   excluded roots still prevent automatic attribution; proposed capture projects
@@ -42,6 +51,12 @@ follow [Semantic Versioning](https://semver.org/).
   configuration-path introspection, including Git 2.39.2. Bounded semantic
   revalidation preserves clone ambiguity and exclusions, and larger Git config
   inventories no longer consume the short remote-URL output limit.
+- Publication retries verify the complete selected source set and exact committed
+  metadata before acknowledging capture. A different remote winner or unknown
+  predecessor stays pending instead of overwriting retained evidence. A recorded
+  predecessor that is now missing also requires reconciliation; queued evidence
+  stays local and pending. History writers remain protected pending admission
+  and lifecycle support.
 
 - Deleted Codex worktrees can recover an existing configured project from a
   unique recorded repository identity, or an exact historical backfill mapping.

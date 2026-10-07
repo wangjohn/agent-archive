@@ -133,8 +133,13 @@ const (
 // It holds paths and native IDs for the import step; nothing here is ever
 // printed.
 type Candidate struct {
-	Harness         string
-	NativeSessionID string
+	reviewedPrefix         string
+	reviewedRecords        int
+	sourceAdmissionCurrent func() bool
+	reviewedChat           *agentapi.DatabaseChat
+	reviewedHeader         *agentapi.NativeHeader
+	Harness                string
+	NativeSessionID        string
 	// TranscriptPath is the session's transcript file. A Cursor chat found
 	// only in Cursor's database has none: its SourceKind is
 	// archive.SourceKindCursorSQLite and SourceKey its chat ID.

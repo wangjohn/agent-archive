@@ -45,9 +45,11 @@ import (
 // directory (see local.Home): registrations, upload requests, and a
 // per-session cache of the last published source bundle, used to detect
 // unchanged input without redownloading or reparsing published history. It
-// never stores credentials or a second copy of conversation content beyond
-// what the published source bundle itself already contains.
+// never stores credentials. Durable imports temporarily retain an additional
+// bounded filtered source until complete local publication is verified.
 type Store struct {
+	// onStageCleanup injects failure after release intent is durable.
+	onStageCleanup func() error
 	// indexSnapshots uses logical packed authority for qualified-index writes.
 	indexSnapshots bool
 	// onPackedEnumeration observes collector-only physical-index directory probes.
@@ -104,7 +106,7 @@ var storeDirs = []string{"registrations", "requests", "request-locks", "publishe
 
 // lazyStoreDirs are the directories the store creates under home on first
 // use rather than up front.
-var lazyStoreDirs = []string{generationHeadsDir, generationNodesDir, generationRecoveryDir, "superseded", "forgotten", refreshSkipDir, listingRepairDir}
+var lazyStoreDirs = []string{admissionStageDir, generationHeadsDir, generationNodesDir, generationRecoveryDir, "superseded", "forgotten", refreshSkipDir, listingRepairDir}
 
 // OwnedEntries lists every top-level entry a Store can create under its
 // home: its directories, its status file, and the storage clock reading
@@ -211,6 +213,11 @@ func (s *Store) updateRegistration(archiveSessionID string, update func(*archive
 		if err := json.Unmarshal(current.data, &reg); err != nil {
 			return nil, false, fmt.Errorf("read registration %q: %w", archiveSessionID, err)
 		}
+		originalReg := reg
+		if reg.ProjectResolution != nil {
+			resolution := *reg.ProjectResolution
+			originalReg.ProjectResolution = &resolution
+		}
 		var originalProof *archive.CodexAdmissionProof
 		if reg.CodexAdmission != nil {
 			proof := *reg.CodexAdmission
@@ -226,6 +233,9 @@ func (s *Store) updateRegistration(archiveSessionID string, update func(*archive
 		if err := update(&reg); err != nil {
 			updateFailed = true
 			return nil, false, err
+		}
+		if originalReg.AdmissionStage != "" && (originalReg.AdmissionStage != reg.AdmissionStage || CheckAdmissionStageOwnership(reg, AdmissionStage{Reservation: originalReg}) != nil) {
+			return nil, false, ErrAdmissionStageRecovery
 		}
 		if !sameCodexAdmission(originalProof, reg.CodexAdmission) {
 			return nil, false, errors.New("a registration update cannot change Codex admission proof")
@@ -336,6 +346,9 @@ func (s *Store) registerUnderLock(key agentmeta.SessionKey, id string, build fun
 				prior, found, err := s.LoadRegistration(id)
 				if err != nil {
 					return err
+				}
+				if found && prior.AdmissionStage != "" && (prior.AdmissionStage != reg.AdmissionStage || CheckAdmissionStageOwnership(reg, AdmissionStage{Reservation: prior}) != nil) {
+					return ErrAdmissionStageRecovery
 				}
 				if found && !sameCodexAdmission(prior.CodexAdmission, reg.CodexAdmission) {
 					return errors.New("a registration replacement cannot change Codex admission proof")
@@ -455,6 +468,8 @@ func (s *Store) LoadRegistration(archiveSessionID string) (archive.SessionRegist
 // request with no new evidence is a no-op beyond confirming the session was
 // checked.
 type Request struct {
+	StageDigest      string                         `json:"stage_digest,omitempty"`
+	StageToken       string                         `json:"stage_token,omitempty"`
 	ArchiveSessionID string                         `json:"archive_session_id"`
 	Token            string                         `json:"token"`
 	Reasons          []string                       `json:"reasons"`
@@ -722,13 +737,16 @@ func (s *Store) CompleteRequest(archiveSessionID, coveredToken string) (bool, er
 // every retry uses the same hash and timestamps even after process restart.
 // Bundle remains available for change detection and future parser-only rebuilds.
 type PendingPublication struct {
-	SkillEvidence string               `json:"skill_evidence,omitempty"`
-	MetadataOnly  bool                 `json:"metadata_only,omitempty"`
-	Bundle        archive.SourceBundle `json:"bundle"`
-	SourceKey     string               `json:"source_key"`
-	MetadataKey   string               `json:"metadata_key"`
-	SourceSHA256  string               `json:"source_sha256"`
-	SourceBytes   []byte               `json:"source_bytes"`
+	AdmissionStage string               `json:"admission_stage,omitempty"`
+	Commit         *PublicationCommit   `json:"commit,omitempty"`
+	Sources        []PublicationSource  `json:"sources,omitempty"`
+	SkillEvidence  string               `json:"skill_evidence,omitempty"`
+	MetadataOnly   bool                 `json:"metadata_only,omitempty"`
+	Bundle         archive.SourceBundle `json:"bundle"`
+	SourceKey      string               `json:"source_key"`
+	MetadataKey    string               `json:"metadata_key"`
+	SourceSHA256   string               `json:"source_sha256"`
+	SourceBytes    []byte               `json:"source_bytes"`
 	// SourceSize is the source's compressed size when SourceBytes is empty:
 	// a metadata-only publication over a source this build cannot reproduce
 	// byte for byte, which is checked in storage instead of re-uploaded.
@@ -769,6 +787,11 @@ func (s *Store) SavePending(id string, pending PendingPublication) error {
 	if pending.SourceKey == "" || pending.MetadataKey == "" || pending.SourceSHA256 == "" || len(pending.MetadataBytes) == 0 || (len(pending.SourceBytes) == 0 && (!pending.MetadataOnly || pending.SourceSize <= 0)) {
 		return errors.New("pending publication is incomplete")
 	}
+	if pending.Commit != nil {
+		if err := pending.ValidatePublication(); err != nil {
+			return err
+		}
+	}
 	return local.WriteCompact(s.pendingPath(id), pending)
 }
 
@@ -776,17 +799,34 @@ func (s *Store) SavePending(id string, pending PendingPublication) error {
 // any. Decoding it reads the whole compressed source; HasPending answers
 // whether one exists without that cost.
 //
-// In a collector pass, a pending publication that no longer decodes is moved
-// aside (the error wraps ErrQuarantined, once) and the session carries on as
-// if it had none; see quarantineInPass.
+// An unreadable journal remains in place as actionable recovery evidence.
+// It may contain the only admitted bytes or describe metadata already uploaded;
+// scans must not treat it as absent, even under the collector lock.
 func (s *Store) LoadPending(id string) (PendingPublication, bool, error) {
 	if !safeFileComponent(id) {
 		return PendingPublication{}, false, errors.New("archive session ID is not a safe file name component")
 	}
+	// Bound the entire encoded journal before decoding bundle/base64 payloads.
+	// Inline compressed bytes have the separate 128 MiB limit; this ceiling
+	// includes the filtered comparison bundle, metadata and JSON encoding overhead.
+	if info, err := os.Stat(s.pendingPath(id)); err == nil && info.Size() > 512<<20 {
+		return PendingPublication{}, false, errors.New("pending publication exceeds 512 MiB encoded journal bound; retain evidence and reconcile")
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return PendingPublication{}, false, err
+	}
 	var pending PendingPublication
-	found, err := s.readOwned(s.pendingPath(id), &pending)
+	err := local.Read(s.pendingPath(id), &pending)
+	if errors.Is(err, os.ErrNotExist) {
+		return PendingPublication{}, false, nil
+	}
 	if err != nil {
-		return PendingPublication{}, false, fmt.Errorf("read pending publication %q: %w", id, s.afterLoss(id, err))
+		return PendingPublication{}, true, fmt.Errorf("read pending publication %q; retain evidence and reconcile: %w", id, err)
+	}
+	found := true
+	if found && pending.Commit != nil {
+		if err := pending.ValidatePublication(); err != nil {
+			return pending, true, err
+		}
 	}
 	return pending, found, nil
 }

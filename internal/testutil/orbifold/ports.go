@@ -75,6 +75,11 @@ func (p *Ports) OpenPass(ctx context.Context, _ agentapi.SourceEnvironment) (age
 	return &pass{owner: p}, nil
 }
 
+// OpenAdmissionPass uses the same bounded in-memory snapshot as ordinary reads.
+func (p *Ports) OpenAdmissionPass(ctx context.Context, env agentapi.SourceEnvironment, _ agentapi.SourceRef) (agentapi.SourcePass, error) {
+	return p.OpenPass(ctx, env)
+}
+
 type pass struct {
 	owner  *Ports
 	closed bool

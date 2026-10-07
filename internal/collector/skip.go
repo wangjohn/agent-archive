@@ -106,6 +106,12 @@ func (p *pass) skipUnchanged(reg archive.SessionRegistration, req state.Request)
 // its failure again without reading it.
 func (p *pass) unchangedSinceLastScan(reg archive.SessionRegistration) (unchanged bool, signature state.ScanSignature, err error) {
 	id := reg.ArchiveSessionID
+	if reg.AdmissionStage != "" {
+		released, err := p.local.AdmissionStageReleased(reg)
+		if err != nil || !released {
+			return false, signature, err
+		}
+	}
 	if owed, err := p.linkOwed(reg); err != nil || owed {
 		return false, signature, err
 	}

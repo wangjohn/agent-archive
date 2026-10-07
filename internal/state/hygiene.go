@@ -40,7 +40,7 @@ const (
 	// quarantineInPass: moved aside by a collector pass or retention sweep
 	// (a Store from ForCollectorPass), whose collector lock makes it the
 	// file's only writer. What it recorded is treated as never having been
-	// recorded: a lost published state or pending publication as never
+	// recorded: a lost published state as never
 	// published, with retention still deleting whatever may have reached the
 	// bucket (see LostPublication), and a lost superseded ledger as empty,
 	// leaving its objects to whole-session expiry.
@@ -59,13 +59,14 @@ const (
 	replacedByNextPass
 	// holdsNoContent: lock files, never decoded.
 	holdsNoContent
-	// readAsRecoveryRequired: damaged membership evidence blocks certification.
+	// readAsRecoveryRequired: damaged authoritative evidence requires repair.
 	readAsRecoveryRequired
 )
 
 // corruptionPolicies is the corruption policy of every entry OwnedEntries
 // names.
 var corruptionPolicies = map[string]corruption{
+	admissionStageDir:         readAsRecoveryRequired,
 	generationHeadsDir:        readAsRecoveryRequired,
 	generationNodesDir:        readAsRecoveryRequired,
 	generationRecoveryDir:     readAsRecoveryRequired,
@@ -73,7 +74,7 @@ var corruptionPolicies = map[string]corruption{
 	"requests":                quarantineUnderLock,
 	"subagent-candidates":     quarantineUnderLock,
 	"published":               quarantineInPass,
-	"pending":                 quarantineInPass,
+	"pending":                 readAsRecoveryRequired,
 	"superseded":              quarantineInPass,
 	"scan-signatures":         readAsAbsent,
 	refreshSkipDir:            readAsAbsent,
@@ -94,7 +95,9 @@ var corruptionPolicies = map[string]corruption{
 
 // quarantineDirs are the directories whose files a reader may move aside.
 var quarantineDirs = func() []string {
-	var dirs []string
+	// Older releases quarantined pending journals. Keep those copies visible
+	// to status, cleanup and loss detection, without quarantining new damage.
+	dirs := []string{"pending"}
 	for dir, policy := range corruptionPolicies {
 		if policy == quarantineUnderLock || policy == quarantineInPass {
 			dirs = append(dirs, dir)
@@ -106,7 +109,7 @@ var quarantineDirs = func() []string {
 
 // ForCollectorPass returns the store as a collector pass or a retention
 // sweep uses it: under the collector lock, which makes it the only writer of
-// published/, pending/, and superseded/, so a file there that no longer
+// published/ and superseded/, so a file there that no longer
 // decodes can be moved aside on the spot (see quarantineInPass). Any other
 // Store only reports such a file.
 func (s *Store) ForCollectorPass() *Store {
@@ -293,7 +296,16 @@ func (s *Store) ScanRegistrations() (regs []archive.SessionRegistration, issues 
 	issues = map[string]error{}
 	regs = make([]archive.SessionRegistration, 0, len(ids))
 	for _, id := range ids {
-		reg, found, err := readOrQuarantine[archive.SessionRegistration](s, s.registrationPath(id), requestLockName(id))
+		reg, found, err := readJSON[archive.SessionRegistration](s.registrationPath(id))
+		if err != nil {
+			stagePath, pathErr := s.stagePath(id, ".json")
+			_, stageErr := os.Lstat(stagePath)
+			if pathErr == nil && errors.Is(stageErr, os.ErrNotExist) {
+				reg, found, err = readOrQuarantine[archive.SessionRegistration](s, s.registrationPath(id), requestLockName(id))
+			} else {
+				err = errors.Join(ErrAdmissionStageRecovery, err)
+			}
+		}
 		if err != nil {
 			issues[id] = fmt.Errorf("read registration %q: %w", id, err)
 			continue

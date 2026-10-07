@@ -599,14 +599,17 @@ func TestBackfillSubagentsInheritImport(t *testing.T) {
 		t.Fatalf("output:\n%s", out)
 	}
 	store := state.OpenReadOnly(f.data)
-	candidates, err := store.LoadSubagentCandidates()
-	if err != nil || len(candidates) != 2 {
-		t.Fatalf("candidates %+v, %v", candidates, err)
+	_, stagedChildren := importRegistrations(t, f.data, firstImport)
+	if len(stagedChildren) != 2 {
+		t.Fatalf("independently admitted children %+v", stagedChildren)
 	}
 	parentID, _, _ := store.ArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("claude")), NativeID: "c-aa-2"})
-	for _, c := range candidates {
-		if c.Origin != archive.SessionOriginImport || !c.ObservedAt.Equal(backfillNow.UTC()) || c.ParentArchiveSessionID != parentID || c.NativeSessionID != "c-aa-2:subagent:"+c.AgentID {
-			t.Errorf("candidate %+v", c)
+	for _, c := range stagedChildren {
+		if c.Origin != archive.SessionOriginImport || !c.AdmittedAt.Equal(backfillNow.UTC()) || c.ParentSessionID != parentID || c.AdmissionStage == "" {
+			t.Errorf("child registration %+v", c)
+		}
+		if _, _, err := store.ReadAdmissionStage(c.ArchiveSessionID, c.AdmissionStage); err != nil {
+			t.Fatalf("child durable evidence: %v", err)
 		}
 	}
 	requests, _ := store.LoadRequests()
@@ -696,7 +699,7 @@ func TestBackfillInterruptedUpload(t *testing.T) {
 	out := &syncBuffer{}
 	const notice = "Stopping after the current session; press Ctrl-C again to quit."
 	f.env.backfillCheckpoint = func(step string) error {
-		if step != "uploading" {
+		if step != "registered" {
 			return nil
 		}
 		signals <- os.Interrupt
@@ -718,7 +721,7 @@ func TestBackfillInterruptedUpload(t *testing.T) {
 	if !strings.Contains(out.String(), notice) {
 		t.Errorf("no notice of the stop:\n%s", out.String())
 	}
-	if code != 0 || !strings.Contains(out.String(), "Stopped. The remaining 12 sessions will be uploaded by the background collector.") || !strings.Contains(out.String(), "list --imported") {
+	if code != 1 || !strings.Contains(out.String(), "Stopped. 1 session registered as import") || !strings.Contains(out.String(), "same options to finish it") {
 		t.Fatalf("code %d, %s\n%s", code, errOut.String(), out.String())
 	}
 	parents, _ := importRegistrations(t, f.data, firstImport)
@@ -728,7 +731,7 @@ func TestBackfillInterruptedUpload(t *testing.T) {
 			t.Errorf("%s has no pending request", reg.ArchiveSessionID)
 		}
 	}
-	if len(parents) != 12 {
+	if len(parents) != 1 {
 		t.Fatalf("%d registered", len(parents))
 	}
 }

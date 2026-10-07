@@ -49,7 +49,8 @@ type RetentionChange struct {
 	Restored bool `json:"restored,omitempty"`
 }
 
-// ConfigChanges is everything ApplyToConfig changed in the configuration.
+// ConfigChanges records reversible policy changes made by ApplyToConfig.
+// The durable writer fence is sticky and deliberately not reverted by undo.
 // The batch records all of it (Batch.AddChanges), so undo can reverse it;
 // TestImportConfigChangesAreRecordedAndUndone holds every configuration
 // field an import changes to that.
@@ -85,6 +86,9 @@ func ApplyToConfig(cfg *config.Config, p Plan, admittedAt time.Time) (ConfigChan
 		}
 		retention = &RetentionChange{From: cfg.RetentionDays, To: p.RetentionDays}
 		cfg.RetentionDays = p.RetentionDays
+	}
+	if len(p.Imported()) > 0 {
+		cfg.DurableImportProtection = true
 	}
 	changes := ConfigChanges{ProjectIDs: []string{}, Apps: []string{}, KeptOut: []string{}, Retention: retention}
 	for _, c := range p.Imported() {

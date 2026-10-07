@@ -889,3 +889,11 @@ func (s *historySnapshot) validateSpan(ctx context.Context, span *physicalSpan) 
 	}
 	return facts, nil
 }
+
+// OpenAdmissionPass uses verified handles and allocates no temporary disk.
+func (p SourceProvider) OpenAdmissionPass(ctx context.Context, e agentapi.SourceEnvironment, ref agentapi.SourceRef) (agentapi.SourcePass, error) {
+	if _, err := p.Describe(ref); err != nil {
+		return nil, err
+	}
+	return p.OpenPass(ctx, e)
+}

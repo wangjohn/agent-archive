@@ -32,7 +32,7 @@ func (s *sessionScan) checkHistoryPublication(p state.PendingPublication) error 
 		return nil
 	}
 	// Lost local state cannot authorize flattening a readable remote history sidecar.
-	raw, err := s.remote.Get(s.ctx, p.MetadataKey)
+	raw, err := storage.ReadPublicationMetadata(s.ctx, s.remote, p.MetadataKey)
 	if errors.Is(err, storage.ErrNotFound) {
 		return nil
 	}
