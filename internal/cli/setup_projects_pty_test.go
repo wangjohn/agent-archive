@@ -1,9 +1,12 @@
 package cli
 
 import (
+	"bufio"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -18,6 +21,14 @@ func TestSetupSelectorTerminalChild(t *testing.T) {
 	}
 	p := newPrompter(os.Stdin, os.Stdout)
 	defer p.close()
+	// Signal read entry outside the terminal: a question prefix or even its
+	// cursor can arrive before rendering and echo restoration have completed.
+	// Keep the original source descriptor for actual terminal capabilities.
+	fd, err := strconv.Atoi(os.Getenv("ARCHIVE_SETUP_SELECTOR_READY_FD"))
+	must(t, err)
+	ready := os.NewFile(uintptr(fd), "selector-read-ready")
+	defer ready.Close()
+	p.in = bufio.NewReader(selectorReadyReader{input: os.Stdin, ready: ready})
 	if os.Getenv("ARCHIVE_SETUP_YESNO_CHILD") == "1" {
 		terminal.Println(p.out, "UNRELATED SENTINEL")
 		codex, err := p.setupYesNo("Include Codex?", false)
@@ -56,6 +67,18 @@ func TestSetupSelectorTerminalChild(t *testing.T) {
 	terminal.Println(p.out, "SELECTION SAVED", want)
 }
 
+type selectorReadyReader struct {
+	input io.Reader
+	ready io.Writer
+}
+
+func (r selectorReadyReader) Read(b []byte) (int, error) {
+	if _, err := r.ready.Write([]byte{1}); err != nil {
+		return 0, err
+	}
+	return r.input.Read(b)
+}
+
 func TestSetupSelectorTerminalMatrix(t *testing.T) {
 	t.Parallel()
 	python, err := exec.LookPath("python3")
@@ -80,8 +103,10 @@ binary,mode=sys.argv[1:]
 width,height=(80,24) if mode in ('typed-ahead','compact','yes-no') else tuple(map(int,mode.split('x')))
 master,slave=pty.openpty()
 fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',height,width,0,0))
-env=dict(os.environ,ARCHIVE_SETUP_YESNO_CHILD='1' if mode=='yes-no' else '0',TERM='xterm-256color',NO_COLOR='1',ARCHIVE_SETUP_SELECTOR_CHILD='1',ARCHIVE_SETUP_SELECTOR_COMPACT='1' if mode=='compact' else '0')
-p=subprocess.Popen([binary,'-test.run=^TestSetupSelectorTerminalChild$'],stdin=slave,stdout=slave,stderr=slave,env=env)
+ready_read,ready_write=os.pipe()
+env=dict(os.environ,ARCHIVE_SETUP_SELECTOR_READY_FD=str(ready_write),ARCHIVE_SETUP_YESNO_CHILD='1' if mode=='yes-no' else '0',TERM='xterm-256color',NO_COLOR='1',ARCHIVE_SETUP_SELECTOR_CHILD='1',ARCHIVE_SETUP_SELECTOR_COMPACT='1' if mode=='compact' else '0')
+p=subprocess.Popen([binary,'-test.run=^TestSetupSelectorTerminalChild$'],stdin=slave,stdout=slave,stderr=slave,env=env,pass_fds=(ready_write,))
+os.close(ready_write)
 out=b''
 def wait(text):
  global out
@@ -91,6 +116,18 @@ def wait(text):
   if select.select([master],[],[],.05)[0]:
    try:out+=os.read(master,65536)
    except OSError:pass
+def wait_ready():
+ global out
+ limit=time.monotonic()+30
+ while True:
+  if p.poll() is not None or time.monotonic()>limit: raise RuntimeError('waiting for read entry',out[-2000:])
+  readable,_,_=select.select([master,ready_read],[],[],.05)
+  if master in readable:
+   try:out+=os.read(master,65536)
+   except OSError:pass
+  if ready_read in readable:
+   assert os.read(ready_read,1)==b'\x01','read-ready pipe closed'
+   return
 def cells(data,cols):
  lines=[[' ']*cols];row=col=0;text=data.decode('utf-8','replace');i=0
  def ensure():
@@ -118,8 +155,8 @@ def cells(data,cols):
 
 try:
  if mode=='yes-no':
-  wait(b'Choose [2]');os.write(master,b'y\n')
-  wait(b'? Include Claude Code?');os.write(master,b'n\n')
+  wait_ready();os.write(master,b'y\n')
+  wait_ready();os.write(master,b'n\n')
   wait(b'DECISIONS SAVED');p.wait(timeout=30)
   view=cells(out,width)
   assert 'Include Codex Yes' in view and 'Include Claude Code No' in view,view
@@ -129,11 +166,11 @@ try:
   assert p.returncode==0,out
   print('setup contextual decisions passed')
   sys.exit(0)
- wait(b'Choose [1]')
+ wait_ready()
  if mode=='compact': os.write(master,b'\n')
  elif mode=='typed-ahead': os.write(master,b'specific\n1\nnext\n\n')
  else:
-  os.write(master,b'specific\n');wait(b'Confirm selection');os.write(master,b'1\nnext\n\n')
+  os.write(master,b'specific\n');wait_ready();os.write(master,b'1\nnext\n\n')
  count=2 if mode=='compact' else 13
  wait(('SELECTION SAVED %d'%count).encode())
  p.wait(timeout=30)
@@ -157,5 +194,5 @@ finally:
   p.terminate()
   try:p.wait(timeout=5)
   except subprocess.TimeoutExpired:p.kill();p.wait(timeout=5)
- os.close(master);os.close(slave)
+ os.close(master);os.close(slave);os.close(ready_read)
 `
