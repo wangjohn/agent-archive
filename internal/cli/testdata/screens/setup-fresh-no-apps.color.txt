@@ -13,7 +13,7 @@ Choose which apps to include:
   2) No (default)
 
 › Choose [2]: y
-\e[2m✓ Yes\e[0m
+\e[2m✓ Include Codex Yes\e[0m
 
 ? Include Claude Code?
 
@@ -21,7 +21,7 @@ Choose which apps to include:
   2) No (default)
 
 › Choose [2]: n
-\e[2m✓ No\e[0m
+\e[2m✓ Include Claude Code No\e[0m
 
 ? Include Cursor?
 
@@ -29,7 +29,7 @@ Choose which apps to include:
   2) No (default)
 
 › Choose [2]: n
-\e[2m✓ No\e[0m
+\e[2m✓ Include Cursor No\e[0m
 
 ? Codex capture scope
 

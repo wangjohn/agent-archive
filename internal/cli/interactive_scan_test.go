@@ -106,7 +106,6 @@ var terminalPackageUses = classifiedCalls{
 // hand): every place agent-archive can ask a question. The comment says what
 // stops the question when interaction is off.
 var promptSites = classifiedCalls{
-	"setup_review.go":     {"newPrompter": 1},                  // Details formats the captured review into a buffer from an empty reader; it never asks a question.
 	"purge.go":            {"newPrompter": 1},                  // Exact digest consent is refused when noninteractive unless --yes.
 	"machines_revoke.go":  {"newPrompter": 1},                  // confirmation and token prompt require Env.interactive; --yes/--json never prompt
 	"machines_own_key.go": {"newPrompter": 1},                  // own-key confirmation/token require Env.interactive; --yes uses environment only
@@ -116,7 +115,8 @@ var promptSites = classifiedCalls{
 	"pairing_source.go":   {"newPrompter": 1},                  // source requires interactive input/output unless deliberate --yes; the scripted path never prompts
 	"pairing_receive.go":  {"newPrompter": 2},                  // receiver refuses prompts-off unless --yes; redirected bundle input switches code and review to a checked private terminal
 	"prompt.go":           {"newPrompter": 2, "prompter{}": 1}, // the definition, and typedInput.prompter, which handoff's picker and ambiguous-title chooser ask through (both behind browseInteractive: see handoff_select.go and handoff_title.go)
-	"setup.go":            {"newPrompter": 3},                  // interactive setup and buffered-input handoff require Env.interactive; the third prompter formats implications from an empty reader only.
+	"setup.go":            {"newPrompter": 3},                  // interactive setup, buffered-input handoff, and output-only completion buffer; runSetupCommand requires Env.interactive
+	"setup_review.go":     {"newPrompter": 1},                  // Details is rendered to an output-only buffer; it never reads or asks a question.
 	"setup_flags.go":      {"newPrompter": 1, "prompter{}": 1}, // setup --yes: only reads a secret, guarded in readR2Secret; the literal has no input, it only prints
 	"uninstall.go":        {"newPrompter": 1},                  // runUninstallCommand refuses unless env.interactive(stdin) or --yes
 	"backfill.go":         {"newPrompter": 1},                  // runBackfillCommand refuses unless env.interactive(stdin) or --yes

@@ -241,7 +241,7 @@ func TestFirstSetupNamesMachineAfterBoundedDuplicateObservation(t *testing.T) {
 	out := setupRun(t, env, input, 0)
 	cfg, _, err := config.Load(home)
 	must(t, err)
-	if cfg.MachineName != "work-laptop" || !strings.Contains(out, "name is already used") || !strings.Contains(out, "OK Machine work-laptop") {
+	if cfg.MachineName != "work-laptop" || !strings.Contains(out, "name is already used") || setupReceiptIndex(out, "Machine work-laptop") < 0 {
 		t.Fatalf("name=%q\n%s", cfg.MachineName, out)
 	}
 	got := machines.List(context.Background(), s)
@@ -332,7 +332,7 @@ func TestSetupMachineNameGroupsValidationAndPreservesBufferedInput(t *testing.T)
 	must(t, chooseSetupMachineName(p, &cfg, env))
 	next, err := p.in.ReadString('\n')
 	must(t, err)
-	if cfg.MachineName != "new-name" || next != "next\n" || strings.Count(out.String(), "? Name this machine") != 3 || !strings.Contains(out.String(), "name is already used") || !strings.Contains(out.String(), "OK Machine new-name") || strings.Contains(out.String(), "OK Machine taken") {
+	if cfg.MachineName != "new-name" || next != "next\n" || strings.Count(out.String(), "? Name this machine") != 3 || !strings.Contains(out.String(), "name is already used") || setupReceiptIndex(out.String(), "Machine new-name") < 0 || setupReceiptIndex(out.String(), "Machine taken") >= 0 {
 		t.Fatalf("name=%s next=%q\n%s", cfg.MachineName, next, &out)
 	}
 	pEOF := newPrompter(strings.NewReader(""), &out)

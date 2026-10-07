@@ -113,7 +113,7 @@ func TestPickAWSProfileByNumberOrName(t *testing.T) {
 		if err != nil || got != want {
 			t.Fatalf("input %q: got %q, %v; want %q", input, got, err, want)
 		}
-		if !strings.Contains(out.String(), "  2) work\n") || !strings.Contains(out.String(), "Enter 1-2, or another profile name [1]: ") {
+		if !strings.Contains(out.String(), "  2) work\n") || !strings.Contains(out.String(), "Enter a number or profile name.") || !strings.Contains(out.String(), "1) default (default)") || !strings.Contains(out.String(), "Choose [1]:") {
 			t.Fatalf("unexpected output: %s", &out)
 		}
 	}
@@ -126,8 +126,8 @@ func TestPickAWSProfileMarksProfilesWithoutCredentials(t *testing.T) {
 	if _, err := pickAWSProfile(newPrompter(strings.NewReader("2\n"), &out), profiles, "work"); err != nil {
 		t.Fatal(err)
 	}
-	want := "  1) default (no credentials configured)\n  2) work\nEnter 1-2, or another profile name [2]: "
-	if !strings.Contains(out.String(), want) {
+	want := "  1) default · (no credentials configured)\n  2) work (default)"
+	if !strings.Contains(out.String(), want) || !strings.Contains(out.String(), "Choose [2]:") {
 		t.Fatalf("output %q, want %q", &out, want)
 	}
 }
@@ -301,9 +301,9 @@ func TestS3LocationBucketDefault(t *testing.T) {
 		want   string
 		prompt string
 	}{
-		{"named like agent-archive", "", "agent-archive-alex", "> Choose [2]: "},
-		{"saved bucket listed", "photos", "photos", "> Choose [1]: "},
-		{"saved bucket not listed", "elsewhere", "elsewhere", "> Choose [elsewhere]: "},
+		{"named like agent-archive", "", "agent-archive-alex", "Choose [2]: "},
+		{"saved bucket listed", "photos", "photos", "Choose [1]: "},
+		{"saved bucket not listed", "elsewhere", "elsewhere", "Choose [elsewhere]: "},
 	} {
 		cfg := credentials.Config{AWSProfile: "work", Bucket: tc.saved}
 		env := s3LocationEnv([]AWSProfile{{Name: "work"}}, fakeBuckets{names: names, regions: regions})
@@ -550,7 +550,7 @@ func TestPickAWSProfileListsEveryProfile(t *testing.T) {
 	if err != nil || got != "account-25" {
 		t.Fatalf("got %q err=%v", got, err)
 	}
-	if !strings.Contains(out.String(), "  25) account-25\nEnter 1-25, or another profile name: ") || strings.Contains(out.String(), "more not listed") {
+	if !strings.Contains(out.String(), "  25) account-25\n") || strings.Contains(out.String(), "more not listed") {
 		t.Fatalf("output %q", &out)
 	}
 }

@@ -27,7 +27,8 @@ stops before asking anything and changes nothing. Its prompt sequence is not
 a scripting API; to script it, use [`setup --yes`](#set-up-without-questions).
 
 Setup groups each question, explanation, choices and shortcuts together. On a
-supported terminal, the answered question becomes a short receipt.
+supported terminal, the answered question becomes a short receipt. Yes/No receipts
+retain the question subject so completed decisions remain identifiable.
 `NO_COLOR` removes color while keeping the same structure and interaction;
 dumb terminals and redirected streams retain the expanded question. R2 secret
 fields hide input and show a fixed credential receipt.

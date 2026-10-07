@@ -125,7 +125,7 @@ func TestResumePrePolicyFreshDraftDefaultsToMetadata(t *testing.T) {
 	t.Parallel()
 	home, project := t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
-	input := strings.TrimSuffix(s3SetupInput("bucket", "us-east-1", "profile", true, false, false, project), "y\n") + "3\n"
+	input := strings.TrimSuffix(s3SetupInput("bucket", "us-east-1", "profile", true, false, false, project), "y\n") + "q\n"
 	setupRun(t, env, input, 0)
 	draft, found, problem, err := readDraft(home)
 	if err != nil || !found || problem != "" {
@@ -138,12 +138,12 @@ func TestResumePrePolicyFreshDraftDefaultsToMetadata(t *testing.T) {
 	if err := local.Write(draftPath(home), draft); err != nil {
 		t.Fatal(err)
 	}
-	output := setupRun(t, env, "continue\n3\n", 0)
-	if !setupContainsText(output, "Skills") || !setupContainsText(output, "metadata") || setupContainsText(output, "kept from previous setup") {
+	output := setupRun(t, env, "continue\nq\n", 0)
+	if !setupContainsText(output, "Skills") || !setupContainsText(output, "Metadata, including user folders") || setupContainsText(output, "kept from previous setup") {
 		t.Fatalf("fresh draft did not use metadata:\n%s", output)
 	}
 	resumed, _, _, err := readDraft(home)
-	if err != nil || resumed.Config.EffectiveSkillEvidence() != config.SkillEvidenceMetadata {
+	if err != nil || resumed.Config.EffectiveSkillEvidence() != config.SkillEvidenceMetadata || (resumed.Config.Discovery != nil && resumed.Config.Discovery.Enabled) {
 		t.Fatalf("resumed policy = %q, err = %v", resumed.Config.SkillEvidence, err)
 	}
 }
@@ -606,7 +606,7 @@ func TestSetupReviewNamedAnswersHaveResolvedReceipts(t *testing.T) {
 		_, err := reviewAction(p, tc.installed, tc.blocked, false)
 		p.close()
 		must(t, err)
-		if !strings.Contains(out.String(), "OK "+tc.want+"\n") {
+		if setupReceiptIndex(out.String(), tc.want) < 0 {
 			t.Fatalf("alias %s receipt unresolved:\n%s", tc.answer, &out)
 		}
 	}

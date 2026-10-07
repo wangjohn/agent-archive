@@ -26,7 +26,7 @@ Also found on this computer: Claude Code and Cursor.
   2) No
 
 › Choose [1]: y
-✓ Yes
+✓ Add them Yes
 
 ? Which projects?
 

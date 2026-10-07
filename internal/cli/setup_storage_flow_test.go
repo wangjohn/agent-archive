@@ -275,3 +275,40 @@ func TestCreateS3MissingCredentialsDefaultsToChoosingAProfile(t *testing.T) {
 		t.Fatalf("cfg=%+v err=%v calls=%v\n%s", cfg, err, creator.calls, out)
 	}
 }
+
+func TestStorageCredentialReceiptsHideValuesAndPreserveNavigation(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		input, want string
+		back        bool
+	}{
+		{"\nSYNTHETIC-PRIVATE-ID\nnext\n", "SYNTHETIC-PRIVATE-ID", false},
+		{"back\nnext\n", "back", false},
+		{":back\nnext\n", "", true},
+	} {
+		var out bytes.Buffer
+		p := newPrompter(strings.NewReader(tc.input), &out)
+		got, err := p.setupStorageField("Access key ID (hidden)", "", true)
+		if got != tc.want || errors.Is(err, errChooseStorageAgain) != tc.back || (!tc.back && err != nil) {
+			t.Fatalf("credential %q: %q %v", tc.input, got, err)
+		}
+		next, err := p.in.ReadString('\n')
+		p.close()
+		if err != nil || next != "next\n" {
+			t.Fatalf("buffered follow-up %q %v", next, err)
+		}
+		if strings.Contains(out.String(), "SYNTHETIC-PRIVATE-ID") || setupReceiptIndex(out.String(), "Access key ID (hidden) back") >= 0 {
+			t.Fatalf("credential value in receipt:\n%s", &out)
+		}
+		if strings.HasPrefix(tc.input, "\n") && (!strings.Contains(out.String(), "Credential was not accepted. Try again.") || strings.Count(out.String(), "? Access key ID (hidden)") != 2) {
+			t.Fatalf("missing required retry:\n%s", &out)
+		}
+	}
+	var out bytes.Buffer
+	p := newPrompter(strings.NewReader(""), &out)
+	_, err := p.setupStorageField("Access key ID (hidden)", "", true)
+	p.close()
+	if err == nil {
+		t.Fatal("EOF accepted a credential")
+	}
+}

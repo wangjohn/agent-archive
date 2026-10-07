@@ -17,7 +17,8 @@ Step 1 of 3 · Choose what to capture
   2) No
 
 › Choose [1]:
-✓ Yes
+✓ Capture sessions from Codex,
+  Claude Code, and Cursor Yes
 
 ? Codex capture scope
 

@@ -343,3 +343,13 @@ func TestSetupReviewProjectsIncludesCurrentFolderAfterSkippedCaptureStep(t *test
 		})
 	}
 }
+
+// setupReceiptIndex checks resolved receipts with either supported terminal glyph.
+func setupReceiptIndex(text, answer string) int {
+	for _, mark := range []string{"OK ", "✓ "} {
+		if i := strings.Index(text, mark+answer+"\n"); i >= 0 {
+			return i
+		}
+	}
+	return -1
+}

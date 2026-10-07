@@ -13,7 +13,7 @@ Step 1 of 3 · Choose what to capture
   2) No
 
 › Choose [1]: y
-✓ Yes
+✓ Capture sessions from Codex and Claude Code Yes
 
 ? Codex capture scope
 

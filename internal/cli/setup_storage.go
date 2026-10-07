@@ -182,7 +182,7 @@ func promptExistingR2(p *prompter, cfg credentials.Config, env Env) (credentials
 		}
 	}
 	if !reuse {
-		secret.AccessKeyID, err = p.setupStorageRequired("Access key ID", "")
+		secret.AccessKeyID, err = p.setupStorageField("Access key ID (hidden)", "", true)
 		if err != nil {
 			return cfg, secret, false, err
 		}
