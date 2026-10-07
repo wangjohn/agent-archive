@@ -610,7 +610,7 @@ func deriveSkills(bundle SourceBundle, nativeSkillUses []SkillUse, metadata *Met
 		case EvidenceKindSkillRead:
 			recordUse(SkillUse{Name: name, SHA256: hash, Evidence: SkillUseEvidenceReadInference})
 		case EvidenceKindLifecycleHook, EvidenceKindFinalResponse, EvidenceKindExplicitFeedback,
-			EvidenceKindLinkedSession, EvidenceKindCaptureGap:
+			EvidenceKindLinkedSession, EvidenceKindCaptureGap, EvidenceKindSessionLabels:
 		}
 	}
 	// Native invocation/read-inference evidence is collected once, in

@@ -161,3 +161,8 @@ func (Filter) EvidenceExtends(previous, candidate archive.SourceBundle) bool {
 func (SourceProvider) Activities(ctx context.Context, e agentapi.SourceEnvironment, refs []agentapi.SourceRef) (map[agentapi.SourceRef]time.Time, error) {
 	return (sourceio.FileProvider{}).Activities(ctx, e, refs)
 }
+
+// NamingOnlyChange isolates typed native title bookkeeping from activity.
+func (Filter) NamingOnlyChange(previous, candidate archive.SourceBundle) bool {
+	return nativecodec.ClaudeNamingOnlyChange(previous, candidate)
+}
