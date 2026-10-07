@@ -55,6 +55,7 @@ type AdmissionStage struct {
 }
 
 func stageDigest(b []byte) string { d := sha256.Sum256(b); return hex.EncodeToString(d[:]) }
+
 func validStageID(id string) bool {
 	return safeFileComponent(id)
 }

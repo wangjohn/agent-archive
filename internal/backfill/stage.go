@@ -235,6 +235,7 @@ func (r Registration) prepareChild(ctx context.Context, cfg config.Config, w *pa
 		childReg.SessionStartedAt = prior.Reservation.SessionStartedAt
 		childReg.AdmittedAt = prior.Reservation.AdmittedAt
 		childReg.RegisteredAt = prior.Reservation.RegisteredAt
+		childReg.SubagentObservedAt = prior.Reservation.SubagentObservedAt
 		if state.CheckAdmissionStageOwnership(childReg, prior) != nil || prior.SkillEvidence != string(cfg.EffectiveSkillEvidence()) || !r.stagePrivacyCurrent(retained) {
 			return state.ErrAdmissionStageRecovery
 		}

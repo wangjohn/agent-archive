@@ -15,7 +15,7 @@ func (p SourceProvider) OpenAdmissionPass(ctx context.Context, e agentapi.Source
 		return nil, err
 	}
 	if ref.Kind == archive.SourceKindFile {
-		return sourceio.FileProvider{}.OpenPass(ctx, e)
+		return sourceio.FileProvider{}.OpenAdmissionPass(ctx, e, ref)
 	}
 	pass, err := p.OpenPass(ctx, e)
 	if err != nil {

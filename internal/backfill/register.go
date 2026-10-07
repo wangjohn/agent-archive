@@ -401,6 +401,12 @@ func (r Registration) skip(cfg config.Config, w *parentWork, result *Registratio
 		return true, nil
 	}
 	if w.prepared {
+		for _, child := range w.childRegistrations {
+			if !cfg.AcceptSession(child) {
+				result.NotAdmitted++
+				return true, nil
+			}
+		}
 		// Native evidence is now immutable private staged evidence.
 	} else if c.SourceKind == archive.SourceKindCursorSQLite {
 		// Checked before the hold (checkChats), never under hooks.lock.

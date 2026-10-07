@@ -269,9 +269,22 @@ func TestAdmissionStageReleaseJournalDetectsValidJSONCorruption(t *testing.T) {
 	}
 }
 
+type stageOwnershipField string
+
+const (
+	ownershipBatch            stageOwnershipField = "batch"
+	ownershipPath             stageOwnershipField = "path"
+	ownershipKind             stageOwnershipField = "kind"
+	ownershipKey              stageOwnershipField = "key"
+	ownershipProvenance       stageOwnershipField = "provenance"
+	ownershipRegistered       stageOwnershipField = "registered"
+	ownershipChildObservation stageOwnershipField = "child-observation"
+	ownershipResolution       stageOwnershipField = "resolution"
+)
+
 func TestAdmittedStageFreezesBatchSourceAndCreationProvenance(t *testing.T) {
-	for _, field := range []string{"batch", "path", "kind", "key", "provenance", "registered", "child-observation", "resolution"} {
-		t.Run(field, func(t *testing.T) {
+	for _, field := range []stageOwnershipField{ownershipBatch, ownershipPath, ownershipKind, ownershipKey, ownershipProvenance, ownershipRegistered, ownershipChildObservation, ownershipResolution} {
+		t.Run(string(field), func(t *testing.T) {
 			s, reg, b := stageFixture(t)
 			reg.ProjectResolution = &archive.ProjectResolution{Root: reg.ProjectRoot, Context: "reviewed"}
 			digest, err := s.PrepareAdmissionStage(reg, b, "none", reg.AdmittedAt)
@@ -284,21 +297,21 @@ func TestAdmittedStageFreezesBatchSourceAndCreationProvenance(t *testing.T) {
 			}
 			_, err = s.UpdateRegistration(reg.ArchiveSessionID, func(r *archive.SessionRegistration) error {
 				switch field {
-				case "batch":
+				case ownershipBatch:
 					r.ImportBatch = archive.NewImportBatch("different")
-				case "path":
+				case ownershipPath:
 					r.TranscriptPath = "/different"
-				case "kind":
+				case ownershipKind:
 					r.SourceKind = archive.SourceKindCursorSQLite
-				case "key":
+				case ownershipKey:
 					r.SourceKey = "different"
-				case "provenance":
+				case ownershipProvenance:
 					r.StartedAtSource = archive.StartedAtSourceFileCreated
-				case "registered":
+				case ownershipRegistered:
 					r.RegisteredAt = r.RegisteredAt.Add(time.Second)
-				case "resolution":
+				case ownershipResolution:
 					r.ProjectResolution.Context = "changed"
-				case "child-observation":
+				case ownershipChildObservation:
 					r.SubagentObservedAt = r.AdmittedAt
 				}
 				return nil

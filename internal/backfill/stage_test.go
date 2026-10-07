@@ -3,6 +3,7 @@ package backfill
 import (
 	"errors"
 	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
@@ -124,9 +125,23 @@ func (missingHeaderSources) LookupNativeHeaders(string) (agentapi.NativeHeaderIn
 
 func (missingHeaderSources) NativeHeaderAgents() []string { return nil }
 
+type stageReviewChange string
+
+const (
+	reviewUnchanged   stageReviewChange = "unchanged"
+	reviewParent      stageReviewChange = "parent"
+	reviewChild       stageReviewChange = "child"
+	reviewChildren    stageReviewChange = "children"
+	reviewBatch       stageReviewChange = "batch"
+	reviewCreation    stageReviewChange = "creation"
+	reviewPause       stageReviewChange = "pause"
+	reviewReactivated stageReviewChange = "reactivated"
+	reviewRewrite     stageReviewChange = "rewrite"
+)
+
 func TestPreparedImportRevalidatesSelectionAndBatchBeforeAdmission(t *testing.T) {
-	for _, change := range []string{"unchanged", "parent", "child", "children", "batch", "creation", "pause", "reactivated"} {
-		t.Run(change, func(t *testing.T) {
+	for _, change := range []stageReviewChange{reviewUnchanged, reviewParent, reviewChild, reviewChildren, reviewBatch, reviewCreation, reviewPause, reviewReactivated} {
+		t.Run(string(change), func(t *testing.T) {
 			home, project := t.TempDir(), t.TempDir()
 			at, start := fixedNow.UTC(), fixedNow.Add(-100000000000).UTC()
 			cfg := config.Config{DurableImportProtection: true, Archive: archive.Config{Enabled: true, Projects: []archive.ProjectActivation{{ProjectID: archive.ProjectID(project), Root: project, Included: true, ActivatedAt: start}}}}
@@ -154,38 +169,94 @@ func TestPreparedImportRevalidatesSelectionAndBatchBeforeAdmission(t *testing.T)
 			// Simulate a crash before the first registration, then a new review.
 			reg.AdmittedAt = at.Add(1000000000)
 			switch change {
-			case "parent":
+			case reviewParent:
 				if err = os.WriteFile(parent, []byte(strings.ReplaceAll(parentBody, "please check it", "new selection")), 0600); err != nil {
 					t.Fatal(err)
 				}
-			case "child":
+			case reviewChild:
 				if err = os.WriteFile(child, []byte(strings.ReplaceAll(childBody, "looked", "changed selection")), 0600); err != nil {
 					t.Fatal(err)
 				}
-			case "children":
+			case reviewChildren:
 				candidate.Subagents = nil
-			case "batch":
+			case reviewBatch:
 				reg.Batch = "different"
-			case "creation":
+			case reviewCreation:
 				candidate.sourceAdmissionCurrent = func() bool { return false }
-			case "reactivated":
+			case reviewReactivated:
 				cfg.Archive.Projects[0].ActivatedAt = reg.AdmittedAt
 				if err = config.Save(home, cfg); err != nil {
 					t.Fatal(err)
 				}
-			case "pause":
+			case reviewPause:
 				cfg.Paused = true
 				if err = config.Save(home, cfg); err != nil {
 					t.Fatal(err)
 				}
 			}
 			result, err := reg.Run([]Candidate{candidate})
-			if change == "unchanged" {
+			if change == reviewUnchanged {
 				if err != nil || len(result.Sessions) != 1 || len(result.Subagents) != 1 {
 					t.Fatal(result, err)
 				}
 			} else if len(result.Sessions) != 0 {
 				t.Fatalf("changed %s admitted old prepared selection: %+v (%v)", change, result, err)
+			}
+		})
+	}
+}
+
+func TestPreparedChildBeforeParentManifestResumesUnderCurrentConsent(t *testing.T) {
+	for _, change := range []stageReviewChange{reviewUnchanged, reviewRewrite, reviewReactivated} {
+		t.Run(string(change), func(t *testing.T) {
+			home, project := t.TempDir(), t.TempDir()
+			at, start := fixedNow.UTC(), fixedNow.Add(-100000000000).UTC()
+			cfg := config.Config{DurableImportProtection: true, Archive: archive.Config{Enabled: true, Projects: []archive.ProjectActivation{{ProjectID: archive.ProjectID(project), Root: project, Included: true, ActivatedAt: start}}}}
+			if err := config.Save(home, cfg); err != nil {
+				t.Fatal(err)
+			}
+			store, err := state.Open(home)
+			if err != nil {
+				t.Fatal(err)
+			}
+			parent, child := filepath.Join(project, "parent.jsonl"), filepath.Join(project, "agent-child.jsonl")
+			childBody := subagentTranscript("parent", "child", start.Add(1000000000))
+			if err = os.WriteFile(parent, []byte(claudeTranscript("parent", project, start)), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err = os.WriteFile(child, []byte(childBody), 0600); err != nil {
+				t.Fatal(err)
+			}
+			candidate := Candidate{Harness: "claude-code", NativeSessionID: "parent", TranscriptPath: parent, ProjectRoot: project, StartedAt: start, StartedAtSource: archive.StartedAtSourceTranscript, Subagents: []Subagent{{Path: child, AgentID: "child"}}}
+			registration := Registration{Durable: true, Sources: testSources, Home: home, Store: store, Batch: "synthetic", AdmittedAt: at}
+			key := agentmeta.SessionKey{Agent: agentmeta.Claude, NativeID: "parent"}
+			id, _, err := store.EnsureArchiveSessionID(key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			work := &parentWork{c: candidate, id: id}
+			if err = registration.prepareChild(t.Context(), cfg, work, key.Agent, registration.registration(candidate, id, ""), candidate.Subagents[0]); err != nil {
+				t.Fatal(err)
+			}
+			// Crash before the parent manifest was prepared, then review again.
+			registration.AdmittedAt = at.Add(1000000000)
+			if change == reviewRewrite {
+				if err = os.WriteFile(child, []byte(strings.ReplaceAll(childBody, "looked", "new selection")), 0600); err != nil {
+					t.Fatal(err)
+				}
+			} else if change == reviewReactivated {
+				cfg.Archive.Projects[0].ActivatedAt = registration.AdmittedAt
+				if err = config.Save(home, cfg); err != nil {
+					t.Fatal(err)
+				}
+			}
+			result, err := registration.Run([]Candidate{candidate})
+			if change == reviewUnchanged {
+				if err != nil || len(result.Sessions) != 1 || len(result.Subagents) != 1 {
+					t.Fatal("child-only reservation did not resume", result, err)
+				}
+			} else if len(result.Sessions) != 0 || len(result.Subagents) != 0 {
+				t.Fatal("changed child consent/selection admitted", result, err)
 			}
 		})
 	}
