@@ -53,6 +53,9 @@ func (s *sessionScan) maintainPendingPrivacy(original state.PendingPublication) 
 		return outcomeSkipped, err
 	}
 	next.RequestToken = original.RequestToken
+	if err := s.preservePrivacyInput(original, &next); err != nil {
+		return outcomeSkipped, err
+	}
 	if err := s.persistPrivacy(next); err != nil {
 		return outcomeSkipped, err
 	}
@@ -112,7 +115,7 @@ func (s *sessionScan) maintainCommittedPrivacy() (sessionOutcome, error) {
 	if err := json.Unmarshal(prior.Body, &metadata); err != nil {
 		return outcomeSkipped, err
 	}
-	next, err := s.prepareRetainedPrivacy(prior.Body, remoteRetainedLoader(s.remote, metadata), prior, state.PrivacyCommitted, "", "", string(s.opts.skillEvidence()))
+	next, err := s.prepareRetainedPrivacy(prior.Body, remoteRetainedLoader(s.remote, metadata), prior, state.PrivacyCommitted, "", "", "")
 	if err != nil {
 		return outcomeSkipped, fmt.Errorf("refilter complete retained selection: %w", err)
 	}

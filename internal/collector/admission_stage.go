@@ -44,25 +44,10 @@ func (s *sessionScan) stagedAdmission() (sessionOutcome, bool, error) {
 		return outcomeSkipped, true, err
 	}
 	if found {
-		if s.pendingPrivacyChanged(pending) {
-			if pending.AdmissionStage != s.reg.AdmissionStage {
-				return outcomeSkipped, true, state.ErrAdmissionStageRecovery
-			}
-			outcome, err := s.maintainPendingPrivacy(pending)
-			return outcome, true, err
-		}
-		if pending.AdmissionStage != s.reg.AdmissionStage {
-			return outcomeSkipped, true, state.ErrAdmissionStageRecovery
-		}
-		if pending.SourceSHA256 != manifest.SHA256 {
-			if err := pending.CheckAdmissionStageTransform(s.reg, manifest, bundle); err != nil {
-				return outcomeSkipped, true, err
-			}
-		}
-
-		outcome, err := s.publishPending(pending)
+		outcome, err := s.resumeStagedPending(pending, manifest, bundle)
 		return outcome, true, err
 	}
+
 	adapter, err := sourceAdapter(s.opts.Sources, s.reg.Harness.Name)
 	if err != nil {
 		return outcomeSkipped, true, err
@@ -93,4 +78,25 @@ func (s *sessionScan) stagedAdmission() (sessionOutcome, bool, error) {
 	}
 	outcome, err := s.publishPending(pending)
 	return outcome, true, err
+}
+
+func (s *sessionScan) resumeStagedPending(pending state.PendingPublication, manifest state.AdmissionStage, bundle archive.SourceBundle) (sessionOutcome, error) {
+	if s.pendingPrivacyChanged(pending) {
+		if pending.AdmissionStage != s.reg.AdmissionStage {
+			return outcomeSkipped, state.ErrAdmissionStageRecovery
+		}
+		outcome, err := s.maintainPendingPrivacy(pending)
+		return outcome, err
+	}
+	if pending.AdmissionStage != s.reg.AdmissionStage {
+		return outcomeSkipped, state.ErrAdmissionStageRecovery
+	}
+	if pending.SourceSHA256 != manifest.SHA256 {
+		if err := pending.CheckAdmissionStageTransform(s.reg, manifest, bundle); err != nil {
+			return outcomeSkipped, err
+		}
+	}
+
+	outcome, err := s.publishPending(pending)
+	return outcome, err
 }

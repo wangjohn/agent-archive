@@ -9,6 +9,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -48,7 +49,7 @@ func preserveRetainedMetadata(next *archive.Metadata, prior archive.Metadata) {
 }
 
 func retainedPolicy(b archive.SourceBundle, skill string) state.PublicationPolicy {
-	return state.PublicationPolicy{Filter: b.Capture.FilterVersion, Adapter: b.Capture.AdapterName, Version: b.Capture.AdapterVersion, Format: b.Capture.SourceFormat, Skill: skill}
+	return state.PublicationPolicy{Filter: b.Capture.FilterVersion, Adapter: b.Capture.AdapterName, Version: b.Capture.AdapterVersion, Format: b.Capture.SourceFormat, Skill: skill, SkillAuthority: state.PrivacySkillConfigured}
 }
 
 // prepareRetainedPrivacy invokes the real native filter on every selected source.
@@ -73,13 +74,17 @@ func (s *sessionScan) prepareRetainedPrivacy(raw []byte, loader retainedSourceLo
 	next := before
 	preserveRetainedMetadata(&next, before)
 	proof := state.PublicationPrivacyEvidence{Authority: authority, StageDigest: stageDigest, StageSourceSHA256: stageSHA, PreviousPolicyContext: storage.SHA256Hex([]byte(before.FilterVersion + "\x00" + before.Adapter.Version + "\x00" + oldSkill))}
+	if prior.PolicyContext != "" {
+		proof.PreviousPolicyContext = prior.PolicyContext
+	}
 	if authority == state.PrivacyPending {
 		original := prior.PrivacyPendingSource
 		if original == nil || original.Commit == nil {
 			return state.PendingPublication{}, errors.New("sealed pending privacy authority is unavailable")
 		}
 		c := original.Commit
-		proof.PendingMutation = &state.PrivacyPendingMutation{MetadataSHA256: c.MetadataSHA256, SourceSetSHA256: c.SourceSetSHA256, PolicyContext: c.PolicyContext, Purpose: c.Purpose, Predecessor: c.Predecessor, PredecessorSHA256: c.PredecessorSHA256, Continuity: c.Continuity}
+		proof.PreviousPolicyContext = c.PolicyContext
+		proof.PendingMutation = &state.PrivacyPendingMutation{MetadataBytes: original.MetadataBytes, MetadataSHA256: c.MetadataSHA256, SourceSetSHA256: c.SourceSetSHA256, PolicyContext: c.PolicyContext, Purpose: c.Purpose, Predecessor: c.Predecessor, PredecessorSHA256: c.PredecessorSHA256, Continuity: c.Continuity}
 	}
 	pending := state.PendingPublication{AdmissionStage: stageDigest, SkillEvidence: string(s.opts.skillEvidence()), MetadataKey: s.mustMetadataKey(), RequestToken: s.req.Token, ReadyAt: s.now, Attempted: true}
 	total := 0
@@ -122,22 +127,22 @@ func (s *sessionScan) prepareRetainedPrivacy(raw []byte, loader retainedSourceLo
 		ref := archive.SourceReference{Key: key, SHA256: compressed.SHA256, CompressedBytes: len(compressed.Bytes)}
 		replacement := selected
 		replacement.Source = ref
-		proof.Sources = append(proof.Sources, state.PrivacySource{Previous: selected, Next: replacement, OldPolicy: retainedPolicy(original, oldSkill), NewPolicy: retainedPolicy(filtered, string(s.opts.skillEvidence()))})
+		oldPolicy := retainedPolicy(original, oldSkill)
+		if oldSkill == "" || i > 0 {
+			oldPolicy.SkillAuthority = state.PrivacySkillObserved
+			oldPolicy.Skill = observedRetainedSkill(original.SupplementalEvidence)
+		}
+		proof.Sources = append(proof.Sources, state.PrivacySource{Previous: selected, Next: replacement, OldPolicy: oldPolicy, NewPolicy: retainedPolicy(filtered, string(s.opts.skillEvidence()))})
 		if i == 0 {
 			pending.Bundle = filtered
 			pending.SourceKey = key
 			pending.SourceSHA256 = ref.SHA256
 			pending.SourceBytes = compressed.Bytes
-			analysis, parseErr := agentapi.Analyze(s.ctx, s.resolveParser(), filtered)
-			if errors.Is(parseErr, context.Canceled) || errors.Is(parseErr, context.DeadlineExceeded) {
-				return pending, parseErr
+			built, err := s.deriveRetainedPrivacyMetadata(filtered, ref, before)
+			if err != nil {
+				return pending, err
 			}
-			built, buildErr := archive.BuildMetadataWithAnalysis(filtered, analysis, parseErr, before.MachineID, before.StartedAt, s.now, ref, archive.ParserInfo{Version: s.parserVersion()})
-			if buildErr != nil && !archive.IsParseError(buildErr) {
-				return pending, buildErr
-			}
-			preserveRetainedMetadata(&built, before)
-			built.ApplyGitHead(s.reg)
+
 			next = built
 		} else {
 			next.History.Preserved[i-1] = replacement
@@ -152,10 +157,11 @@ func (s *sessionScan) prepareRetainedPrivacy(raw []byte, loader retainedSourceLo
 	if err != nil {
 		return pending, err
 	}
-	prior.Privacy, err = state.BindPrivacyEvidence(proof, raw, pending.MetadataBytes, s.reg.DestinationID, s.publicationAdmission(), policy)
+	prior, err = s.bindRetainedPrivacyEvidence(proof, raw, pending.MetadataBytes, prior, policy)
 	if err != nil {
 		return pending, err
 	}
+
 	return state.PreparePublication(pending, prior, s.reg.DestinationID, s.publicationAdmission(), policy, state.PublicationPrivacyRewrite)
 }
 
@@ -210,4 +216,52 @@ func (s *sessionScan) verifyRetainedSelection(metadata archive.Metadata) error {
 		}
 	}
 	return nil
+}
+
+func observedRetainedSkill(evidence []archive.SupplementalEvidence) string {
+	mode := config.SkillEvidenceNone
+	for _, item := range evidence {
+		if item.Kind == archive.EvidenceKindSkillSnapshot {
+			return string(config.SkillEvidenceBody)
+		}
+		if item.Kind == archive.EvidenceKindSkillInventory {
+			mode = config.SkillEvidenceMetadata
+		}
+	}
+	return string(mode)
+}
+
+func (s *sessionScan) deriveRetainedPrivacyMetadata(filtered archive.SourceBundle, ref archive.SourceReference, before archive.Metadata) (archive.Metadata, error) {
+	analysis, parseErr := agentapi.Analyze(s.ctx, s.resolveParser(), filtered)
+	if errors.Is(parseErr, context.Canceled) || errors.Is(parseErr, context.DeadlineExceeded) {
+		return archive.Metadata{}, parseErr
+	}
+	built, buildErr := archive.BuildMetadataWithAnalysis(filtered, analysis, parseErr, before.MachineID, before.StartedAt, s.now, ref, archive.ParserInfo{Version: s.parserVersion()})
+	if buildErr != nil && !archive.IsParseError(buildErr) {
+		return archive.Metadata{}, buildErr
+	}
+	preserveRetainedMetadata(&built, before)
+	built.ApplyGitHead(s.reg)
+	return built, nil
+}
+
+func (s *sessionScan) bindRetainedPrivacyEvidence(proof state.PublicationPrivacyEvidence, raw, next []byte, prior state.PublicationPredecessor, policy string) (state.PublicationPredecessor, error) {
+	stageDigest := proof.StageDigest
+	var err error
+	if stageDigest != "" {
+		retained := prior.RetainedPrivacy
+		if prior.PrivacyPendingSource != nil && prior.PrivacyPendingSource.Commit != nil {
+			retained = prior.PrivacyPendingSource.Commit.Privacy
+		}
+		if retained != nil {
+			if err := state.ComposeStagePrivacy(&proof, retained); err != nil {
+				return prior, err
+			}
+		}
+	}
+	prior.Privacy, err = state.BindPrivacyEvidence(proof, raw, next, s.reg.DestinationID, s.publicationAdmission(), policy)
+	if err != nil {
+		return prior, err
+	}
+	return prior, nil
 }

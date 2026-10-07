@@ -48,6 +48,8 @@ type PublicationPredecessor struct {
 	SameRevisionContinuity *PublicationContinuity
 	Privacy                *PublicationPrivacyEvidence
 	PrivacyPendingSource   *PendingPublication
+	RetainedPrivacy        *PublicationPrivacyEvidence
+	PolicyContext          string
 }
 
 // PublicationContinuity binds a provider-approved continuation to exact source digests.
@@ -163,17 +165,8 @@ func (p PendingPublication) validatePublicationPredecessor(prior PublicationPred
 			return err
 		}
 	case PredecessorAbsent, PredecessorUnknown:
-		if purpose == PublicationPrivacyRewrite && prior.Privacy != nil && prior.Privacy.Authority == PrivacyPending {
-			if err := validatePendingPrivacyPreparation(prior, destination, admission, policy); err != nil {
-				return err
-			}
-		}
-		if purpose == PublicationPrivacyRewrite && (prior.Privacy == nil || (prior.Privacy.Authority != PrivacyStage && prior.Privacy.Authority != PrivacyPending) || prior.Privacy.Authority == PrivacyStage && prior.Privacy.StageDigest != p.AdmissionStage) {
-			return errors.New("privacy replacement requires committed predecessor or immutable admitted stage authority")
-		}
-		if len(prior.Body) != 0 {
-			return errors.New("unexpected publication predecessor body")
-		}
+		return p.validateUncommittedPrivacy(prior, destination, admission, policy, purpose)
+
 	default:
 		return errors.New("publication predecessor evidence is required")
 	}
@@ -319,7 +312,19 @@ func (p *Published) PublicationPredecessor() PublicationPredecessor {
 	if p.state.PredecessorUnknown || len(p.state.MetadataBytes) == 0 || (p.state.Commit != nil && publicationSHA256(p.state.MetadataBytes) != p.state.Commit.MetadataSHA256) {
 		return PublicationPredecessor{State: PredecessorUnknown}
 	}
-	return PublicationPredecessor{State: PredecessorPresent, Body: p.state.MetadataBytes, Bundle: bundle}
+	prior := PublicationPredecessor{State: PredecessorPresent, Body: p.state.MetadataBytes, Bundle: bundle}
+	if p.state.Commit != nil {
+		prior.PolicyContext = p.state.Commit.PolicyContext
+		evidence := p.state.Commit.Privacy
+		if evidence != nil && len(evidence.Sources) > 0 {
+			pending := PendingPublication{Commit: p.state.Commit, MetadataBytes: p.state.MetadataBytes, AdmissionStage: evidence.StageDigest, SkillEvidence: evidence.Sources[0].NewPolicy.Skill}
+			_, sourceErr := p.CommittedSources()
+			if sourceErr == nil && pending.validatePrivacyEvidence() == nil {
+				prior.RetainedPrivacy = evidence
+			}
+		}
+	}
+	return prior
 }
 
 func attachPublication(next publishedState, pending PendingPublication) (publishedState, error) {
@@ -334,4 +339,19 @@ func attachPublication(next publishedState, pending PendingPublication) (publish
 		next.Sources[i] = source.Reference
 	}
 	return next, nil
+}
+
+func (p PendingPublication) validateUncommittedPrivacy(prior PublicationPredecessor, destination, admission, policy string, purpose PublicationPurpose) error {
+	if purpose == PublicationPrivacyRewrite && prior.Privacy != nil && prior.Privacy.Authority == PrivacyPending {
+		if err := validatePendingPrivacyPreparation(prior, destination, admission, policy); err != nil {
+			return err
+		}
+	}
+	if purpose == PublicationPrivacyRewrite && (prior.Privacy == nil || (prior.Privacy.Authority != PrivacyStage && prior.Privacy.Authority != PrivacyPending) || prior.Privacy.Authority == PrivacyStage && prior.Privacy.StageDigest != p.AdmissionStage) {
+		return errors.New("privacy replacement requires committed predecessor or immutable admitted stage authority")
+	}
+	if len(prior.Body) != 0 {
+		return errors.New("unexpected publication predecessor body")
+	}
+	return nil
 }

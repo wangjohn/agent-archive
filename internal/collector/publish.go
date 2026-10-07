@@ -79,6 +79,9 @@ func (s *sessionScan) publishPending(pending state.PendingPublication) (sessionO
 	if err := s.sealPending(&pending); err != nil {
 		return outcomeSkipped, err
 	}
+	if err := s.checkPrivacyInputReplay(pending); err != nil {
+		return outcomeSkipped, err
+	}
 	// Marking it attempted rewrites the whole file, source bytes and bundle
 	// included, so it is done once: a retry of an attempted publication, or
 	// one saved already marked because it was due at once, skips it.
@@ -160,26 +163,12 @@ func (s *sessionScan) publishPending(pending state.PendingPublication) (sessionO
 			return outcomeSkipped, fmt.Errorf("complete published request: %w", err)
 		}
 	}
-	if pending.AdmissionStage != "" {
-		released, err := s.local.AdmissionStageReleased(s.reg)
-		if err != nil {
-			return outcomeSkipped, err
-		}
-		if !released {
-			resumed, err := s.local.ResumeAdmissionStageRelease(s.reg, s.published)
-			if err != nil {
-				return outcomeSkipped, err
-			}
-			if !resumed {
-				manifest, _, err := s.local.ReadAdmissionStage(s.id(), pending.AdmissionStage)
-				if err != nil {
-					return outcomeSkipped, err
-				}
-				if err = s.local.ReleaseAdmissionStage(s.reg, manifest, s.published, pending.RequestToken); err != nil {
-					return outcomeSkipped, err
-				}
-			}
-		}
+	if err := s.releasePublishedStage(pending); err != nil {
+		return outcomeSkipped, err
+	}
+
+	if err := s.cleanupPrivacyInput(pending); err != nil {
+		return outcomeSkipped, err
 	}
 	if err := s.local.RemovePending(s.id()); err != nil {
 		return outcomeSkipped, err
@@ -297,5 +286,30 @@ func (s *sessionScan) bindPublicationContinuity(prior *state.PublicationPredeces
 		return errors.New("native retained comparator refused same revision continuation")
 	}
 	prior.SameRevisionContinuity = &state.PublicationContinuity{PreviousSourceSHA256: previous.SourceBundle.SHA256, NextSourceSHA256: pending.SourceSHA256}
+	return nil
+}
+
+func (s *sessionScan) releasePublishedStage(pending state.PendingPublication) error {
+	if pending.AdmissionStage != "" {
+		released, err := s.local.AdmissionStageReleased(s.reg)
+		if err != nil {
+			return err
+		}
+		if !released {
+			resumed, err := s.local.ResumeAdmissionStageRelease(s.reg, s.published)
+			if err != nil {
+				return err
+			}
+			if !resumed {
+				manifest, _, err := s.local.ReadAdmissionStage(s.id(), pending.AdmissionStage)
+				if err != nil {
+					return err
+				}
+				if err = s.local.ReleaseAdmissionStage(s.reg, manifest, s.published, pending.RequestToken); err != nil {
+					return err
+				}
+			}
+		}
+	}
 	return nil
 }

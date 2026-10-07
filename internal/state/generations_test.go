@@ -446,3 +446,53 @@ func TestGenerationRecoveryRefusesChangedPriorCommittedSelection(t *testing.T) {
 		t.Fatal("changed predecessor froze routing", found, err)
 	}
 }
+
+func TestGenerationRecoverySettlesStageAndClearsOnlySuccessorLinkage(t *testing.T) {
+	s, reg, pending := saturatedStagePending(t)
+	published, err := s.LoadPublishedState(reg.ArchiveSessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := published.SaveCommittedPublication(pending, reg.RegisteredAt); err != nil {
+		t.Fatal(err)
+	}
+	if err := published.SaveBlocked(pending.Bundle, reg.RegisteredAt, BlockedReasonTranscriptRewritten); err != nil {
+		t.Fatal(err)
+	}
+	at := reg.RegisteredAt.Add(time.Hour)
+	called := false
+	builder := generationBuilder(at)
+	if _, err := s.BeginGenerationRecovery(reg.ArchiveSessionID, at, func(old archive.SessionRegistration, id string) (archive.SessionRegistration, PendingPublication, error) {
+		called = true
+		return builder(old, id)
+	}); err == nil || called {
+		t.Fatal("unsettled stage permitted routing mutation", called, err)
+	}
+	m, _, err := s.ReadAdmissionStage(reg.ArchiveSessionID, reg.AdmissionStage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReleaseAdmissionStage(reg, m, published, ""); err != nil {
+		t.Fatal(err)
+	}
+	nextID, err := s.BeginGenerationRecovery(reg.ArchiveSessionID, at, builder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	successor, found, err := s.LoadRegistration(nextID)
+	if err != nil || !found || successor.AdmissionStage != "" || successor.PreviousGenerationID != reg.ArchiveSessionID || successor.Origin != reg.Origin || successor.ImportBatch.Recorded() != reg.ImportBatch.Recorded() || !successor.AdmittedAt.Equal(reg.AdmittedAt) || successor.DestinationID != reg.DestinationID {
+		t.Fatal("successor changed admission provenance", successor, found, err)
+	}
+	frozen, found, err := s.LoadRegistration(reg.ArchiveSessionID)
+	if err != nil || !found || !frozen.CaptureFrozen || frozen.AdmissionStage != reg.AdmissionStage {
+		t.Fatal("predecessor lost stage provenance", frozen, found, err)
+	}
+	refs, err := published.CommittedSources()
+	if err != nil || len(refs) != 1 || refs[0].Key != pending.SourceKey {
+		t.Fatal("frozen predecessor source changed", refs, err)
+	}
+	next, found, err := s.LoadPending(nextID)
+	if err != nil || !found || next.AdmissionStage != "" || next.SourceKey == pending.SourceKey || next.Bundle.PreviousGenerationID != reg.ArchiveSessionID {
+		t.Fatal("successor reused old source namespace", next, found, err)
+	}
+}
