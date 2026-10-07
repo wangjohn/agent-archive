@@ -49,7 +49,8 @@ shared-destination conflict detection is still read/compare/write under the
 existing single-owner contract, **not distributed CAS** or cloned-owner safety.
 
 Executed provider tests cover uncertain metadata acknowledgement **after an actual
-successful provider PUT**, journal restart/native loss before upload, full current
+successful provider PUT**, journal restart/native loss before upload, retained production reading after
+native and local-state loss following upload, full current
 and preserved source checksum/age/content verification, actual native privacy
 refilter, changed authoritative winner/listing publication, retained reading
 without local state, immutable mismatch refusal, and two independent owners'
