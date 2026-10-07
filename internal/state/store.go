@@ -1158,6 +1158,8 @@ func (s *Store) ScanPending(id string) (bool, error) {
 // Anything that invalidates the assertion removes the token (see
 // RemoveScanSignature's callers).
 type ScanSignature struct {
+	// PublishedLabel identifies retained safe native name evidence, independently of lookup time.
+	PublishedLabel string `json:"published_label,omitempty"`
 	// A settled complete authority token carries only compact acknowledged facts.
 	SourceSetDigest       string    `json:"source_set_digest,omitempty"`
 	CurrentRevision       string    `json:"current_revision,omitempty"`

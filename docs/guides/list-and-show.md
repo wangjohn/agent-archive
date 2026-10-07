@@ -281,11 +281,12 @@ configured project basename. The ID column is a short prefix you can pass to
 `list --verbose` or add `--harness`. Projects with the same basename stay in
 separate groups, labeled with their project ID prefixes.
 
-Whether the Claude Code CLI (as opposed to its desktop app) names a session
-without `/rename` has not been checked yet.
-<!-- OWNER, live check (dev/specs/session-finding.md, "Live check (PR 8)"):
-replace the sentence above with what you saw in a CLI session: whether a
-`custom-title` record appears without `/rename`, and when. -->
+Claude Code names come from typed native `custom-title` and `ai-title`
+transcript records. The latest explicit `/rename` wins over generated titles;
+otherwise the latest generated title wins. Names are redacted and shortened
+for archive display. CLI/extension transcript-backed names are supported;
+other desktop-only histories and every native picker fallback are outside
+this capture contract. The separate `title` remains the first human prompt.
 
 Codex currently uses the first-prompt preview because its sidebar title is
 stored separately from the transcript. The table leaves subagent sessions
