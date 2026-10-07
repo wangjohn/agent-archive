@@ -41,12 +41,12 @@ func (c *disposableHTTP) Do(r *http.Request) (*http.Response, error) {
 		return nil, errors.New("acceptance request left disposable provider origin")
 	}
 	c.mu.Lock()
-	c.requests++
-	within := c.requests <= 4096
-	c.mu.Unlock()
-	if !within {
+	if c.requests >= 4096 {
+		c.mu.Unlock()
 		return nil, errors.New("acceptance provider request budget exhausted")
 	}
+	c.requests++
+	c.mu.Unlock()
 	response, err := c.client.Do(r)
 	if response != nil {
 		c.mu.Lock()
@@ -72,7 +72,7 @@ func NewDisposableS3(t *testing.T) *DisposableS3 {
 	}
 	endpoint := os.Getenv("AA_PROVIDER_ENDPOINT")
 	u, err := url.Parse(endpoint)
-	if err != nil || u.Scheme != "http" || u.Hostname() != "127.0.0.1" || u.Port() == "" || u.Path != "" || u.RawQuery != "" || u.User != nil {
+	if err != nil || u.Scheme != "http" || u.Hostname() != "127.0.0.1" || u.Port() == "" || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.User != nil {
 		t.Fatal("acceptance requires an explicit loopback disposable provider endpoint")
 	}
 	bucket := os.Getenv("AA_PROVIDER_BUCKET")

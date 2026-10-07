@@ -11,8 +11,10 @@ umask 077
 root=$(git rev-parse --show-toplevel)
 [[ -z $(git status --porcelain) ]] || { echo 'acceptance requires a clean exact candidate' >&2; exit 2; }
 [[ ! -e $RUNNER_TEMP/aa-provider-resources ]] || { echo "prior provider cleanup obligation exists" >&2; exit 2; }
-work=$(mktemp -d "$RUNNER_TEMP/aa-provider.XXXXXXXX")
-prefix=aa-provider-$(basename "$work")
+suffix=$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')
+prefix=aa-provider-$suffix
+work=$RUNNER_TEMP/$prefix
+mkdir -m 700 "$work"
 container=$prefix-service
 image=$prefix-image
 printf '%s\n' "$prefix" > "$RUNNER_TEMP/aa-provider-resources"

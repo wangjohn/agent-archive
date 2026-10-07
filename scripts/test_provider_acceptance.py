@@ -98,8 +98,8 @@ class OwnedCleanupTest(unittest.TestCase):
         self.root = Path(self.temp.name)
         tools = self.root / 'bin'
         tools.mkdir()
-        self.prefix = 'aa-provider-aa-provider.A1b2C3d4'
-        self.work = self.root / 'aa-provider.A1b2C3d4'
+        self.prefix = 'aa-provider-0123456789abcdef'
+        self.work = self.root / self.prefix
         self.work.mkdir()
         self.control = self.root / 'aa-provider-resources'
         self.control.write_text(self.prefix + '\n')

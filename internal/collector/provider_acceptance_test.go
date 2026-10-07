@@ -15,6 +15,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 	"github.com/wangjohn/agent-archive/internal/testutil/providertest"
 )
 
@@ -120,9 +121,13 @@ func TestProviderFullSetPrivacyReadbackAndIndependentWinner(t *testing.T) {
 	scan, previous, raw := retainedHistoryFixture(t)
 	seedProviderFixture(t, remote, scan.remote)
 	scan.remote = remote
+	before := remote.Requests()
 	pending, err := scan.prepareRetainedPrivacy(raw, remoteRetainedLoader(remote, previous), scan.published.PublicationPredecessor(), state.PrivacyCommitted, "", "", "body")
 	if err != nil {
 		t.Fatal(err)
+	}
+	if remote.Requests()-before != 2 {
+		t.Fatal("two retained inputs did not use exactly one actual provider read each")
 	}
 	if err := scan.local.SavePending(scan.id(), pending); err != nil {
 		t.Fatal(err)
@@ -244,6 +249,9 @@ func publishProviderOwner(t *testing.T, remote storage.ObjectStore, owner string
 	reg := registration(t, writeTranscript(t, t.TempDir(), "synthetic.jsonl", codexTranscript))
 	reg.ArchiveSessionID = owner
 	reg.NativeSessionID = owner
+	reg.Origin = archive.SessionOriginImport
+	reg.ImportBatch = archive.NewImportBatch("synthetic-" + owner)
+	reg.AdmittedAt = reg.RegisteredAt
 	bundle, err := ReadLocalBundle(t.Context(), local.Home(), reg, reg.RegisteredAt, "", testSources)
 	if err != nil {
 		t.Fatal(err)
@@ -266,4 +274,13 @@ func publishProviderOwner(t *testing.T, remote storage.ObjectStore, owner string
 		t.Fatal(result, err)
 	}
 	return reg
+}
+
+func TestSyntheticIndependentOwnerAdmissionFixture(t *testing.T) {
+	remote := storagetest.NewMemoryStore()
+	reg := publishProviderOwner(t, remote, "synthetic-isolated-owner")
+	metadata := fetchMetadata(t, remote, reg.Harness.Name, reg.ArchiveSessionID)
+	if metadata.NativeSessionID != reg.NativeSessionID || metadata.Origin != archive.SessionOriginImport {
+		t.Fatal("synthetic owner admission lost origin or ownership")
+	}
 }

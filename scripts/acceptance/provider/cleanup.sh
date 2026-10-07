@@ -7,13 +7,13 @@ control=$RUNNER_TEMP/aa-provider-resources
 [[ -e $control ]] || exit 0
 [[ -f $control && ! -L $control ]] || { echo 'invalid provider cleanup control' >&2; exit 1; }
 IFS= read -r prefix < "$control"
-[[ $prefix =~ ^aa-provider-aa-provider\.[A-Za-z0-9]{8}$ ]] || { echo 'invalid owned provider resource name' >&2; exit 1; }
+[[ $prefix =~ ^aa-provider-[0-9a-f]{16}$ ]] || { echo 'invalid owned provider resource name' >&2; exit 1; }
 docker info >/dev/null 2>&1 || { echo "cannot verify provider cleanup while daemon is unavailable" >&2; exit 1; }
 inspect_owned() {
   local kind=$1 name=$2 error
   if error=$(docker "$kind" inspect "$name" 2>&1 >/dev/null); then return 0; fi
   case $error in
-    "Error: No such object: $name" | "Error: No such image: $name" | "Error response from daemon: No such container: $name" | "Error response from daemon: No such image: $name") return 1 ;;
+    "Error: No such container: $name" | "Error: No such object: $name" | "Error: No such image: $name" | "Error response from daemon: No such container: $name" | "Error response from daemon: No such image: $name") return 1 ;;
     *) echo 'owned resource absence could not be verified' >&2; return 2 ;;
   esac
 }
@@ -35,7 +35,7 @@ for kind in container image; do
 done
 docker info >/dev/null 2>&1 || status=1
 if [[ $status == 0 ]]; then
-  rm -rf "$RUNNER_TEMP/${prefix#aa-provider-}"
+  rm -rf "$RUNNER_TEMP/$prefix"
   rm "$control"
 else
   echo 'owned provider cleanup remains incomplete' >&2
