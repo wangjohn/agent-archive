@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -220,60 +219,59 @@ func (s *Store) ReadAdmissionStage(id, digest string) (AdmissionStage, archive.S
 }
 
 func (s *Store) admissionStageUsage() (int64, error) {
-	used, err := s.temporaryUsage()
+	temporary, err := s.temporaryUsage()
 	if err != nil {
 		return 0, err
 	}
+	evidence, err := s.publicationEvidenceUsage()
+	if err != nil {
+		return 0, err
+	}
+	if evidence > AdmissionStageQuota-temporary {
+		return 0, ErrAdmissionStageCapacity
+	}
+	temporary += evidence
+	stages, err := s.stageQuotaUsage()
+	if err != nil {
+		return 0, err
+	}
+	pending, err := s.pendingQuotaUsage()
+	if err != nil {
+		return 0, err
+	}
+	if stages > AdmissionStageQuota-temporary || pending > AdmissionStageQuota-temporary-stages {
+		return 0, ErrAdmissionStageCapacity
+	}
+	return temporary + stages + pending, nil
+}
+
+func (s *Store) stageQuotaUsage() (int64, error) {
+	var used int64
 	entries, err := os.ReadDir(filepath.Join(s.home, admissionStageDir))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return 0, err
 	}
 	seen := map[string]bool{}
-	for _, e := range entries {
-		if !strings.HasSuffix(e.Name(), ".json") {
+	for _, entry := range entries {
+		if !strings.HasSuffix(entry.Name(), ".json") {
 			continue
 		}
-		id := strings.TrimSuffix(e.Name(), ".json")
-		path, _ := s.stagePath(id, ".json")
-		b, err := readStageFile(path, stageManifestLimit)
+		id := strings.TrimSuffix(entry.Name(), ".json")
+		charge, err := s.quotaManifestUsage(id)
 		if err != nil {
-			return 0, ErrAdmissionStageRecovery
+			return 0, err
 		}
-		var m AdmissionStage
-		if json.Unmarshal(b, &m) != nil || m.ReservedBytes <= 0 || m.ReservedBytes > AdmissionStageQuota {
-			return 0, ErrAdmissionStageRecovery
+		if charge > AdmissionStageQuota-used {
+			return 0, ErrAdmissionStageCapacity
 		}
-		released, e := s.AdmissionStageReleased(archive.SessionRegistration{ArchiveSessionID: id, AdmissionStage: stageDigest(b)})
-		if e != nil {
-			return 0, e
-		}
-		if released {
-			object, _ := s.stagePath(id, ".source.gz")
-			if info, e := os.Lstat(object); e == nil {
-				if info.Size() < 0 || info.Size() > (AdmissionStageQuota-used)/2 {
-					return 0, ErrAdmissionStageCapacity
-				}
-				used += 2 * info.Size()
-			} else if !errors.Is(e, os.ErrNotExist) {
-				return 0, e
-			}
-			if int64(len(b)) > AdmissionStageQuota-used {
-				return 0, ErrAdmissionStageCapacity
-			}
-			used += int64(len(b))
-		} else {
-			if m.ReservedBytes > AdmissionStageQuota-used {
-				return 0, ErrAdmissionStageCapacity
-			}
-			used += m.ReservedBytes
-		}
+		used += charge
 		seen[id+".source.gz"] = true
 	}
-	for _, e := range entries {
-		if strings.HasSuffix(e.Name(), ".json") || seen[e.Name()] {
+	for _, entry := range entries {
+		if strings.HasSuffix(entry.Name(), ".json") || seen[entry.Name()] {
 			continue
 		}
-		info, err := e.Info()
+		info, err := entry.Info()
 		if err != nil || !info.Mode().IsRegular() {
 			return 0, ErrAdmissionStageRecovery
 		}
@@ -282,12 +280,56 @@ func (s *Store) admissionStageUsage() (int64, error) {
 		}
 		used += info.Size()
 	}
-	// Existing pending work is charged even when it predates durable admission.
+	return used, nil
+}
+
+func (s *Store) quotaManifestUsage(id string) (int64, error) {
+	path, err := s.stagePath(id, ".json")
+	if err != nil {
+		return 0, err
+	}
+	raw, err := readStageFile(path, stageManifestLimit)
+	var m AdmissionStage
+	if err != nil || json.Unmarshal(raw, &m) != nil || !validQuotaStage(m, id) {
+		return 0, ErrAdmissionStageRecovery
+	}
+	digest := stageDigest(raw)
+	reg, found, err := s.LoadRegistration(id)
+	if err != nil || (found && reg.AdmissionStage != "" && (reg.AdmissionStage != digest || CheckAdmissionStageOwnership(reg, m) != nil)) {
+		return 0, ErrAdmissionStageRecovery
+	}
+	released, err := s.AdmissionStageReleased(archive.SessionRegistration{ArchiveSessionID: id, AdmissionStage: digest})
+	if err != nil {
+		return 0, err
+	}
+	object, _ := s.stagePath(id, ".source.gz")
+	info, err := os.Lstat(object)
+	if released {
+		if errors.Is(err, os.ErrNotExist) {
+			return int64(len(raw)), nil
+		}
+		if err != nil || !info.Mode().IsRegular() || info.Size() < 0 || info.Size() > AdmissionStageQuota/2 {
+			return 0, ErrAdmissionStageRecovery
+		}
+		return 2*info.Size() + int64(len(raw)), nil
+	}
+	if err != nil || !info.Mode().IsRegular() || info.Size() != m.Bytes {
+		return 0, ErrAdmissionStageRecovery
+	}
+	return max(m.ReservedBytes, 2*info.Size()+2*int64(len(raw))), nil
+}
+
+func (s *Store) pendingQuotaUsage() (int64, error) {
+	var used int64
 	pending, err := os.ReadDir(filepath.Join(s.home, "pending"))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return 0, err
 	}
+	seenReceipts := map[string]bool{}
 	for _, e := range pending {
+		if seenReceipts[e.Name()] {
+			continue
+		}
 		info, err := e.Info()
 		if err != nil || !info.Mode().IsRegular() {
 			return 0, ErrAdmissionStageRecovery
@@ -296,24 +338,19 @@ func (s *Store) admissionStageUsage() (int64, error) {
 			return 0, ErrAdmissionStageCapacity
 		}
 		charge := 2 * info.Size()
-		id := strings.TrimSuffix(e.Name(), ".json")
 		if strings.HasSuffix(e.Name(), ".json") {
-			p, found, readErr := s.LoadPending(id)
-			if readErr != nil {
-				return 0, ErrAdmissionStageRecovery
-			}
-			if found {
-				charge -= s.coveredPendingCredit(id, p, charge)
-			}
+			id := strings.TrimSuffix(e.Name(), ".json")
+			receiptBytes, credit := s.existingPendingQuotaCredit(id, info)
+			charge += receiptBytes
+			charge -= credit
+			seenReceipts[id+".quota"] = true
 		}
 		if charge > AdmissionStageQuota-used {
 			return 0, ErrAdmissionStageCapacity
 		}
 		used += charge
 	}
-	if used < 0 {
-		return 0, fmt.Errorf("%w: invalid accounting", ErrAdmissionStageRecovery)
-	}
+
 	return used, nil
 }
 

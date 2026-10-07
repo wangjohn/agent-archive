@@ -49,7 +49,7 @@ func (s *Store) SavePendingWithTemporaryReservation(r *TemporaryReservation, id 
 
 func (s *Store) savePendingQuota(id string, p PendingPublication, required bool) error {
 	if !required {
-		for _, dir := range []string{admissionStageDir, temporaryReservationDir} {
+		for _, dir := range []string{admissionStageDir, temporaryReservationDir, publicationEvidenceDir} {
 			entries, e := os.ReadDir(filepath.Join(s.home, dir))
 			if e != nil && !errors.Is(e, os.ErrNotExist) {
 				return e
@@ -76,30 +76,43 @@ func (s *Store) savePendingQuota(id string, p PendingPublication, required bool)
 		return err
 	}
 	defer unlock()
+	available := s.coveredPendingCredit(id, p, AdmissionStageQuota)
+	if old, e := os.Lstat(s.pendingPath(id)); e == nil && available > 0 {
+		if err = s.reconcileQuotaReceipt(id, old); err != nil {
+			return err
+		}
+	} else if e != nil && !errors.Is(e, os.ErrNotExist) {
+		return e
+	}
 	used, err := s.admissionStageUsage()
 	if err != nil {
 		return err
 	}
 	charge := 2 * int64(len(encoded))
-	available := s.coveredPendingCredit(id, p, AdmissionStageQuota)
-	// A covered stage's held allowance must cover old and new atomic copies
-	// together. Existing pending capacity cannot be silently spent twice.
+	if available > 0 {
+		charge += 2 * quotaReceiptLimit
+	}
 	if old, e := os.Lstat(s.pendingPath(id)); e == nil {
-		oldPending, found, readErr := s.LoadPending(id)
-		if readErr != nil {
-			return ErrAdmissionStageRecovery
-		}
-		if found {
-			available = max(0, available-s.coveredPendingCredit(id, oldPending, 2*old.Size()))
-		}
+		_, oldCredit := s.existingPendingQuotaCredit(id, old)
+		available = max(0, available-oldCredit)
 	} else if !errors.Is(e, os.ErrNotExist) {
 		return e
 	}
-	credit := min(charge, available)
-	if charge-credit > AdmissionStageQuota-used {
+	if charge-min(charge, available) > AdmissionStageQuota-used {
 		return ErrAdmissionStageCapacity
 	}
-	return local.WriteBytes(s.pendingPath(id), encoded)
+	if err = local.WriteBytes(s.pendingPath(id), encoded); err != nil {
+		return err
+	}
+	if s.onQuotaReceipt != nil {
+		if err = s.onQuotaReceipt(); err != nil {
+			return err
+		}
+	}
+	if available > 0 {
+		return s.writeQuotaReceipt(id, p, encoded)
+	}
+	return s.removeQuotaReceipt(id)
 }
 
 // coveredPendingCredit consumes only an admitted stage's verified future-copy
@@ -113,6 +126,9 @@ func (s *Store) coveredPendingCredit(id string, p PendingPublication, charge int
 	released, err := s.AdmissionStageReleased(reg)
 	if err != nil || released {
 		return 0
+	}
+	if s.onQuotaBodyRead != nil {
+		s.onQuotaBodyRead("stage")
 	}
 	m, bundle, err := s.ReadAdmissionStage(id, reg.AdmissionStage)
 	if err != nil || CheckAdmissionStageOwnership(reg, m) != nil {
