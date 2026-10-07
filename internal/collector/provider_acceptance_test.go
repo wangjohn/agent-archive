@@ -284,3 +284,36 @@ func TestSyntheticIndependentOwnerAdmissionFixture(t *testing.T) {
 		t.Fatal("synthetic owner admission lost origin or ownership")
 	}
 }
+
+func TestProviderPublishedSourceSurvivesNativeAndLocalStateLoss(t *testing.T) {
+	remote := providertest.NewDisposableS3(t)
+	local := newTestStore(t)
+	reg := registration(t, writeTranscript(t, t.TempDir(), "synthetic-after-upload.jsonl", codexTranscript))
+	if err := local.SaveRegistration(reg); err != nil {
+		t.Fatal(err)
+	}
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "synthetic-after-upload", RepoKey: func(string) string { return "synthetic-project" }}
+	result, err := Run(t.Context(), local, remote, opts)
+	if err != nil || len(result.Errors) != 0 || len(result.Published) != 1 {
+		t.Fatal(result, err)
+	}
+	selected := fetchMetadata(t, remote, reg.Harness.Name, reg.ArchiveSessionID)
+	if err := os.Remove(reg.TranscriptPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(local.Home()); err != nil {
+		t.Fatal(err)
+	}
+	metadata := fetchMetadata(t, remote, reg.Harness.Name, reg.ArchiveSessionID)
+	if metadata.SourceBundle != selected.SourceBundle || !metadata.CapturedAt.Equal(selected.CapturedAt) {
+		t.Fatal("remote selection changed after native and local state loss")
+	}
+	bundle, err := reader.LoadSource(t.Context(), remote, metadata, reader.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(bundle)
+	if err != nil || !strings.Contains(string(body), "visible") || bundle.NativeSessionID != reg.NativeSessionID {
+		t.Fatal("retained provider source lost content or attribution", err)
+	}
+}

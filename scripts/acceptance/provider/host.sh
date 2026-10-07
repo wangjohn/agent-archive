@@ -87,4 +87,5 @@ python3 scripts/acceptance/provider/verify-results.py "$AA_ACCEPTANCE_OUTPUT/pro
   TestProviderAdmissionSurvivesNativeLossAndUncertainCommit \
   TestProviderFullSetPrivacyReadbackAndIndependentWinner \
   TestProviderIndependentOwnersPublishAndReadSeparateSessions \
-  TestProviderImmutableMismatchNeverOverwritesSource > "$AA_ACCEPTANCE_OUTPUT/provider-summary.json"
+  TestProviderImmutableMismatchNeverOverwritesSource \
+  TestProviderPublishedSourceSurvivesNativeAndLocalStateLoss > "$AA_ACCEPTANCE_OUTPUT/provider-summary.json"
