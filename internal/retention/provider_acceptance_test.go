@@ -51,7 +51,7 @@ func TestProviderOwnedDeletionResumesUncertainAcknowledgement(t *testing.T) {
 	}
 	assertProviderNamespaceAbsent(t, remote, reg)
 	journal, found, err := restarted.LoadSessionDeletion(reg)
-	if err != nil || !found || journal.Phase != "cleaned" {
+	if err != nil || !found || journal.Phase != state.DeletionCleaned {
 		t.Fatal(journal, err)
 	}
 }
@@ -141,7 +141,7 @@ func TestProviderRetentionRestoresAfterNewHook(t *testing.T) {
 		t.Fatal("restored content unavailable", err)
 	}
 	journal, found, err := local.LoadSessionDeletion(reg)
-	if err != nil || !found || journal.Phase != "restored" {
+	if err != nil || !found || journal.Phase != state.DeletionRestored {
 		t.Fatal(journal, err)
 	}
 }

@@ -18,7 +18,7 @@ import (
 type componentBoundStore struct{ *storagetest.MemoryStore }
 
 func (s componentBoundStore) Put(ctx context.Context, key string, body []byte) error {
-	for _, part := range strings.Split(key, "/") {
+	for part := range strings.SplitSeq(key, "/") {
 		if len(part) > 255 {
 			return errors.New("synthetic filesystem component limit")
 		}
@@ -48,7 +48,7 @@ func TestPortableRevisionPreservesExactSummaryAndBoundsEveryWrite(t *testing.T) 
 	if err != nil || len(hints) != 1 {
 		t.Fatal(hints, err)
 	}
-	for _, part := range strings.Split(hints[0].Key, "/") {
+	for part := range strings.SplitSeq(hints[0].Key, "/") {
 		if len(part) > 240 {
 			t.Fatal("portable component exceeds bound", len(part))
 		}
