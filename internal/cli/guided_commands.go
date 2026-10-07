@@ -61,6 +61,10 @@ func (p *prompter) guidedRetention(def int) (int, error) {
 // guidedRows aligns human records and switches to labeled fields when a table
 // would exceed the available terminal width. Structured output bypasses it.
 func guidedRows(out io.Writer, headers []string, rows [][]string) {
+	if len(rows) == 0 {
+		terminal.Println(out, "No records found.")
+		return
+	}
 	caps := capabilitiesFor(nil, out)
 	width := caps.Width
 	if width <= 0 {
@@ -111,9 +115,6 @@ func guidedRows(out io.Writer, headers []string, rows [][]string) {
 			}
 			terminal.Println(out, hangingIndent(prefix, value, width))
 		}
-	}
-	if len(rows) == 0 {
-		terminal.Println(out, "No records found.")
 	}
 }
 

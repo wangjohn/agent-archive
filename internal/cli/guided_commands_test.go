@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -23,6 +24,20 @@ import (
 type guidedCommandOutput struct {
 	bytes.Buffer
 	caps promptCapabilities
+}
+
+func TestGuidedRowsEmptyProviderObservations(t *testing.T) {
+	t.Parallel()
+	for _, width := range []int{0, 36, 80} {
+		t.Run(strconv.Itoa(width), func(t *testing.T) {
+			t.Parallel()
+			out := &guidedCommandOutput{caps: promptCapabilities{Width: width}}
+			guidedRows(out, []string{"Machine ID", "Provider key", "Role", "State", "Binding"}, nil)
+			if got := out.String(); got != "No records found.\n" {
+				t.Fatalf("empty observations at width %d: %q", width, got)
+			}
+		})
+	}
 }
 
 func (o *guidedCommandOutput) promptCapabilities() promptCapabilities { return o.caps }

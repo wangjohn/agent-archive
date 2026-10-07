@@ -193,6 +193,42 @@ func TestGuidedMachinesJSONHasNoPromptDecoration(t *testing.T) {
 	}
 }
 
+func TestGuidedEmptyMachinesListing(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []string{"wide", "narrow", "json"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
+			env, _, _ := pairingSourceFixture(t)
+			width := 80
+			if mode == "narrow" {
+				width = 36
+			}
+			out := &guidedCommandOutput{caps: promptCapabilities{Width: width}}
+			var errOut bytes.Buffer
+			args := []string{"machines"}
+			if mode == "json" {
+				args = append(args, "--json")
+			}
+			if exit := Run(args, nil, out, &errOut, env); exit != 0 || errOut.Len() != 0 {
+				t.Fatalf("empty listing failed: exit %d, stderr %s", exit, &errOut)
+			}
+			if mode == "json" {
+				var document map[string]json.RawMessage
+				must(t, json.Unmarshal(out.Bytes(), &document))
+				var records []json.RawMessage
+				must(t, json.Unmarshal(document["records"], &records))
+				if len(records) != 0 || strings.Contains(out.String(), "No records found.") {
+					t.Fatalf("empty JSON listing changed: %s", out.String())
+				}
+				return
+			}
+			if strings.Count(out.String(), "No records found.") != 1 || !strings.Contains(out.String(), "Bucket records are untrusted claims") {
+				t.Fatalf("empty listing lacks explicit state or trust caveat: %s", out.String())
+			}
+		})
+	}
+}
+
 // Actual handoff flows retain static, readable output when cursor ownership is
 // unavailable. Stdout and stderr are captured independently in the split case.
 func TestGuidedFullHandoffOutputSurfaces(t *testing.T) {
