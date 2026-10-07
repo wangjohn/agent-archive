@@ -74,10 +74,13 @@ var terminalPackageUses = classifiedCalls{
 	// only by runBrowser, which runs after browseInteractive, and
 	// its terminal is restored on every way out. The prompt line guard also
 	// restores hidden input before interrupts and job control; the pending-input
-	// probe only checks readiness and never consumes an answer.
+	// probe only checks readiness and never consumes an answer. Before ordinary
+	// prompt emission, echoSuppressed inspects the original ECHO/ECHONL modes
+	// so completion counts only actual character echo and supplies missing
+	// newline echo without changing the user's modes.
 	"keys_unix.go": {
-		"term.IsTerminal": 1, "unix.IoctlGetTermios": 4, "unix.IoctlSetTermios": 5,
-		"unix.ICANON": 2, "unix.ECHO": 2, "unix.ECHONL": 2, "unix.IEXTEN": 1, "unix.ISIG": 2, "unix.ICRNL": 1,
+		"term.IsTerminal": 1, "unix.IoctlGetTermios": 5, "unix.IoctlSetTermios": 5,
+		"unix.ICANON": 2, "unix.ECHO": 4, "unix.ECHONL": 3, "unix.IEXTEN": 1, "unix.ISIG": 2, "unix.ICRNL": 1,
 		"unix.VMIN": 1, "unix.VTIME": 1, "unix.VQUIT": 1,
 		"unix.Select": 2, "unix.FdSet": 2, "unix.Timeval": 1, "unix.NsecToTimeval": 1, "unix.Read": 1, "unix.EINTR": 2,
 		"unix.Kill": 3, "unix.SIGSTOP": 3, "unix.Termios": 2,
