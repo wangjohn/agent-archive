@@ -45,8 +45,13 @@ func TestPendingRAMOnlyPrivacyHandleRejectsInvalidOwnership(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer func() {
-				if err := handle.Close(); err != nil {
-					t.Error(err)
+				closeErr := handle.Close()
+				if kind == "corrupt" {
+					if !errors.Is(closeErr, ErrAdmissionStageRecovery) || !errors.Is(handle.Err(), ErrAdmissionStageRecovery) {
+						t.Error("corrupt handle lost its recovery error", closeErr, handle.Err())
+					}
+				} else if closeErr != nil {
+					t.Error(closeErr)
 				}
 			}()
 			if kind == "root" {
@@ -64,5 +69,37 @@ func TestPendingRAMOnlyPrivacyHandleRejectsInvalidOwnership(t *testing.T) {
 				t.Fatal("invalid handle allocated pending", err)
 			}
 		})
+	}
+}
+
+func TestPendingPrivacyHandleRefusesReplacedHomeBeforeAllocation(t *testing.T) {
+	s, reg, p := saturatedStagePending(t)
+	handle, err := NewTemporaryReservation(s, PublicationPrivacy, reg.ArchiveSessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := handle.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
+	original := s.Home() + "-held"
+	if err := os.Rename(s.Home(), original); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := os.RemoveAll(original); err != nil {
+			t.Error(err)
+		}
+	}()
+	if err := os.MkdirAll(s.Home(), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SavePendingWithTemporaryReservation(handle, reg.ArchiveSessionID, p); !errors.Is(err, ErrAdmissionStageRecovery) {
+		t.Fatal("replaced home redirected privacy pending allocation", err)
+	}
+	entries, err := os.ReadDir(s.Home())
+	if err != nil || len(entries) != 0 {
+		t.Fatal("replaced home received private quota or pending files", entries, err)
 	}
 }

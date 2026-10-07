@@ -29,12 +29,17 @@ func (s *sessionScan) maintainPendingPrivacy(original state.PendingPublication) 
 	if err != nil {
 		return outcomeSkipped, err
 	}
+	var replay retainedSourceLoader
 	if kind == state.PrivacyPending && original.Commit.Privacy != nil && original.Commit.Privacy.Authority == state.PrivacyPending {
 		root, err := s.oldestPrivacyInput(original)
 		if err != nil {
 			return outcomeSkipped, err
 		}
 		prior, err = prior.CheckPrivacyReplayInput(original, *root, s.reg.DestinationID, s.publicationAdmission())
+		if err != nil {
+			return outcomeSkipped, err
+		}
+		replay, err = s.oldestRetainedLoader(original, *root)
 		if err != nil {
 			return outcomeSkipped, err
 		}
@@ -49,7 +54,7 @@ func (s *sessionScan) maintainPendingPrivacy(original state.PendingPublication) 
 		return outcomeSkipped, err
 	}
 	if live {
-		manifest, _, err := s.local.ReadAdmissionStage(s.id(), original.AdmissionStage)
+		manifest, staged, err := s.local.ReadAdmissionStage(s.id(), original.AdmissionStage)
 		if err != nil {
 			return outcomeSkipped, err
 		}
@@ -57,12 +62,25 @@ func (s *sessionScan) maintainPendingPrivacy(original state.PendingPublication) 
 			return outcomeSkipped, err
 		}
 		stageDigest, stageSHA = original.AdmissionStage, manifest.SHA256
+		if kind == state.PrivacyPending && original.Commit.Privacy != nil {
+			if err := original.CheckAdmissionStageTransform(s.reg, manifest, staged); err != nil {
+				return outcomeSkipped, err
+			}
+			// The immutable admitted stage is the oldest native content authority
+			// until its selecting commit settles; the receipt stays immediate.
+			replay = func(ctx context.Context, selected archive.RevisionReference) (archive.SourceBundle, error) {
+				if selected.RevisionID != original.Commit.Privacy.Sources[0].Next.RevisionID || !selected.CapturedAt.Equal(staged.Capture.CapturedAt) {
+					return archive.SourceBundle{}, state.ErrAdmissionStageRecovery
+				}
+				return staged, ctx.Err()
+			}
+		}
 		if kind == state.PrivacyPending && prior.State == state.PredecessorAbsent && original.SourceSHA256 == manifest.SHA256 {
 			kind = state.PrivacyStage
 			prior.PrivacyPendingSource = nil
 		}
 	}
-	next, err := s.prepareRetainedPrivacy(original.MetadataBytes, loader, prior, kind, stageDigest, stageSHA, original.SkillEvidence)
+	next, err := s.prepareRetainedPrivacyWithReplay(original.MetadataBytes, loader, replay, prior, kind, stageDigest, stageSHA, original.SkillEvidence)
 	if err != nil {
 		return outcomeSkipped, err
 	}
