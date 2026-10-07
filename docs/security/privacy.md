@@ -142,7 +142,8 @@ are filter-derived text stored in the bucket, not a separate redaction pass.
   and message IDs; summaries the app wrote when compacting a conversation;
   the names the app gave the session, which pass the same redaction as
   your prompts: every Claude Code session name the transcript records (set
-  automatically from your prompt or by `/rename`; renaming adds a name and
+  from typed `ai-title` generated names or `custom-title` `/rename` records;
+  explicit names win over generated names. Renaming adds a name and
   does not remove the earlier ones) and Cursor's current chat name; for a
   Claude Code subagent, the description its parent gave the task ("find the
   retention tests"), read from the `agent-<id>.meta.json` file Claude Code
@@ -621,3 +622,9 @@ paused, excluded projects and recognizable unsupported import/fork shapes remain
 ineligible. Discovery reads bounded identity/start/project metadata before
 admission; eligible transcripts then pass through the same privacy filter as
 hook capture. Discovery health and rejection diagnostics contain no prompt text.
+
+Claude name records retain typed session identity and sidechain flags to
+exclude another session’s title. Names alone never admit a session or extend
+activity/retention. Injected Codex `external_codex_apps_open_page` context
+wrappers at the start of a message are omitted; quoted markup and examples in
+human prose/code remain intact. Text outside context remains prompt text.
