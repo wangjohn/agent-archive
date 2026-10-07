@@ -274,15 +274,17 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 			p.result.Errors["native-coverage"] = err
 		}
 	}
-	p.observeLabels(ctx)
-	p.repairListingIndex()
-	orderOldestRequestsFirst(p.registrations, p.requests)
+	// Construct the lazy source scope before labels borrow retained publications,
+	// so optional providers also share the default pass ledger with native work.
 	closeCursorPass := openCursorPass(p.registrations, &p.opts)
 	defer func() {
 		if err := closeCursorPass(); err != nil {
 			runErr = errors.Join(runErr, err)
 		}
 	}()
+	p.observeLabels(ctx)
+	p.repairListingIndex()
+	orderOldestRequestsFirst(p.registrations, p.requests)
 	for i, reg := range p.registrations {
 		// A pass past its deadline ends like a stopped one: nothing more can
 		// reach storage, so the rest keep their work rather than each
