@@ -72,16 +72,24 @@ var terminalPackageUses = classifiedCalls{
 	"ui.go": {"term.IsTerminal": 2, "term.GetSize": 2},
 	// Key mode: the session browser reads keys one at a time. It is set up
 	// only by runBrowser, which runs after browseInteractive, and
-	// its terminal is restored on every way out.
+	// its terminal is restored on every way out. The prompt line guard also
+	// restores hidden input before interrupts and job control; the pending-input
+	// probe only checks readiness and never consumes an answer. Before ordinary
+	// prompt emission, echoSuppressed inspects the original ECHO/ECHONL modes
+	// so completion counts only actual character echo and supplies missing
+	// newline echo without changing the user's modes.
 	"keys_unix.go": {
-		"term.IsTerminal": 1, "unix.IoctlGetTermios": 3, "unix.IoctlSetTermios": 2,
-		"unix.ICANON": 1, "unix.ECHO": 1, "unix.ECHONL": 1, "unix.IEXTEN": 1, "unix.ISIG": 1,
+		"term.IsTerminal": 1, "unix.IoctlGetTermios": 5, "unix.IoctlSetTermios": 5,
+		"unix.ICANON": 2, "unix.ECHO": 4, "unix.ECHONL": 3, "unix.IEXTEN": 1, "unix.ISIG": 2, "unix.ICRNL": 1,
 		"unix.VMIN": 1, "unix.VTIME": 1, "unix.VQUIT": 1,
-		"unix.Select": 1, "unix.FdSet": 1, "unix.NsecToTimeval": 1, "unix.Read": 1, "unix.EINTR": 2,
-		"unix.Kill": 2, "unix.SIGSTOP": 2,
+		"unix.Select": 2, "unix.FdSet": 2, "unix.Timeval": 1, "unix.NsecToTimeval": 1, "unix.Read": 1, "unix.EINTR": 2,
+		"unix.Kill": 3, "unix.SIGSTOP": 3, "unix.Termios": 2,
 	},
-	"keys_darwin.go": {"unix.TIOCGETA": 1, "unix.TIOCSETA": 1, "unix.TIOCSETAF": 1},
-	"keys_linux.go":  {"unix.TCGETS": 1, "unix.TCSETS": 1, "unix.TCSETSF": 1},
+	// Prompt capabilities use descriptor identity/size for presentation; guarded
+	// hidden reads and lifecycle restoration require terminal mechanisms.
+	"prompt_render.go": {"term.IsTerminal": 4, "term.GetSize": 1},
+	"keys_darwin.go":   {"unix.TIOCGETA": 1, "unix.TIOCSETA": 1, "unix.TIOCSETAF": 1},
+	"keys_linux.go":    {"unix.TCGETS": 1, "unix.TCSETS": 1, "unix.TCSETSF": 1},
 	// saveTerminalState restores modes the pager or a prompt changed; it does
 	// nothing unless something interactive already ran.
 	"list_browse.go": {"term.IsTerminal": 1, "term.GetState": 1, "term.Restore": 1},

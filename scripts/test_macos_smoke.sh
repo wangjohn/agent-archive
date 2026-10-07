@@ -23,6 +23,11 @@ go test -race -count=1 -timeout 10m \
 
 cli_tests=(
   TestScreens
+  TestGuidedPromptTerminalCells
+  TestGuidedPromptEmissionPreservesTerminalOwnership
+  TestPairingCodeDisplayRecognizesWrappedTerminal
+  TestGuidedPromptCollapseRequiresOwnedVisibleRows
+  TestGuidedEOFNeverResolvesDefault
   TestFirstSetupLaunchctlSequence
   TestSetupAndUninstallNeedATerminal
   TestBrowserKeysRestoreTheTerminal

@@ -29,9 +29,11 @@ type prompter struct {
 	handBack func([]byte)
 	now      func() time.Time
 	style    textStyle
-	// spaceAfterAnswer separates interactive setup answers from what follows.
+	// guidedSpacing separates legacy guided answers from what follows.
 	// Other commands use this prompter too and retain their existing output.
-	spaceAfterAnswer bool
+	guidedSpacing bool
+	render        *promptRenderer
+	lineGuard     *promptLineGuard
 	// singleArea is set while setup changes one area of an installed
 	// setup, where step headings do not count steps.
 	singleArea bool
@@ -84,16 +86,17 @@ func (p *prompter) clock() time.Time {
 }
 
 func newPrompter(in io.Reader, out io.Writer) *prompter {
-	return &prompter{in: bufio.NewReader(in), out: out, source: in, style: styleFor(out)}
+	return &prompter{in: bufio.NewReader(in), out: &promptWriter{w: out, trailing: 1}, source: in, style: styleFor(out)}
 }
 
 func (p *prompter) line(label string) (string, error) {
 	terminal.Print(p.out, label)
 	text, err := p.in.ReadString('\n')
+	p.noteLineEcho(text)
 	if err != nil {
 		if errors.Is(err, io.EOF) && text != "" {
 			// A final answer with no trailing newline is still a real one.
-			if p.spaceAfterAnswer {
+			if p.guidedSpacing {
 				terminal.Println(p.out)
 			}
 			return strings.TrimSpace(text), nil
@@ -105,7 +108,7 @@ func (p *prompter) line(label string) (string, error) {
 		// so setup could commit real changes the user never confirmed.
 		return "", fmt.Errorf("no more input: %w", err)
 	}
-	if p.spaceAfterAnswer {
+	if p.guidedSpacing {
 		terminal.Println(p.out)
 	}
 	return strings.TrimSpace(text), nil
@@ -228,8 +231,7 @@ type actionOption struct {
 }
 
 // actions keeps primary choices numbered and renders navigation separately.
-// Hidden aliases are accepted only here, never by secret or name inputs.
-func (p *prompter) actions(question, def string, primary []option, secondary []actionOption, aliases ...option) (string, error) {
+func (p *prompter) actions(question, def string, primary []option, secondary []actionOption) (string, error) {
 	p.heading(question)
 	choices := append([]option(nil), primary...)
 	for i, o := range primary {
@@ -243,7 +245,6 @@ func (p *prompter) actions(question, def string, primary []option, secondary []a
 		terminal.Printf(p.out, "[%s] %s\n", key, o.Label)
 		choices = append(choices, option{o.Key, o.Label})
 	}
-	choices = append(choices, aliases...)
 	displayDefault := ""
 	for i, o := range primary {
 		if o.Key == def {
@@ -373,7 +374,7 @@ func (p *prompter) secret(label string) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("cannot hide credential input: %w", err)
 		}
-		if p.spaceAfterAnswer {
+		if p.guidedSpacing {
 			terminal.Println(p.out)
 		}
 		return strings.TrimSpace(string(value)), nil

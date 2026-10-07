@@ -6,18 +6,22 @@ Choose Cloudflare R2 or Amazon S3 for private archive storage. Setup will guide 
 
 Step 1 of 3 · Choose what to capture
 
-Archive Claude Code sessions in ~/src/web-app? [Y/n] 
+Archive Claude Code sessions in ~/src/web-app? [Y/n]
 
 Looking for your other projects...
 On the review screen: Edit a setting adds projects, drops apps, and changes how long sessions are kept.
 
 Step 2 of 3 · Connect storage
 
-Where should your archive live?
-  1) Cloudflare R2
+? Where should your archive live?
+
+  1) Cloudflare R2 (default)
   2) Amazon S3
-[h] Setup instructions
-Choose [1]: s3-existing
+
+  [h] Setup instructions
+
+› Choose [1]: s3-existing
+✓ Provider Amazon S3
 
 AWS profile: work
 
@@ -41,12 +45,15 @@ Step 3 of 3 · Ready to start
 
   ✓ Storage connected       write, read, list, delete
   ✗ Bucket is public        a bucket policy allows public access
-    Fix its access before archiving: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
+    Fix its access before archiving:
+    https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
   ✓ Hook file is valid      ~/.claude/settings.json
 
-  Edit a setting adds projects, drops apps, and changes how long sessions are kept.
+  Edit a setting adds projects, drops apps, and changes how long sessions are
+  kept.
   Filtering is best effort; sensitive text may remain in archived sessions.
-  What leaves your machine: https://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md
+  What leaves your machine:
+  https://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md
   · Machine name: unnamed (random ID suffix after save). Choose Name this machine to set a label; no hostname is read.
 
 Fix what is marked ✗ above first.

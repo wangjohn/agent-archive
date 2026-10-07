@@ -20,18 +20,23 @@ Enter 1-2 [\e[1m1\e[0m] › included-projects
 
 Projects to archive (✓ included):
   1) \e[32m✓\e[0m ~/src/web-app  \e[2mthis folder\e[0m
-a includes all listed projects. Or enter 1 to include or leave it out, or a path to add a project.
+a includes all listed projects. Or enter 1 to include or leave it out, or a path
+to add a project.
 Enter a blank line when finished.
-\e[1mProjects\e[0m › 
+\e[1mProjects\e[0m ›
 
 
 \e[1mStep 2 of 3 · Connect storage\e[0m
 
-\e[1mWhere should your archive live?\e[0m
+? Where should your archive live?
+
   1) Cloudflare R2
-  2) Amazon S3
-[h] Setup instructions
-Choose [\e[1m2\e[0m] › s3
+  2) Amazon S3 (default)
+
+  [h] Setup instructions
+
+› Choose [2]: s3
+\e[2m✓ Provider Amazon S3\e[0m
 
 Setup will create a bucket with Block Public Access using an AWS profile.
 \e[1mSet up Amazon S3\e[0m
@@ -44,13 +49,13 @@ Choose › e
 \e[1mWhich AWS profile has access to the bucket?\e[0m
   1) default
   2) personal \e[2m(no credentials configured)\e[0m
-Enter 1-2, or another profile name [\e[1m1\e[0m] › 
+Enter 1-2, or another profile name [\e[1m1\e[0m] ›
 
 \e[1mWhich bucket should sessions be stored in?\e[0m
   1) agent-archive-alex
   2) photos
   3) team-archive
-Enter 1-3, or another bucket name [\e[1m1\e[0m] › 
+Enter 1-3, or another bucket name [\e[1m1\e[0m] ›
 
 Bucket agent-archive-alex is in eu-west-2; using that region.
 
@@ -76,12 +81,14 @@ Checking your storage connection…
 
   \e[32m✓\e[0m Storage connected       \e[2mwrite, read, list, delete\e[0m
   \e[33m!\e[0m Bucket privacy unknown  \e[2mpublic-access settings could not be read\e[0m
-    Make sure public access is off: \e[36mhttps://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html\e[0m
+    Make sure public access is off:
+    \e[36mhttps://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html\e[0m
   \e[32m✓\e[0m Hook file is valid      \e[2m~/.codex/hooks.json\e[0m
   \e[32m✓\e[0m Codex discovery         \e[2msupported new tasks do not require hook approval\e[0m
 
 \e[2m  Filtering is best effort; sensitive text may remain in archived sessions.\e[0m
-  \e[2mWhat leaves your machine:\e[0m \e[36mhttps://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md\e[0m
+  \e[2mWhat leaves your machine:\e[0m
+  \e[36mhttps://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md\e[0m
   \e[2m·\e[0m Machine name: unnamed (random ID suffix after save). Choose Name this machine to set a label; no hostname is read.
 
 \e[1mStart archiving?\e[0m

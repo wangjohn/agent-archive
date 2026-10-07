@@ -8,26 +8,30 @@ Step 1 of 3 · Choose what to capture
 
 Archive Claude Code sessions in ~/src/web-app? [Y/n] n
 
-Include Claude Code? [Y/n] 
+Include Claude Code? [Y/n]
 
 Projects to archive (✓ included):
   1) ✓ ~/src/web-app  this folder · 2 sessions · today
   2)   ~/src/api      1 session · 3 days ago
   3)   ~/src/docs     1 session · 40 days ago
-a includes all listed projects. Or enter numbers to include or leave out (such as 2 3), or a path.
+a includes all listed projects. Or enter numbers to include or leave out (such
+as 2 3), or a path.
 Enter a blank line when finished.
 Projects: 3
 
 Included: ~/src/web-app, ~/src/docs
-Projects: 
+Projects:
 
 
 Step 2 of 3 · Connect storage
 
-Where should your archive live?
-  1) Cloudflare R2
+? Where should your archive live?
+
+  1) Cloudflare R2 (default)
   2) Amazon S3
-[h] Setup instructions
-Choose [1]: Setup incomplete: no more input: EOF
+
+  [h] Setup instructions
+
+› Choose [1]: Setup incomplete: no more input: EOF
 Run agent-archive setup to continue.
 [exit 1]

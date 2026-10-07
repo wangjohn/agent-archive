@@ -26,6 +26,12 @@ storage prompt for a link to the [bucket guide](bucket.md). Setup asks questions
 stops before asking anything and changes nothing. Its prompt sequence is not
 a scripting API; to script it, use [`setup --yes`](#set-up-without-questions).
 
+Storage selection groups its question, choices and shortcuts together. On a
+supported terminal, the answered provider menu becomes a short receipt.
+`NO_COLOR` removes color while keeping the same structure and interaction;
+dumb terminals and redirected streams retain the expanded question. R2 secret
+fields hide input and show a fixed credential receipt.
+
 ## Before the first question
 
 Setup first checks what starting to archive will need, and prints one line

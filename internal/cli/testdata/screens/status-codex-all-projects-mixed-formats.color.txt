@@ -2,17 +2,23 @@ $ agent-archive status
 \e[1mAgent Archive\e[0m  \e[33m● Waiting for capture\e[0m
 
   \e[33m!\e[0m Waiting for the first Codex task
-    Start a supported new Codex task in any non-excluded project, then run \e[36magent-archive sync\e[0m. Hook approval is optional for discovery.
+    Start a supported new Codex task in any non-excluded project, then run
+    \e[36magent-archive sync\e[0m. Hook approval is optional for discovery.
 
 \e[1mCapture\e[0m
-  \e[33m!\e[0m Codex 0.121.0   capture check pending; all current and future Codex projects   \e[2mno sessions yet\e[0m
-    \e[33m!\e[0m Last scan skipped 2 observations; run agent-archive status --verbose for details.
-  \e[33m!\e[0m Identity recovery: unknown; run agent-archive sync for current bounded local evidence.
+  \e[33m!\e[0m Codex 0.121.0   capture check pending; all current and future Codex projects
+    \e[2mno sessions yet\e[0m
+    \e[33m!\e[0m Last scan skipped 2 observations; run agent-archive status --verbose for
+      details.
+  \e[33m!\e[0m Identity recovery: unknown; run agent-archive sync for current bounded local
+    evidence.
 
 \e[1mStorage\e[0m
   \e[32m✓\e[0m s3://team-archive/agent-archive/   \e[2mreachable, checked by setup just now\e[0m
   \e[32m✓\e[0m Background collector on            \e[2mno scan yet\e[0m
-  \e[33m!\e[0m Bucket privacy not verified        \e[2mthis storage can't be inspected; see https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html\e[0m
+  \e[33m!\e[0m Bucket privacy not verified
+    \e[2mthis storage can't be inspected; see
+    https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html\e[0m
 
 \e[2mMore: agent-archive status --verbose · agent-archive status codex\e[0m
 [exit 0]

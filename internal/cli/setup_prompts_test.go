@@ -492,7 +492,7 @@ func TestStorageHelpStaysOnTheMenu(t *testing.T) {
 	t.Parallel()
 	var out bytes.Buffer
 	cfg, _, _, err := promptStorage(newPrompter(strings.NewReader("help\n"+storageMenuNumber(t, "help")+"\ns3-existing\nprofile\nbucket\nus-east-1\n"), &out), credentials.Config{}, Env{AWSProfiles: func() ([]AWSProfile, error) { return nil, nil }}, "")
-	if err != nil || cfg.Provider != "s3" || strings.Count(out.String(), bucketDocURL) != 2 || strings.Count(out.String(), "Setup instructions") != 3 {
+	if err != nil || cfg.Provider != "s3" || strings.Count(out.String(), bucketDocURL) != 2 || strings.Count(out.String(), "  [h] Setup instructions") != 3 {
 		t.Fatalf("cfg=%+v err=%v output=%s", cfg, err, &out)
 	}
 }

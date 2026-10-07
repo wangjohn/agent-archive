@@ -6,18 +6,22 @@ Choose Cloudflare R2 or Amazon S3 for private archive storage. Setup will guide 
 
 \e[1mStep 1 of 3 · Choose what to capture\e[0m
 
-\e[1mArchive Claude Code sessions in ~/src/web-app?\e[0m [\e[1mY\e[0m/n] › 
+\e[1mArchive Claude Code sessions in ~/src/web-app?\e[0m [\e[1mY\e[0m/n] ›
 
 Looking for your other projects...
 On the review screen: Edit a setting adds projects, drops apps, and changes how long sessions are kept.
 
 \e[1mStep 2 of 3 · Connect storage\e[0m
 
-\e[1mWhere should your archive live?\e[0m
-  1) Cloudflare R2
+? Where should your archive live?
+
+  1) Cloudflare R2 (default)
   2) Amazon S3
-[h] Setup instructions
-Choose [\e[1m1\e[0m] › s3-existing
+
+  [h] Setup instructions
+
+› Choose [1]: s3-existing
+\e[2m✓ Provider Amazon S3\e[0m
 
 \e[1mAWS profile\e[0m › work
 
@@ -41,12 +45,15 @@ Checking your storage connection…
 
   \e[32m✓\e[0m Storage connected       \e[2mwrite, read, list, delete\e[0m
   \e[31m✗\e[0m Bucket is public        \e[2ma bucket policy allows public access\e[0m
-    Fix its access before archiving: \e[36mhttps://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html\e[0m
+    Fix its access before archiving:
+    \e[36mhttps://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html\e[0m
   \e[32m✓\e[0m Hook file is valid      \e[2m~/.claude/settings.json\e[0m
 
-\e[2m  Edit a setting adds projects, drops apps, and changes how long sessions are kept.\e[0m
+\e[2m  Edit a setting adds projects, drops apps, and changes how long sessions are
+  kept.\e[0m
 \e[2m  Filtering is best effort; sensitive text may remain in archived sessions.\e[0m
-  \e[2mWhat leaves your machine:\e[0m \e[36mhttps://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md\e[0m
+  \e[2mWhat leaves your machine:\e[0m
+  \e[36mhttps://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md\e[0m
   \e[2m·\e[0m Machine name: unnamed (random ID suffix after save). Choose Name this machine to set a label; no hostname is read.
 
 \e[1mFix what is marked ✗ above first.\e[0m

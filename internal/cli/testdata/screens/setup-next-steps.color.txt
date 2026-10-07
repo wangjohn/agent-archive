@@ -20,18 +20,23 @@ Enter 1-2 [\e[1m1\e[0m] › included-projects
 
 Projects to archive (✓ included):
   1) \e[32m✓\e[0m ~/src/web-app  \e[2mthis folder\e[0m
-a includes all listed projects. Or enter 1 to include or leave it out, or a path to add a project.
+a includes all listed projects. Or enter 1 to include or leave it out, or a path
+to add a project.
 Enter a blank line when finished.
-\e[1mProjects\e[0m › 
+\e[1mProjects\e[0m ›
 
 
 \e[1mStep 2 of 3 · Connect storage\e[0m
 
-\e[1mWhere should your archive live?\e[0m
-  1) Cloudflare R2
+? Where should your archive live?
+
+  1) Cloudflare R2 (default)
   2) Amazon S3
-[h] Setup instructions
-Choose [\e[1m1\e[0m] › s3-existing
+
+  [h] Setup instructions
+
+› Choose [1]: s3-existing
+\e[2m✓ Provider Amazon S3\e[0m
 
 \e[1mAWS profile\e[0m › work
 
@@ -64,12 +69,15 @@ Checking your storage connection…
 
   \e[32m✓\e[0m Storage connected       \e[2mwrite, read, list, delete\e[0m
   \e[33m!\e[0m Bucket privacy unknown  \e[2mpublic-access settings could not be read\e[0m
-    Make sure public access is off: \e[36mhttps://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html\e[0m
-  \e[32m✓\e[0m Hook files are valid    \e[2m~/.codex/hooks.json, ~/.claude/settings.json, ~/.cursor/hooks.json\e[0m
+    Make sure public access is off:
+    \e[36mhttps://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html\e[0m
+  \e[32m✓\e[0m Hook files are valid    \e[2m~/.codex/hooks.json, ~/.claude/settings.json,
+                            ~/.cursor/hooks.json\e[0m
   \e[32m✓\e[0m Codex discovery         \e[2msupported new tasks do not require hook approval\e[0m
 
 \e[2m  Filtering is best effort; sensitive text may remain in archived sessions.\e[0m
-  \e[2mWhat leaves your machine:\e[0m \e[36mhttps://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md\e[0m
+  \e[2mWhat leaves your machine:\e[0m
+  \e[36mhttps://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md\e[0m
   \e[2m·\e[0m Machine name: unnamed (random ID suffix after save). Choose Name this machine to set a label; no hostname is read.
 
 \e[1mStart archiving?\e[0m
@@ -77,7 +85,7 @@ Checking your storage connection…
   2) Edit a setting
   3) Cancel (your setup draft is kept)
   4) Name this machine (optional)
-Enter 1-4 [\e[1m1\e[0m] › 
+Enter 1-4 [\e[1m1\e[0m] ›
 
 
 Configuration saved.
@@ -86,8 +94,10 @@ Installed the agent-archive skill, which lets your agents look up and pull in pa
 To remove the agent skills and keep them off, run \e[36magent-archive setup --no-skills\e[0m.
 
 Next, in each app:
-  Codex: start a supported new task in an included project; automatic discovery does not require hook approval.
-  Optional hook capture: Codex: run \e[36m/hooks\e[0m and approve the archive hooks, then start a new session (or \e[36m/clear\e[0m).
+  Codex: start a supported new task in an included project; automatic discovery
+  does not require hook approval.
+  Optional hook capture: Codex: run \e[36m/hooks\e[0m and approve the archive hooks, then
+  start a new session (or \e[36m/clear\e[0m).
   Claude Code: nothing to approve; start a new session (or \e[36m/clear\e[0m).
   Cursor: nothing to approve; start a new Agent chat.
 Sessions already open are not captured. Start a new one in an included project.

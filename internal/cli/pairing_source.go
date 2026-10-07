@@ -78,6 +78,7 @@ func runPairingAdd(args []string, stdin io.Reader, out, errOut io.Writer, env En
 		return 1
 	}
 	p := newPrompter(stdin, out)
+	defer p.close()
 	if !*yes {
 		terminal.Println(out, "Add another machine")
 		terminal.Println(out)
@@ -429,9 +430,11 @@ func showPairingCode(p *prompter, code string, env Env) error {
 	if err != nil {
 		return err
 	}
-	if !env.interactive(p.out) {
+	if !env.interactive(underlyingWriter(p.out)) {
 		return errors.New("pairing code display needs terminal output")
 	}
+	release := p.suspendPrompts()
+	defer release()
 	// Use checked writes for secret-bearing output. Always restore the screen.
 	if _, err := io.WriteString(p.out, "\x1b[?1049h\x1b[2J\x1b[H"); err != nil {
 		return err

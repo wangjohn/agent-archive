@@ -19,11 +19,15 @@ Enter 1-2 [\e[1m1\e[0m] › included-projects
 
 \e[1mStep 2 of 3 · Connect storage\e[0m
 
-\e[1mWhere should your archive live?\e[0m
-  1) Cloudflare R2
+? Where should your archive live?
+
+  1) Cloudflare R2 (default)
   2) Amazon S3
-[h] Setup instructions
-Choose [\e[1m1\e[0m] › s3-existing
+
+  [h] Setup instructions
+
+› Choose [1]: s3-existing
+\e[2m✓ Provider Amazon S3\e[0m
 
 \e[1mAWS profile\e[0m › work
 
@@ -59,9 +63,11 @@ Checking your storage connection…
   \e[32m✓\e[0m Hook files are valid    \e[2m~/.codex/hooks.json, ~/.claude/settings.json\e[0m
   \e[32m✓\e[0m Codex discovery         \e[2msupported new tasks do not require hook approval\e[0m
 
-\e[2m  Edit a setting adds projects, drops apps, and changes how long sessions are kept.\e[0m
+\e[2m  Edit a setting adds projects, drops apps, and changes how long sessions are
+  kept.\e[0m
 \e[2m  Filtering is best effort; sensitive text may remain in archived sessions.\e[0m
-  \e[2mWhat leaves your machine:\e[0m \e[36mhttps://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md\e[0m
+  \e[2mWhat leaves your machine:\e[0m
+  \e[36mhttps://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md\e[0m
   \e[2m·\e[0m Machine name: unnamed (random ID suffix after save). Choose Name this machine to set a label; no hostname is read.
 
 \e[1mStart archiving?\e[0m

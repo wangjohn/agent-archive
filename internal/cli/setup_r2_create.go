@@ -213,7 +213,7 @@ func (c *r2Creator) connect() error {
 		}
 		switch r2ConnectChoice(choice) {
 		case r2ConnectToken:
-			token, err := c.p.secret("Cloudflare API token (hidden; Enter to go back): ")
+			token, err := c.p.guidedText(promptModel{Question: "Cloudflare API token (hidden; Enter to go back)", Label: "Credential", Secret: true})
 			if err != nil {
 				return err
 			}

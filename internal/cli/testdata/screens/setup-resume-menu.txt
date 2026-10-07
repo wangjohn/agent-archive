@@ -15,11 +15,15 @@ Enter 1-5 [1]: 1
 
 Step 2 of 3 · Connect storage
 
-Where should your archive live?
-  1) Cloudflare R2
+? Where should your archive live?
+
+  1) Cloudflare R2 (default)
   2) Amazon S3
-[h] Setup instructions
-Choose [1]: s3-existing
+
+  [h] Setup instructions
+
+› Choose [1]: s3-existing
+✓ Provider Amazon S3
 
 AWS profile: work
 
@@ -52,12 +56,14 @@ Step 3 of 3 · Ready to start
 
   ✓ Storage connected       write, read, list, delete
   ! Bucket privacy unknown  public-access settings could not be read
-    Make sure public access is off: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
+    Make sure public access is off:
+    https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
   ✓ Hook files are valid    ~/.codex/hooks.json, ~/.claude/settings.json
   ✓ Codex discovery         supported new tasks do not require hook approval
 
   Filtering is best effort; sensitive text may remain in archived sessions.
-  What leaves your machine: https://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md
+  What leaves your machine:
+  https://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md
   · Machine name: unnamed (random ID suffix after save). Choose Name this machine to set a label; no hostname is read.
 
 Start archiving?

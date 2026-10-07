@@ -1,0 +1,371 @@
+package cli
+
+import (
+	"bufio"
+	"io"
+	"os"
+	"os/exec"
+	"strconv"
+	"strings"
+	"testing"
+
+	"github.com/wangjohn/agent-archive/internal/terminal"
+)
+
+type promptTestMode string
+
+const (
+	promptModeEchoOff       promptTestMode = "echo-off"
+	promptModeNewlineOnly   promptTestMode = "newline-only"
+	promptModeNewlineLong   promptTestMode = "newline-only-long"
+	promptModeEchoOffLong   promptTestMode = "echo-off-long"
+	promptModeEchoOffStatic promptTestMode = "echo-off-static"
+	promptModeEchoOffEOF    promptTestMode = "echo-off-eof"
+	promptModeEchoOffEmpty  promptTestMode = "echo-off-empty-eof"
+	promptModeEchoOffAhead  promptTestMode = "echo-off-typed-ahead"
+	promptModeNormal        promptTestMode = "normal"
+	promptModeNoColor       promptTestMode = "no-color"
+	promptModeWide          promptTestMode = "wide"
+	promptModeControlEcho   promptTestMode = "control-echo"
+	promptModeComposed      promptTestMode = "composed"
+	promptModeLong          promptTestMode = "long"
+	promptModeDefaultLong   promptTestMode = "default-long"
+	promptModeRetry         promptTestMode = "retry"
+	promptModeResize        promptTestMode = "resize"
+	promptModeScroll        promptTestMode = "scroll"
+	promptModeTypedAhead    promptTestMode = "typed-ahead"
+	promptModeTypedAheadTwo promptTestMode = "typed-ahead-two"
+	promptModeSuspend       promptTestMode = "suspend"
+	promptModeExternal      promptTestMode = "external"
+	promptModePager         promptTestMode = "pager"
+	promptModeEof           promptTestMode = "eof"
+	promptModeFinalEof      promptTestMode = "final-answer-eof"
+	promptModeSecretEof     promptTestMode = "secret-eof"
+	promptModeInterrupt     promptTestMode = "interrupt"
+	promptModeTerm          promptTestMode = "term"
+	promptModeHup           promptTestMode = "hup"
+	promptModeQuit          promptTestMode = "quit"
+	promptModePairingOutput promptTestMode = "pairing-output"
+	promptModeLive          promptTestMode = "live"
+	promptModeHeight        promptTestMode = "height"
+	promptModeOverflow      promptTestMode = "overflow"
+	promptModeContinued     promptTestMode = "continued"
+	promptModeRedirect      promptTestMode = "redirect"
+	promptModeDumb          promptTestMode = "dumb"
+	promptModeLongEcho      promptTestMode = "long-echo"
+)
+
+// TestGuidedSetupTerminalChild uses setup's exact provider model with synthetic
+// answers. No setup transaction, home, credential store or provider is opened.
+func TestGuidedSetupTerminalChild(t *testing.T) {
+	if os.Getenv("ARCHIVE_GUIDED_PROMPT_CHILD") != "1" {
+		t.Skip("PTY child only")
+	}
+	p := newPrompter(os.Stdin, os.Stdout)
+	defer p.close()
+	mode := promptTestMode(os.Getenv("ARCHIVE_GUIDED_PROMPT_MODE"))
+	if mode == promptModePairingOutput {
+		must(t, showPairingCode(p, "aardvark-abandoned-abbreviate-abdomen-abhorrence-abiding", Env{LookupEnv: noEnv, Interrupts: noInterrupts}))
+		terminal.Println(p.out, "DONE")
+		return
+	}
+	if strings.HasPrefix(string(mode), "echo-off") || strings.HasPrefix(string(mode), "newline-only") {
+		terminal.Println(p.out, "UNRELATED SENTINEL")
+	}
+	model := promptExample()
+	model.Helpers = nil
+	// The normal-collapse harness sends only after the renderer has returned
+	// ownership and entered its one buffered read. Early input has a separate
+	// deterministic emission harness; observing a visible cursor is not proof
+	// that the terminal echo restoration/pending-input probe has finished.
+	var readAnswer func(*bufio.Reader) (string, error)
+	if fdText := os.Getenv("ARCHIVE_GUIDED_READ_READY_FD"); fdText != "" {
+		fd, err := strconv.Atoi(fdText)
+		must(t, err)
+		ready := os.NewFile(uintptr(fd), "prompt-read-ready")
+		defer func() { _ = ready.Close() }()
+		readAnswer = func(in *bufio.Reader) (string, error) {
+			if _, err := io.WriteString(ready, "r"); err != nil {
+				return "", err
+			}
+			return in.ReadString('\n')
+		}
+	}
+	model.ReadAnswer = readAnswer
+	if mode == promptModeExternal || mode == promptModePager {
+		r := p.renderer()
+		region := r.begin(model)
+		release := p.suspendPrompts()
+		terminal.Println(p.out, "\nEXTERNAL SENTINEL")
+		if mode == promptModePager {
+			terminal.Print(p.out, "\x1b[?1049hPAGER CONTENT\x1b[?1049l")
+		}
+		raw, interrupted, err := p.guidedRead(readAnswer)
+		must(t, err)
+		release()
+		r.finish(region, "Provider Amazon S3", raw, false, p.inputPending(), interrupted)
+	} else {
+		answer, err := p.guidedChoice(model)
+		must(t, err)
+		if answer != "s3" {
+			t.Fatalf("provider %s", answer)
+		}
+	}
+	profileDefault := "work"
+	if mode == promptModeDefaultLong {
+		profileDefault = strings.Repeat("d", 90)
+	}
+	value, err := p.guidedText(promptModel{Question: "AWS profile", Label: "Profile", Default: profileDefault, Receipt: "Profile", ReadAnswer: readAnswer})
+	must(t, err)
+	if (mode == promptModeEchoOffLong || mode == promptModeNewlineLong) && value != strings.Repeat("x", 170) {
+		t.Fatalf("lost ordinary input with echo disabled")
+	}
+	if mode == promptModeLong && value != strings.Repeat("x", 90) {
+		t.Fatalf("lost long answer")
+	}
+	secret, err := p.guidedText(promptModel{Question: "Secret access key (hidden)", Label: "Credential", Secret: true, ReadAnswer: readAnswer})
+	must(t, err)
+	if secret != "synthetic-secret" {
+		t.Fatalf("lost hidden input")
+	}
+	terminal.Println(p.out, "DONE")
+}
+
+// TestGuidedPromptTerminalCells proves ownership by interpreting terminal cells,
+// rather than accepting an ANSI sequence as evidence that collapse was safe.
+func TestGuidedPromptTerminalCells(t *testing.T) {
+	t.Parallel()
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("PTY harness requires Python 3")
+	}
+	binary, err := os.Executable()
+	must(t, err)
+	for _, mode := range []promptTestMode{promptModeEchoOff, promptModeNewlineOnly, promptModeNewlineLong, promptModeEchoOffLong, promptModeEchoOffStatic, promptModeEchoOffEOF, promptModeEchoOffEmpty, promptModeEchoOffAhead, promptModeNormal, promptModeNoColor, promptModeWide, promptModeControlEcho, promptModeComposed, promptModeLong, promptModeDefaultLong, promptModeRetry, promptModeResize, promptModeScroll, promptModeTypedAhead, promptModeTypedAheadTwo, promptModeSuspend, promptModeExternal, promptModePager, promptModeEof, promptModeFinalEof, promptModeSecretEof, promptModeInterrupt, promptModeTerm, promptModeHup, promptModeQuit} {
+		t.Run(string(mode), func(t *testing.T) {
+			t.Parallel()
+			if out, err := runPTYScript(t, python, guidedPromptPTY, binary, string(mode)); err != nil {
+				t.Fatalf("PTY %s: %v\n%s", mode, err, out)
+			}
+		})
+	}
+}
+
+const guidedPromptPTY = `import os, pty, select, subprocess, sys, termios, time, fcntl, struct, signal, re, unicodedata
+binary, mode = sys.argv[1:]
+master, slave = pty.openpty()
+readyRead,readyWrite=os.pipe()
+width, height = (36,20) if mode == 'scroll' else (60,20) if mode in ('long','default-long') else (100,30) if mode == 'no-color' else (80,24)
+fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH',height,width,0,0))
+if mode.startswith('echo-off') or mode.startswith('newline-only'):
+    modes=termios.tcgetattr(slave)
+    modes[3] &= ~(termios.ECHO | termios.ECHONL)
+    if mode.startswith('newline-only'): modes[3] |= termios.ECHONL
+    termios.tcsetattr(slave,termios.TCSANOW,modes)
+initialModes=termios.tcgetattr(slave)
+env = dict(os.environ, TERM='xterm-256color', ARCHIVE_GUIDED_PROMPT_CHILD='1', ARCHIVE_GUIDED_PROMPT_MODE=mode)
+env['ARCHIVE_GUIDED_READ_READY_FD']=str(readyWrite)
+env.pop('NO_COLOR',None)
+if mode == 'no-color': env['NO_COLOR']='1'
+if mode == 'echo-off-static': env['TERM']='dumb'
+os.setsid()
+fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
+def session():
+    os.setpgid(0,0)
+    signal.signal(signal.SIGTTOU,signal.SIG_IGN)
+    os.tcsetpgrp(0,os.getpid())
+    signal.signal(signal.SIGTTOU,signal.SIG_DFL)
+p = subprocess.Popen([binary,'-test.run=^TestGuidedSetupTerminalChild$'],stdin=slave,stdout=slave,stderr=slave,env=env,preexec_fn=session,pass_fds=(readyWrite,))
+os.close(readyWrite)
+output = b''
+deadline = time.monotonic()+60
+
+def read():
+    global output
+    if select.select([master],[],[],.05)[0]:
+        try: output += os.read(master,65536)
+        except OSError: pass
+
+def wait(needle,offset=0):
+    limit=min(deadline,time.monotonic()+30)
+    while needle not in output[offset:]:
+        if p.poll() is not None or time.monotonic()>limit: raise RuntimeError('waiting for',needle,output[-1500:])
+        read()
+
+def echo(on):
+    limit=min(deadline,time.monotonic()+30)
+    while bool(termios.tcgetattr(slave)[3] & termios.ECHO)!=on:
+        if time.monotonic()>limit: raise RuntimeError('echo mode',on,output[-1500:])
+        read()
+
+def answerReady():
+    if not select.select([readyRead],[],[],30)[0] or os.read(readyRead,1)!=b'r':
+        raise RuntimeError('buffered read entry',output[-1500:])
+
+# This small terminal oracle handles the renderer's cursor/erase vocabulary,
+# canonical echo and wrap. Keep scrollback, so erasing an unrelated row fails.
+def cells(data,cols):
+    lines=[[' ']*cols];row=col=0; text=data.decode('utf-8','replace');i=0
+    def ensure():
+        while row>=len(lines): lines.append([' ']*cols)
+    while i<len(text):
+        if text[i]=='\x1b':
+            m=re.match(r'\x1b\[([?0-9;]*)([A-Za-z])',text[i:])
+            if m:
+                arg,end=m.groups(); n=int(arg or '1') if arg.isdigit() or not arg else 1
+                if end=='A': row=max(0,row-n)
+                elif end=='B': row+=n;ensure()
+                elif end=='K':
+                    if arg=='2': lines[row]=[' ']*cols
+                    else: lines[row][col:]=[' ']*(cols-col)
+                i+=len(m.group());continue
+        ch=text[i];i+=1
+        if ch=='\r': col=0;continue
+        if ch=='\n': row+=1;ensure();continue
+        if ch=='\b': col=max(0,col-1);continue
+        if ord(ch)<32: continue
+        size=0 if unicodedata.combining(ch) else 2 if unicodedata.east_asian_width(ch) in ('W','F') else 1
+        if col+size>cols: row+=1;col=0;ensure()
+        if size: lines[row][col]=ch;col+=size
+    return '\n'.join(''.join(line).rstrip() for line in lines)
+
+try:
+    wait(b'Choose [2]: ')
+    if mode not in ('typed-ahead','typed-ahead-two','echo-off-typed-ahead'): answerReady()
+    if mode in ('eof','echo-off-empty-eof'): os.write(master,termios.tcgetattr(slave)[6][termios.VEOF])
+    else:
+        if mode=='retry':
+            offset=len(output);os.write(master,b'bad\n');wait(b'Choose [2]: ',offset);answerReady()
+        if mode in ('typed-ahead','echo-off-typed-ahead'): os.write(master,b'2\nwork\nsynthetic-secret\n')
+        elif mode=='typed-ahead-two': os.write(master,b'2\n'+b'x'*170+b'\n')
+        else: os.write(master,b'2\n')
+        wait(b'Profile ['+ (b'd'*90 if mode=='default-long' else b'work') + b']: ')
+        if mode not in ('typed-ahead','typed-ahead-two','echo-off-typed-ahead'): answerReady()
+        if mode=='resize':
+            signal.signal(signal.SIGTTOU,signal.SIG_IGN)
+            fcntl.ioctl(master,termios.TIOCSWINSZ,struct.pack('HHHH',20,60,0,0))
+            signal.signal(signal.SIGTTOU,signal.SIG_DFL)
+            p.send_signal(signal.SIGWINCH)
+        if mode in ('final-answer-eof','echo-off-eof'): os.write(master,b'work'+termios.tcgetattr(slave)[6][termios.VEOF]*2)
+        elif mode in ('echo-off-long','newline-only-long'): os.write(master,b'x'*170+b'\n')
+        elif mode=='composed': os.write(master,('👍🏽'*30+'\n').encode())
+        elif mode not in ('typed-ahead','typed-ahead-two','echo-off-typed-ahead'): os.write(master,(('xxx漢漢漢漢xx漢x漢漢x漢漢x漢x漢漢xx漢漢漢xxx漢漢漢x漢xxxxx漢x漢xx漢漢漢漢漢xxx漢x漢x漢xx漢x漢x漢xx漢xxxxxx漢漢漢漢漢xxx漢x漢x漢xxx漢漢xxxx漢xx漢漢xxx漢漢xx漢漢漢漢漢漢漢漢漢漢x漢漢漢xx漢漢x漢xxx漢x漢x漢x漢漢xxxxxx漢漢xxx漢'.encode() if mode=='wide' else b'x'*90) if mode in ('wide','long') else b'\x01'*170 if mode=='control-echo' else b'x'*900 if mode=='scroll' else b'' if mode=='default-long' else b'work')+b'\n')
+        wait(b'Credential: ')
+        if mode not in ('typed-ahead','typed-ahead-two','echo-off-typed-ahead'): answerReady()
+        if mode not in ('typed-ahead','echo-off-typed-ahead'): echo(False)
+        if mode=='suspend':
+            p.send_signal(signal.SIGTSTP)
+            while True:
+                pid,status=os.waitpid(p.pid,os.WNOHANG|os.WUNTRACED)
+                if pid and os.WIFSTOPPED(status):
+                    assert os.WSTOPSIG(status)==signal.SIGSTOP, ('unexpected stop signal',os.WSTOPSIG(status))
+                    break
+                if time.monotonic()>deadline: raise RuntimeError('did not suspend')
+                read()
+            assert termios.tcgetattr(slave)[3] & termios.ECHO, 'suspend did not restore echo'
+            os.write(slave,b'\r\nSHELL SENTINEL\r\n')
+            p.send_signal(signal.SIGCONT);echo(False)
+        sig={'interrupt':signal.SIGINT,'term':signal.SIGTERM,'hup':signal.SIGHUP,'quit':signal.SIGQUIT}.get(mode)
+        if sig: p.send_signal(sig)
+        elif mode=='secret-eof': os.write(master,termios.tcgetattr(slave)[6][termios.VEOF])
+        elif mode not in ('typed-ahead','echo-off-typed-ahead'): os.write(master,b'synthetic-secret\n')
+    while p.poll() is None:
+        if time.monotonic()>deadline: raise RuntimeError('child exit',output[-1500:])
+        read()
+    marker=b"<<drained>>"
+    os.write(slave,marker)
+    while marker not in output:
+        if time.monotonic()>deadline: raise RuntimeError("drain timeout",output[-1500:])
+        read()
+    output=output.replace(marker,b"")
+    expected={'eof':1,'echo-off-empty-eof':1,'secret-eof':1,'interrupt':130,'term':143,'hup':129,'quit':131}.get(mode,0)
+    assert p.returncode==expected,(p.returncode,expected,output[-1500:])
+    assert termios.tcgetattr(slave)==initialModes,'terminal modes not restored'
+    if mode!='typed-ahead': assert b'synthetic-secret' not in output,'hidden input echoed'
+    assert b'\x1b[?1049' not in output or mode=='pager','setup used alternate screen'
+    if mode in ('final-answer-eof','echo-off-eof'):
+        profile=output[output.index(b'Profile [work]: '):output.index(b'Credential: ')]
+        assert b'\r\n\x1b[2m'+ '✓ Profile work'.encode() in profile,'final EOF receipt shares input row: '+repr(profile)
+        assert b'\x1b[2K' not in profile,'final EOF erased unowned rows'
+    view=cells(output,width)
+    if expected==0:
+        assert 'DONE' in view,view
+        assert 'Credential received' in view,view
+        assert 'Provider Amazon S3' in view,view
+        if mode.startswith('echo-off') or mode.startswith('newline-only'):
+            assert 'UNRELATED SENTINEL' in view,view
+            assert 'Choose [2]:' not in view[view.index('DONE'):],view
+            assert 'Profile [work]:' not in view[view.index('DONE'):],view
+            assert 'synthetic-secret' not in view,view
+        if mode in ('normal','no-color','default-long','echo-off','newline-only','newline-only-long','echo-off-long'):
+            assert 'Where should your archive live?' not in view,view
+            assert 'AWS profile' not in view,view
+            assert 'Secret access key' not in view,view
+        if mode=='echo-off-static':
+            assert b'\x1b[' not in output,output
+            assert '> Profile [work]: \r\nOK Profile work' in output.decode(),output
+        if mode=='no-color': assert b'\x1b[1m' not in output and b'\x1b[2m' not in output,'NO_COLOR styled text'
+        if mode in ('wide','long'):
+            assert 'AWS profile' in view,view
+            field=output[output.index(b'Profile [work]: '):output.index(b'Credential: ')]
+            assert b'\x1b[2K' not in field,'unknown early echo extent erased wrapped input'
+        if mode=='control-echo': assert 'AWS profile' in view and '^A' in view,view
+        if mode=='composed':
+            field=output[output.index(b'Profile [work]: '):output.index(b'Credential: ')]
+            assert '👍🏽'.encode() in field,field
+            assert b'\x1b[2K' not in field,'composed echo erased unprovable rows'
+            assert 'AWS profile' in view,view
+        if mode=='resize': assert 'AWS profile' in view,view
+        if mode=='scroll': assert 'AWS profile' in view,view
+        if mode=='suspend': assert 'SHELL SENTINEL' in view,view
+        if mode in ('external','pager'): assert 'EXTERNAL SENTINEL' in view and 'Where should your archive live?' in view,view
+finally:
+    if p.poll() is None: p.kill();p.wait()
+    signal.signal(signal.SIGHUP,signal.SIG_IGN)
+    os.close(master);os.close(slave);os.close(readyRead)
+`
+
+// A real file terminal must remain identifiable through the prompt writer.
+func TestPairingCodeDisplayRecognizesWrappedTerminal(t *testing.T) {
+	t.Parallel()
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("PTY harness requires Python 3")
+	}
+	binary, err := os.Executable()
+	must(t, err)
+	if out, err := runPTYScript(t, python, pairingOutputPTY, binary); err != nil {
+		t.Fatalf("pairing terminal: %v\n%s", err, out)
+	}
+}
+
+const pairingOutputPTY = `import os, pty, select, subprocess, sys, time
+master, slave = pty.openpty()
+env = dict(os.environ, ARCHIVE_GUIDED_PROMPT_CHILD='1', ARCHIVE_GUIDED_PROMPT_MODE='pairing-output')
+p = subprocess.Popen([sys.argv[1], '-test.run=^TestGuidedSetupTerminalChild$'], stdin=slave, stdout=slave, stderr=slave, env=env)
+output = b''
+deadline = time.monotonic()+60
+def read():
+    global output
+    if select.select([master],[],[],.05)[0]:
+        try: output += os.read(master,65536)
+        except OSError: pass
+try:
+    while b'Press Enter to hide.' not in output:
+        if p.poll() is not None or time.monotonic()>deadline: raise RuntimeError('pairing display',output)
+        read()
+    os.write(master,b'\n')
+    while p.poll() is None:
+        if time.monotonic()>deadline: raise RuntimeError('child exit',output)
+        read()
+    os.write(slave,b'<<drained>>')
+    while b'<<drained>>' not in output:
+        if time.monotonic()>deadline: raise RuntimeError('drain',output)
+        read()
+    assert p.returncode==0,(p.returncode,output)
+    assert b'\x1b[?1049h' in output and b'\x1b[?1049l' in output,output
+    assert output.index(b'\x1b[?1049h') < output.index(b'2. Enter the pairing code on the other machine') < output.index(b'\x1b[?1049l'),output
+finally:
+    if p.poll() is None: p.kill();p.wait()
+    os.close(master);os.close(slave)
+`

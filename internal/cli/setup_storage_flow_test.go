@@ -46,7 +46,7 @@ func TestStorageProviderNumbersAndModeAliases(t *testing.T) {
 		want  string
 	}{{"\n", "r2"}, {"2\n", "s3"}, {"r2-existing\n", "r2-existing"}, {"r2-\ns3\n", "s3"}} {
 		var out bytes.Buffer
-		got, err := newPrompter(strings.NewReader(tc.input), &out).actions("Provider", "r2", storageMenuOptions(), nil, option{"r2-existing", ""}, option{"r2-create", ""})
+		got, err := newPrompter(strings.NewReader(tc.input), &out).guidedChoice(promptModel{Question: "Provider", Default: "r2", Primary: storageMenuOptions(), Aliases: []option{{"r2-existing", ""}, {"r2-create", ""}}})
 		if err != nil || got != tc.want {
 			t.Fatalf("%q: %q %v", tc.input, got, err)
 		}

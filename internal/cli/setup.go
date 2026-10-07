@@ -261,7 +261,8 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env, verbose bool, skills
 	reviewed := reviewDiscoveries(discoveries, detected)
 	p := newPrompter(stdin, out)
 	p.tokenCommand = append([]string(nil), existing.CloudflareTokenCommand...)
-	p.spaceAfterAnswer = true
+	p.guidedSpacing = true
+	defer p.close()
 	p.now = env.now
 	known := knownProjectsOnce(env, userHome)
 	// Said before any question: setup will refuse to install an app's hooks
@@ -296,7 +297,7 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env, verbose bool, skills
 	p.in = newPrompter(pairInput, out).in
 	// A saved draft that names a bucket has already been past this.
 	if !found && unfinished.Config.Storage.Bucket == "" {
-		terminal.Println(out, "Choose Cloudflare R2 or Amazon S3 for private archive storage. Setup will guide you through connecting your account.")
+		terminal.Println(p.out, "Choose Cloudflare R2 or Amazon S3 for private archive storage. Setup will guide you through connecting your account.")
 	}
 	draft, done, err := selectSetupDraft(p, home, userHome, env, existing, found, installed, known)
 	if err != nil {
@@ -1004,6 +1005,8 @@ func storageCheckMayPrompt(storage credentials.Config, env Env) bool {
 // interrupt stops the spinner and returns at once with
 // errStorageCheckInterrupted.
 func runStorageCheck(p *prompter, cfg *config.Config, env Env) error {
+	release := p.suspendPrompts()
+	defer release()
 	const label = "Checking your storage connection…"
 	style := p.style
 	if style.live && storageCheckMayPrompt(cfg.Storage, env) {

@@ -7,6 +7,8 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -211,4 +213,145 @@ func readTerminal(fd int, p []byte) (int, error) {
 		}
 		return n, nil
 	}
+}
+
+// promptLineGuard restores canonical terminal modes before hidden input exits,
+// receives an interrupt, or suspends. It stays alive for the prompter lifecycle:
+// Go retains its job-control handler after notification, so later ordinary
+// prompts must continue handling Ctrl-Z too. It never reads stdin.
+type promptLineGuard struct {
+	fd          int
+	mu          sync.Mutex
+	original    *unix.Termios
+	hiddenModes *unix.Termios
+	signals     chan os.Signal
+	interrupts  chan os.Signal
+	done        chan struct{}
+	finished    chan struct{}
+	resumed     chan os.Signal
+	onSuspend   func()
+	delegated   atomic.Bool
+}
+
+func newPromptLineGuard(fd int, onSuspend func()) *promptLineGuard {
+	g := &promptLineGuard{fd: fd, onSuspend: onSuspend, signals: make(chan os.Signal, 8), interrupts: make(chan os.Signal, 4), done: make(chan struct{}), finished: make(chan struct{}), resumed: make(chan os.Signal, 1)}
+	signal.Notify(g.signals, syscall.SIGTSTP)
+	signal.Notify(g.resumed, syscall.SIGCONT)
+	go g.watch()
+	return g
+}
+
+// echoSuppressed records the user's modes before temporary prompt muting.
+// ECHONL can echo only the newline even when ordinary character echo is off.
+func (g *promptLineGuard) echoSuppressed() (characters, newline bool, err error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	modes, err := unix.IoctlGetTermios(g.fd, ioctlGetTermios)
+	if err != nil {
+		return false, false, err
+	}
+	return modes.Lflag&unix.ECHO == 0, modes.Lflag&(unix.ECHO|unix.ECHONL) == 0, nil
+}
+
+func (g *promptLineGuard) hidden() (func(), error) {
+	return g.hideEcho(true)
+}
+
+// muted suppresses echo only while a block is emitted. Canonical editing,
+// EOF and signal processing retain their existing terminal settings.
+func (g *promptLineGuard) muted() (func(), error) {
+	return g.hideEcho(false)
+}
+
+func (g *promptLineGuard) hideEcho(canonical bool) (func(), error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	modes, err := unix.IoctlGetTermios(g.fd, ioctlGetTermios)
+	if err != nil {
+		return nil, err
+	}
+	hidden := *modes
+	hidden.Lflag &^= unix.ECHO | unix.ECHONL
+	if canonical {
+		hidden.Lflag |= unix.ICANON | unix.ISIG
+		hidden.Iflag |= unix.ICRNL
+	}
+	if err := unix.IoctlSetTermios(g.fd, ioctlSetTermios, &hidden); err != nil {
+		return nil, err
+	}
+	g.original = modes
+	g.hiddenModes = &hidden
+	signal.Notify(g.interrupts, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGQUIT)
+	return func() {
+		signal.Stop(g.interrupts)
+		g.mu.Lock()
+		defer g.mu.Unlock()
+		g.restore()
+		g.original = nil
+		g.hiddenModes = nil
+	}, nil
+}
+
+func (g *promptLineGuard) restore() {
+	if g.original != nil {
+		_ = unix.IoctlSetTermios(g.fd, ioctlSetTermios, g.original)
+	}
+}
+
+func (g *promptLineGuard) watch() {
+	for {
+		select {
+		case <-g.signals:
+			if g.delegated.Load() {
+				continue
+			}
+			g.mu.Lock()
+			g.restore()
+			if g.onSuspend != nil {
+				g.onSuspend()
+			}
+			select {
+			case <-g.resumed:
+			default:
+			}
+			// SIGSTOP delivery may race this goroutine on another runtime thread.
+			// Keep echo restored until SIGCONT confirms the process resumed.
+			if err := unix.Kill(os.Getpid(), unix.SIGSTOP); err == nil {
+				<-g.resumed
+			}
+			if g.hiddenModes != nil {
+				_ = unix.IoctlSetTermios(g.fd, ioctlSetTermios, g.hiddenModes)
+			}
+			g.mu.Unlock()
+		case sig := <-g.interrupts:
+			g.mu.Lock()
+			g.restore()
+			g.mu.Unlock()
+			os.Exit(128 + int(sig.(syscall.Signal)))
+		case <-g.done:
+			g.mu.Lock()
+			g.restore()
+			g.mu.Unlock()
+			close(g.finished)
+			return
+		}
+	}
+}
+
+func (g *promptLineGuard) close() {
+	signal.Stop(g.signals)
+	signal.Stop(g.interrupts)
+	close(g.done)
+	<-g.finished
+	signal.Stop(g.resumed)
+}
+
+// terminalInputPending detects canonical lines already echoed for a later
+// prompt, without consuming any input or creating another reader.
+func terminalInputPending(fd int) bool {
+	var fds unix.FdSet
+	fds.Set(fd)
+	timeout := unix.Timeval{}
+	n, err := unix.Select(fd+1, &fds, nil, nil, &timeout)
+	return err == nil && n > 0
 }

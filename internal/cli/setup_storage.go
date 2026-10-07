@@ -54,7 +54,7 @@ func promptStorage(p *prompter, existing credentials.Config, env Env, failedRegi
 		if existing.Bucket != "" {
 			terminal.Println(p.out, "Continue connecting the saved bucket, or choose a replacement.")
 		}
-		choice, err := p.actions("Where should your archive live?", def, storageMenuOptions(), secondary, aliases...)
+		choice, err := p.guidedChoice(promptModel{Question: "Where should your archive live?", Default: def, Primary: storageMenuOptions(), Secondary: secondary, Aliases: aliases, Receipt: "Provider", ResolveReceipt: storageProviderLabel})
 		if err != nil {
 			return existing, secret, false, err
 		}
@@ -191,7 +191,7 @@ func promptExistingR2(p *prompter, cfg credentials.Config, env Env) (credentials
 			return cfg, secret, false, err
 		}
 		for secret.SecretAccessKey == "" {
-			secret.SecretAccessKey, err = p.secret("Secret access key (hidden): ")
+			secret.SecretAccessKey, err = p.guidedText(promptModel{Question: "Secret access key (hidden)", Label: "Credential", Secret: true})
 			if err != nil {
 				return cfg, secret, false, err
 			}
@@ -200,4 +200,18 @@ func promptExistingR2(p *prompter, cfg credentials.Config, env Env) (credentials
 
 	cfg.Prefix = firstNonEmpty(cfg.Prefix, defaultPrefix)
 	return cfg, secret, secret.SecretAccessKey != "", err
+}
+
+// storageProviderLabel resolves named compatibility answers to visible labels.
+func storageProviderLabel(key string) string {
+	if strings.HasPrefix(key, "r2") {
+		return "Cloudflare R2"
+	}
+	if strings.HasPrefix(key, "s3") {
+		return "Amazon S3"
+	}
+	if key == "help" {
+		return "Setup instructions"
+	}
+	return key
 }

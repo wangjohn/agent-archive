@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bufio"
 	"bytes"
 	"os"
 	"os/exec"
@@ -253,5 +254,41 @@ func TestPairingFileCollisionCanRecoverToAnotherPath(t *testing.T) {
 	must(t, err)
 	if !strings.Contains(out.String(), "Saved to: "+replacement) || !strings.Contains(out.String(), "Downloads/replacement.txt") {
 		t.Fatal("receiver command did not follow the replacement path")
+	}
+}
+
+// Pairing text consumes exactly one bounded answer from the foundation buffer;
+// the later hidden prompt must still receive typed-ahead code and consent.
+func TestPairingTransferKeepsSharedPromptInput(t *testing.T) {
+	t.Parallel()
+	var out bytes.Buffer
+	bundle := pairing.Prefix + "SYNTHETIC"
+	p := newPrompter(strings.NewReader(bundle+"\nsynthetic-code\nno\n"), &out)
+	defer p.close()
+	got, err := readPairingBundle(p, setupOptions{}, p.in, Env{})
+	must(t, err)
+	code, err := p.guidedText(promptModel{Question: "Pairing code (hidden)", Secret: true, ReadAnswer: func(in *bufio.Reader) (string, error) { return boundedPairingLine(in, 512) }})
+	must(t, err)
+	consent, err := p.yesNo("Replace destination?", false)
+	must(t, err)
+	if got != bundle || code != "synthetic-code" || consent || strings.Contains(out.String(), code) {
+		t.Fatal("pairing buffer lost input or exposed the private code")
+	}
+	if !strings.Contains(out.String(), "Credential received") {
+		t.Fatal("pairing code did not use a fixed secret receipt")
+	}
+}
+
+func TestPairingCodeDisplayRelinquishesPromptRegion(t *testing.T) {
+	t.Parallel()
+	var out bytes.Buffer
+	p := newPrompter(strings.NewReader("\n"), &out)
+	defer p.close()
+	r := p.renderer()
+	region := r.begin(promptModel{Question: "Transfer"})
+	env := Env{IsTerminal: func(any) bool { return true }, Interrupts: noInterrupts}
+	must(t, showPairingCode(p, "aardvark-abandoned-abbreviate-abdomen-abhorrence-abiding", env))
+	if r.suspended != 0 || r.epoch.Load() == region.epoch {
+		t.Fatal("pairing screen retained the preceding prompt region or suspension")
 	}
 }

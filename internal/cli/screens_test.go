@@ -746,7 +746,7 @@ var setupKeyPattern = regexp.MustCompile(`\.setup-test/[0-9a-f]+\.json`)
 func (f *screenFixture) normalize(s string) string {
 	s = strings.ReplaceAll(s, f.userHome, screenHome)
 	s = strings.ReplaceAll(s, f.root, "")
-	return setupKeyPattern.ReplaceAllString(s, ".setup-test/KEY.json")
+	return trimScreenLineEnds(setupKeyPattern.ReplaceAllString(s, ".setup-test/KEY.json"))
 }
 
 // screenOutput is stdout and stderr together, a color terminal or not.
@@ -757,12 +757,18 @@ type screenOutput struct {
 
 func (o *screenOutput) colorTerminal() bool { return o.color }
 
+// Screen transcripts model static terminal history with explicit dimensions.
+func (o *screenOutput) promptCapabilities() promptCapabilities {
+	return promptCapabilities{Color: o.color, InputTerminal: true, OutputTerminal: true, SharedTerminal: true, Width: 80, Height: 24}
+}
+
 // echoAnswers hands setup one answer per read and echoes it to the screen,
 // as a terminal shows what the user typed after the prompt.
 type echoAnswers struct {
 	answers []string
 	next    int
 	echo    *screenOutput
+	hidden  bool
 }
 
 func (e *echoAnswers) Read(p []byte) (int, error) {
@@ -774,6 +780,20 @@ func (e *echoAnswers) Read(p []byte) (int, error) {
 		return 0, errors.New("screen answer longer than the read buffer")
 	}
 	e.next++
-	e.echo.WriteString(line)
+	if !e.hidden {
+		e.echo.WriteString(line)
+	}
 	return copy(p, line), nil
+}
+
+func (e *echoAnswers) hidePromptEcho() func() { e.hidden = true; return func() { e.hidden = false } }
+
+// trimScreenLineEnds records visible cells rather than cursor padding after a
+// hidden or redirected answer. Keep the live cursor's trailing space in output.
+func trimScreenLineEnds(text string) string {
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		lines[i] = strings.TrimRight(line, " \t")
+	}
+	return strings.Join(lines, "\n")
 }

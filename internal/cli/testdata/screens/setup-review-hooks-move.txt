@@ -37,7 +37,8 @@ Review your changes
 
   ✓ Storage connected       write, read, list, delete
   ! Bucket privacy unknown  public-access settings could not be read
-    Make sure public access is off: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
+    Make sure public access is off:
+    https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
   ✓ Hook file is valid      ~/codex-elsewhere/hooks.json
   ✓ Codex discovery         supported new tasks do not require hook approval
   ! Codex hooks move to ~/codex-elsewhere/hooks.json from ~/.codex/hooks.json.
@@ -46,7 +47,8 @@ Review your changes
     from a shell without CODEX_HOME.
 
   Filtering is best effort; sensitive text may remain in archived sessions.
-  What leaves your machine: https://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md
+  What leaves your machine:
+  https://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md
 
 Save these changes?
   1) Yes, save
