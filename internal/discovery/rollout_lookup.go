@@ -19,7 +19,6 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/codexmeta"
 	"github.com/wangjohn/agent-archive/internal/config"
-	"github.com/wangjohn/agent-archive/internal/jsonwire"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 	"github.com/wangjohn/agent-archive/internal/state"
@@ -495,7 +494,7 @@ func (l *CodexRolloutLookup) revisionDigest(ctx context.Context, value any) (str
 	if !l.readBudget.Reserve(scratch) {
 		return "", errCatalogBudget
 	}
-	n, err := jsonwire.Bound(ctx, value, l.readBudget.Available()/2)
+	n, err := agentmeta.JSONWireBound(ctx, value, l.readBudget.Available()/2)
 	l.readBudget.Release(scratch)
 	if err != nil {
 		return "", errors.Join(errCatalogBudget, err)

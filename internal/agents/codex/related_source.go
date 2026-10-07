@@ -708,10 +708,10 @@ func (s *historySnapshot) ValidateAdmission(ctx context.Context, a agentapi.Sour
 	if err != nil {
 		return err
 	}
-	if !validAdmissionFacts(s.selection.leaf, facts, a) {
-		return sourceFailure(agentapi.Unsafe, "source admission facts changed")
+	if err := s.owner.checkHistoryAdmissionFacts(ctx, s.selection, s.spans, facts, a); err != nil {
+		return err
 	}
-	if a.NativeID != s.selection.thread || a.Cwd != "" && a.Cwd != s.selection.leaf.meta.Cwd {
+	if a.NativeID != s.selection.thread || a.Cwd != "" && a.Cwd != facts.Cwd {
 		return sourceFailure(agentapi.Unsafe, "source admission identity changed")
 	}
 	return s.check(ctx)
@@ -1053,13 +1053,63 @@ func (p *relatedSourcePass) ValidateSourceAdmission(ctx context.Context, ref age
 	if err != nil {
 		return err
 	}
-	if selection.thread != admission.NativeID || admission.Cwd != "" && facts.Cwd != admission.Cwd || !validAdmissionFacts(selection.leaf, facts, admission) {
+	if err := p.checkHistoryAdmissionFacts(ctx, selection, spans, facts, admission); err != nil {
+		return err
+	}
+	if selection.thread != admission.NativeID || admission.Cwd != "" && facts.Cwd != admission.Cwd {
 		return sourceFailure(agentapi.Unsafe, "source admission facts changed")
 	}
 	if p.env.CodexRollouts != nil {
 		return p.env.CodexRollouts.Check(ctx, selection.thread, selection.set.Revision)
 	}
 	return ctx.Err()
+}
+
+// Initial producer fields belong to the immutable original rollout. The
+// physical revision remains checked independently by validAdmissionFacts.
+func (p *relatedSourcePass) checkHistoryAdmissionFacts(ctx context.Context, selection sourceSelection, spans []physicalSpan, facts archive.CodexSourceBinding, admission agentapi.SourceAdmission) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	initialVersion, initialOriginator := admission.InitialProducerVersion, admission.InitialProducerOriginator
+	admission.InitialProducerVersion, admission.InitialProducerOriginator = "", ""
+	if !validAdmissionFacts(selection.leaf, facts, admission) {
+		return sourceFailure(agentapi.Unsafe, "source admission facts changed")
+	}
+	if initialVersion == "" && initialOriginator == "" {
+		return nil
+	}
+	var original *rolloutFile
+	// Prefer the exact original participating in the already validated graph.
+	for _, span := range spans {
+		if span.file.identity.ThreadID == selection.thread && span.file.identity.RolloutID == selection.thread {
+			original = span.file
+			break
+		}
+	}
+	if original == nil {
+		// historyBindingFacts opened the original when immutable admission requires
+		// it. Refuse ambiguous cached locators rather than choosing by map order.
+		for _, candidate := range p.files {
+			if candidate.identity.ThreadID != selection.thread || candidate.identity.RolloutID != selection.thread {
+				continue
+			}
+			if original != nil && original.ref.Path != candidate.ref.Path {
+				return sourceFailure(agentapi.Unsafe, "source admission facts changed")
+			}
+			original = candidate
+		}
+	}
+	if original == nil || original.meta.Cwd != facts.Cwd {
+		return sourceFailure(agentapi.Unsafe, "source admission facts changed")
+	}
+	if err := original.checkHeader(ctx); err != nil {
+		return err
+	}
+	if (initialVersion != "" && original.meta.Version != initialVersion) || (initialOriginator != "" && original.meta.Originator != initialOriginator) {
+		return sourceFailure(agentapi.Unsafe, "source admission facts changed")
+	}
+	return nil
 }
 
 func validAdmissionFacts(f *rolloutFile, facts archive.CodexSourceBinding, a agentapi.SourceAdmission) bool {
@@ -1475,7 +1525,10 @@ func (s *historySnapshot) AdmissionEvidence(ctx context.Context, admission agent
 	if err != nil {
 		return agentapi.AdmissionEvidence{}, err
 	}
-	if admission.NativeID != s.selection.thread || admission.Cwd != "" && admission.Cwd != s.selection.leaf.meta.Cwd || !validAdmissionFacts(s.selection.leaf, binding, admission) {
+	if err := s.owner.checkHistoryAdmissionFacts(ctx, s.selection, s.spans, binding, admission); err != nil {
+		return agentapi.AdmissionEvidence{}, err
+	}
+	if admission.NativeID != s.selection.thread || admission.Cwd != "" && admission.Cwd != binding.Cwd {
 		return agentapi.AdmissionEvidence{}, sourceFailure(agentapi.Unsafe, "source admission facts changed")
 	}
 	task, err := s.gatherOwnTask(ctx)
