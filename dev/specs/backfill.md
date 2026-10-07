@@ -1244,9 +1244,12 @@ registered membership. Completed stages and groups survive partial progress.
 Request `StageToken` preserves the token covered by initial staged evidence while
 hooks replace the mutable request token. Pending publication binds the exact
 admitted manifest and publication admission context. Cleanup requires the full
-verified local committed source set to contain the exact stage digest/size, then
-processes only the covered token. An incomplete cleanup journal remains owed and
+verified local committed source set to contain the exact original stage source,
+or a complete typed privacy receipt binding that immutable digest/source/policy
+to the verified replacement selection, then processes only the covered token. An incomplete cleanup journal remains owed and
 resumes even after the object deletion succeeded. Newer requests remain queued.
-Corrupt stages, damaged staged registrations and changed privacy policy remain
-recovery-required and never reopen native sources as fallback. Existing history
+Corrupt stages and damaged staged registrations remain recovery-required. An
+obsolete privacy policy is refiltered from the immutable staged or sealed pending
+evidence under current injected policy; failed or incomplete correspondence stays
+pending. These paths never reopen native sources as fallback. Existing history
 entry fences remain unchanged.

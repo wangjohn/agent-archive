@@ -29,13 +29,6 @@ func (s *sessionScan) stagedAdmission() (sessionOutcome, bool, error) {
 	if err = state.CheckAdmissionStageOwnership(s.reg, manifest); err != nil {
 		return outcomeSkipped, true, err
 	}
-	adapter, err := sourceAdapter(s.opts.Sources, s.reg.Harness.Name)
-	if err != nil {
-		return outcomeSkipped, true, err
-	}
-	if bundle.Capture.FilterVersion != archive.FilterVersion || bundle.Capture.AdapterVersion != adapter.Version() || manifest.SkillEvidence != string(s.opts.skillEvidence()) || !sourceEvidenceWithinPolicy(bundle.SupplementalEvidence, s.opts.skillEvidence()) {
-		return outcomeSkipped, true, errors.New("durable import privacy policy changed; retained stage needs bounded privacy maintenance")
-	}
 	if err = s.local.ReconcileAdmissionStage(s.reg, manifest, s.opts.AcceptSession); err != nil {
 		return outcomeSkipped, true, err
 	}
@@ -51,10 +44,16 @@ func (s *sessionScan) stagedAdmission() (sessionOutcome, bool, error) {
 		return outcomeSkipped, true, err
 	}
 	if found {
-		if pending.AdmissionStage != s.reg.AdmissionStage || pending.SourceSHA256 != manifest.SHA256 {
-			return outcomeSkipped, true, state.ErrAdmissionStageRecovery
-		}
-		outcome, err := s.publishPending(pending)
+		outcome, err := s.resumeStagedPending(pending, manifest, bundle)
+		return outcome, true, err
+	}
+
+	adapter, err := sourceAdapter(s.opts.Sources, s.reg.Harness.Name)
+	if err != nil {
+		return outcomeSkipped, true, err
+	}
+	if bundle.Capture.FilterVersion != archive.FilterVersion || bundle.Capture.AdapterVersion != adapter.Version() || manifest.SkillEvidence != string(s.opts.skillEvidence()) || !sourceEvidenceWithinPolicy(bundle.SupplementalEvidence, s.opts.skillEvidence()) {
+		outcome, err := s.maintainStagedPrivacy(manifest, bundle, req)
 		return outcome, true, err
 	}
 	// A crash after local commit/request completion but before release does not
@@ -79,4 +78,25 @@ func (s *sessionScan) stagedAdmission() (sessionOutcome, bool, error) {
 	}
 	outcome, err := s.publishPending(pending)
 	return outcome, true, err
+}
+
+func (s *sessionScan) resumeStagedPending(pending state.PendingPublication, manifest state.AdmissionStage, bundle archive.SourceBundle) (sessionOutcome, error) {
+	if s.pendingPrivacyChanged(pending) {
+		if pending.AdmissionStage != s.reg.AdmissionStage {
+			return outcomeSkipped, state.ErrAdmissionStageRecovery
+		}
+		outcome, err := s.maintainPendingPrivacy(pending)
+		return outcome, err
+	}
+	if pending.AdmissionStage != s.reg.AdmissionStage {
+		return outcomeSkipped, state.ErrAdmissionStageRecovery
+	}
+	if pending.SourceSHA256 != manifest.SHA256 {
+		if err := pending.CheckAdmissionStageTransform(s.reg, manifest, bundle); err != nil {
+			return outcomeSkipped, err
+		}
+	}
+
+	outcome, err := s.publishPending(pending)
+	return outcome, err
 }

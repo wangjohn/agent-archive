@@ -69,6 +69,11 @@ func refilterBundle(ctx context.Context, reg archive.SessionRegistration, adapte
 	if err := archive.CheckHistoryMutation(bundle, archive.Metadata{}); err != nil {
 		return archive.SourceBundle{}, err
 	}
+	return refilterRetainedBundle(ctx, reg, adapter, bundle)
+}
+
+// refilterRetainedBundle is the shared native-codec transform beneath entrypoint fences.
+func refilterRetainedBundle(ctx context.Context, reg archive.SessionRegistration, adapter archive.Adapter, bundle archive.SourceBundle) (archive.SourceBundle, error) {
 	filtered, err := refilterNative(ctx, reg, adapter, bundle)
 	if err != nil {
 		return archive.SourceBundle{}, err
@@ -77,6 +82,8 @@ func refilterBundle(ctx context.Context, reg archive.SessionRegistration, adapte
 	if err != nil {
 		return archive.SourceBundle{}, err
 	}
+	// Retained producer observations are immutable; codec parsing cannot upgrade them.
+	refiltered.Capture.Harness = bundle.Capture.Harness
 	refiltered.Capture.Gaps = mergeCaptureGaps(bundle.Capture.Gaps, refiltered.Capture.Gaps)
 	return refiltered, nil
 }

@@ -94,6 +94,10 @@ func regenerateMetadata(s *sessionScan) (outcome sessionOutcome, handled bool, e
 		return outcomeSkipped, false, nil
 	}
 	source, ok := chooseRefreshSource(last.bundle, uploaded, known)
+	if prior.History != nil {
+		source = refreshSource{ref: prior.SourceBundle}
+		ok = true
+	}
 	if !ok {
 		// Neither the bytes nor a recorded reference: nothing to publish
 		// against. The next content change publishes current metadata.
@@ -134,16 +138,26 @@ func regenerateMetadata(s *sessionScan) (outcome sessionOutcome, handled bool, e
 // retried on every pass and status can count it.
 func (s *sessionScan) refreshedMetadata(last lastPublication, source archive.SourceReference) (encoded []byte, changed bool, err error) {
 	prior := last.metadata
+	if prior.History != nil {
+		if err := s.verifyRetainedSelection(prior); err != nil {
+			return nil, false, err
+		}
+	}
 	analysis, parseErr := agentapi.Analyze(s.ctx, s.resolveParser(), last.bundle)
 	if errors.Is(parseErr, context.Canceled) || errors.Is(parseErr, context.DeadlineExceeded) {
 		return nil, false, parseErr
 	}
 	next, buildErr := archive.BuildMetadataWithAnalysis(last.bundle, analysis, parseErr, s.opts.MachineID, s.reg.SessionStartedAt, s.now, source, archive.ParserInfo{Version: s.parserVersion()})
-	next.ApplyRegistrationProvenance(s.reg)
-	next.ApplyProjectName(s.reg.ProjectRoot)
-	next.ApplyRepoKey(s.opts.repoKeyOr(s.reg, func() string { return prior.RepoKey }))
-	next.ApplyGitHead(s.reg)
-	next.ApplyReplay(s.reg)
+	if prior.History != nil {
+		preserveRetainedMetadata(&next, prior)
+		next.ApplyGitHead(s.reg)
+	} else {
+		next.ApplyRegistrationProvenance(s.reg)
+		next.ApplyProjectName(s.reg.ProjectRoot)
+		next.ApplyRepoKey(s.opts.repoKeyOr(s.reg, func() string { return prior.RepoKey }))
+		next.ApplyGitHead(s.reg)
+		next.ApplyReplay(s.reg)
+	}
 	if buildErr != nil && !archive.IsParseError(buildErr) {
 		// This build cannot derive metadata from the retained bundle at all
 		// (one cached under an older source schema, say). That is not a
@@ -360,12 +374,20 @@ func (s *sessionScan) publishRecordedGitHead(last lastPublication, key string) (
 	if known && uploaded != next.SourceBundle {
 		return outcomeSkipped, false, nil
 	}
+	if next.History != nil {
+		if err := s.verifyRetainedSelection(next); err != nil {
+			return outcomeSkipped, true, err
+		}
+	}
 	// Carry the retained source's bytes when this build can rebuild them, as
 	// a metadata refresh does, so a source missing from storage is repaired
 	// instead of failing this publication on every pass.
 	source := refreshSource{ref: next.SourceBundle}
 	if rebuilt, ok := chooseRefreshSource(last.bundle, uploaded, known); ok && rebuilt.bytes != nil {
 		source = rebuilt
+	}
+	if next.History != nil {
+		source = refreshSource{ref: next.SourceBundle}
 	}
 	next.SourceBundle = source.ref
 	next.MetadataDerivedAt = s.now

@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -127,6 +126,11 @@ func (s *Store) PrepareAdmissionStage(reg archive.SessionRegistration, bundle ar
 	} else if !errors.Is(e, os.ErrNotExist) {
 		return "", e
 	}
+	unlock, err := s.namedLockWait("temporary-quota", time.Second)
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
 	used, err := s.admissionStageUsage()
 	if err != nil {
 		return "", err
@@ -219,68 +223,137 @@ func (s *Store) ReadAdmissionStage(id, digest string) (AdmissionStage, archive.S
 }
 
 func (s *Store) admissionStageUsage() (int64, error) {
+	temporary, err := s.temporaryUsage()
+	if err != nil {
+		return 0, err
+	}
+	evidence, err := s.publicationEvidenceUsage()
+	if err != nil {
+		return 0, err
+	}
+	if evidence > AdmissionStageQuota-temporary {
+		return 0, ErrAdmissionStageCapacity
+	}
+	temporary += evidence
+	stages, err := s.stageQuotaUsage()
+	if err != nil {
+		return 0, err
+	}
+	pending, err := s.pendingQuotaUsage()
+	if err != nil {
+		return 0, err
+	}
+	if stages > AdmissionStageQuota-temporary || pending > AdmissionStageQuota-temporary-stages {
+		return 0, ErrAdmissionStageCapacity
+	}
+	return temporary + stages + pending, nil
+}
+
+func (s *Store) stageQuotaUsage() (int64, error) {
 	var used int64
 	entries, err := os.ReadDir(filepath.Join(s.home, admissionStageDir))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return 0, err
 	}
 	seen := map[string]bool{}
-	for _, e := range entries {
-		if !strings.HasSuffix(e.Name(), ".json") {
+	for _, entry := range entries {
+		if !strings.HasSuffix(entry.Name(), ".json") {
 			continue
 		}
-		id := strings.TrimSuffix(e.Name(), ".json")
-		path, _ := s.stagePath(id, ".json")
-		b, err := readStageFile(path, stageManifestLimit)
+		id := strings.TrimSuffix(entry.Name(), ".json")
+		charge, err := s.quotaManifestUsage(id)
 		if err != nil {
-			return 0, ErrAdmissionStageRecovery
+			return 0, err
 		}
-		var m AdmissionStage
-		if json.Unmarshal(b, &m) != nil || m.ReservedBytes <= 0 || m.ReservedBytes > AdmissionStageQuota {
-			return 0, ErrAdmissionStageRecovery
+		if charge > AdmissionStageQuota-used {
+			return 0, ErrAdmissionStageCapacity
 		}
-		released, e := s.AdmissionStageReleased(archive.SessionRegistration{ArchiveSessionID: id, AdmissionStage: stageDigest(b)})
-		if e != nil {
-			return 0, e
-		}
-		if released {
-			object, _ := s.stagePath(id, ".source.gz")
-			if info, e := os.Lstat(object); e == nil {
-				used += 2 * info.Size()
-			} else if !errors.Is(e, os.ErrNotExist) {
-				return 0, e
-			}
-			used += int64(len(b))
-		} else {
-			used += m.ReservedBytes
-		}
+		used += charge
 		seen[id+".source.gz"] = true
 	}
-	for _, e := range entries {
-		if strings.HasSuffix(e.Name(), ".json") || seen[e.Name()] {
+	for _, entry := range entries {
+		if strings.HasSuffix(entry.Name(), ".json") || seen[entry.Name()] {
 			continue
 		}
-		info, err := e.Info()
+		info, err := entry.Info()
 		if err != nil || !info.Mode().IsRegular() {
 			return 0, ErrAdmissionStageRecovery
 		}
+		if info.Size() < 0 || info.Size() > AdmissionStageQuota-used {
+			return 0, ErrAdmissionStageCapacity
+		}
 		used += info.Size()
 	}
-	// Existing pending work is charged even when it predates durable admission.
+	return used, nil
+}
+
+func (s *Store) quotaManifestUsage(id string) (int64, error) {
+	path, err := s.stagePath(id, ".json")
+	if err != nil {
+		return 0, err
+	}
+	raw, err := readStageFile(path, stageManifestLimit)
+	var m AdmissionStage
+	if err != nil || json.Unmarshal(raw, &m) != nil || !validQuotaStage(m, id) {
+		return 0, ErrAdmissionStageRecovery
+	}
+	digest := stageDigest(raw)
+	reg, found, err := s.LoadRegistration(id)
+	if err != nil || (found && reg.AdmissionStage != "" && (reg.AdmissionStage != digest || CheckAdmissionStageOwnership(reg, m) != nil)) {
+		return 0, ErrAdmissionStageRecovery
+	}
+	released, err := s.AdmissionStageReleased(archive.SessionRegistration{ArchiveSessionID: id, AdmissionStage: digest})
+	if err != nil {
+		return 0, err
+	}
+	object, _ := s.stagePath(id, ".source.gz")
+	info, err := os.Lstat(object)
+	if released {
+		if errors.Is(err, os.ErrNotExist) {
+			return int64(len(raw)), nil
+		}
+		if err != nil || !info.Mode().IsRegular() || info.Size() < 0 || info.Size() > AdmissionStageQuota/2 {
+			return 0, ErrAdmissionStageRecovery
+		}
+		return 2*info.Size() + int64(len(raw)), nil
+	}
+	if err != nil || !info.Mode().IsRegular() || info.Size() != m.Bytes {
+		return 0, ErrAdmissionStageRecovery
+	}
+	return max(m.ReservedBytes, 2*info.Size()+2*int64(len(raw))), nil
+}
+
+func (s *Store) pendingQuotaUsage() (int64, error) {
+	var used int64
 	pending, err := os.ReadDir(filepath.Join(s.home, "pending"))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return 0, err
 	}
+	seenReceipts := map[string]bool{}
 	for _, e := range pending {
+		if seenReceipts[e.Name()] {
+			continue
+		}
 		info, err := e.Info()
 		if err != nil || !info.Mode().IsRegular() {
 			return 0, ErrAdmissionStageRecovery
 		}
-		used += 2 * info.Size()
+		if info.Size() < 0 || info.Size() >= AdmissionStageQuota/2 {
+			return 0, ErrAdmissionStageCapacity
+		}
+		charge := 2 * info.Size()
+		if id, ok := strings.CutSuffix(e.Name(), ".json"); ok {
+			receiptBytes, credit := s.existingPendingQuotaCredit(id, info)
+			charge += receiptBytes
+			charge -= credit
+			seenReceipts[id+".quota"] = true
+		}
+		if charge > AdmissionStageQuota-used {
+			return 0, ErrAdmissionStageCapacity
+		}
+		used += charge
 	}
-	if used < 0 {
-		return 0, fmt.Errorf("%w: invalid accounting", ErrAdmissionStageRecovery)
-	}
+
 	return used, nil
 }
 
@@ -385,11 +458,13 @@ func (s *Store) SaveAdmissionRequest(reg archive.SessionRegistration, evidence .
 }
 
 type stageRelease struct {
-	Checksum     string `json:"checksum"`
-	Digest       string `json:"digest"`
-	SourceSHA256 string `json:"source_sha256"`
-	CoveredToken string `json:"covered_token,omitempty"`
-	Complete     bool   `json:"complete"`
+	Checksum                string `json:"checksum"`
+	Digest                  string `json:"digest"`
+	SourceSHA256            string `json:"source_sha256"`
+	SelectingMetadataSHA256 string `json:"selecting_metadata_sha256,omitempty"`
+	ReplacementSHA256       string `json:"replacement_sha256,omitempty"`
+	CoveredToken            string `json:"covered_token,omitempty"`
+	Complete                bool   `json:"complete"`
 }
 
 func stageReleaseChecksum(r stageRelease) string {
@@ -443,7 +518,9 @@ func (s *Store) ReleaseAdmissionStage(reg archive.SessionRegistration, m Admissi
 		}
 	}
 	if !represented {
-		return ErrAdmissionStageRecovery
+		if _, valid := published.privacyStageSource(reg, m); !valid {
+			return ErrAdmissionStageRecovery
+		}
 	}
 	if coveredToken != "" {
 		if _, err = s.CompleteRequest(reg.ArchiveSessionID, coveredToken); err != nil {
@@ -451,7 +528,12 @@ func (s *Store) ReleaseAdmissionStage(reg archive.SessionRegistration, m Admissi
 		}
 	}
 	path, _ := s.stagePath(reg.ArchiveSessionID, ".released")
-	if err = writeStageRelease(path, stageRelease{Digest: reg.AdmissionStage, SourceSHA256: m.SHA256, CoveredToken: coveredToken}); err != nil {
+	receipt := stageRelease{Digest: reg.AdmissionStage, SourceSHA256: m.SHA256, CoveredToken: coveredToken}
+	if replacement, valid := published.privacyStageSource(reg, m); valid {
+		receipt.ReplacementSHA256 = replacement
+		receipt.SelectingMetadataSHA256 = published.state.Commit.MetadataSHA256
+	}
+	if err = writeStageRelease(path, receipt); err != nil {
 		return err
 	}
 	_, err = s.ResumeAdmissionStageRelease(reg, published)
@@ -473,7 +555,8 @@ func (s *Store) AdmissionStageCommitted(reg archive.SessionRegistration, m Admis
 			return true
 		}
 	}
-	return false
+	_, transformed := p.privacyStageSource(reg, m)
+	return transformed
 }
 
 // PreparedAdmissionStage reads a reservation only. Callers must still obtain
@@ -532,6 +615,12 @@ func (s *Store) ResumeAdmissionStageRelease(reg archive.SessionRegistration, p *
 	var m AdmissionStage
 	if json.Unmarshal(raw, &m) != nil || m.SHA256 != r.SourceSHA256 || !s.AdmissionStageCommitted(reg, m, p) {
 		return true, ErrAdmissionStageRecovery
+	}
+	if r.ReplacementSHA256 != "" {
+		replacement, valid := p.privacyStageSource(reg, m)
+		if !valid || replacement != r.ReplacementSHA256 || p.state.Commit.MetadataSHA256 != r.SelectingMetadataSHA256 {
+			return true, ErrAdmissionStageRecovery
+		}
 	}
 	if r.Complete {
 		return true, nil

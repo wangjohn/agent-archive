@@ -42,14 +42,16 @@ type generationNode struct {
 }
 
 type generationRecovery struct {
-	Version      int                          `json:"version"`
-	Key          agentmeta.SessionKey         `json:"key"`
-	Previous     string                       `json:"previous"`
-	Next         string                       `json:"next"`
-	Complete     bool                         `json:"complete,omitempty"`
-	Registration *archive.SessionRegistration `json:"registration,omitempty"`
-	Pending      *PendingPublication          `json:"pending,omitempty"`
-	Request      *Request                     `json:"request,omitempty"`
+	PriorMetadataSHA256  string                       `json:"prior_metadata_sha256"`
+	PriorSourceSetSHA256 string                       `json:"prior_source_set_sha256"`
+	Version              int                          `json:"version"`
+	Key                  agentmeta.SessionKey         `json:"key"`
+	Previous             string                       `json:"previous"`
+	Next                 string                       `json:"next"`
+	Complete             bool                         `json:"complete,omitempty"`
+	Registration         *archive.SessionRegistration `json:"registration,omitempty"`
+	Pending              *PendingPublication          `json:"pending,omitempty"`
+	Request              *Request                     `json:"request,omitempty"`
 }
 
 func (s *Store) generationHeadPath(key agentmeta.SessionKey) string {
@@ -140,7 +142,11 @@ func (s *Store) BeginGenerationRecovery(id string, at time.Time, build func(arch
 	}
 	request := Request{ArchiveSessionID: next, Token: token, Reasons: []string{"generation-recovery"}, RequestedAt: at}
 	pending.RequestToken = token
-	r := generationRecovery{Version: 1, Key: key, Previous: id, Next: next, Registration: &reg, Pending: &pending, Request: &request}
+	priorRaw, priorSet, err := s.generationCommittedAuthority(old)
+	if err != nil {
+		return "", err
+	}
+	r := generationRecovery{PriorMetadataSHA256: priorRaw, PriorSourceSetSHA256: priorSet, Version: 1, Key: key, Previous: id, Next: next, Registration: &reg, Pending: &pending, Request: &request}
 	if err := local.Write(s.generationRecoveryPath(id), r); err != nil {
 		return "", err
 	}
@@ -157,6 +163,10 @@ func validateGenerationSuccessor(old, reg archive.SessionRegistration, pending P
 	preserved := reg
 	preserved.ArchiveSessionID = old.ArchiveSessionID
 	preserved.PreviousGenerationID = old.PreviousGenerationID
+	preserved.AdmissionStage = old.AdmissionStage
+	if reg.AdmissionStage != "" {
+		return errors.New("successor cannot inherit predecessor admission stage")
+	}
 	if !reflect.DeepEqual(preserved, old) {
 		return errors.New("recovery cannot alter original admission or provenance")
 	}
@@ -170,6 +180,11 @@ func validateGenerationPublication(reg archive.SessionRegistration, pending Pend
 	if err := archive.CheckHistoryMutation(pending.Bundle, archive.Metadata{}); err != nil {
 		return err
 	}
+	return validateGenerationEvidence(reg, pending)
+}
+
+// validateGenerationEvidence is shared fixed-source validation beneath recovery fences.
+func validateGenerationEvidence(reg archive.SessionRegistration, pending PendingPublication) error {
 	bundle := pending.Bundle
 	if pending.MetadataOnly || bundle.NativeSessionID != reg.NativeSessionID || bundle.ProjectID != reg.ProjectID || bundle.Capture.Harness.Name != reg.Harness.Name {
 		return errors.New("recovery publication identity differs from registration")
@@ -187,7 +202,7 @@ func validateGenerationPublication(reg archive.SessionRegistration, pending Pend
 		return errors.New("recovery publication metadata key differs from registration")
 	}
 	var metadata archive.Metadata
-	if json.Unmarshal(pending.MetadataBytes, &metadata) != nil || metadata.SchemaVersion != archive.MetadataSchemaVersion || metadata.SessionID != reg.ArchiveSessionID || metadata.PreviousGenerationID != reg.PreviousGenerationID || metadata.NativeSessionID != reg.NativeSessionID || metadata.ProjectID != reg.ProjectID || metadata.Harness.Name != reg.Harness.Name || !metadata.CapturedAt.Equal(bundle.Capture.CapturedAt) || metadata.SourceBundle != pending.SourceReference() {
+	if json.Unmarshal(pending.MetadataBytes, &metadata) != nil || (metadata.SchemaVersion != archive.MetadataSchemaVersion && metadata.SchemaVersion != archive.HistoryMetadataSchemaVersion) || metadata.ValidateSourceReference() != nil || metadata.SessionID != reg.ArchiveSessionID || metadata.PreviousGenerationID != reg.PreviousGenerationID || metadata.NativeSessionID != reg.NativeSessionID || metadata.ProjectID != reg.ProjectID || metadata.Harness.Name != reg.Harness.Name || !metadata.CapturedAt.Equal(bundle.Capture.CapturedAt) || metadata.SourceBundle != pending.SourceReference() {
 		return errors.New("recovery publication metadata differs from its fixed source")
 	}
 	return nil
@@ -212,6 +227,12 @@ func (s *Store) generationRecoveryOriginal(id string) (archive.SessionRegistrati
 	summary, found, err := s.LoadPublishedSummary(id)
 	if err != nil || !found || !summary.Published || summary.BlockedReason != BlockedReasonTranscriptRewritten {
 		return archive.SessionRegistration{}, agentmeta.SessionKey{}, errors.New("recovery requires published history blocked by transcript_rewritten")
+	}
+	if old.AdmissionStage != "" {
+		settled, err := s.AdmissionStageReleased(old)
+		if err != nil || !settled {
+			return archive.SessionRegistration{}, agentmeta.SessionKey{}, errors.New("settle predecessor durable admission cleanup before recovery")
+		}
 	}
 	if pending, err := s.HasPending(id); err != nil || pending {
 		return archive.SessionRegistration{}, agentmeta.SessionKey{}, errors.New("settle pending publication with agent-archive sync before recovery")
@@ -287,6 +308,10 @@ func (s *Store) resumeGenerationRecovery(id string) error {
 	old.CaptureFrozen = false
 	key, err := registrationKey(old)
 	if err != nil || key != r.Key || validateGenerationSuccessor(old, *r.Registration, *r.Pending, r.Next, r.Request.RequestedAt) != nil {
+		return ErrSessionIndexRecoveryRequired
+	}
+	priorRaw, priorSet, err := s.generationCommittedAuthority(old)
+	if err != nil || priorRaw != r.PriorMetadataSHA256 || priorSet != r.PriorSourceSetSHA256 {
 		return ErrSessionIndexRecoveryRequired
 	}
 	if err := s.freezeGenerationRecovery(r); err != nil {
@@ -781,4 +806,24 @@ func (s *Store) GenerationCaptureAllowed(reg archive.SessionRegistration) error 
 		return ErrSessionIndexRecoveryRequired
 	}
 	return nil
+}
+
+// generationCommittedAuthority binds frozen routing to the exact complete prior selection.
+func (s *Store) generationCommittedAuthority(reg archive.SessionRegistration) (string, string, error) {
+	p, err := s.LoadPublishedState(reg.ArchiveSessionID)
+	if err != nil {
+		return "", "", err
+	}
+	prior := p.PublicationPredecessor()
+	if prior.State != PredecessorPresent {
+		return "", "", errors.New("generation recovery requires exact prior publication authority")
+	}
+	if _, err := p.CommittedSources(); err != nil {
+		return "", "", err
+	}
+	digest, _, err := archive.PublicationIdentity(prior.Body, reg.DestinationID, "generation_recovery", "", "generation_recovery")
+	if err != nil {
+		return "", "", err
+	}
+	return publicationSHA256(prior.Body), digest, nil
 }

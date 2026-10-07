@@ -30,7 +30,17 @@ func (r Registration) materialize(ctx context.Context, c Candidate, reg *archive
 		return out, errors.New("durable import requires a bounded admission source capability")
 	}
 	ref := agentapi.SourceRef{Kind: c.SourceKind, Path: c.TranscriptPath, Key: c.SourceKey}
-	pass, err := bounded.OpenAdmissionPass(ctx, agentapi.SourceEnvironment{Database: r.CursorDatabase}, ref)
+	var temporary agentapi.TemporaryByteBudget
+	if c.SourceKind == archive.SourceKindCursorSQLite {
+		workspace, e := state.NewTemporaryReservation(r.Store, state.CursorAdmission, reg.ArchiveSessionID)
+		if e != nil {
+			return out, e
+		}
+		defer func() { err = errors.Join(err, workspace.Close()) }()
+		temporary = workspace
+	}
+	env := agentapi.SourceEnvironment{Database: r.CursorDatabase, TemporaryBytes: temporary}
+	pass, err := bounded.OpenAdmissionPass(ctx, env, ref)
 	if err != nil {
 		return out, err
 	}

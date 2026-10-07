@@ -32,7 +32,25 @@ func generationFixture(t *testing.T) (*Store, archive.SessionRegistration, time.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := p.Save(bundle, reg.RegisteredAt, CacheStatusPublished); err != nil {
+	bundle.Capture.AdapterName = "test"
+	bundle.Capture.AdapterVersion = "test-v1"
+	bundle.Capture.FilterVersion = archive.FilterVersion
+	bundle.Capture.SourceFormat = "test-jsonl"
+	compressed, err := archive.BuildCompressedSource(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := archive.SourceObjectKey(bundle, compressed.SHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := archive.SourceReference{Key: key, SHA256: compressed.SHA256, CompressedBytes: len(compressed.Bytes)}
+	metadata := archive.Metadata{SchemaVersion: archive.MetadataSchemaVersion, SessionID: reg.ArchiveSessionID, NativeSessionID: reg.NativeSessionID, ProjectID: reg.ProjectID, MachineID: "test", StartedAt: reg.SessionStartedAt, CapturedAt: reg.RegisteredAt, MetadataDerivedAt: reg.RegisteredAt, Harness: reg.Harness, FilterVersion: archive.FilterVersion, SourceBundle: ref}
+	raw, err := json.Marshal(metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.SavePublication(bundle, reg.RegisteredAt, ref, raw); err != nil {
 		t.Fatal(err)
 	}
 	if err := p.SaveBlocked(bundle, reg.RegisteredAt, BlockedReasonTranscriptRewritten); err != nil {
@@ -44,6 +62,7 @@ func generationFixture(t *testing.T) (*Store, archive.SessionRegistration, time.
 func generationBuilder(at time.Time) func(archive.SessionRegistration, string) (archive.SessionRegistration, PendingPublication, error) {
 	return func(reg archive.SessionRegistration, id string) (archive.SessionRegistration, PendingPublication, error) {
 		prev := reg.ArchiveSessionID
+		reg.AdmissionStage = ""
 		reg.ArchiveSessionID = id
 		reg.PreviousGenerationID = prev
 		bundle := archive.SourceBundle{SchemaVersion: archive.SourceSchemaVersion, ArchiveSessionID: id, NativeSessionID: reg.NativeSessionID, ProjectID: reg.ProjectID, PreviousGenerationID: prev, Capture: archive.SourceCapture{Harness: reg.Harness, AdapterName: "test", CapturedAt: at}}
@@ -388,5 +407,92 @@ func TestFrozenGenerationRefusesUnsupportedNodeVersion(t *testing.T) {
 				t.Fatalf("unsupported node accepted as frozen authority: %v", err)
 			}
 		})
+	}
+}
+
+func TestGenerationRecoveryRefusesChangedPriorCommittedSelection(t *testing.T) {
+	s, reg, at := generationFixture(t)
+	s.onIndexStep = func(step string) error {
+		if step == "generation-journal" {
+			return errors.New("synthetic interruption")
+		}
+		return nil
+	}
+	if _, err := s.BeginGenerationRecovery(reg.ArchiveSessionID, at, generationBuilder(at)); err == nil {
+		t.Fatal("journal interruption missing")
+	}
+	p, err := s.LoadPublishedState(reg.ArchiveSessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m archive.Metadata
+	if err := json.Unmarshal(p.Metadata(), &m); err != nil {
+		t.Fatal(err)
+	}
+	m.MetadataDerivedAt = m.MetadataDerivedAt.Add(time.Hour)
+	raw, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.CacheMetadata(raw); err != nil {
+		t.Fatal(err)
+	}
+	s.onIndexStep = nil
+	if err := s.ResumeGenerationRecoveries(t.Context()); !errors.Is(err, ErrSessionIndexRecoveryRequired) {
+		t.Fatal("routing changed after predecessor mutation", err)
+	}
+	current, found, err := s.LoadRegistration(reg.ArchiveSessionID)
+	if err != nil || !found || current.CaptureFrozen {
+		t.Fatal("changed predecessor froze routing", found, err)
+	}
+}
+
+func TestGenerationRecoverySettlesStageAndClearsOnlySuccessorLinkage(t *testing.T) {
+	s, reg, pending := saturatedStagePending(t)
+	published, err := s.LoadPublishedState(reg.ArchiveSessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := published.SaveCommittedPublication(pending, reg.RegisteredAt); err != nil {
+		t.Fatal(err)
+	}
+	if err := published.SaveBlocked(pending.Bundle, reg.RegisteredAt, BlockedReasonTranscriptRewritten); err != nil {
+		t.Fatal(err)
+	}
+	at := reg.RegisteredAt.Add(time.Hour)
+	called := false
+	builder := generationBuilder(at)
+	if _, err := s.BeginGenerationRecovery(reg.ArchiveSessionID, at, func(old archive.SessionRegistration, id string) (archive.SessionRegistration, PendingPublication, error) {
+		called = true
+		return builder(old, id)
+	}); err == nil || called {
+		t.Fatal("unsettled stage permitted routing mutation", called, err)
+	}
+	m, _, err := s.ReadAdmissionStage(reg.ArchiveSessionID, reg.AdmissionStage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReleaseAdmissionStage(reg, m, published, ""); err != nil {
+		t.Fatal(err)
+	}
+	nextID, err := s.BeginGenerationRecovery(reg.ArchiveSessionID, at, builder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	successor, found, err := s.LoadRegistration(nextID)
+	if err != nil || !found || successor.AdmissionStage != "" || successor.PreviousGenerationID != reg.ArchiveSessionID || successor.Origin != reg.Origin || successor.ImportBatch.Recorded() != reg.ImportBatch.Recorded() || !successor.AdmittedAt.Equal(reg.AdmittedAt) || successor.DestinationID != reg.DestinationID {
+		t.Fatal("successor changed admission provenance", successor, found, err)
+	}
+	frozen, found, err := s.LoadRegistration(reg.ArchiveSessionID)
+	if err != nil || !found || !frozen.CaptureFrozen || frozen.AdmissionStage != reg.AdmissionStage {
+		t.Fatal("predecessor lost stage provenance", frozen, found, err)
+	}
+	refs, err := published.CommittedSources()
+	if err != nil || len(refs) != 1 || refs[0].Key != pending.SourceKey {
+		t.Fatal("frozen predecessor source changed", refs, err)
+	}
+	next, found, err := s.LoadPending(nextID)
+	if err != nil || !found || next.AdmissionStage != "" || next.SourceKey == pending.SourceKey || next.Bundle.PreviousGenerationID != reg.ArchiveSessionID {
+		t.Fatal("successor reused old source namespace", next, found, err)
 	}
 }
