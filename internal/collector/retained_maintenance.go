@@ -73,18 +73,9 @@ func (s *sessionScan) prepareRetainedPrivacy(raw []byte, loader retainedSourceLo
 	}
 	next := before
 	preserveRetainedMetadata(&next, before)
-	proof := state.PublicationPrivacyEvidence{Authority: authority, StageDigest: stageDigest, StageSourceSHA256: stageSHA, PreviousPolicyContext: storage.SHA256Hex([]byte(before.FilterVersion + "\x00" + before.Adapter.Version + "\x00" + oldSkill))}
-	if prior.PolicyContext != "" {
-		proof.PreviousPolicyContext = prior.PolicyContext
-	}
-	if authority == state.PrivacyPending {
-		original := prior.PrivacyPendingSource
-		if original == nil || original.Commit == nil {
-			return state.PendingPublication{}, errors.New("sealed pending privacy authority is unavailable")
-		}
-		c := original.Commit
-		proof.PreviousPolicyContext = c.PolicyContext
-		proof.PendingMutation = &state.PrivacyPendingMutation{MetadataBytes: original.MetadataBytes, MetadataSHA256: c.MetadataSHA256, SourceSetSHA256: c.SourceSetSHA256, PolicyContext: c.PolicyContext, Purpose: c.Purpose, Predecessor: c.Predecessor, PredecessorSHA256: c.PredecessorSHA256, Continuity: c.Continuity}
+	proof, err := retainedPrivacyProof(before, prior, authority, stageDigest, stageSHA, oldSkill)
+	if err != nil {
+		return state.PendingPublication{}, err
 	}
 	pending := state.PendingPublication{AdmissionStage: stageDigest, SkillEvidence: string(s.opts.skillEvidence()), MetadataKey: s.mustMetadataKey(), RequestToken: s.req.Token, ReadyAt: s.now, Attempted: true}
 	total := 0
@@ -264,4 +255,22 @@ func (s *sessionScan) bindRetainedPrivacyEvidence(proof state.PublicationPrivacy
 		return prior, err
 	}
 	return prior, nil
+}
+
+func retainedPrivacyProof(before archive.Metadata, prior state.PublicationPredecessor, authority state.PrivacyAuthority, stageDigest, stageSHA, oldSkill string) (state.PublicationPrivacyEvidence, error) {
+	previousPolicy := storage.SHA256Hex([]byte(before.FilterVersion + "\x00" + before.Adapter.Version + "\x00" + oldSkill))
+	if prior.PolicyContext != "" {
+		previousPolicy = prior.PolicyContext
+	}
+	var input *state.PrivacyPendingMutation
+	if authority == state.PrivacyPending {
+		original := prior.PrivacyPendingSource
+		if original == nil || original.Commit == nil {
+			return state.PublicationPrivacyEvidence{}, errors.New("sealed pending privacy authority is unavailable")
+		}
+		c := original.Commit
+		previousPolicy = c.PolicyContext
+		input = &state.PrivacyPendingMutation{MetadataBytes: original.MetadataBytes, MetadataSHA256: c.MetadataSHA256, SourceSetSHA256: c.SourceSetSHA256, PolicyContext: c.PolicyContext, Purpose: c.Purpose, Predecessor: c.Predecessor, PredecessorSHA256: c.PredecessorSHA256, Continuity: c.Continuity}
+	}
+	return state.PublicationPrivacyEvidence{Authority: authority, StageDigest: stageDigest, StageSourceSHA256: stageSHA, PreviousPolicyContext: previousPolicy, PendingMutation: input}, nil
 }

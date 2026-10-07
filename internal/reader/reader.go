@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -555,10 +556,11 @@ func matchesSkillIdentity(name, hash string, f Filter) bool {
 // metadata pointer. A schema-1 bundle (a single JSON document) is refused with
 // an error naming its schema version.
 func LoadSource(ctx context.Context, store storage.ObjectStore, metadata archive.Metadata, limits Limits) (archive.SourceBundle, error) {
-	selection := archive.RevisionReference{Source: metadata.SourceBundle, CapturedAt: metadata.CapturedAt}
+	revision := ""
 	if metadata.History != nil {
-		selection.RevisionID = metadata.History.CurrentRevision
+		revision = metadata.History.CurrentRevision
 	}
+	selection := archive.RevisionReference{Source: metadata.SourceBundle, CapturedAt: metadata.CapturedAt, RevisionID: revision}
 	return loadReferencedSource(ctx, store, metadata, selection, true, limits)
 }
 
@@ -572,12 +574,8 @@ func LoadRevisionSource(ctx context.Context, store storage.ObjectStore, metadata
 	if active && (metadata.History == nil && selected.RevisionID == "" || metadata.History != nil && selected.RevisionID == metadata.History.CurrentRevision) {
 		return loadReferencedSource(ctx, store, metadata, selected, true, limits)
 	}
-	if metadata.History != nil {
-		for _, ref := range metadata.History.Preserved {
-			if ref == selected {
-				return loadReferencedSource(ctx, store, metadata, selected, false, limits)
-			}
-		}
+	if metadata.History != nil && slices.Contains(metadata.History.Preserved, selected) {
+		return loadReferencedSource(ctx, store, metadata, selected, false, limits)
 	}
 	return archive.SourceBundle{}, errors.New("retained revision is not selected by metadata")
 }

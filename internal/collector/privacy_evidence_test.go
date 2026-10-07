@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -15,6 +16,14 @@ import (
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
+)
+
+type privacyEvidenceFailure string
+
+const (
+	privacyEvidenceFailureUnreadableSource privacyEvidenceFailure = "unreadable-source"
+	privacyEvidenceFailureMissingBody      privacyEvidenceFailure = "missing-body"
+	privacyEvidenceFailureChangedBody      privacyEvidenceFailure = "changed-body"
 )
 
 func unuploadedPrivacyFixture(t *testing.T) (*state.Store, archive.SessionRegistration, *metadataFailStore, Options, state.PendingPublication) {
@@ -102,7 +111,7 @@ func TestPrivacyOriginalJournalSurvivesRestartUntilLocalSuccessor(t *testing.T) 
 
 func TestPrivacyOriginalJournalMissingOrCorruptKeepsObligation(t *testing.T) {
 	for _, kind := range []string{"missing", "corrupt"} {
-		t.Run(kind, func(t *testing.T) {
+		t.Run(string(kind), func(t *testing.T) {
 			local, reg, remote, opts, _ := unuploadedPrivacyFixture(t)
 			_, _ = Run(t.Context(), local, remote, opts)
 			before, found, err := local.LoadPending(reg.ArchiveSessionID)
@@ -220,8 +229,8 @@ func (s unreadablePrivacySourceStore) Get(ctx context.Context, key string) ([]by
 }
 
 func TestPrivacyEmbeddedOriginalAuthorityMustRemainReadableAndSealed(t *testing.T) {
-	for _, kind := range []string{"unreadable-source", "missing-body", "changed-body"} {
-		t.Run(kind, func(t *testing.T) {
+	for _, kind := range []privacyEvidenceFailure{privacyEvidenceFailureUnreadableSource, privacyEvidenceFailureMissingBody, privacyEvidenceFailureChangedBody} {
+		t.Run(string(kind), func(t *testing.T) {
 			local, reg, remote, opts, old := unuploadedPrivacyFixture(t)
 			if err := remote.Put(t.Context(), old.SourceKey, old.SourceBytes); err != nil {
 				t.Fatal(err)
@@ -233,11 +242,11 @@ func TestPrivacyEmbeddedOriginalAuthorityMustRemainReadableAndSealed(t *testing.
 			}
 			var target storage.ObjectStore = remote
 			switch kind {
-			case "unreadable-source":
+			case privacyEvidenceFailureUnreadableSource:
 				target = unreadablePrivacySourceStore{ObjectStore: remote, key: old.SourceKey}
-			case "missing-body":
+			case privacyEvidenceFailureMissingBody:
 				next.Commit.Privacy.ReplayInput.MetadataBytes = nil
-			case "changed-body":
+			case privacyEvidenceFailureChangedBody:
 				next.Commit.Privacy.ReplayInput.MetadataBytes = []byte("{}")
 			}
 			remote.failMetadata = false
@@ -333,5 +342,240 @@ func TestPrivacyPreparedEvidenceQuotaFailureKeepsOriginalPending(t *testing.T) {
 	result, err := Run(t.Context(), local, remote, opts)
 	if err != nil || len(result.Errors) != 0 || len(result.Published) != 1 {
 		t.Fatal("prepared evidence did not reconcile", result, err)
+	}
+}
+
+func TestPrivacyRepeatedUncommittedPolicyChangesPreserveOldestOriginal(t *testing.T) {
+	for _, remoteOriginal := range []bool{false, true} {
+		t.Run(fmt.Sprintf("remote-original-%t", remoteOriginal), func(t *testing.T) {
+			local, reg, remote, opts, old := unuploadedPrivacyFixture(t)
+			if remoteOriginal {
+				if err := remote.Put(t.Context(), old.SourceKey, old.SourceBytes); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for i := range 5 {
+				at := reg.RegisteredAt.Add(time.Hour + time.Duration(i+1)*time.Minute)
+				opts.Now = func() time.Time { return at }
+				if i%2 == 0 {
+					opts.SkillEvidence = config.SkillEvidenceNone
+				} else {
+					opts.SkillEvidence = config.SkillEvidenceMetadata
+				}
+				result, err := Run(t.Context(), local, remote, opts)
+				if err != nil || result.Errors[reg.ArchiveSessionID] == nil {
+					t.Fatal("expected remote metadata checkpoint", result, err)
+				}
+				next, found, err := local.LoadPending(reg.ArchiveSessionID)
+				if err != nil || !found || next.Commit.Privacy == nil || next.SkillEvidence != string(opts.SkillEvidence) {
+					t.Fatal("repeated uncommitted transition stalled", next.SkillEvidence, found, err, result.Errors)
+				}
+				root := next.Commit.Privacy.ReplayInput
+				if root == nil || i < 3 && (root.MetadataSHA256 != old.Commit.MetadataSHA256 || root.SourceSetSHA256 != old.Commit.SourceSetSHA256) || root.Privacy != nil && (root.Privacy.ReplayInput != nil || root.Privacy.PendingMutation != nil && root.Privacy.PendingMutation.Privacy != nil) {
+					t.Fatal("oldest authority changed or retained a receipt chain", root)
+				}
+				if i == 2 {
+					published, err := local.LoadPublishedState(reg.ArchiveSessionID)
+					if err != nil {
+						t.Fatal(err)
+					}
+					remote.failMetadata = false
+					scan := newSessionScan(t.Context(), local, remote, reg, state.Request{}, published, reg.RegisteredAt, opts)
+					if err := scan.upload(next); err != nil {
+						t.Fatal(err)
+					}
+					// The next policy pass must record exact remote-next without acknowledging
+					// or releasing the original obligation before its selecting successor.
+					remote.failMetadata = true
+				}
+				if !remoteOriginal {
+					raw, err := local.ReadPublicationEvidence(reg.ArchiveSessionID)
+					if err != nil {
+						t.Fatal(err)
+					}
+					var j privacyInputJournal
+					if err := json.Unmarshal(raw, &j); err != nil || !bytes.Equal(j.Original.SourceBytes, old.SourceBytes) {
+						t.Fatal("oldest bytes changed", err)
+					}
+				}
+			}
+			remote.failMetadata = false
+			result, err := Run(t.Context(), local, remote, opts)
+			if err != nil || len(result.Errors) != 0 || len(result.Published) != 1 {
+				t.Fatal(result, err)
+			}
+			if _, found, err := local.LoadPending(reg.ArchiveSessionID); err != nil || found {
+				t.Fatal("successor not settled", found, err)
+			}
+			if _, err := local.ReadPublicationEvidence(reg.ArchiveSessionID); !errors.Is(err, os.ErrNotExist) {
+				t.Fatal("oldest original not cleaned", err)
+			}
+		})
+	}
+}
+
+func TestStagedOrphanPrivacyEvidenceBlocksReplacement(t *testing.T) {
+	local, reg := stagedPolicyFixture(t, config.SkillEvidenceBody,
+		archive.SupplementalEvidence{Kind: archive.EvidenceKindSkillSnapshot, Provenance: "synthetic", Payload: map[string]any{"name": "synthetic", "body": "private original"}})
+	if err := local.SavePublicationEvidence(reg.ArchiveSessionID, []byte("orphan original evidence")); err != nil {
+		t.Fatal(err)
+	}
+	remote := storagetest.NewMemoryStore()
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "synthetic", SkillEvidence: config.SkillEvidenceNone}
+	result, err := Run(t.Context(), local, remote, opts)
+	if err != nil || result.Errors[reg.ArchiveSessionID] == nil || len(result.Published) != 0 {
+		t.Fatal("stage bypassed orphan obligation", result, err)
+	}
+	if _, found, err := local.LoadPending(reg.ArchiveSessionID); err != nil || found {
+		t.Fatal("orphan obligation replaced", found, err)
+	}
+	if _, found, err := local.LoadRequest(reg.ArchiveSessionID); err != nil || !found {
+		t.Fatal("orphan obligation acknowledged", found, err)
+	}
+	if released, err := local.AdmissionStageReleased(reg); err != nil || released {
+		t.Fatal("orphan obligation released stage", released, err)
+	}
+}
+
+func TestFrozenOrphanPrivacyEvidenceBlocksAcknowledgement(t *testing.T) {
+	local, remote := newTestStore(t), storagetest.NewMemoryStore()
+	at := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
+	dir := publishCodexSession(t, local, remote, at)
+	writeTranscript(t, dir, "codex.jsonl", truncatedCodexTranscript)
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "synthetic", Now: func() time.Time { return at.Add(time.Hour) }, RepoKey: func(string) string { return "" }}
+	if result, err := Run(t.Context(), local, remote, opts); err != nil || len(result.Errors) != 0 {
+		t.Fatal(result, err)
+	}
+	reg, _, err := local.LoadRegistration("session-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	builder, err := PrepareGenerationRecovery(t.Context(), reg, at.Add(2*time.Hour), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := local.BeginGenerationRecovery(reg.ArchiveSessionID, at.Add(2*time.Hour), builder); err != nil {
+		t.Fatal(err)
+	}
+	if err := local.SaveRequest(reg.ArchiveSessionID, "stop", at.Add(3*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := local.SavePublicationEvidence(reg.ArchiveSessionID, []byte("orphan original evidence")); err != nil {
+		t.Fatal(err)
+	}
+	result, err := Run(t.Context(), local, remote, opts)
+	if err != nil || result.Errors[reg.ArchiveSessionID] == nil {
+		t.Fatal("frozen maintenance bypassed orphan obligation", result, err)
+	}
+	if _, found, err := local.LoadRequest(reg.ArchiveSessionID); err != nil || !found {
+		t.Fatal("orphan obligation acknowledged", found, err)
+	}
+}
+
+func TestStagedCurrentSkillPolicyStillRefiltersInconsistentEvidence(t *testing.T) {
+	local, reg := stagedPolicyFixture(t, config.SkillEvidenceNone, archive.SupplementalEvidence{Kind: archive.EvidenceKindSkillSnapshot, Provenance: "synthetic", Payload: map[string]any{"name": "synthetic", "body": "private original"}})
+	remote := storagetest.NewMemoryStore()
+	result, err := Run(t.Context(), local, remote, Options{Sources: testSources, Parsers: testParsers, MachineID: "synthetic", SkillEvidence: config.SkillEvidenceNone})
+	if err != nil || len(result.Errors) != 0 || len(result.Published) != 1 {
+		t.Fatal(result, err)
+	}
+	metadata := fetchMetadata(t, remote, reg.Harness.Name, reg.ArchiveSessionID)
+	bundle := fetchBundle(t, remote, metadata)
+	if !sourceEvidenceWithinPolicy(bundle.SupplementalEvidence, config.SkillEvidenceNone) {
+		t.Fatal("current-policy label bypassed retained-content privacy")
+	}
+}
+
+func TestPrivacyPendingReceiptRejectsDifferentImmediateInputReference(t *testing.T) {
+	local, reg, remote, opts, _ := unuploadedPrivacyFixture(t)
+	_, _ = Run(t.Context(), local, remote, opts)
+	p, found, err := local.LoadPending(reg.ArchiveSessionID)
+	if err != nil || !found || p.Commit.Privacy.Authority != state.PrivacyPending {
+		t.Fatal(p, found, err)
+	}
+	// Keep the sealed original body/digests, age, ownership and next selection,
+	// but substitute a valid same-namespace source in its previous correspondence.
+	p.Commit.Privacy.Sources[0].Previous.Source = p.SourceReference()
+	if err := p.ValidatePublication(); err == nil {
+		t.Fatal("receipt accepted a source absent from its sealed immediate input")
+	}
+}
+
+func TestPrivacyPolicyChangeAfterCompletedStageReleaseUsesCommittedSource(t *testing.T) {
+	local, reg := stagedPolicyFixture(t, config.SkillEvidenceBody, archive.SupplementalEvidence{Kind: archive.EvidenceKindSkillSnapshot, Provenance: "synthetic", Payload: map[string]any{"name": "synthetic", "body": "private original"}})
+	remote := &metadataFailStore{MemoryStore: storagetest.NewMemoryStore(), failMetadata: true}
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "synthetic", SkillEvidence: config.SkillEvidenceBody}
+	_, _ = Run(t.Context(), local, remote, opts)
+	original, found, err := local.LoadPending(reg.ArchiveSessionID)
+	if err != nil || !found {
+		t.Fatal(found, err)
+	}
+	published, err := local.LoadPublishedState(reg.ArchiveSessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	remote.failMetadata = false
+	scan := newSessionScan(t.Context(), local, remote, reg, state.Request{}, published, reg.RegisteredAt, opts)
+	if err := scan.upload(original); err != nil {
+		t.Fatal(err)
+	}
+	if err := published.SaveCommittedPublication(original, reg.RegisteredAt); err != nil {
+		t.Fatal(err)
+	}
+	manifest, _, err := local.ReadAdmissionStage(reg.ArchiveSessionID, reg.AdmissionStage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := local.ReleaseAdmissionStage(reg, manifest, published, original.RequestToken); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(reg.TranscriptPath); err != nil {
+		t.Fatal(err)
+	}
+	// Pending removal was interrupted, after selecting local commit and release.
+	opts.SkillEvidence = config.SkillEvidenceNone
+	result, err := Run(t.Context(), local, remote, opts)
+	if err != nil || len(result.Errors) != 0 || len(result.Published) != 1 {
+		t.Fatal(result, err)
+	}
+	bundle := fetchBundle(t, remote, fetchMetadata(t, remote, reg.Harness.Name, reg.ArchiveSessionID))
+	if !sourceEvidenceWithinPolicy(bundle.SupplementalEvidence, config.SkillEvidenceNone) {
+		t.Fatal("released original replayed obsolete skill policy")
+	}
+}
+
+func TestPrivacyReplayAuthorizationBindsExactImmediateReceipt(t *testing.T) {
+	local, reg, remote, opts, _ := unuploadedPrivacyFixture(t)
+	_, _ = Run(t.Context(), local, remote, opts)
+	original, found, err := local.LoadPending(reg.ArchiveSessionID)
+	if err != nil || !found {
+		t.Fatal(found, err)
+	}
+	published, err := local.LoadPublishedState(reg.ArchiveSessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scan := newSessionScan(t.Context(), local, remote, reg, state.Request{}, published, opts.Now(), opts)
+	prior, kind, err := scan.reconcilePrivacyPending(original)
+	if err != nil || kind != state.PrivacyPending {
+		t.Fatal(kind, err)
+	}
+	root, err := scan.oldestPrivacyInput(original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prior, err = prior.CheckPrivacyReplayInput(original, *root, reg.DestinationID, scan.publicationAdmission())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// An authorization checked before refiltering cannot be reused after changing
+	// an otherwise structurally valid receipt's native codec provenance.
+	original.Commit.Privacy.Sources[0].OldPolicy.Format = "different-native-format"
+	loader, err := scan.pendingRetainedLoader(original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := scan.prepareRetainedPrivacy(original.MetadataBytes, loader, prior, kind, "", "", original.SkillEvidence); err == nil {
+		t.Fatal("authorization reused for a changed immediate receipt")
 	}
 }

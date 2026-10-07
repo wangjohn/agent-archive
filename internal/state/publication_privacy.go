@@ -52,14 +52,15 @@ type PrivacySource struct {
 
 // PrivacyPendingMutation retains the original sealed mutation authority without payload duplication.
 type PrivacyPendingMutation struct {
-	MetadataBytes     []byte                 `json:"metadata_bytes,omitempty"`
-	MetadataSHA256    string                 `json:"metadata_sha256"`
-	SourceSetSHA256   string                 `json:"source_set_sha256"`
-	PolicyContext     string                 `json:"policy_context"`
-	Purpose           PublicationPurpose     `json:"purpose"`
-	Predecessor       PredecessorState       `json:"predecessor"`
-	PredecessorSHA256 string                 `json:"predecessor_sha256,omitempty"`
-	Continuity        *PublicationContinuity `json:"continuity,omitempty"`
+	Privacy           *PublicationPrivacyEvidence `json:"privacy,omitempty"`
+	MetadataBytes     []byte                      `json:"metadata_bytes,omitempty"`
+	MetadataSHA256    string                      `json:"metadata_sha256"`
+	SourceSetSHA256   string                      `json:"source_set_sha256"`
+	PolicyContext     string                      `json:"policy_context"`
+	Purpose           PublicationPurpose          `json:"purpose"`
+	Predecessor       PredecessorState            `json:"predecessor"`
+	PredecessorSHA256 string                      `json:"predecessor_sha256,omitempty"`
+	Continuity        *PublicationContinuity      `json:"continuity,omitempty"`
 }
 
 // PublicationPrivacyEvidence seals codec-produced complete correspondence, not raw dependency proof.
@@ -97,17 +98,17 @@ func RevisionSelections(m archive.Metadata) ([]archive.RevisionReference, error)
 
 func privacyOwnership(m archive.Metadata) string {
 	raw, _ := json.Marshal(struct {
-		Session       string
-		Native        string
-		Project       string
-		Machine       string
-		Harness       string
-		Parent        string
-		Generation    string
-		Started       time.Time
-		Origin        archive.SessionOrigin
-		Imported      *time.Time
-		StartedSource archive.StartedAtSource
+		Session       string                  `json:"Session"`
+		Native        string                  `json:"Native"`
+		Project       string                  `json:"Project"`
+		Machine       string                  `json:"Machine"`
+		Harness       string                  `json:"Harness"`
+		Parent        string                  `json:"Parent"`
+		Generation    string                  `json:"Generation"`
+		Started       time.Time               `json:"Started"`
+		Origin        archive.SessionOrigin   `json:"Origin"`
+		Imported      *time.Time              `json:"Imported"`
+		StartedSource archive.StartedAtSource `json:"StartedSource"`
 	}{Session: m.SessionID, Native: m.NativeSessionID, Project: m.ProjectID, Machine: m.MachineID, Harness: m.Harness.Name, Parent: m.ParentSessionID, Generation: m.PreviousGenerationID, Started: m.StartedAt, Origin: m.Origin, Imported: m.ImportedAt, StartedSource: m.StartedAtSource})
 	return publicationSHA256(raw)
 }
@@ -152,13 +153,13 @@ func BindPrivacyEvidence(e PublicationPrivacyEvidence, previous, next []byte, de
 	return &e, nil
 }
 
-func validatePrivacyPreparation(p PendingPublication, prior PublicationPredecessor, previous, next archive.Metadata, destination, admission, policy string) error {
+func validatePrivacyPreparation(prior PublicationPredecessor, previous, next archive.Metadata, destination, admission string) error {
 	e := prior.Privacy
 	if err := validateComposedStage(e, prior); err != nil {
 		return err
 	}
 	if e != nil && e.Authority == PrivacyPending {
-		return validatePendingPrivacyPreparation(prior, destination, admission, policy)
+		return validatePendingPrivacyPreparation(prior, destination, admission)
 	}
 	if e == nil || e.Authority != PrivacyCommitted || e.PreviousMetadataSHA256 != publicationSHA256(prior.Body) || e.OwnershipSHA256 != privacyOwnership(previous) || privacyOwnership(previous) != privacyOwnership(next) {
 		return errors.New("privacy replacement requires exact complete committed authority")
@@ -278,7 +279,7 @@ func (p *Published) privacyStageSource(reg archive.SessionRegistration, m Admiss
 	return "", false
 }
 
-func validatePendingPrivacyPreparation(prior PublicationPredecessor, destination, admission, policy string) error {
+func validatePendingPrivacyPreparation(prior PublicationPredecessor, destination, admission string) error {
 	e, original := prior.Privacy, prior.PrivacyPendingSource
 	if err := validateComposedStage(e, prior); err != nil {
 		return err
@@ -293,7 +294,7 @@ func validatePendingPrivacyPreparation(prior PublicationPredecessor, destination
 	if original.Commit.Predecessor != check.State || check.State == PredecessorPresent && publicationSHA256(check.Body) != original.Commit.PredecessorSHA256 {
 		return errors.New("privacy pending predecessor differs from exact retained authority")
 	}
-	if err := original.validatePublicationPredecessor(check, destination, admission, original.Commit.PolicyContext, original.Commit.Purpose); err != nil {
+	if err := validateOriginalPrivacyTransition(*original, check, destination, admission); err != nil {
 		return err
 	}
 	var before archive.Metadata
@@ -449,6 +450,7 @@ func (p PendingPublication) validatePrivacyAuthority() error {
 	}
 	return nil
 }
+
 func validatePrivacySource(source PrivacySource, selected archive.RevisionReference, m archive.Metadata, skill string, seen map[string]bool) error {
 	if source.Next != selected || source.Previous.RevisionID != source.Next.RevisionID || !source.Previous.CapturedAt.Equal(source.Next.CapturedAt) || seen[source.Previous.Source.Key] || source.Previous.Source.CompressedBytes <= 0 || !validPublicationDigest(source.Previous.Source.SHA256) {
 		return errors.New("privacy correspondence changes selection, age or uniqueness")
@@ -469,6 +471,9 @@ func (p PendingPublication) validatePrivacyReplayInput() error {
 		if input == nil {
 			continue
 		}
+		if input.Privacy != nil && (input.Purpose != PublicationPrivacyRewrite || input.Privacy.ReplayInput != nil || input.Privacy.PendingMutation != nil && input.Privacy.PendingMutation.Privacy != nil || input.Privacy.InputJournalSHA256 != "") {
+			return errors.New("privacy replay input must retain only one bounded original receipt")
+		}
 		if len(input.MetadataBytes) == 0 || publicationSHA256(input.MetadataBytes) != input.MetadataSHA256 || input.Predecessor == PredecessorUnknown {
 			return errors.New("privacy replay original body is not authenticated known authority")
 		}
@@ -477,8 +482,135 @@ func (p PendingPublication) validatePrivacyReplayInput() error {
 			return errors.New("privacy replay original source set differs")
 		}
 	}
+	if e.PendingMutation != nil {
+		var before archive.Metadata
+		if err := json.Unmarshal(e.PendingMutation.MetadataBytes, &before); err != nil {
+			return err
+		}
+		refs, err := RevisionSelections(before)
+		if err != nil {
+			return err
+		}
+		digest, _, err := archive.PublicationIdentity(e.PendingMutation.MetadataBytes, p.Commit.DestinationID, p.Commit.AdmissionContext, e.PreviousPolicyContext, string(PublicationPrivacyRewrite))
+		if err != nil || digest != e.PreviousSetSHA256 || e.PreviousPolicyContext != e.PendingMutation.PolicyContext || privacyOwnership(before) != e.OwnershipSHA256 || len(refs) != len(e.Sources) {
+			return errors.New("privacy immediate input correspondence differs")
+		}
+		for i, ref := range refs {
+			if ref != e.Sources[i].Previous {
+				return errors.New("privacy immediate previous selection differs")
+			}
+		}
+	}
 	if e.InputJournalSHA256 != "" && !validPublicationDigest(e.InputJournalSHA256) {
 		return errors.New("privacy original evidence journal binding is invalid")
 	}
 	return nil
+}
+
+// validateOriginalPrivacyTransition rechecks one oldest authorized input and the
+// immediate sealed privacy receipt. It never recursively retains intermediate receipts.
+func validateOriginalPrivacyTransition(original PendingPublication, prior PublicationPredecessor, destination, admission string) error {
+	e := original.Commit.Privacy
+	if e == nil || e.Authority != PrivacyPending {
+		return original.validatePublicationPredecessor(prior, destination, admission, original.Commit.PolicyContext, original.Commit.Purpose)
+	}
+	if checked := prior.privacyReplay; checked != nil {
+		raw, err := json.Marshal(original.Commit)
+		if err != nil || checked.CommitSHA256 != publicationSHA256(raw) || checked.Prior != prior.State || checked.PriorSHA256 != publicationSHA256(prior.Body) || checked.Destination != destination || checked.Admission != admission {
+			return errors.New("privacy replay authorization changed during transformation")
+		}
+		return nil
+	}
+	root := prior.privacyReplaySource
+	input := e.ReplayInput
+	if root == nil || input == nil || root.ValidatePublication() != nil || root.Commit.MetadataSHA256 != input.MetadataSHA256 || root.Commit.SourceSetSHA256 != input.SourceSetSHA256 || root.Commit.DestinationID != destination || root.Commit.AdmissionContext != admission {
+		return errors.New("repeated privacy requires exact oldest authorized replay input")
+	}
+	if err := validatePrivacyReplayRoot(*root, original, prior, destination, admission); err != nil {
+		return err
+	}
+	return validatePrivacyReplaySelection(root.MetadataBytes, original.MetadataBytes)
+}
+
+func validatePrivacyReplaySelection(previous, current []byte) error {
+	var before, after archive.Metadata
+	if err := json.Unmarshal(previous, &before); err != nil {
+		return err
+	}
+	if err := json.Unmarshal(current, &after); err != nil {
+		return err
+	}
+	old, err := RevisionSelections(before)
+	if err != nil {
+		return err
+	}
+	next, err := RevisionSelections(after)
+	if err != nil {
+		return err
+	}
+	if privacyOwnership(before) != privacyOwnership(after) || len(old) != len(next) {
+		return errors.New("privacy replay changed oldest ownership or selection")
+	}
+	for i := range old {
+		if old[i].RevisionID != next[i].RevisionID || !old[i].CapturedAt.Equal(next[i].CapturedAt) {
+			return errors.New("privacy replay changed oldest revision role or age")
+		}
+	}
+	return nil
+}
+
+// privacyReplayValidation is ephemeral, exact authorization; it retains no decoded
+// source or persisted chain while the collector transforms revisions sequentially.
+type privacyReplayValidation struct {
+	CommitSHA256 string
+	Prior        PredecessorState
+	PriorSHA256  string
+	Destination  string
+	Admission    string
+}
+
+// CheckPrivacyReplayInput validates the oldest real source and immediate receipt
+// before transformation, then binds their authorization without retaining decoded input.
+func (prior PublicationPredecessor) CheckPrivacyReplayInput(original, root PendingPublication, destination, admission string) (PublicationPredecessor, error) {
+	if err := original.ValidatePublication(); err != nil {
+		return prior, err
+	}
+	if original.Commit.Privacy == nil || original.Commit.Privacy.Authority != PrivacyPending {
+		return prior, errors.New("privacy replay requires a pending privacy receipt")
+	}
+	prior.privacyReplay = nil
+	prior.privacyReplaySource = &root
+	if err := validateOriginalPrivacyTransition(original, prior, destination, admission); err != nil {
+		return PublicationPredecessor{}, err
+	}
+	raw, err := json.Marshal(original.Commit)
+	if err != nil {
+		return PublicationPredecessor{}, err
+	}
+	prior.privacyReplaySource = nil
+	prior.privacyReplay = &privacyReplayValidation{CommitSHA256: publicationSHA256(raw), Prior: prior.State, PriorSHA256: publicationSHA256(prior.Body), Destination: destination, Admission: admission}
+	return prior, nil
+}
+
+func validatePrivacyReplayRoot(root, original PendingPublication, prior PublicationPredecessor, destination, admission string) error {
+	if prior.State == PredecessorPresent && root.Commit.MetadataSHA256 == publicationSHA256(prior.Body) && root.Commit.PolicyContext == prior.PolicyContext {
+		retained := prior.RetainedPrivacy
+		if retained == nil || root.Commit.Privacy == nil || root.Commit.PolicyContext != prior.PolicyContext {
+			return errors.New("privacy replay root lacks exact local selecting receipt")
+		}
+		normalized := *retained
+		normalized.ReplayInput = nil
+		normalized.InputJournalSHA256 = ""
+		if privacyReceiptDigest(&normalized) != privacyReceiptDigest(root.Commit.Privacy) {
+			return errors.New("privacy replay root selecting receipt differs")
+		}
+		return nil
+	}
+	if root.Commit.Predecessor != original.Commit.Predecessor || root.Commit.PredecessorSHA256 != original.Commit.PredecessorSHA256 || root.Commit.Privacy != nil && root.Commit.Privacy.Authority == PrivacyPending {
+		return errors.New("privacy replay root is not the originally authorized transition")
+	}
+	check := prior
+	check.Privacy = root.Commit.Privacy
+	check.SameRevisionContinuity = root.Commit.Continuity
+	return root.validatePublicationPredecessor(check, destination, admission, root.Commit.PolicyContext, root.Commit.Purpose)
 }

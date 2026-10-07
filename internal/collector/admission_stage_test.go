@@ -23,6 +23,7 @@ func stagedPolicyFixture(t *testing.T, mode config.SkillEvidence, extra ...archi
 	t.Helper()
 	return stagedPolicyFixtureWithReservation(t, mode, 0, extra...)
 }
+
 func stagedPolicyFixtureWithReservation(t *testing.T, mode config.SkillEvidence, reserved int64, extra ...archive.SupplementalEvidence) (*state.Store, archive.SessionRegistration) {
 	t.Helper()
 	local := newTestStore(t)

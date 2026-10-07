@@ -197,7 +197,10 @@ The private `privacy` purpose binds complete previous-to-next correspondence to
 raw metadata hashes, deterministic source-set identities, destination, admission
 and policy. Its input authority distinguishes exact committed predecessor,
 immutable admitted stage, and an exact previously sealed authorized pending
-candidate. Pending replay revalidates the original authorized transition. An
+candidate. Pending replay revalidates the original authorized transition. Repeated pending
+rewrites bind that checked authority to the exact immediate receipt before
+releasing the decoded original and transforming the selected revisions. Replay
+correspondence must match every ordered reference in the immediate input body. An
 already remotely selected candidate is verified and recorded locally without
 acknowledging its request or releasing staging, then transformed under current
 policy. An exact original predecessor permits transforming the entire newer
@@ -218,7 +221,9 @@ correspondence plus exact prior receipt and selecting-body digests. Prior receip
 loss or corruption remains actionable pending evidence; no checksum assertion or
 unbounded proof chain can authorize cleanup. Original stage bytes and reservations
 remain until exact remote and atomic local commit, covered request completion,
-then actual cleanup. Newer uncovered request tokens remain queued. RAM-only
+then actual cleanup. Completed release recovery uses verified committed remote
+sources when the original staged payload is already gone. Newer uncovered request
+tokens remain queued. RAM-only
 transformation allocates no scratch payload; the shared atomic pending gate charges
 all actual coexistence and borrows only the exact validated stage future allowance
 under the unchanged aggregate 1 GiB quota.

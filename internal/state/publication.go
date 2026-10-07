@@ -47,6 +47,8 @@ type PublicationPredecessor struct {
 	Bundle                 archive.SourceBundle
 	SameRevisionContinuity *PublicationContinuity
 	Privacy                *PublicationPrivacyEvidence
+	privacyReplaySource    *PendingPublication
+	privacyReplay          *privacyReplayValidation
 	PrivacyPendingSource   *PendingPublication
 	RetainedPrivacy        *PublicationPrivacyEvidence
 	PolicyContext          string
@@ -55,8 +57,8 @@ type PublicationPredecessor struct {
 // PublicationContinuity binds a provider-approved continuation to exact source digests.
 // Filtered equality alone cannot supply this evidence.
 type PublicationContinuity struct {
-	PreviousSourceSHA256 string
-	NextSourceSHA256     string
+	PreviousSourceSHA256 string `json:"PreviousSourceSHA256"`
+	NextSourceSHA256     string `json:"NextSourceSHA256"`
 }
 
 // PublicationSource carries one exact source reference and optional replay bytes.
@@ -153,7 +155,7 @@ func (p PendingPublication) validatePublicationPredecessor(prior PublicationPred
 			return errors.New("publication cannot change committed ownership")
 		}
 		if purpose == PublicationPrivacyRewrite {
-			return validatePrivacyPreparation(p, prior, previous, next, destination, admission, policy)
+			return validatePrivacyPreparation(prior, previous, next, destination, admission)
 		}
 		if previous.History != nil && next.History != nil && previous.History.CurrentRevision == next.History.CurrentRevision && previous.SourceBundle != next.SourceBundle {
 			proof := prior.SameRevisionContinuity
@@ -165,7 +167,7 @@ func (p PendingPublication) validatePublicationPredecessor(prior PublicationPred
 			return err
 		}
 	case PredecessorAbsent, PredecessorUnknown:
-		return p.validateUncommittedPrivacy(prior, destination, admission, policy, purpose)
+		return p.validateUncommittedPrivacy(prior, destination, admission, purpose)
 
 	default:
 		return errors.New("publication predecessor evidence is required")
@@ -312,19 +314,22 @@ func (p *Published) PublicationPredecessor() PublicationPredecessor {
 	if p.state.PredecessorUnknown || len(p.state.MetadataBytes) == 0 || (p.state.Commit != nil && publicationSHA256(p.state.MetadataBytes) != p.state.Commit.MetadataSHA256) {
 		return PublicationPredecessor{State: PredecessorUnknown}
 	}
-	prior := PublicationPredecessor{State: PredecessorPresent, Body: p.state.MetadataBytes, Bundle: bundle}
+	policy := ""
 	if p.state.Commit != nil {
-		prior.PolicyContext = p.state.Commit.PolicyContext
+		policy = p.state.Commit.PolicyContext
+	}
+	var retained *PublicationPrivacyEvidence
+	if p.state.Commit != nil {
 		evidence := p.state.Commit.Privacy
 		if evidence != nil && len(evidence.Sources) > 0 {
 			pending := PendingPublication{Commit: p.state.Commit, MetadataBytes: p.state.MetadataBytes, AdmissionStage: evidence.StageDigest, SkillEvidence: evidence.Sources[0].NewPolicy.Skill}
 			_, sourceErr := p.CommittedSources()
 			if sourceErr == nil && pending.validatePrivacyEvidence() == nil {
-				prior.RetainedPrivacy = evidence
+				retained = evidence
 			}
 		}
 	}
-	return prior
+	return PublicationPredecessor{State: PredecessorPresent, Body: p.state.MetadataBytes, Bundle: bundle, PolicyContext: policy, RetainedPrivacy: retained}
 }
 
 func attachPublication(next publishedState, pending PendingPublication) (publishedState, error) {
@@ -341,9 +346,9 @@ func attachPublication(next publishedState, pending PendingPublication) (publish
 	return next, nil
 }
 
-func (p PendingPublication) validateUncommittedPrivacy(prior PublicationPredecessor, destination, admission, policy string, purpose PublicationPurpose) error {
+func (p PendingPublication) validateUncommittedPrivacy(prior PublicationPredecessor, destination, admission string, purpose PublicationPurpose) error {
 	if purpose == PublicationPrivacyRewrite && prior.Privacy != nil && prior.Privacy.Authority == PrivacyPending {
-		if err := validatePendingPrivacyPreparation(prior, destination, admission, policy); err != nil {
+		if err := validatePendingPrivacyPreparation(prior, destination, admission); err != nil {
 			return err
 		}
 	}

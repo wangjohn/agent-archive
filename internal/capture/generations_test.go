@@ -59,8 +59,22 @@ func TestGenerationChildrenKeepRecordedParent(t *testing.T) {
 			}
 		}
 	}
-	bundle := archive.SourceBundle{SchemaVersion: archive.SourceSchemaVersion, ArchiveSessionID: parentID, NativeSessionID: parent.NativeSessionID, ProjectID: parent.ProjectID, Capture: archive.SourceCapture{Harness: parent.Harness, CapturedAt: at}}
-	if err := statetest.SavePublished(store, parentID, bundle, at, state.CacheStatusPublished); err != nil {
+	bundle := archive.SourceBundle{SchemaVersion: archive.SourceSchemaVersion, ArchiveSessionID: parentID, NativeSessionID: parent.NativeSessionID, ProjectID: parent.ProjectID, Capture: archive.SourceCapture{Harness: parent.Harness, CapturedAt: at, AdapterName: "test", AdapterVersion: "test-v1", FilterVersion: archive.FilterVersion, SourceFormat: "test-jsonl"}}
+	compressed, err := archive.BuildCompressedSource(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceKey, err := archive.SourceObjectKey(bundle, compressed.SHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := archive.SourceReference{Key: sourceKey, SHA256: compressed.SHA256, CompressedBytes: len(compressed.Bytes)}
+	metadata := archive.Metadata{SchemaVersion: archive.MetadataSchemaVersion, SessionID: parentID, NativeSessionID: parent.NativeSessionID, ProjectID: parent.ProjectID, MachineID: "synthetic", StartedAt: parent.SessionStartedAt, CapturedAt: at, MetadataDerivedAt: at, Harness: parent.Harness, FilterVersion: archive.FilterVersion, SourceBundle: ref}
+	raw, err := json.Marshal(metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := statetest.SavePublication(store, parentID, bundle, at, ref, raw); err != nil {
 		t.Fatal(err)
 	}
 	if err := statetest.SaveBlocked(store, parentID, bundle, at, state.BlockedReasonTranscriptRewritten); err != nil {

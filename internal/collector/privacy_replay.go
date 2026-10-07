@@ -27,18 +27,19 @@ func (s pendingSourceStore) Get(ctx context.Context, key string) ([]byte, error)
 	}
 	return s.ObjectStore.Get(ctx, key)
 }
-func (s pendingSourceStore) GetLimited(ctx context.Context, key string, max int64) ([]byte, error) {
+
+func (s pendingSourceStore) GetLimited(ctx context.Context, key string, limit int64) ([]byte, error) {
 	if b, ok := s.payloads[key]; ok {
-		if int64(len(b)) > max {
+		if int64(len(b)) > limit {
 			return nil, storage.ErrObjectTooLarge
 		}
 		return b, ctx.Err()
 	}
 	if getter, ok := s.ObjectStore.(storage.LimitedGetter); ok {
-		return getter.GetLimited(ctx, key, max)
+		return getter.GetLimited(ctx, key, limit)
 	}
 	b, err := s.Get(ctx, key)
-	if int64(len(b)) > max {
+	if int64(len(b)) > limit {
 		return nil, storage.ErrObjectTooLarge
 	}
 	return b, err

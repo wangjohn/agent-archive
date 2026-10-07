@@ -528,11 +528,12 @@ func (s *Store) ReleaseAdmissionStage(reg archive.SessionRegistration, m Admissi
 		}
 	}
 	path, _ := s.stagePath(reg.ArchiveSessionID, ".released")
-	receipt := stageRelease{Digest: reg.AdmissionStage, SourceSHA256: m.SHA256, CoveredToken: coveredToken}
-	if replacement, valid := published.privacyStageSource(reg, m); valid {
-		receipt.ReplacementSHA256 = replacement
-		receipt.SelectingMetadataSHA256 = published.state.Commit.MetadataSHA256
+	replacement, valid := published.privacyStageSource(reg, m)
+	selecting := ""
+	if valid {
+		selecting = published.state.Commit.MetadataSHA256
 	}
+	receipt := stageRelease{Digest: reg.AdmissionStage, SourceSHA256: m.SHA256, CoveredToken: coveredToken, ReplacementSHA256: replacement, SelectingMetadataSHA256: selecting}
 	if err = writeStageRelease(path, receipt); err != nil {
 		return err
 	}
