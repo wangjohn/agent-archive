@@ -106,6 +106,15 @@ func TestExternalRenamePublishesRetainedSourceWithoutReadingTranscript(t *testin
 			if got := fetchMetadata(t, remote, "codex", reg.ArchiveSessionID); got.Name != after.Name {
 				t.Fatal("unavailable cleared last good name")
 			}
+			now = now.Add(time.Hour)
+			provider.label = archive.SessionLabel{State: archive.SessionLabelPresent, Name: " \n    <external_codex_apps_open_page>example</external_codex_apps_open_page>", Source: archive.SessionLabelDatabase, Contract: codex.LabelContract}
+			result, err = Run(context.Background(), local, remote, opts)
+			if err != nil || len(result.Errors) > 0 || len(remote.keys) != 0 {
+				t.Fatalf("unstable name republished: %+v %v %v", result, err, remote.keys)
+			}
+			if got := fetchMetadata(t, remote, "codex", reg.ArchiveSessionID); got.Name != after.Name {
+				t.Fatal("unstable name cleared last good name")
+			}
 		})
 	}
 }

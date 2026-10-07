@@ -10,6 +10,7 @@ func FuzzSessionLabelEvidence(f *testing.F) {
 	for _, seed := range [][3]string{
 		{"01900000-0000-7000-8000-000000000001", "codex-files-159.2-v1", "Prior verified name"},
 		{"fixture-thread", "fixture-provider-v1", "Name\nwith whitespace"},
+		{"fixture-thread", "fixture-provider-v1", " \n    <external_codex_apps_open_page>example</external_codex_apps_open_page>"},
 		{"fixture-thread", "AKIAABCDEFGHIJKLMNOP", "Invented name"},
 		{"fixture-thread", "/private/native/path", "Invented name"},
 		{"fixture-thread", "fixture-provider-v1", "Name sk-proj-abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"},

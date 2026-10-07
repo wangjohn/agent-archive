@@ -29,6 +29,8 @@ verified evidence.
 
 Unavailable observations preserve the last verified name. Confirmed absence
 clears it; an index-only miss cannot clear a previous canonical database name.
+Names whose normalized text cannot remain stable through privacy filtering
+are also unavailable and preserve the last verified name.
 Rename publication uses retained source evidence when the native transcript is
 unchanged or missing, preserving original activity, capture time and retention.
 Attempted publication retries keep their frozen bytes; a newer rename is owed

@@ -70,6 +70,29 @@ func TestPriorSessionLabelContractRemainsReadable(t *testing.T) {
 	}
 }
 
+func TestSessionLabelRejectsUnstableNormalizedMarkup(t *testing.T) {
+	label := SessionLabel{NativeID: "fixture-thread", State: SessionLabelPresent, Source: SessionLabelDatabase, Contract: "fixture-provider-v1"}
+	for _, name := range []string{
+		"    <external_codex_apps_open_page>example</external_codex_apps_open_page>",
+		" \n    <external_codex_apps_open_page>example</external_codex_apps_open_page>",
+		" \t\r\n\t<external_codex_apps_open_page>example</external_codex_apps_open_page>",
+	} {
+		label.Name = name
+		if filtered, ok := FilterSessionLabel(label); ok || filtered != (SessionLabel{}) || label.Fingerprint() != "" {
+			t.Fatalf("unstable normalized name accepted: %+v", filtered)
+		}
+	}
+	label.Name = "Explain external_codex_apps_open_page\nwith examples"
+	filtered, ok := FilterSessionLabel(label)
+	if !ok || filtered.Name != "Explain external_codex_apps_open_page with examples" {
+		t.Fatalf("ordinary name lost: %+v %v", filtered, ok)
+	}
+	again, ok := FilterSessionLabel(filtered)
+	if !ok || again != filtered || filtered.Fingerprint() == "" {
+		t.Fatal("ordinary normalized name did not remain stable")
+	}
+}
+
 func TestSessionLabelGenericOwnershipAndOpaqueContractPrivacy(t *testing.T) {
 	label := SessionLabel{NativeID: "claude-thread-1", State: SessionLabelPresent, Name: "Verified name", Source: SessionLabelIndex, Contract: "synthetic-provider-v1"}
 	at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)

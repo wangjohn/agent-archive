@@ -15,7 +15,8 @@ follow [Semantic Versioning](https://semver.org/).
   0.159.2 settled storage, including verified legacy database/index fallback. Changes publish filtered
   source evidence without renewing activity or retention; unavailable live-WAL
   storage preserves the last verified name. Deferred lookup targets rotate within
-  prioritized homes even after backoff expires. No native process is started.
+  prioritized homes even after backoff expires. Names that cannot remain stable
+  through privacy filtering preserve the last verified name. No native process is started.
 
 
 ### Added

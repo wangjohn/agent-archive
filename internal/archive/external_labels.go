@@ -69,6 +69,13 @@ func FilterSessionLabel(label SessionLabel) (SessionLabel, bool) {
 			name = name[:len(name)-1]
 		}
 	}
+	// Presentation normalization can remove the indentation that made literal
+	// markup safe. Refuse an unstable observation before it enters the cache;
+	// unavailable names preserve the last successful evidence.
+	again, keep := sanitizeValue(name, &state)
+	if !keep || again != name {
+		return SessionLabel{}, false
+	}
 	label.Name = name
 	return label, true
 }
