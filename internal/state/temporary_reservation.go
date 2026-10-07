@@ -81,6 +81,36 @@ func NewTemporaryReservation(s *Store, owner TemporaryOwner, key string) (*Tempo
 // Root returns the individually owned absolute scratch root without creating it.
 func (r *TemporaryReservation) Root() string { return filepath.Join(r.store.home, r.manifest.Root) }
 
+// OpenWorkspace creates and opens only this reservation's owned scratch root
+// through its held home capability, after a positive durable reservation. The
+// caller closes this handle before Close cleans the owned workspace.
+func (r *TemporaryReservation) OpenWorkspace() (*os.Root, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed || r.err != nil || r.bytes <= 0 || r.manifest.Owner != CursorAdmission {
+		return nil, ErrAdmissionStageRecovery
+	}
+	if err := r.checkDirectories(); err != nil {
+		return nil, err
+	}
+	if err := r.root.MkdirAll(r.manifest.Root, 0700); err != nil {
+		return nil, err
+	}
+	before, err := r.root.Lstat(r.manifest.Root)
+	if err != nil || !before.IsDir() || before.Mode()&os.ModeSymlink != 0 {
+		return nil, ErrAdmissionStageRecovery
+	}
+	root, err := r.root.OpenRoot(r.manifest.Root)
+	if err != nil {
+		return nil, err
+	}
+	opened, err := root.Stat(".")
+	if err != nil || !os.SameFile(before, opened) {
+		return nil, errors.Join(ErrAdmissionStageRecovery, root.Close())
+	}
+	return root, nil
+}
+
 // Err returns any retained cleanup or accounting error.
 func (r *TemporaryReservation) Err() error { r.mu.Lock(); defer r.mu.Unlock(); return r.err }
 

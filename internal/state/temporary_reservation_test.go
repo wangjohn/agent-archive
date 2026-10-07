@@ -119,3 +119,46 @@ func TestTemporaryReservationRootEscapeRetainsCharge(t *testing.T) {
 		t.Fatal("lost retained charge", err)
 	}
 }
+
+func TestTemporaryWorkspaceRequiresDurableReservationAndRootConfinement(t *testing.T) {
+	t.Parallel()
+	s, _, _ := stageFixture(t)
+	r, err := NewTemporaryReservation(s, CursorAdmission, "rooted")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	if root, e := r.OpenWorkspace(); e == nil {
+		root.Close()
+		t.Fatal("workspace allocated without reservation")
+	}
+	if err = r.Reserve(4096); err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	parent := filepath.Join(s.Home(), temporaryScratchDir)
+	if err = os.Symlink(outside, parent); err != nil {
+		t.Fatal(err)
+	}
+	if root, e := r.OpenWorkspace(); e == nil {
+		root.Close()
+		t.Fatal("workspace escaped held home")
+	}
+	entries, err := os.ReadDir(outside)
+	if err != nil || len(entries) != 0 {
+		t.Fatal("outside allocated", entries, err)
+	}
+	if err = os.Remove(parent); err != nil {
+		t.Fatal(err)
+	}
+	root, err := r.OpenWorkspace()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = root.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err = r.Close(); err != nil {
+		t.Fatal(err)
+	}
+}

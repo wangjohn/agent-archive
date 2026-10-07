@@ -30,15 +30,23 @@ func ReadRecovery(ctx context.Context, path string, budget agentapi.RecoveryRead
 		return NotChecked(Locked)
 	}
 	return readInPlace(ctx, src, Options{}, func(ctx context.Context, db *sql.DB) error {
-		// Native decoding and payload preflights require one row per exact key.
-		// Explicit collations are outside the known native schema: the decoder's
-		// ordinary selectors must retain exact binary key comparisons.
-		// Keep this scalar schema observation on the same immutable handle.
-		if err := budget.Charge(1, 8); err != nil {
+		if err := validateRecoverySchema(ctx, db, budget); err != nil {
 			return err
 		}
-		var unique bool
-		err := db.QueryRowContext(ctx, `SELECT EXISTS (
+		return read(ctx, db)
+	})
+}
+
+func validateRecoverySchema(ctx context.Context, db *sql.DB, budget agentapi.RecoveryReadBudget) error {
+	// Native decoding and payload preflights require one row per exact key.
+	// Explicit collations are outside the known native schema: the decoder's
+	// ordinary selectors must retain exact binary key comparisons.
+	// Keep this scalar schema observation on the same immutable handle.
+	if err := budget.Charge(1, 8); err != nil {
+		return err
+	}
+	var unique bool
+	err := db.QueryRowContext(ctx, `SELECT EXISTS (
  SELECT 1 FROM pragma_index_list('cursorDiskKV') AS idx
  WHERE idx."unique" = 1 AND idx.partial = 0
  AND EXISTS (SELECT 1 FROM sqlite_schema
@@ -47,14 +55,13 @@ func ReadRecovery(ctx context.Context, path string, budget agentapi.RecoveryRead
  AND EXISTS (SELECT 1 FROM pragma_index_xinfo(idx.name)
  WHERE "key" = 1 AND name = 'key' AND coll = 'BINARY')
 )`).Scan(&unique)
-		if err != nil {
-			return err
-		}
-		if !unique {
-			return NotChecked(UnknownFormat)
-		}
-		return read(ctx, db)
-	})
+	if err != nil {
+		return err
+	}
+	if !unique {
+		return NotChecked(UnknownFormat)
+	}
+	return nil
 }
 
 // ReadRecoveryComposer returns bounded immutable evidence with the existing
@@ -69,53 +76,58 @@ func ReadRecoveryComposer(ctx context.Context, path, id string, rawLimit, record
 			return err
 		}
 		defer func() { err = errors.Join(err, tx.Rollback()) }()
-		value, err := recoveryComposerValue(ctx, tx, id, rawLimit, recordLimit, budget)
-		if err != nil {
-			return err
-		}
-		_, ids, err := decodeHeaders(value)
-		if err != nil {
-			return err
-		}
-		lengths, err := recoveryBubbleLengths(ctx, tx, id, budget)
-		if err != nil {
-			return err
-		}
-		total := int64(len(value))
-		seen := map[string]bool{}
-		prefix := bubblePrefix(id)
-		for _, key := range ids {
-			n, present := lengths[key]
-			if !present {
-				continue
-			}
-			if rawLimit > 0 && n > rawLimit-total {
-				return agentapi.Wrap(agentapi.Limit, agentapi.ErrRawLimit)
-			}
-			total += n
-			if seen[key] {
-				continue
-			}
-			seen[key] = true
-			if recordLimit > 0 && n > recordLimit {
-				return agentapi.Wrap(agentapi.Limit, ErrRecordLimit)
-			}
-			if err := budget.Charge(1, int64(len(prefix+key))+n); err != nil {
-				return err
-			}
-		}
-		found, err := listedBubbles(ctx, tx, id, ids, lengths)
-		if err != nil {
-			return err
-		}
-		c = Composer{Composer: value, Bubbles: make([]Bubble, len(ids))}
-		for i, key := range ids {
-			_, present := lengths[key]
-			c.Bubbles[i] = Bubble{ID: key, Value: found[key], Missing: !present}
-		}
-		return nil
+		c, err = readRecoveryComposerTx(ctx, tx, id, rawLimit, recordLimit, budget)
+		return err
 	})
 	return c, err
+}
+
+func readRecoveryComposerTx(ctx context.Context, tx *sql.Tx, id string, rawLimit, recordLimit int64, budget agentapi.RecoveryReadBudget) (c Composer, err error) {
+	value, err := recoveryComposerValue(ctx, tx, id, rawLimit, recordLimit, budget)
+	if err != nil {
+		return c, err
+	}
+	_, ids, err := decodeHeaders(value)
+	if err != nil {
+		return c, err
+	}
+	lengths, err := recoveryBubbleLengths(ctx, tx, id, budget)
+	if err != nil {
+		return c, err
+	}
+	total := int64(len(value))
+	seen := map[string]bool{}
+	prefix := bubblePrefix(id)
+	for _, key := range ids {
+		n, present := lengths[key]
+		if !present {
+			continue
+		}
+		if rawLimit > 0 && n > rawLimit-total {
+			return c, agentapi.Wrap(agentapi.Limit, agentapi.ErrRawLimit)
+		}
+		total += n
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		if recordLimit > 0 && n > recordLimit {
+			return c, agentapi.Wrap(agentapi.Limit, ErrRecordLimit)
+		}
+		if err := budget.Charge(1, int64(len(prefix+key))+n); err != nil {
+			return c, err
+		}
+	}
+	found, err := listedBubbles(ctx, tx, id, ids, lengths)
+	if err != nil {
+		return c, err
+	}
+	c = Composer{Composer: value, Bubbles: make([]Bubble, len(ids))}
+	for i, key := range ids {
+		_, present := lengths[key]
+		c.Bubbles[i] = Bubble{ID: key, Value: found[key], Missing: !present}
+	}
+	return c, nil
 }
 
 func recoveryComposerValue(ctx context.Context, tx *sql.Tx, id string, rawLimit, recordLimit int64, budget agentapi.RecoveryReadBudget) ([]byte, error) {
