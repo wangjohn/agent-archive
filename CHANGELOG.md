@@ -41,7 +41,9 @@ follow [Semantic Versioning](https://semver.org/).
   available across policy changes. A policy increase can refilter that retained
   evidence after an intermediate reduction, without reopening native input.
   Policy changes also recover from verified committed sources if original-journal
-  cleanup finished before interrupted pending removal.
+  cleanup finished before interrupted pending removal. Maintenance reuses the
+  scan's loaded publication state and refuses a reservation whose home directory
+  was replaced before pending allocation.
 
 - Confirmed imports retain private, filtered evidence before admission, so the
   first upload can finish after native transcripts disappear. Imports use bounded

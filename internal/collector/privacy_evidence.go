@@ -318,7 +318,7 @@ func (s *sessionScan) privacyInputRetiredReferences(p state.PendingPublication) 
 
 // requireNoOrphanPrivacyInput guards all absent-pending maintenance routes.
 func (s *sessionScan) requireNoOrphanPrivacyInput() error {
-	owed, err := s.local.Outstanding(s.reg, false)
+	owed, err := s.published.Outstanding(s.reg, false)
 	if err != nil {
 		return err
 	}

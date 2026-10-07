@@ -19,6 +19,17 @@ func (s *Store) SavePendingWithTemporaryReservation(r *TemporaryReservation, id 
 	if err != nil || canonical != r.store.home || r.closed || r.err != nil || r.manifest.Owner != PublicationPrivacy || r.manifest.Key != id {
 		return ErrAdmissionStageRecovery
 	}
+	// A canonical pathname can be reused for a different home inode after the
+	// reservation was opened. It must still identify the held state authority
+	// before this consumer enters the ordinary single-owner pending writer.
+	held, err := r.root.Stat(".")
+	if err != nil {
+		return ErrAdmissionStageRecovery
+	}
+	current, err := os.Stat(canonical)
+	if err != nil || !os.SameFile(held, current) {
+		return ErrAdmissionStageRecovery
+	}
 	if r.bytes == 0 {
 		if r.manifest.Charged != 0 {
 			return ErrAdmissionStageRecovery
