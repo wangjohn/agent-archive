@@ -37,7 +37,8 @@ func TestGenerationRecoveryRequiresObservedNativeIdentity(t *testing.T) {
 			reg := registration(t, writeTranscript(t, t.TempDir(), "native.jsonl", tc.transcript))
 			reg.Harness.Name = tc.harness
 			at := reg.RegisteredAt.Add(time.Hour)
-			build, err := PrepareGenerationRecovery(t.Context(), reg, at, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", RepoKey: func(string) string { return "" }})
+			build, closePreview, err := PrepareGenerationRecovery(t.Context(), reg, at, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", RepoKey: func(string) string { return "" }})
+			defer closePreview()
 			if tc.refuse {
 				if err == nil || build != nil {
 					t.Fatal("different observed native identity admitted")
@@ -92,7 +93,8 @@ func TestGenerationRecoveryPreservesMismatchAndCapturesNewActivity(t *testing.T)
 				t.Fatal(err)
 			}
 			recoveryAt := at.Add(3 * time.Hour)
-			builder, err := PrepareGenerationRecovery(context.Background(), reg, recoveryAt, opts)
+			builder, closePreview, err := PrepareGenerationRecovery(context.Background(), reg, recoveryAt, opts)
+			defer closePreview()
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -163,7 +165,8 @@ func TestFrozenGenerationPrivacyAndParserMaintenanceNeverReadsNative(t *testing.
 		t.Fatal(err)
 	}
 	reg, _, _ := s.LoadRegistration("session-1")
-	builder, err := PrepareGenerationRecovery(context.Background(), reg, at.Add(2*time.Hour), opts)
+	builder, closePreview, err := PrepareGenerationRecovery(context.Background(), reg, at.Add(2*time.Hour), opts)
+	defer closePreview()
 	if err != nil {
 		t.Fatal(err)
 	}

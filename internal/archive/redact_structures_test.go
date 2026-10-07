@@ -101,7 +101,7 @@ func TestStructuredCredentialLabelsAndPairs(t *testing.T) {
 		map[string]any{"passwords": []any{secret}},
 	} {
 		data, _ := json.Marshal(in)
-		state := sanitizeState{AddGap: func(string, int, string) {}}
+		state := PrivacyState{AddGap: func(string, int, string) {}}
 		out, _ := sanitizeValue(string(data), &state)
 		if s, _ := out.(string); strings.Contains(s, secret) {
 			t.Errorf("%s: secret survived: %s", data, s)
@@ -114,7 +114,7 @@ func TestStructuredCredentialLabelsAndPairs(t *testing.T) {
 		`{"note":"` + secret + `","note":"ok"}`,
 		`[{"a":{"b":"` + secret + `","b":1}}]`,
 	} {
-		state := sanitizeState{AddGap: func(string, int, string) {}}
+		state := PrivacyState{AddGap: func(string, int, string) {}}
 		if out, _ := sanitizeValue(in, &state); strings.Contains(out.(string), secret) {
 			t.Errorf("%s: the duplicate key's first value survived: %v", in, out)
 		}
@@ -128,7 +128,7 @@ func TestStructuredCredentialLabelsAndPairs(t *testing.T) {
 		}
 	}
 	// A label that is not a credential keeps its value.
-	state := sanitizeState{AddGap: func(string, int, string) {}}
+	state := PrivacyState{AddGap: func(string, int, string) {}}
 	keep := `{"headers":[{"name":"Accept","value":"application/json"}],"pair":["Content-Type","text/plain"]}`
 	if out, _ := sanitizeValue(keep, &state); out != keep {
 		t.Errorf("a plain header was changed: %v", out)

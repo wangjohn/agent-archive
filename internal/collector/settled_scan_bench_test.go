@@ -86,6 +86,11 @@ func (s *settledReadStore) Get(ctx context.Context, key string) ([]byte, error) 
 	return s.MemoryStore.Get(ctx, key)
 }
 
+func (s *settledReadStore) GetLimited(ctx context.Context, key string, limit int64) ([]byte, error) {
+	s.recordRead(key)
+	return s.MemoryStore.GetLimited(ctx, key, limit)
+}
+
 func (s *settledReadStore) GetVersioned(ctx context.Context, key string) ([]byte, string, error) {
 	s.recordRead(key)
 	return s.MemoryStore.GetVersioned(ctx, key)

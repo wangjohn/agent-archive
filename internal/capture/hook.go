@@ -40,7 +40,6 @@ type eventOptions struct {
 	repoKey     RepoKeyFunc
 	replay      *archive.Replay
 	gitHead     GitHeadFunc
-	decoders    agentapi.DecodersLookup
 	stat        func(string) (os.FileInfo, error)
 	afterEffect func(effectName) error
 }
@@ -531,6 +530,12 @@ func applyObservation(target *archive.Harness, session agentapi.NativeSession) {
 }
 
 func applyLocator(reg *archive.SessionRegistration, event agentapi.LifecycleEvent) {
+	if reg.CodexBinding != nil {
+		if filepath.IsAbs(event.Source.Path) && len(event.Source.Path) <= 4096 {
+			reg.CodexCandidatePath = event.Source.Path
+		}
+		return
+	}
 	if event.Source.Path == "" || !reg.ReadsTranscriptFile() || reg.Origin == archive.SessionOriginDiscovery {
 		return
 	}
