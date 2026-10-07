@@ -464,18 +464,21 @@ func (c *r2Creator) chooseAccount() error {
 		}
 	}
 	terminal.Println(c.p.out, "Find the Account ID in the Cloudflare dashboard > Storage & databases > R2 > Overview.")
-	for {
-		answer, err := c.p.setupRequired("Cloudflare account ID", "")
+	answer, err := c.p.guidedText(promptModel{Question: "Cloudflare account ID", Label: "Answer", Validate: func(value string) error {
+		_, err := parseR2AccountID(value)
 		if err != nil {
-			return err
+			return fmt.Errorf("that isn't a Cloudflare account ID (%w)", err)
 		}
-		account, e := parseR2AccountID(answer)
-		if e == nil {
-			c.account = account
-			return nil
-		}
-		terminal.Printf(c.p.out, "That isn't a Cloudflare account ID (%v).\n", e)
+		return nil
+	}, ResolveReceipt: func(value string) string {
+		account, _ := parseR2AccountID(value)
+		return "Cloudflare account ID " + account
+	}})
+	if err != nil {
+		return err
 	}
+	c.account, err = parseR2AccountID(answer)
+	return err
 }
 
 // parseR2AccountID reads a 32-character account ID.
@@ -496,7 +499,7 @@ func (c *r2Creator) askBucket() {
 }
 
 func (c *r2Creator) askBucketName(label, def string) (string, error) {
-	name, err := c.p.guidedText(promptModel{Question: label, Label: "Name", Default: def, Receipt: "Bucket", Validate: func(name string) error { return cloudflare.ValidateBucketName(strings.ToLower(name)) }})
+	name, err := c.p.guidedText(promptModel{Question: label, Label: "Name", Default: def, ResolveReceipt: func(name string) string { return "Bucket " + strings.ToLower(name) }, Validate: func(name string) error { return cloudflare.ValidateBucketName(strings.ToLower(name)) }})
 	return strings.ToLower(name), err
 }
 
@@ -510,31 +513,36 @@ func (c *r2Creator) askLocation() error {
 		c.bucket.Jurisdiction, c.bucket.LocationHint = "", ""
 		return nil
 	}
-	for {
-		answer, e := p.setupText("Jurisdiction ("+strings.Join(cloudflare.Jurisdictions, ", ")+"; Enter for none)", "")
-		if e != nil {
-			return e
+	jurisdictionLabel := "Jurisdiction (" + strings.Join(cloudflare.Jurisdictions, ", ") + "; Enter for none)"
+	jurisdiction, err := p.guidedText(promptModel{Question: jurisdictionLabel, Label: "Answer", Validate: func(value string) error {
+		if value != "" && !cloudflare.ValidJurisdiction(strings.ToLower(value)) {
+			return fmt.Errorf("choose one of %s, or press Enter for none", strings.Join(cloudflare.Jurisdictions, ", "))
 		}
-		if answer == "" || cloudflare.ValidJurisdiction(strings.ToLower(answer)) {
-			c.bucket.Jurisdiction = strings.ToLower(answer)
-			break
-		}
-		terminal.Println(p.out, "Choose one of "+strings.Join(cloudflare.Jurisdictions, ", ")+", or press Enter for none.")
+		return nil
+	}, ResolveReceipt: func(value string) string {
+		return "Jurisdiction " + firstNonEmpty(strings.ToLower(value), "none")
+	}})
+	if err != nil {
+		return err
 	}
+	c.bucket.Jurisdiction = strings.ToLower(jurisdiction)
 	if c.bucket.Jurisdiction != "" {
 		terminal.Println(p.out, "A jurisdiction can't be changed later, and the bucket is reached only at "+cloudflare.Endpoint(c.account, c.bucket.Jurisdiction)+".")
 	}
-	for {
-		answer, e := p.setupText("Location hint ("+strings.Join(cloudflare.LocationHints, ", ")+"; Enter for automatic)", "")
-		if e != nil {
-			return e
+	locationLabel := "Location hint (" + strings.Join(cloudflare.LocationHints, ", ") + "; Enter for automatic)"
+	location, err := p.guidedText(promptModel{Question: locationLabel, Label: "Answer", Validate: func(value string) error {
+		if value != "" && !cloudflare.ValidLocationHint(strings.ToLower(value)) {
+			return fmt.Errorf("choose one of %s, or press Enter for automatic", strings.Join(cloudflare.LocationHints, ", "))
 		}
-		if answer == "" || cloudflare.ValidLocationHint(strings.ToLower(answer)) {
-			c.bucket.LocationHint = strings.ToLower(answer)
-			return nil
-		}
-		terminal.Println(p.out, "Choose one of "+strings.Join(cloudflare.LocationHints, ", ")+", or press Enter for automatic.")
+		return nil
+	}, ResolveReceipt: func(value string) string {
+		return "Location hint " + firstNonEmpty(strings.ToLower(value), "automatic")
+	}})
+	if err != nil {
+		return err
 	}
+	c.bucket.LocationHint = strings.ToLower(location)
+	return nil
 }
 
 // createUntilVerified creates the bucket, mints the key, and checks it, and

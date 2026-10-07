@@ -576,7 +576,12 @@ func askSecureChoice(p *prompter, creator BucketCreator, bucket, profile string)
 			return secureChoice(answer), nil
 		}
 		terminal.Println(p.out, "Only delete it if setup just created it: a bucket you already owned under this name isn't yours to delete here.")
-		typed, err := p.setupText("Type the bucket name "+bucket+" to delete it, or press Enter to keep it", "")
+		typed, err := p.guidedText(promptModel{Question: "Type the bucket name " + bucket + " to delete it, or press Enter to keep it", Label: "Answer", ResolveReceipt: func(value string) string {
+			if value == bucket {
+				return "Deletion confirmed for bucket " + bucket
+			}
+			return "Deletion not confirmed; keeping bucket " + bucket
+		}})
 		if err != nil {
 			return secureStop, err
 		}

@@ -59,19 +59,6 @@ func (p *prompter) setupYesNo(question string, def bool) (bool, error) {
 	return setupAffirmed(answer), err
 }
 
-func (p *prompter) setupText(label, def string) (string, error) {
-	return p.guidedText(promptModel{Question: strings.TrimSpace(label), Default: def, Label: "Answer", Receipt: strings.TrimSpace(label)})
-}
-
-func (p *prompter) setupRequired(label, def string) (string, error) {
-	return p.guidedText(promptModel{Question: strings.TrimSpace(label), Default: def, Label: "Answer", Receipt: strings.TrimSpace(label), Validate: func(value string) error {
-		if value == "" {
-			return fmt.Errorf("this value is required")
-		}
-		return nil
-	}})
-}
-
 func (p *prompter) setupRetentionDays(def int) (int, error) {
 	answer, err := p.guidedText(promptModel{Question: "Keep sessions for how many days?", Label: "Days", Default: strconv.Itoa(def), Receipt: "Retention", Validate: func(value string) error {
 		n, e := strconv.Atoi(value)

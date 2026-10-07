@@ -543,7 +543,7 @@ func TestGuidedR2AsksForTheAccountWhenItCannotBeFound(t *testing.T) {
 		g.cf.Fail(cloudflaretest.RouteAccounts, cloudflaretest.Failure{Status: http.StatusForbidden, Message: "not allowed"})
 		input := guidedAnswers(append(append([]string{}, askToken...), append([]string{"short", cloudflaretest.AccountID}, acceptedRest...)...)...)
 		out := g.run(t, input, 0)
-		for _, want := range []string{"Couldn't list your Cloudflare accounts", "isn't allowed to list accounts", "That isn't a Cloudflare account ID", "Cloudflare said: not allowed"} {
+		for _, want := range []string{"Couldn't list your Cloudflare accounts", "isn't allowed to list accounts", "that isn't a Cloudflare account ID", "Cloudflare said: not allowed"} {
 			if !setupContainsText(out, want) {
 				t.Errorf("output lacks %q:\n%s", want, out)
 			}

@@ -813,17 +813,16 @@ func editSetupReview(available []string, p *prompter, draft *setupDraft, userHom
 	case "storage":
 		draft.Step = 1
 	case "prefix":
-		for {
-			prefix, e := p.setupRequired("Folder inside the bucket", draft.Config.Storage.Prefix)
-			if e != nil {
-				return e
+		prefix, e := p.guidedText(promptModel{Question: "Folder inside the bucket", Label: "Answer", Default: draft.Config.Storage.Prefix, Receipt: "Folder inside the bucket", Validate: func(prefix string) error {
+			if _, err := storage.Prefix(prefix, "test"); err != nil || prefix == "" {
+				return fmt.Errorf("use a relative folder name, such as agent-archive/; do not include .. or a leading slash")
 			}
-			if _, e = storage.Prefix(prefix, "test"); e == nil {
-				draft.Config.Storage.Prefix = prefix
-				break
-			}
-			terminal.Println(p.out, "Use a relative folder name, such as agent-archive/; do not include .. or a leading slash.")
+			return nil
+		}})
+		if e != nil {
+			return e
 		}
+		draft.Config.Storage.Prefix = prefix
 	case "region":
 		draft.Config.Storage.Region, err = promptRegion(p, "Bucket region", draft.Config.Storage.Region)
 	}
