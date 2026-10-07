@@ -3,6 +3,7 @@ package backfill
 import (
 	"errors"
 	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
@@ -10,6 +11,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -98,10 +100,11 @@ func TestDurableImportHeaderlessExceptionRequiresDeclaredPolicyAndEmptyReview(t 
 	}
 	for _, harness := range []string{"cursor", "claude-code"} {
 		t.Run(harness, func(t *testing.T) {
-			candidate := Candidate{Harness: harness, NativeSessionID: "native", TranscriptPath: path, StartedAt: fixedNow.Add(-100000000000), reviewedHeader: &agentapi.NativeHeader{Directory: "/changed"}}
+			header := &agentapi.NativeHeader{Directory: "/changed"}
 			if harness == "claude-code" {
-				candidate.reviewedHeader = &agentapi.NativeHeader{}
+				header = &agentapi.NativeHeader{}
 			}
+			candidate := Candidate{Harness: harness, NativeSessionID: "native", TranscriptPath: path, StartedAt: fixedNow.Add(-100000000000), reviewedHeader: header}
 			lookup := missingHeaderSources{SourcesLookup: testSources, ImportsLookup: testSources}
 			reg := archive.SessionRegistration{ArchiveSessionID: "synthetic", NativeSessionID: "native", Harness: archive.Harness{Name: harness}, Origin: archive.SessionOriginImport}
 			if _, err := (Registration{Sources: lookup, AdmittedAt: fixedNow}).materialize(t.Context(), candidate, &reg, nil, nil); err == nil {
@@ -119,4 +122,154 @@ type missingHeaderSources struct {
 func (missingHeaderSources) LookupNativeHeaders(string) (agentapi.NativeHeaderInspector, bool) {
 	return nil, false
 }
+
 func (missingHeaderSources) NativeHeaderAgents() []string { return nil }
+
+type stageReviewChange string
+
+const (
+	reviewUnchanged   stageReviewChange = "unchanged"
+	reviewParent      stageReviewChange = "parent"
+	reviewChild       stageReviewChange = "child"
+	reviewChildren    stageReviewChange = "children"
+	reviewBatch       stageReviewChange = "batch"
+	reviewCreation    stageReviewChange = "creation"
+	reviewPause       stageReviewChange = "pause"
+	reviewReactivated stageReviewChange = "reactivated"
+)
+
+func TestPreparedImportRevalidatesSelectionAndBatchBeforeAdmission(t *testing.T) {
+	for _, change := range []stageReviewChange{reviewUnchanged, reviewParent, reviewChild, reviewChildren, reviewBatch, reviewCreation, reviewPause, reviewReactivated} {
+		t.Run(string(change), func(t *testing.T) {
+			home, project := t.TempDir(), t.TempDir()
+			at, start := fixedNow.UTC(), fixedNow.Add(-100000000000).UTC()
+			cfg := config.Config{DurableImportProtection: true, Archive: archive.Config{Enabled: true, Projects: []archive.ProjectActivation{{ProjectID: archive.ProjectID(project), Root: project, Included: true, ActivatedAt: start}}}}
+			if err := config.Save(home, cfg); err != nil {
+				t.Fatal(err)
+			}
+			store, err := state.Open(home)
+			if err != nil {
+				t.Fatal(err)
+			}
+			parent, child := filepath.Join(project, "parent.jsonl"), filepath.Join(project, "agent-child.jsonl")
+			parentBody, childBody := claudeTranscript("parent", project, start), subagentTranscript("parent", "child", start.Add(1000000000))
+			if err = os.WriteFile(parent, []byte(parentBody), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err = os.WriteFile(child, []byte(childBody), 0600); err != nil {
+				t.Fatal(err)
+			}
+			candidate := Candidate{Harness: "claude-code", NativeSessionID: "parent", TranscriptPath: parent, ProjectRoot: project, StartedAt: start, StartedAtSource: archive.StartedAtSourceTranscript, Subagents: []Subagent{{Path: child, AgentID: "child"}}}
+			reg := Registration{Durable: true, Sources: testSources, Home: home, Store: store, Batch: "synthetic", AdmittedAt: at}
+			work := &parentWork{c: candidate}
+			if err = reg.prepareWork(t.Context(), cfg, work, &RegistrationResult{}); err != nil {
+				t.Fatal(err)
+			}
+			// Simulate a crash before the first registration, then a new review.
+			reg.AdmittedAt = at.Add(1000000000)
+			switch change {
+			case reviewUnchanged:
+				// Keep the exact reviewed selection.
+			case reviewParent:
+				if err = os.WriteFile(parent, []byte(strings.ReplaceAll(parentBody, "please check it", "new selection")), 0600); err != nil {
+					t.Fatal(err)
+				}
+			case reviewChild:
+				if err = os.WriteFile(child, []byte(strings.ReplaceAll(childBody, "looked", "changed selection")), 0600); err != nil {
+					t.Fatal(err)
+				}
+			case reviewChildren:
+				candidate.Subagents = nil
+			case reviewBatch:
+				reg.Batch = "different"
+			case reviewCreation:
+				candidate.sourceAdmissionCurrent = func() bool { return false }
+			case reviewReactivated:
+				cfg.Archive.Projects[0].ActivatedAt = reg.AdmittedAt
+				if err = config.Save(home, cfg); err != nil {
+					t.Fatal(err)
+				}
+			case reviewPause:
+				cfg.Paused = true
+				if err = config.Save(home, cfg); err != nil {
+					t.Fatal(err)
+				}
+			}
+			result, err := reg.Run([]Candidate{candidate})
+			if change == reviewUnchanged {
+				if err != nil || len(result.Sessions) != 1 || len(result.Subagents) != 1 {
+					t.Fatal(result, err)
+				}
+			} else if len(result.Sessions) != 0 {
+				t.Fatalf("changed %s admitted old prepared selection: %+v (%v)", change, result, err)
+			}
+		})
+	}
+}
+
+type childReservationChange string
+
+const (
+	childUnchanged   childReservationChange = "unchanged"
+	childRewrite     childReservationChange = "rewrite"
+	childReactivated childReservationChange = "reactivated"
+)
+
+func TestPreparedChildBeforeParentManifestResumesUnderCurrentConsent(t *testing.T) {
+	for _, change := range []childReservationChange{childUnchanged, childRewrite, childReactivated} {
+		t.Run(string(change), func(t *testing.T) {
+			home, project := t.TempDir(), t.TempDir()
+			at, start := fixedNow.UTC(), fixedNow.Add(-100000000000).UTC()
+			cfg := config.Config{DurableImportProtection: true, Archive: archive.Config{Enabled: true, Projects: []archive.ProjectActivation{{ProjectID: archive.ProjectID(project), Root: project, Included: true, ActivatedAt: start}}}}
+			if err := config.Save(home, cfg); err != nil {
+				t.Fatal(err)
+			}
+			store, err := state.Open(home)
+			if err != nil {
+				t.Fatal(err)
+			}
+			parent, child := filepath.Join(project, "parent.jsonl"), filepath.Join(project, "agent-child.jsonl")
+			childBody := subagentTranscript("parent", "child", start.Add(1000000000))
+			if err = os.WriteFile(parent, []byte(claudeTranscript("parent", project, start)), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err = os.WriteFile(child, []byte(childBody), 0600); err != nil {
+				t.Fatal(err)
+			}
+			candidate := Candidate{Harness: "claude-code", NativeSessionID: "parent", TranscriptPath: parent, ProjectRoot: project, StartedAt: start, StartedAtSource: archive.StartedAtSourceTranscript, Subagents: []Subagent{{Path: child, AgentID: "child"}}}
+			registration := Registration{Durable: true, Sources: testSources, Home: home, Store: store, Batch: "synthetic", AdmittedAt: at}
+			key := agentmeta.SessionKey{Agent: agentmeta.Claude, NativeID: "parent"}
+			id, _, err := store.EnsureArchiveSessionID(key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			work := &parentWork{c: candidate, id: id}
+			if err = registration.prepareChild(t.Context(), cfg, work, key.Agent, registration.registration(candidate, id, ""), candidate.Subagents[0]); err != nil {
+				t.Fatal(err)
+			}
+			// Crash before the parent manifest was prepared, then review again.
+			registration.AdmittedAt = at.Add(1000000000)
+			switch change {
+			case childUnchanged:
+				// Retry the same selected child after interruption.
+			case childRewrite:
+				if err = os.WriteFile(child, []byte(strings.ReplaceAll(childBody, "looked", "new selection")), 0600); err != nil {
+					t.Fatal(err)
+				}
+			case childReactivated:
+				cfg.Archive.Projects[0].ActivatedAt = registration.AdmittedAt
+				if err = config.Save(home, cfg); err != nil {
+					t.Fatal(err)
+				}
+			}
+			result, err := registration.Run([]Candidate{candidate})
+			if change == childUnchanged {
+				if err != nil || len(result.Sessions) != 1 || len(result.Subagents) != 1 {
+					t.Fatal("child-only reservation did not resume", result, err)
+				}
+			} else if len(result.Sessions) != 0 || len(result.Subagents) != 0 {
+				t.Fatal("changed child consent/selection admitted", result, err)
+			}
+		})
+	}
+}

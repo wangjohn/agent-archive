@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"time"
 
@@ -27,6 +28,7 @@ const AdmissionStageFilteredLimit int64 = 64 << 20
 
 // AdmissionStageCompressedLimit bounds one compressed filtered source.
 const AdmissionStageCompressedLimit int64 = 128 << 20
+
 const stageManifestLimit int64 = 1 << 20
 
 // ErrAdmissionStageCapacity leaves the import resumable after admitted groups publish.
@@ -52,9 +54,11 @@ type AdmissionStage struct {
 }
 
 func stageDigest(b []byte) string { d := sha256.Sum256(b); return hex.EncodeToString(d[:]) }
+
 func validStageID(id string) bool {
 	return safeFileComponent(id)
 }
+
 func (s *Store) stagePath(id, suffix string) (string, error) {
 	if !validStageID(id) {
 		return "", ErrAdmissionStageRecovery
@@ -149,33 +153,33 @@ func (s *Store) PrepareAdmissionStage(reg archive.SessionRegistration, bundle ar
 	return stageDigest(encoded), nil
 }
 
-func readStageFile(path string, max int64) ([]byte, error) {
+func readStageFile(path string, limit int64) ([]byte, error) {
 	info, err := os.Lstat(path)
 	if err != nil {
 		return nil, err
 	}
-	if !info.Mode().IsRegular() || info.Size() > max {
+	if !info.Mode().IsRegular() || info.Size() > limit {
 		return nil, ErrAdmissionStageRecovery
 	}
 	root, err := os.OpenRoot(filepath.Dir(path))
 	if err != nil {
 		return nil, err
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 	f, err := root.Open(filepath.Base(path))
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	opened, err := f.Stat()
 	if err != nil || !os.SameFile(info, opened) {
 		return nil, ErrAdmissionStageRecovery
 	}
-	b, err := io.ReadAll(io.LimitReader(f, max+1))
+	b, err := io.ReadAll(io.LimitReader(f, limit+1))
 	if err != nil {
 		return nil, err
 	}
-	if int64(len(b)) > max {
+	if int64(len(b)) > limit {
 		return nil, ErrAdmissionStageRecovery
 	}
 	after, err := os.Lstat(path)
@@ -363,7 +367,7 @@ func CheckAdmissionStageOwnership(reg archive.SessionRegistration, m AdmissionSt
 	if !bytes.Equal(left, right) {
 		return ErrAdmissionStageRecovery
 	}
-	if reg.ArchiveSessionID != r.ArchiveSessionID || reg.NativeSessionID != r.NativeSessionID || reg.ProjectID != r.ProjectID || reg.ProjectRoot != r.ProjectRoot || reg.Harness.Name != r.Harness.Name || reg.DestinationID != r.DestinationID || reg.RepoKey != r.RepoKey || !reg.AdmittedAt.Equal(r.AdmittedAt) || !reg.SessionStartedAt.Equal(r.SessionStartedAt) || reg.ParentSessionID != r.ParentSessionID || reg.ParentNativeSessionID != r.ParentNativeSessionID || reg.SubagentID != r.SubagentID || reg.Origin != r.Origin {
+	if reg.ArchiveSessionID != r.ArchiveSessionID || reg.NativeSessionID != r.NativeSessionID || reg.ProjectID != r.ProjectID || reg.ProjectRoot != r.ProjectRoot || reg.Harness.Name != r.Harness.Name || reg.DestinationID != r.DestinationID || reg.RepoKey != r.RepoKey || !reg.AdmittedAt.Equal(r.AdmittedAt) || !reg.SessionStartedAt.Equal(r.SessionStartedAt) || reg.ParentSessionID != r.ParentSessionID || reg.ParentNativeSessionID != r.ParentNativeSessionID || reg.SubagentID != r.SubagentID || reg.Origin != r.Origin || !reflect.DeepEqual(reg.ImportBatch, r.ImportBatch) || reg.TranscriptPath != r.TranscriptPath || reg.SourceKind != r.SourceKind || reg.SourceKey != r.SourceKey || reg.StartedAtSource != r.StartedAtSource || !reg.RegisteredAt.Equal(r.RegisteredAt) || !reg.SubagentObservedAt.Equal(r.SubagentObservedAt) {
 		return ErrAdmissionStageRecovery
 	}
 	return nil
@@ -568,13 +572,13 @@ func (s *Store) PreparedAdmissionStage(id string) (AdmissionStage, archive.Sourc
 // AdmissionStageContext binds publication to the exact admitted manifest.
 func AdmissionStageContext(reg archive.SessionRegistration) string {
 	body, _ := json.Marshal(struct {
-		Session   string
-		Native    string
-		Project   string
-		Admission string
-		Origin    archive.SessionOrigin
-		Batch     archive.ImportBatch
-		Stage     string
+		Session   string                `json:"Session"`
+		Native    string                `json:"Native"`
+		Project   string                `json:"Project"`
+		Admission string                `json:"Admission"`
+		Origin    archive.SessionOrigin `json:"Origin"`
+		Batch     archive.ImportBatch   `json:"Batch"`
+		Stage     string                `json:"Stage"`
 	}{reg.ArchiveSessionID, reg.NativeSessionID, reg.ProjectID, reg.Admitted().UTC().Format("2006-01-02T15:04:05.999999999Z07:00"), reg.Origin, reg.ImportBatch, reg.AdmissionStage})
 	return stageDigest(body)
 }
@@ -619,7 +623,7 @@ func (s *Store) ResumeAdmissionStageRelease(reg archive.SessionRegistration, p *
 	if err != nil {
 		return true, err
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 	dir, err := root.Open(".")
 	if err != nil {
 		return true, err

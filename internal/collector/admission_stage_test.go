@@ -16,6 +16,7 @@ func stagedFixture(t *testing.T) (*state.Store, archive.SessionRegistration) {
 	t.Helper()
 	return stagedPolicyFixture(t, config.SkillEvidenceBody)
 }
+
 func stagedPolicyFixture(t *testing.T, mode config.SkillEvidence, extra ...archive.SupplementalEvidence) (*state.Store, archive.SessionRegistration) {
 	t.Helper()
 	local := newTestStore(t)
@@ -47,6 +48,7 @@ func stagedPolicyFixture(t *testing.T, mode config.SkillEvidence, extra ...archi
 	}
 	return local, reg
 }
+
 func TestAdmissionStagePublishesAfterDeletionAndPreservesNewerRequest(t *testing.T) {
 	local, reg := stagedFixture(t)
 	before, _, err := local.LoadRequest(reg.ArchiveSessionID)
@@ -77,6 +79,7 @@ func TestAdmissionStagePublishesAfterDeletionAndPreservesNewerRequest(t *testing
 		t.Fatal(released, err)
 	}
 }
+
 func TestAdmissionStageCorruptionNeverFallsBackToNative(t *testing.T) {
 	local, reg := stagedFixture(t)
 	if err := os.WriteFile(filepath.Join(local.Home(), "admission-stages", reg.ArchiveSessionID+".source.gz"), []byte("corrupt"), 0600); err != nil {

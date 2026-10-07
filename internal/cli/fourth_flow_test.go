@@ -273,7 +273,7 @@ func TestFourthHistoricalQualifiedLocatorFlow(t *testing.T) {
 	_, err = backfill.ApplyToConfig(&cfg, plan, at)
 	must(t, err)
 	must(t, config.Save(home, cfg))
-	registration := backfill.Registration{Home: home, Store: local, Batch: "2026-09-01-1", AdmittedAt: at, DestinationID: cfg.DestinationID()}
+	registration := backfill.Registration{Sources: registry, Home: home, Store: local, Batch: "2026-09-01-1", AdmittedAt: at, DestinationID: cfg.DestinationID()}
 	result, err := registration.Run(imported)
 	if err != nil || len(result.Sessions) != 1 {
 		t.Fatalf("historical admission: %+v %v", result, err)

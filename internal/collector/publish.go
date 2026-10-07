@@ -154,26 +154,8 @@ func (s *sessionScan) publishPending(pending state.PendingPublication) (sessionO
 			return outcomeSkipped, fmt.Errorf("complete published request: %w", err)
 		}
 	}
-	if pending.AdmissionStage != "" {
-		released, err := s.local.AdmissionStageReleased(s.reg)
-		if err != nil {
-			return outcomeSkipped, err
-		}
-		if !released {
-			resumed, err := s.local.ResumeAdmissionStageRelease(s.reg, s.published)
-			if err != nil {
-				return outcomeSkipped, err
-			}
-			if !resumed {
-				manifest, _, err := s.local.ReadAdmissionStage(s.id(), pending.AdmissionStage)
-				if err != nil {
-					return outcomeSkipped, err
-				}
-				if err = s.local.ReleaseAdmissionStage(s.reg, manifest, s.published, pending.RequestToken); err != nil {
-					return outcomeSkipped, err
-				}
-			}
-		}
+	if err := s.releasePendingStage(pending); err != nil {
+		return outcomeSkipped, err
 	}
 	if err := s.local.RemovePending(s.id()); err != nil {
 		return outcomeSkipped, err
@@ -291,5 +273,30 @@ func (s *sessionScan) bindPublicationContinuity(prior *state.PublicationPredeces
 		return errors.New("native retained comparator refused same revision continuation")
 	}
 	prior.SameRevisionContinuity = &state.PublicationContinuity{PreviousSourceSHA256: previous.SourceBundle.SHA256, NextSourceSHA256: pending.SourceSHA256}
+	return nil
+}
+
+func (s *sessionScan) releasePendingStage(pending state.PendingPublication) error {
+	if pending.AdmissionStage != "" {
+		released, err := s.local.AdmissionStageReleased(s.reg)
+		if err != nil {
+			return err
+		}
+		if !released {
+			resumed, err := s.local.ResumeAdmissionStageRelease(s.reg, s.published)
+			if err != nil {
+				return err
+			}
+			if !resumed {
+				manifest, _, err := s.local.ReadAdmissionStage(s.id(), pending.AdmissionStage)
+				if err != nil {
+					return err
+				}
+				if err = s.local.ReleaseAdmissionStage(s.reg, manifest, s.published, pending.RequestToken); err != nil {
+					return err
+				}
+			}
+		}
+	}
 	return nil
 }

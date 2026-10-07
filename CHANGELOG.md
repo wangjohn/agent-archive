@@ -37,6 +37,8 @@ follow [Semantic Versioning](https://semver.org/).
 - Confirmed imports retain private, filtered evidence before admission, so the
   first upload can finish after native transcripts disappear. Imports use bounded
   groups and disk capacity, and preserve later hook requests during retries.
+  Admission rechecks pause and activation policy, binds the reviewed retained
+  prefix, and verifies prepared evidence against the current batch and child group.
   Settled Cursor databases can use read-only staging; live databases stay
   unadmitted pending bounded snapshot support. Protected configuration refuses
   older writers that cannot preserve durable imports.

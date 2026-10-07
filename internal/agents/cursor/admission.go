@@ -17,7 +17,7 @@ func (p SourceProvider) OpenAdmissionPass(ctx context.Context, e agentapi.Source
 		return nil, err
 	}
 	if ref.Kind == archive.SourceKindFile {
-		return sourceio.FileProvider{}.OpenPass(ctx, e)
+		return sourceio.FileProvider{}.OpenAdmissionPass(ctx, e, ref)
 	}
 	pass, err := p.OpenPass(ctx, e)
 	if err != nil {
@@ -43,6 +43,9 @@ func (p *admissionPass) Read(ctx context.Context, ref agentapi.SourceRef, l agen
 	}
 	if ref != p.ref {
 		return nil, errors.New("cursor admission source binding changed")
+	}
+	if p.budget == nil {
+		return nil, errors.New("cursor admission requires a shared payload budget")
 	}
 	if p.failed != nil {
 		return nil, p.failed
@@ -81,8 +84,8 @@ func (p *admissionPass) Read(ctx context.Context, ref agentapi.SourceRef, l agen
 		})
 	}, liveWorkspace...)
 	if err != nil {
-		p.failed = err
-		return nil, err
+		p.failed = errors.Join(errors.New("cursor import remains unadmitted; review changed input or settle the database and retry"), err)
+		return nil, p.failed
 	}
 	chatSnapshot := &chatSnapshot{owner: owner, composer: c}
 	owner.live[chatSnapshot] = true
@@ -93,6 +96,7 @@ func (p *admissionPass) Read(ctx context.Context, ref agentapi.SourceRef, l agen
 	}
 	return &admissionSnapshot{SourceSnapshot: snapshot, chat: native.chat}, nil
 }
+
 func (p *admissionPass) Signature(context.Context, agentapi.SourceRef) (agentapi.SourceObservation, error) {
 	return agentapi.SourceObservation{}, errors.New("admission reads require the complete immutable snapshot")
 }
@@ -102,8 +106,10 @@ type admissionBudget struct {
 	bytes int64
 }
 
-func (b *admissionBudget) RemainingRows() int    { return b.rows }
+func (b *admissionBudget) RemainingRows() int { return b.rows }
+
 func (b *admissionBudget) RemainingBytes() int64 { return b.bytes }
+
 func (b *admissionBudget) Charge(rows int, bytes int64) error {
 	if rows < 0 || bytes < 0 || rows > b.rows || bytes > b.bytes {
 		return errors.New("cursor admission evidence capacity exhausted")

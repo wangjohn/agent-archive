@@ -13,8 +13,10 @@ import (
 
 type stageAdapter struct{}
 
-func (stageAdapter) Name() string    { return "claude-code" }
+func (stageAdapter) Name() string { return "claude-code" }
+
 func (stageAdapter) Version() string { return "synthetic" }
+
 func stageFixture(t *testing.T) (*Store, archive.SessionRegistration, archive.SourceBundle) {
 	t.Helper()
 	s, err := Open(t.TempDir())
@@ -29,6 +31,7 @@ func stageFixture(t *testing.T) (*Store, archive.SessionRegistration, archive.So
 	}
 	return s, reg, b
 }
+
 func TestAdmissionStageCorruptionAndPreparedManifestNeverAdmit(t *testing.T) {
 	s, reg, b := stageFixture(t)
 	digest, err := s.PrepareAdmissionStage(reg, b, "none", reg.AdmittedAt)
@@ -56,6 +59,7 @@ func TestAdmissionStageCorruptionAndPreparedManifestNeverAdmit(t *testing.T) {
 		t.Fatal("corruption quarantined evidence", e)
 	}
 }
+
 func TestAdmissionStageQuotaIncludesPendingAndLeavesReservationUnadmitted(t *testing.T) {
 	s, reg, b := stageFixture(t)
 	path := filepath.Join(s.Home(), "pending", "synthetic-large.json")
@@ -262,5 +266,59 @@ func TestAdmissionStageReleaseJournalDetectsValidJSONCorruption(t *testing.T) {
 	}
 	if _, err = s.AdmissionStageReleased(reg); !errors.Is(err, ErrAdmissionStageRecovery) {
 		t.Fatal("completion corruption accepted", err)
+	}
+}
+
+type stageOwnershipField string
+
+const (
+	ownershipBatch            stageOwnershipField = "batch"
+	ownershipPath             stageOwnershipField = "path"
+	ownershipKind             stageOwnershipField = "kind"
+	ownershipKey              stageOwnershipField = "key"
+	ownershipProvenance       stageOwnershipField = "provenance"
+	ownershipRegistered       stageOwnershipField = "registered"
+	ownershipChildObservation stageOwnershipField = "child-observation"
+	ownershipResolution       stageOwnershipField = "resolution"
+)
+
+func TestAdmittedStageFreezesBatchSourceAndCreationProvenance(t *testing.T) {
+	for _, field := range []stageOwnershipField{ownershipBatch, ownershipPath, ownershipKind, ownershipKey, ownershipProvenance, ownershipRegistered, ownershipChildObservation, ownershipResolution} {
+		t.Run(string(field), func(t *testing.T) {
+			s, reg, b := stageFixture(t)
+			reg.ProjectResolution = &archive.ProjectResolution{Root: reg.ProjectRoot, Context: "reviewed"}
+			digest, err := s.PrepareAdmissionStage(reg, b, "none", reg.AdmittedAt)
+			if err != nil {
+				t.Fatal(err)
+			}
+			reg.AdmissionStage = digest
+			if err = s.SaveRegistration(reg); err != nil {
+				t.Fatal(err)
+			}
+			_, err = s.UpdateRegistration(reg.ArchiveSessionID, func(r *archive.SessionRegistration) error {
+				switch field {
+				case ownershipBatch:
+					r.ImportBatch = archive.NewImportBatch("different")
+				case ownershipPath:
+					r.TranscriptPath = "/different"
+				case ownershipKind:
+					r.SourceKind = archive.SourceKindCursorSQLite
+				case ownershipKey:
+					r.SourceKey = "different"
+				case ownershipProvenance:
+					r.StartedAtSource = archive.StartedAtSourceFileCreated
+				case ownershipRegistered:
+					r.RegisteredAt = r.RegisteredAt.Add(time.Second)
+				case ownershipResolution:
+					r.ProjectResolution.Context = "changed"
+				case ownershipChildObservation:
+					r.SubagentObservedAt = r.AdmittedAt
+				}
+				return nil
+			})
+			if err == nil {
+				t.Fatalf("mutable staged %s: %v", field, err)
+			}
+		})
 	}
 }

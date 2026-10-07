@@ -133,6 +133,8 @@ const (
 // It holds paths and native IDs for the import step; nothing here is ever
 // printed.
 type Candidate struct {
+	reviewedPrefix         string
+	reviewedRecords        int
 	sourceAdmissionCurrent func() bool
 	reviewedChat           *agentapi.DatabaseChat
 	reviewedHeader         *agentapi.NativeHeader
