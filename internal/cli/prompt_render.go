@@ -433,7 +433,18 @@ func (m promptModel) number(i int) int {
 // Emoji presentation and joined clusters vary between terminals. Their existing
 // visible widths still guide formatting, but cannot justify erasing owned rows.
 func ambiguousPromptWidth(text string) bool {
-	return strings.ContainsAny(text, "\u200d\ufe0f")
+	return strings.IndexFunc(text, func(r rune) bool {
+		// Composed emoji and Hangul can occupy fewer cells than the sum of
+		// their runes. Spacing marks and text/emoji selectors also depend on
+		// terminal shaping. Preserve history when rune counts cannot prove it.
+		return r == '\u200d' || r == '\ufe0e' || r == '\ufe0f' || r == '\u20e3' ||
+			(r >= '\U0001f3fb' && r <= '\U0001f3ff') ||
+			(r >= '\U0001f1e6' && r <= '\U0001f1ff') ||
+			(r >= '\u1100' && r <= '\u11ff') ||
+			(r >= '\ua960' && r <= '\ua97f') ||
+			(r >= '\ud7b0' && r <= '\ud7ff') || unicode.Is(unicode.Mc, r) ||
+			(unicode.IsControl(r) && r != '\n')
+	}) >= 0
 }
 
 func receiptText(s string) string {
@@ -466,7 +477,7 @@ func (p *prompter) guidedRead(read func(*bufio.Reader) (string, error)) (string,
 	}
 	raw, err := read(p.in)
 	changed := signalled(changes)
-	if err != nil && (!errors.Is(err, io.EOF) || raw == "") {
+	if err != nil && (!errors.Is(err, io.EOF) || strings.TrimSpace(raw) == "") {
 		if errors.Is(err, io.EOF) {
 			return "", true, fmt.Errorf("no more input: %w", err)
 		}
