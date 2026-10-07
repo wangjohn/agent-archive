@@ -282,9 +282,8 @@ func (s *sessionScan) refreshLabels() (sessionOutcome, bool, error) {
 	}
 	// The narrow summary is only a lookup fast path. Before source-backed
 	// publication, verify all retained bytes against the committed reference.
-	compressed, err := archive.BuildCompressedSource(last.bundle)
-	if err != nil || compressed.SHA256 != last.metadata.SourceBundle.SHA256 || len(compressed.Bytes) != last.metadata.SourceBundle.CompressedBytes {
-		return outcomeSkipped, true, errors.New("retained source cannot be verified for session name refresh")
+	if err := s.verifyLabelSource(last.bundle, last.metadata.SourceBundle); err != nil {
+		return outcomeSkipped, true, err
 	}
 	candidate := last.bundle
 	candidate.SupplementalEvidence = s.applyLabels(candidate.SupplementalEvidence)
@@ -299,6 +298,21 @@ func (s *sessionScan) refreshLabels() (sessionOutcome, bool, error) {
 	}
 	outcome, err := s.publish(sourceRead{observed: *observed}, candidate)
 	return outcome, true, err
+}
+
+// Verification output ends before rendering the renamed source. Both compression
+// passes reserve their scratch and output through the shared retained ledger.
+func (s *sessionScan) verifyLabelSource(bundle archive.SourceBundle, reference archive.SourceReference) error {
+	mark := len(s.retainedReleases)
+	defer s.releaseRetainedAfter(mark)
+	compressed, err := s.compressSource(bundle)
+	if err != nil {
+		return err
+	}
+	if compressed.SHA256 != reference.SHA256 || len(compressed.Bytes) != reference.CompressedBytes {
+		return errors.New("retained source cannot be verified for session name refresh")
+	}
+	return nil
 }
 
 func (s *sessionScan) publishedLabel() string {
