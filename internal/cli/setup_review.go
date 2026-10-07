@@ -420,7 +420,7 @@ func showSetupReviewDetails(p *prompter, env Env, errOut io.Writer) error {
 	details.now = p.now
 	renderSetupReview(details, p.reviewModel, true)
 	release := p.suspendPrompts(true)
-	err := withPager(context.Background(), p.out, errOut, env, false, func(w io.Writer) error { _, e := w.Write(out.Bytes()); return e })
+	err := withPager(context.Background(), underlyingWriter(p.out), errOut, env, false, func(w io.Writer) error { _, e := w.Write(out.Bytes()); return e })
 	release()
 	return err
 }
