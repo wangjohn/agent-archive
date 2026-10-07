@@ -39,6 +39,7 @@ func retainedCleanup(t *testing.T) (*sweeper, archive.SessionRegistration, archi
 	s := &sweeper{ctx: t.Context(), local: local, store: remote, opts: agreeing(Options{Now: func() time.Time { return now }, PrivacyVerified: func(archive.SessionRegistration, archive.Metadata) bool { return true }}), now: now, result: Result{Errors: map[string]error{}}, metadataSHA: storage.SHA256Hex(raw)}
 	return s, reg, m, keys
 }
+
 func cleanupLedger(keys []string, now time.Time) []state.SupersededSource {
 	entries := []state.SupersededSource{}
 	for _, key := range keys {
@@ -46,6 +47,7 @@ func cleanupLedger(keys []string, now time.Time) []state.SupersededSource {
 	}
 	return entries
 }
+
 func TestRetainedCleanupProtectsFullUnionAndRetiresAllObsoletePrivacyKeys(t *testing.T) {
 	s, reg, m, keys := retainedCleanup(t)
 	if err := s.deleteSuperseded(reg, cleanupLedger(keys, s.now), m); err != nil {
@@ -65,6 +67,7 @@ func TestRetainedCleanupProtectsFullUnionAndRetiresAllObsoletePrivacyKeys(t *tes
 		}
 	}
 }
+
 func TestRetainedCleanupMissingPreservedSourceHoldsEveryObsoleteKey(t *testing.T) {
 	s, reg, m, keys := retainedCleanup(t)
 	if err := s.store.Delete(t.Context(), keys[1]); err != nil {
@@ -79,6 +82,7 @@ func TestRetainedCleanupMissingPreservedSourceHoldsEveryObsoleteKey(t *testing.T
 		}
 	}
 }
+
 func TestRetainedCleanupSelectingMetadataChangeHoldsPrivacyKeys(t *testing.T) {
 	s, reg, m, keys := retainedCleanup(t)
 	m.Title = "new selecting winner"

@@ -33,6 +33,7 @@ func TestHistoryWriterFenceComposesAndStaysSticky(t *testing.T) {
 		}
 	}
 }
+
 func TestHistoryWriterRejectsMarkerWithoutCapability(t *testing.T) {
 	var cfg Config
 	if err := json.Unmarshal([]byte(`{"schema_version":{"version":6,"writer":"history-lifecycle-v6"}}`), &cfg); err == nil {

@@ -51,6 +51,7 @@ type Store struct {
 	onDeletionBeforeCommit func() error
 	onDeletionCleanup      func() error
 	onDeletionSync         func() error
+	onLocalDeletionSync    func(string) error
 
 	// quotaRoot confines a reservation's accounting reads to its held home.
 	quotaRoot *os.Root

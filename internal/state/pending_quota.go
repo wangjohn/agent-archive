@@ -12,7 +12,7 @@ import (
 
 func (s *Store) savePendingQuota(id string, p PendingPublication, required bool) error {
 	if !required {
-		for _, dir := range []string{admissionStageDir, temporaryReservationDir, temporaryScratchDir, publicationEvidenceDir} {
+		for _, dir := range []string{admissionStageDir, temporaryReservationDir, temporaryScratchDir, publicationEvidenceDir, "session-deletions"} {
 			present, e := s.quotaDirectoryHasEntries(filepath.Join(s.home, dir))
 			if e != nil {
 				return e

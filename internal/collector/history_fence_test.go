@@ -61,7 +61,7 @@ func TestHistoryCachedStateRefusesMaintenanceBeforeWrites(t *testing.T) {
 	if e := p.Save(b, time.Now(), state.CacheStatusPublished); e != nil {
 		t.Fatal(e)
 	}
-	s := sessionScan{published: p}
+	s := sessionScan{local: local, reg: registration(t, "/synthetic/native.jsonl"), published: p}
 	if _, e := s.run(); !errors.Is(e, archive.ErrHistoryMutationPending) {
 		t.Fatalf("cached history maintenance: %v", e)
 	}

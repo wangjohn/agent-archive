@@ -264,7 +264,7 @@ func (s *Store) hasWork(archiveSessionID string) (bool, error) {
 		if err != nil {
 			return true, err
 		}
-		if have && j.CoveredRequest && j.Phase != "restored" && j.Phase != "restoring" {
+		if have && j.CoveredRequest && j.Phase != DeletionRestored && j.Phase != DeletionRestoring {
 			req, haveReq, err := s.LoadRequest(archiveSessionID)
 			if err != nil {
 				return true, err
@@ -476,6 +476,7 @@ func (s *Store) forgetSession(archiveSessionID string, key agentmeta.SessionKey,
 		s.scanSignaturePath(archiveSessionID),
 		s.supersededPath(archiveSessionID),
 		s.refreshSkipPath(archiveSessionID),
+		filepath.Join(s.home, listingRepairDir, archiveSessionID+".json"),
 		filepath.Join(s.SessionDir(archiveSessionID), "verification.json"),
 	}
 
@@ -571,7 +572,10 @@ func (s *Store) prepareForgetEvidence(archiveSessionID string, key agentmeta.Ses
 }
 
 func (s *Store) orphanStems(directory string) ([]string, error) {
-	if directory == admissionStageDir || directory == "session-deletions" {
+	if directory == admissionStageDir {
+		return s.deletionOrphanStems(directory)
+	}
+	if directory == "session-deletions" {
 		return s.deletionOrphanStems(directory)
 	}
 	return s.listJSONStems(directory)
@@ -586,7 +590,7 @@ func (s *Store) keepNewerDeletionWork(id string) (bool, error) {
 	if err != nil {
 		return true, err
 	}
-	if !found || j.Reason != RemovalReasonRetention || j.Phase == "restored" {
+	if !found || j.Reason != RemovalReasonRetention || j.Phase == DeletionRestored {
 		return false, nil
 	}
 	req, have, err := s.LoadRequest(id)

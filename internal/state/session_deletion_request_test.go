@@ -124,10 +124,10 @@ func TestRetentionIntentDirectorySyncFailureNeverReportsDurableSuccess(t *testin
 	}
 	s.onDeletionSync = nil
 	j, found, err := s.LoadSessionDeletion(reg)
-	if err != nil || !found || j.Phase != "prepared" {
+	if err != nil || !found || j.Phase != DeletionPrepared {
 		t.Fatal("sync failure implied deletion", j, err)
 	}
-	if err := s.AdvanceSessionDeletion(reg, "deleting"); err != nil {
+	if err := s.AdvanceSessionDeletion(reg, DeletionDeleting); err != nil {
 		t.Fatal("fresh durable retry failed", err)
 	}
 }

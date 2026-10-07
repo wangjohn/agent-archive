@@ -674,7 +674,7 @@ func (s *sweeper) resumeDeletion(reg archive.SessionRegistration) (bool, error) 
 	if err != nil {
 		return true, err
 	}
-	if !found || j.Phase == "restored" || j.Phase == "restoring" {
+	if !found || j.Phase == state.DeletionRestored || j.Phase == state.DeletionRestoring {
 		return false, nil
 	}
 	if j.LocalRemoved {
@@ -700,7 +700,11 @@ func (s *sweeper) resumeDeletion(reg archive.SessionRegistration) (bool, error) 
 	key := agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(reg.Harness.Name)), NativeID: reg.NativeSessionID}
 	forgotten, err := s.local.ForgetIdleSession(reg.ArchiveSessionID, key, j.Reason == state.RemovalReasonRetention, &state.RemovalRecord{Harness: reg.Harness.Name, Reason: j.Reason, At: j.At})
 	if forgotten {
-		s.result.DeletedSessions = append(s.result.DeletedSessions, reg.ArchiveSessionID)
+		if j.MetadataSHA256 == "" {
+			s.result.PrunedSessions = append(s.result.PrunedSessions, reg.ArchiveSessionID)
+		} else {
+			s.result.DeletedSessions = append(s.result.DeletedSessions, reg.ArchiveSessionID)
+		}
 	}
 	return true, err
 }

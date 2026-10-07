@@ -59,6 +59,7 @@ func openDeletionDirectoryAt(root *os.Root, create bool) (_ *os.Root, err error)
 	}
 	return dir, nil
 }
+
 func (s *Store) readDeletionFile(id string) (out []byte, err error) {
 	dir, err := s.openDeletionDirectory(false)
 	if err != nil {
@@ -92,9 +93,11 @@ func (s *Store) readDeletionFile(id string) (out []byte, err error) {
 	}
 	return out, nil
 }
+
 func (s *Store) writeDeletionFile(id string, raw []byte) error {
 	return s.writeDeletionFileChecked(id, raw, nil)
 }
+
 func (s *Store) writeDeletionFileChecked(id string, raw []byte, check func() error) (err error) {
 	if int64(len(raw)) > deletionControlLimit {
 		return ErrAdmissionStageCapacity
