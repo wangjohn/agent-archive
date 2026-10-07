@@ -178,6 +178,7 @@ func gitOrSkip(t *testing.T) string {
 		t.Skip("git is not installed")
 	}
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
 	t.Setenv("GIT_CONFIG_SYSTEM", "/dev/null")
 	return git

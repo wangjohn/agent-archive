@@ -148,7 +148,7 @@ type Candidate struct {
 	ProjectRoot              string
 	ProjectResolution        *archive.ProjectResolution
 	projectResolutionCurrent func() bool
-	projectResolutionReset   func()
+	projectResolutionReset   func(context.Context)
 	ProjectKind              ProjectKind
 	// ProjectIncluded is set when the root is a configured, included
 	// project; otherwise importing adds it.
