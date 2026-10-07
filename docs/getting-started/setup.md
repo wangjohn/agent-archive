@@ -572,7 +572,7 @@ from loading its own job into your real launchd or systemd user manager: stub
 
 ## After setup
 
-After "Configuration saved.", setup says, with one line per app, what to do next:
+After "Setup complete", setup says, with one line per app, what to do next:
 
 - **Codex:** start a supported new task within the reviewed Codex scope: an included
   project in included-project mode, or any non-excluded project in all-projects mode.
@@ -610,8 +610,19 @@ sessions of the projects you chose, when they have some on this machine that
 aren't in the archive yet:
 
 ```text
+Optional · Import past sessions
+
 Looking for past sessions in these projects… 214 found.
-Import the 214 past sessions from these projects? [Y/n]
+
+? Import these sessions?
+
+  Found 214 sessions in 3 selected projects.
+  90-day retention applies.
+
+  1) Import 214 sessions (default)
+  2) Skip for now
+
+› Choose [1]:
 ```
 
 Yes runs the same import as `agent-archive backfill --project DIR` for each
