@@ -177,6 +177,23 @@ transformation allocates no scratch payload; the shared atomic pending gate char
 all actual coexistence and borrows only the exact validated stage future allowance
 under the unchanged aggregate 1 GiB quota.
 
+Unuploaded original replay bytes remain durably recoverable until that exact local
+successor commit. A bounded per-session `publication-evidence/<id>/journal.json`
+retains one oldest sealed original plus immediate/prepared successor bindings;
+its actual bytes, atomic coexistence, control overhead and orphan temporary files
+are charged under shared quota. Before pending replacement, originals already
+resolvable from an immutable stage or verified checksum-addressed remote objects
+may instead use bounded embedded exact authority/metadata bytes. Their backing
+objects are reverified on replay. Missing/corrupt journals, vanished or unreadable
+backing objects, or insufficient quota preserve pending work rather than uploading
+obsolete bytes or reopening native sources. `HasPending` observes confined evidence
+directories without reading bodies, so corruption/orphan files remain visible to
+work status, generation guards and removal checks even if pending is absent.
+Absent pending plus retained evidence requires explicit successor restoration.
+Journal cleanup validates exact selecting local metadata and the full source set;
+remote PUT alone never authorizes release. Explicit authoritative deletion and
+orphan restoration remain responsibilities of the later lifecycle milestone.
+
 Generation recovery journals exact prior committed metadata/source-set authority
 before fencing routing. An admitted predecessor must have completed its verified
 stage release. The successor clears only old-stage linkage, preserves admission

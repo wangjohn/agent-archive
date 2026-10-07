@@ -852,7 +852,7 @@ func (s *Store) HasPending(id string) (bool, error) {
 	}
 	_, err := os.Stat(s.pendingPath(id))
 	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
+		return s.hasPublicationEvidence(id)
 	}
 	if err != nil {
 		return false, fmt.Errorf("stat pending publication %q: %w", id, err)

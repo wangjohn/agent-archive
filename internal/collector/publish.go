@@ -109,34 +109,10 @@ func (s *sessionScan) publishPending(pending state.PendingPublication) (sessionO
 	} else {
 		listingPublished = true
 	}
-	// Record only references absent from the complete next set. Preserved revisions
-	// stay live; privacy-sensitive predecessor ledger failure keeps replay evidence.
-	priorBundle, _, havePrior := s.published.LastPublished()
-	previous, err := s.published.CommittedSources()
-	if err != nil {
+	if err := s.recordPublicationRetirement(pending); err != nil {
 		return outcomeSkipped, err
 	}
-	for _, ref := range pending.PrivacyRetiredSources() {
-		if !slices.Contains(previous, ref) {
-			previous = append(previous, ref)
-		}
-	}
-	selected := map[string]bool{}
-	for _, source := range pending.Sources {
-		selected[source.Reference.Key] = true
-	}
-	for _, previous := range previous {
-		if selected[previous.Key] {
-			continue
-		}
-		privacySensitive := pending.Commit.Purpose == state.PublicationPrivacyRewrite || havePrior && priorBundle.Capture.FilterVersion != pending.Bundle.Capture.FilterVersion
-		if err := s.local.RecordSupersededWithPrivacy(s.id(), previous.Key, s.now, privacySensitive); err != nil {
-			if privacySensitive {
-				return outcomeSkipped, fmt.Errorf("record privacy-sensitive predecessor: %w", err)
-			}
-			s.warn(fmt.Errorf("record superseded source for cleanup: %w", err))
-		}
-	}
+
 	// Verify once more after listing/ledger work before committing local authority.
 	body, err = storage.ReadPublicationMetadata(s.ctx, s.remote, pending.MetadataKey)
 	if err != nil {
@@ -309,6 +285,42 @@ func (s *sessionScan) releasePublishedStage(pending state.PendingPublication) er
 					return err
 				}
 			}
+		}
+	}
+	return nil
+}
+
+func (s *sessionScan) recordPublicationRetirement(pending state.PendingPublication) error {
+	// Record only references absent from the complete next set. Preserved revisions
+	// stay live; privacy-sensitive predecessor ledger failure keeps replay evidence.
+	priorBundle, _, havePrior := s.published.LastPublished()
+	previous, err := s.published.CommittedSources()
+	if err != nil {
+		return err
+	}
+	originalRefs, err := s.privacyInputRetiredReferences(pending)
+	if err != nil {
+		return err
+	}
+	for _, ref := range append(pending.PrivacyRetiredSources(), originalRefs...) {
+		if !slices.Contains(previous, ref) {
+			previous = append(previous, ref)
+		}
+	}
+	selected := map[string]bool{}
+	for _, source := range pending.Sources {
+		selected[source.Reference.Key] = true
+	}
+	for _, previous := range previous {
+		if selected[previous.Key] {
+			continue
+		}
+		privacySensitive := pending.Commit.Purpose == state.PublicationPrivacyRewrite || havePrior && priorBundle.Capture.FilterVersion != pending.Bundle.Capture.FilterVersion
+		if err := s.local.RecordSupersededWithPrivacy(s.id(), previous.Key, s.now, privacySensitive); err != nil {
+			if privacySensitive {
+				return fmt.Errorf("record privacy-sensitive predecessor: %w", err)
+			}
+			s.warn(fmt.Errorf("record superseded source for cleanup: %w", err))
 		}
 	}
 	return nil

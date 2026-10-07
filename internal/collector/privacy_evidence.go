@@ -47,7 +47,7 @@ func (s *sessionScan) readPrivacyInputJournal() (privacyInputJournal, []byte, er
 		return j, nil, fmt.Errorf("privacy original evidence requires recovery: %w", err)
 	}
 	expected, err := privacyJournalBytes(j)
-	if err != nil || string(expected) != string(raw) || j.Version != 1 || j.Session != s.id() || j.Destination != s.reg.DestinationID || j.Admission != s.publicationAdmission() || j.Original.ValidatePublication() != nil || j.Original.Commit.Predecessor == state.PredecessorUnknown || j.Original.Commit.DestinationID != j.Destination || j.Original.Commit.AdmissionContext != j.Admission {
+	if err != nil || string(expected) != string(raw) || j.Version != 1 || j.Session != s.id() || j.Destination != s.reg.DestinationID || j.Admission != s.publicationAdmission() || j.Original.ValidatePublication() != nil || j.Original.Bundle.ArchiveSessionID != s.id() || j.Original.Bundle.NativeSessionID != s.reg.NativeSessionID || j.Original.Bundle.ProjectID != s.reg.ProjectID || j.Original.Bundle.Capture.Harness.Name != s.reg.Harness.Name || j.Original.Commit.Predecessor == state.PredecessorUnknown || j.Original.Commit.DestinationID != j.Destination || j.Original.Commit.AdmissionContext != j.Admission {
 		return j, nil, errors.New("privacy original evidence seal or ownership requires recovery")
 	}
 	return j, raw, nil
@@ -151,7 +151,7 @@ func (s *sessionScan) checkPrivacyInputReplay(p state.PendingPublication) error 
 		if !privacyJournalMatches(j, raw, p) {
 			return errors.New("privacy original evidence does not bind exact pending successor")
 		}
-		return nil
+		return s.verifyJournalReferences(j.Original)
 	}
 	input := proof.ReplayInput
 	if input == nil {
@@ -247,4 +247,58 @@ func (s *sessionScan) exactLocalPrivacySuccessor(p state.PendingPublication) boo
 		}
 	}
 	return true
+}
+
+func (s *sessionScan) verifyJournalReferences(original state.PendingPublication) error {
+	var refs []storage.SourcePublication
+	for i, source := range original.Sources {
+		payload := source.Bytes
+		if i == 0 {
+			payload = original.SourceBytes
+		}
+		if len(payload) > 0 {
+			continue
+		}
+		refs = append(refs, storage.SourcePublication{Key: source.Reference.Key, SHA256: source.Reference.SHA256, Size: source.Reference.CompressedBytes})
+	}
+	if len(refs) == 0 {
+		return nil
+	}
+	return storage.VerifySourceSet(s.ctx, s.remote, refs, s.opts.Retry)
+}
+
+func (s *sessionScan) privacyInputRetiredReferences(p state.PendingPublication) ([]archive.SourceReference, error) {
+	if p.Commit == nil || p.Commit.Privacy == nil {
+		return nil, nil
+	}
+	proof := p.Commit.Privacy
+	if proof.InputJournalSHA256 != "" {
+		j, raw, err := s.readPrivacyInputJournal()
+		if errors.Is(err, os.ErrNotExist) && s.exactLocalPrivacySuccessor(p) {
+			return nil, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		if !privacyJournalMatches(j, raw, p) {
+			return nil, errors.New("privacy retirement input differs")
+		}
+		refs := make([]archive.SourceReference, len(j.Original.Sources))
+		for i, source := range j.Original.Sources {
+			refs[i] = source.Reference
+		}
+		return refs, nil
+	}
+	input := proof.ReplayInput
+	if input == nil {
+		input = proof.PendingMutation
+	}
+	if input == nil || len(input.MetadataBytes) == 0 {
+		return nil, nil
+	}
+	var m archive.Metadata
+	if err := json.Unmarshal(input.MetadataBytes, &m); err != nil {
+		return nil, err
+	}
+	return m.SourceReferences()
 }

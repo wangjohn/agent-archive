@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/state"
@@ -116,6 +117,13 @@ func (s *sessionScan) pendingPrivacyChanged(p state.PendingPublication) bool {
 	if pendingSkillMode(p.SkillEvidence) != s.opts.skillEvidence() {
 		return true
 	}
-	_, err := s.publicationPolicy(p.Bundle)
-	return err != nil
+	if _, err := s.publicationPolicy(p.Bundle); err != nil {
+		return true
+	}
+	if p.Commit == nil || p.Commit.Privacy == nil || p.Commit.Privacy.InputJournalSHA256 == "" {
+		if _, err := s.local.ReadPublicationEvidence(s.id()); !errors.Is(err, os.ErrNotExist) {
+			return true
+		}
+	}
+	return false
 }

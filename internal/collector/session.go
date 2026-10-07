@@ -180,6 +180,13 @@ func (s *sessionScan) resume() (outcome sessionOutcome, handled bool, err error)
 		return outcomeSkipped, true, err
 	}
 	if !havePending {
+		owed, e := s.local.HasPending(s.id())
+		if e != nil {
+			return outcomeSkipped, true, e
+		}
+		if owed {
+			return outcomeSkipped, true, errors.New("retained original publication evidence requires successor journal recovery; native substitution is forbidden")
+		}
 		if signature, found, e := s.local.LoadScanSignature(s.id()); e != nil {
 			return outcomeSkipped, true, e
 		} else if found && pendingSkillMode(signature.SkillEvidence) != s.opts.skillEvidence() {
