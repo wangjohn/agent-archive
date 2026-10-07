@@ -26,6 +26,39 @@ func (s *Store) quotaLstat(path string) (os.FileInfo, error) {
 	return s.quotaRoot.Lstat(relative)
 }
 
+// Probe one entry so ordinary fresh-state publication never enumerates history.
+func (s *Store) quotaDirectoryHasEntries(path string) (present bool, err error) {
+	info, err := s.quotaLstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return false, ErrAdmissionStageRecovery
+	}
+	var directory *os.File
+	if s.quotaRoot == nil {
+		directory, err = os.Open(path)
+	} else {
+		relative, e := s.quotaRelative(path)
+		if e != nil {
+			return false, e
+		}
+		directory, err = s.quotaRoot.Open(relative)
+	}
+	if err != nil {
+		return false, err
+	}
+	defer func() { err = errors.Join(err, directory.Close()) }()
+	entries, err := directory.ReadDir(1)
+	if errors.Is(err, io.EOF) {
+		err = nil
+	}
+	return len(entries) > 0, err
+}
+
 func (s *Store) quotaReadDir(path string) (entries []os.DirEntry, err error) {
 	var directory *os.File
 	if s.quotaRoot == nil {

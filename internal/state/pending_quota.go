@@ -12,12 +12,12 @@ import (
 
 func (s *Store) savePendingQuota(id string, p PendingPublication, required bool) error {
 	if !required {
-		for _, dir := range []string{admissionStageDir, temporaryReservationDir, publicationEvidenceDir} {
-			entries, e := os.ReadDir(filepath.Join(s.home, dir))
-			if e != nil && !errors.Is(e, os.ErrNotExist) {
+		for _, dir := range []string{admissionStageDir, temporaryReservationDir, temporaryScratchDir, publicationEvidenceDir} {
+			present, e := s.quotaDirectoryHasEntries(filepath.Join(s.home, dir))
+			if e != nil {
 				return e
 			}
-			if len(entries) > 0 {
+			if present {
 				required = true
 				break
 			}
