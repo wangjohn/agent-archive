@@ -3,6 +3,8 @@ package providertest
 import (
 	"net/http"
 	"testing"
+
+	_ "github.com/wangjohn/agent-archive/internal/testutil/golden" // registers -update for go test ./... -update
 )
 
 func TestDisposableRequestOriginAndBudgetRefuseBeforeNetwork(t *testing.T) {
