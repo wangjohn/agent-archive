@@ -437,3 +437,20 @@ func (r *Registry) CanonicalDiscovery(name string) (string, bool) {
 	b, ok := r.sourceBindings[agentmeta.Normalize(name)]
 	return string(b.Descriptor.ID), ok && b.Discovery != nil
 }
+
+// WithCodexLabelHost returns a narrow pass composition without mutating the registry.
+func (r *Registry) WithCodexLabelHost(host agentapi.LabelHostFactory) agentapi.LabelsLookup {
+	return nativeLabels{registry: r, host: host}
+}
+
+type nativeLabels struct {
+	registry *Registry
+	host     agentapi.LabelHostFactory
+}
+
+func (n nativeLabels) LookupLabels(name string) (agentapi.LabelProvider, bool) {
+	if agentmeta.Normalize(name) == "codex" {
+		return codex.NativeLabelProvider{Host: n.host}, true
+	}
+	return n.registry.LookupLabels(name)
+}

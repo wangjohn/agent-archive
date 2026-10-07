@@ -88,7 +88,7 @@ func (p *pass) observeLabels(ctx context.Context) {
 		label, ok := archive.FilterSessionLabel(results[id])
 		if ok && label.NativeID == request.Registration.NativeSessionID {
 			// An index miss is weaker than a previously canonical database observation.
-			if label.Source != archive.SessionLabelIndex || label.State != archive.SessionLabelAbsent || entry.Label.Source != archive.SessionLabelDatabase {
+			if !weakerLabelAbsence(label, entry.Label) {
 				if entry.Label.Fingerprint() != label.Fingerprint() {
 					entry.Label, entry.ObservedAt = label, p.now
 				}
@@ -368,6 +368,13 @@ func labelRequestGroup(providers map[string]agentapi.LabelProvider, env agentapi
 	}
 	sum := sha256.Sum256([]byte(request.Registration.Harness.Name + "\x00" + key))
 	return hex.EncodeToString(sum[:])
+}
+
+func weakerLabelAbsence(next, previous archive.SessionLabel) bool {
+	if next.State != archive.SessionLabelAbsent {
+		return false
+	}
+	return (next.Source == archive.SessionLabelIndex && previous.Source == archive.SessionLabelDatabase) || (next.Source != archive.SessionLabelAPI && previous.Source == archive.SessionLabelAPI)
 }
 
 func lookupLabelRequests(ctx context.Context, providers map[string]agentapi.LabelProvider, env agentapi.LabelEnvironment, requests []agentapi.LabelRequest) map[string]archive.SessionLabel {

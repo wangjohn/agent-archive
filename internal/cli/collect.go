@@ -203,8 +203,8 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (result collector.Resu
 		}
 	}
 	result, err = collector.Run(ctx, localStore, objectStore, collector.Options{
-		Labels:           env.agentRegistry(),
-		LabelEnvironment: agentapi.LabelEnvironment{Homes: labelHomes, ExternalSQLite: env.getenv("CODEX_SQLITE_HOME") != ""},
+		Labels:           env.labelProviders(cfg),
+		LabelEnvironment: env.labelEnvironment(cfg, labelHomes),
 		PrepareCodexCoverage: func(ctx context.Context, regs []archive.SessionRegistration) error {
 			return rollouts.PrepareRegistered(ctx, cfg, regs, discovery.Options{Now: env.Now, Stop: stop})
 		},

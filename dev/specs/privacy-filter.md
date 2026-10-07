@@ -424,3 +424,8 @@ An unavailable observation is not absence and preserves previously verified
 evidence. Native paths, raw database rows and index contents are not retained.
 Codex `session_meta` additionally retains only the `legacy` or `paginated`
 `history_mode` enum to establish index interpretation. Other values are omitted.
+
+Filter 18 accepts the fixed `api`/`codex-api-159.2-v1` session-label pair in
+addition to the file contract. It retains only the same owning ID, filtered
+bounded name or explicit absent state, contract and stable observation time.
+Native JSON responses and process output are discarded before persistence.

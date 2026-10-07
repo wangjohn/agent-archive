@@ -17,7 +17,7 @@ func (Filter) NamingOnlyChange(previous, candidate archive.SourceBundle) bool {
 	}
 	before, _, _ := archive.CurrentSessionLabel(previous)
 	after, _, _ := archive.CurrentSessionLabel(candidate)
-	if (before.State != "" && !supportedLabelContract(before.Contract)) || (after.State != "" && !supportedLabelContract(after.Contract)) || before.Fingerprint() == after.Fingerprint() {
+	if (before.State != "" && !supportedSessionLabel(before)) || (after.State != "" && !supportedSessionLabel(after)) || before.Fingerprint() == after.Fingerprint() {
 		return false
 	}
 
