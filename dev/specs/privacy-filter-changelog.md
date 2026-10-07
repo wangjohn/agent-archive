@@ -5,6 +5,17 @@ rules, as a whole, are in the [filter specification](privacy-filter.md);
 version numbers and bump rules are in [versions](../maintainers/versions.md). Each archived session
 records the filter version that produced it (`filter_version`).
 
+## Source filter version 18
+
+Adapter 0.18.0 and Codex parser 0.25.0 accompany this change.
+
+- The same bounded owning `session_labels` shape accepts the fixed `api` source
+  with `codex-api-159.2-v1`. API responses, paths, diagnostics, turns and unrelated
+  fields are never retained. Explicit compatible null can clear a name; weaker
+  unavailable file fallback cannot clear an API observation.
+- Native lookup is explicit opt-in. Its host may write native startup state;
+  desktop coexistence and real native authentication remain unverified.
+
 ## Source filter version 17
 
 Adapter 0.17.0 and Codex parser 0.24.0 accompany this change.

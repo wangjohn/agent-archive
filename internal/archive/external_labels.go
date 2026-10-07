@@ -25,6 +25,8 @@ const (
 	SessionLabelAbsent   SessionLabelState  = "confirmed_absent"
 	SessionLabelIndex    SessionLabelSource = "index"
 	SessionLabelDatabase SessionLabelSource = "database"
+	// SessionLabelAPI identifies accepted metadata API evidence.
+	SessionLabelAPI SessionLabelSource = "api"
 )
 
 // SessionLabel is a bounded filtered native observation. Its zero value is unavailable.
@@ -38,7 +40,7 @@ type SessionLabel struct {
 
 // FilterSessionLabel validates the narrow shape and filters before any persistence.
 func FilterSessionLabel(label SessionLabel) (SessionLabel, bool) {
-	if !safeLabelToken(label.Contract, 64) || !safeLabelToken(label.NativeID, 256) || (label.Source != SessionLabelIndex && label.Source != SessionLabelDatabase) || (label.State != SessionLabelPresent && label.State != SessionLabelAbsent) {
+	if !safeLabelToken(label.Contract, 64) || !safeLabelToken(label.NativeID, 256) || (label.Source != SessionLabelIndex && label.Source != SessionLabelDatabase && label.Source != SessionLabelAPI) || (label.State != SessionLabelPresent && label.State != SessionLabelAbsent) {
 		return SessionLabel{}, false
 	}
 	if label.State == SessionLabelAbsent {

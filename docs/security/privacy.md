@@ -5,6 +5,11 @@ page says what that copy contains, what is kept out of it, what the tool
 changes on your machine, and where its protections stop. The per-version history
 of the filter is in the [filter changelog](../../dev/specs/privacy-filter-changelog.md).
 
+Native Codex name lookup is optional and defaults to files. Explicit `native`
+mode can write Codex startup databases and system skills; desktop coexistence
+and native credential behavior remain unverified. Only the filtered owning name
+or confirmed absence is archived. See [Codex session names](../reference/codex-session-names.md).
+
 Before enabling capture, review these choices:
 
 - Included projects are the default. Codex's explicit all-projects scope also
