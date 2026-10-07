@@ -12,6 +12,7 @@ docker info >/dev/null 2>&1 || { echo "cannot verify provider cleanup while daem
 inspect_owned() {
   local kind=$1 name=$2 error
   if error=$(docker "$kind" inspect "$name" 2>&1 >/dev/null); then return 0; fi
+  if [[ $kind == image && ( $error == "Error response from daemon: No such image: $name:latest" || $error == "Error: No such image: $name:latest" ) ]]; then return 1; fi
   case $error in
     "Error: No such container: $name" | "Error: No such object: $name" | "Error: No such image: $name" | "Error response from daemon: No such container: $name" | "Error response from daemon: No such image: $name") return 1 ;;
     *) echo 'owned resource absence could not be verified' >&2; return 2 ;;

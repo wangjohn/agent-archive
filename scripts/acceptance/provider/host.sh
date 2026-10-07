@@ -33,11 +33,11 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 mkdir -p "$AA_ACCEPTANCE_OUTPUT" "$work/tools" "$work/data" "$work/mc" "$work/home"
-export GOBIN="$work/tools" GOTOOLCHAIN=local CGO_ENABLED=0
+export GOBIN="$work/tools" GOTOOLCHAIN=local
 # SumDB checks the exact module versions; provenance and built module identities
 # are recorded without static credentials, service data, or native transcript text.
 for module in github.com/minio/minio@v0.0.0-20260212201848-7aac2a2c5b7c github.com/minio/mc@v0.0.0-20251106162529-77f82e18b540; do
-  go install "$module"
+  CGO_ENABLED=0 go install "$module"
 done
 go version -m "$work/tools/minio" > "$AA_ACCEPTANCE_OUTPUT/minio-build.txt"
 go version -m "$work/tools/mc" > "$AA_ACCEPTANCE_OUTPUT/mc-build.txt"
@@ -82,7 +82,7 @@ export AA_PROVIDER_ACCESS="$access" AA_PROVIDER_SECRET="$secret" AA_PROVIDER_BUC
 # Go test source/native/state stays under temporary roots. The provider adapter
 # also refuses ambient credentials, redirects, non-loopback origins and runaway requests.
 cd "$root"
-go test -json -race -p 2 -count=1 -timeout=8m -run '^TestProvider' ./internal/collector > "$AA_ACCEPTANCE_OUTPUT/provider-tests.jsonl"
+CGO_ENABLED=1 go test -json -race -p 2 -count=1 -timeout=8m -run '^TestProvider' ./internal/collector > "$AA_ACCEPTANCE_OUTPUT/provider-tests.jsonl"
 python3 scripts/acceptance/provider/verify-results.py "$AA_ACCEPTANCE_OUTPUT/provider-tests.jsonl" \
   TestProviderAdmissionSurvivesNativeLossAndUncertainCommit \
   TestProviderFullSetPrivacyReadbackAndIndependentWinner \

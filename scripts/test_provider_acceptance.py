@@ -70,6 +70,8 @@ class ProviderHarnessPolicyTest(unittest.TestCase):
         self.assertIn('github.com/minio/minio@v0.0.0-20260212201848-7aac2a2c5b7c', script)
         self.assertIn('github.com/minio/mc@v0.0.0-20251106162529-77f82e18b540', script)
         self.assertIn('--publish 127.0.0.1::9000', script)
+        self.assertIn('CGO_ENABLED=0 go install', script)
+        self.assertNotIn('export GOBIN="$work/tools" GOTOOLCHAIN=local CGO_ENABLED=0', script)
         self.assertIn("trap cleanup EXIT", script)
         self.assertNotIn('docker system prune', script)
         self.assertNotIn('docker ps', script)
@@ -114,7 +116,10 @@ case "$1 $2" in
   'container inspect'|'image inspect')
     [ -z "$FAKE_INSPECT_ERROR" ] || { echo 'transport failure' >&2; exit 1; }
     [ ! -e "$RUNNER_TEMP/$3.exists" ] || exit 0
-    echo "Error: No such object: $3" >&2; exit 1 ;;
+    if [ "$1" = image ] && [ -n "$FAKE_IMAGE_LATEST" ]; then
+      echo "Error response from daemon: No such image: $3:latest" >&2
+    else echo "Error: No such object: $3" >&2; fi
+    exit 1 ;;
   'rm -f')
     [ -z "$FAKE_REMOVE_ERROR" ] || exit 4
     rm "$RUNNER_TEMP/$3.exists"; exit $? ;;
@@ -146,6 +151,11 @@ exit 9
         self.assertIn(f'rm -f {self.prefix}-service', calls)
         self.assertIn(f'image rm {self.prefix}-image', calls)
         self.assertFalse(any('prune' in call or call.startswith('ps') for call in calls))
+
+    def test_docker_normalized_latest_absence_is_exactly_owned(self):
+        result = self.run_cleanup(FAKE_IMAGE_LATEST="1")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(self.control.exists())
 
     def test_uncertain_daemon_or_removal_keeps_recovery_control(self):
         for failure in ('FAKE_DAEMON_ERROR', 'FAKE_REMOVE_ERROR', 'FAKE_INSPECT_ERROR'):
