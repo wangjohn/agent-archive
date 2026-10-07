@@ -84,6 +84,13 @@ func (s *sessionScan) reconcilePrivacyPending(p state.PendingPublication) (state
 		if err := storage.VerifySourceSet(s.ctx, s.remote, refs, s.opts.Retry); err != nil {
 			return state.PublicationPredecessor{}, "", err
 		}
+		confirmed, err := storage.ReadPublicationMetadata(s.ctx, s.remote, p.MetadataKey)
+		if err != nil {
+			return state.PublicationPredecessor{}, "", err
+		}
+		if storage.SHA256Hex(confirmed) != p.Commit.MetadataSHA256 {
+			return state.PublicationPredecessor{}, "", storage.ErrPublicationConflict
+		}
 		if err := s.published.SaveCommittedPublication(p, s.now); err != nil {
 			return state.PublicationPredecessor{}, "", err
 		}

@@ -309,3 +309,22 @@ func validatePendingPrivacyPreparation(prior PublicationPredecessor, destination
 	}
 	return nil
 }
+
+// CheckAdmissionStageTransform accepts only a complete codec-produced replacement
+// of this exact immutable stage; it never treats a different checksum as ownership.
+func (p PendingPublication) CheckAdmissionStageTransform(reg archive.SessionRegistration, m AdmissionStage, bundle archive.SourceBundle) error {
+	if CheckAdmissionStageOwnership(reg, m) != nil || p.AdmissionStage != reg.AdmissionStage || p.Commit == nil || p.Commit.Purpose != PublicationPrivacyRewrite || p.Commit.DestinationID != reg.DestinationID || p.Commit.AdmissionContext != AdmissionStageContext(reg) || p.ValidatePublication() != nil {
+		return ErrAdmissionStageRecovery
+	}
+	e := p.Commit.Privacy
+	if e == nil || e.StageDigest != reg.AdmissionStage || e.StageSourceSHA256 != m.SHA256 {
+		return ErrAdmissionStageRecovery
+	}
+	policy := PublicationPolicy{Filter: bundle.Capture.FilterVersion, Adapter: bundle.Capture.AdapterName, Version: bundle.Capture.AdapterVersion, Format: bundle.Capture.SourceFormat, Skill: m.SkillEvidence}
+	for _, source := range e.Sources {
+		if source.Previous.Source.SHA256 == m.SHA256 && int64(source.Previous.Source.CompressedBytes) == m.Bytes && source.Previous.CapturedAt.Equal(bundle.Capture.CapturedAt) && source.OldPolicy == policy {
+			return nil
+		}
+	}
+	return ErrAdmissionStageRecovery
+}

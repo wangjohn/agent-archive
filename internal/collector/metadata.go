@@ -374,6 +374,11 @@ func (s *sessionScan) publishRecordedGitHead(last lastPublication, key string) (
 	if known && uploaded != next.SourceBundle {
 		return outcomeSkipped, false, nil
 	}
+	if next.History != nil {
+		if err := s.verifyRetainedSelection(next); err != nil {
+			return outcomeSkipped, true, err
+		}
+	}
 	// Carry the retained source's bytes when this build can rebuild them, as
 	// a metadata refresh does, so a source missing from storage is repaired
 	// instead of failing this publication on every pass.

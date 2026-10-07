@@ -53,7 +53,7 @@ func retainedPolicy(b archive.SourceBundle, skill string) state.PublicationPolic
 
 // prepareRetainedPrivacy invokes the real native filter on every selected source.
 // It has no native file/Git fallback and produces no remote writes. Callers hold
-// the approved temporary reservation before constructing output payloads.
+// the shared atomic pending quota gate before persisting the bounded RAM output.
 func (s *sessionScan) prepareRetainedPrivacy(raw []byte, loader retainedSourceLoader, prior state.PublicationPredecessor, authority state.PrivacyAuthority, stageDigest, stageSHA, oldSkill string) (state.PendingPublication, error) {
 	var before archive.Metadata
 	if err := json.Unmarshal(raw, &before); err != nil {
