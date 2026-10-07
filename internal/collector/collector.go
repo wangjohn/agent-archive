@@ -33,6 +33,11 @@ import (
 // local.Lock(home) around Run; Run itself does not acquire it, so it stays
 // simple to call directly from tests.
 type Options struct {
+	labelReadObserver func(int64)
+	// Labels supplies optional bounded native metadata for existing retained sessions.
+	Labels           agentapi.LabelsLookup
+	LabelEnvironment agentapi.LabelEnvironment
+	labels           map[string]state.LabelEntry
 	// PrepareCodexCoverage advances caller-owned qualified coverage once after admission work loads.
 	PrepareCodexCoverage func(context.Context, []archive.SessionRegistration) error
 	// CodexRollouts is one caller-owned bounded locator view shared by the pass.
@@ -248,6 +253,7 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 		result:           Result{Errors: subagents.errors, WaitingSubagents: subagents.waiting, RejectedSubagents: subagents.rejected},
 		expiredSubagents: subagents.expired,
 	}
+	defer p.releaseLabelResources()
 	if generationRecoveryErr != nil {
 		p.result.Errors["generation-recovery"] = generationRecoveryErr
 	}
@@ -268,14 +274,17 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 			p.result.Errors["native-coverage"] = err
 		}
 	}
-	p.repairListingIndex()
-	orderOldestRequestsFirst(p.registrations, p.requests)
+	// Construct the lazy source scope before labels borrow retained publications,
+	// so optional providers also share the default pass ledger with native work.
 	closeCursorPass := openCursorPass(p.registrations, &p.opts)
 	defer func() {
 		if err := closeCursorPass(); err != nil {
 			runErr = errors.Join(runErr, err)
 		}
 	}()
+	p.observeLabels(ctx)
+	p.repairListingIndex()
+	orderOldestRequestsFirst(p.registrations, p.requests)
 	for i, reg := range p.registrations {
 		// A pass past its deadline ends like a stopped one: nothing more can
 		// reach storage, so the rest keep their work rather than each
@@ -294,11 +303,15 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 
 // pass is one Run: its inputs, what it has found so far, and its result.
 type pass struct {
-	ctx    context.Context
-	local  *state.Store
-	remote storage.ObjectStore
-	opts   Options
-	now    time.Time
+	labelLocal          *state.Store
+	closeLabelResources func()
+	labelStates         map[string]*state.Published
+	labelBytes          int64
+	ctx                 context.Context
+	local               *state.Store
+	remote              storage.ObjectStore
+	opts                Options
+	now                 time.Time
 
 	registrations []archive.SessionRegistration
 	requests      map[string]state.Request
@@ -418,7 +431,12 @@ func (p *pass) scan(reg archive.SessionRegistration) {
 		return
 	}
 	// The session's published state, read once for the whole scan.
-	published, err := p.local.LoadPublishedState(id)
+	published := p.labelStates[id]
+	delete(p.labelStates, id)
+	var err error
+	if published == nil {
+		published, err = p.local.LoadPublishedState(id)
+	}
 	if err != nil {
 		p.fail(id, fmt.Errorf("load published cache: %w", err))
 		return

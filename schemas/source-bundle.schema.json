@@ -292,6 +292,29 @@
     },
     "supplemental": {
       "type": "object",
+      "allOf": [
+        {
+          "if": {"properties": {"kind": {"const": "session_labels"}}, "required": ["kind"]},
+          "then": {
+            "properties": {
+              "provenance": {"type": "string", "pattern": "^native:[A-Za-z0-9_.-]{1,64}:session_labels$"},
+              "payload": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["native_session_id", "state", "source", "contract"],
+                "properties": {
+                  "native_session_id": {"type": "string", "pattern": "^[A-Za-z0-9_.-]{1,256}$"},
+                  "state": {"enum": ["present", "confirmed_absent"]},
+                  "name": {"type": "string", "minLength": 1, "maxLength": 512},
+                  "source": {"enum": ["index", "database"]},
+                  "contract": {"type": "string", "pattern": "^[A-Za-z0-9_.-]{1,64}$"}
+                },
+                "allOf": [{"if": {"properties": {"state": {"const": "present"}}}, "then": {"required": ["name"]}, "else": {"not": {"required": ["name"]}}}]
+              }
+            }
+          }
+        }
+      ],
       "additionalProperties": false,
       "required": [
         "kind",
