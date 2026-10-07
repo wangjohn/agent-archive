@@ -353,3 +353,24 @@ func setupReceiptIndex(text, answer string) int {
 	}
 	return -1
 }
+
+// Retrying discovery keeps manually added candidates, including unchecked ones,
+// so stable project numbers can be used to revise the selection afterward.
+func TestSetupRetryPreservesUncheckedManualCandidate(t *testing.T) {
+	t.Parallel()
+	roots := selectorRoots(t, 2)
+	at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	existing := []archive.ProjectActivation{{Root: roots[0].Root, ProjectID: archive.ProjectID(roots[0].Root), Included: true, ActivatedAt: at}}
+	userHome := t.TempDir()
+	env := setupTestEnv(t, t.TempDir(), userHome, newFakeKeychain(), time.Now())
+	var out bytes.Buffer
+	p := newPrompter(strings.NewReader("specific\np\n"+roots[1].Root+"\n2\nr\n2\n\n"), &out)
+	defer p.close()
+	p.projectConfig = config.Config{Harnesses: []string{"claude"}, Archive: archive.Config{Projects: existing}}
+	p.projectScan = &setupProjectSearch{env: env, home: userHome}
+	got, err := selectSetupProjects(p, existing, existing, nil, "", userHome, nil)
+	must(t, err)
+	if includedProjects(got) != 2 || got[0].ActivatedAt != at || strings.Contains(out.String(), "enter project numbers from 1 to 1") {
+		t.Fatalf("retry lost manual candidate or activation: %+v\n%s", got, &out)
+	}
+}
