@@ -127,6 +127,27 @@ func TestPairingTransferCommandUsesReceivingHomeAndQuotesFilename(t *testing.T) 
 	}
 }
 
+func TestPairingReceiverDistinguishesRelativeFilenamesFromPastedBundles(t *testing.T) {
+	// Sequential because t.Chdir controls relative file resolution.
+	home := t.TempDir()
+	t.Chdir(home)
+	env := Env{UserHomeDir: func() (string, error) { return home, nil }}
+	bundle := pairing.Prefix + "SYNTHETIC"
+	for _, name := range []string{"aa-pairing.txt", "aa-pair-backup.txt"} {
+		must(t, os.WriteFile(filepath.Join(home, name), []byte(bundle+"\n"), 0600))
+	}
+	for _, input := range []string{"aa-pairing.txt", "aa-pair-backup.txt", bundle} {
+		t.Run(input, func(t *testing.T) {
+			p := newPrompter(strings.NewReader(input+"\n"), &bytes.Buffer{})
+			got, err := readPairingBundle(p, setupOptions{}, p.in, env)
+			must(t, err)
+			if got != bundle {
+				t.Fatalf("read %q, want file contents or pasted bundle %q", got, bundle)
+			}
+		})
+	}
+}
+
 func TestPairingReceiverFileAndClipboardInputsStayBounded(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
