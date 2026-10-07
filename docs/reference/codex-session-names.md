@@ -58,6 +58,10 @@ contract. Migration reads at most 8 MiB per retained JSON publication and
 checksum and stat. These limits defer work without delaying normal capture.
 Serialized and decoded context also share the pass's data budget; a borrowed
 publication remains charged until its pass scope ends.
+Rename integrity verification and candidate encoding reserve compression scratch
+and output against the same ledger; verification output is released before the
+renamed candidate is rendered. Shared pressure preserves the last acknowledged
+source and deferred name evidence for a later pass.
 Aggregate exhaustion is deferred to another pass. A retained publication over
 the per-session 8 MiB ceiling remains unavailable for this rename-only path;
 cursor rotation cannot make it fit. Its prior name and pending transaction
