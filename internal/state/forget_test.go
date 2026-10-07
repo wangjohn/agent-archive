@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -196,10 +195,14 @@ func TestForgetIdleSessionKeepsTheRecordWhenTheForgetFailsPartWay(t *testing.T) 
 	if err := local.SaveRegistration(reg); err != nil {
 		t.Fatal(err)
 	}
-	// A non-empty directory where the published cache belongs cannot be
-	// removed, and it is removed after the registration.
-	if err := os.MkdirAll(filepath.Join(local.publishedPath(reg.ArchiveSessionID), "blocker"), 0o700); err != nil {
-		t.Fatal(err)
+	// Directory corruption is now refused before unlinking any owner records.
+	// Interrupt at the durable index boundary to retain the original partial
+	// removal assertions after registration unlink.
+	local.onIndexStep = func(step string) error {
+		if step == "forget-indexes" {
+			return errors.New("synthetic partial forget failure")
+		}
+		return nil
 	}
 	removal := &RemovalRecord{Harness: "codex", Reason: RemovalReasonRetention, At: time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)}
 	forgotten, err := local.ForgetIdleSession(reg.ArchiveSessionID, agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(reg.Harness.Name)), NativeID: reg.NativeSessionID}, true, removal)

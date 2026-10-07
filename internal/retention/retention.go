@@ -589,6 +589,18 @@ func (s *sweeper) deleteSuperseded(reg archive.SessionRegistration, superseded [
 				continue
 			}
 		}
+		// Source verification can observe a new selecting winner. Recheck after
+		// that provider work before deleting a key absent from the reviewed set.
+		_, confirmed, err := s.selectingMetadata(reg)
+		if err != nil {
+			return err
+		}
+		if storage.SHA256Hex(confirmed) != selection {
+			return fmt.Errorf("current selecting metadata changed during verification")
+		}
+		if err := s.ctx.Err(); err != nil {
+			return err
+		}
 		if err := s.store.Delete(s.ctx, entry.Key); err != nil {
 			return fmt.Errorf("delete superseded source %q: %w", entry.Key, err)
 		}

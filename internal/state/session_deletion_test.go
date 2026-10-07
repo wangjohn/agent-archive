@@ -427,3 +427,119 @@ func TestDeletionWritePinsQuotaAndControlAcrossHomeReplacement(t *testing.T) {
 		t.Fatal("replacement root inherited deletion authority", err)
 	}
 }
+
+func TestSessionDeletionRefusesSymlinkedListingStateBeforeUnlink(t *testing.T) {
+	s, reg, _ := stageFixture(t)
+	if err := s.SaveRegistration(reg); err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	file := filepath.Join(outside, reg.ArchiveSessionID+".json")
+	if err := os.WriteFile(file, []byte("unrelated listing state"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(s.home, listingRepairDir)); err != nil {
+		t.Fatal(err)
+	}
+	key, _ := agentmeta.NewSessionKey(reg.Harness.Name, reg.NativeSessionID)
+	if err := s.ForgetSession(reg.ArchiveSessionID, key); err == nil {
+		t.Fatal("symlinked cleanup reported success")
+	}
+	if raw, err := os.ReadFile(file); err != nil || string(raw) != "unrelated listing state" {
+		t.Fatal("cleanup removed unrelated symlink target", err)
+	}
+	if _, found, err := s.LoadRegistration(reg.ArchiveSessionID); err != nil || !found {
+		t.Fatal("corrupt cleanup lost owner", found, err)
+	}
+}
+
+func TestTerminalDeletionSurvivingScratchReceiptRemainsActionable(t *testing.T) {
+	s, reg, _ := stageFixture(t)
+	if err := s.SaveRegistration(reg); err != nil {
+		t.Fatal(err)
+	}
+	key, _ := agentmeta.NewSessionKey(reg.Harness.Name, reg.NativeSessionID)
+	if err := s.ForgetSession(reg.ArchiveSessionID, key); err != nil {
+		t.Fatal(err)
+	}
+	if ids, err := s.OrphanedSessions(nil); err != nil || len(ids) != 0 {
+		t.Fatal(ids, err)
+	}
+	r, err := NewTemporaryReservation(s, PublicationPrivacy, reg.ArchiveSessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = r.Close() }()
+	if err := r.Reserve(1024); err != nil {
+		t.Fatal(err)
+	}
+	ids, err := s.OrphanedSessions(nil)
+	if err != nil || len(ids) != 1 || ids[0] != reg.ArchiveSessionID {
+		t.Fatal("terminal marker hid surviving scratch obligation", ids, err)
+	}
+}
+
+func TestTerminalDeletionCorruptRecordDirectoryRemainsActionable(t *testing.T) {
+	for _, name := range []string{"pending", "sessions/session", temporaryReservationDir, temporaryScratchDir} {
+		t.Run(name, func(t *testing.T) {
+			s, reg, _ := stageFixture(t)
+			if err := s.SaveRegistration(reg); err != nil {
+				t.Fatal(err)
+			}
+			key, _ := agentmeta.NewSessionKey(reg.Harness.Name, reg.NativeSessionID)
+			if err := s.ForgetSession(reg.ArchiveSessionID, key); err != nil {
+				t.Fatal(err)
+			}
+			if name == "sessions/session" {
+				name = filepath.Join("sessions", reg.ArchiveSessionID)
+			}
+			path := filepath.Join(s.home, name)
+			if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(t.TempDir(), path); err != nil {
+				t.Fatal(err)
+			}
+			ids, err := s.OrphanedSessions(nil)
+			if err != nil || len(ids) != 1 {
+				t.Fatal("terminal marker hid corrupt record directory", ids, err)
+			}
+		})
+	}
+}
+
+func TestSessionDeletionPinsRecordsAcrossDirectoryReplacement(t *testing.T) {
+	s, reg, _ := stageFixture(t)
+	if err := s.SaveRegistration(reg); err != nil {
+		t.Fatal(err)
+	}
+	directory := filepath.Join(s.home, listingRepairDir)
+	if err := os.Mkdir(directory, 0700); err != nil {
+		t.Fatal(err)
+	}
+	name := reg.ArchiveSessionID + ".json"
+	if err := os.WriteFile(filepath.Join(directory, name), []byte("owned listing state"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, name), []byte("unrelated state"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	s.onDeletionBeforeCommit = func() error {
+		s.onDeletionBeforeCommit = nil
+		if err := os.Rename(directory, directory+"-held"); err != nil {
+			return err
+		}
+		return os.Symlink(outside, directory)
+	}
+	key, _ := agentmeta.NewSessionKey(reg.Harness.Name, reg.NativeSessionID)
+	if err := s.ForgetSession(reg.ArchiveSessionID, key); err == nil {
+		t.Fatal("replaced directory reported terminal success")
+	}
+	if raw, err := os.ReadFile(filepath.Join(outside, name)); err != nil || string(raw) != "unrelated state" {
+		t.Fatal("replacement target was unlinked", err)
+	}
+	if j, found, err := s.LoadSessionDeletion(reg); err != nil || !found || j.LocalRemoved {
+		t.Fatal("replaced directory granted terminal proof", j, found, err)
+	}
+}

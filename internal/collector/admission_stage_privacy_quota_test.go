@@ -13,7 +13,8 @@ import (
 
 func TestAdmissionStageRepeatedPrivacyChangesProgressAtSaturatedQuota(t *testing.T) {
 	t.Parallel()
-	local, reg := stagedPolicyFixtureWithReservation(t, config.SkillEvidenceBody, state.AdmissionStageQuota,
+	// Saturate the composed pool, including its fixed shared cleanup allowance.
+	local, reg := stagedPolicyFixtureWithReservation(t, config.SkillEvidenceBody, state.AdmissionStageQuota-(64<<10),
 		archive.SupplementalEvidence{Kind: archive.EvidenceKindSkillSnapshot, Provenance: "synthetic", Payload: map[string]any{"name": "synthetic", "snapshot": "private-stage-original"}})
 	manifest, _, err := local.ReadAdmissionStage(reg.ArchiveSessionID, reg.AdmissionStage)
 	if err != nil {

@@ -447,25 +447,9 @@ func (s *Store) ForgetSession(archiveSessionID string, key agentmeta.SessionKey)
 
 // forgetSession is ForgetSession; withCandidates false is for a caller that
 // already removed the session's subagent candidates under their locks.
-func (s *Store) forgetSession(archiveSessionID string, key agentmeta.SessionKey, withCandidates bool, revision, retirement *local.Staged) error {
+func (s *Store) forgetSession(archiveSessionID string, key agentmeta.SessionKey, withCandidates bool, revision, retirement *local.Staged) (err error) {
 	if !safeFileComponent(archiveSessionID) {
 		return errors.New("archive session ID is not a safe file name component")
-	}
-	if err := s.prepareForgetEvidence(archiveSessionID, key); err != nil {
-		return err
-	}
-	if withCandidates {
-		if err := s.removeSubagentCandidatesForSession(archiveSessionID); err != nil {
-			return fmt.Errorf("remove linked subagent candidates: %w", err)
-		}
-	}
-	if retirement != nil {
-		if err := retirement.Commit(); err != nil {
-			return err
-		}
-		if err := s.indexStep("generation-retired"); err != nil {
-			return err
-		}
 	}
 	paths := []string{
 		s.registrationPath(archiveSessionID),
@@ -495,7 +479,37 @@ func (s *Store) forgetSession(archiveSessionID string, key agentmeta.SessionKey,
 	// registration would reuse) must already be gone by then.
 	requestLockPath := filepath.Join(s.home, requestLockName(archiveSessionID))
 	paths = append(paths, requestLockPath)
+	records, err := s.pinDeletionRecords(paths)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, records.close()) }()
+	if err := s.prepareForgetEvidence(archiveSessionID, key); err != nil {
+		return err
+	}
+	if withCandidates {
+		if err := s.removeSubagentCandidatesForSession(archiveSessionID); err != nil {
+			return fmt.Errorf("remove linked subagent candidates: %w", err)
+		}
+	}
+	if err := records.currentHome(); err != nil {
+		return err
+	}
+	if retirement != nil {
+		if err := retirement.Commit(); err != nil {
+			return err
+		}
+		if err := s.indexStep("generation-retired"); err != nil {
+			return err
+		}
+	}
+	if err := records.currentHome(); err != nil {
+		return err
+	}
 	for _, path := range paths {
+		if err := records.currentHome(); err != nil {
+			return err
+		}
 		// Keep registration deletion before index deletion: interrupted expiry
 		// must never leave an admitted owner invisible to bounded lookup.
 		if path == requestLockPath && key.NativeID != "" {
@@ -506,30 +520,16 @@ func (s *Store) forgetSession(archiveSessionID string, key agentmeta.SessionKey,
 				return err
 			}
 		}
-		remove := os.Remove
+		remove := records.remove
 		if path == s.registrationPath(archiveSessionID) {
-			remove = func(path string) error { return s.removeRegistrationWithRevision(path, revision) }
+			remove = func(path string) error { return s.removeRegistrationWithRevision(path, revision, records.remove) }
 		}
 		if err := remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return errors.Join(fmt.Errorf("remove %q: %w", path, err), s.MarkSessionIndexRecoveryNeeded())
 		}
 	}
-	// Drop the per-session directory only once nothing else lives in it;
-	// anything unexpected there is preserved rather than deleted blindly.
-	dir := s.SessionDir(archiveSessionID)
-	entries, err := os.ReadDir(dir)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("read session directory %q: %w", dir, err)
-	}
-	if len(entries) == 0 {
-		if err := os.Remove(dir); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("remove session directory %q: %w", dir, err)
-		}
-	}
-	return nil
+	// Preserve unexpected entries and refuse symlinked/replaced session parents.
+	return records.removeEmptySession(archiveSessionID)
 }
 
 func (s *Store) prepareForgetEvidence(archiveSessionID string, key agentmeta.SessionKey) error {
