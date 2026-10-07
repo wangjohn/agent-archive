@@ -16,7 +16,7 @@ OK Handoff write to a file
 
 ? Write to
 
-> Choose [/Users/alex/src/project/handoff-fe8030de.md]: /Users/alex/handoff.md
+> Choose [/Users/alex/src/project/handoff-SESSION.md]: /Users/alex/handoff.md
 OK File
    /Users/alex/handoff.md
 

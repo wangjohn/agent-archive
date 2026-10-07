@@ -148,7 +148,7 @@ func TestGuidedFullCommandTranscripts(t *testing.T) {
 						}
 					}
 					text := normalize(out.String())
-					text = regexp.MustCompile(`(handoff: wrote .*?) \([0-9]+ bytes\)`).ReplaceAllString(text, "$1 (BYTES bytes)")
+					text = normalizeGuidedHandoffTranscript(text)
 					// Random issued IDs and content hashes are presentation placeholders.
 					text = regexp.MustCompile(`[0-9a-f]{64}`).ReplaceAllString(text, "HASH")
 					text = regexp.MustCompile(`[0-9a-f]{32}`).ReplaceAllString(text, "MACHINE_ID")
@@ -214,11 +214,16 @@ func TestGuidedFullHandoffOutputSurfaces(t *testing.T) {
 			text = strings.ReplaceAll(text, path, "/Users/alex/handoff.md")
 			text = strings.ReplaceAll(text, f.project, "/Users/alex/src/project")
 			text = strings.ReplaceAll(text, f.home, "/Users/alex/.agent-archive")
-			text = regexp.MustCompile(`(handoff: wrote .*?) \([0-9]+ bytes\)`).ReplaceAllString(text, "$1 (BYTES bytes)")
+			text = normalizeGuidedHandoffTranscript(text)
 			if strings.Contains(text, "\x1b") {
 				t.Fatalf("static surface emitted cursor controls: %q", text)
 			}
 			golden.Check(t, filepath.Join("testdata", "guided-full", "handoff-"+mode+".txt"), []byte(trimScreenLineEnds(text)))
 		})
 	}
+}
+
+func normalizeGuidedHandoffTranscript(text string) string {
+	text = regexp.MustCompile(`handoff-[0-9a-f]{8}\.md`).ReplaceAllString(text, "handoff-SESSION.md")
+	return regexp.MustCompile(`(handoff: wrote .*?) \([0-9]+ bytes\)`).ReplaceAllString(text, "$1 (BYTES bytes)")
 }

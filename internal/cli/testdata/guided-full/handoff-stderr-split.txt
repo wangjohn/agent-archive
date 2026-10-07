@@ -17,7 +17,7 @@ $ agent-archive handoff SESSION
 
 ? Write to
 
-› Choose [/Users/alex/src/project/handoff-1a6c5fd9.md]: /Users/alex/handoff.md
+› Choose [/Users/alex/src/project/handoff-SESSION.md]: /Users/alex/handoff.md
 
 ✓ File
   /Users/alex/handoff.md

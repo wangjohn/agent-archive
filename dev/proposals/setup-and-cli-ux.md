@@ -429,5 +429,8 @@ work; investigate any implementation that changes archived content.
 
 The setup portion is implemented with focused CLI/backfill regression checks,
 setup transcript goldens, and selector PTY coverage on macOS. Independent P2
-review and hosted platform gates remain pending; the other guided flows and
-full cross-platform acceptance are tracked separately above.
+review and hosted platform gates remain pending. The remaining guided commands
+are implemented in a dependent P3 change with complete injected command
+transcripts, plain/color width matrices and terminal ownership checks. Their
+delivery checkboxes remain pending final prerequisite integration, independent
+review, required gates and cross-platform acceptance.
