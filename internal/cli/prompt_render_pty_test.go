@@ -286,7 +286,7 @@ try:
         read()
     assert p.returncode==0,(p.returncode,output)
     assert b'\x1b[?1049h' in output and b'\x1b[?1049l' in output,output
-    assert output.index(b'\x1b[?1049h') < output.index(b'Pairing code:') < output.index(b'\x1b[?1049l'),output
+    assert output.index(b'\x1b[?1049h') < output.index(b'2. Enter the pairing code on the other machine') < output.index(b'\x1b[?1049l'),output
 finally:
     if p.poll() is None: p.kill();p.wait()
     os.close(master);os.close(slave)

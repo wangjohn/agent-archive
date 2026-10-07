@@ -39,7 +39,37 @@ func boundedPairingLine(r *bufio.Reader, limit int) (string, error) {
 	}
 }
 
-func readPairingBundle(p *prompter, opts setupOptions, stdin io.Reader) (string, error) {
+func readPairingBundle(p *prompter, opts setupOptions, stdin io.Reader, env Env) (string, error) {
+	if !opts.yes && opts.pairFile == "" {
+		terminal.Println(p.out, "Connect to your existing archive")
+		terminal.Println(p.out, "On your configured machine, run agent-archive machines add.")
+		terminal.Println(p.out, "Transfer the pairing file here, then enter its path below. You can also paste copied pairing text.")
+		terminal.Print(p.out, "Pairing file path or text: ")
+		input, err := boundedPairingLine(p.in, pairing.MaxBundle+1)
+		if err != nil {
+			return "", err
+		}
+		if strings.HasPrefix(input, pairing.Prefix) {
+			// A regular file can share the wire prefix; prefer its contents.
+			if info, err := os.Stat(input); err != nil || !info.Mode().IsRegular() {
+				return input, nil
+			}
+		}
+		if input == "" || input == "-" {
+			return "", errors.New("enter a pairing file path or paste pairing text; use --pair-file - to read stdin")
+		}
+		opts.pairFile = input
+	}
+	if opts.pairFile != "" && opts.pairFile != "-" {
+		userHome, err := env.userHomeDir()
+		if err != nil {
+			return "", errors.New("cannot locate home directory for pairing file")
+		}
+		opts.pairFile, err = pairingFilePath(opts.pairFile, userHome)
+		if err != nil {
+			return "", errors.New("cannot resolve pairing file path")
+		}
+	}
 	if opts.pairFile != "" {
 		reader := stdin
 		var f *os.File
@@ -47,7 +77,7 @@ func readPairingBundle(p *prompter, opts setupOptions, stdin io.Reader) (string,
 			var err error
 			f, err = os.Open(opts.pairFile)
 			if err != nil {
-				return "", fmt.Errorf("cannot open pairing file")
+				return "", fmt.Errorf("cannot open pairing file %s; transfer it here and rerun agent-archive setup --pair-file %s", opts.pairFile, shellQuote(opts.pairFile))
 			}
 			defer func() { _ = f.Close() }()
 			reader = f
@@ -61,8 +91,7 @@ func readPairingBundle(p *prompter, opts setupOptions, stdin io.Reader) (string,
 	if opts.yes {
 		return "", fmt.Errorf("--yes pairing needs --pair-file PATH or --pair-file -")
 	}
-	terminal.Print(p.out, "Paste the encrypted pairing bundle: ")
-	return boundedPairingLine(p.in, pairing.MaxBundle+1)
+	return "", errors.New("a pairing file or pairing text is required")
 }
 
 func setupPairing(opts setupOptions, stdin io.Reader, out, errOut io.Writer, env Env) error {
@@ -168,11 +197,18 @@ func setupPairing(opts setupOptions, stdin io.Reader, out, errOut io.Writer, env
 	if err = applySetup(home, userHome, exe, existing, &cfg, nil, env); err != nil {
 		return fmt.Errorf("pairing setup did not commit: %w; retry the same pairing or finish/discard the saved setup", err)
 	}
-	terminal.Printf(out, "Paired with %s. This machine is %s. %s.\n", payload.IssuerName, payload.Name, pairingCredentialDescription(payload))
+	printPairingConnected(out, cfg.MachineName, payload, opts.yes)
 	if err = finishSetup(p, errOut, home, cfg, existing.Paused, discoveries, env.now(), setupFinish{env: env, userHome: userHome, offerImport: !opts.yes, skills: skills}); err != nil {
 		return err
 	}
 	return nil
+}
+
+func printPairingConnected(out io.Writer, name string, payload pairing.Payload, yes bool) {
+	terminal.Printf(out, "✓ %s is connected. Paired with %s.\n%s.\n", name, payload.IssuerName, pairingCredentialDescription(payload))
+	if !yes {
+		terminal.Println(out, "You can finish on the source machine and delete the pairing file.")
+	}
 }
 
 func readPairingCode(opts setupOptions, p *prompter, env Env) (string, error) {
@@ -427,7 +463,7 @@ func pairingReceiverInput(opts setupOptions, stdin io.Reader, out io.Writer, env
 		p.in = bufio.NewReader(opts.pairingInput)
 	}
 	p.now = env.now
-	bundle, err := readPairingBundle(p, opts, stdin)
+	bundle, err := readPairingBundle(p, opts, stdin, env)
 	if err != nil {
 		return nil, "", noClose, err
 	}
