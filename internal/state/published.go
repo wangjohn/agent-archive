@@ -138,6 +138,8 @@ func captureAgeFromMetadata(bundle archive.SourceBundle, m archive.Metadata) tim
 // session without its source bundles: enough for retention, for a subagent
 // looking for its link in its parent, and for status.
 type PublishedSummary struct {
+	// LabelSourceChecksum invalidates narrow naming context without decoding source records.
+	LabelSourceChecksum string `json:"label_source_checksum,omitempty"`
 	// Complete source-set facts are derived only when acknowledged state changes.
 	SourceSetDigest       string    `json:"source_set_digest,omitempty"`
 	CurrentRevision       string    `json:"current_revision,omitempty"`
@@ -192,6 +194,7 @@ func (p publishedState) summary() PublishedSummary {
 }
 
 func (p publishedState) summaryFromMetadata(m archive.Metadata) PublishedSummary {
+	source, _ := p.lastPublishedSource()
 	_, lastPublishedAt, published := p.resolveLastPublished()
 	var ageFrom time.Time
 	if clamp := p.AgeFrom; clamp != nil && clamp.For.Equal(captureAgeFromMetadata(p.Bundle, m)) {
@@ -217,7 +220,8 @@ func (p publishedState) summaryFromMetadata(m archive.Metadata) PublishedSummary
 		}
 	}
 	return PublishedSummary{
-		SourceSetDigest: digest, CurrentRevision: revision,
+		LabelSourceChecksum: source.SHA256,
+		SourceSetDigest:     digest, CurrentRevision: revision,
 		SourceSetComplete: complete, SourceSchemaVersion: sourceSchema, MetadataSchemaVersion: metadataSchema,
 		MeaningfulCapturedAt: captureAgeFromMetadata(p.Bundle, m),
 		Harness:              p.Bundle.Capture.Harness.Name,

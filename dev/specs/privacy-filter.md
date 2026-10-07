@@ -412,3 +412,15 @@ This changes derivation, not the privacy allowlist or filter version.
 Leading native `<external_codex_apps_open_page>` context wrappers follow the
 nested and unclosed-block omission rules. User prose, quoted markup and code
 examples are preserved, as is human text following a context wrapper.
+
+Verified Codex external names are typed `session_labels` supplemental evidence:
+`native_session_id`, `state`, optional `name`, `source`, and `contract` only.
+The UUID must match the owning ordinary Codex source. `present` requires a
+nonempty filtered name; `confirmed_absent` carries no name. Unknown fields,
+malformed IDs and history bundles are refused. Raw names are bounded to 16 KiB,
+receive normal credential redaction, normalize whitespace/control characters,
+and truncate to 512 bytes on a UTF-8 boundary before hashing or caching.
+An unavailable observation is not absence and preserves previously verified
+evidence. Native paths, raw database rows and index contents are not retained.
+Codex `session_meta` additionally retains only the `legacy` or `paginated`
+`history_mode` enum to establish index interpretation. Other values are omitted.

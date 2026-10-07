@@ -3,6 +3,7 @@ package nativecodec
 import (
 	"encoding/json"
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/codexmeta"
 	"sort"
 	"strings"
 )
@@ -138,12 +139,12 @@ func sanitizeObject(in map[string]any, state *archive.PrivacyState) (map[string]
 				state.PrivacyOmit(key)
 				continue
 			}
-		case booleanFlagKeys[lower]:
+		case typedRecordFlagKey(lower):
 			// Filter 4 admits isMeta, and filter 5 isCompactSummary and
 			// isVisibleInTranscriptOnly, only as the boolean flag Claude Code
 			// writes. Any other value under those names is prose the allowlist
 			// never retained, and stays omitted.
-			if _, isFlag := value.(bool); !isFlag {
+			if !typedRecordFlagValue(lower, value) {
 				state.PrivacyOmit(key)
 				continue
 			}
@@ -244,4 +245,17 @@ func sanitizeValue(value any, state *archive.PrivacyState) (any, bool) {
 	default:
 		return archive.SanitizeValue(value, state)
 	}
+}
+
+func typedRecordFlagKey(key string) bool {
+	return booleanFlagKeys[key] || key == "history_mode"
+}
+
+func typedRecordFlagValue(key string, value any) bool {
+	if booleanFlagKeys[key] {
+		_, ok := value.(bool)
+		return ok
+	}
+	mode, ok := value.(string)
+	return ok && (codexmeta.HistoryMode(mode) == codexmeta.CodexHistoryLegacy || codexmeta.HistoryMode(mode) == codexmeta.CodexHistoryPaginated)
 }

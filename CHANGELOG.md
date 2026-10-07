@@ -10,7 +10,13 @@ follow [Semantic Versioning](https://semver.org/).
   explicit rename. Validate title ownership, preserve partial preview coverage,
   and keep naming bookkeeping out of activity and capture eligibility.
 - Remove injected Codex open-page context from prompt fallback while preserving
-  the human request outside it. External Codex sidebar names remain pending.
+  the human request outside it.
+- Refresh Codex names for already admitted ordinary sessions from verified
+  0.159.2 settled storage, including verified legacy database/index fallback. Changes publish filtered
+  source evidence without renewing activity or retention; unavailable live-WAL
+  storage preserves the last verified name. Deferred lookup targets rotate within
+  prioritized homes even after backoff expires. Names that cannot remain stable
+  through privacy filtering preserve the last verified name. No native process is started.
 
 
 ### Added

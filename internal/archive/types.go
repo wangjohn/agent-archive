@@ -45,7 +45,9 @@ const (
 	// the description the parent gave a Claude Code subagent's task, read
 	// from the sibling .meta.json. Filter 15 redacts aa-pair1 pairing bundles,
 	// including truncated payloads. See dev/specs/privacy-filter.md.
-	FilterVersion = "16"
+	// Filter 17 retains typed, owning Codex session_labels metadata with
+	// prompt redaction and a bounded display name; it never establishes activity.
+	FilterVersion = "17"
 	// OpenTelemetryGenAIRevision pins the upstream definitions used by the
 	// three gen_ai.* attributes emitted by BuildMetadata. The archive is not
 	// an OTLP payload; all agent_archive.* attributes are local extensions.
@@ -159,7 +161,7 @@ const (
 	SkillUseEvidenceReadInference SkillUseEvidence = "skill_read_inference"
 )
 
-// SupplementalEvidenceKind names the recognized shapes of hook-only evidence.
+// SupplementalEvidenceKind names the recognized shapes of hook or verified native metadata evidence.
 // It is a named string, not a closed set: a hook may report a kind this
 // package does not recognize, and such evidence is still preserved as-is.
 type SupplementalEvidenceKind string
@@ -169,6 +171,7 @@ type SupplementalEvidenceKind string
 // read; a lifecycle event; a final response; explicit user feedback; a linked
 // child session; and a capture gap.
 const (
+	EvidenceKindSessionLabels    SupplementalEvidenceKind = "session_labels"
 	EvidenceKindSkillInventory   SupplementalEvidenceKind = "skill_inventory"
 	EvidenceKindSkillDiscovered  SupplementalEvidenceKind = "skill_discovered"
 	EvidenceKindSkillSnapshot    SupplementalEvidenceKind = "skill_snapshot"
@@ -511,7 +514,7 @@ type FilteredTranscript struct {
 	NativeStartComplete bool            `json:"-"`
 }
 
-// SupplementalEvidence is hook-only evidence. Payload must already be
+// SupplementalEvidence is hook or verified native metadata evidence. Payload must already be
 // privacy-filtered by the producer; this package preserves it separately from
 // native records and does not reconcile it into a transcript.
 type SupplementalEvidence struct {

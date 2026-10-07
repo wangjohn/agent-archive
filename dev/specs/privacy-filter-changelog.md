@@ -5,6 +5,30 @@ rules, as a whole, are in the [filter specification](privacy-filter.md);
 version numbers and bump rules are in [versions](../maintainers/versions.md). Each archived session
 records the filter version that produced it (`filter_version`).
 
+## Source filter version 17
+
+Adapter 0.17.0 and Codex parser 0.24.0 accompany this change.
+
+- Typed `session_labels` evidence keeps only an owning native UUID, present or
+  confirmed-absent state, filtered name, source class and pinned contract.
+  Unknown fields and other owners are rejected. Generic evidence validates
+  bounded safe owner IDs and opaque contracts; the Codex integration separately
+  validates native UUID, producer, history and resolver compatibility. Names receive the ordinary
+  credential redaction, control-character removal and a 512-byte UTF-8 cap
+  before fingerprinting or persistence. Names that would change under another
+  privacy pass after presentation normalization are unavailable, preserving
+  earlier verified evidence instead of caching an unpublishable observation.
+  Native paths and metadata responses
+  are omitted. Evidence replacement retains a stable observation timestamp
+  when semantic content is unchanged.
+- Names remain separate from prompt titles. They do not admit sessions, renew
+  capture time, count as conversation activity or extend retention. Related
+  Codex histories remain outside this publication path.
+- Codex session metadata retains only the `legacy`/`paginated` `history_mode`
+  enum, so index-only interpretation cannot mistake a missing paginated
+  database for legacy storage. Older retained output lacking this proof defers
+  index-only resolution until normal refiltering supplies current context.
+
 ## Source filter version 16
 
 Adapter version 0.16.0 goes with it. Claude/common parser 0.21.0 and Codex

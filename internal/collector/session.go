@@ -207,6 +207,9 @@ func (s *sessionScan) resume() (outcome sessionOutcome, handled bool, err error)
 		} else if found && pendingSkillMode(signature.SkillEvidence) != s.opts.skillEvidence() {
 			return outcomeSkipped, false, nil
 		}
+		if outcome, handled, err := s.refreshLabels(); handled || err != nil {
+			return outcome, handled, err
+		}
 		return regenerateMetadata(s)
 	}
 	if pending.History != nil {
@@ -390,6 +393,13 @@ func (s *sessionScan) build(read sourceRead) (archive.SourceBundle, []archive.Su
 		baseEvidence = cached.SupplementalEvidence
 	}
 	baseEvidence = limitSkillEvidence(baseEvidence, s.opts.skillEvidence())
+	if read.filtered.History == nil {
+		baseEvidence = s.applyLabels(baseEvidence)
+	} else {
+		// An ordinary lookup may precede a native history transition in the
+		// same pass. Preserve history capture without widening name authority.
+		baseEvidence = withoutSessionLabels(baseEvidence)
+	}
 	supplemental := limitSkillEvidence(mergeSupplementalEvidence(baseEvidence, s.req.HookEvidence), s.opts.skillEvidence())
 
 	// now is a placeholder here; bundleEvidenceEqual ignores CapturedAt, so
