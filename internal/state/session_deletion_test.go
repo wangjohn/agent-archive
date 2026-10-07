@@ -149,3 +149,44 @@ func TestSessionDeletionInterruptedRootedCleanupRetainsOwnerAndResumes(t *testin
 		t.Fatal("removed owner remains", err)
 	}
 }
+
+func TestSessionDeletionCleansOnlyOwnedScratchReservations(t *testing.T) {
+	s, reg, _ := stageFixture(t)
+	if err := s.SaveRegistration(reg); err != nil {
+		t.Fatal(err)
+	}
+	owned, err := NewTemporaryReservation(s, CursorAdmission, reg.ArchiveSessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = owned.Close() }()
+	other, err := NewTemporaryReservation(s, PublicationPrivacy, "other-owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = other.Close() }()
+	for _, reservation := range []*TemporaryReservation{owned, other} {
+		if err = reservation.Reserve(1024); err != nil {
+			t.Fatal(err)
+		}
+		if err = os.MkdirAll(reservation.Root(), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err = os.WriteFile(filepath.Join(reservation.Root(), "synthetic-snapshot"), []byte("filtered scratch"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	key, _ := agentmeta.NewSessionKey(reg.Harness.Name, reg.NativeSessionID)
+	if err = s.ForgetSession(reg.ArchiveSessionID, key); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = os.Stat(owned.Root()); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("owned scratch survived", err)
+	}
+	if raw, err := os.ReadFile(filepath.Join(other.Root(), "synthetic-snapshot")); err != nil || string(raw) != "filtered scratch" {
+		t.Fatal("unrelated scratch changed", err)
+	}
+	if used, err := s.temporaryUsage(); err != nil || used != 1024+temporaryControlBytes {
+		t.Fatal("unrelated charge lost", used, err)
+	}
+}
