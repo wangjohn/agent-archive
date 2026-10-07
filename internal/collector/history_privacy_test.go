@@ -274,7 +274,7 @@ func TestMixedHistoryPreparationRestartsAndReadsOriginalReplacedStage(t *testing
 		if err := scan.local.SavePending(scan.id(), p); err != nil {
 			t.Fatal(err)
 		}
-		scan.local, err = state.Open(scan.local.Home())
+		scan.local, err = openTestStore(scan.local.Home())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -389,7 +389,7 @@ func TestRunAcknowledgedAllRefPrivacyPublishesTogetherWithoutNativeReads(t *test
 	}
 	scan.opts.RepoKey = func(string) string { t.Fatal("retained preparation consulted current Git"); return "" }
 	for pass := range len(p.History.Inputs) {
-		scan.local, err = state.Open(scan.local.Home())
+		scan.local, err = openTestStore(scan.local.Home())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -515,7 +515,7 @@ func TestCommittedHistoryMaintenanceObligationSurvivesMissingOriginalRestart(t *
 	if err != nil || !found || !p.History.MaintenanceOwed || !p.Attempted {
 		t.Fatal("durable obligation lost", p.History, err)
 	}
-	scan.local, err = state.Open(scan.local.Home())
+	scan.local, err = openTestStore(scan.local.Home())
 	if err != nil {
 		t.Fatal(err)
 	}

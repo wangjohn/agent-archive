@@ -503,7 +503,7 @@ func TestUnchangedSessionsCostNoWritesAndStayFast(t *testing.T) {
 		t.Parallel()
 	}
 	home := t.TempDir()
-	local, err := state.Open(home)
+	local, err := openTestStore(home)
 	if err != nil {
 		t.Fatal(err)
 	}

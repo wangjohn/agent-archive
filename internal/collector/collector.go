@@ -209,6 +209,15 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	if opts.MachineID == "" {
 		return Result{}, errors.New("machine ID is required")
 	}
+	durableObligations, durableErr := local.DurableStorageObligations()
+	if durableErr != nil {
+		return Result{Errors: map[string]error{"durable-storage": durableErr}}, durableErr
+	}
+	for _, obligation := range durableObligations {
+		if obligation.SessionID == "" {
+			return Result{Errors: map[string]error{"durable-storage": state.ErrDurableStorageRecovery}}, state.ErrDurableStorageRecovery
+		}
+	}
 	recoveryLocal, closeRecovery := local.WithReadBudget(ctx, (&sessionScan{opts: opts}).readBudget())
 	generationRecoveryErr := recoveryLocal.ResumeGenerationRecoveries(ctx)
 	if generationRecoveryErr != nil && (!errors.Is(generationRecoveryErr, agentapi.ErrReadBudget) || errors.Is(generationRecoveryErr, context.Canceled) || errors.Is(generationRecoveryErr, context.DeadlineExceeded)) {
@@ -240,13 +249,14 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	subagents := materializeSubagentCandidates(ctx, local, opts, now)
 	opts.repoKeys = newRepoKeyCache(opts.RepoKey)
 	p := &pass{
-		ctx:              ctx,
-		local:            local,
-		remote:           store,
-		opts:             opts,
-		now:              now,
-		result:           Result{Errors: subagents.errors, WaitingSubagents: subagents.waiting, RejectedSubagents: subagents.rejected},
-		expiredSubagents: subagents.expired,
+		ctx:                ctx,
+		local:              local,
+		remote:             store,
+		opts:               opts,
+		now:                now,
+		durableObligations: durableObligations,
+		result:             Result{Errors: subagents.errors, WaitingSubagents: subagents.waiting, RejectedSubagents: subagents.rejected},
+		expiredSubagents:   subagents.expired,
 	}
 	if generationRecoveryErr != nil {
 		p.result.Errors["generation-recovery"] = generationRecoveryErr
@@ -316,8 +326,9 @@ type pass struct {
 	pending int
 	// expiredSubagents lists the subagents this pass stopped waiting for
 	// (see state.Status.ExpiredSubagents).
-	expiredSubagents []state.ExpiredSubagent
-	result           Result
+	expiredSubagents   []state.ExpiredSubagent
+	result             Result
+	durableObligations []state.DurableStorageObligation
 }
 
 // loadWork lists the registered sessions and their pending requests. One
@@ -343,6 +354,20 @@ func (p *pass) loadWork() error {
 	for id, issue := range registrationIssues {
 		addError(p.result.Errors, id, issue)
 		registered[id] = !errors.Is(issue, state.ErrQuarantined)
+	}
+	obligations := p.durableObligations
+	orphaned := map[string]bool{}
+	for _, obligation := range obligations {
+		id := obligation.SessionID
+		if id == "" {
+			addError(p.result.Errors, "durable-storage", state.ErrDurableStorageRecovery)
+			continue
+		}
+		if !registered[id] && !orphaned[id] {
+			orphaned[id] = true
+			p.pending++
+			addError(p.result.Errors, id, state.ErrDurableStorageRecovery)
+		}
 	}
 	// Lock files of sessions and candidates that are gone go now, while the
 	// registrations just listed say which those are.

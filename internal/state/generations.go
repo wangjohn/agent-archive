@@ -17,6 +17,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
@@ -111,16 +112,21 @@ func (s *Store) BeginGenerationRecovery(id string, at time.Time, build func(arch
 	if !safeFileComponent(id) || at.IsZero() {
 		return "", errors.New("valid session ID and recovery time required")
 	}
-	unlock, err := local.NamedLockWait(s.home, "hooks.lock", time.Second)
-	if err != nil {
-		return "", err
-	}
-	defer unlock()
+	var nextID string
+	err := config.WithDurableStorage(s.home, func(g config.DurableStorageGuard) error {
+		var e error
+		nextID, e = s.beginGenerationRecoveryGuard(g, id, at, build)
+		return e
+	})
+	return nextID, err
+}
+
+func (s *Store) beginGenerationRecoveryGuard(g config.DurableStorageGuard, id string, at time.Time, build func(archive.SessionRegistration, string) (archive.SessionRegistration, PendingPublication, error)) (string, error) {
 	if next, found, err := s.GenerationSuccessor(id); err != nil || found {
 		if err != nil {
 			return "", err
 		}
-		if err := s.resumeGenerationRecovery(s.generationReadContext(), id); err != nil {
+		if err := s.resumeGenerationRecovery(g, s.generationReadContext(), id); err != nil {
 			return "", err
 		}
 		return next, nil
@@ -147,13 +153,13 @@ func (s *Store) BeginGenerationRecovery(id string, at time.Time, build func(arch
 	request := Request{ArchiveSessionID: next, Token: token, Reasons: []string{"generation-recovery"}, RequestedAt: at}
 	pending.RequestToken = token
 	r := generationRecovery{Version: 1, Key: key, Previous: id, Next: next, Registration: &reg, Pending: &pending, Request: &request}
-	if err := s.writeCompact(s.generationRecoveryPath(id), r); err != nil {
+	if err := s.writeDurableGuard(g, filepath.Join(generationRecoveryDir, id+".json"), r); err != nil {
 		return "", err
 	}
 	if err := s.indexStep("generation-journal"); err != nil {
 		return "", err
 	}
-	return next, s.resumeGenerationRecovery(s.generationReadContext(), id)
+	return next, s.resumeGenerationRecovery(g, s.generationReadContext(), id)
 }
 
 func validateGenerationSuccessor(old, reg archive.SessionRegistration, pending PendingPublication, next string, at time.Time, budget *agentapi.NativeReadBudget, ctx context.Context) error {
@@ -263,6 +269,9 @@ func (s *Store) generationRecoveryOriginal(id string) (archive.SessionRegistrati
 // ResumeGenerationRecoveries replays interrupted local transitions before any
 // census, admission replay or storage work. Caller owns collector.lock.
 func (s *Store) ResumeGenerationRecoveries(ctx context.Context) error {
+	if err := s.CheckDurableReadRoots(); err != nil {
+		return err
+	}
 	files, err := os.ReadDir(filepath.Join(s.home, generationRecoveryDir))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -314,20 +323,17 @@ func (s *Store) resumeGenerationRecoveryFile(ctx context.Context, id string, bud
 	// Only routing status was consumed. End this independent full view before
 	// rereading the locked journal that authorizes the actual replay.
 	closeScope()
-	unlock, err := local.NamedLockWait(s.home, "hooks.lock", time.Second)
-	if err != nil {
-		return err
-	}
-	defer unlock()
-	resumed, closeResume := s.WithReadBudget(ctx, budget)
-	defer closeResume()
-	return resumed.resumeGenerationRecovery(ctx, id)
+	return config.WithDurableStorage(s.home, func(g config.DurableStorageGuard) error {
+		resumed, closeResume := s.WithReadBudget(ctx, budget)
+		defer closeResume()
+		return resumed.resumeGenerationRecovery(g, ctx, id)
+	})
 }
 
 // resumeGenerationRecovery runs with collector.lock then hooks.lock. Every
 // registration/index/request write uses its existing request-lock staging;
 // membership renames therefore retain request -> membership lock order.
-func (s *Store) resumeGenerationRecovery(ctx context.Context, id string) error {
+func (s *Store) resumeGenerationRecovery(g config.DurableStorageGuard, ctx context.Context, id string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -366,10 +372,10 @@ func (s *Store) resumeGenerationRecovery(ctx context.Context, id string) error {
 	if err := s.freezeGenerationRecovery(r); err != nil {
 		return fmt.Errorf("freeze recovery predecessor: %w", err)
 	}
-	if err := s.registerGenerationRecovery(r); err != nil {
+	if err := s.registerGenerationRecovery(g, r); err != nil {
 		return fmt.Errorf("register recovery successor: %w", err)
 	}
-	if err := s.activateGenerationRecovery(r); err != nil {
+	if err := s.activateGenerationRecovery(g, r); err != nil {
 		return fmt.Errorf("activate recovery successor: %w", err)
 	}
 	return nil
@@ -425,7 +431,7 @@ func (s *Store) freezeGenerationRecovery(r generationRecovery) error {
 	return nil
 }
 
-func (s *Store) registerGenerationRecovery(r generationRecovery) error {
+func (s *Store) registerGenerationRecovery(g config.DurableStorageGuard, r generationRecovery) error {
 	reg := *r.Registration
 	if err := s.writeUnderRequestLock(r.Next, s.registrationPath(r.Next), nil, func(current fileSnapshot) (any, bool, error) {
 		if current.found {
@@ -442,7 +448,7 @@ func (s *Store) registerGenerationRecovery(r generationRecovery) error {
 	if err := s.indexStep("generation-registration"); err != nil {
 		return err
 	}
-	if err := s.SavePending(r.Next, *r.Pending); err != nil {
+	if err := s.savePendingGuard(g, r.Next, *r.Pending); err != nil {
 		return err
 	}
 	if err := s.indexStep("generation-pending"); err != nil {
@@ -465,7 +471,7 @@ func (s *Store) registerGenerationRecovery(r generationRecovery) error {
 	return nil
 }
 
-func (s *Store) activateGenerationRecovery(r generationRecovery) error {
+func (s *Store) activateGenerationRecovery(g config.DurableStorageGuard, r generationRecovery) error {
 	if err := s.writeGenerationIndexUnderRequestLock(r.Next, qualifiedSessionIndexPath(s.home, r.Key), nil, func(current fileSnapshot) (any, bool, error) {
 		if current.found {
 			var prior qualifiedSessionIndexEntry
@@ -498,7 +504,7 @@ func (s *Store) activateGenerationRecovery(r generationRecovery) error {
 	r.Registration = nil
 	r.Pending = nil
 	r.Request = nil
-	if err := s.writeCompact(s.generationRecoveryPath(r.Previous), r); err != nil {
+	if err := s.writeDurableGuard(g, filepath.Join(generationRecoveryDir, r.Previous+".json"), r); err != nil {
 		return err
 	}
 	return s.indexStep("generation-complete")

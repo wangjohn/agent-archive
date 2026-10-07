@@ -26,7 +26,7 @@ import (
 func subagentGraceFixture(t *testing.T, origin archive.SessionOrigin) (*state.Store, time.Time, string) {
 	t.Helper()
 	home := t.TempDir()
-	local, err := state.Open(home)
+	local, err := openTestStore(home)
 	if err != nil {
 		t.Fatal(err)
 	}

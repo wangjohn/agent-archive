@@ -29,6 +29,11 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Pending publication and historical source staging share a bounded durable
+  storage budget. Interrupted or unregistered source stages remain visible as
+  recovery work; automatic cleanup retains original evidence. A sticky storage
+  writer fence makes older writers refuse these protected configurations.
+
 - First-time backfill can review live repository destinations and recover matching
   deleted worktree sessions in the same import. Hidden clones and unknown or
   excluded roots still prevent automatic attribution; proposed capture projects

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
@@ -90,6 +91,7 @@ var corruptionPolicies = map[string]corruption{
 	"status.json":             replacedByNextPass,
 	storageClockFile:          readAsAbsent,
 	"request-locks":           holdsNoContent,
+	"temporary-quota":         holdsNoContent,
 }
 
 // quarantineDirs are the directories whose files a reader may move aside.
@@ -435,8 +437,19 @@ const staleTempAge = time.Hour
 // left in the directories this store owns. Best effort: a failure only
 // leaves the file for the next pass.
 func (s *Store) RemoveStaleTemps() {
+	protect := true
+	if home, err := local.OpenRootedHome(s.home); err == nil {
+		cfg, found, e := config.LoadRooted(home)
+		protect = e != nil || !found || cfg.DurableStorageProtection
+		if e = home.Close(); e != nil {
+			protect = true
+		}
+	}
 	dirs := []string{s.home}
 	for _, dir := range append(append([]string{}, storeDirs...), lazyStoreDirs...) {
+		if protect && (dir == "pending" || dir == generationRecoveryDir) {
+			continue
+		}
 		dirs = append(dirs, filepath.Join(s.home, dir))
 	}
 	// Per-session evidence directories (see SessionDir) sit one level down.

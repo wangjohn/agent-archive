@@ -108,7 +108,7 @@ func TestParserMetadataRetryUsesSavedBytes(t *testing.T) {
 	}
 	remote.failMetadata = false
 	now = now.Add(24 * time.Hour)
-	restarted, err := state.Open(local.Home())
+	restarted, err := openTestStore(local.Home())
 	if err != nil {
 		t.Fatal(err)
 	}

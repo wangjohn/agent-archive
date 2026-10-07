@@ -729,7 +729,7 @@ func (s *Store) LoadBlocked(archiveSessionID string) (BlockedReason, bool, error
 func (s *Store) LoadPublished(archiveSessionID string) (bundle archive.SourceBundle, publishedAt time.Time, status CacheStatus, found bool, err error) {
 	p, err := s.LoadPublishedState(archiveSessionID)
 	if err != nil {
-		return archive.SourceBundle{}, time.Time{}, "", false, err
+		return archive.SourceBundle{}, time.Time{}, "", errors.Is(err, ErrDurableStorageRecovery), err
 	}
 	bundle, publishedAt, status, found = p.Cached()
 	return bundle, publishedAt, status, found, nil
@@ -740,7 +740,7 @@ func (s *Store) LoadPublished(archiveSessionID string) (bundle archive.SourceBun
 func (s *Store) LoadLastPublished(archiveSessionID string) (bundle archive.SourceBundle, publishedAt time.Time, found bool, err error) {
 	p, err := s.LoadPublishedState(archiveSessionID)
 	if err != nil {
-		return archive.SourceBundle{}, time.Time{}, false, err
+		return archive.SourceBundle{}, time.Time{}, errors.Is(err, ErrDurableStorageRecovery), err
 	}
 	bundle, publishedAt, found = p.LastPublished()
 	return bundle, publishedAt, found, nil

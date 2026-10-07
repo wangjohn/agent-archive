@@ -579,6 +579,28 @@ func readSessionStatus(view *statusView, cfg config.Config, home string, store *
 			pending++
 		}
 	}
+	obligations, obligationErr := store.DurableStorageObligations()
+	if obligationErr != nil {
+		view.Warnings = append(view.Warnings, "Durable publication evidence requires recovery; automatic cleanup and native substitution are unavailable.")
+	}
+	registered := map[string]bool{}
+	for _, reg := range regs {
+		registered[reg.ArchiveSessionID] = true
+	}
+	orphans := map[string]bool{}
+	for _, obligation := range obligations {
+		id := obligation.SessionID
+		if id == "" {
+			pending++
+			view.Warnings = append(view.Warnings, "A private durable storage root requires recovery.")
+			continue
+		}
+		if !registered[id] && !orphans[id] {
+			orphans[id] = true
+			pending++
+			view.Warnings = append(view.Warnings, fmt.Sprintf("Session %q retains durable publication evidence without a readable registration; recover it before collecting or cleaning up.", id))
+		}
+	}
 	if pending > view.Collector.PendingCount {
 		view.Collector.PendingCount = pending
 	}
