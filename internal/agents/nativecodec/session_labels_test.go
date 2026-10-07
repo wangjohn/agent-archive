@@ -21,7 +21,9 @@ func claudeLabelLines(t *testing.T, lines ...string) SourceBundle {
 		`{"type":"user","uuid":"u1","sessionId":"s","timestamp":"2026-09-30T10:00:00Z","gitBranch":"main","message":{"role":"user","content":"  Rename the   widget\nparser "}}`,
 		`{"type":"assistant","uuid":"a1","sessionId":"s","timestamp":"2026-09-30T10:00:05Z","gitBranch":"main","message":{"role":"assistant","content":[{"type":"text","text":"Done."}]}}`,
 	}
-	return claudeLines(t, append(base, lines...)...)
+	bundle := claudeLines(t, append(base, lines...)...)
+	bundle.NativeSessionID = "s"
+	return bundle
 }
 
 func prLink(repository string, number int) string {

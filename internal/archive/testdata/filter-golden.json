@@ -5,11 +5,20 @@
   "claude-compaction.jsonl": {
     "sha256": "a32aef4e79698cea84a1d9d91068f539f3df13bfdce4d47afb05d0b2978cce06"
   },
+  "claude-generated-title.jsonl": {
+    "sha256": "af08f75f17a5f2d1a56e5b13a463b6e571a67e88f48bd2e233d2aaa3a6f965c9"
+  },
   "claude-git-activity.jsonl": {
     "sha256": "aa7b0dd2b78280576860e21abdac21019e0db4a1e749aea2b560ab401f3e5790"
   },
   "claude-local-command.jsonl": {
     "sha256": "b83a0fb3faaba35210af550eb796532054814969b8f02a9644daef8e58c9e567"
+  },
+  "claude-many-models.jsonl": {
+    "sha256": "ca1529b66ac22b59222007dde373888a1e5c02dc7dd89b7a2d8b7a5bca418e13"
+  },
+  "claude-model-tokens.jsonl": {
+    "sha256": "f437f4f6b5926a90d709a63dcc2c0fd3739d629081ef5c0e871c7be8e74999ca"
   },
   "claude-pairing-bundles.jsonl": {
     "sha256": "5fe49aee46385d9b72672a10e03a2ee3df5364ebe9c9e549ccd770f559a3ec65"
@@ -61,6 +70,12 @@
   },
   "codex-list-output.jsonl": {
     "sha256": "290ed0599d14b7c05975f0ee9d037cf16a1b544e2c67a3785d00fa5b6e7980e1"
+  },
+  "codex-many-models.jsonl": {
+    "sha256": "0e8bf45709bebd1f550b81a7de31f6efedc5e806b8c553ea9af7c303bae865d1"
+  },
+  "codex-model-switch.jsonl": {
+    "sha256": "648170e042a26e3e2d24318e110ae972b715b1248a8bcc0bb815a5ea6f510ed6"
   },
   "codex-pairing-bundles.jsonl": {
     "sha256": "4bbddd3fead673a238ef41bbf413b1efaff6a6b8738d2022b03e21220b6a9589"
