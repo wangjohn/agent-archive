@@ -110,3 +110,5 @@ Actual MinIO executes the unchanged discovery summaries; fixture shortening is
 not a substitute for provider compatibility. Required grouped provider tests
 include five fixed child expectations, and a skipped descendant cannot turn its
 passed parent into acceptance.
+
+Privacy retirement has two separate required proofs: ordinary CLI publication uses the actual verifier and public Sweep, while the full 65-reference historical set uses the shipped package-local retirement port after exact durable selection and production-reader current-policy readback. The outer historical Sweep remains fenced. Restoration retries bind the exact sealed successor after an uncertain metadata acknowledgement; a changed undo intent may conservatively skip while retaining pending publication and removal work.

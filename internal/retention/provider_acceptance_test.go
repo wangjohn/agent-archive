@@ -7,11 +7,13 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -103,13 +105,36 @@ func TestProviderRetentionRestoresAfterNewHook(t *testing.T) {
 	if _, err := remote.Get(t.Context(), previous.SourceBundle.Key); err != nil {
 		t.Fatal("new hook lost restoration source", err)
 	}
-	result := collect(t, local, remote, now.Add(time.Minute))
+	if result := collect(t, local, &uncertainRestorationPut{ObjectStore: remote}, now.Add(time.Minute)); len(result.Errors) == 0 {
+		t.Fatal("lost restoration acknowledgement accepted")
+	}
+	pending, found, err := local.LoadPending(reg.ArchiveSessionID)
+	if err != nil || !found || pending.ValidatePublication() != nil {
+		t.Fatal("sealed restoration successor missing", err)
+	}
+	result := collect(t, local, remote, now.Add(2*time.Minute))
 	if len(result.Errors) != 0 || len(result.Published) != 1 {
 		t.Fatal(result)
 	}
-	restored := fetchMetadata(t, remote, reg.ArchiveSessionID)
-	if restored.SourceBundle != previous.SourceBundle {
-		t.Fatal("restoration changed frozen source")
+	selected, err := remote.Get(t.Context(), pending.MetadataKey)
+	if err != nil || !bytes.Equal(selected, pending.MetadataBytes) {
+		t.Fatal("restoration changed sealed selecting successor", err)
+	}
+	published, err := local.LoadPublishedState(reg.ArchiveSessionID)
+	if err != nil || !bytes.Equal(published.Metadata(), pending.MetadataBytes) {
+		t.Fatal("local successor differs from verified remote selection", err)
+	}
+	refs, err := published.CommittedSources()
+	var restored archive.Metadata
+	if err != nil || json.Unmarshal(selected, &restored) != nil {
+		t.Fatal("invalid restored selection", err)
+	}
+	selectedRefs, err := restored.SourceReferences()
+	if err != nil || !slices.Equal(refs, selectedRefs) {
+		t.Fatal("restoration lost exact sealed full set", err)
+	}
+	if found, err := local.HasPending(reg.ArchiveSessionID); err != nil || found {
+		t.Fatal("verified successor did not settle pending restoration", err)
 	}
 	loaded, err := reader.LoadSource(t.Context(), remote, restored, reader.Limits{})
 	if err != nil || !strings.Contains(stringProviderJSON(t, loaded), "visible") {
@@ -210,8 +235,18 @@ func TestProviderRestorationMissingOrChangedIntentRetainsPending(t *testing.T) {
 		t.Run(string(kind), func(t *testing.T) {
 			local, remote, reg, now, key, selected := prepareProviderRestoration(t)
 			invalidateProviderIntent(t, local, reg, now, kind)
-			if result := collect(t, local, remote, now.Add(3*time.Minute)); len(result.Errors) == 0 {
-				t.Fatal("missing/changed intent silently replayed")
+			result := collect(t, local, remote, now.Add(3*time.Minute))
+			if len(result.Published) != 0 {
+				t.Fatal("missing/changed intent silently replayed", result)
+			}
+			if kind == providerMissingIntent && len(result.Errors) == 0 {
+				t.Fatal("missing intent was not actionable", result)
+			}
+			if kind == providerChangedIntent {
+				work, err := local.Outstanding(reg, true)
+				if err != nil || !work.Removal || len(result.Skipped) != 1 {
+					t.Fatal("changed removal intent was not durably held", work, result, err)
+				}
 			}
 			if found, err := local.HasPending(reg.ArchiveSessionID); err != nil || !found {
 				t.Fatal("invalid intent discarded durable restoration")
@@ -281,4 +316,90 @@ func invalidateProviderIntent(t *testing.T, local *state.Store, reg archive.Sess
 	default:
 		t.Fatal("unsupported synthetic intent fault")
 	}
+}
+
+// This is component acceptance of the shipped inner retirement port. Public
+// historical Sweep remains fenced; no enabled outer lifecycle is claimed.
+func TestProviderFullSetPrivacyRetirementInnerPortRequiresReadback(t *testing.T) {
+	remote := providertest.NewDisposableS3(t)
+	local := newTestStore(t)
+	now := time.Now().UTC()
+	f := providertest.PutRetainedFixture(t, remote, archive.MaxPreservedRevisions, now.Add(-48*time.Hour))
+	if err := local.SaveRegistration(f.Registration); err != nil {
+		t.Fatal(err)
+	}
+	published, err := local.LoadPublishedState(f.Registration.ArchiveSessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = published.SavePublication(f.Active, f.Metadata.CapturedAt, f.Metadata.SourceBundle, f.Body); err != nil {
+		t.Fatal(err)
+	}
+	if err = local.RecordSupersededWithPrivacy(f.Registration.ArchiveSessionID, f.Unreferenced.Key, now.Add(-48*time.Hour), true); err != nil {
+		t.Fatal(err)
+	}
+	ledger, err := local.LoadSuperseded(f.Registration.ArchiveSessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Config{MachineID: f.Metadata.MachineID}
+	verifiedSelection := ""
+	opts := Options{GracePeriod: time.Hour, CurrentDestination: cfg.InCurrentDestination, PrivacyVerified: func(reg archive.SessionRegistration, metadata archive.Metadata) bool {
+		body, err := json.Marshal(metadata)
+		return err == nil && verifiedSelection != "" && storage.SHA256Hex(body) == verifiedSelection && cfg.InCurrentDestination(reg)
+	}}
+	s := &sweeper{ctx: t.Context(), local: local, store: remote, opts: opts, now: now, metadataSHA: storage.SHA256Hex(f.Body), result: Result{Errors: map[string]error{}}}
+	if err = s.deleteSuperseded(f.Registration, ledger, f.Metadata); err != nil || s.result.DeletedSnapshots != 0 {
+		t.Fatal("unverified historical privacy cleanup", s.result, err)
+	}
+	if _, err = remote.Get(t.Context(), f.Unreferenced.Key); err != nil {
+		t.Fatal("unverified privacy evidence removed", err)
+	}
+	verifiedSelection = verifyProviderRetainedSelection(t, local, remote, cfg, f)
+	if err = s.deleteSuperseded(f.Registration, ledger, f.Metadata); err != nil || s.result.DeletedSnapshots != 1 {
+		t.Fatal("verified full-set retirement failed", s.result, err)
+	}
+	if _, err = remote.Get(t.Context(), f.Unreferenced.Key); !errors.Is(err, storage.ErrNotFound) {
+		t.Fatal("obsolete privacy evidence remains", err)
+	}
+	// Read again after destructive cleanup: every retained body and age survives.
+	if after := verifyProviderRetainedSelection(t, local, remote, cfg, f); after != verifiedSelection {
+		t.Fatal("retirement changed selecting evidence")
+	}
+}
+
+func verifyProviderRetainedSelection(t *testing.T, local *state.Store, remote storage.ObjectStore, cfg config.Config, f providertest.RetainedFixture) string {
+	t.Helper()
+	if !cfg.InCurrentDestination(f.Registration) || cfg.MachineID != f.Metadata.MachineID {
+		t.Fatal("selection is outside current owner/destination")
+	}
+	published, err := local.LoadPublishedState(f.Registration.ArchiveSessionID)
+	if err != nil || !bytes.Equal(published.Metadata(), f.Body) {
+		t.Fatal("durable selecting metadata differs", err)
+	}
+	refs, err := published.CommittedSources()
+	selectedRefs, selectedErr := f.Metadata.SourceReferences()
+	if err != nil || selectedErr != nil || !slices.Equal(refs, selectedRefs) {
+		t.Fatal("durable complete selection differs", err, selectedErr)
+	}
+	key, err := archive.MetadataObjectKey(f.Registration.Harness.Name, f.Registration.ArchiveSessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := remote.Get(t.Context(), key)
+	if err != nil || !bytes.Equal(raw, f.Body) {
+		t.Fatal("remote selecting authority differs", err)
+	}
+	revisions := []archive.RevisionReference{{RevisionID: f.Metadata.History.CurrentRevision, CapturedAt: f.Metadata.CapturedAt, Source: f.Metadata.SourceBundle}}
+	revisions = append(revisions, f.Metadata.History.Preserved...)
+	for _, revision := range revisions {
+		bundle, err := reader.LoadRevisionSource(t.Context(), remote, f.Metadata, revision, reader.Limits{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bundle.Capture.FilterVersion != archive.FilterVersion || !bundle.Capture.CapturedAt.Equal(revision.CapturedAt) || bundle.History.ActiveRolloutID != revision.RevisionID || !strings.Contains(stringProviderJSON(t, bundle.NativeRecords), "synthetic retained provider content") {
+			t.Fatal("retained current-policy identity, content or age differs")
+		}
+	}
+	return storage.SHA256Hex(raw)
 }

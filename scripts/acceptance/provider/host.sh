@@ -101,4 +101,5 @@ python3 scripts/acceptance/provider/verify-results.py "$AA_ACCEPTANCE_OUTPUT/pro
   TestProviderRestorationMissingOrChangedIntentRetainsPending/missing \
   TestProviderRestorationMissingOrChangedIntentRetainsPending/changed \
   TestProviderFullSetDeletionInnerPortsPreserveFence \
+  TestProviderFullSetPrivacyRetirementInnerPortRequiresReadback \
   TestProviderPrivacyRetirementRequiresVerifiedFullSelection > "$AA_ACCEPTANCE_OUTPUT/provider-summary.json"
