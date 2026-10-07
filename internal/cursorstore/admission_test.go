@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"unsafe"
 
 	"github.com/wangjohn/agent-archive/internal/state"
 	"modernc.org/libc"
@@ -158,7 +159,7 @@ func TestAdmissionDestinationRejectsWritesBeforeAllocation(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = vfs.Close() }()
-	db, err := sql.Open("sqlite", admissionDestinationDSN(path, vfs.name, 512, 1000))
+	db, err := openAdmissionTestDatabase(t, admissionDestinationDSN(path, vfs.name, 512, 1000))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -374,7 +375,7 @@ func TestAdmissionPrivateDestinationRetainsNativeTablesUntilReaderClose(t *testi
 		t.Fatal(err)
 	}
 	defer func() { _ = vfs.Close() }()
-	db, err := sql.Open("sqlite", admissionDestinationDSN(path, vfs.name, 512, 8))
+	db, err := openAdmissionTestDatabase(t, admissionDestinationDSN(path, vfs.name, 512, 8))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -432,4 +433,260 @@ func TestAdmissionDestinationShortReadZeroFillsNativeBuffer(t *testing.T) {
 	if rc := admissionReadDestination(vfs, buffer, 8, 0); rc != sqlite3.SQLITE_INTERRUPT {
 		t.Fatal("cancelled native read", rc)
 	}
+}
+
+func TestAdmissionRefusesWritableProcessSharedMemoryBeforeMapping(t *testing.T) {
+	t.Parallel()
+	if os.Geteuid() == 0 {
+		t.Skip("root admission is refused before native open")
+	}
+	path := filepath.Join(t.TempDir(), "state.vscdb")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	if _, err = db.ExecContext(t.Context(), `PRAGMA journal_mode=WAL; CREATE TABLE cursorDiskKV(key TEXT PRIMARY KEY,value BLOB); INSERT INTO cursorDiskKV VALUES ('composerData:c','{}')`); err != nil {
+		t.Fatal(err)
+	}
+	before := snapshotDir(t, filepath.Dir(path))
+	workspace := admissionWorkspace(t)
+	copied, _, err := PrepareAdmissionDatabase(t.Context(), path, workspace)
+	if err == nil || copied != "" {
+		t.Fatal("reused writable native shared memory", copied, err)
+	}
+	assertUnchanged(t, filepath.Dir(path), before)
+	if _, err = os.Stat(workspace.Root()); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("unsafe shared memory allocated scratch", err)
+	}
+}
+
+func TestAdmissionRacedSourceRefusesBeforeNativeDelegation(t *testing.T) {
+	t.Parallel()
+	if os.Geteuid() == 0 {
+		t.Skip("root admission is refused before native open")
+	}
+	path := filepath.Join(t.TempDir(), "state.vscdb")
+	writeDB(t, path, false, map[string]any{"composerData:c": chat("c", 1)})
+	path, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := os.OpenRoot(filepath.Dir(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = root.Close() }()
+	vfs, err := newAdmissionVFS(map[string]os.FileInfo{path: info}, false, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = vfs.Close() }()
+	vfs.setSourceRoot(root, filepath.Dir(path))
+	if err = os.Rename(path, path+".old"); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "outside.db")
+	writeDB(t, outside, false, map[string]any{"composerData:outside": chat("outside", 1)})
+	replacement, err := os.ReadFile(outside)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(path, replacement, 0600); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", admissionDSN(dsn(path, false), vfs.name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	var count int
+	unlock := lockAdmissionRegistry()
+	err = db.QueryRowContext(t.Context(), "SELECT count(*) FROM cursorDiskKV").Scan(&count)
+	unlock()
+	if err == nil {
+		t.Fatal("raced identity admitted")
+	}
+	if vfs.opens.Load() != 0 {
+		t.Fatal("native open ran before rooted identity refusal", vfs.opens.Load())
+	}
+}
+
+func admissionWritableMapProbe(_ *libc.TLS, p uintptr, _, _, _ int32, _ uintptr) int32 {
+	native := loadAdmissionC[sqlite3.TunixFile](p)
+	inode := loadAdmissionC[sqlite3.TunixInodeInfo](native.FpInode)
+	node := loadAdmissionC[sqlite3.TunixShmNode](inode.FpShmNode)
+	node.FnRef++
+	writeAdmissionC(inode.FpShmNode, node)
+	return sqlite3.SQLITE_OK
+}
+
+func TestAdmissionWritableSharedMemoryRefusesBeforeCallback(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "state.vscdb")
+	if err := os.WriteFile(path+"-shm", []byte("synthetic"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path + "-shm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := os.OpenRoot(filepath.Dir(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = root.Close() }()
+	tls := libc.NewTLS()
+	defer tls.Close()
+	name, err := libc.CString(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer libc.Xfree(tls, name)
+	file := libc.Xmalloc(tls, libc.Tsize_t(unsafe.Sizeof(sqlite3.TunixFile{})))
+	inode := libc.Xmalloc(tls, libc.Tsize_t(unsafe.Sizeof(sqlite3.TunixInodeInfo{})))
+	node := libc.Xmalloc(tls, libc.Tsize_t(unsafe.Sizeof(sqlite3.TunixShmNode{})))
+	if file == 0 || inode == 0 || node == 0 {
+		t.Fatal("synthetic native allocation failed")
+	}
+	defer libc.Xfree(tls, file)
+	defer libc.Xfree(tls, inode)
+	defer libc.Xfree(tls, node)
+	writeAdmissionC(file, sqlite3.TunixFile{FzPath: name, FpInode: inode})
+	writeAdmissionC(inode, sqlite3.TunixInodeInfo{FpShmNode: node})
+	writeAdmissionC(node, sqlite3.TunixShmNode{FisReadonly: 0, FhShm: -1})
+	vfs := &admissionVFS{sourceRoot: root, sourceDirectory: filepath.Dir(path), allowed: map[string]os.FileInfo{path + "-shm": info}}
+	defer func() {
+		for _, held := range vfs.sourcePins {
+			_ = held.Close()
+		}
+	}()
+	f := &admissionFile{vfs: vfs, originalMethods: sqlite3.Tsqlite3_io_methods{FxShmMap: callbackPointer(admissionWritableMapProbe)}}
+	admissionVFSState.Lock()
+	admissionVFSState.files[file] = f
+	admissionVFSState.Unlock()
+	defer func() { admissionVFSState.Lock(); delete(admissionVFSState.files, file); admissionVFSState.Unlock() }()
+	if rc := admissionShmMap(tls, file, 0, 32768, 0, 0); rc != sqlite3.SQLITE_READONLY {
+		t.Fatal(rc)
+	}
+	if got := loadAdmissionC[sqlite3.TunixShmNode](node).FnRef; got != 0 {
+		t.Fatal("writable SHM delegated before refusal", got)
+	}
+}
+
+func TestAdmissionDescriptorVerificationPreservesPinnedReadLocks(t *testing.T) {
+	t.Parallel()
+	if os.Geteuid() == 0 {
+		t.Skip("root admission is refused before native open")
+	}
+	path := filepath.Join(t.TempDir(), "state.vscdb")
+	w := startWriter(t, path)
+	w.put(map[string]string{"composerData:c": chat("c", 1), "padding": strings.Repeat("p", 256<<10)})
+	path, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace := admissionWorkspace(t)
+	var probeErr error
+	_, _, err = prepareAdmissionDatabase(t.Context(), path, workspace, admissionCopyOptions{afterStep: func(n int) {
+		if n != 1 {
+			return
+		}
+		expected, e := os.Stat(path + "-shm")
+		if e != nil {
+			probeErr = e
+			return
+		}
+		fd := int32(-1)
+		admissionVFSState.Lock()
+		for p, f := range admissionVFSState.files {
+			if f.vfs.heldFile != nil || f.vfs.sourceDirectory != filepath.Dir(path) {
+				continue
+			}
+			native := loadAdmissionC[sqlite3.TunixFile](p)
+			if native.FpShm == 0 {
+				continue
+			}
+			shm := loadAdmissionC[sqlite3.TunixShm](native.FpShm)
+			node := loadAdmissionC[sqlite3.TunixShmNode](shm.FpShmNode)
+			fd = node.FhShm
+		}
+		admissionVFSState.Unlock()
+		if fd < 0 || !admissionDescriptorMatches(fd, expected) {
+			probeErr = errors.New("source descriptor unavailable")
+			return
+		}
+		w.do(writerCommand{Op: writerCheckpoint})
+		info, e := os.Stat(path + "-wal")
+		if e != nil || info.Size() == 0 {
+			probeErr = errors.New("descriptor verification dropped pinned reader locks")
+		}
+	}})
+	if probeErr != nil {
+		t.Fatal(probeErr)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAdmissionDestinationRegistrationPreservesExistingVFS(t *testing.T) {
+	t.Parallel()
+	if os.Geteuid() == 0 {
+		t.Skip("root source admission is refused")
+	}
+	path := filepath.Join(t.TempDir(), "native.db")
+	held, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = held.Close() }()
+	info, err := held.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := newAdmissionVFS(map[string]os.FileInfo{path: info}, false, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = source.Close() }()
+	destination, err := newAdmissionDestinationVFS(t.Context(), path, held, 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = destination.Close() }()
+	tls := libc.NewTLS()
+	defer tls.Close()
+	name, err := libc.CString(source.name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer libc.Xfree(tls, name)
+	unlock := lockAdmissionRegistry()
+	actual := sqlite3.Xsqlite3_vfs_find(tls, name)
+	unlock()
+	if actual != source.ptr {
+		t.Fatal("destination setup lost registered source VFS", actual, source.ptr)
+	}
+}
+
+func openAdmissionTestDatabase(t *testing.T, dsn string) (*sql.DB, error) {
+	t.Helper()
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(1)
+	conn, err := admissionConnection(t.Context(), db)
+	if err != nil {
+		return nil, errors.Join(err, db.Close())
+	}
+	if err = conn.Close(); err != nil {
+		return nil, errors.Join(err, db.Close())
+	}
+	return db, nil
 }

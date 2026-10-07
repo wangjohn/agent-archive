@@ -65,3 +65,39 @@ func TestAdmissionSameSnapshotParentRoutingRefusesFormerTopLevel(t *testing.T) {
 		t.Fatal("admitted newly routed child", snapshot, err)
 	}
 }
+
+func TestAdmissionRejectsPresentNullProducerVersion(t *testing.T) {
+	t.Parallel()
+	for _, key := range []string{"selected", "parent"} {
+		t.Run(key, func(t *testing.T) {
+			t.Parallel()
+			path := filepath.Join(t.TempDir(), "native.db")
+			db, err := sql.Open("sqlite", path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = db.ExecContext(t.Context(), `CREATE TABLE cursorDiskKV(key TEXT PRIMARY KEY,value BLOB); INSERT INTO cursorDiskKV VALUES ('composerData:c','{"composerId":"c","createdAt":1,"conversation":[{"type":2,"text":"synthetic"}]}')`); err != nil {
+				t.Fatal(err)
+			}
+			row := "composerData:c"
+			if key == "parent" {
+				row = "composerData:parent"
+			}
+			if _, err = db.ExecContext(t.Context(), `INSERT OR REPLACE INTO cursorDiskKV VALUES (?,?)`, row, `{"_v":null,"composerId":"c","createdAt":1,"conversation":[{"type":2,"text":"synthetic"}]}`); err != nil {
+				t.Fatal(err)
+			}
+			if err = db.Close(); err != nil {
+				t.Fatal(err)
+			}
+			ref := agentapi.SourceRef{Kind: archive.SourceKindCursorSQLite, Key: "c"}
+			pass, err := (SourceProvider{}).OpenAdmissionPass(t.Context(), agentapi.SourceEnvironment{Database: path}, ref)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = pass.Close() }()
+			if snapshot, err := pass.Read(t.Context(), ref, agentapi.ReadLimits{}); err == nil || snapshot != nil {
+				t.Fatal("admitted malformed producer version", snapshot, err)
+			}
+		})
+	}
+}

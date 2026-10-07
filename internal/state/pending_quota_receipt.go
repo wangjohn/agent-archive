@@ -29,24 +29,24 @@ func validQuotaStage(m AdmissionStage, id string) bool {
 }
 
 func (s *Store) heldQuotaStage(id, digest string) (m AdmissionStage, allowance int64, ok bool) {
-	reg, found, err := s.LoadRegistration(id)
+	reg, found, err := s.quotaRegistration(id)
 	if err != nil || !found || reg.AdmissionStage != digest || digest == "" {
 		return
 	}
-	released, err := s.AdmissionStageReleased(reg)
+	released, err := s.quotaStageReleased(reg)
 	if err != nil || released {
 		return
 	}
-	path, err := s.stagePath(id, ".json")
+	path, err := s.quotaStagePath(id, ".json")
 	if err != nil {
 		return
 	}
-	raw, err := readStageFile(path, stageManifestLimit)
+	raw, err := s.quotaReadFile(path, stageManifestLimit)
 	if err != nil || stageDigest(raw) != digest || json.Unmarshal(raw, &m) != nil || !validQuotaStage(m, id) || CheckAdmissionStageOwnership(reg, m) != nil {
 		return
 	}
-	object, _ := s.stagePath(id, ".source.gz")
-	info, err := os.Lstat(object)
+	object, _ := s.quotaStagePath(id, ".source.gz")
+	info, err := s.quotaLstat(object)
 	if err != nil || !info.Mode().IsRegular() || info.Size() != m.Bytes {
 		return
 	}
@@ -68,7 +68,7 @@ func quotaReceiptDigest(r pendingQuotaReceipt) string {
 // the physical quota and never establishes content or publication authority.
 func (s *Store) existingPendingQuotaCredit(id string, pendingInfo os.FileInfo) (receiptBytes, credit int64) {
 	path := s.quotaReceiptPath(id)
-	info, err := os.Lstat(path)
+	info, err := s.quotaLstat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return
 	}
@@ -76,7 +76,7 @@ func (s *Store) existingPendingQuotaCredit(id string, pendingInfo os.FileInfo) (
 		return AdmissionStageQuota + 1, 0
 	}
 	receiptBytes = 2 * info.Size()
-	raw, err := readStageFile(path, quotaReceiptLimit)
+	raw, err := s.quotaReadFile(path, quotaReceiptLimit)
 	var r pendingQuotaReceipt
 	if err != nil || json.Unmarshal(raw, &r) != nil || r.Version != 1 || r.SessionID != id || r.Checksum != quotaReceiptDigest(r) || len(r.PendingSHA) != 64 || r.EncodedBytes != pendingInfo.Size() || !r.ModifiedAt.Equal(pendingInfo.ModTime()) || r.Identity != pendingQuotaIdentity(pendingInfo) {
 		return
@@ -90,7 +90,7 @@ func (s *Store) existingPendingQuotaCredit(id string, pendingInfo os.FileInfo) (
 }
 
 func (s *Store) writeQuotaReceipt(id string, p PendingPublication, encoded []byte) error {
-	info, err := os.Lstat(s.pendingPath(id))
+	info, err := s.quotaLstat(s.pendingPath(id))
 	if err != nil || !info.Mode().IsRegular() || info.Size() != int64(len(encoded)) {
 		return ErrAdmissionStageRecovery
 	}
@@ -109,7 +109,7 @@ func (s *Store) reconcileQuotaReceipt(id string, info os.FileInfo) error {
 	if s.onQuotaBodyRead != nil {
 		s.onQuotaBodyRead("pending")
 	}
-	raw, err := readStageFile(s.pendingPath(id), AdmissionStageQuota/2)
+	raw, err := s.quotaReadFile(s.pendingPath(id), AdmissionStageQuota/2)
 	if err != nil {
 		return err
 	}

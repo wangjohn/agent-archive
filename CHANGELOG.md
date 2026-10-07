@@ -11,7 +11,8 @@ follow [Semantic Versioning](https://semver.org/).
 - Confirmed Cursor history imports can copy supported live databases with bounded
   read-only snapshots. Shared private staging capacity includes scratch, pending
   copies and recoverable original evidence; unsupported or changed input requires
-  settling Cursor or another review.
+  settling Cursor or another review. Native descriptor verification retains read
+  locks, and rooted quota controls charge oversized or orphaned scratch files.
 
 - Readers understand self-contained Codex fork, child and revised histories,
   preserve exact raw ordinal boundaries and count only the chat's own activity.
