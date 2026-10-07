@@ -53,9 +53,14 @@ const (
 // with a transcript on disk; the plan leaves those out. Reason is set when
 // Checked is false.
 type CursorDatabaseResult struct {
-	Chats   []CursorDatabaseChat
-	Checked bool
-	Reason  CursorUncheckedReason
+	// RecoveryRows and RecoveryBytes count bounded catalog values read for
+	// recovery. RecoveryBudgetExhausted reports an incomplete bounded catalog.
+	RecoveryRows            int
+	RecoveryBytes           int64
+	RecoveryBudgetExhausted bool
+	Chats                   []CursorDatabaseChat
+	Checked                 bool
+	Reason                  CursorUncheckedReason
 	// NewerFormat counts the composerData rows with a _v newer than this
 	// release knows, read anyway.
 	NewerFormat int
@@ -69,6 +74,9 @@ type CursorDatabaseResult struct {
 	// Checked.
 	ReadChat     func(ctx context.Context, id string) (cursorstore.Composer, error)
 	ReadSnapshot func(context.Context, string) (cursorstore.Composer, agentapi.SourceSnapshot, error)
+	// ReadRecoverySnapshot supplies optional bounded in-place native evidence.
+	ReadRecoverySnapshot func(context.Context, string, agentapi.RecoveryReadBudget) (cursorstore.Composer, agentapi.SourceSnapshot, error)
+	recoveryReadBudget   *cursorRecoveryReadBudget
 	// Close removes the snapshot ReadChat took, if any. Set when Checked.
 	Close func() error
 }
@@ -89,51 +97,85 @@ func CursorDatabaseReaderFor(env Environment) func(context.Context) (CursorDatab
 		if err := ctx.Err(); err != nil {
 			return CursorDatabaseResult{}, err
 		}
-		if res.Checked {
-			// A copy an earlier plan left when it was killed goes before this
-			// plan can take another.
-			cursorstore.RemoveStaleSnapshots()
-			if env.Sources == nil {
-				return CursorDatabaseResult{}, errors.New("source integrations are required")
-			}
-			provider, _, ok := env.Sources.LookupSources(archive.HarnessCursor)
-			if !ok {
-				return CursorDatabaseResult{}, errors.New("cursor source integration unavailable")
-			}
-			pass, err := provider.OpenPass(ctx, agentapi.SourceEnvironment{Database: path})
-			if err != nil {
-				return CursorDatabaseResult{}, err
-			}
-			res.ReadSnapshot = func(ctx context.Context, id string) (cursorstore.Composer, agentapi.SourceSnapshot, error) {
-				snap, err := pass.Read(ctx, agentapi.SourceRef{Kind: archive.SourceKindCursorSQLite, Key: id}, agentapi.ReadLimits{RawBytes: collector.DefaultMaxRawTranscriptBytes, RecordBytes: archive.MaxRecordBytes})
-				if err != nil {
-					return cursorstore.Composer{}, nil, err
-				}
-				var c cursorstore.Composer
-				records := snap.Input().Records
-				for {
-					r, ok, err := records.Next(ctx)
-					if err != nil {
-						return c, nil, errors.Join(err, snap.Close())
-					}
-					if !ok {
-						break
-					}
-					switch r.Kind {
-					case agentapi.ComposerRecord:
-						c.Composer = r.Raw
-					case agentapi.CodexHistoryHeader, agentapi.CodexHistoryRecord:
-						return c, nil, errors.Join(errors.New("unexpected Codex history record in Cursor source"), snap.Close())
-					case agentapi.BubbleRecord:
-						c.Bubbles = append(c.Bubbles, cursorstore.Bubble{ID: r.Key, Value: r.Raw, Missing: r.Missing})
-					}
-				}
-				return c, snap, nil
-			}
-			res.Close = pass.Close
-		}
-		return res, nil
+		return openCursorDatabaseSource(ctx, env, res)
 	}
+}
+
+// CursorRecoveryDatabaseReaderFor composes bounded recovery evidence separately
+// from ordinary filtered Cursor database output planning.
+func CursorRecoveryDatabaseReaderFor(env Environment) func(context.Context, int, int64) (CursorDatabaseResult, error) {
+	return func(ctx context.Context, rows int, bytes int64) (CursorDatabaseResult, error) {
+		res := readCursorRecoveryDatabase(ctx, env.DatabaseCatalogs, env.cursorStateDatabase(), rows, bytes)
+		if err := ctx.Err(); err != nil {
+			return CursorDatabaseResult{}, err
+		}
+		return openCursorDatabaseSource(ctx, env, res)
+	}
+}
+
+func openCursorDatabaseSource(ctx context.Context, env Environment, res CursorDatabaseResult) (CursorDatabaseResult, error) {
+	if res.Checked {
+		// A copy an earlier plan left when it was killed goes before this
+		// plan can take another.
+		cursorstore.RemoveStaleSnapshots()
+		if env.Sources == nil {
+			return CursorDatabaseResult{}, errors.New("source integrations are required")
+		}
+		provider, _, ok := env.Sources.LookupSources(archive.HarnessCursor)
+		if !ok {
+			return CursorDatabaseResult{}, errors.New("cursor source integration unavailable")
+		}
+		pass, err := provider.OpenPass(ctx, agentapi.SourceEnvironment{Database: env.cursorStateDatabase()})
+		if err != nil {
+			return CursorDatabaseResult{}, err
+		}
+		read := func(ctx context.Context, id string, recoveryBudget agentapi.RecoveryReadBudget) (cursorstore.Composer, agentapi.SourceSnapshot, error) {
+			var snap agentapi.SourceSnapshot
+			var err error
+			if recoveryBudget != nil {
+				bounded, ok := pass.(agentapi.RecoverySourcePass)
+				if !ok {
+					return cursorstore.Composer{}, nil, agentapi.Wrap(agentapi.Unavailable, errors.New("bounded recovery source unavailable"))
+				}
+				snap, err = bounded.ReadRecovery(ctx, agentapi.SourceRef{Kind: archive.SourceKindCursorSQLite, Key: id}, agentapi.ReadLimits{RawBytes: collector.DefaultMaxRawTranscriptBytes, RecordBytes: archive.MaxRecordBytes}, recoveryBudget)
+			} else {
+				snap, err = pass.Read(ctx, agentapi.SourceRef{Kind: archive.SourceKindCursorSQLite, Key: id}, agentapi.ReadLimits{RawBytes: collector.DefaultMaxRawTranscriptBytes, RecordBytes: archive.MaxRecordBytes})
+			}
+			if err != nil {
+				return cursorstore.Composer{}, nil, err
+			}
+			var c cursorstore.Composer
+			records := snap.Input().Records
+			for {
+				r, ok, err := records.Next(ctx)
+				if err != nil {
+					return c, nil, errors.Join(err, snap.Close())
+				}
+				if !ok {
+					break
+				}
+				switch r.Kind {
+				case agentapi.ComposerRecord:
+					c.Composer = r.Raw
+				case agentapi.CodexHistoryHeader, agentapi.CodexHistoryRecord:
+					return c, nil, errors.Join(errors.New("unexpected Codex history record in Cursor source"), snap.Close())
+				case agentapi.BubbleRecord:
+					c.Bubbles = append(c.Bubbles, cursorstore.Bubble{ID: r.Key, Value: r.Raw, Missing: r.Missing})
+				}
+			}
+			return c, snap, nil
+		}
+		res.ReadSnapshot = func(ctx context.Context, id string) (cursorstore.Composer, agentapi.SourceSnapshot, error) {
+			return read(ctx, id, nil)
+		}
+		if _, ok := pass.(agentapi.RecoverySourcePass); ok {
+			res.ReadRecoverySnapshot = func(ctx context.Context, id string, budget agentapi.RecoveryReadBudget) (cursorstore.Composer, agentapi.SourceSnapshot, error) {
+				return read(ctx, id, budget)
+			}
+		}
+		res.Close = pass.Close
+	}
+	return res, nil
 }
 
 func unchecked(reason CursorUncheckedReason) CursorDatabaseResult {
