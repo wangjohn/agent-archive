@@ -358,7 +358,7 @@ func TestBackfillEditRetention(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("code %d, %s", code, errOut)
 	}
-	if !strings.Contains(out, "OK Keep sessions for how many days? 365\n\nBackfill imports") {
+	if !strings.Contains(normalizeBackfillPromptGlyphs(out), "OK Keep sessions for how many days? 365\n\nBackfill imports") {
 		t.Fatalf("retention receipt must have one blank line before the refreshed plan:\n%s", out)
 	}
 	checkGolden(t, "edit.txt", []byte(strings.ReplaceAll(trimScreenLineEnds(out), f.root, "$ROOT")))
