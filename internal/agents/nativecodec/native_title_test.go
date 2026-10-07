@@ -120,6 +120,10 @@ func TestCodexOpenPageContextIsNotAPromptFallback(t *testing.T) {
 		{"indented code", "    <external_codex_apps_open_page>example</external_codex_apps_open_page>", "<external_codex_apps_open_page>example</external_codex_apps_open_page>"},
 		{"indented suffix", "<external_codex_apps_open_page>Context</external_codex_apps_open_page>\n    <external_codex_apps_open_page>example</external_codex_apps_open_page>", "<external_codex_apps_open_page>example</external_codex_apps_open_page>"},
 		{"indented example with other injected context", "    <external_codex_apps_open_page>example</external_codex_apps_open_page>\n<system-reminder>Injected</system-reminder>", "<external_codex_apps_open_page>example</external_codex_apps_open_page>"},
+		{"whitespace blank before indented code", " \n    <external_codex_apps_open_page>example</external_codex_apps_open_page>", "<external_codex_apps_open_page>example</external_codex_apps_open_page>"},
+		{"whitespace blank after native context", "<external_codex_apps_open_page>Context</external_codex_apps_open_page> \n    <external_codex_apps_open_page>example</external_codex_apps_open_page>", "<external_codex_apps_open_page>example</external_codex_apps_open_page>"},
+		{"whitespace blank after reminder", "<system-reminder>Injected</system-reminder> \n    <external_codex_apps_open_page>example</external_codex_apps_open_page>", "<external_codex_apps_open_page>example</external_codex_apps_open_page>"},
+		{"tab blank and code after both wrappers", "<system-reminder>Injected</system-reminder><external_codex_apps_open_page>Context</external_codex_apps_open_page> \t\r\n\t<external_codex_apps_open_page>example</external_codex_apps_open_page>", "<external_codex_apps_open_page>example</external_codex_apps_open_page>"},
 		{"ordinary example", "Explain external_codex_apps_open_page with examples.", "Explain external_codex_apps_open_page with examples."},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -130,6 +134,19 @@ func TestCodexOpenPageContextIsNotAPromptFallback(t *testing.T) {
 				t.Fatal(err)
 			}
 			retained := bytes.Join(filtered.Records, []byte("\n"))
+			for _, boundary := range []string{" \n    ", " \t\r\n\t"} {
+				if at := strings.Index(tc.input, boundary); at >= 0 {
+					var kept map[string]any
+					if err := json.Unmarshal(filtered.Records[0], &kept); err != nil {
+						t.Fatal(err)
+					}
+					payload := kept["payload"].(map[string]any)
+					text := payload["content"].([]any)[0].(map[string]any)["text"]
+					if text != tc.input[at:] {
+						t.Fatalf("retained text %q want %q", text, tc.input[at:])
+					}
+				}
+			}
 			refiltered, err := (CodexAdapter{}).FilterJSONL(bytes.NewReader(retained))
 			if err != nil || !bytes.Equal(retained, bytes.Join(refiltered.Records, []byte("\n"))) {
 				t.Fatalf("filter did not preserve its output: %v", err)
@@ -138,6 +155,13 @@ func TestCodexOpenPageContextIsNotAPromptFallback(t *testing.T) {
 			analysis, err := ParseCodex(context.Background(), bundle)
 			if err != nil {
 				t.Fatal(err)
+			}
+			wantTurns := 0
+			if tc.want != "" {
+				wantTurns = 1
+			}
+			if len(analysis.View.Turns) != wantTurns {
+				t.Fatalf("turns %d want %d", len(analysis.View.Turns), wantTurns)
 			}
 			if analysis.Facts.TextTitle != tc.want {
 				t.Fatalf("title %q want %q", analysis.Facts.TextTitle, tc.want)
