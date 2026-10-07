@@ -62,6 +62,10 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Codex current-history validation uses the remaining bounded pass allowance
+  for private SQLite queries, avoiding spurious retries after a scheduling delay
+  while retaining caller cancellation and native source identity checks.
+
 - First-time backfill can review live repository destinations and recover matching
   deleted worktree sessions in the same import. Hidden clones and unknown or
   excluded roots still prevent automatic attribution; proposed capture projects
