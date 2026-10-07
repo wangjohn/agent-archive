@@ -358,6 +358,9 @@ func TestBackfillEditRetention(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("code %d, %s", code, errOut)
 	}
+	if !strings.Contains(out, "OK Keep sessions for how many days? 365\n\nBackfill imports") {
+		t.Fatalf("retention receipt must have one blank line before the refreshed plan:\n%s", out)
+	}
 	checkGolden(t, "edit.txt", []byte(strings.ReplaceAll(trimScreenLineEnds(out), f.root, "$ROOT")))
 	if strings.Count(out, "? Import 12 sessions from 5 projects?") != 2 || !strings.Contains(out, "Retention is 365 days, so these sessions are deleted on 2027-09-23.") {
 		t.Fatalf("plan not shown again with the new date:\n%s", out)

@@ -660,7 +660,6 @@ func confirmImport(p *prompter, out io.Writer, plan *backfill.Plan, configured i
 				continue
 			}
 			plan.RetentionDays = days
-			terminal.Println(out)
 			backfill.RenderText(out, *plan)
 			terminal.Println(out)
 		default:

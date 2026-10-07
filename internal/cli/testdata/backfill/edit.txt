@@ -54,7 +54,6 @@ setup.
 > Choose [90]:
 OK Keep sessions for how many days? 365
 
-
 Backfill imports every session found on this machine into
 s3 / personal-agent-archive / agent-archive/. Nothing has been uploaded yet.
 

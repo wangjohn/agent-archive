@@ -54,7 +54,6 @@ Here it can only be raised from 90 days, and undo puts 90 back. Shorten it in se
 › Choose [90]: 120
 \e[3A\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[3A\e[2m✓ Keep sessions for how many days? 120\e[0m
 
-
 Backfill imports every session found on this machine into
 s3 / personal-agent-archive / agent-archive/. Nothing has been uploaded yet.
 

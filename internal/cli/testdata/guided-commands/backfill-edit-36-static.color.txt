@@ -41,7 +41,6 @@ it in setup.
 \e[2mOK Keep sessions for how many days?
    120\e[0m
 
-
 Backfill imports every session found on this machine into
  / . Nothing has been uploaded yet.
 

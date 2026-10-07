@@ -41,7 +41,6 @@ it in setup.
 OK Keep sessions for how many days?
    120
 
-
 Backfill imports every session found on this machine into
  / . Nothing has been uploaded yet.
 
