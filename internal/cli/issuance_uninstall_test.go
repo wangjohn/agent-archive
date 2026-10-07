@@ -130,7 +130,7 @@ func TestPairingAddRejectsSourceChangedBeforeIssuanceLock(t *testing.T) {
 				return originalLookup(name)
 			}
 			var out, errOut bytes.Buffer
-			status := executePairingAdd(home, cfg, payload, newPrompter(nil, &out), env, &out, &errOut, pairingAddOptions{name: "laptop", spares: -1, yes: true, printBundle: true})
+			status := executePairingAdd(home, cfg, payload, newPrompter(nil, &out), env, &out, &errOut, pairingAddOptions{userHome: t.TempDir(), name: "laptop", spares: -1, yes: true, printBundle: true})
 			if status != 1 || cf.Calls(cloudflaretest.RouteCreateToken) != 0 || len(cf.Live()) != 0 {
 				t.Fatalf("stale source minted or delivered: status=%d calls=%d out=%s err=%s", status, cf.Calls(cloudflaretest.RouteCreateToken), &out, &errOut)
 			}

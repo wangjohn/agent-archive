@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"time"
 
@@ -74,10 +75,13 @@ func runRecoverCommand(args []string, stdout, stderr io.Writer, env Env) (code i
 		}
 	}()
 	reg, at, builder := preview.reg, preview.at, preview.build
-	terminal.Printf(stdout, "Session %s cannot prove that the current transcript extends its retained history.\n", id)
-	terminal.Printf(stdout, "Recovery preserves its archived history, feedback and handoffs under %s, freezes further native capture there, and starts a new linked archive ID from the current filtered transcript. Missing earlier records remain a capture gap.\n", id)
-	terminal.Println(stdout, "Each generation expires independently under normal retention. Existing subagents keep their original identities and parent; new subagents use the active generation. Imported generations remain in their original undo batch.")
-	terminal.Println(stdout, "The new generation is queued locally for normal sync. Recovery permanently requires a generation-aware writer; older binaries will refuse this data directory.")
+	guidedExplanation(stdout, "Transcript recovery", fmt.Sprintf("Session %s cannot prove that the current transcript extends its retained history.", id))
+	terminal.Println(stdout)
+	guidedExplanation(stdout, "Consequences",
+		fmt.Sprintf("Recovery preserves its archived history, feedback and handoffs under %s, freezes further native capture there, and starts a new linked archive ID from the current filtered transcript. Missing earlier records remain a capture gap.", id),
+		"Each generation expires independently under normal retention. Existing subagents keep their original identities and parent; new subagents use the active generation. Imported generations remain in their original undo batch.",
+		"The new generation is queued locally for normal sync. Recovery permanently requires a generation-aware writer; older binaries will refuse this data directory.")
+	terminal.Println(stdout)
 	if !*confirm {
 		terminal.Printf(stdout, "To start this generation, run agent-archive recover %s --confirm.\n", id)
 		return 0

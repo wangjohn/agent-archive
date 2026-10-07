@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -108,61 +107,61 @@ func chooseDestination(p *prompter, installed []handoffDestination, def handoffD
 	if i := slices.Index(installed, def); i > 0 {
 		agents = slices.Concat([]handoffDestination{def}, installed[:i], installed[i+1:])
 	}
-	p.heading("Continue in:")
-	for i, dest := range agents {
+	primary := make([]option, 0, len(agents))
+	for _, dest := range agents {
 		label := string(dest)
 		if d, ok := c.Lookup(string(dest)); ok {
 			label = d.DisplayName
 		}
-		if dest == def {
-			label += " (default)"
-		}
-		terminal.Printf(p.out, "  %d) %s\n", i+1, label)
+		primary = append(primary, option{string(dest), label})
 	}
+	secondary := []actionOption{}
 	for _, l := range handoffLetters {
 		if l.action == handoffCopy && !canCopy {
 			continue
 		}
-		terminal.Printf(p.out, "  %s) %s\n", l.key, l.label)
+		secondary = append(secondary, actionOption{l.word, l.key, l.label})
 	}
-	letters := "p, w, or q"
-	if canCopy {
-		letters = "p, c, w, or q"
+	defaultKey := string(def)
+	if len(agents) == 0 {
+		defaultKey = "print"
 	}
-	label, defKey := "Enter "+letters, "p"
-	switch {
-	case len(agents) == 1:
-		label, defKey = "Enter 1, "+letters, "1"
-	case len(agents) > 1:
-		label, defKey = fmt.Sprintf("Enter 1-%d, %s", len(agents), letters), "1"
-	}
-	for {
-		answer, err := p.choose(label, defKey)
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				return handoffChoice{action: handoffQuit}, nil
+	aliases := []option{}
+	for _, dest := range agents {
+		if d, ok := c.Lookup(string(dest)); ok {
+			for _, alias := range d.Aliases {
+				aliases = append(aliases, option{alias, string(dest)})
 			}
-			return handoffChoice{}, err
 		}
-		answer = agentmeta.Canonical(c, answer)
-		if n, err := strconv.Atoi(answer); err == nil && n >= 1 && n <= len(agents) {
-			return handoffChoice{action: handoffLaunch, dest: agents[n-1]}, nil
+	}
+	answer, err := p.guidedChoice(promptModel{Question: "Continue in", Primary: primary, Secondary: secondary, Default: defaultKey, Aliases: aliases, Receipt: "Handoff", ResolveReceipt: func(key string) string {
+		key = agentmeta.Canonical(c, key)
+		if d, ok := c.Lookup(key); ok {
+			return d.DisplayName
 		}
-		// An agent's name works as well as its number.
-		if slices.Contains(agents, handoffDestination(answer)) {
-			return handoffChoice{action: handoffLaunch, dest: handoffDestination(answer)}, nil
-		}
-		// So does a letter's word.
 		for _, l := range handoffLetters {
-			if l.action == handoffCopy && !canCopy {
-				continue
-			}
-			if answer == l.key || answer == l.word {
-				return handoffChoice{action: l.action}, nil
+			if l.word == key {
+				return l.label
 			}
 		}
-		terminal.Printf(p.out, "%s.\n", label)
+		return key
+	}})
+	answer = agentmeta.Canonical(c, answer)
+	if errors.Is(err, io.EOF) {
+		return handoffChoice{action: handoffQuit}, nil
 	}
+	if err != nil {
+		return handoffChoice{}, err
+	}
+	if slices.Contains(agents, handoffDestination(answer)) {
+		return handoffChoice{action: handoffLaunch, dest: handoffDestination(answer)}, nil
+	}
+	for _, l := range handoffLetters {
+		if answer == l.word {
+			return handoffChoice{action: l.action}, nil
+		}
+	}
+	return handoffChoice{action: handoffQuit}, nil
 }
 
 // askHandoffDestination offers the agents installed here, defaulting by the
@@ -186,6 +185,8 @@ func askHandoffDestinationConfig(p *prompter, h archive.Handoff, cfg config.Conf
 func deliverHandoff(choice handoffChoice, p *prompter, rendered []byte, target handoffTarget, opts handoffOptions, stdout, stderr io.Writer, env handoffDestinationDependencies) error {
 	switch choice.action {
 	case handoffPrint:
+		release := p.suspendPrompts(true)
+		defer release()
 		_, _, err := pageText(context.Background(), stdout, stderr, env, false, false, rendered)
 		return err
 	case handoffCopy:
@@ -216,7 +217,12 @@ func writeHandoffChoice(p *prompter, rendered []byte, target handoffTarget, dir 
 	def := filepath.Join(dir, "handoff-"+shortSessionID(handoffFileName(target.bundle))+".md")
 	label := "Write to"
 	for {
-		path, err := p.withDefault(label, def)
+		path, err := p.guidedText(promptModel{Question: label, Default: def, ResolveReceipt: func(value string) string {
+			if value == "q" || value == "" {
+				return "Handoff file cancelled"
+			}
+			return "File " + value
+		}})
 		if errors.Is(err, io.EOF) {
 			return nil
 		}
@@ -242,7 +248,7 @@ func writeHandoffChoice(p *prompter, rendered []byte, target handoffTarget, dir 
 			continue
 		}
 		if statErr == nil {
-			replace, err := p.yesNo(path+" already exists. Replace it?", false)
+			replace, err := p.guidedYesNo(path + " already exists. Replace it?")
 			if errors.Is(err, io.EOF) {
 				return nil
 			}

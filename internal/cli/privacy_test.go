@@ -182,7 +182,7 @@ func TestSetupPersistsPrivacyAndStatusNeverInspects(t *testing.T) {
 	remote := &privateTestStore{MemoryStore: storagetest.NewMemoryStore()}
 	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return remote, nil }
 	output := setupRun(t, env, s3SetupInput("synthetic", "us-east-1", "profile", true, false, false, project), 0)
-	if !strings.Contains(output, "✓ Bucket is private       all public access blocked") {
+	if !strings.Contains(output, "✓ Bucket is private") {
 		t.Fatal(output)
 	}
 	cfg, found, err := config.Load(home)

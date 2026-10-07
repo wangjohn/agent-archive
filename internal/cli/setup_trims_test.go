@@ -17,21 +17,20 @@ import (
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
-// A first setup in a Git repository, with apps found, asks one question for
-// the apps and the project, keeps the default retention, and asks neither
-// the project list nor anything about retention.
-func TestSetupFirstRunAsksOneQuestionForAppsAndProject(t *testing.T) {
+// A first setup offers detected apps and the shared project selector, while
+// keeping default retention. Current-folder setup never bypasses project consent.
+func TestSetupFirstRunUsesDetectedAppsAndSharedProjectSelector(t *testing.T) {
 	t.Parallel()
 	f := newScreenFixture(t)
 	f.withApps(t, "codex", "claude")
 	f.inWebApp(t)
 	// One confirmation, then S3, profile, bucket, and start.
-	out := f.runSetup(t, strings.Join([]string{"", "included-projects", "s3-existing", "work", "2", ""}, "\n")+"\n")
-	if !strings.Contains(out, "Archive Codex and Claude Code sessions in ~/src/web-app? [Y/n]") {
-		t.Fatalf("no combined question:\n%s", out)
+	out := f.runSetup(t, strings.Join([]string{"", "included-projects", "", "s3-existing", "work", "2", ""}, "\n")+"\n")
+	if !setupContainsText(out, "Capture sessions from Codex and Claude Code?") {
+		t.Fatalf("no applications question:\n%s", out)
 	}
-	for _, asked := range []string{"Include Codex", "Projects to archive", "Projects:"} {
-		if strings.Contains(out, asked) {
+	for _, asked := range []string{"Include Codex?", "Keep sessions for how many days?"} {
+		if setupContainsText(out, asked) {
 			t.Fatalf("still asked %q:\n%s", asked, out)
 		}
 	}
@@ -52,8 +51,8 @@ func TestSetupFirstRunDecliningAsksAppsAndProjectsSeparately(t *testing.T) {
 	f.withApps(t, "codex", "claude")
 	f.inWebApp(t)
 	out := f.runSetup(t, strings.Join([]string{"n", "n", "n", "y", "n", "", "s3-existing", "work", "2", ""}, "\n")+"\n")
-	for _, want := range []string{"Archive Codex and Claude Code sessions in ~/src/web-app? [Y/n]", "Include Codex and Claude Code? [Y/n]", "Include Codex? [Y/n]", "Projects to archive", "Projects:"} {
-		if !strings.Contains(out, want) {
+	for _, want := range []string{"Capture sessions from Codex and Claude Code?", "Include Codex?", "Which projects?", "All 1 found projects (default)"} {
+		if !setupContainsText(out, want) {
 			t.Fatalf("missing %q:\n%s", want, out)
 		}
 	}
@@ -69,14 +68,14 @@ func TestSetupOffersImportAfterNextSteps(t *testing.T) {
 	t.Parallel()
 	f := newImportOfferFixture(t)
 	out := f.runSetup(t, setupImportAnswers("n"))
-	saved := strings.Index(out, "Configuration saved.")
+	saved := strings.Index(out, "Setup complete")
 	steps := strings.Index(out, "Check progress with agent-archive status.")
-	offer := strings.Index(out, "Import the 2 past sessions from these projects?")
-	another := strings.Index(out, "To set up another machine with this storage")
+	offer := strings.Index(out, "Import these sessions?")
+	another := strings.Index(out, "Another machine:")
 	if saved < 0 || steps < saved || offer < steps || another < offer {
 		t.Fatalf("order saved=%d steps=%d offer=%d another=%d:\n%s", saved, steps, offer, another, out)
 	}
-	if !strings.Contains(out, "Not imported.") || len(importedSessions(t, f.home)) != 0 {
+	if !setupContainsText(out, "Not imported.") || len(importedSessions(t, f.home)) != 0 {
 		t.Fatalf("declining still imported:\n%s", out)
 	}
 }
@@ -88,14 +87,14 @@ func TestSetupStorageInstructionsPointAtTheBucketGuide(t *testing.T) {
 	f := newScreenFixture(t)
 	f.withApps(t, "claude")
 	f.inWebApp(t)
-	out := f.runSetup(t, strings.Join([]string{"", storageMenuNumber(t, "help"), "s3-existing", "work", "2", ""}, "\n")+"\n")
-	if !strings.Contains(out, bucketDocURL) {
+	out := f.runSetup(t, strings.Join([]string{"", "", storageMenuNumber(t, "help"), "s3-existing", "work", "2", ""}, "\n")+"\n")
+	if !setupContainsText(out, bucketDocURL) {
 		t.Fatalf("no link to the bucket guide:\n%s", out)
 	}
 	if n := strings.Count(out, "Where should your archive live?"); n != 2 {
 		t.Fatalf("menu shown %d times, want again after the instructions:\n%s", n, out)
 	}
-	if strings.Contains(out, "Manage API tokens") {
+	if setupContainsText(out, "Manage API tokens") {
 		t.Fatalf("the long manual steps are back:\n%s", out)
 	}
 	if _, found, err := config.Load(f.home); err != nil || !found {
@@ -167,13 +166,13 @@ func TestSetupBadR2KeyFailsAtTheProbeBeforeAnyWrite(t *testing.T) {
 	env, store, home := newOpStoreEnv(t, refused)
 	input := strings.TrimSuffix(r2SetupInput(t.TempDir(), "WRONGSECRET"), "y\n") + "cancel\n"
 	output := setupRun(t, env, input, 1)
-	if !strings.Contains(output, "Can't sign in to Cloudflare R2.") || !strings.Contains(output, "Fix: ") {
+	if !setupContainsText(output, "Can't sign in to Cloudflare R2.") || !setupContainsText(output, "Fix: ") {
 		t.Fatalf("no diagnosis:\n%s", output)
 	}
-	if !strings.Contains(output, "Enter the R2 access key again") {
+	if !setupContainsText(output, "Enter the R2 access key again") {
 		t.Fatalf("no way to enter the key again:\n%s", output)
 	}
-	if strings.Contains(output, "WRONGSECRET") {
+	if setupContainsText(output, "WRONGSECRET") {
 		t.Fatalf("secret leaked:\n%s", output)
 	}
 	if ops := store.recorded(); strings.Join(ops, ",") != "probe" {
@@ -214,7 +213,7 @@ func TestSetupYesBadProfileFailsAtTheProbe(t *testing.T) {
 	if code := Run(args, strings.NewReader(""), &out, &errOut, env); code != 1 {
 		t.Fatalf("exit %d\n%s%s", code, &out, &errOut)
 	}
-	if !strings.Contains(errOut.String(), "Access denied.") {
+	if !setupContainsText(errOut.String(), "Access denied.") {
 		t.Fatalf("no diagnosis:\n%s", &errOut)
 	}
 	if ops := store.recorded(); strings.Join(ops, ",") != "probe" {

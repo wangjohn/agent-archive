@@ -241,7 +241,7 @@ func TestFirstSetupNamesMachineAfterBoundedDuplicateObservation(t *testing.T) {
 	out := setupRun(t, env, input, 0)
 	cfg, _, err := config.Load(home)
 	must(t, err)
-	if cfg.MachineName != "work-laptop" || !strings.Contains(out, "Name is already used") || !strings.Contains(out, "Machine name: work-laptop") {
+	if cfg.MachineName != "work-laptop" || !strings.Contains(out, "name is already used") || setupReceiptIndex(out, "Machine work-laptop") < 0 {
 		t.Fatalf("name=%q\n%s", cfg.MachineName, out)
 	}
 	got := machines.List(context.Background(), s)
@@ -278,7 +278,7 @@ func TestMachinesTextShowsUnverifiedPairingAndSharedIdentity(t *testing.T) {
 		t.Fatalf("exit=%d %s", code, &out)
 	}
 	for _, text := range []string{"Paired 2026-10-01", "Paired unknown", "shared R2 key with source (" + source.MachineID + ")", "cannot revoke independently", "untrusted claims", "Heartbeat"} {
-		if !strings.Contains(out.String(), text) {
+		if !strings.Contains(strings.Join(strings.Fields(out.String()), " "), text) {
 			t.Fatalf("missing %q\n%s", text, &out)
 		}
 	}
@@ -311,5 +311,33 @@ func TestFirstSetupNameKeepsDefaultWithoutIOAndRefusesPartialObservation(t *test
 	err := chooseSetupMachineName(newPrompter(strings.NewReader("new-choice\n"), &out), &cfg, env)
 	if err == nil || cfg.MachineName != "earlier-choice" {
 		t.Fatalf("partial observation changed label: %q %v", cfg.MachineName, err)
+	}
+}
+
+// Naming is one grouped setup prompt. Syntax and duplicate retries use the same
+// buffered input; EOF and incomplete observation must not change the draft.
+// Regression: 2026-10 setup review P2-R1-06.
+func TestSetupMachineNameGroupsValidationAndPreservesBufferedInput(t *testing.T) {
+	t.Parallel()
+	env := testEnv(t, t.TempDir(), time.Now())
+	store := storagetest.NewMemoryStore()
+	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return store, nil }
+	cfg := config.Config{MachineID: strings.Repeat("a", 32), MachineName: "taken", Storage: credentials.Config{Provider: credentials.ProviderS3, Bucket: "synthetic"}}
+	record, err := machines.Build(cfg, "linux/amd64", "dev", "", time.Now())
+	must(t, err)
+	must(t, machines.Publish(t.Context(), store, record))
+	var out bytes.Buffer
+	p := newPrompter(strings.NewReader("Bad Name\ntaken\nnew-name\nnext\n"), &out)
+	defer p.close()
+	must(t, chooseSetupMachineName(p, &cfg, env))
+	next, err := p.in.ReadString('\n')
+	must(t, err)
+	if cfg.MachineName != "new-name" || next != "next\n" || strings.Count(out.String(), "? Name this machine") != 3 || !strings.Contains(out.String(), "name is already used") || setupReceiptIndex(out.String(), "Machine new-name") < 0 || setupReceiptIndex(out.String(), "Machine taken") >= 0 {
+		t.Fatalf("name=%s next=%q\n%s", cfg.MachineName, next, &out)
+	}
+	pEOF := newPrompter(strings.NewReader(""), &out)
+	defer pEOF.close()
+	if err := chooseSetupMachineName(pEOF, &cfg, env); err == nil || cfg.MachineName != "new-name" {
+		t.Fatalf("EOF changed name: %s %v", cfg.MachineName, err)
 	}
 }

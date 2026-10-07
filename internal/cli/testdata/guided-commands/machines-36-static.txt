@@ -1,0 +1,155 @@
+Machines · bucket claims
+  Name
+    machine-00
+  Machine ID
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  Platform
+    darwin/arm64
+  Credential claim
+    Dedicated key claim (unverified)
+  Heartbeat
+    2026-10-06
+
+  Name
+    machine-01
+  Machine ID
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  Platform
+    darwin/arm64
+  Credential claim
+    Dedicated key claim (unverified)
+  Heartbeat
+    2026-10-06
+
+  Name
+    machine-02
+  Machine ID
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  Platform
+    darwin/arm64
+  Credential claim
+    Dedicated key claim (unverified)
+  Heartbeat
+    2026-10-06
+
+  Name
+    machine-03
+  Machine ID
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  Platform
+    darwin/arm64
+  Credential claim
+    Dedicated key claim (unverified)
+  Heartbeat
+    2026-10-06
+
+  Name
+    machine-04
+  Machine ID
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  Platform
+    darwin/arm64
+  Credential claim
+    Dedicated key claim (unverified)
+  Heartbeat
+    2026-10-06
+
+  Name
+    machine-05
+  Machine ID
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  Platform
+    darwin/arm64
+  Credential claim
+    Dedicated key claim (unverified)
+  Heartbeat
+    2026-10-06
+
+  Name
+    machine-06
+  Machine ID
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  Platform
+    darwin/arm64
+  Credential claim
+    Dedicated key claim (unverified)
+  Heartbeat
+    2026-10-06
+
+  Name
+    machine-07
+  Machine ID
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  Platform
+    darwin/arm64
+  Credential claim
+    Dedicated key claim (unverified)
+  Heartbeat
+    2026-10-06
+
+  Name
+    machine-08
+  Machine ID
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  Platform
+    darwin/arm64
+  Credential claim
+    Dedicated key claim (unverified)
+  Heartbeat
+    2026-10-06
+
+  Name
+    machine-09
+  Machine ID
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  Platform
+    darwin/arm64
+  Credential claim
+    Dedicated key claim (unverified)
+  Heartbeat
+    2026-10-06
+
+  Name
+    machine-10
+  Machine ID
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  Platform
+    darwin/arm64
+  Credential claim
+    Dedicated key claim (unverified)
+  Heartbeat
+    2026-10-06
+
+  Name
+    machine-11
+  Machine ID
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  Platform
+    darwin/arm64
+  Credential claim
+    Dedicated key claim (unverified)
+  Heartbeat
+    2026-10-06
+
+  Name
+    machine-12
+  Machine ID
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  Platform
+    darwin/arm64
+  Credential claim
+    Dedicated key claim (unverified)
+  Heartbeat
+    2026-10-06
+
+  Name
+    machine-13
+  Machine ID
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  Platform
+    darwin/arm64
+  Credential claim
+    Dedicated key claim (unverified)
+  Heartbeat
+    2026-10-06
+Not checked against the provider. Bucket records are untrusted claims, not proof of ownership or access removal.

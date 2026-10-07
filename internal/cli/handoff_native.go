@@ -542,7 +542,7 @@ func previewNativeCandidate(ctx context.Context, files nativesessions.FileSystem
 	if !ok {
 		return collector.TranscriptPreview{}, errors.New("preview unavailable")
 	}
-	return collector.PreviewTranscript(ctx, s, preview, collector.PreviewLimits{HeadBytes: nativeWindowBytes, TailBytes: nativeWindowBytes, RecordBytes: nativeWindowBytes})
+	return collector.PreviewTranscript(ctx, s, preview, collector.PreviewLimits{HeadBytes: nativeWindowBytes, TailBytes: nativeWindowBytes, RecordBytes: nativeWindowBytes}, c.NativeID)
 }
 
 // Each browser worker owns its own serial pass; no shared mutable provider resource enters the pool.

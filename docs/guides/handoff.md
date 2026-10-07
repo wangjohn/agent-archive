@@ -22,7 +22,7 @@ There are two ways to do it:
   in Terminal) with this session as its context.
 - **From a terminal.** Run `agent-archive handoff`, pick a session (or name one
   in words: `agent-archive handoff "flaky retention"`), and press Enter at
-  `Continue in:`. The other agent starts in this terminal.
+  `Continue in`. The other agent starts in this terminal.
 
 ## Before setup: native local sessions
 
@@ -140,14 +140,17 @@ Pick a session in [the picker](#the-picker) (a number, or `/` and a few
 words to find one), and `handoff` asks where to continue:
 
 ```text
-Continue in:
+? Continue in
+
   1) Codex (default)
   2) Claude Code
-  p) print
-  c) copy to the clipboard
-  w) write to a file
-  q) quit
-Enter 1-2, p, c, w, or q [1]:
+
+  [p] print
+  [c] copy to the clipboard
+  [w] write to a file
+  [q] quit
+
+› Choose [1]:
 ```
 
 Only agents whose CLI is on `PATH` are numbered. Enter takes the default:
@@ -273,7 +276,7 @@ handoff: created worktree /Users/me/src/app-handoff-3f2a9c1e on branch handoff/3
 ```
 
 Without `--to`, the worktree is made only once you pick an agent at
-`Continue in:`; print, copy, and write make none.
+`Continue in`; print, copy, and write make none.
 
 An existing branch or directory of that name is an error, never reused;
 pick another branch with `--branch`, or remove the old worktree with
@@ -287,7 +290,15 @@ active in the last 2 minutes, and belongs to the checkout the agent would
 start in, a terminal asks first:
 
 ```text
-The source session was active just now; continue in the same checkout? [y/N/w]
+? The source session was active just now; where should the new agent continue?
+
+  In the same checkout, both agents can edit its files until one stops.
+
+  1) Continue in the same checkout
+  2) Cancel (default)
+  3) Continue in a new git worktree
+
+› Choose [2]:
 ```
 
 `y` continues, `N` (the default) cancels with nothing launched, and `w`
@@ -374,7 +385,7 @@ Codex session, that session is not offered for words (as `--latest` passes over
 it), unless `--to` is set, which hands off a session the caller names.
 
 **One match** is handed off, and then everything else applies to it: `--to`,
-`--worktree`, the `Continue in:` question on a terminal. This holds even when the
+`--worktree`, the `Continue in` question on a terminal. This holds even when the
 archive holds other matches, so name an ID when in doubt.
 
 **Several matches** are never guessed between.
@@ -571,7 +582,7 @@ more words narrow it, and an empty answer clears the filter, and quits when
 there is none. A number the table does not have, and a word shorter than 4
 characters, are words too.
 
-*After you pick.* The picker closes and `Continue in:` follows. Whatever you
+*After you pick.* The picker closes and `Continue in` follows. Whatever you
 type ahead for that question while the picker is closing is kept for it.
 
 ### Finding a session by repository

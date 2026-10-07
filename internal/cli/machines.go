@@ -1,12 +1,14 @@
 package cli
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/config"
@@ -177,13 +179,17 @@ func runMachinesCommand(args []string, stdin io.Reader, out, errOut io.Writer, e
 			return machineCommandError(errOut, err)
 		}
 	} else {
+		terminal.Println(out, "Machines · bucket claims")
+		rows := [][]string{}
 		for _, r := range result.Records {
 			own := ""
 			if r.MachineID == cfg.MachineID {
 				own = " (this machine)"
 			}
-			terminal.Printf(out, "%s  %s  %s  %s  Paired %s  Heartbeat %s%s\n", r.Name, r.MachineID, r.Platform, machineCredentialClaim(r, result.Records), machinePairingDate(r), r.HeartbeatAt.Format("2006-01-02"), own)
+			rows = append(rows, []string{r.Name + own, r.MachineID, r.Platform, machineCredentialClaim(r, result.Records), machinePairingDate(r), r.HeartbeatAt.Format("2006-01-02")})
 		}
+		guidedRows(out, []string{"Name", "Machine ID", "Platform", "Credential claim", "Paired", "Heartbeat"}, rows)
+		terminal.Println(out)
 		for _, r := range result.Records {
 			for _, spare := range r.UnusedSpares {
 				terminal.Printf(out, "%s: unused spare claim %s (unverified).\n", r.MachineID, spare.AccessKeyID)
@@ -295,44 +301,56 @@ func runMachinesRename(args []string, out, errOut io.Writer, env Env) int {
 // chooseSetupMachineName changes only a first-setup draft after bounded duplicate
 // observation. A blank answer keeps a neutral default without reading a hostname.
 func chooseSetupMachineName(p *prompter, cfg *config.Config, env Env) error {
-	for {
-		name, err := p.line("Machine name (1-40 lowercase letters, digits or hyphens; blank keeps unnamed): ")
-		if err != nil {
-			return err
-		}
-		if name == "" {
-			cfg.MachineName = ""
-			return nil
-		}
-		if !config.ValidMachineName(name) {
-			p.warn("Use 1 to 40 lowercase letters, digits, or hyphens, starting with a letter or digit.")
-			continue
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), machines.Timeout)
-		store, err := env.openStoreContext(ctx, *cfg)
-		if err != nil {
-			cancel()
-			return errors.New("could not check machine names; retry setup or keep the unnamed default")
-		}
-		result := machines.List(ctx, store)
-		cancel()
-		if result.Partial {
-			return errors.New("machine listing is incomplete; retry setup or keep the unnamed default")
-		}
-		taken := false
-		for _, r := range result.Records {
-			if r.Name == name {
-				taken = true
-				break
+	var taken bool
+	name, err := p.guidedText(promptModel{
+		Question: "Name this machine", Helpers: []string{"Use 1–40 lowercase letters, digits or hyphens, starting with a letter or digit.", "Leave blank to keep this machine unnamed; no hostname is read."}, Label: "Name",
+		ReadAnswer: func(in *bufio.Reader) (string, error) {
+			raw, err := in.ReadString('\n')
+			if err != nil && (raw == "" || !errors.Is(err, io.EOF)) {
+				return raw, err
 			}
-		}
-		if taken {
-			p.warn("Name is already used; choose another name.")
-			continue
-		}
+			name := strings.TrimSpace(raw)
+			taken = false
+			if name == "" || !config.ValidMachineName(name) {
+				return raw, err
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), machines.Timeout)
+			defer cancel()
+			release := p.suspendPrompts()
+			defer release()
+			store, openErr := env.openStoreContext(ctx, *cfg)
+			if openErr != nil {
+				return "", errors.New("could not check machine names; retry setup or keep the unnamed default")
+			}
+			result := machines.List(ctx, store)
+			if result.Partial {
+				return "", errors.New("machine listing is incomplete; retry setup or keep the unnamed default")
+			}
+			for _, record := range result.Records {
+				taken = taken || record.Name == name
+			}
+			return raw, err
+		},
+		Validate: func(name string) error {
+			if name != "" && !config.ValidMachineName(name) {
+				return errors.New("use 1 to 40 lowercase letters, digits, or hyphens, starting with a letter or digit")
+			}
+			if taken {
+				return errors.New("name is already used; choose another name")
+			}
+			return nil
+		},
+		ResolveReceipt: func(name string) string {
+			if name == "" {
+				return "Machine unnamed"
+			}
+			return "Machine " + name
+		},
+	})
+	if err == nil {
 		cfg.MachineName = name
-		return nil
 	}
+	return err
 }
 
 func machinePairingDate(r machines.Record) string {

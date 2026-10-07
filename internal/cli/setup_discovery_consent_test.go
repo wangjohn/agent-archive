@@ -47,7 +47,7 @@ func TestCodexExceptionRequiresNamedOtherAppConsentBeforeAdmission(t *testing.T)
 			if !reflect.DeepEqual(next, old) {
 				t.Fatal("default No changed permission")
 			}
-			if !strings.Contains(out.String(), appName(app)) || !strings.Contains(out.String(), "[y/N]") || !strings.Contains(out.String(), "Capture permissions are unchanged") {
+			if !strings.Contains(out.String(), appName(app)) || !strings.Contains(out.String(), "2) No (default)") || !strings.Contains(out.String(), "Capture permissions are unchanged") {
 				t.Fatalf("named/default-No consent missing: %s", &out)
 			}
 			must(t, applySetup(home, userHome, old.InstalledExecutable, old, &next, nil, env))

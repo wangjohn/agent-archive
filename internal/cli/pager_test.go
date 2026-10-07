@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -687,12 +688,22 @@ func TestParseLessVersion(t *testing.T) {
 	}
 }
 
+// pagerOutput models a terminal with color but unknown dimensions. Pager
+// contract tests compare its content with a pipe; guided screen fixtures have
+// explicit dimensions and therefore apply different display-width policies.
+type pagerOutput struct {
+	bytes.Buffer
+	color bool
+}
+
+func (o *pagerOutput) colorTerminal() bool { return o.color }
+
 // pagedRun runs args with stdout a terminal (color or not) whose pager
 // records what it is given, and returns the pager's text and command (empty
 // when nothing was paged) and what reached stdout directly.
 func pagedRun(t *testing.T, env Env, color bool, args ...string) (paged, command, direct string) {
 	t.Helper()
-	stdout := &screenOutput{color: color}
+	stdout := &pagerOutput{color: color}
 	env.IsTerminal = func(stream any) bool { return stream == any(stdout) }
 	var text bytes.Buffer
 	env.RunPager = func(_ context.Context, cmd string, _ []string, in io.Reader, _, _ io.Writer) error {
@@ -754,6 +765,32 @@ func TestLongDisplaysArePagedOnATerminal(t *testing.T) {
 				if !strings.Contains(paged, "\x1b[") {
 					t.Fatalf("paged without color on a color terminal:\n%q", paged)
 				}
+			}
+		})
+	}
+}
+
+// A known terminal width changes display formatting, not the bytes the pager
+// receives compared with --no-pager on that same terminal.
+func TestShowPagingPreservesTerminalWidth(t *testing.T) {
+	t.Parallel()
+	env, _, id := publishedFixture(t)
+	for _, width := range []int{36, 80, 100} {
+		t.Run(strconv.Itoa(width), func(t *testing.T) {
+			t.Parallel()
+			out := &promptScreen{caps: promptCapabilities{OutputTerminal: true, Width: width, Height: 24}}
+			e := env
+			e.IsTerminal = func(stream any) bool { return stream == any(out) }
+			var paged, errOut bytes.Buffer
+			e.RunPager = func(_ context.Context, _ string, _ []string, in io.Reader, _, _ io.Writer) error {
+				_, err := io.Copy(&paged, in)
+				return err
+			}
+			if code := Run([]string{"show", id}, nil, out, &errOut, e); code != 0 || out.Len() != 0 || paged.Len() == 0 {
+				t.Fatalf("paged: code=%d stdout=%q stderr=%s", code, out.String(), errOut.String())
+			}
+			if code := Run([]string{"show", id, "--no-pager"}, nil, out, &errOut, e); code != 0 || out.String() != paged.String() {
+				t.Fatalf("direct: code=%d stdout=%q paged=%q stderr=%s", code, out.String(), paged.String(), errOut.String())
 			}
 		})
 	}
