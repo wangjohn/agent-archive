@@ -182,6 +182,7 @@ def cells(data,cols):
 
 try:
     wait(b'Choose [2]: ')
+    if mode not in ('typed-ahead','typed-ahead-two'): echo(True)
     if mode=='eof': os.write(master,termios.tcgetattr(slave)[6][termios.VEOF])
     else:
         if mode=='retry':
@@ -190,6 +191,7 @@ try:
         elif mode=='typed-ahead-two': os.write(master,b'2\n'+b'x'*170+b'\n')
         else: os.write(master,b'2\n')
         wait(b'Profile ['+ (b'd'*90 if mode=='default-long' else b'work') + b']: ')
+        if mode not in ('typed-ahead','typed-ahead-two'): echo(True)
         if mode=='resize':
             signal.signal(signal.SIGTTOU,signal.SIG_IGN)
             fcntl.ioctl(master,termios.TIOCSWINSZ,struct.pack('HHHH',20,60,0,0))
@@ -239,11 +241,15 @@ try:
         assert 'DONE' in view,view
         assert 'Credential received' in view,view
         assert 'Provider Amazon S3' in view,view
-        if mode in ('normal','no-color','wide','long','default-long'):
+        if mode in ('normal','no-color','default-long'):
             assert 'Where should your archive live?' not in view,view
             assert 'AWS profile' not in view,view
             assert 'Secret access key' not in view,view
         if mode=='no-color': assert b'\x1b[1m' not in output and b'\x1b[2m' not in output,'NO_COLOR styled text'
+        if mode in ('wide','long'):
+            assert 'AWS profile' in view,view
+            field=output[output.index(b'Profile [work]: '):output.index(b'Credential: ')]
+            assert b'\x1b[2K' not in field,'unknown early echo extent erased wrapped input'
         if mode=='control-echo': assert 'AWS profile' in view and '^A' in view,view
         if mode=='composed':
             field=output[output.index(b'Profile [work]: '):output.index(b'Credential: ')]
