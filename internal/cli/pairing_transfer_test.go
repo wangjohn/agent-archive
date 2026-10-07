@@ -282,6 +282,28 @@ func TestPairingTransferKeepsSharedPromptInput(t *testing.T) {
 	}
 }
 
+func TestPairingTransferConsentDefaultsToNoAndKeepsBufferedAnswer(t *testing.T) {
+	t.Parallel()
+	var out bytes.Buffer
+	bundle := pairing.Prefix + "SYNTHETIC"
+	p := newPrompter(strings.NewReader(bundle+"\nsynthetic-code\n\nnext-answer\n"), &out)
+	defer p.close()
+	got, err := readPairingBundle(p, setupOptions{}, p.in, Env{})
+	must(t, err)
+	code, err := p.guidedText(promptModel{Question: "Pairing code (hidden)", Secret: true, ReadAnswer: func(in *bufio.Reader) (string, error) { return boundedPairingLine(in, 512) }})
+	must(t, err)
+	consent, err := p.guidedYesNo("Replace destination?")
+	must(t, err)
+	next, err := p.in.ReadString('\n')
+	must(t, err)
+	if got != bundle || code != "synthetic-code" || consent || next != "next-answer\n" {
+		t.Fatal("pairing consent changed its default or consumed the following answer")
+	}
+	if strings.Contains(out.String(), code) || !strings.Contains(out.String(), "Credential received") || !strings.Contains(out.String(), "? Replace destination?") || !strings.Contains(out.String(), "No (default)") {
+		t.Fatal("pairing consent or private-code receipt changed")
+	}
+}
+
 func TestPairingCodeDisplayRelinquishesPromptRegion(t *testing.T) {
 	t.Parallel()
 	var out bytes.Buffer

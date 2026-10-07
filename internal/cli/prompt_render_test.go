@@ -80,7 +80,7 @@ func TestGuidedPromptCollapseRequiresOwnedVisibleRows(t *testing.T) {
 				release()
 			case promptModeLongEcho:
 				echo = strings.Repeat("a", 2000) + "\n"
-			case promptModeNormal, promptModeNoColor, promptModeWide, promptModeControlEcho, promptModeLong, promptModeDefaultLong, promptModeRetry, promptModeScroll, promptModeTypedAhead, promptModeTypedAheadTwo, promptModePager, promptModeEof, promptModeSecretEof, promptModeInterrupt, promptModeTerm, promptModeHup, promptModeQuit, promptModePairingOutput, promptModeLive, promptModeContinued, promptModeRedirect, promptModeDumb:
+			case promptModeNormal, promptModeNoColor, promptModeWide, promptModeControlEcho, promptModeComposed, promptModeLong, promptModeDefaultLong, promptModeRetry, promptModeScroll, promptModeTypedAhead, promptModeTypedAheadTwo, promptModePager, promptModeEof, promptModeSecretEof, promptModeInterrupt, promptModeTerm, promptModeHup, promptModeQuit, promptModePairingOutput, promptModeLive, promptModeContinued, promptModeRedirect, promptModeDumb:
 				// These modes retain the original block; only capability/read flags differ.
 			}
 			r.finish(region, "Provider Amazon S3", echo, false, mode == promptModeTypedAhead, mode == promptModeContinued)
@@ -148,19 +148,41 @@ func TestGuidedTextValidatesBeforeReceiptAndSharesBufferedInput(t *testing.T) {
 
 func TestGuidedEOFNeverResolvesDefault(t *testing.T) {
 	t.Parallel()
+	for _, input := range []string{"", " \t"} {
+		for _, secret := range []bool{false, true} {
+			var out bytes.Buffer
+			p := newPrompter(strings.NewReader(input), &out)
+			_, err := p.guidedText(promptModel{Question: "Confirm", Default: "yes", Secret: secret})
+			if !errors.Is(err, io.EOF) || strings.Contains(out.String(), symbolOK) {
+				t.Fatalf("input=%q secret=%t error %v output %q", input, secret, err, out.String())
+			}
+		}
+		var out bytes.Buffer
+		p := newPrompter(strings.NewReader(input), &out)
+		_, err := p.guidedChoice(promptExample())
+		if !errors.Is(err, io.EOF) || strings.Contains(out.String(), symbolOK) {
+			t.Fatalf("input=%q %v %q", input, err, out.String())
+		}
+	}
+}
+
+func TestGuidedFinalAnswerAtEOFRemainsAnAnswer(t *testing.T) {
+	t.Parallel()
 	for _, secret := range []bool{false, true} {
 		var out bytes.Buffer
-		p := newPrompter(strings.NewReader(""), &out)
-		_, err := p.guidedText(promptModel{Question: "Confirm", Default: "yes", Secret: secret})
-		if !errors.Is(err, io.EOF) || strings.Contains(out.String(), symbolOK) {
-			t.Fatalf("error %v output %q", err, out.String())
+		p := newPrompter(strings.NewReader(" work "), &out)
+		value, err := p.guidedText(promptModel{Question: "Profile", Default: "default", Secret: secret})
+		must(t, err)
+		if value != "work" {
+			t.Fatalf("final answer=%q", value)
 		}
 	}
 	var out bytes.Buffer
-	p := newPrompter(strings.NewReader(""), &out)
-	_, err := p.guidedChoice(promptExample())
-	if !errors.Is(err, io.EOF) || strings.Contains(out.String(), symbolOK) {
-		t.Fatalf("%v %q", err, out.String())
+	p := newPrompter(strings.NewReader("r2"), &out)
+	key, err := p.guidedChoice(promptExample())
+	must(t, err)
+	if key != "r2" {
+		t.Fatalf("final key=%q", key)
 	}
 }
 
@@ -266,7 +288,7 @@ func TestPromptRowsCountWideGlyphsThatWrapBeforeTheLastCell(t *testing.T) {
 
 func TestPromptAmbiguousEmojiWidthsPreserveHistory(t *testing.T) {
 	t.Parallel()
-	for _, value := range []string{"❤️", "👩‍💻"} {
+	for _, value := range []string{"❤️", "👩‍💻", "👍🏽", "1\u20e3", "가", "🇺🇸", "☀\ufe0e", "का़", "bad\rhelper", "bad\thelper"} {
 		out := &promptScreen{caps: promptCapabilities{InputTerminal: true, OutputTerminal: true, SharedTerminal: true, Redraw: true, Width: 36, Height: 20}}
 		p := newPrompter(strings.NewReader(""), out)
 		r := p.renderer()

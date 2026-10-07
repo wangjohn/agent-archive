@@ -232,11 +232,11 @@ func TestScriptedAllCodexScopePublishesSeparateUnlistedProjects(t *testing.T) {
 		id := fmt.Sprintf("00000000-0000-0000-0000-%012d", n+1)
 		path := filepath.Join(before.Discovery.CodexHomes[0], "sessions", "rollout-2026-10-03T12-01-00-"+id+".jsonl")
 		must(t, os.MkdirAll(filepath.Dir(path), 0700))
-		meta, err := json.Marshal(map[string]any{"type": "session_meta", "timestamp": created.Format(time.RFC3339Nano), "payload": map[string]any{"id": id, "timestamp": created.Format(time.RFC3339Nano), "cwd": project, "source": "vscode", "originator": "Codex Desktop", "cli_version": "0.160.0", "history_mode": "paginated"}})
+		meta, err := json.Marshal(map[string]any{"type": "session_meta", "ordinal": 0, "timestamp": created.Format(time.RFC3339Nano), "payload": map[string]any{"id": id, "timestamp": created.Format(time.RFC3339Nano), "cwd": project, "source": "vscode", "originator": "Codex Desktop", "cli_version": "0.160.0", "history_mode": "paginated"}})
 		must(t, err)
-		task, err := json.Marshal(map[string]any{"type": "event_msg", "timestamp": created.Format(time.RFC3339Nano), "payload": map[string]any{"type": "task_started", "turn_id": id, "root_turn_id": id, "started_at": created.Format(time.RFC3339Nano)}})
+		task, err := json.Marshal(map[string]any{"type": "event_msg", "ordinal": 1, "timestamp": created.Format(time.RFC3339Nano), "payload": map[string]any{"type": "task_started", "turn_id": id, "root_turn_id": id, "started_at": created.Format(time.RFC3339Nano)}})
 		must(t, err)
-		prompt := `{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Synthetic independent project task"}]}}`
+		prompt := `{"type":"response_item","ordinal":2,"payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Synthetic independent project task"}]}}`
 		must(t, os.WriteFile(path, []byte(string(meta)+"\n"+string(task)+"\n"+prompt+"\n"), 0600))
 	}
 	env.Now = func() time.Time { return at.Add(2 * time.Minute) }

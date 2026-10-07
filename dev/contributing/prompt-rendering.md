@@ -35,7 +35,7 @@ one answer with its existing size limit. For a pairing receiver, use a callback
 that calls `boundedPairingLine(reader, limit)`, preserving its bound. Do not open
 another reader, read the file descriptor directly or turn a bounded payload into
 an unbounded `ReadString`. The same buffer supplies legacy line prompts and
-browser hand-back. Empty EOF is an error and never chooses a default. A final
+browser hand-back. Empty or whitespace-only EOF is an error and never chooses a default. A final
 nonempty answer without a newline is accepted, with a conservative static
 receipt.
 
@@ -53,8 +53,10 @@ viewport, typed-ahead input may already have echoed, a resume/resize arrives,
 or the region's output generation/ownership changes. Control-character echo uses
 static completion because canonical terminals may expand controls to caret
 notation or move the cursor. Receipts discard control characters. Emoji
-variation selectors and joined emoji clusters also use static completion
-because terminals disagree about their displayed widths. Receipts stay in
+variation selectors, joined or modified emoji, keycaps, Hangul jamo and
+spacing marks also use static completion because terminal shaping can make
+their clusters occupy fewer cells than their individual runes. Control
+characters in the rendered model likewise invalidate region ownership. Receipts stay in
 ordinary scrollback. Setup never opens an alternate screen for prompts.
 
 Use `release := p.suspendPrompts()` **before** a spinner, credential helper,

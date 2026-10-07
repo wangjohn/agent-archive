@@ -337,6 +337,13 @@ func (s *failingMetadataGets) Get(ctx context.Context, key string) ([]byte, erro
 	return s.MemoryStore.Get(ctx, key)
 }
 
+func (s *failingMetadataGets) GetLimited(ctx context.Context, key string, limit int64) ([]byte, error) {
+	if s.failing && strings.HasSuffix(key, "/metadata.json") {
+		return nil, errors.New("storage unavailable")
+	}
+	return s.MemoryStore.GetLimited(ctx, key, limit)
+}
+
 // GetVersioned preserves the injected metadata read failure on both APIs.
 func (s *failingMetadataGets) GetVersioned(ctx context.Context, key string) ([]byte, string, error) {
 	if s.failing && strings.HasSuffix(key, "/metadata.json") {
