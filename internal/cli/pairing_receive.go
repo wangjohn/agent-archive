@@ -49,7 +49,7 @@ func readPairingBundle(p *prompter, opts setupOptions, stdin io.Reader, env Env)
 		if err != nil {
 			return "", err
 		}
-		if strings.HasPrefix(input, "aa-pair") {
+		if strings.HasPrefix(input, pairing.Prefix) {
 			return input, nil
 		}
 		if input == "" || input == "-" {
