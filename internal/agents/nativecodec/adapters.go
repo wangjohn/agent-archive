@@ -382,7 +382,11 @@ func (CursorAdapter) FilterText(r io.Reader, freshStartedAt time.Time) (archive.
 	return result, nil
 }
 
-func filterJSONL(r io.Reader, format string, knownTypes map[string]bool, lead map[string]any, validateMeta func([]byte) error) (archive.FilteredTranscript, error) {
+func filterJSONL(r io.Reader, format string, knownTypes map[string]bool, lead map[string]any, validateMeta func([]byte) error, bounds ...archive.CaptureBoundary) (archive.FilteredTranscript, error) {
+	return filterJSONLEncoded(r, format, knownTypes, lead, validateMeta, nil, nil, bounds...)
+}
+
+func filterJSONLEncoded(r io.Reader, format string, knownTypes map[string]bool, lead map[string]any, validateMeta func([]byte) error, encoder func(map[string]any) ([]byte, error), beforeRecord func(int) (func(), error), bounds ...archive.CaptureBoundary) (archive.FilteredTranscript, error) {
 	scanner := bufio.NewScanner(r)
 	// Individual native JSONL records can contain tool output. A hard limit keeps
 	// filtering bounded; exceeding it is refused rather than silently
@@ -391,20 +395,19 @@ func filterJSONL(r io.Reader, format string, knownTypes map[string]bool, lead ma
 	// its maximum and the initial buffer's capacity, so the initial buffer
 	// must not exceed the limit either.
 	scanner.Buffer(make([]byte, min(64*1024, maxRecordBytes+1)), maxRecordBytes+1)
-	return filterRecords(format, knownTypes, lead, func() ([]byte, bool) {
+	return filterRecordsObserved(format, knownTypes, lead, func() ([]byte, bool) {
 		if scanner.Scan() {
 			return scanner.Bytes(), true
 		}
 		return nil, false
-	}, scanner.Err, validateMeta)
+	}, scanner.Err, validateMeta, nil, nil, encoder, beforeRecord, bounds...)
 }
 
-func filterRecords(format string, knownTypes map[string]bool, lead map[string]any, next func() ([]byte, bool), readError func() error, validateMeta func([]byte) error) (archive.FilteredTranscript, error) {
-	return filterRecordsObserved(format, knownTypes, lead, next, readError, validateMeta, nil, nil)
-}
-
-func filterRecordsObserved(format string, knownTypes map[string]bool, lead map[string]any, next func() ([]byte, bool), readError func() error, validateMeta func([]byte) error, retained func(int), own func(string) bool) (archive.FilteredTranscript, error) {
+func filterRecordsObserved(format string, knownTypes map[string]bool, lead map[string]any, next func() ([]byte, bool), readError func() error, validateMeta func([]byte) error, retained func(int), own func(string) bool, encoder func(map[string]any) ([]byte, error), beforeRecord func(int) (func(), error), bounds ...archive.CaptureBoundary) (archive.FilteredTranscript, error) {
+	next, readError = boundRecordSource(next, readError, bounds)
 	result := archive.FilteredTranscript{Format: format, NativeStartComplete: true}
+	records := recordReservations{before: beforeRecord}
+	defer records.end()
 	lineNo, recognized := 0, 0
 	gapSet := map[string]bool{}
 	// Filter 2 collapsed every omission into one content-free gap, so a reader
@@ -434,6 +437,7 @@ func filterRecordsObserved(format string, knownTypes map[string]bool, lead map[s
 		}
 	}
 	for {
+		records.end()
 		observeRetained(retained, len(result.Records))
 		line, more := next()
 		if !more {
@@ -445,6 +449,9 @@ func filterRecordsObserved(format string, knownTypes map[string]bool, lead map[s
 		if len(bytes.TrimSpace(line)) == 0 {
 			continue
 		}
+		if err := records.borrow(len(line)); err != nil {
+			return archive.FilteredTranscript{}, err
+		}
 		var raw map[string]any
 		if err := json.Unmarshal(line, &raw); err != nil {
 			result.NativeStartComplete = false
@@ -453,7 +460,7 @@ func filterRecordsObserved(format string, knownTypes map[string]bool, lead map[s
 		}
 		kind, _ := raw["type"].(string)
 		noteOwnedNativeIdentity(&result, raw, kind, own)
-		if err := validateMetadata(kind, line, validateMeta); err != nil {
+		if err := validateMetadataReserved(kind, line, validateMeta, beforeRecord); err != nil {
 			return archive.FilteredTranscript{}, err
 		}
 		if format == "claude-jsonl" && isCompactBoundary(raw) {
@@ -496,20 +503,12 @@ func filterRecordsObserved(format string, knownTypes map[string]bool, lead map[s
 		}
 		observeHarness(&result, safe)
 		noteSafeIdentity(&result, safe)
-		encoded, err := json.Marshal(safe)
-		if err != nil {
-			return archive.FilteredTranscript{}, &archive.FilterError{Reason: "safe record cannot be encoded"}
+		if err := retainEncodedRecord(&result, safe, encoder, bounds); err != nil {
+			return archive.FilteredTranscript{}, err
 		}
-		retain(&result, encoded)
 	}
-	if err := readError(); err != nil {
-		if errors.Is(err, bufio.ErrTooLong) {
-			return archive.FilteredTranscript{}, archive.ErrRecordTooLarge
-		}
-		return archive.FilteredTranscript{}, &archive.FilterError{Reason: "transcript cannot be read"}
-	}
-	if lineNo > 0 && recognized == 0 {
-		return archive.FilteredTranscript{}, archive.ErrUnsafeSourceFormat
+	if err := filteredReadComplete(readError(), lineNo, recognized); err != nil {
+		return archive.FilteredTranscript{}, err
 	}
 	filteredLead.writeTo(&result, addGap, omittedKeys.add)
 	if detail := omittedKeys.detail("omitted keys: "); detail != "" {
@@ -760,8 +759,101 @@ func observeRetained(observer func(int), count int) {
 	}
 }
 
+func boundRecordSource(next func() ([]byte, bool), readError func() error, bounds []archive.CaptureBoundary) (func() ([]byte, bool), func() error) {
+	if len(bounds) == 0 || bounds[0].RetainedRecords <= 0 {
+		return next, readError
+	}
+	left := bounds[0].RetainedRecords
+	exceeded := false
+	return func() ([]byte, bool) {
+			raw, more := next()
+			if !more {
+				return raw, more
+			}
+			if left <= 0 {
+				exceeded = true
+				return nil, false
+			}
+			left--
+			return raw, true
+		}, func() error {
+			if exceeded {
+				return errors.Join(bufio.ErrTooLong, readError())
+			}
+			return readError()
+		}
+}
+
+func bytesBoundReached(bounds []archive.CaptureBoundary, used, next int) bool {
+	return len(bounds) > 0 && bounds[0].RetainedBytes > 0 && next > bounds[0].RetainedBytes-used
+}
+
+func filteredReadComplete(err error, lines, recognized int) error {
+	if errors.Is(err, bufio.ErrTooLong) {
+		return archive.ErrRecordTooLarge
+	}
+	if err != nil {
+		return &archive.FilterError{Reason: "transcript cannot be read"}
+	}
+	if lines > 0 && recognized == 0 {
+		return archive.ErrUnsafeSourceFormat
+	}
+	return nil
+}
+
 func noteOwnedNativeIdentity(result *archive.FilteredTranscript, raw map[string]any, kind string, own func(string) bool) {
 	if own == nil || own(kind) {
 		noteNativeIdentity(result, raw)
 	}
+}
+
+type recordReservations struct {
+	before  func(int) (func(), error)
+	release func()
+}
+
+func (r *recordReservations) end() {
+	if r.release != nil {
+		r.release()
+		r.release = nil
+	}
+}
+
+func (r *recordReservations) borrow(n int) error {
+	if r.before == nil {
+		return nil
+	}
+	release, err := r.before(n)
+	r.release = release
+	return err
+}
+
+func validateMetadataReserved(kind string, line []byte, validate func([]byte) error, before func(int) (func(), error)) error {
+	if kind == "session_meta" && validate != nil && before != nil {
+		release, err := before(len(line))
+		if err != nil {
+			return err
+		}
+		defer release()
+	}
+	return validateMetadata(kind, line, validate)
+}
+
+func encodeSafeRecord(value map[string]any, encoder func(map[string]any) ([]byte, error)) ([]byte, error) {
+	if encoder != nil {
+		return encoder(value)
+	}
+	return json.Marshal(value)
+}
+
+func retainEncodedRecord(result *archive.FilteredTranscript, safe map[string]any, encoder func(map[string]any) ([]byte, error), bounds []archive.CaptureBoundary) error {
+	encoded, err := encodeSafeRecord(safe, encoder)
+	if err != nil {
+		return errors.Join(&archive.FilterError{Reason: "safe record cannot be encoded"}, err)
+	}
+	if bytesBoundReached(bounds, result.Boundary.RetainedBytes, len(encoded)) {
+		return archive.ErrRecordTooLarge
+	}
+	retain(result, encoded)
+	return nil
 }

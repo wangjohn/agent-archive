@@ -2,14 +2,11 @@ package collector
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 	"github.com/wangjohn/agent-archive/internal/transcriptio"
 )
 
@@ -62,38 +59,4 @@ func filterSnapshot(ctx context.Context, file agentapi.FileInput, adapter archiv
 		return out, stat, translateSourceError(err)
 	}
 	return out, stat, checkFilteredSize(out, maxBytes)
-}
-
-// discoveryReaderAt checks cancellation while validating admitted metadata.
-type discoveryReaderAt struct {
-	ctx  context.Context
-	file io.ReaderAt
-}
-
-func (r discoveryReaderAt) ReadAt(p []byte, off int64) (int, error) {
-	if err := r.ctx.Err(); err != nil {
-		return 0, err
-	}
-	return r.file.ReadAt(p, off)
-}
-
-// validateDiscoveryInput checks immutable admission facts before filtering the
-// same verified handle. It never reopens the source path.
-func validateDiscoveryInput(ctx context.Context, file agentapi.FileInput, reg archive.SessionRegistration) error {
-	if file == nil {
-		return errors.New("discovery source requires verified file input")
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	header := sourcefacts.ReadCodexHeader(io.NewSectionReader(discoveryReaderAt{ctx: ctx, file: file}, 0, file.Length()), reg.TranscriptPath)
-	var producerSource string
-	_ = json.Unmarshal(header.Meta.Source, &producerSource)
-	if header.Outcome != "native_format" || header.Meta.ID != reg.NativeSessionID || header.Meta.Cwd != reg.DiscoveryCwd || !header.Started.Equal(reg.SessionStartedAt) || header.Meta.Version != reg.Harness.Version || header.Meta.Originator != reg.DiscoveryProducerOriginator || producerSource != reg.DiscoveryProducerSource {
-		return errors.New("discovery source identity changed")
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	return file.Check()
 }

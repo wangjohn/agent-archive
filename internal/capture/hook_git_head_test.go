@@ -426,7 +426,7 @@ func TestContendedStopKeepsTheCommitItSaw(t *testing.T) {
 		t.Fatal(err)
 	}
 	busy := func(string, time.Duration) (func(), error) { return nil, local.ErrBusy }
-	if err := handleBatch(home, "cursor", batch, stopAt, busy, nil, eventOptions{decoders: testDecoders, gitHead: git.lookup}); err != nil {
+	if err := handleBatch(home, "cursor", batch, stopAt, busy, nil, eventOptions{gitHead: git.lookup}); err != nil {
 		t.Fatalf("contended stop was not queued: %v", err)
 	}
 	if reg := onlyRegistration(t, home); reg.LastHead != nil && reg.LastHead.SHA == laterCommit {

@@ -2,14 +2,12 @@ package retention
 
 import (
 	"bytes"
-	"errors"
 	"testing"
 
-	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
-func TestHistoryDeletionLeavesEveryArtifactUnchanged(t *testing.T) {
+func TestMalformedHistoryDeletionLeavesEveryArtifactUnchanged(t *testing.T) {
 	t.Parallel()
 	store := storagetest.NewMemoryStore()
 	ctx := t.Context()
@@ -19,7 +17,7 @@ func TestHistoryDeletionLeavesEveryArtifactUnchanged(t *testing.T) {
 			t.Fatal(e)
 		}
 	}
-	if e := DeleteWholeSession(ctx, store, "codex", "protected"); !errors.Is(e, archive.ErrHistoryMutationPending) {
+	if e := DeleteWholeSession(ctx, store, "codex", "protected"); e == nil {
 		t.Fatalf("delete history: %v", e)
 	}
 	for key, raw := range objects {

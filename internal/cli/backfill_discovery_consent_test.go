@@ -17,8 +17,8 @@ func TestBackfillScopeChangesReconcileExistingDiscoveryConsent(t *testing.T) {
 	must(t, config.ReconcileDiscovery(&cfg, config.Config{}, backfillNow.Add(-time.Hour)))
 	must(t, config.Save(f.data, cfg))
 	original := cfg.Discovery.Authorizations[0]
-	if _, errOut, code := f.importRun(t, nil, false, "--yes"); code != 0 {
-		t.Fatalf("import: %d %s", code, errOut)
+	if out, errOut, code := f.importRun(t, nil, false, "--yes"); code != 0 {
+		t.Fatalf("import: %d %s %s", code, errOut, out)
 	}
 	imported := mustLoadConfig(t, f.data)
 	if len(imported.Discovery.Authorizations) != len(imported.Archive.Projects) {
