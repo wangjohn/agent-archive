@@ -148,7 +148,7 @@ type Candidate struct {
 	ProjectRoot              string
 	ProjectResolution        *archive.ProjectResolution
 	projectResolutionCurrent func() bool
-	projectResolutionReset   func()
+	projectResolutionReset   func(context.Context)
 	ProjectKind              ProjectKind
 	// ProjectIncluded is set when the root is a configured, included
 	// project; otherwise importing adds it.
@@ -166,6 +166,8 @@ type Candidate struct {
 	// register (collector.CheckImportedSubagent); they are not imported.
 	SubagentsSkipped int
 	Skip             SkipReason
+	// Diagnostic explains the winning skip without retaining source contents or locators.
+	Diagnostic *Diagnostic
 }
 
 // Subagent is one subagent transcript belonging to an imported parent.

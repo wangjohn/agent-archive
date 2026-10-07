@@ -172,7 +172,8 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (result collector.Resu
 		return collector.Result{}, err
 	}
 	defer func() { resultErr = errors.Join(resultErr, rollouts.Close()) }()
-	_, discoveryErr := discovery.Run(ctx, localStore, cfg, discovery.Options{Now: env.Now, Stop: stop, Rollouts: rollouts, RepositoryIdentity: gitremote.ProjectIdentity, RepositoryIdentityCurrent: gitremote.ProjectIdentityCurrent})
+	observer := &gitremote.IdentityObserver{}
+	_, discoveryErr := discovery.Run(ctx, localStore, cfg, discovery.Options{Now: env.Now, Stop: stop, Rollouts: rollouts, RepositoryIdentity: observer.Lookup, RepositoryIdentityCurrent: gitremote.ProjectIdentityCurrent})
 	if discoveryErr != nil {
 		recordPreflightError(localStore, errors.Join(recoveryErr, discoveryErr))
 	}

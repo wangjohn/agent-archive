@@ -35,6 +35,13 @@ type RepositoryIdentity struct {
 	Key          string
 	Known        bool
 	Dependencies []RepositoryDependency
+	// Validation is semantic when Git cannot expose every candidate config path.
+	Validation   string
+	ObservedRoot string
+	// ObservationScope binds temporary evidence to its executable/config environment.
+	ObservationScope string
+	// BudgetExhausted distinguishes bounded observation failure from unknown evidence.
+	BudgetExhausted bool
 }
 
 // RepositoryDependency is a local metadata stamp, never Git config contents.
@@ -57,24 +64,29 @@ type RecoveryInventory struct {
 // RecoveryResolver only recovers absent checkouts into existing configured roots.
 // Live ownership and explicit configured rules must be evaluated before calling Recover.
 type RecoveryResolver struct {
-	Projects           []archive.ProjectActivation
-	Mappings           map[string]string
-	ResolvePath        func(string) string
-	Lookup             RepositoryLookup
-	Validate           func(RepositoryIdentity) bool
-	rawResolve         func(string) string
-	pathContext        string
-	mappedIdentities   map[string]RepositoryIdentity
-	MetadataOperations int
-	MetadataExhausted  bool
-	sliceValidated     map[string]bool
-	digest             string
-	results            map[string]recoveryDecision
-	Inventory          *RecoveryInventory
-	Context            string
-	PolicyContext      string
-	Operations         int
-	MaxOperations      int
+	Projects             []archive.ProjectActivation
+	Mappings             map[string]string
+	ResolvePath          func(string) string
+	Lookup               RepositoryLookup
+	Validate             func(RepositoryIdentity) bool
+	rawResolve           func(string) string
+	pathContext          string
+	mappedIdentities     map[string]RepositoryIdentity
+	MetadataOperations   int
+	MetadataExhausted    bool
+	sliceValidated       map[string]bool
+	observationContext   context.Context
+	semanticValidated    bool
+	semanticChecked      bool
+	semanticObservations map[string]RepositoryIdentity
+	semanticOperations   int
+	digest               string
+	results              map[string]recoveryDecision
+	Inventory            *RecoveryInventory
+	Context              string
+	PolicyContext        string
+	Operations           int
+	MaxOperations        int
 }
 
 type recoveryDecision struct {
@@ -133,6 +145,7 @@ func RecoveryContext(projects []archive.ProjectActivation, mappings map[string]s
 // Recover considers exact mappings and recorded keys without basename inference.
 // Unknown inventory entries remain uncertainty, even when the included match looks unique.
 func (r *RecoveryResolver) Recover(ctx context.Context, cwd, key string) (proof archive.ProjectResolution, outcome RecoveryOutcome) {
+	r.observationContext = ctx
 	cacheKey := cwd + "\x00" + key + "\x00" + r.Context
 	if decision, ok := r.results[cacheKey]; ok {
 		if !r.Current(decision.Proof) {
@@ -177,6 +190,12 @@ func (r *RecoveryResolver) Recover(ctx context.Context, cwd, key string) (proof 
 		return proof, outcome
 	}
 	proof.InventoryDigest = r.digest
+	proof.ValidationMethod = "dependency_stamps"
+	for _, id := range r.Inventory.Entries {
+		if id.Validation == "semantic" {
+			proof.ValidationMethod = "semantic"
+		}
+	}
 	inv := r.Inventory
 	matches := map[string]int{}
 	for i, id := range inv.Entries {
@@ -226,11 +245,22 @@ func (r *RecoveryResolver) recoverMapped(ctx context.Context, key, target string
 		if !p.Included || (owned && !owner.Included) || r.Lookup == nil {
 			return proof, RecoveryMappingConflict
 		}
-		if ctx.Err() != nil || r.Operations >= r.MaxOperations {
+		id, cached := r.mappedIdentities[p.Root]
+		if !cached {
+			// Freeze one planning observation per target so later mappings cannot
+			// replace the baseline used to validate earlier candidates.
+			if ctx.Err() != nil || r.Operations >= r.MaxOperations {
+				return proof, RecoveryBudgetExhausted
+			}
+			id = safeRepositoryIdentity(r.Lookup(ctx, p.Root))
+			r.Operations++
+		}
+		if ctx.Err() != nil {
 			return proof, RecoveryBudgetExhausted
 		}
-		id := safeRepositoryIdentity(r.Lookup(ctx, p.Root))
-		r.Operations++
+		if id.BudgetExhausted {
+			return proof, RecoveryBudgetExhausted
+		}
 		if !id.Known {
 			return proof, RecoveryInventoryUnavailable
 		}
@@ -243,6 +273,10 @@ func (r *RecoveryResolver) recoverMapped(ctx context.Context, key, target string
 		r.mappedIdentities[p.Root] = id
 		proof.Root = p.Root
 		proof.Method = "explicit_mapping"
+		proof.ValidationMethod = "dependency_stamps"
+		if id.Validation == "semantic" {
+			proof.ValidationMethod = "semantic"
+		}
 		return proof, ""
 	}
 	return proof, RecoveryMappingConflict
@@ -287,6 +321,9 @@ func (r *RecoveryResolver) prepareInventory(ctx context.Context) RecoveryOutcome
 		r.digest = hex.EncodeToString(sum[:])
 	}
 	for _, id := range inv.Entries {
+		if id.BudgetExhausted {
+			return RecoveryBudgetExhausted
+		}
 		if !id.Known {
 			return RecoveryInventoryUnavailable
 		}
@@ -301,6 +338,15 @@ func safeRepositoryIdentity(id RepositoryIdentity) RepositoryIdentity {
 	if id.Root != "" && (!filepath.IsAbs(id.Root) || len(id.Root) > 4096 || strings.ContainsAny(id.Root, "\x00\r\n")) {
 		return RepositoryIdentity{}
 	}
+	if id.Validation != "" && id.Validation != "semantic" {
+		return RepositoryIdentity{}
+	}
+	if id.Validation == "semantic" && !validRecoveryPath(id.ObservedRoot) {
+		return RepositoryIdentity{}
+	}
+	if len(id.ObservationScope) > 128 {
+		return RepositoryIdentity{}
+	}
 	if len(id.Dependencies) > 128 {
 		return RepositoryIdentity{}
 	}
@@ -313,10 +359,18 @@ func safeRepositoryIdentity(id RepositoryIdentity) RepositoryIdentity {
 }
 
 // Current rechecks content-free proof dependencies outside admission locks.
-// Stale evidence stays pending until the next pass; it never triggers extra Git.
+// Semantic evidence gets one bounded second sweep; stale evidence stays pending.
 func (r *RecoveryResolver) Current(proof archive.ProjectResolution) bool {
-	if r.Validate == nil {
-		return true
+	if proof.ValidationMethod == "semantic" && (r.observationContext == nil || r.observationContext.Err() != nil) {
+		r.MetadataExhausted = true
+		return false
+	}
+	if r.Validate == nil && proof.ValidationMethod != "semantic" {
+		if proof.Method == "explicit_mapping" {
+			id, ok := r.mappedIdentities[proof.Root]
+			return ok && r.semanticIdentityCurrent(id)
+		}
+		return r.semanticCurrent()
 	}
 	if r.MetadataOperations+len(r.Projects)+1 > r.metadataLimit() {
 		r.MetadataExhausted = true
@@ -332,7 +386,10 @@ func (r *RecoveryResolver) Current(proof archive.ProjectResolution) bool {
 	}
 	if proof.Method == "explicit_mapping" {
 		id, ok := r.mappedIdentities[proof.Root]
-		return ok && r.identityCurrent(id)
+		return ok && r.semanticIdentityCurrent(id) && r.identityCurrent(id)
+	}
+	if !r.semanticCurrent() {
+		return false
 	}
 	for _, id := range r.Inventory.Entries {
 		if !r.identityCurrent(id) {
@@ -348,7 +405,7 @@ func (r *RecoveryResolver) identityCurrent(id RepositoryIdentity) bool {
 		return false
 	}
 	r.MetadataOperations += len(id.Dependencies)
-	return r.Validate(id)
+	return r.Validate == nil || r.Validate(id)
 }
 
 func (r *RecoveryResolver) staleOutcome() RecoveryOutcome {
@@ -370,12 +427,20 @@ func (r *RecoveryResolver) ResetValidation() {
 	r.MetadataOperations = 0
 	r.MetadataExhausted = false
 	r.sliceValidated = nil
+	r.semanticValidated = false
+	r.semanticChecked = false
+	r.semanticObservations = nil
+	r.semanticOperations = 0
 }
 
 // CurrentSlice coalesces common inventory validation for one short import hold.
 // Call ResetValidation before assembling each slice, outside admission locks.
 func (r *RecoveryResolver) CurrentSlice(proof archive.ProjectResolution) bool {
-	if r.Validate != nil {
+	if proof.ValidationMethod == "semantic" && (r.observationContext == nil || r.observationContext.Err() != nil) {
+		r.MetadataExhausted = true
+		return false
+	}
+	if r.Validate != nil || proof.ValidationMethod == "semantic" {
 		if r.MetadataOperations >= r.metadataLimit() {
 			r.MetadataExhausted = true
 			return false
@@ -404,4 +469,65 @@ func (r *RecoveryResolver) CurrentSlice(proof archive.ProjectResolution) bool {
 
 func validRecoveryPath(path string) bool {
 	return len(path) <= 4096 && filepath.IsAbs(path) && !strings.ContainsAny(path, "\x00\r\n")
+}
+
+// semanticCurrent performs the second complete semantic sweep once per slice.
+// Every configured entry participates, including excluded roots and scratch roots.
+func (r *RecoveryResolver) semanticCurrent() bool {
+	if r.semanticChecked {
+		return r.semanticValidated
+	}
+	semantic := false
+	for _, id := range r.Inventory.Entries {
+		semantic = semantic || id.Validation == "semantic"
+	}
+	if !semantic {
+		return true
+	}
+	r.semanticChecked = true
+	for i, id := range r.Inventory.Entries {
+		if !r.semanticLookupCurrent(id, r.Projects[i].Root) {
+			return false
+		}
+	}
+	r.semanticValidated = true
+	return true
+}
+
+func (r *RecoveryResolver) semanticIdentityCurrent(id RepositoryIdentity) bool {
+	if id.Validation != "semantic" {
+		return true
+	}
+	return r.semanticLookupCurrent(id, id.ObservedRoot)
+}
+
+func (r *RecoveryResolver) semanticLookupCurrent(id RepositoryIdentity, root string) bool {
+	if fresh, ok := r.semanticObservations[root]; ok {
+		return semanticIdentityAgrees(id, fresh)
+	}
+	ctx := r.observationContext
+	if ctx == nil || ctx.Err() != nil || r.semanticOperations >= 1024 {
+		r.MetadataExhausted = true
+		return false
+	}
+	r.semanticOperations++
+	fresh := safeRepositoryIdentity(r.Lookup(ctx, root))
+	if r.semanticObservations == nil {
+		r.semanticObservations = map[string]RepositoryIdentity{}
+	}
+	r.semanticObservations[root] = fresh
+	if fresh.BudgetExhausted || ctx.Err() != nil {
+		r.MetadataExhausted = true
+	}
+	return ctx.Err() == nil && semanticIdentityAgrees(id, fresh)
+}
+
+// ResetValidationContext renews the consumer context after planning ends.
+func (r *RecoveryResolver) ResetValidationContext(ctx context.Context) {
+	r.ResetValidation()
+	r.observationContext = ctx
+}
+
+func semanticIdentityAgrees(planned, fresh RepositoryIdentity) bool {
+	return fresh.Known && !fresh.BudgetExhausted && fresh.Root == planned.Root && fresh.Key == planned.Key && fresh.Validation == planned.Validation && fresh.ObservationScope == planned.ObservationScope
 }

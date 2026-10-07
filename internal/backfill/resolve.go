@@ -24,6 +24,7 @@ type resolution struct {
 	// included is set when a configured, included project owns the directory.
 	included bool
 	skip     SkipReason
+	outcome  sourcefacts.RecoveryOutcome
 	proof    *archive.ProjectResolution
 	current  *resolutionCheck
 }
@@ -32,7 +33,7 @@ type resolution struct {
 // worktrees are followed through their .git files.
 type resolutionCheck struct {
 	valid func() bool
-	reset func()
+	reset func(context.Context)
 }
 
 type resolver struct {
@@ -142,7 +143,7 @@ func (r *resolver) resolveEvidence(ctx context.Context, cwd, key string) resolut
 		proof, outcome := r.recovery.Recover(ctx, cwd, key)
 		if outcome == "" {
 			checked, valid := false, false
-			check := &resolutionCheck{reset: func() { checked = false; r.recovery.ResetValidation() }, valid: func() bool {
+			check := &resolutionCheck{reset: func(ctx context.Context) { checked = false; r.recovery.ResetValidationContext(ctx) }, valid: func() bool {
 				if !checked {
 					checked = true
 					valid = !r.env.exists(cwd) && r.env.exists(proof.Root) && !r.hasRepositoryEvidence(cwd) && r.recovery.CurrentSlice(proof)
@@ -152,7 +153,7 @@ func (r *resolver) resolveEvidence(ctx context.Context, cwd, key string) resolut
 			res = resolution{root: proof.Root, kind: r.kindOf(proof.Root), included: true, proof: &proof, current: check}
 		}
 		if outcome != "" {
-			res = resolution{skip: SkipWorktreeUnresolved}
+			res = resolution{skip: SkipWorktreeUnresolved, outcome: outcome}
 		}
 		if outcome == sourcefacts.RecoveryBudgetExhausted || outcome == sourcefacts.RecoveryInventoryUnavailable {
 			return res
