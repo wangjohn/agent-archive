@@ -136,7 +136,6 @@ const (
 	reviewCreation    stageReviewChange = "creation"
 	reviewPause       stageReviewChange = "pause"
 	reviewReactivated stageReviewChange = "reactivated"
-	reviewRewrite     stageReviewChange = "rewrite"
 )
 
 func TestPreparedImportRevalidatesSelectionAndBatchBeforeAdmission(t *testing.T) {
@@ -169,6 +168,8 @@ func TestPreparedImportRevalidatesSelectionAndBatchBeforeAdmission(t *testing.T)
 			// Simulate a crash before the first registration, then a new review.
 			reg.AdmittedAt = at.Add(1000000000)
 			switch change {
+			case reviewUnchanged:
+				// Keep the exact reviewed selection.
 			case reviewParent:
 				if err = os.WriteFile(parent, []byte(strings.ReplaceAll(parentBody, "please check it", "new selection")), 0600); err != nil {
 					t.Fatal(err)
@@ -206,8 +207,16 @@ func TestPreparedImportRevalidatesSelectionAndBatchBeforeAdmission(t *testing.T)
 	}
 }
 
+type childReservationChange string
+
+const (
+	childUnchanged   childReservationChange = "unchanged"
+	childRewrite     childReservationChange = "rewrite"
+	childReactivated childReservationChange = "reactivated"
+)
+
 func TestPreparedChildBeforeParentManifestResumesUnderCurrentConsent(t *testing.T) {
-	for _, change := range []stageReviewChange{reviewUnchanged, reviewRewrite, reviewReactivated} {
+	for _, change := range []childReservationChange{childUnchanged, childRewrite, childReactivated} {
 		t.Run(string(change), func(t *testing.T) {
 			home, project := t.TempDir(), t.TempDir()
 			at, start := fixedNow.UTC(), fixedNow.Add(-100000000000).UTC()
@@ -240,18 +249,21 @@ func TestPreparedChildBeforeParentManifestResumesUnderCurrentConsent(t *testing.
 			}
 			// Crash before the parent manifest was prepared, then review again.
 			registration.AdmittedAt = at.Add(1000000000)
-			if change == reviewRewrite {
+			switch change {
+			case childUnchanged:
+				// Retry the same selected child after interruption.
+			case childRewrite:
 				if err = os.WriteFile(child, []byte(strings.ReplaceAll(childBody, "looked", "new selection")), 0600); err != nil {
 					t.Fatal(err)
 				}
-			} else if change == reviewReactivated {
+			case childReactivated:
 				cfg.Archive.Projects[0].ActivatedAt = registration.AdmittedAt
 				if err = config.Save(home, cfg); err != nil {
 					t.Fatal(err)
 				}
 			}
 			result, err := registration.Run([]Candidate{candidate})
-			if change == reviewUnchanged {
+			if change == childUnchanged {
 				if err != nil || len(result.Sessions) != 1 || len(result.Subagents) != 1 {
 					t.Fatal("child-only reservation did not resume", result, err)
 				}
