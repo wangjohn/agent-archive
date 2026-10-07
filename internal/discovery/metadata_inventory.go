@@ -68,6 +68,7 @@ type metadataInventory struct {
 	threads, rollouts   map[string][]int
 	cursor              *metadataCursor
 	charge, headerBytes int64
+	batchCharge         int64
 	remaining           time.Duration
 	deadline            time.Time
 	interned            map[string]string
@@ -84,6 +85,15 @@ func (l *CodexRolloutLookup) MetadataInventory() agentapi.CodexRolloutLookup {
 	return l.metadata
 }
 
+// metadataTypeSize bounds the conversion before reserving concrete backing slots.
+func metadataTypeSize[T any]() int64 {
+	size := reflect.TypeFor[T]().Size()
+	if size > 1<<20 {
+		panic("unexpected metadata representation size")
+	}
+	return int64(size)
+}
+
 // metadataStamp retains exact filesystem identity without retaining an allocated
 // FileInfo and its platform Stat_t behind every metadata fact.
 type metadataStamp struct {
@@ -92,14 +102,33 @@ type metadataStamp struct {
 	mode        os.FileMode
 }
 
+func metadataDevice(value any) (uint64, bool) {
+	switch dev := value.(type) {
+	case int32:
+		if dev < 0 {
+			return 0, false
+		}
+		return uint64(dev), true
+	case uint64:
+		return dev, true
+	default:
+		return 0, false
+	}
+}
 func stampMetadata(info os.FileInfo) metadataStamp {
 	stat, ok := info.Sys().(*syscall.Stat_t)
 	if !ok {
 		return metadataStamp{}
 	}
-	return metadataStamp{uint64(stat.Dev), uint64(stat.Ino), info.Size(), info.ModTime().UnixNano(), info.Mode()}
+	dev, valid := metadataDevice(stat.Dev)
+	if !valid {
+		return metadataStamp{}
+	}
+	return metadataStamp{dev, uint64(stat.Ino), info.Size(), info.ModTime().UnixNano(), info.Mode()}
 }
-func (s metadataStamp) same(info os.FileInfo) bool { return info != nil && s == stampMetadata(info) }
+func (s metadataStamp) same(info os.FileInfo) bool {
+	return info != nil && s.ino != 0 && s == stampMetadata(info)
+}
 func (m *metadataInventory) intern(value string) (string, error) {
 	if value == "" {
 		return "", nil
@@ -123,6 +152,11 @@ func (m *metadataInventory) internIdentity(id codexmeta.CodexIdentity) (codexmet
 		}
 		*value = interned
 	}
+	mode, err := m.intern(string(id.HistoryMode))
+	if err != nil {
+		return id, err
+	}
+	id.HistoryMode = codexmeta.HistoryMode(mode)
 	if id.HistoryBase != nil {
 		value := *id.HistoryBase
 		interned, err := m.intern(value.RolloutID)
@@ -234,7 +268,7 @@ func (m *metadataInventory) start(ctx context.Context) error {
 	m.interned = map[string]string{}
 	// Reserve every backing slot before allocating; no geometric growth or old
 	// backing array coexistence is omitted from the shared ledger.
-	if !m.reserve(int64(reflect.TypeFor[metadataFact]().Size())*16384 + 2048*256 + 128<<10) {
+	if !m.reserve(metadataTypeSize[metadataFact]()*16384 + 2048*256 + 128<<10) {
 		return metadataLimit()
 	}
 	m.facts = make([]metadataFact, 0, 16384)
@@ -247,6 +281,9 @@ func (m *metadataInventory) start(ctx context.Context) error {
 		return metadataLimit()
 	}
 	for _, home := range m.owner.homes {
+		if !filepath.IsAbs(home) || len(home) > 4096 {
+			return metadataUnavailable()
+		}
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -356,30 +393,15 @@ func (m *metadataInventory) step(ctx context.Context) error {
 			return err
 		}
 		if m.cursor != nil {
-			c := m.cursor
-			if len(c.line) >= metadataHeaderBytes || m.headerBytes+m.charge+1 > metadataBytes {
-				return metadataLimit()
-			}
-			var b [1]byte
-			m.counts.requested++
-			m.counts.operations++
 			operations++
-			n, err := c.reader.ReadAt(b[:], int64(len(c.line)))
-			m.counts.returned += int64(n)
-			m.headerBytes += int64(n)
-			if err != nil || n != 1 {
-				return metadataUnavailable()
-			}
-			c.line = append(c.line, b[0])
-			if b[0] == '\n' {
-				if err := m.finishHeader(ctx); err != nil {
-					return err
-				}
+			if err := m.readHeaderByte(ctx); err != nil {
+				return err
 			}
 			continue
 		}
 		if len(m.batch) > 0 {
 			entry := m.batch[0]
+			m.batch[0] = SourceEntry{}
 			if entry.unsafeMetadata || entry.unknownMetadata {
 				return metadataUnavailable()
 			}
@@ -415,6 +437,11 @@ func (m *metadataInventory) step(ctx context.Context) error {
 			}
 			continue
 		}
+		if m.batchCharge != 0 {
+			m.owner.readBudget.Release(m.batchCharge)
+			m.charge -= m.batchCharge
+			m.batchCharge = 0
+		}
 		if len(m.queue) == 0 {
 			m.complete = true
 			break
@@ -424,7 +451,13 @@ func (m *metadataInventory) step(ctx context.Context) error {
 		// The same bounded adapter/directory worker supplies ordinary requested and
 		// explicit full metadata lanes. The full lane starts its own complete round,
 		// never promoting the ordinary cache or requested proof to an epoch.
-		batch, err := (codexAdapter{metadataCounts: &m.counts}).Enumerate(ctx, d.Root, d.Path, d.Offset)
+		batch, err := (codexAdapter{metadataCounts: &m.counts, metadataReserve: func(n int64) bool {
+			if !m.reserve(n) {
+				return false
+			}
+			m.batchCharge += n
+			return true
+		}}).Enumerate(ctx, d.Root, d.Path, d.Offset)
 		if err != nil || batch.coverage == nil || batch.coverage.Unavailable {
 			return metadataUnavailable()
 		}
@@ -453,6 +486,33 @@ func (m *metadataInventory) step(ctx context.Context) error {
 	}
 	return nil
 }
+func (m *metadataInventory) readHeaderByte(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	c := m.cursor
+	if len(c.line) >= metadataHeaderBytes || m.headerBytes+m.charge+1 > metadataBytes {
+		return metadataLimit()
+	}
+	var b [1]byte
+	m.counts.requested++
+	m.counts.
+		n, err := c.reader.ReadAt(b[:], int64(len(c.line)))
+	m.counts.returned += int64(n)
+	m.headerBytes += int64(n)
+	if err != nil || n != 1 {
+		return metadataUnavailable()
+	}
+	c.line = append(c.line, b[0])
+	if b[0] == '\n' {
+		if err := m.finishHeader(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (m *metadataInventory) finishHeader(ctx context.Context) error {
 	c := m.cursor
 	if err := ctx.Err(); err != nil {
@@ -661,7 +721,7 @@ func (m *metadataInventory) thread(ctx context.Context, id string) (agentapi.Cod
 	if err != nil {
 		return agentapi.CodexRolloutSet{}, err
 	}
-	refs := m.refs(m.threads[id])
+
 	hash := sha256.New()
 	for _, i := range m.threads[id] {
 		f := m.facts[i]
@@ -672,7 +732,7 @@ func (m *metadataInventory) thread(ctx context.Context, id string) (agentapi.Cod
 	if current != nil {
 		_, _ = io.WriteString(hash, current.Path)
 	}
-	return agentapi.CodexRolloutSet{Current: current, Candidates: refs, Complete: m.complete, Revision: hex.EncodeToString(hash.Sum(nil))}, nil
+	return agentapi.CodexRolloutSet{Current: current, Complete: m.complete, Revision: hex.EncodeToString(hash.Sum(nil))}, nil
 }
 
 type metadataSlice struct {
@@ -681,6 +741,7 @@ type metadataSlice struct {
 	expires   time.Time
 	failure   error
 	closed    bool
+	charge    int64
 }
 
 func (s *metadataSlice) Valid(ctx context.Context) error {
@@ -714,13 +775,19 @@ func (s *metadataSlice) Thread(ctx context.Context, id string) (agentapi.CodexRo
 		return agentapi.CodexRolloutSet{}, err
 	}
 	defer done()
-	return s.inventory.thread(op, id)
+	set, err := s.inventory.thread(op, id)
+	if err != nil {
+		return set, err
+	}
+	refs, err := s.refs(s.inventory.threads[id])
+	set.Candidates = refs
+	return set, err
 }
 func (s *metadataSlice) Rollout(ctx context.Context, id string) ([]agentapi.SourceRef, error) {
 	if err := s.step(ctx); err != nil {
 		return nil, err
 	}
-	return s.inventory.refs(s.inventory.rollouts[id]), nil
+	return s.refs(s.inventory.rollouts[id])
 }
 func (s *metadataSlice) Check(ctx context.Context, id, revision string) error {
 	if err := s.step(ctx); err != nil {
@@ -740,7 +807,26 @@ func (s *metadataSlice) Check(ctx context.Context, id, revision string) error {
 	}
 	return nil
 }
-func (s *metadataSlice) Close() error { s.closed = true; return nil }
+func (s *metadataSlice) Close() error {
+	if s.closed {
+		return nil
+	}
+	s.closed = true
+	if !s.inventory.owner.closed {
+		s.inventory.owner.readBudget.Release(s.charge)
+		s.inventory.charge -= s.charge
+	}
+	s.charge = 0
+	return nil
+}
+func (s *metadataSlice) refs(indices []int) ([]agentapi.SourceRef, error) {
+	charge := int64(len(indices)) * metadataTypeSize[agentapi.SourceRef]()
+	if !s.inventory.reserve(charge) {
+		return nil, metadataLimit()
+	}
+	s.charge += charge
+	return s.inventory.refs(indices), nil
+}
 func (s *metadataSlice) NativeReadBudget() *agentapi.NativeReadBudget {
 	return s.inventory.owner.readBudget
 }

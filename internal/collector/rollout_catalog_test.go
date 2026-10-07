@@ -12,7 +12,6 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/rolloutcatalog"
 )
 
 func TestPendingCatalogIsLazySharedAndDoesNotAdmitHistory(t *testing.T) {
@@ -27,7 +26,7 @@ func TestPendingCatalogIsLazySharedAndDoesNotAdmitHistory(t *testing.T) {
 		raw := `{"type":"session_meta","payload":{"id":"` + id + `","cwd":"/synthetic/project","timestamp":"2026-10-01T12:00:00Z","cli_version":"0.160.0","originator":"codex_cli_rs","source":"cli"}}` + "\n" + `{"type":"response_item","payload":{"type":"message","role":"user","content":"synthetic"}}` + "\n"
 		ordinary := writeTranscript(t, dir, "rollout-"+id+".jsonl", raw)
 		related := writeTranscript(t, dir, "rollout-"+other+".jsonl", raw)
-		c := rolloutcatalog.New([]string{home}, rolloutcatalog.Limits{PrefixBytes: 1})
+		c := newCollectorCatalog(t, []string{home})
 		calls := 0
 		opts := Options{Sources: testSources, PendingCodexRollouts: func() agentapi.CodexRolloutLookup { calls++; return c }}
 		reg := archive.SessionRegistration{Harness: archive.Harness{Name: "codex"}, TranscriptPath: ordinary}
@@ -42,8 +41,8 @@ func TestPendingCatalogIsLazySharedAndDoesNotAdmitHistory(t *testing.T) {
 		if _, _, err := reader.Filter(t.Context(), filter, DefaultMaxTranscriptBytes); err != nil {
 			t.Fatal(err)
 		}
-		if calls != 0 || c.Counters().Headers != 0 {
-			t.Fatalf("ordinary capture enumerated history: calls %d counters %#v", calls, c.Counters())
+		if calls != 0 || c.sweeps != 0 {
+			t.Fatalf("ordinary capture enumerated history: calls %d counters %#v", calls, c.sweeps)
 		}
 		reg.TranscriptPath = related
 		reader, ok = newSourceReader(reg, opts)
@@ -55,8 +54,8 @@ func TestPendingCatalogIsLazySharedAndDoesNotAdmitHistory(t *testing.T) {
 				t.Fatalf("history fence lost: %v", err)
 			}
 		}
-		if calls != 2 || c.Counters().Headers != 2 || c.Counters().PrefixBytes != 0 {
-			t.Fatalf("pending views not shared metadata observation: calls %d counters %#v", calls, c.Counters())
+		if calls != 2 || c.sweeps != 2 {
+			t.Fatalf("pending views not shared metadata observation: calls %d counters %#v", calls, c.sweeps)
 		}
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
@@ -81,7 +80,7 @@ func TestPendingCatalogPreservesTypedFailureAndReportsOnlyCounts(t *testing.T) {
 			}
 			path = writeTranscript(t, dir, "rollout-"+id+".jsonl", raw)
 		}
-		c := rolloutcatalog.New(homes, rolloutcatalog.Limits{PrefixBytes: 1})
+		c := newCollectorCatalog(t, homes)
 		calls := 0
 		r := providerReader{harness: "codex", ref: agentapi.SourceRef{Path: path}, pendingRollouts: func() agentapi.CodexRolloutLookup { calls++; return c }}
 		ordinaryError := agentapi.Wrap(agentapi.Unavailable, errors.New("synthetic refusal"))
@@ -101,15 +100,15 @@ func TestPendingCatalogPreservesTypedFailureAndReportsOnlyCounts(t *testing.T) {
 				t.Fatal("pending diagnostic exposed private evidence")
 			}
 		}
-		if !strings.Contains(err.Error(), "2 candidate rollout locators") || c.Counters().PrefixBytes != 0 {
-			t.Fatalf("metadata-only diagnostic failed: %v %#v", err, c.Counters())
+		if !strings.Contains(err.Error(), "2 candidate rollout locators") {
+			t.Fatalf("metadata-only diagnostic failed: %v %#v", err, c.sweeps)
 		}
 	})
 }
 
 func TestPendingCatalogCloseFailurePreservesPrivateRefusal(t *testing.T) {
 	t.Parallel()
-	lookup := &failingCloseCatalog{Catalog: rolloutcatalog.New([]string{t.TempDir()}, rolloutcatalog.Limits{})}
+	lookup := &failingCloseCatalog{collectorCatalog: newCollectorCatalog(t, []string{t.TempDir()})}
 	r := providerReader{harness: "codex", pendingRollouts: func() agentapi.CodexRolloutLookup { return lookup }}
 	original := errors.Join(agentapi.Wrap(agentapi.Unavailable, errors.New("synthetic refusal")), archive.ErrRelatedHistory)
 	err := r.observePendingHistory(t.Context(), original)
@@ -119,12 +118,12 @@ func TestPendingCatalogCloseFailurePreservesPrivateRefusal(t *testing.T) {
 }
 
 type failingCloseCatalog struct {
-	*rolloutcatalog.Catalog
+	*collectorCatalog
 	closes int
 }
 
 func (c *failingCloseCatalog) BeginValidationSlice(ctx context.Context, limits agentapi.CodexValidationLimits) (agentapi.CodexRolloutSlice, error) {
-	slice, err := c.Catalog.BeginValidationSlice(ctx, limits)
+	slice, err := c.collectorCatalog.BeginValidationSlice(ctx, limits)
 	if err != nil {
 		return nil, err
 	}

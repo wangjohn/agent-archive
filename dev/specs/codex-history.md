@@ -56,9 +56,10 @@ and check calls and30seconds after the sweep, with a60second maximum. A sweep
 rechecks captured directory membership stamps and every physical file
 observation; selected providers independently check opened headers/content.
 Thread and Check retain live targeted current-row queries and WAL refresh/replay
-despite filesystem proof reuse. The existing total five-second owner allowance
-is shared across enumeration, sweeps and current checks. Slice renewal never
-replenishes it. Failed sweeps are retained only in their bounded slice; callers
+despite filesystem proof reuse. Ordinary requested work retains its five-second allowance. An explicitly
+requested full epoch has one fixed thirty-second cumulative active-work
+allowance for acquisition, sweeps and current checks. Caller cancellation and
+earlier deadlines win; slice renewal and lifetime never replenish that allowance. Failed sweeps are retained only in their bounded slice; callers
 close snapshots before renewal. CloseReadOnly releases resources without a
 capture-catalog checkpoint. Filesystem observations use the practical
 size/mtime/identity contract; restored timestamps are not a filesystem lock.
@@ -68,9 +69,9 @@ view for a content-free diagnostic under a100ms caller deadline. It preserves
 the original error and says this operation remains pending. Upstream admitted
 and retained history paths retain their existing behavior. No second production
 catalog, new content authority or new history admission is introduced here.
-The standalone `internal/rolloutcatalog` helper retains its legacy prefix
-coalescing and settled-VFS semantics for explicit legacy callers and tests;
-production diagnostics use the discovery owner instead.
+The PR-only legacy prefix-coalescing catalog and settled-VFS engine are retired;
+metadata completeness does not establish duplicate content agreement. Authorized
+both-copy prefix checks and cross-home ancestor content remain separately owned.
 
 ## Captured-prefix consistency and resources
 

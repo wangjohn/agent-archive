@@ -120,8 +120,9 @@ func findAdapter(adapters []SourceAdapter, agent string) SourceAdapter {
 }
 
 type codexAdapter struct {
-	metadataCounts *metadataCounts
-	supported      func(sourcefacts.CodexMeta) bool
+	metadataCounts  *metadataCounts
+	metadataReserve func(int64) bool
+	supported       func(sourcefacts.CodexMeta) bool
 }
 
 func (codexAdapter) Agent() string { return "codex" }
@@ -148,6 +149,9 @@ func (a codexAdapter) Enumerate(ctx context.Context, root, path string, cookie i
 	for _, name := range names {
 		if err := ctx.Err(); err != nil {
 			return SourceBatch{}, err
+		}
+		if a.metadataReserve != nil && !a.metadataReserve(128+int64((len(root)+len(path)+len(name)+31)&^15)) {
+			return SourceBatch{}, metadataLimit()
 		}
 		entry := a.Describe(root, path, name)
 		b.Entries = append(b.Entries, entry)

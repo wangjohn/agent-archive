@@ -89,27 +89,6 @@ func sourceFailure(kind agentapi.FailureKind, message string) error {
 }
 
 func (p *relatedSourcePass) open(ctx context.Context, ref agentapi.SourceRef) (*rolloutFile, error) {
-	return p.openWith(ctx, ref, p.env.Files, p.env.Policy)
-}
-
-// openRelated uses each catalog dependency's independently approved native root.
-// The seed remains governed by the caller's original admission read policy.
-func (p *relatedSourcePass) openRelated(ctx context.Context, ref agentapi.SourceRef) (*rolloutFile, error) {
-	if rooted, ok := p.env.CodexRollouts.(interface{ Files() transcriptio.Opener }); ok {
-		files := rooted.Files()
-		// A cached seed does not bypass a dependency's independent root authority.
-		if _, err := files.Lstat(ref.Path); err != nil {
-			return nil, sourceio.Classify(err)
-		}
-		if _, err := files.EvalSymlinks(ref.Path); err != nil {
-			return nil, sourceio.Classify(err)
-		}
-		return p.openWith(ctx, ref, files, transcriptio.OpenPolicy{RejectSymlinks: true})
-	}
-	return p.open(ctx, ref)
-}
-
-func (p *relatedSourcePass) openWith(ctx context.Context, ref agentapi.SourceRef, files transcriptio.Opener, policy transcriptio.OpenPolicy) (*rolloutFile, error) {
 	if p.closed {
 		return nil, agentapi.ErrClosed
 	}
@@ -144,7 +123,7 @@ func (p *relatedSourcePass) openWith(ctx context.Context, ref agentapi.SourceRef
 	if len(p.files) >= archive.MaxHistorySpans {
 		return nil, sourceFailure(agentapi.Limit, "shared rollout file limit")
 	}
-	f, err := transcriptio.Open(files, ref.Path, policy)
+	f, err := transcriptio.Open(p.env.Files, ref.Path, p.env.Policy)
 	if err != nil {
 		return nil, sourceio.Classify(err)
 	}
@@ -284,7 +263,7 @@ func (p *relatedSourcePass) selectSource(ctx context.Context, ref agentapi.Sourc
 	}
 	selected.set = set
 	if set.Current != nil {
-		current, e := p.openRelated(ctx, *set.Current)
+		current, e := p.open(ctx, *set.Current)
 		if e != nil {
 			return selected, e
 		}
@@ -334,7 +313,7 @@ func (p *relatedSourcePass) selectLineage(ctx context.Context, selected sourceSe
 	candidates := map[string]*rolloutFile{}
 	bases := map[string]bool{}
 	for _, candidate := range set.Candidates {
-		f, e := p.openRelated(ctx, candidate)
+		f, e := p.open(ctx, candidate)
 		if e != nil {
 			return selected, e
 		}
@@ -423,7 +402,7 @@ func (p *relatedSourcePass) graph(ctx context.Context, leaf *rolloutFile) ([]phy
 		if len(refs) != 1 {
 			return nil, sourceFailure(agentapi.Unavailable, "history dependency missing or ambiguous")
 		}
-		base, err := p.openRelated(ctx, refs[0])
+		base, err := p.open(ctx, refs[0])
 		if err != nil {
 			return nil, err
 		}
