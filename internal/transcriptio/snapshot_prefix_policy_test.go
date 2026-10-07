@@ -12,9 +12,17 @@ import (
 	"github.com/wangjohn/agent-archive/internal/transcriptio"
 )
 
+type prefixLocatorMutation string
+
+const (
+	prefixLocatorUnchanged    prefixLocatorMutation = "unchanged"
+	prefixLocatorAppend       prefixLocatorMutation = "append"
+	prefixLocatorFinalSymlink prefixLocatorMutation = "final-symlink"
+)
+
 func TestSnapshotPrefixPreservesStrictRootLocator(t *testing.T) {
-	for _, mutation := range []string{"unchanged", "append", "final-symlink"} {
-		t.Run(mutation, func(t *testing.T) {
+	for _, mutation := range []prefixLocatorMutation{prefixLocatorUnchanged, prefixLocatorAppend, prefixLocatorFinalSymlink} {
+		t.Run(string(mutation), func(t *testing.T) {
 			root := t.TempDir()
 			path := filepath.Join(root, "session.jsonl")
 			data := []byte("{\"role\":\"user\"}\n")
@@ -35,7 +43,7 @@ func TestSnapshotPrefixPreservesStrictRootLocator(t *testing.T) {
 				t.Fatal(err)
 			}
 			switch mutation {
-			case "append":
+			case prefixLocatorAppend:
 				f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
 				if err != nil {
 					t.Fatal(err)
@@ -45,7 +53,7 @@ func TestSnapshotPrefixPreservesStrictRootLocator(t *testing.T) {
 				if err := errors.Join(writeErr, closeErr); err != nil {
 					t.Fatal(err)
 				}
-			case "final-symlink":
+			case prefixLocatorFinalSymlink:
 				moved := filepath.Join(root, "retained.jsonl")
 				if err := os.Rename(path, moved); err != nil {
 					t.Fatal(err)
@@ -55,7 +63,7 @@ func TestSnapshotPrefixPreservesStrictRootLocator(t *testing.T) {
 				}
 			}
 			err = s.CheckPrefix(context.Background(), int64(len(data)), digest)
-			if mutation == "final-symlink" {
+			if mutation == prefixLocatorFinalSymlink {
 				if !errors.Is(err, transcriptio.ErrChanged) {
 					t.Fatalf("new strict locator symlink: got %v, want ErrChanged", err)
 				}
