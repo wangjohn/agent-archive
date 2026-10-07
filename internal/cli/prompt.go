@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/signal"
 	"slices"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -114,16 +113,6 @@ func (p *prompter) line(label string) (string, error) {
 	return strings.TrimSpace(text), nil
 }
 
-// ask writes a prompt and reads its answer. The prompt is question, then
-// the choices in brackets with choices[def] the default, then the input
-// cursor. A color terminal shows the question in bold when bold is set, the
-// default choice in bold, and "›" as the cursor; plain output ends the
-// prompt with plainEnd instead, as it always has, so a script reading it
-// sees the same text. def outside choices marks no default.
-func (p *prompter) ask(question string, bold bool, choices []string, def int, plainEnd string) (string, error) {
-	return p.line(p.promptText(question, bold, choices, def, plainEnd))
-}
-
 func (p *prompter) promptText(question string, bold bool, choices []string, def int, plainEnd string) string {
 	if question == "" && len(choices) == 0 {
 		return ""
@@ -158,61 +147,6 @@ func (p *prompter) promptText(question string, bold bool, choices []string, def 
 // promptCursor ends every prompt on a color terminal.
 const promptCursor = "›"
 
-// withDefault prompts once with a question, returning def when the answer
-// is blank. A blank default shows no bracketed value rather than a
-// confusing "[]".
-func (p *prompter) withDefault(label, def string) (string, error) {
-	return p.defaulted(label, true, def)
-}
-
-// choose is withDefault for a menu's answer line, such as "Enter 1-3 [1]":
-// the question above it is the bold one, so only the default is.
-func (p *prompter) choose(label, def string) (string, error) {
-	return p.defaulted(label, false, def)
-}
-
-func (p *prompter) defaulted(label string, bold bool, def string) (string, error) {
-	var choices []string
-	if def != "" {
-		choices = []string{def}
-	}
-	answer, err := p.ask(label, bold, choices, 0, ": ")
-	if err != nil {
-		return "", err
-	}
-	if answer == "" {
-		return def, nil
-	}
-	return answer, nil
-}
-
-func (p *prompter) yesNo(label string) (bool, error) {
-	choices, defIndex := []string{"y", "N"}, 1
-	for {
-		answer, err := p.ask(label, true, choices, defIndex, " ")
-		if err != nil {
-			return false, err
-		}
-		switch strings.ToLower(answer) {
-		case "":
-			return false, nil
-		case "y", "yes":
-			return true, nil
-		case "n", "no":
-			return false, nil
-		default:
-			terminal.Println(p.out, "Please enter y or n.")
-		}
-	}
-}
-
-// heading writes a question that the lines after it answer, such as a
-// menu's, in bold. Blank lines leading it stay outside the bold.
-func (p *prompter) heading(question string) {
-	rest := strings.TrimLeft(question, "\n")
-	terminal.Println(p.out, question[:len(question)-len(rest)]+p.style.bold(rest))
-}
-
 // option is one numbered entry in a menu. Key is what the caller receives;
 // Label is what the user reads.
 type option struct {
@@ -225,35 +159,6 @@ type actionOption struct {
 	Key      string
 	Shortcut string
 	Label    string
-}
-
-// menu prints a question with numbered options and returns the chosen key.
-// The user answers with the option's number; a blank answer takes def. The
-// option's key, or an unambiguous prefix of it such as y for yes, is also
-// accepted, so scripted input keeps working.
-func (p *prompter) menu(question, def string, options ...option) (string, error) {
-	p.heading(question)
-	defNum := ""
-	for i, o := range options {
-		terminal.Printf(p.out, "  %d) %s\n", i+1, o.Label)
-		if o.Key == def {
-			defNum = strconv.Itoa(i + 1)
-		}
-	}
-	label := fmt.Sprintf("Enter 1-%d", len(options))
-	for {
-		answer, err := p.choose(label, defNum)
-		if err != nil {
-			return "", err
-		}
-		if n, e := strconv.Atoi(answer); e == nil && n >= 1 && n <= len(options) {
-			return options[n-1].Key, nil
-		}
-		if key, ok := matchOption(answer, options); ok {
-			return key, nil
-		}
-		terminal.Printf(p.out, "Enter a number from 1 to %d.\n", len(options))
-	}
 }
 
 // matchOption finds the option whose key equals answer, or failing that the
@@ -278,21 +183,6 @@ func matchOption(answer string, options []option) (string, bool) {
 		}
 	}
 	return match, match != ""
-}
-
-// retentionDays asks how many days to keep sessions, offering def.
-func (p *prompter) retentionDays(def int) (int, error) {
-	for {
-		answer, err := p.withDefault("Keep sessions for how many days?", strconv.Itoa(def))
-		if err != nil {
-			return 0, err
-		}
-		value, err := strconv.Atoi(answer)
-		if err == nil && value > 0 && value <= 36500 {
-			return value, nil
-		}
-		terminal.Println(p.out, "Enter a number of days between 1 and 36500.")
-	}
 }
 
 func (p *prompter) secret(label string) (string, error) {
@@ -337,7 +227,7 @@ func (p *prompter) secret(label string) (string, error) {
 }
 
 // labelText styles a prompt written whole, such as "Projects: " or
-// "Import 3 sessions? [y/N/edit] ", as ask would: its trailing ": " or " "
+// "Import 3 sessions? [y/N/edit] ", with the same cursor: its trailing ": " or " "
 // is the plain end, and a bracketed list of choices at its end marks its
 // default with a capital letter, as in [y/N].
 func (p *prompter) labelText(label string) string {

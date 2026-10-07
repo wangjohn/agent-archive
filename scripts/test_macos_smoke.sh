@@ -25,6 +25,7 @@ cli_tests=(
   TestScreens
   TestGuidedPromptTerminalCells
   TestGuidedPromptEmissionPreservesTerminalOwnership
+  TestGuidedCommandsTerminalOwnership
   TestPairingCodeDisplayRecognizesWrappedTerminal
   TestGuidedPromptCollapseRequiresOwnedVisibleRows
   TestGuidedEOFNeverResolvesDefault

@@ -31,8 +31,10 @@ The rendering state retains only row counts, cursor width, dimensions, output
 generation and an ownership epoch. It never retains entered text.
 
 `ReadAnswer` optionally accepts the **existing** `*bufio.Reader` and returns
-one answer with its existing size limit. For a pairing receiver, use a callback
-that calls `boundedPairingLine(reader, limit)`, preserving its bound. Do not open
+one raw answer, including its newline and EOF, with its existing size limit.
+For a pairing receiver, use a callback that calls
+`boundedPairingAnswer(reader, limit)`, preserving its bound. The trimmed
+`boundedPairingLine` adapter is for legacy consumers outside guided input. Do not open
 another reader, read the file descriptor directly or turn a bounded payload into
 an unbounded `ReadString`. The same buffer supplies legacy line prompts and
 browser hand-back. Empty or whitespace-only EOF is an error and never chooses a default. A final
@@ -90,11 +92,12 @@ writes automatically. Keep suspension on the same command goroutine.
 The renderer's `block` owns blank lines for migrated headings and logical
 blocks: use `p.renderer().block(text)` with a newline-terminated body rather
 than embedding leading blank lines. Answer completion leaves one blank line.
-Legacy `step`, `heading`, `ask`, `menu`, `actions`, `yesNo`, and low-level `line`
-keep their established output while their callers are migrated; remove their
-leading/trailing newline workarounds as part of those migrations. The shared
-`guidedSpacing` field preserves spacing for those legacy guided answers and is
-not a reason to change every `line` call (browsers and special input use it).
+Guided command callers use `guidedChoice`, `guidedText`, and their setup or
+command adapters. Obsolete confirmation and menu helpers have been removed.
+Low-level `line`, `promptText`, `secret`, and `labelText` retain their existing
+browser and special-input contracts. The `guidedSpacing` field preserves
+spacing for low-level input used during setup; it is not a reason to change
+every browser `line` call.
 
 Always `defer p.close()` for a command using guided hidden input. Its terminal
 guard restores modes on completion, errors, EOF, SIGINT/SIGTERM/SIGHUP/SIGQUIT,

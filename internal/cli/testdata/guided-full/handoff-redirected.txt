@@ -1,0 +1,4 @@
+$ agent-archive handoff SESSION
+[stderr]
+handoff: wrote /Users/alex/handoff.md (BYTES bytes)
+[exit 0]

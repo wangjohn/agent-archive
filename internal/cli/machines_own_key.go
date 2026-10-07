@@ -75,6 +75,7 @@ func runMachinesOwnKey(args []string, stdin io.Reader, out, errOut io.Writer, en
 		return 0
 	}
 	p := newPrompter(stdin, out)
+	defer p.close()
 	interactive := !*yes && env.interactive(stdin)
 	if err = confirmOwnKey(p, *yes, interactive); err != nil {
 		return machineCommandError(errOut, err)
@@ -507,7 +508,7 @@ func confirmOwnKey(p *prompter, yes, interactive bool) error {
 	if !interactive {
 		return errors.New("own-key needs an interactive terminal or deliberate --yes")
 	}
-	consent, err := p.yesNo("Create and commit a dedicated key? The shared provider key stays valid for other users")
+	consent, err := p.guidedYesNo("Create and commit a dedicated key? The shared provider key stays valid for other users")
 	if err != nil || !consent {
 		return errors.New("own-key cancelled; nothing changed")
 	}

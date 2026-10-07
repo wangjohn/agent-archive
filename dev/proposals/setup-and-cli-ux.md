@@ -1,7 +1,9 @@
 # Setup and CLI experience implementation plan
 
-Status: Accepted design; step 1 shared rendering is implemented. Steps 2–6
-remain pending. See the [renderer contract](../contributing/prompt-rendering.md).
+Status: Accepted design; shared rendering, setup and remaining guided commands
+are implemented in dependent changes. Final integration review, required gates
+and platform acceptance remain pending. See the
+[renderer contract](../contributing/prompt-rendering.md).
 
 Make guided commands clearly distinguish completed answers, explanatory text,
 and the current question. Initial onboarding and later interactive setup use
@@ -427,5 +429,8 @@ work; investigate any implementation that changes archived content.
 
 The setup portion is implemented with focused CLI/backfill regression checks,
 setup transcript goldens, and selector PTY coverage on macOS. Independent P2
-review and hosted platform gates remain pending; the other guided flows and
-full cross-platform acceptance are tracked separately above.
+review and hosted platform gates remain pending. The remaining guided commands
+are implemented in a dependent P3 change with complete injected command
+transcripts, plain/color width matrices and terminal ownership checks. Their
+delivery checkboxes remain pending final prerequisite integration, independent
+review, required gates and cross-platform acceptance.

@@ -101,10 +101,10 @@ func runMachinesVerify(cfg config.Config, listing machines.ListResult, stdin io.
 		return machineCommandError(errOut, err)
 	}
 	p := newPrompter(stdin, errOut)
+	defer p.close()
 	interactive := !unattended && !asJSON && env.interactive(stdin)
 	if interactive {
-		terminal.Println(errOut, "Explicit read-only provider check. Management token stays in memory; use Account API Tokens Read or Write.")
-		terminal.Println(errOut, cloudflare.TokenDashboardURL)
+		p.tokenHelpers = []string{"Explicit read-only provider check. Management token stays in memory; use Account API Tokens Read or Write.", cloudflare.TokenDashboardURL}
 	}
 	token, _, _, err := readManagementToken(context.Background(), p, env, cfg.CloudflareTokenCommand, interactive)
 	if err != nil {
@@ -142,9 +142,12 @@ func runMachinesVerify(cfg config.Config, listing machines.ListResult, stdin io.
 		if listing.Partial {
 			terminal.Println(out, "Bucket machine listing is incomplete; provider observations cover only readable records.")
 		}
+		rows := [][]string{}
 		for _, observation := range report.Observations {
-			terminal.Printf(out, "%s  %s  %s  %s (%s)\n", observation.MachineID, observation.AccessKeyID, observation.Role, observation.State, observation.Binding)
+			rows = append(rows, []string{observation.MachineID, observation.AccessKeyID, string(observation.Role), string(observation.State), string(observation.Binding)})
 		}
+		guidedRows(out, []string{"Machine ID", "Provider key", "Role", "State", "Binding"}, rows)
+		terminal.Println(out)
 		for _, id := range report.Unclaimed {
 			terminal.Printf(out, "Provider key %s: claim not observed.\n", id)
 		}

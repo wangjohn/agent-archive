@@ -26,6 +26,13 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Pairing, handoff, standalone history import and undo, uninstall and purge
+  use grouped questions and safe completion receipts. Secondary actions use
+  bracketed shortcuts. Destructive defaults, exact purge digest confirmation,
+  private pairing code display and structured output contracts are preserved.
+  Human machine listings align fields and switch to labeled rows at narrow
+  widths; recovery previews group their consequences.
+
 - Setup offers All found projects as the visible default in one shared selector,
   including projects beyond the first page, with bounded discovery coverage,
   observed session counts, Specific selection and preserved capture rules.

@@ -1,0 +1,21 @@
+\e[1mTranscript recovery\e[0m
+
+Session synthetic-session cannot
+prove that the current transcript
+extends its retained history.
+
+\e[1mConsequences\e[0m
+
+Archived history, feedback and
+handoffs stay under the earlier ID.
+Each generation expires
+independently under normal
+retention.
+The new generation is queued locally
+for normal sync. Recovery
+permanently requires a
+generation-aware writer; older
+binaries will refuse this data
+directory.
+
+To start this generation, run agent-archive recover synthetic-session --confirm.

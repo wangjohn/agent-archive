@@ -21,24 +21,26 @@ import (
 
 // styledPrompter reads answers from input and writes to out in style.
 func styledPrompter(input string, out *bytes.Buffer, style textStyle) *prompter {
-	return &prompter{in: bufio.NewReader(strings.NewReader(input)), out: out, source: strings.NewReader(input), style: style}
+	p := &prompter{in: bufio.NewReader(strings.NewReader(input)), out: out, source: strings.NewReader(input), style: style}
+	p.renderer().capabilities = func() promptCapabilities { return promptCapabilities{Color: style.color, Width: 80} }
+	return p
 }
 
 // askAll puts the same questions to p that setup does, one of each kind,
 // and returns the answers as one string.
 func askAll(t *testing.T, p *prompter) string {
 	t.Helper()
-	yes, err := p.yesNo("Include Codex?")
+	yes, err := p.guidedYesNo("Include Codex?")
 	must(t, err)
-	no, err := p.yesNo("Include Cursor?")
+	no, err := p.guidedYesNo("Include Cursor?")
 	must(t, err)
-	profile, err := p.withDefault("AWS profile", "work")
+	profile, err := p.guidedDefault("AWS profile", "work")
 	must(t, err)
-	byNumber, err := p.menu("Where should your archive live?", "r2", option{"r2", "Cloudflare R2"}, option{"s3", "Amazon S3"})
+	byNumber, err := p.guidedMenu("Where should your archive live?", "r2", option{"r2", "Cloudflare R2"}, option{"s3", "Amazon S3"})
 	must(t, err)
-	byKey, err := p.menu("What next?", "fix", option{"fix", "Fix it"}, option{"retry", "Retry the check"})
+	byKey, err := p.guidedMenu("What next?", "fix", option{"fix", "Fix it"}, option{"retry", "Retry the check"})
 	must(t, err)
-	days, err := p.retentionDays(90)
+	days, err := p.guidedRetention(90)
 	must(t, err)
 	path, err := p.line(p.labelText("Project path: "))
 	must(t, err)
@@ -52,10 +54,9 @@ func boolWord(b bool) string {
 	return "no"
 }
 
-// Piped input, and a terminal with NO_COLOR, see the prompts as they were
-// before color: no escape codes and no › cursor, so a script that reads the
-// prompts, or answers them, keeps working.
-func TestPlainPromptsAreUnchanged(t *testing.T) {
+// Redirected and NO_COLOR prompts preserve named and numbered answers and
+// resolved receipts without introducing color escapes.
+func TestGroupedPlainPromptsPreserveScriptedAnswers(t *testing.T) {
 	t.Parallel()
 	noColor := terminalStyle(func(key string) string {
 		return map[string]string{"NO_COLOR": "1", "TERM": "xterm-256color"}[key]
@@ -69,42 +70,29 @@ func TestPlainPromptsAreUnchanged(t *testing.T) {
 		if got, want := askAll(t, p), "yes no admin s3 retry 30 ~/src/app"; got != want {
 			t.Errorf("%s: answers %q, want %q", name, got, want)
 		}
-		want := "Include Codex? [y/N] Include Cursor? [y/N] AWS profile [work]: " +
-			"Where should your archive live?\n  1) Cloudflare R2\n  2) Amazon S3\nEnter 1-2 [1]: " +
-			"What next?\n  1) Fix it\n  2) Retry the check\nEnter 1-2 [1]: " +
-			"Keep sessions for how many days? [90]: Project path: "
-		if out.String() != want {
-			t.Errorf("%s: wrote\n%q\nwant\n%q", name, out.String(), want)
+		if strings.Contains(out.String(), "\x1b") {
+			t.Fatalf("%s added color: %q", name, out.String())
+		}
+		for _, want := range []string{"? Include Codex?", "2) No (default)", "✓ Include Cursor No", "1) Cloudflare R2 (default)", "✓ Amazon S3", "✓ Retry the check", "✓ Keep sessions for how many days? 30", "Project path: "} {
+			if !strings.Contains(out.String(), want) {
+				t.Errorf("%s missing %q: %s", name, want, &out)
+			}
 		}
 	}
 }
 
-// A color terminal shows each question in bold, its default in bold, and
-// the › cursor, and reads the same answers, blank ones included.
-func TestColorPromptsBoldTheQuestionAndDefault(t *testing.T) {
+// Colors apply to safe resolved receipts while blank answers keep defaults.
+func TestGroupedColorPromptsStyleResolvedReceipts(t *testing.T) {
 	t.Parallel()
 	var out bytes.Buffer
 	p := styledPrompter("yes\nyes\n\n\n1\n\n~/src/app\n", &out, textStyle{color: true})
 	if got, want := askAll(t, p), "yes yes work r2 fix 90 ~/src/app"; got != want {
 		t.Errorf("answers %q, want %q", got, want)
 	}
-	written := out.String()
-	for _, want := range []string{
-		"\x1b[1mInclude Codex?\x1b[0m [y/\x1b[1mN\x1b[0m] › ",
-		"\x1b[1mInclude Cursor?\x1b[0m [y/\x1b[1mN\x1b[0m] › ",
-		"\x1b[1mAWS profile\x1b[0m [\x1b[1mwork\x1b[0m] › ",
-		"\x1b[1mWhere should your archive live?\x1b[0m\n",
-		// A menu's answer line is not a question: only its default is bold.
-		"\nEnter 1-2 [\x1b[1m1\x1b[0m] › ",
-		"\x1b[1mKeep sessions for how many days?\x1b[0m [\x1b[1m90\x1b[0m] › ",
-		"\x1b[1mProject path\x1b[0m › ",
-	} {
-		if !strings.Contains(written, want) {
-			t.Errorf("wrote\n%q\nwant it to contain %q", written, want)
+	for _, want := range []string{"\x1b[2m✓ Include Codex Yes\x1b[0m", "1) Cloudflare R2 (default)", "\x1b[2m✓ AWS profile work\x1b[0m", "\x1b[2m✓ Keep sessions for how many days? 90\x1b[0m", "\x1b[1mProject path\x1b[0m › "} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("missing %q: %s", want, &out)
 		}
-	}
-	if strings.Contains(written, ": ") {
-		t.Errorf("wrote %q, want every prompt to end with the › cursor", written)
 	}
 }
 
@@ -127,15 +115,15 @@ func TestLabelTextStylesAWholePrompt(t *testing.T) {
 	}
 }
 
-// A menu's question that starts with a blank line keeps the blank line
-// outside the bold.
-func TestMenuHeadingKeepsLeadingBlankLinesPlain(t *testing.T) {
+// A grouped menu separates its question from prior output before any
+// receipt styling is applied.
+func TestGroupedMenuKeepsLeadingBoundaryPlain(t *testing.T) {
 	t.Parallel()
 	var out bytes.Buffer
 	p := styledPrompter("1\n", &out, textStyle{color: true})
-	_, err := p.menu("\nWhat would you like to change?", "back", option{"back", "Nothing"})
+	_, err := p.guidedMenu("\nWhat would you like to change?", "back", option{"back", "Nothing"})
 	must(t, err)
-	if !strings.HasPrefix(out.String(), "\n\x1b[1mWhat would you like to change?\x1b[0m\n") {
+	if !strings.HasPrefix(out.String(), "\n? What would you like to change?\n") {
 		t.Errorf("wrote %q", out.String())
 	}
 }

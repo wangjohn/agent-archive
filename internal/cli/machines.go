@@ -179,13 +179,17 @@ func runMachinesCommand(args []string, stdin io.Reader, out, errOut io.Writer, e
 			return machineCommandError(errOut, err)
 		}
 	} else {
+		terminal.Println(out, "Machines · bucket claims")
+		rows := [][]string{}
 		for _, r := range result.Records {
 			own := ""
 			if r.MachineID == cfg.MachineID {
 				own = " (this machine)"
 			}
-			terminal.Printf(out, "%s  %s  %s  %s  Paired %s  Heartbeat %s%s\n", r.Name, r.MachineID, r.Platform, machineCredentialClaim(r, result.Records), machinePairingDate(r), r.HeartbeatAt.Format("2006-01-02"), own)
+			rows = append(rows, []string{r.Name + own, r.MachineID, r.Platform, machineCredentialClaim(r, result.Records), machinePairingDate(r), r.HeartbeatAt.Format("2006-01-02")})
 		}
+		guidedRows(out, []string{"Name", "Machine ID", "Platform", "Credential claim", "Paired", "Heartbeat"}, rows)
+		terminal.Println(out)
 		for _, r := range result.Records {
 			for _, spare := range r.UnusedSpares {
 				terminal.Printf(out, "%s: unused spare claim %s (unverified).\n", r.MachineID, spare.AccessKeyID)

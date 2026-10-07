@@ -119,22 +119,23 @@ func TestChooseDestinationListsTheDefaultFirst(t *testing.T) {
 	if _, err := chooseDestination(newPrompter(strings.NewReader("q\n"), &out), installed, handoffDestinationCodex, true, productionAgents.Catalog()); err != nil {
 		t.Fatal(err)
 	}
-	want := "Continue in:\n  1) Codex (default)\n  2) Claude Code\n  3) Cursor\n  p) print\n  c) copy to the clipboard\n  w) write to a file\n  q) quit\nEnter 1-3, p, c, w, or q [1]: "
-	if out.String() != want {
-		t.Fatalf("prompt:\n%q\nwant\n%q", out.String(), want)
+	for _, want := range []string{"? Continue in", "1) Codex (default)", "2) Claude Code", "3) Cursor", "[p] print", "[c] copy to the clipboard", "[w] write to a file", "[q] quit", "Choose [1]", "Handoff quit"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("missing %q in prompt:\n%s", want, out.String())
+		}
 	}
 	out.Reset()
 	if _, err := chooseDestination(newPrompter(strings.NewReader("q\n"), &out), nil, "", true, productionAgents.Catalog()); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasSuffix(out.String(), "  q) quit\nEnter p, c, w, or q [p]: ") || strings.Contains(out.String(), "1)") {
+	if !strings.Contains(out.String(), "[q] quit") || !strings.Contains(out.String(), "[Enter] print") || strings.Contains(out.String(), "1)") {
 		t.Fatalf("prompt with no agent installed:\n%s", out.String())
 	}
 	out.Reset()
 	if _, err := chooseDestination(newPrompter(strings.NewReader("q\n"), &out), []handoffDestination{handoffDestinationClaude}, handoffDestinationClaude, true, productionAgents.Catalog()); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasSuffix(out.String(), "\nEnter 1, p, c, w, or q [1]: ") {
+	if !strings.Contains(out.String(), "Choose [1]") {
 		t.Fatalf("prompt with one agent installed:\n%s", out.String())
 	}
 }
@@ -187,7 +188,7 @@ func TestHandoffPromptUsesConfiguredDefault(t *testing.T) {
 		return "/opt/bin/" + name, nil
 	}
 	out, _, code := runPicker(t, f.env, "q\n", f.id)
-	if code != 0 || !strings.Contains(out, "1) Cursor (default)\n  2) Codex\n  p) print") || strings.Contains(out, "Claude Code") {
+	if code != 0 || !strings.Contains(out, "1) Cursor (default)\n  2) Codex\n\n  [p] print") || strings.Contains(out, "Claude Code") {
 		t.Fatalf("code=%d\n%s", code, out)
 	}
 }
@@ -200,7 +201,7 @@ func TestHandoffPromptPrintsThroughThePager(t *testing.T) {
 	var pager string
 	f.env.RunPager = copyPager(&pager)
 	out, errOut, code := runPicker(t, f.env, "p\n", f.id)
-	if code != 0 || !strings.HasPrefix(pager, "less") || !strings.HasSuffix(out, "[1]: "+want) {
+	if code != 0 || !strings.HasPrefix(pager, "less") || !strings.Contains(out, "Choose [1]: ") || !strings.Contains(out, "Handoff print\n\n") || !strings.HasSuffix(out, want) {
 		t.Fatalf("code=%d pager=%q stderr=%s\n%s", code, pager, errOut, out)
 	}
 }
@@ -236,7 +237,7 @@ func TestHandoffPromptWritesAFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "h.md")
 	out, errOut, code := runPicker(t, f.env, "w\n"+path+"\n", f.id)
-	if code != 0 || !strings.Contains(out, "Write to ["+filepath.Join(f.project, "handoff-"+shortSessionID(f.id)+".md")+"]: ") || !strings.Contains(errOut, "handoff: wrote "+path) {
+	if code != 0 || !strings.Contains(out, "? Write to\n\n") || !strings.Contains(out, "Choose ["+filepath.Join(f.project, "handoff-"+shortSessionID(f.id)+".md")+"]: ") || !strings.Contains(errOut, "handoff: wrote "+path) {
 		t.Fatalf("code=%d stderr=%s\n%s", code, errOut, out)
 	}
 	info, err := os.Stat(path)
@@ -247,7 +248,7 @@ func TestHandoffPromptWritesAFile(t *testing.T) {
 	must(t, os.WriteFile(path, []byte("mine"), 0o600))
 	other := filepath.Join(dir, "other.md")
 	out, errOut, code = runPicker(t, f.env, "w\n"+path+"\n\n"+other+"\n", f.id)
-	if data, _ := os.ReadFile(path); code != 0 || string(data) != "mine" || !strings.Contains(out, path+" already exists. Replace it? [y/N]") {
+	if data, _ := os.ReadFile(path); code != 0 || string(data) != "mine" || !strings.Contains(out, "? "+path+" already exists. Replace it?") || !strings.Contains(out, "2) No (default)") {
 		t.Fatalf("declined replace: code=%d file=%q stderr=%s\n%s", code, data, errOut, out)
 	}
 	if data, _ := os.ReadFile(other); string(data) != want {
@@ -319,7 +320,7 @@ func TestHandoffPromptAsksAgainAfterAFailedWrite(t *testing.T) {
 	missing := filepath.Join(dir, "no-such-dir", "h.md")
 	good := filepath.Join(dir, "h.md")
 	out, errOut, code := runPicker(t, f.env, "w\n"+missing+"\n"+good+"\n", f.id)
-	if code != 0 || !strings.Contains(errOut, "agent-archive: handoff: open "+missing) || !strings.Contains(out, "Write to (Enter to cancel): ") {
+	if code != 0 || !strings.Contains(errOut, "agent-archive: handoff: open "+missing) || !strings.Contains(out, "? Write to (Enter to cancel)\n\n") || !strings.Contains(out, "Choose: ") {
 		t.Fatalf("code=%d stderr=%s\n%s", code, errOut, out)
 	}
 	if _, err := os.Stat(good); err != nil {

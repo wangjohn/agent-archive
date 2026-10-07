@@ -204,7 +204,7 @@ func choosePairingScopes(p *prompter, payload pairing.Payload, matches projectMa
 		}
 		if matches.Incomplete && !yes && len(roots) > 0 {
 			terminal.Printf(p.out, "Partial evidence for %s; other clones may exist.\n", inc.Label)
-			allow, err := p.yesNo("Use these observed candidates despite incomplete discovery?")
+			allow, err := p.guidedYesNo("Use these observed candidates despite incomplete discovery?")
 			if err != nil {
 				return nil, err
 			}
@@ -221,13 +221,13 @@ func choosePairingScopes(p *prompter, payload pairing.Payload, matches projectMa
 					options = append(options, option{strconv.Itoa(j + 1), homeRelative(root, userHome)})
 				}
 				options = append(options, option{"both", "Include every listed clone"})
-				choice, err := p.menu("Choose a clone for "+inc.Label, "skip", options...)
+				choice, err := p.guidedMenu("Choose a clone for "+inc.Label, "skip", options...)
 				if err != nil {
 					return nil, err
 				}
 				switch pairingCloneChoice(choice) {
 				case pairingCloneEvery:
-					allow, err := p.yesNo("Include all listed clones?")
+					allow, err := p.guidedYesNo("Include all listed clones?")
 					if err != nil {
 						return nil, err
 					}
@@ -317,7 +317,13 @@ func mapPairingExclusions(p *prompter, payload pairing.Payload, selected map[str
 			if !yes {
 				var err error
 				terminal.Println(p.out, "Source exclusion could not be mapped; source absolute paths are never carried.")
-				path, e := p.ask("Map exclusion to a path relative to this home (Enter to leave unresolved)", false, nil, -1, ": ")
+				path, e := p.guidedText(promptModel{Question: "Map exclusion to a path relative to this home (Enter to leave unresolved)", Validate: func(value string) error {
+					if value == "" {
+						return nil
+					}
+					_, err := resolvePortablePath(userHome, value)
+					return err
+				}})
 				if e != nil {
 					return nil, nil, e
 				}
@@ -328,7 +334,7 @@ func mapPairingExclusions(p *prompter, payload pairing.Payload, selected map[str
 					}
 					mapped = append(mapped, root)
 				} else {
-					allow, err = p.yesNo("Explicitly include unresolved project paths without that source exclusion?")
+					allow, err = p.guidedYesNo("Explicitly include unresolved project paths without that source exclusion?")
 					if err != nil {
 						return nil, nil, err
 					}
@@ -415,14 +421,32 @@ func (e Env) pairingRepositoryRoot(ctx context.Context, root string) (string, er
 }
 
 func manualPairingScope(p *prompter, inc pairing.Inclusion, userHome string, env Env) (string, string, bool, error) {
-	path, err := p.ask("Manual local directory for "+inc.Label+" (Enter to skip)", false, nil, -1, ": ")
+	var root, key string
+	var known bool
+	path, err := p.guidedText(promptModel{Question: "Manual local directory for " + inc.Label + " (Enter to skip)", Validate: func(value string) error {
+		if value == "" {
+			return nil
+		}
+		var err error
+		root, key, known, err = validateManualPairingScope(value, inc, userHome, env)
+		return err
+	}, ResolveReceipt: func(value string) string {
+		if value == "" {
+			return "Project skipped"
+		}
+		return "Project " + homeRelative(root, userHome)
+	}})
 	if err != nil || path == "" {
 		return "", "", false, err
 	}
+	return root, key, known, nil
+}
+
+func validateManualPairingScope(path string, inc pairing.Inclusion, userHome string, env Env) (string, string, bool, error) {
 	if !filepath.IsAbs(path) && path != "~" && !strings.HasPrefix(path, "~/") {
 		path = filepath.Join(userHome, path)
 	}
-	path, err = projectDir(path, userHome)
+	path, err := projectDir(path, userHome)
 	if err != nil {
 		return "", "", false, err
 	}

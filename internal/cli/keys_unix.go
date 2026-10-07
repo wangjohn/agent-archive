@@ -230,6 +230,7 @@ type promptLineGuard struct {
 	finished    chan struct{}
 	resumed     chan os.Signal
 	onSuspend   func()
+	onResume    func()
 	delegated   atomic.Bool
 }
 
@@ -239,6 +240,26 @@ func newPromptLineGuard(fd int, onSuspend func()) *promptLineGuard {
 	signal.Notify(g.resumed, syscall.SIGCONT)
 	go g.watch()
 	return g
+}
+
+// screenLifecycle temporarily conceals an alternate screen during job control.
+// The existing guard remains the sole owner of stopping and continuing input.
+func (g *promptLineGuard) screenLifecycle(hide, show func()) func() {
+	g.mu.Lock()
+	oldSuspend, oldResume := g.onSuspend, g.onResume
+	g.onSuspend = func() {
+		if oldSuspend != nil {
+			oldSuspend()
+		}
+		hide()
+	}
+	g.onResume = show
+	g.mu.Unlock()
+	return func() {
+		g.mu.Lock()
+		g.onSuspend, g.onResume = oldSuspend, oldResume
+		g.mu.Unlock()
+	}
 }
 
 // echoSuppressed records the user's modes before temporary prompt muting.
@@ -318,6 +339,9 @@ func (g *promptLineGuard) watch() {
 			// Keep echo restored until SIGCONT confirms the process resumed.
 			if err := unix.Kill(os.Getpid(), unix.SIGSTOP); err == nil {
 				<-g.resumed
+			}
+			if g.onResume != nil {
+				g.onResume()
 			}
 			if g.hiddenModes != nil {
 				_ = unix.IoctlSetTermios(g.fd, ioctlSetTermios, g.hiddenModes)
