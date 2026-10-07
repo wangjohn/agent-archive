@@ -74,7 +74,7 @@ func observeClaudeSkills(t *testing.T, l skillLayout, scope string) (map[string]
 			snapshots = append(snapshots, e.Payload)
 		case archive.EvidenceKindSkillDiscovered, archive.EvidenceKindSkillInvocation, archive.EvidenceKindSkillRead,
 			archive.EvidenceKindLifecycleHook, archive.EvidenceKindFinalResponse, archive.EvidenceKindExplicitFeedback,
-			archive.EvidenceKindLinkedSession, archive.EvidenceKindCaptureGap:
+			archive.EvidenceKindLinkedSession, archive.EvidenceKindCaptureGap, archive.EvidenceKindSessionLabels:
 			// Only the skill inventory and snapshots are under test.
 		}
 	}

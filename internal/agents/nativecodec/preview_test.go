@@ -26,12 +26,12 @@ func TestPreviewRecordsShareFilteredLabels(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			bundle, err := NewSourceBundle(SessionRegistration{ArchiveSessionID: "preview", NativeSessionID: "preview", ProjectID: "project", ProjectRoot: "/project", SessionStartedAt: time.Now(), Harness: Harness{Name: tc.harness}}, adapter, filtered, time.Now(), nil)
+			bundle, err := NewSourceBundle(SessionRegistration{ArchiveSessionID: "preview", NativeSessionID: "native-named", ProjectID: "project", ProjectRoot: "/project", SessionStartedAt: time.Now(), Harness: Harness{Name: tc.harness}}, adapter, filtered, time.Now(), nil)
 			if err != nil {
 				t.Fatal(err)
 			}
 			want, _ := SessionLabels(bundle)
-			var accumulator PreviewAccumulator
+			accumulator := PreviewAccumulator{NativeID: bundle.NativeSessionID}
 			scanner := bufio.NewScanner(bytes.NewReader(raw))
 			scanner.Buffer(make([]byte, 64*1024), MaxRecordBytes)
 			for scanner.Scan() {

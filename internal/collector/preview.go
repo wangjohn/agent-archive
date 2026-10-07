@@ -18,6 +18,7 @@ type PreviewLimits struct {
 type TranscriptPreview struct {
 	NativeID         string
 	Name             string
+	NameSource       archive.SessionNameSource
 	Title            string
 	Branch           string
 	RecordedActivity time.Time
@@ -27,9 +28,9 @@ type TranscriptPreview struct {
 }
 
 // PreviewTranscript reads bounded complete head/tail records on the verified handle.
-func PreviewTranscript(ctx context.Context, snapshot agentapi.FileInput, preview agentapi.RecordPreviewer, limits PreviewLimits) (TranscriptPreview, error) {
+func PreviewTranscript(ctx context.Context, snapshot agentapi.FileInput, preview agentapi.RecordPreviewer, limits PreviewLimits, nativeID string) (TranscriptPreview, error) {
 	var recordErr error
-	var accumulator archive.PreviewAccumulator
+	accumulator := archive.PreviewAccumulator{NativeID: nativeID}
 	visit := func(first bool) func([]byte) bool {
 		return func(record []byte) bool {
 			var facts archive.RecordPreview
@@ -41,7 +42,7 @@ func PreviewTranscript(ctx context.Context, snapshot agentapi.FileInput, preview
 		}
 	}
 	head, err := snapshot.Records(ctx, false, limits.HeadBytes, limits.RecordBytes, visit(true))
-	out := TranscriptPreview{Bytes: head.Bytes}
+	out := TranscriptPreview{Bytes: head.Bytes, NativeID: accumulator.NativeID}
 	if err != nil {
 		return out, err
 	}
@@ -60,6 +61,7 @@ func PreviewTranscript(ctx context.Context, snapshot agentapi.FileInput, preview
 		}
 	}
 	out.Name, out.Title, out.Branch = accumulator.Labels.Name, accumulator.Labels.Title, accumulator.Labels.Branch
+	out.NameSource = accumulator.NameSource
 	out.RecordedActivity, out.Gaps = accumulator.Activity, accumulator.Gaps
 	if !out.NameComplete {
 		out.Gaps = append(out.Gaps, archive.CaptureGap{Code: "preview_partial"})
