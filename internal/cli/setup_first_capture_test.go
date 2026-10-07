@@ -14,25 +14,23 @@ import (
 	"github.com/wangjohn/agent-archive/internal/platform"
 )
 
-// Without a repository to pre-select, or without an app setup knows, setup
-// keeps its separate questions.
-func TestOfferFirstCaptureAsksNothingWhenItCannotGuessBoth(t *testing.T) {
+// Without a known app, setup keeps its individual app questions.
+func TestOfferFirstCaptureAsksNothingWithoutKnownApps(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name    string
-		detect  []string
-		current string
+		name   string
+		detect []string
 	}{
 
-		{"no apps", nil, "/Users/alex/src/app"},
-		{"only apps setup does not know", []string{"windsurf"}, "/Users/alex/src/app"},
+		{"no apps", nil},
+		{"only apps setup does not know", []string{"windsurf"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			var out bytes.Buffer
 			p := newPrompter(strings.NewReader(""), &out)
 			cfg := config.Config{}
-			done, err := offerFirstCapture(allHarnesses, p, &cfg, tc.detect, tc.current, "/Users/alex", nil)
+			done, err := offerFirstCapture(allHarnesses, p, &cfg, tc.detect)
 			if done || err != nil || out.Len() != 0 || len(cfg.Harnesses) != 0 || len(cfg.Archive.Projects) != 0 {
 				t.Fatalf("done=%v err=%v cfg=%+v asked:\n%s", done, err, cfg, &out)
 			}
@@ -181,7 +179,7 @@ func TestOfferFirstCaptureGuessesTheCurrentProject(t *testing.T) {
 	var out bytes.Buffer
 	p := newPrompter(strings.NewReader("\n"), &out)
 	cfg := config.Config{}
-	done, err := offerFirstCapture(allHarnesses, p, &cfg, []string{"claude"}, "/Users/alex/src/app", "/Users/alex", nil)
+	done, err := offerFirstCapture(allHarnesses, p, &cfg, []string{"claude"})
 	if !done || err != nil || len(cfg.Archive.Projects) != 0 || len(cfg.Harnesses) != 1 {
 		t.Fatalf("done=%v err=%v cfg=%+v\n%s", done, err, cfg, &out)
 	}
@@ -231,17 +229,13 @@ func TestChooseCaptureDoesNotPreselectABroadFolder(t *testing.T) {
 	}
 }
 
-// The answer says how many other projects the apps' history holds, and the
-// review repeats where to add them.
-func TestOfferFirstCaptureNamesOtherProjects(t *testing.T) {
+// Selecting apps leaves project consent to the dedicated selector.
+func TestOfferFirstCaptureLeavesProjectConsentSeparate(t *testing.T) {
 	t.Parallel()
-	known := func(config.Config) []backfill.KnownProject {
-		return []backfill.KnownProject{{Root: "/Users/alex/src/app", Sessions: 2}, {Root: "/Users/alex/src/api", Sessions: 1}, {Root: "/Users/alex/src/docs", Sessions: 1}}
-	}
 	var out bytes.Buffer
 	p := newPrompter(strings.NewReader("\n"), &out)
 	cfg := config.Config{}
-	done, err := offerFirstCapture(allHarnesses, p, &cfg, []string{"claude"}, "/Users/alex/src/app", "/Users/alex", known)
+	done, err := offerFirstCapture(allHarnesses, p, &cfg, []string{"claude"})
 	if !done || err != nil {
 		t.Fatalf("done=%v err=%v", done, err)
 	}
@@ -260,7 +254,7 @@ func TestOfferFirstCaptureSkipsConfiguredSetups(t *testing.T) {
 	} {
 		var out bytes.Buffer
 		p := newPrompter(strings.NewReader(""), &out)
-		done, err := offerFirstCapture(allHarnesses, p, &cfg, []string{"claude"}, "/Users/alex/src/app", "/Users/alex", nil)
+		done, err := offerFirstCapture(allHarnesses, p, &cfg, []string{"claude"})
 		if done || err != nil || out.Len() != 0 {
 			t.Fatalf("%+v: done=%v err=%v asked:\n%s", cfg, done, err, &out)
 		}

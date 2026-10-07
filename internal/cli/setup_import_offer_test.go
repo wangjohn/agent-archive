@@ -344,3 +344,14 @@ func TestAnotherMachineCommandCarriesCapturePolicies(t *testing.T) {
 		t.Fatalf("capture policy missing: %s", got)
 	}
 }
+
+// Setup preserves the named import answer while rendering its actual action.
+// Regression: 2026-10 setup review P2-R1-07.
+func TestSetupImportNamedAnswerHasResolvedReceipt(t *testing.T) {
+	t.Parallel()
+	f := newImportOfferFixture(t)
+	out := f.runSetup(t, setupImportAnswers("y"))
+	if !strings.Contains(out, "OK Import 2 sessions\n") || strings.Contains(out, "OK y\n") {
+		t.Fatalf("unresolved import receipt:\n%s", out)
+	}
+}

@@ -18,13 +18,13 @@ func TestStorageActionsAcceptOnlyUnambiguousChoices(t *testing.T) {
 		want  string
 	}{{"\n", "create"}, {"c\n", "customize"}, {"customize\n", "customize"}, {"e\n", "existing"}, {"b\n", "back"}, {"x\ne\n", "existing"}} {
 		var out bytes.Buffer
-		got, err := newPrompter(strings.NewReader(tc.input), &out).actions("Storage", "create", nil, []actionOption{{"create", "", "Create"}, {"customize", "c", "Customize"}, {"existing", "e", "Existing"}, {"back", "b", "Back"}})
+		got, err := newPrompter(strings.NewReader(tc.input), &out).setupActions("Storage", "create", nil, []actionOption{{"create", "", "Create"}, {"customize", "c", "Customize"}, {"existing", "e", "Existing"}, {"back", "b", "Back"}})
 		if err != nil || got != tc.want {
 			t.Fatalf("input %q: %q %v", tc.input, got, err)
 		}
 	}
 	var out bytes.Buffer
-	_, err := newPrompter(strings.NewReader(""), &out).actions("Storage", "create", nil, []actionOption{{"create", "", "Create"}})
+	_, err := newPrompter(strings.NewReader(""), &out).setupActions("Storage", "create", nil, []actionOption{{"create", "", "Create"}})
 	if err == nil {
 		t.Fatal("EOF must not accept the default")
 	}
@@ -33,7 +33,7 @@ func TestStorageActionsAcceptOnlyUnambiguousChoices(t *testing.T) {
 	if err != nil || secret != "e" {
 		t.Fatalf("secret intercepted: %q %v", secret, err)
 	}
-	name, err := p.required("Name", "")
+	name, err := p.setupRequired("Name", "")
 	if err != nil || name != "b" {
 		t.Fatalf("name intercepted: %q %v", name, err)
 	}

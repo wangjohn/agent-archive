@@ -204,7 +204,7 @@ func choosePairingScopes(p *prompter, payload pairing.Payload, matches projectMa
 		}
 		if matches.Incomplete && !yes && len(roots) > 0 {
 			terminal.Printf(p.out, "Partial evidence for %s; other clones may exist.\n", inc.Label)
-			allow, err := p.yesNo("Use these observed candidates despite incomplete discovery?", false)
+			allow, err := p.yesNo("Use these observed candidates despite incomplete discovery?")
 			if err != nil {
 				return nil, err
 			}
@@ -227,7 +227,7 @@ func choosePairingScopes(p *prompter, payload pairing.Payload, matches projectMa
 				}
 				switch pairingCloneChoice(choice) {
 				case pairingCloneEvery:
-					allow, err := p.yesNo("Include all listed clones?", false)
+					allow, err := p.yesNo("Include all listed clones?")
 					if err != nil {
 						return nil, err
 					}
@@ -328,7 +328,7 @@ func mapPairingExclusions(p *prompter, payload pairing.Payload, selected map[str
 					}
 					mapped = append(mapped, root)
 				} else {
-					allow, err = p.yesNo("Explicitly include unresolved project paths without that source exclusion?", false)
+					allow, err = p.yesNo("Explicitly include unresolved project paths without that source exclusion?")
 					if err != nil {
 						return nil, nil, err
 					}

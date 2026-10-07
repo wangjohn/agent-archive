@@ -553,7 +553,7 @@ func TestSetupContinueAfterEachFailureAsksBeforeChecking(t *testing.T) {
 
 func TestSetupStorageDiagnosticDetailsDoesNotRetry(t *testing.T) {
 	t.Parallel()
-	var failure error = errors.New("synthetic storage transport failure")
+	failure := errors.New("synthetic storage transport failure")
 	env := failingStorageEnv(t, t.TempDir(), &failure)
 	open := env.OpenStore
 	calls := 0

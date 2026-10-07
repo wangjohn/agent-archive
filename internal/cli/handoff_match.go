@@ -154,7 +154,7 @@ func newRepoMatchGate(opts handoffOptions, interactive bool, answers io.Reader, 
 		}
 		terminal.Println(stderr, "handoff: matched by repository (remote origin), not by path")
 		terminal.Printf(stderr, "  %s\n", matchFacts(match, true))
-		yes, err := newPrompter(answers, stderr).yesNo("Hand off this session?", false)
+		yes, err := newPrompter(answers, stderr).yesNo("Hand off this session?")
 		if err != nil || !yes {
 			terminal.Println(stderr, "handoff: canceled; nothing was launched")
 			return errRepoMatchNotUsed

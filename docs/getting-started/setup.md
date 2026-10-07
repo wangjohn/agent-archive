@@ -626,6 +626,10 @@ instead.
 
 Setup's storage check and installed hooks establish configuration, not a captured session. After `agent-archive sync` or the next background pass, check that the app's Capture row says **archived, verified**, then confirm the session appears in `agent-archive list` and `agent-archive show SESSION_ID`. An overall `Ready` state alone does not establish that this app published a new session and had it read back. For a short route through the check, see [first successful capture](../README.md#first-successful-capture).
 
+Completion reflects the configured capture mode. Codex-only hook capture is
+reported as configured; its app approval still requires `/hooks`. Paused capture
+stays paused.
+
 After setup, a short hint points to machine pairing. Choose **Machine transfer details**
 under More next steps for a command that sets up another machine with the same
 storage, capture rules, agent skill installation policy, apps and projects

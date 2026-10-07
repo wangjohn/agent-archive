@@ -116,6 +116,9 @@ Full settings and privacy
                  scanned; change with Edit a setting
   Storage        s3://team-archive/agent-archive/ · us-east-1 · profile work
   Keep for       90 days
+  Sources        Codex: ~/.codex
+                 Claude Code: ~/.claude
+                 Cursor: ~/.cursor
   Hook files     Codex: ~/.codex/hooks.json
                  Claude Code: ~/.claude/settings.json
                  Cursor: ~/.cursor/hooks.json

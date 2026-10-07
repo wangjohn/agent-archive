@@ -317,7 +317,11 @@ func TestSetupReviewBlocksStartOnHookFileBrokenAfterPreflight(t *testing.T) {
 	if blocked < 0 || refused < blocked || !setupContainsText(output, "Fix the blocking checks first.") {
 		t.Fatalf("✗ did not block starting:\n%s", output)
 	}
-	if setupContainsText(output[strings.Index(output, "OK Check again"):], "✗ Codex hook file is invalid") || !setupContainsText(output[refused:], "1) Start archiving (default)") {
+	checked := strings.Index(output, "OK Check again")
+	if checked < 0 {
+		t.Fatalf("missing check receipt: %s", output)
+	}
+	if setupContainsText(output[checked:], "✗ Codex hook file is invalid") || !setupContainsText(output[refused:], "1) Start archiving (default)") {
 		t.Fatalf("check again did not clear the ✗:\n%s", output)
 	}
 	if _, found, err := config.Load(home); err != nil || !found {
@@ -344,4 +348,78 @@ func (a *hookFixingAnswers) Read(p []byte) (int, error) {
 	line := a.answers[a.next] + "\n"
 	a.next++
 	return copy(p, line), nil
+}
+
+// Details renders through a buffer, which must retain the invoking terminal's
+// dimensions and show every selected app's native capture roots.
+// Regression: 2026-10 setup review P2-R1-03/P2-R1-04.
+func TestSetupDetailsRetainsNarrowLayoutAndAllAppSourceRoots(t *testing.T) {
+	t.Parallel()
+	f := newScreenFixture(t)
+	f.withApps(t, "claude", "cursor")
+	f.inWebApp(t)
+	out := &promptScreen{caps: promptCapabilities{Width: 36, Height: 20}}
+	input := strings.NewReader("\n\ns3-existing\nwork\n2\ndetails\nq\n")
+	if code := Run([]string{"setup"}, input, out, out, f.env); code != 0 {
+		t.Fatalf("exit %d\n%s", code, out.String())
+	}
+	text := f.normalize(out.String())
+	detailsAt := strings.Index(text, "\nFull settings and privacy\n")
+	if detailsAt < 0 {
+		t.Fatalf("missing Details heading: %s", text)
+	}
+	details := text[detailsAt+1:]
+	if !strings.Contains(details, "  Apps\n    Claude Code") || !setupContainsText(details, "Claude Code: ~/.claude") || !setupContainsText(details, "Cursor: ~/.cursor") {
+		t.Fatalf("details lost width or source roots:\n%s", details)
+	}
+}
+
+// Removing the final imported-only app is a meaningful publishing change, so
+// both review views must retain its old/new row before Save.
+// Regression: 2026-10 setup review P2-R1-05.
+func TestSetupReviewShowsRemovedImportedApps(t *testing.T) {
+	t.Parallel()
+	old := config.Config{Harnesses: []string{"claude"}, ImportedHarnesses: []string{"cursor"}, RetentionDays: 90}
+	next := old
+	next.ImportedHarnesses = nil
+	model := buildSetupReviewModel(next, setupReview{existing: old, reconfiguring: true}, time.Now())
+	for _, details := range []bool{false, true} {
+		var out bytes.Buffer
+		p := newPrompter(strings.NewReader(""), &out)
+		renderSetupReview(p, model, details)
+		p.close()
+		if !setupContainsText(out.String(), "* Imported none") || !setupContainsText(out.String(), "was Cursor (sessions imported") {
+			t.Fatalf("removed publishing scope missing:\n%s", &out)
+		}
+	}
+}
+
+// A receiver reviews consent before credentials are staged or storage is probed.
+// Regression: 2026-10 setup review P2-R1-08.
+func TestSetupReviewBeforeProbeDoesNotClaimStorageConnected(t *testing.T) {
+	t.Parallel()
+	var out bytes.Buffer
+	p := newPrompter(strings.NewReader(""), &out)
+	defer p.close()
+	showSetupReview(p, config.Config{}, setupReview{storageUnchecked: true})
+	if strings.Contains(out.String(), "✓ Storage connected") || !setupContainsText(out.String(), "Storage not checked yet · Connection will be checked after you confirm these settings") {
+		t.Fatal(out.String())
+	}
+}
+
+// Configuration establishes hook capture, but cannot establish app approval.
+// Regression: 2026-10 setup review P2-R1-09.
+func TestSetupHookOnlyCompletionDoesNotClaimAutomaticCaptureOn(t *testing.T) {
+	t.Parallel()
+	f := newScreenFixture(t)
+	f.withApps(t, "codex")
+	f.inWebApp(t)
+	input := strings.NewReader("\nall-projects\ndone\ns3-existing\nwork\n2\nedit\ndiscovery\nno\nstart\ndone\n")
+	var out bytes.Buffer
+	if code := Run([]string{"setup"}, input, &out, &out, f.env); code != 0 {
+		t.Fatalf("exit %d\n%s", code, &out)
+	}
+	if strings.Contains(out.String(), "Automatic capture is on") || !setupContainsText(out.String(), "Setup complete · Codex hook capture is configured") || !strings.Contains(out.String(), "/hooks") {
+		t.Fatal(out.String())
+	}
 }

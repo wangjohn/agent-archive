@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/backfill"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
+	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 	"github.com/wangjohn/agent-archive/internal/testutil/golden"
 )
@@ -22,7 +24,7 @@ func selectorRoots(t *testing.T, n int) []backfill.KnownProject {
 	base, err := filepath.EvalSymlinks(t.TempDir())
 	must(t, err)
 	var roots []backfill.KnownProject
-	for i := 0; i < n; i++ {
+	for i := range n {
 		root := filepath.Join(base, fmt.Sprintf("project-%02d", i+1))
 		must(t, os.MkdirAll(root, 0700))
 		roots = append(roots, backfill.KnownProject{Root: root, Sessions: i + 1})
@@ -178,7 +180,7 @@ func TestSetupReviewPresentationMatrix(t *testing.T) {
 				defer p.close()
 				p.style.color = color
 				f := newScreenFixture(t)
-				cfg := config.Config{Harnesses: []string{"claude", "cursor"}, RetentionDays: 90, SkillEvidence: config.SkillEvidenceMetadata, Storage: credentials.Config{Provider: credentials.ProviderS3, Bucket: "team-archive", Region: "us-east-1", Prefix: "agent-archive"}, Archive: archive.Config{Projects: []archive.ProjectActivation{{Root: filepath.Join(f.userHome, "src/長い-project-path"), Included: true}}}}
+				cfg := config.Config{Harnesses: []string{"claude", "cursor"}, RetentionDays: 90, SkillEvidence: config.SkillEvidenceMetadata, Storage: credentials.Config{Provider: credentials.ProviderS3, Bucket: "team-archive", Region: "us-east-1", Prefix: "agent-archive"}, Archive: archive.Config{Projects: []archive.ProjectActivation{{Root: filepath.Join(f.userHome, "src", "長い-project-path"), Included: true}}}}
 				cfg.BucketPrivacy = inspectBucketPrivacy(cfg, &privateTestStore{MemoryStore: storagetest.NewMemoryStore()}, screenNow)
 				model := buildSetupReviewModel(cfg, setupReview{userHome: f.userHome, hookFiles: f.env.hookFiles(f.userHome)}, screenNow)
 				renderSetupReview(p, model, false)
@@ -237,7 +239,8 @@ func setupContainsText(text, want string) bool {
 func TestSetupIncompleteDiscoveryDoesNotPromiseEmptyOrCompleteTotals(t *testing.T) {
 	t.Parallel()
 	for _, empty := range []bool{true, false} {
-		t.Run(fmt.Sprint(empty), func(t *testing.T) {
+		t.Run(strconv.FormatBool(empty), func(t *testing.T) {
+			t.Parallel()
 			roots := selectorRoots(t, 1)
 			input := "\n"
 			known := roots
@@ -303,5 +306,40 @@ func TestSetupSpecificRetainsImportedExclusionForNewCandidate(t *testing.T) {
 	got := applyProjectCandidates(candidates, nil, map[string]bool{archive.ProjectID(roots[1].Root): true})
 	if len(got) != 2 || got[1].Included || got[1].Root != roots[1].Root {
 		t.Fatalf("imported exclusion lost: %+v", got)
+	}
+}
+
+// Explicitly opening Projects after resuming or changing another setting must
+// offer the current repository even if it has no saved rule or session history.
+// Regression: 2026-10 setup review P2-R1-01.
+func TestSetupReviewProjectsIncludesCurrentFolderAfterSkippedCaptureStep(t *testing.T) {
+	t.Parallel()
+	for _, entry := range []string{"storage", "retention", "continue"} {
+		t.Run(entry, func(t *testing.T) {
+			t.Parallel()
+			f := newScreenFixture(t)
+			f.installed(t)
+			current := f.project(t, "src/new-project")
+			f.env.WorkingDir = func() (string, error) { return current, nil }
+			input := "storage\n\n"
+			if entry == "retention" {
+				input = "retention\n90\n"
+			}
+			if entry == "continue" {
+				cfg := mustLoadConfig(t, f.home)
+				must(t, local.Write(draftPath(f.home), setupDraft{Version: draftFormat, Config: cfg, Step: 2}))
+				input = "continue\n"
+			}
+			out := setupRun(t, f.env, input+"edit\nprojects\n\nq\n", 0)
+			draft, found, _, err := readDraft(f.home)
+			must(t, err)
+			if !found || includedProjects(draft.Config.Archive.Projects) != 2 || !setupContainsText(out, "1) ~/src/new-project · this folder") {
+				t.Fatalf("current folder omitted after %s: %+v\n%s", entry, draft.Config.Archive.Projects, out)
+			}
+			saved := mustLoadConfig(t, f.home)
+			if includedProjects(saved.Archive.Projects) != 1 {
+				t.Fatal("cancelled review saved project changes")
+			}
+		})
 	}
 }
