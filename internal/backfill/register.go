@@ -181,20 +181,8 @@ func (r Registration) Run(candidates []Candidate) (RegistrationResult, error) {
 			}
 		}
 		cancelValidation()
-		if r.Durable {
-			cfg, found, e := config.Load(r.Home)
-			if e != nil {
-				return result, e
-			}
-			if !found {
-				return result, errors.New("configuration disappeared before staging")
-			}
-			if e = r.prepareWork(ctx, cfg, works[i], &result); e != nil {
-				if ctx.Err() != nil {
-					return result, ErrStopped
-				}
-				return result, admissionPreparationError{source: works[i].c.SourceKind, cause: e}
-			}
+		if e := r.prepareAdmission(ctx, works[i], &result); e != nil {
+			return result, e
 		}
 		if ctx.Err() != nil || (r.Stop != nil && r.Stop()) {
 			return result, ErrStopped
@@ -404,11 +392,21 @@ func (r Registration) skip(cfg config.Config, w *parentWork, result *Registratio
 		result.NotAdmitted++
 		return true, nil
 	}
-	if !cfg.AcceptSession(r.registration(c, "", "")) {
+	admission := r.registration(c, "", "")
+	if w.prepared {
+		admission = w.stagedRegistration
+	}
+	if cfg.Paused || !cfg.AcceptSession(admission) {
 		result.NotAdmitted++
 		return true, nil
 	}
 	if w.prepared {
+		for _, child := range w.childRegistrations {
+			if !cfg.AcceptSession(child) {
+				result.NotAdmitted++
+				return true, nil
+			}
+		}
 		// Native evidence is now immutable private staged evidence.
 	} else if c.SourceKind == archive.SourceKindCursorSQLite {
 		// Checked before the hold (checkChats), never under hooks.lock.
@@ -546,4 +544,24 @@ func observeSource(ctx context.Context, sources agentapi.SourcesLookup, environm
 func regularFile(path string) bool {
 	info, err := os.Lstat(path)
 	return err == nil && info.Mode().IsRegular()
+}
+
+func (r Registration) prepareAdmission(ctx context.Context, w *parentWork, result *RegistrationResult) error {
+	if !r.Durable {
+		return nil
+	}
+	cfg, found, err := config.Load(r.Home)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return errors.New("configuration disappeared before staging")
+	}
+	if err = r.prepareWork(ctx, cfg, w, result); err != nil {
+		if ctx.Err() != nil {
+			return ErrStopped
+		}
+		return admissionPreparationError{source: w.c.SourceKind, cause: err}
+	}
+	return nil
 }

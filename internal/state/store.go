@@ -218,6 +218,10 @@ func (s *Store) updateRegistration(archiveSessionID string, update func(*archive
 			return nil, false, fmt.Errorf("read registration %q: %w", archiveSessionID, err)
 		}
 		originalReg := reg
+		if reg.ProjectResolution != nil {
+			resolution := *reg.ProjectResolution
+			originalReg.ProjectResolution = &resolution
+		}
 		var originalProof *archive.CodexAdmissionProof
 		if reg.CodexAdmission != nil {
 			proof := *reg.CodexAdmission

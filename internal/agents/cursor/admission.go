@@ -15,7 +15,7 @@ func (p SourceProvider) OpenAdmissionPass(ctx context.Context, e agentapi.Source
 		return nil, err
 	}
 	if ref.Kind == archive.SourceKindFile {
-		return sourceio.FileProvider{}.OpenPass(ctx, e)
+		return sourceio.FileProvider{}.OpenAdmissionPass(ctx, e, ref)
 	}
 	pass, err := p.OpenPass(ctx, e)
 	if err != nil {
@@ -36,22 +36,23 @@ func (p *admissionPass) Read(ctx context.Context, ref agentapi.SourceRef, l agen
 	}
 	budget := p.budget
 	if budget == nil {
-		return nil, errors.New("Cursor admission requires a shared payload budget")
+		return nil, errors.New("cursor admission requires a shared payload budget")
 	}
 	snapshot, err := bounded.ReadRecovery(ctx, ref, l, budget)
 	if err != nil {
-		return nil, errors.Join(errors.New("Cursor import remains unadmitted; settle the database or retry with bounded snapshot support"), err)
+		return nil, errors.Join(errors.New("cursor import remains unadmitted; settle the database or retry with bounded snapshot support"), err)
 	}
 	chatSnapshot, ok := snapshot.(*chatSnapshot)
 	if !ok {
-		return nil, errors.Join(errors.New("Cursor admission snapshot facts unavailable"), snapshot.Close())
+		return nil, errors.Join(errors.New("cursor admission snapshot facts unavailable"), snapshot.Close())
 	}
 	native, ok := decodeComposerData("composerData:"+ref.Key, chatSnapshot.composer.Composer)
 	if !ok || !native.counted || native.newer || native.chat.Malformed || native.chat.KeyID != ref.Key || native.chat.ID != ref.Key || native.chat.CreatedAt.IsZero() {
-		return nil, errors.Join(errors.New("Cursor admission identity or eligibility is unverified"), snapshot.Close())
+		return nil, errors.Join(errors.New("cursor admission identity or eligibility is unverified"), snapshot.Close())
 	}
 	return &admissionSnapshot{SourceSnapshot: snapshot, chat: native.chat}, nil
 }
+
 func (p *admissionPass) Signature(context.Context, agentapi.SourceRef) (agentapi.SourceObservation, error) {
 	return agentapi.SourceObservation{}, errors.New("admission reads require the complete settled snapshot")
 }
@@ -61,11 +62,13 @@ type admissionBudget struct {
 	bytes int64
 }
 
-func (b *admissionBudget) RemainingRows() int    { return b.rows }
+func (b *admissionBudget) RemainingRows() int { return b.rows }
+
 func (b *admissionBudget) RemainingBytes() int64 { return b.bytes }
+
 func (b *admissionBudget) Charge(rows int, bytes int64) error {
 	if rows < 0 || bytes < 0 || rows > b.rows || bytes > b.bytes {
-		return errors.New("Cursor admission evidence capacity exhausted")
+		return errors.New("cursor admission evidence capacity exhausted")
 	}
 	b.rows -= rows
 	b.bytes -= bytes

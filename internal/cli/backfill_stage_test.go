@@ -153,3 +153,53 @@ func TestDurableImportBackgroundQuotaStopRetainsCursorAndResumes(t *testing.T) {
 		t.Fatal(batch)
 	}
 }
+
+func TestDurableImportFileReviewBindsRetainedPrefix(t *testing.T) {
+	for _, change := range []string{"rewrite", "append"} {
+		t.Run(change, func(t *testing.T) {
+			f, _ := newImportFixture(t)
+			cfg, _, err := config.Load(f.data)
+			if err != nil {
+				t.Fatal(err)
+			}
+			plan, err := backfill.BuildPlan(t.Context(), f.env.backfillEnvironment(f.userHome, cfg), newArchiveState(f.data, cfg), cfg, backfill.Filters{Harnesses: []string{"claude-code"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			candidates := plan.Imported()
+			if len(candidates) == 0 {
+				t.Fatal("no reviewed Claude files")
+			}
+			candidate := candidates[0]
+			raw, err := os.ReadFile(candidate.TranscriptPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if change == "rewrite" {
+				raw = []byte(strings.ReplaceAll(string(raw), "please check it", "rewritten retained conversation"))
+				if !strings.Contains(string(raw), "rewritten retained conversation") {
+					t.Fatal("fixture content was not changed")
+				}
+			} else {
+				raw = append(raw, raw...)
+			}
+			if err = os.WriteFile(candidate.TranscriptPath, raw, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err = backfill.ApplyToConfig(&cfg, plan, backfillNow.UTC()); err != nil {
+				t.Fatal(err)
+			}
+			if err = config.Save(f.data, cfg); err != nil {
+				t.Fatal(err)
+			}
+			result, err := (backfill.Registration{Durable: true, Sources: f.env.agentRegistry(), Home: f.data, Store: state.OpenReadOnly(f.data), Batch: firstImport, AdmittedAt: backfillNow.UTC(), DestinationID: cfg.DestinationID()}).Run([]backfill.Candidate{candidate})
+			if change == "rewrite" {
+				if err == nil || len(result.Sessions) != 0 {
+					t.Fatal("rewritten review admitted", result, err)
+				}
+			} else if err != nil || len(result.Sessions) != 1 {
+				t.Fatal("reviewed prefix append refused", result, err)
+			}
+		})
+	}
+}

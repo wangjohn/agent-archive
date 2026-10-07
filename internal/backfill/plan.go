@@ -710,6 +710,8 @@ func applyImportInspection(ctx context.Context, inspector agentapi.ImportInspect
 		w.unsafe = true
 		return
 	}
+	w.c.reviewedRecords = len(filtered.Records)
+	w.c.reviewedPrefix = filteredPrefixDigest(filtered, len(filtered.Records))
 	w.validated = true
 	w.empty = !observed.Conversation
 	w.t.identityMismatch = w.t.identityMismatch || observed.IdentityMismatch

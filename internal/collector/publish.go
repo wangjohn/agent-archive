@@ -139,7 +139,7 @@ func (s *sessionScan) publishPending(pending state.PendingPublication) (sessionO
 			return outcomeSkipped, fmt.Errorf("complete published request: %w", err)
 		}
 	}
-	if err := s.releasePublishedStage(pending); err != nil {
+	if err := s.releasePendingStage(pending); err != nil {
 		return outcomeSkipped, err
 	}
 
@@ -265,7 +265,7 @@ func (s *sessionScan) bindPublicationContinuity(prior *state.PublicationPredeces
 	return nil
 }
 
-func (s *sessionScan) releasePublishedStage(pending state.PendingPublication) error {
+func (s *sessionScan) releasePendingStage(pending state.PendingPublication) error {
 	if pending.AdmissionStage != "" {
 		released, err := s.local.AdmissionStageReleased(s.reg)
 		if err != nil {

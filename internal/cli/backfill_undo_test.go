@@ -717,8 +717,14 @@ func stripDestinationIDs(t *testing.T, home string) {
 		t.Fatal(err)
 	}
 	for _, reg := range regs {
-		reg.DestinationID = ""
-		if err := store.SaveRegistration(reg); err != nil {
+		// Construct an actual legacy fixture directly: current durable writers
+		// must reject changing frozen destination ownership.
+		reg.DestinationID, reg.AdmissionStage = "", ""
+		body, err := json.Marshal(reg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(home, "registrations", reg.ArchiveSessionID+".json"), body, 0600); err != nil {
 			t.Fatal(err)
 		}
 	}
