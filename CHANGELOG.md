@@ -53,6 +53,9 @@ follow [Semantic Versioning](https://semver.org/).
   exact complete publication without treating missing metadata as a new session.
   Explicit removal cannot restore through that path. History admission remains
   protected pending the remaining enablement gates.
+- Repeated privacy changes can reuse an admitted stage's reserved capacity while
+  publication remains pending, including after restart at the staging quota limit.
+  Quota receipts keep the immutable original stage identity across transformations.
 
 - Pending privacy maintenance keeps the oldest authenticated uncommitted content
   available across policy changes. A policy increase can refilter that retained
