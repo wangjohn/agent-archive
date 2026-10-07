@@ -54,6 +54,76 @@ jobs:
       # the live run itself needs privileged Docker and is not run in CI.
       - run: python3 scripts/test_linux_acceptance.py
 
+  git-identity-compatibility:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Exact upstream releases exercise optional-command absence even
+          # when the runner upgrades. This is not distribution-package proof.
+          - git: upstream-2.30.2
+            tag: v2.30.2
+            ref: 94f6e3e283f2adfc518b39cfc39291f1c2832ad0
+            expected: git version 2.30.2
+          - git: upstream-2.39.2
+            tag: v2.39.2
+            ref: cbf04937d5b9fcf0a76c28f69e6294e9e3ecd7e6
+            expected: git version 2.39.2
+          - git: runner-current
+            tag: ''
+            ref: ''
+            expected: ''
+    name: Git identity (${{ matrix.git }})
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.1'
+          cache: false
+      - name: Check out pinned upstream Git
+        if: matrix.ref != ''
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: git/git
+          ref: ${{ matrix.ref }}
+          path: git-fixture
+          persist-credentials: false
+      - name: Build pinned upstream Git (local-only commands)
+        if: matrix.ref != ''
+        working-directory: git-fixture
+        env:
+          PINNED_GIT_TAG: ${{ matrix.tag }}
+          PINNED_GIT_COMMIT: ${{ matrix.ref }}
+        run: |
+          # Fetch only the release annotation for Git's version generator;
+          # the code remains at the immutable commit checked out above.
+          git fetch --depth=1 origin "refs/tags/$PINNED_GIT_TAG:refs/tags/$PINNED_GIT_TAG"
+          test "$(git rev-parse HEAD)" = "$PINNED_GIT_COMMIT"
+          make -j2 prefix="$RUNNER_TEMP/git-fixture" NO_TCLTK=YesPlease NO_GETTEXT=YesPlease NO_CURL=YesPlease NO_EXPAT=YesPlease all
+          make prefix="$RUNNER_TEMP/git-fixture" NO_TCLTK=YesPlease NO_GETTEXT=YesPlease NO_CURL=YesPlease NO_EXPAT=YesPlease install
+          echo "$RUNNER_TEMP/git-fixture/bin" >> "$GITHUB_PATH"
+      - name: Isolated identity regressions and exact executable version
+        env:
+          EXPECTED_GIT_VERSION: ${{ matrix.expected }}
+          HOME: ${{ runner.temp }}/git-identity-home
+          XDG_CONFIG_HOME: ${{ runner.temp }}/git-identity-xdg
+          GOCACHE: ${{ runner.temp }}/git-identity-go-cache
+          GOMODCACHE: ${{ runner.temp }}/git-identity-go-modules
+          GOMAXPROCS: '2'
+        run: |
+          mkdir -p "$HOME" "$XDG_CONFIG_HOME"
+          git --version | tee "$RUNNER_TEMP/git-identity-version.txt"
+          if [ -n "$EXPECTED_GIT_VERSION" ]; then
+            test "$(git --version)" = "$EXPECTED_GIT_VERSION"
+          fi
+          cat "$RUNNER_TEMP/git-identity-version.txt" >> "$GITHUB_STEP_SUMMARY"
+          go test -p 2 -count=1 -v ./internal/gitremote ./internal/sourcefacts
+          go test -p 2 -count=1 -v -run 'RecoveredImport|DeletedWorktree' ./internal/backfill
+
   macos-smoke:
     # Compile every Darwin/cgo package, then exercise the native Keychain,
     # launchd, terminal, and setup paths before merging. The full race suite

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -62,6 +63,9 @@ func importPlanLocked(env Env, stdout, stderr io.Writer, home string, plan backf
 		terminal.Printf(stderr, "agent-archive: backfill: "+format+"\n", args...)
 		return 1
 	}
+	confirmationCtx, stopConfirmation := importConfirmationContext(env, stderr, plan)
+	stopConfirmation = releaseOnce(stopConfirmation)
+	defer stopConfirmation()
 	// Step 4: commit the configuration, under collector.lock and hooks.lock.
 	stopWait := startActivity(stdout, "Waiting for collector…")
 	releaseCollector, err := lockCollectorWait(home, "backfill import", env.now(), backfillCollectorWait)
@@ -73,10 +77,15 @@ func importPlanLocked(env Env, stdout, stderr io.Writer, home string, plan backf
 	// between a session's subagent candidates and its registration.
 	releaseCollector = releaseOnce(releaseCollector)
 	defer releaseCollector()
-	batch, admittedAt, added, err := commitImport(env, home, plan, fingerprint)
+	// Waiting for the collector has its own allowance. Start the evidence
+	// deadline only after that wait, retaining signal cancellation throughout.
+	confirmationCtx, cancelConfirmation := context.WithTimeout(confirmationCtx, 30*time.Second)
+	defer cancelConfirmation()
+	batch, admittedAt, added, err := commitImport(confirmationCtx, env, home, plan, fingerprint)
 	if err != nil {
 		return fail("%v", err)
 	}
+	stopConfirmation()
 	if err := env.checkpoint("committed"); err != nil {
 		return fail("%v", err)
 	}
@@ -86,7 +95,9 @@ func importPlanLocked(env Env, stdout, stderr io.Writer, home string, plan backf
 	// once, after removing any copy of Cursor's database this process made.
 	stdout = &lockedWriter{w: stdout}
 	var activity activityStop
-	interrupt := watchSignals(env, stdout, "Stopping after the current session; press Ctrl-C again to quit.", activity.invoke)
+	registrationCtx, cancelRegistration := context.WithCancel(context.Background())
+	defer cancelRegistration()
+	interrupt := watchSignals(env, stdout, "Stopping after the current session; press Ctrl-C again to quit.", func() { cancelRegistration(); activity.invoke() })
 	defer interrupt.release()
 
 	// Step 5: register, in short holds of hooks.lock.
@@ -99,6 +110,7 @@ func importPlanLocked(env Env, stdout, stderr io.Writer, home string, plan backf
 	stopRegister := startActivity(stdout, "Registering sessions…")
 	activity.set(stopRegister)
 	registration := backfill.Registration{
+		Context: registrationCtx,
 		Sources: env.agentRegistry(),
 		Home:    home, Store: store, Batch: batch.ID, AdmittedAt: admittedAt, DestinationID: batch.DestinationID,
 		MaxHoldSteps: env.backfillHoldSteps, CursorDatabase: env.cursorDatabase(), RepoKey: env.repoKeyResolver(),
@@ -249,6 +261,17 @@ func (a *activityStop) invoke() {
 	}
 }
 
+func importConfirmationContext(env Env, stderr io.Writer, plan backfill.Plan) (context.Context, func()) {
+	recovered := false
+	for _, c := range plan.Imported() {
+		recovered = recovered || c.ProjectResolution != nil
+	}
+	if !recovered {
+		return context.WithCancel(context.Background())
+	}
+	return interruptibleContext(env, stderr)
+}
+
 // commitImport is step 4. With collector.lock held, it takes hooks.lock,
 // rereads the configuration, and checks that it is the one the plan was made
 // from. It then stamps the admission time and writes the batch file, which
@@ -256,12 +279,18 @@ func (a *activityStop) invoke() {
 // projects, apps, and retention. The batch file is written first,
 // so a crash in between leaves a batch that names projects it did not add,
 // never projects added without a record.
-func commitImport(env Env, home string, plan backfill.Plan, fingerprint string) (batch backfill.Batch, admittedAt time.Time, added int, err error) {
+func commitImport(ctx context.Context, env Env, home string, plan backfill.Plan, fingerprint string) (batch backfill.Batch, admittedAt time.Time, added int, err error) {
+	if err := plan.CheckRecovery(ctx); err != nil {
+		return batch, admittedAt, 0, err
+	}
 	releaseHooks, err := local.NamedLockWait(home, "hooks.lock", backfillHooksWait)
 	if err != nil {
 		return batch, admittedAt, 0, errors.New("capture hooks are busy; run backfill again. Nothing was changed")
 	}
 	defer releaseHooks()
+	if err := ctx.Err(); err != nil {
+		return batch, admittedAt, 0, err
+	}
 	cfg, found, err := config.Load(home)
 	if err != nil {
 		return batch, admittedAt, 0, fmt.Errorf("load config: %w", err)
@@ -301,6 +330,9 @@ func commitImport(env Env, home string, plan backfill.Plan, fingerprint string) 
 		return batch, admittedAt, 0, err
 	}
 	if err := env.checkpoint("batch saved"); err != nil {
+		return batch, admittedAt, 0, err
+	}
+	if err := ctx.Err(); err != nil {
 		return batch, admittedAt, 0, err
 	}
 	if err := config.Save(home, cfg); err != nil {
