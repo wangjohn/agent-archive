@@ -77,6 +77,13 @@ func readAdmissionWorkspace(ctx context.Context, workspace agentapi.TemporaryWor
 	if err = budget.Charge(0, 200); err != nil {
 		return err
 	}
+	conn, err := admissionConnection(ctx, db)
+	if err != nil {
+		return err
+	}
+	if err = conn.Close(); err != nil {
+		return err
+	}
 	if err = validateRecoverySchema(ctx, db, budget); err != nil {
 		return err
 	}

@@ -77,6 +77,7 @@ func NewTemporaryReservation(s *Store, owner TemporaryOwner, key string) (*Tempo
 	if err != nil {
 		return nil, err
 	}
+	canonicalStore.quotaRoot = root
 	return &TemporaryReservation{store: &canonicalStore, root: root, manifest: temporaryManifest{Owner: owner, Key: key, Token: token, Root: filepath.Join(temporaryScratchDir, token), Version: 1}}, nil
 }
 
@@ -123,7 +124,7 @@ func (r *TemporaryReservation) Reserve(n int64) error {
 	if r.closed || r.err != nil || n <= 0 || n > AdmissionStageQuota-temporaryControlBytes-r.bytes {
 		return ErrAdmissionStageCapacity
 	}
-	unlock, err := r.store.namedLockWait("temporary-quota", time.Second)
+	unlock, err := temporaryQuotaLock(r.root, time.Second)
 	if err != nil {
 		return err
 	}
@@ -143,12 +144,12 @@ func (r *TemporaryReservation) Reserve(n int64) error {
 		return err
 	}
 	if r.bytes == 0 {
-		entries, e := os.ReadDir(filepath.Join(r.store.home, temporaryReservationDir))
+		entries, e := r.store.quotaReadDir(filepath.Join(r.store.home, temporaryReservationDir))
 		if e != nil && !errors.Is(e, os.ErrNotExist) {
 			return e
 		}
 		for _, entry := range entries {
-			b, e := readStageFile(filepath.Join(r.store.home, temporaryReservationDir, entry.Name()), temporaryControlBytes)
+			b, e := r.store.quotaReadFile(filepath.Join(r.store.home, temporaryReservationDir, entry.Name()), temporaryControlBytes)
 			var m temporaryManifest
 			if e != nil || json.Unmarshal(b, &m) != nil {
 				return ErrAdmissionStageRecovery
@@ -163,7 +164,7 @@ func (r *TemporaryReservation) Reserve(n int64) error {
 	}
 	m := r.manifest
 	m.Charged = r.bytes + n + temporaryControlBytes
-	if err = local.Write(filepath.Join(r.store.home, temporaryReservationDir, m.Token+".json"), m); err != nil {
+	if err = r.writeManifest(m); err != nil {
 		r.err = err
 		return err
 	}
@@ -201,7 +202,7 @@ func (r *TemporaryReservation) release() error {
 	if _, err := r.root.Lstat(r.manifest.Root); !errors.Is(err, os.ErrNotExist) {
 		return ErrAdmissionStageRecovery
 	}
-	unlock, err := r.store.namedLockWait("temporary-quota", time.Second)
+	unlock, err := temporaryQuotaLock(r.root, time.Second)
 	if err != nil {
 		return err
 	}
@@ -209,18 +210,27 @@ func (r *TemporaryReservation) release() error {
 	if err = r.checkDirectories(); err != nil {
 		return err
 	}
-	if err = r.root.Remove(filepath.Join(temporaryReservationDir, r.manifest.Token+".json")); err != nil {
-		return err
-	}
 	dir, err := r.root.Open(temporaryReservationDir)
 	if err != nil {
 		return err
 	}
-	err = errors.Join(dir.Sync(), dir.Close())
-	if err == nil {
-		r.bytes = 0
+	if err = r.root.Remove(filepath.Join(temporaryReservationDir, r.manifest.Token+".json")); err != nil {
+		return errors.Join(err, dir.Close())
 	}
-	return err
+	if r.store.onTemporaryRelease != nil {
+		err = r.store.onTemporaryRelease()
+	}
+	if err == nil {
+		err = dir.Sync()
+	}
+	err = errors.Join(err, dir.Close())
+	if err != nil {
+		// A failed directory sync does not prove durable removal. Restore the
+		// visible charge, even if the same sync failure makes restoration uncertain.
+		return errors.Join(err, r.writeManifest(r.manifest))
+	}
+	r.bytes = 0
+	return nil
 }
 
 // Close attempts only owned scratch cleanup, retaining durable capacity on any
@@ -247,18 +257,18 @@ func (r *TemporaryReservation) Close() error {
 
 func (s *Store) temporaryUsage() (int64, error) {
 	dir := filepath.Join(s.home, temporaryReservationDir)
-	if info, err := os.Lstat(dir); err == nil && (!info.IsDir() || info.Mode()&os.ModeSymlink != 0) {
+	if info, err := s.quotaLstat(dir); err == nil && (!info.IsDir() || info.Mode()&os.ModeSymlink != 0) {
 		return 0, ErrAdmissionStageRecovery
 	}
-	entries, err := os.ReadDir(dir)
+	entries, err := s.quotaReadDir(dir)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return 0, err
 	}
 	var used int64
-	roots := map[string]bool{}
+	roots := map[string]int64{}
 	keys := map[string]bool{}
 	for _, e := range entries {
-		b, err := readStageFile(filepath.Join(dir, e.Name()), temporaryControlBytes)
+		b, err := s.quotaReadFile(filepath.Join(dir, e.Name()), temporaryControlBytes)
 		var m temporaryManifest
 		if err != nil || json.Unmarshal(b, &m) != nil || m.Version != 1 || !safeFileComponent(m.Token) || e.Name() != m.Token+".json" || !safeFileComponent(m.Key) || m.Root != filepath.Join(temporaryScratchDir, m.Token) || m.Charged < temporaryControlBytes || m.Charged > AdmissionStageQuota-used {
 			return 0, ErrAdmissionStageRecovery
@@ -274,20 +284,30 @@ func (s *Store) temporaryUsage() (int64, error) {
 		}
 		keys[key] = true
 		used += m.Charged
-		roots[m.Token] = true
+		roots[m.Token] = m.Charged
 	}
 	scratchDir := filepath.Join(s.home, temporaryScratchDir)
-	if info, e := os.Lstat(scratchDir); e == nil && (!info.IsDir() || info.Mode()&os.ModeSymlink != 0) {
+	if info, e := s.quotaLstat(scratchDir); e == nil && (!info.IsDir() || info.Mode()&os.ModeSymlink != 0) {
 		return 0, ErrAdmissionStageRecovery
 	}
-	scratch, err := os.ReadDir(filepath.Join(s.home, temporaryScratchDir))
+	scratch, err := s.quotaReadDir(filepath.Join(s.home, temporaryScratchDir))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return 0, err
 	}
+	remaining := 65536
 	for _, e := range scratch {
-		if !roots[e.Name()] || !e.IsDir() || e.Type()&os.ModeSymlink != 0 {
+		if roots[e.Name()] == 0 || !e.IsDir() || e.Type()&os.ModeSymlink != 0 {
 			return 0, ErrAdmissionStageRecovery
 		}
+		physical, err := s.temporaryPhysicalUsage(filepath.Join(scratchDir, e.Name()), &remaining)
+		if err != nil {
+			return 0, err
+		}
+		extra := max(0, physical+temporaryControlBytes-roots[e.Name()])
+		if extra > AdmissionStageQuota-used {
+			return 0, ErrAdmissionStageCapacity
+		}
+		used += extra
 	}
 	return used, nil
 }

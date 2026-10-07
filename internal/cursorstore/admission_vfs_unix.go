@@ -6,9 +6,11 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"runtime"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"unsafe"
 
 	"golang.org/x/sys/unix"
@@ -30,6 +32,9 @@ type admissionVFS struct {
 	allowed           map[string]os.FileInfo
 	limit             int64
 	writable          bool
+	sourceRoot        *os.Root
+	sourceDirectory   string
+	sourcePins        map[string]*os.File
 	heldFile          *os.File
 	context           context.Context
 	writeCalls        atomic.Int64
@@ -58,6 +63,15 @@ var admissionVFSState = struct {
 
 var admissionVFSSequence atomic.Uint64
 
+// Registry links are native mutable state. Serialize admission registration,
+// lookup/open and unregister/free, even on SQLite builds with no-op mutexes.
+var admissionRegistryMutex sync.Mutex
+
+func lockAdmissionRegistry() func() {
+	admissionRegistryMutex.Lock()
+	return admissionRegistryMutex.Unlock
+}
+
 func callbackPointer[T any](fn T) uintptr { return *(*uintptr)(unsafe.Pointer(&struct{ f T }{fn})) }
 
 func loadAdmissionC[T any](ptr uintptr) T {
@@ -77,11 +91,16 @@ func newAdmissionVFS(allowed map[string]os.FileInfo, writable bool, limit int64)
 	}
 	tls := libc.NewTLS()
 	defer tls.Close()
+	unlock := lockAdmissionRegistry()
 	base := sqlite3.Xsqlite3_vfs_find(tls, 0)
+	var native sqlite3.Tsqlite3_vfs
+	if base != 0 {
+		native = loadAdmissionC[sqlite3.Tsqlite3_vfs](base)
+	}
+	unlock()
 	if base == 0 {
 		return nil, errors.New("bounded admission VFS unavailable")
 	}
-	native := loadAdmissionC[sqlite3.Tsqlite3_vfs](base)
 	if libc.GoString(native.FzName) != "unix" || native.FszOsFile != int32(unsafe.Sizeof(sqlite3.TunixFile{})) || native.FxOpen == 0 {
 		return nil, errors.New("bounded admission requires the known Unix VFS ABI")
 	}
@@ -95,6 +114,9 @@ func newAdmissionVFS(allowed map[string]os.FileInfo, writable bool, limit int64)
 	clone.FpNext = 0
 	clone.FxOpen = callbackPointer(admissionOpen)
 	clone.FxDelete = callbackPointer(admissionDelete)
+	if writable {
+		clone.FxFullPathname = callbackPointer(admissionFullPathname)
+	}
 	v := &admissionVFS{name: name, namePtr: namePtr, base: base, allowed: allowed, writable: writable, limit: limit, native: native, clone: clone}
 	v.pin.Pin(&v.clone)
 	v.ptr = libc.Xmalloc(tls, libc.Tsize_t(unsafe.Sizeof(v.clone)))
@@ -107,7 +129,10 @@ func newAdmissionVFS(allowed map[string]os.FileInfo, writable bool, limit int64)
 	admissionVFSState.Lock()
 	admissionVFSState.vfs[v.ptr] = v
 	admissionVFSState.Unlock()
-	if sqlite3.Xsqlite3_vfs_register(tls, v.ptr, 0) != sqlite3.SQLITE_OK {
+	unlock = lockAdmissionRegistry()
+	rc := sqlite3.Xsqlite3_vfs_register(tls, v.ptr, 0)
+	unlock()
+	if rc != sqlite3.SQLITE_OK {
 		return nil, errors.Join(errors.New("bounded admission VFS registration failed"), v.Close())
 	}
 	return v, nil
@@ -124,10 +149,6 @@ func newAdmissionDestinationVFS(ctx context.Context, path string, held *os.File,
 	}
 	v.heldFile = held
 	v.context = ctx
-	v.clone.FxFullPathname = callbackPointer(admissionFullPathname)
-	tls := libc.NewTLS()
-	writeAdmissionC(v.ptr, v.clone)
-	tls.Close()
 	return v, nil
 }
 
@@ -145,6 +166,8 @@ func itoa(n uint64) string {
 }
 
 func (v *admissionVFS) Close() error {
+	unlock := lockAdmissionRegistry()
+	defer unlock()
 	if v.activeDescriptors.Load() != 0 {
 		return errors.New("cursor admission native handles remain open")
 	}
@@ -159,7 +182,11 @@ func (v *admissionVFS) Close() error {
 	v.pin.Unpin()
 	libc.Xfree(tls, v.ptr)
 	libc.Xfree(tls, v.namePtr)
-	return nil
+	var err error
+	for _, held := range v.sourcePins {
+		err = errors.Join(err, held.Close())
+	}
+	return err
 }
 
 func admissionFullPathname(tls *libc.TLS, pVFS, name uintptr, capacity int32, out uintptr) int32 {
@@ -199,6 +226,9 @@ func admissionOpen(tls *libc.TLS, pVFS, zName, pFile uintptr, flags int32, out u
 	}
 	if v.writable {
 		return admissionOpenDestination(tls, v, pFile, flags, out, approved)
+	}
+	if err := v.pinSourceFile(path, approved); err != nil {
+		return sqlite3.SQLITE_CANTOPEN
 	}
 	base := &v.native
 	open := *(*func(*libc.TLS, uintptr, uintptr, uintptr, int32, uintptr) int32)(unsafe.Pointer(&base.FxOpen))
@@ -242,14 +272,14 @@ func admissionOpen(tls *libc.TLS, pVFS, zName, pFile uintptr, flags int32, out u
 }
 
 func admissionDescriptorMatches(fd int32, expected os.FileInfo) bool {
-	dup, err := unix.Dup(int(fd))
-	if err != nil {
+	// Dup followed by Close drops this process's POSIX locks on the inode.
+	// Verify with Fstat alone; never open or close a verification descriptor.
+	var actual unix.Stat_t
+	if unix.Fstat(int(fd), &actual) != nil {
 		return false
 	}
-	f := os.NewFile(uintptr(dup), "admission-descriptor")
-	info, err := f.Stat()
-	closeErr := f.Close()
-	return err == nil && closeErr == nil && info.Mode().IsRegular() && os.SameFile(expected, info)
+	before, ok := expected.Sys().(*syscall.Stat_t)
+	return ok && actual.Mode&unix.S_IFMT == unix.S_IFREG && actual.Dev == before.Dev && actual.Ino == before.Ino
 }
 
 func admissionLookup(p uintptr) (*admissionFile, *sqlite3.Tsqlite3_io_methods) {
@@ -353,9 +383,18 @@ func admissionShmMap(tls *libc.TLS, p uintptr, region, size, extend int32, out u
 	if !ok {
 		return sqlite3.SQLITE_READONLY
 	}
-	info, err := os.Lstat(path)
-	if err != nil || !info.Mode().IsRegular() || !os.SameFile(expected, info) {
+	if err := f.vfs.pinSourceFile(path, expected); err != nil {
 		return sqlite3.SQLITE_READONLY
+	}
+	// Unix reuses an existing process-wide inode SHM node before consulting
+	// readonly_shm. Refuse a writable node BEFORE mapping: checking afterwards
+	// would be too late to guarantee read-only native memory access.
+	inode := loadAdmissionC[sqlite3.TunixInodeInfo](native.FpInode)
+	if inode.FpShmNode != 0 {
+		node := loadAdmissionC[sqlite3.TunixShmNode](inode.FpShmNode)
+		if node.FisReadonly == 0 || !admissionDescriptorMatches(node.FhShm, expected) {
+			return sqlite3.SQLITE_READONLY
+		}
 	}
 	mapFile := *(*func(*libc.TLS, uintptr, int32, int32, int32, uintptr) int32)(unsafe.Pointer(&m.FxShmMap))
 	rc := mapFile(tls, p, region, size, 0, out)
@@ -388,4 +427,42 @@ func (v *admissionVFS) copyStats(stats *AdmissionCopyStats) {
 	stats.DestinationOpens = int(v.opens.Load())
 	stats.ProhibitedOpens = int(v.deniedOpens.Load())
 	stats.DestinationOpenDescriptors = int(v.activeDescriptors.Load())
+}
+
+// Native open/map callbacks cannot read outside the approved root. A rooted
+// descriptor pins each observed identity before native delegation; the native
+// descriptor is independently checked before SQLite can read it. Delegation is
+// read-only and cannot create, truncate, delete or initialize writable SHM.
+func (v *admissionVFS) pinSourceFile(path string, expected os.FileInfo) error {
+	if v.sourceRoot == nil || filepath.Dir(path) != v.sourceDirectory {
+		return NotChecked(Unreadable)
+	}
+	name := filepath.Base(path)
+	before, err := v.sourceRoot.Lstat(name)
+	if err != nil || !before.Mode().IsRegular() || !os.SameFile(expected, before) {
+		return NotChecked(ChangedDuringRead)
+	}
+	if v.sourcePins == nil {
+		v.sourcePins = map[string]*os.File{}
+	}
+	held := v.sourcePins[path]
+	if held == nil {
+		held, err = v.sourceRoot.Open(name)
+		if err != nil {
+			return err
+		}
+		// Retain every descriptor until SQLite closes and the VFS unregisters.
+		// Closing even a read-only fd early would drop native POSIX read locks.
+		v.sourcePins[path] = held
+	}
+	opened, err := held.Stat()
+	if err != nil || !opened.Mode().IsRegular() || !os.SameFile(expected, opened) {
+		return NotChecked(ChangedDuringRead)
+	}
+	return nil
+}
+
+func (v *admissionVFS) setSourceRoot(root *os.Root, directory string) {
+	v.sourceRoot = root
+	v.sourceDirectory = directory
 }

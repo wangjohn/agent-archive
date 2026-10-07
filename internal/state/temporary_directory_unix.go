@@ -1,0 +1,44 @@
+//go:build darwin || linux
+
+package state
+
+import (
+	"errors"
+	"os"
+	"syscall"
+	"time"
+
+	"github.com/wangjohn/agent-archive/internal/local"
+)
+
+func temporaryQuotaLock(root *os.Root, timeout time.Duration) (func(), error) {
+	deadline := time.Now().Add(timeout)
+	for {
+		f, err := root.OpenFile("temporary-quota", os.O_CREATE|os.O_RDWR, 0600)
+		if err != nil {
+			return nil, err
+		}
+		err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if err != nil {
+			_ = f.Close()
+			if !errors.Is(err, syscall.EWOULDBLOCK) && !errors.Is(err, syscall.EAGAIN) {
+				return nil, err
+			}
+			if time.Now().After(deadline) {
+				return nil, local.ErrBusy
+			}
+			time.Sleep(10 * time.Millisecond)
+			continue
+		}
+		release := func() { _ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN); _ = f.Close() }
+		held, e := f.Stat()
+		named, n := root.Stat("temporary-quota")
+		if e == nil && n == nil && os.SameFile(held, named) {
+			return release, nil
+		}
+		release()
+		if e != nil || n != nil || time.Now().After(deadline) {
+			return nil, errors.Join(ErrAdmissionStageRecovery, e, n)
+		}
+	}
+}

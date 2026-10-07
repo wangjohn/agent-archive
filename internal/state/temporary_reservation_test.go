@@ -162,3 +162,93 @@ func TestTemporaryWorkspaceRequiresDurableReservationAndRootConfinement(t *testi
 		t.Fatal(err)
 	}
 }
+
+func TestTemporaryReservationAncestorSwapKeepsAccountingInHeldHome(t *testing.T) {
+	t.Parallel()
+	s, _, _ := stageFixture(t)
+	r, err := NewTemporaryReservation(s, CursorAdmission, "held-home")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = r.Close() }()
+	original := s.Home()
+	retained := original + "-retained"
+	outside := t.TempDir()
+	if err = os.Rename(original, retained); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Remove(original); _ = os.Rename(retained, original) })
+	if err = os.Symlink(outside, original); err != nil {
+		t.Fatal(err)
+	}
+	if err = r.Reserve(4096); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(outside)
+	if err != nil || len(entries) != 0 {
+		t.Fatal("accounting escaped held home", entries, err)
+	}
+	if _, err = os.Stat(filepath.Join(retained, temporaryReservationDir, r.manifest.Token+".json")); err != nil {
+		t.Fatal("held home has no durable reservation", err)
+	}
+	if err = r.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTemporaryQuotaChargesOversizedOwnedScratchWithoutBodyReads(t *testing.T) {
+	t.Parallel()
+	s, _, _ := stageFixture(t)
+	r, err := NewTemporaryReservation(s, CursorAdmission, "physical")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = r.Close() }()
+	if err = r.Reserve(4096); err != nil {
+		t.Fatal(err)
+	}
+	root, err := r.OpenWorkspace()
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := root.OpenFile("orphan", os.O_CREATE|os.O_EXCL|os.O_RDWR, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = f.Truncate(8192); err != nil {
+		t.Fatal(err)
+	}
+	if err = f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err = root.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reads := 0
+	s.onQuotaBodyRead = func(string) { reads++ }
+	used, err := s.admissionStageUsage()
+	if err != nil || used < temporaryControlBytes+8192 || reads != 0 {
+		t.Fatal("physical scratch undercharged", used, reads, err)
+	}
+}
+
+func TestTemporaryReleaseSyncFailureRestoresVisibleCharge(t *testing.T) {
+	t.Parallel()
+	s, _, _ := stageFixture(t)
+	fault := errors.New("synthetic directory sync failure")
+	s.onTemporaryRelease = func() error { return fault }
+	r, err := NewTemporaryReservation(s, CursorAdmission, "sync-failure")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = r.Reserve(4096); err != nil {
+		t.Fatal(err)
+	}
+	if err = r.Close(); !errors.Is(err, fault) {
+		t.Fatal("lost cleanup failure", err)
+	}
+	used, err := OpenReadOnly(s.Home()).admissionStageUsage()
+	if err != nil || used != 4096+temporaryControlBytes {
+		t.Fatal("failed cleanup lost durable charge", used, err)
+	}
+}
