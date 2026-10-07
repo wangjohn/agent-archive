@@ -32,12 +32,12 @@ func (r countedLabelOutput) Read(p []byte) (int, error) {
 // Unsolicited lines left behind a successful response still spend the pass cap.
 func TestCodexNamingBoundsReadAheadAcrossHomes(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		budget := &labelStdoutBudget{remaining: 1 << 20}
+		budget := &labelStreamBudget{remaining: 1 << 20}
 		var read atomic.Int64
 		var hosts []*codexLabelHost
 		for range 8 {
 			output := "{}\n" + strings.Repeat(strings.Repeat("x", 120<<10)+"\n", 4)
-			h := &codexLabelHost{output: io.NopCloser(countedLabelOutput{strings.NewReader(output), &read}), stdoutBudget: budget, lines: make(chan labelLine, 1), done: make(chan struct{})}
+			h := &codexLabelHost{output: io.NopCloser(countedLabelOutput{strings.NewReader(output), &read}), streamBudget: budget, lines: make(chan labelLine, 1), done: make(chan struct{})}
 			hosts = append(hosts, h)
 			go h.readLines()
 			_, _ = h.ReadLine(context.Background())
@@ -107,7 +107,7 @@ func TestCodexNamingFreshPassRestoresStdoutAllowance(t *testing.T) {
 
 func TestCodexNamingExhaustedStdoutClosesAndReapsHost(t *testing.T) {
 	env, home := labelHostScript(t, "printf '123456789\\n'\nexec /bin/sleep 30\n")
-	host, err := env.startCodexLabelHost(context.Background(), home, &labelStdoutBudget{remaining: 3})
+	host, err := env.startCodexLabelHost(context.Background(), home, &labelStreamBudget{remaining: 3, stderrRemaining: 16 << 10})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,19 +247,6 @@ func TestCodexNamingStreamRejectsPartialAndOversizedLines(t *testing.T) {
 			t.Fatal("invalid stream accepted")
 		}
 		_ = h.Close()
-	}
-}
-
-func TestCodexNamingStderrIsDiscardedAndBounded(t *testing.T) {
-	calls := 0
-	w := labelDiscard{limit: 16 << 10, exceeded: func() { calls++ }}
-	n, err := w.Write(make([]byte, 16<<10))
-	if n != 16<<10 || err != nil {
-		t.Fatal(n, err)
-	}
-	n, err = w.Write([]byte("private"))
-	if n != 7 || err == nil || calls != 1 {
-		t.Fatal(n, err, calls)
 	}
 }
 
