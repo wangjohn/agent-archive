@@ -80,7 +80,7 @@ func TestGuidedPromptCollapseRequiresOwnedVisibleRows(t *testing.T) {
 				release()
 			case promptModeLongEcho:
 				echo = strings.Repeat("a", 2000) + "\n"
-			case promptModeNormal, promptModeNoColor, promptModeWide, promptModeControlEcho, promptModeComposed, promptModeLong, promptModeDefaultLong, promptModeRetry, promptModeScroll, promptModeTypedAhead, promptModeTypedAheadTwo, promptModePager, promptModeEof, promptModeFinalEof, promptModeSecretEof, promptModeInterrupt, promptModeTerm, promptModeHup, promptModeQuit, promptModePairingOutput, promptModeLive, promptModeContinued, promptModeRedirect, promptModeDumb:
+			case promptModeEchoOff, promptModeNewlineOnly, promptModeNewlineLong, promptModeEchoOffLong, promptModeEchoOffStatic, promptModeEchoOffEOF, promptModeEchoOffEmpty, promptModeEchoOffAhead, promptModeNormal, promptModeNoColor, promptModeWide, promptModeControlEcho, promptModeComposed, promptModeLong, promptModeDefaultLong, promptModeRetry, promptModeScroll, promptModeTypedAhead, promptModeTypedAheadTwo, promptModePager, promptModeEof, promptModeFinalEof, promptModeSecretEof, promptModeInterrupt, promptModeTerm, promptModeHup, promptModeQuit, promptModePairingOutput, promptModeLive, promptModeContinued, promptModeRedirect, promptModeDumb:
 				// These modes retain the original block; only capability/read flags differ.
 			}
 			r.finish(region, "Provider Amazon S3", echo, false, mode == promptModeTypedAhead, mode == promptModeContinued)

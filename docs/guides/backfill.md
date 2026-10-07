@@ -140,6 +140,18 @@ includes excluded clones, and never uses a folder name. Missing or unreadable
 Git evidence, multiple clones, and uncertain nested exclusions leave the session
 unresolved. Existing configured rules and verified live worktree ownership win.
 
+On a first import, backfill resolves live repository sessions before deleted
+worktree recovery. It can propose those live repositories as destinations for
+sessions with matching recorded identity. Review the project rows: confirmation
+adds the selected destinations through the ordinary import configuration change,
+so new sessions there will be captured too. Dry-run changes no configuration.
+Supported readable Cursor database chats also provide live evidence, even when
+only Codex output is selected. Unavailable or malformed database evidence keeps
+automatic recovery pending. Output date, app, and project filters do not remove observed live clones from the
+recovery evidence. Hidden clones remain evidence without being silently added to
+capture; exclusions, unknown roots and incomplete source inventories keep
+recovery pending. Automatic discovery uses committed projects only.
+
 For an ambiguous historical import, review an exact mapping with:
 
 ```sh

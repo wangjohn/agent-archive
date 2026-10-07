@@ -15,6 +15,14 @@ import (
 type promptTestMode string
 
 const (
+	promptModeEchoOff       promptTestMode = "echo-off"
+	promptModeNewlineOnly   promptTestMode = "newline-only"
+	promptModeNewlineLong   promptTestMode = "newline-only-long"
+	promptModeEchoOffLong   promptTestMode = "echo-off-long"
+	promptModeEchoOffStatic promptTestMode = "echo-off-static"
+	promptModeEchoOffEOF    promptTestMode = "echo-off-eof"
+	promptModeEchoOffEmpty  promptTestMode = "echo-off-empty-eof"
+	promptModeEchoOffAhead  promptTestMode = "echo-off-typed-ahead"
 	promptModeNormal        promptTestMode = "normal"
 	promptModeNoColor       promptTestMode = "no-color"
 	promptModeWide          promptTestMode = "wide"
@@ -61,6 +69,9 @@ func TestGuidedSetupTerminalChild(t *testing.T) {
 		terminal.Println(p.out, "DONE")
 		return
 	}
+	if strings.HasPrefix(string(mode), "echo-off") || strings.HasPrefix(string(mode), "newline-only") {
+		terminal.Println(p.out, "UNRELATED SENTINEL")
+	}
 	model := promptExample()
 	model.Helpers = nil
 	// The normal-collapse harness sends only after the renderer has returned
@@ -106,6 +117,9 @@ func TestGuidedSetupTerminalChild(t *testing.T) {
 	}
 	value, err := p.guidedText(promptModel{Question: "AWS profile", Label: "Profile", Default: profileDefault, Receipt: "Profile", ReadAnswer: readAnswer})
 	must(t, err)
+	if (mode == promptModeEchoOffLong || mode == promptModeNewlineLong) && value != strings.Repeat("x", 170) {
+		t.Fatalf("lost ordinary input with echo disabled")
+	}
 	if mode == promptModeLong && value != strings.Repeat("x", 90) {
 		t.Fatalf("lost long answer")
 	}
@@ -127,7 +141,7 @@ func TestGuidedPromptTerminalCells(t *testing.T) {
 	}
 	binary, err := os.Executable()
 	must(t, err)
-	for _, mode := range []promptTestMode{promptModeNormal, promptModeNoColor, promptModeWide, promptModeControlEcho, promptModeComposed, promptModeLong, promptModeDefaultLong, promptModeRetry, promptModeResize, promptModeScroll, promptModeTypedAhead, promptModeTypedAheadTwo, promptModeSuspend, promptModeExternal, promptModePager, promptModeEof, promptModeFinalEof, promptModeSecretEof, promptModeInterrupt, promptModeTerm, promptModeHup, promptModeQuit} {
+	for _, mode := range []promptTestMode{promptModeEchoOff, promptModeNewlineOnly, promptModeNewlineLong, promptModeEchoOffLong, promptModeEchoOffStatic, promptModeEchoOffEOF, promptModeEchoOffEmpty, promptModeEchoOffAhead, promptModeNormal, promptModeNoColor, promptModeWide, promptModeControlEcho, promptModeComposed, promptModeLong, promptModeDefaultLong, promptModeRetry, promptModeResize, promptModeScroll, promptModeTypedAhead, promptModeTypedAheadTwo, promptModeSuspend, promptModeExternal, promptModePager, promptModeEof, promptModeFinalEof, promptModeSecretEof, promptModeInterrupt, promptModeTerm, promptModeHup, promptModeQuit} {
 		t.Run(string(mode), func(t *testing.T) {
 			t.Parallel()
 			if out, err := runPTYScript(t, python, guidedPromptPTY, binary, string(mode)); err != nil {
@@ -143,10 +157,17 @@ master, slave = pty.openpty()
 readyRead,readyWrite=os.pipe()
 width, height = (36,20) if mode == 'scroll' else (60,20) if mode in ('long','default-long') else (100,30) if mode == 'no-color' else (80,24)
 fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH',height,width,0,0))
+if mode.startswith('echo-off') or mode.startswith('newline-only'):
+    modes=termios.tcgetattr(slave)
+    modes[3] &= ~(termios.ECHO | termios.ECHONL)
+    if mode.startswith('newline-only'): modes[3] |= termios.ECHONL
+    termios.tcsetattr(slave,termios.TCSANOW,modes)
+initialModes=termios.tcgetattr(slave)
 env = dict(os.environ, TERM='xterm-256color', ARCHIVE_GUIDED_PROMPT_CHILD='1', ARCHIVE_GUIDED_PROMPT_MODE=mode)
 env['ARCHIVE_GUIDED_READ_READY_FD']=str(readyWrite)
 env.pop('NO_COLOR',None)
 if mode == 'no-color': env['NO_COLOR']='1'
+if mode == 'echo-off-static': env['TERM']='dumb'
 os.setsid()
 fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
 def session():
@@ -210,27 +231,28 @@ def cells(data,cols):
 
 try:
     wait(b'Choose [2]: ')
-    if mode not in ('typed-ahead','typed-ahead-two'): answerReady()
-    if mode=='eof': os.write(master,termios.tcgetattr(slave)[6][termios.VEOF])
+    if mode not in ('typed-ahead','typed-ahead-two','echo-off-typed-ahead'): answerReady()
+    if mode in ('eof','echo-off-empty-eof'): os.write(master,termios.tcgetattr(slave)[6][termios.VEOF])
     else:
         if mode=='retry':
             offset=len(output);os.write(master,b'bad\n');wait(b'Choose [2]: ',offset);answerReady()
-        if mode=='typed-ahead': os.write(master,b'2\nwork\nsynthetic-secret\n')
+        if mode in ('typed-ahead','echo-off-typed-ahead'): os.write(master,b'2\nwork\nsynthetic-secret\n')
         elif mode=='typed-ahead-two': os.write(master,b'2\n'+b'x'*170+b'\n')
         else: os.write(master,b'2\n')
         wait(b'Profile ['+ (b'd'*90 if mode=='default-long' else b'work') + b']: ')
-        if mode not in ('typed-ahead','typed-ahead-two'): answerReady()
+        if mode not in ('typed-ahead','typed-ahead-two','echo-off-typed-ahead'): answerReady()
         if mode=='resize':
             signal.signal(signal.SIGTTOU,signal.SIG_IGN)
             fcntl.ioctl(master,termios.TIOCSWINSZ,struct.pack('HHHH',20,60,0,0))
             signal.signal(signal.SIGTTOU,signal.SIG_DFL)
             p.send_signal(signal.SIGWINCH)
-        if mode=='final-answer-eof': os.write(master,b'work'+termios.tcgetattr(slave)[6][termios.VEOF]*2)
+        if mode in ('final-answer-eof','echo-off-eof'): os.write(master,b'work'+termios.tcgetattr(slave)[6][termios.VEOF]*2)
+        elif mode in ('echo-off-long','newline-only-long'): os.write(master,b'x'*170+b'\n')
         elif mode=='composed': os.write(master,('👍🏽'*30+'\n').encode())
-        elif mode not in ('typed-ahead','typed-ahead-two'): os.write(master,(('xxx漢漢漢漢xx漢x漢漢x漢漢x漢x漢漢xx漢漢漢xxx漢漢漢x漢xxxxx漢x漢xx漢漢漢漢漢xxx漢x漢x漢xx漢x漢x漢xx漢xxxxxx漢漢漢漢漢xxx漢x漢x漢xxx漢漢xxxx漢xx漢漢xxx漢漢xx漢漢漢漢漢漢漢漢漢漢x漢漢漢xx漢漢x漢xxx漢x漢x漢x漢漢xxxxxx漢漢xxx漢'.encode() if mode=='wide' else b'x'*90) if mode in ('wide','long') else b'\x01'*170 if mode=='control-echo' else b'x'*900 if mode=='scroll' else b'' if mode=='default-long' else b'work')+b'\n')
+        elif mode not in ('typed-ahead','typed-ahead-two','echo-off-typed-ahead'): os.write(master,(('xxx漢漢漢漢xx漢x漢漢x漢漢x漢x漢漢xx漢漢漢xxx漢漢漢x漢xxxxx漢x漢xx漢漢漢漢漢xxx漢x漢x漢xx漢x漢x漢xx漢xxxxxx漢漢漢漢漢xxx漢x漢x漢xxx漢漢xxxx漢xx漢漢xxx漢漢xx漢漢漢漢漢漢漢漢漢漢x漢漢漢xx漢漢x漢xxx漢x漢x漢x漢漢xxxxxx漢漢xxx漢'.encode() if mode=='wide' else b'x'*90) if mode in ('wide','long') else b'\x01'*170 if mode=='control-echo' else b'x'*900 if mode=='scroll' else b'' if mode=='default-long' else b'work')+b'\n')
         wait(b'Credential: ')
-        if mode not in ('typed-ahead','typed-ahead-two'): answerReady()
-        if mode!='typed-ahead': echo(False)
+        if mode not in ('typed-ahead','typed-ahead-two','echo-off-typed-ahead'): answerReady()
+        if mode not in ('typed-ahead','echo-off-typed-ahead'): echo(False)
         if mode=='suspend':
             p.send_signal(signal.SIGTSTP)
             while True:
@@ -246,7 +268,7 @@ try:
         sig={'interrupt':signal.SIGINT,'term':signal.SIGTERM,'hup':signal.SIGHUP,'quit':signal.SIGQUIT}.get(mode)
         if sig: p.send_signal(sig)
         elif mode=='secret-eof': os.write(master,termios.tcgetattr(slave)[6][termios.VEOF])
-        elif mode!='typed-ahead': os.write(master,b'synthetic-secret\n')
+        elif mode not in ('typed-ahead','echo-off-typed-ahead'): os.write(master,b'synthetic-secret\n')
     while p.poll() is None:
         if time.monotonic()>deadline: raise RuntimeError('child exit',output[-1500:])
         read()
@@ -256,12 +278,12 @@ try:
         if time.monotonic()>deadline: raise RuntimeError("drain timeout",output[-1500:])
         read()
     output=output.replace(marker,b"")
-    expected={'eof':1,'secret-eof':1,'interrupt':130,'term':143,'hup':129,'quit':131}.get(mode,0)
+    expected={'eof':1,'echo-off-empty-eof':1,'secret-eof':1,'interrupt':130,'term':143,'hup':129,'quit':131}.get(mode,0)
     assert p.returncode==expected,(p.returncode,expected,output[-1500:])
-    assert termios.tcgetattr(slave)[3] & termios.ECHO,'echo not restored'
+    assert termios.tcgetattr(slave)==initialModes,'terminal modes not restored'
     if mode!='typed-ahead': assert b'synthetic-secret' not in output,'hidden input echoed'
     assert b'\x1b[?1049' not in output or mode=='pager','setup used alternate screen'
-    if mode=='final-answer-eof':
+    if mode in ('final-answer-eof','echo-off-eof'):
         profile=output[output.index(b'Profile [work]: '):output.index(b'Credential: ')]
         assert b'\r\n\x1b[2m'+ '✓ Profile work'.encode() in profile,'final EOF receipt shares input row: '+repr(profile)
         assert b'\x1b[2K' not in profile,'final EOF erased unowned rows'
@@ -270,10 +292,18 @@ try:
         assert 'DONE' in view,view
         assert 'Credential received' in view,view
         assert 'Provider Amazon S3' in view,view
-        if mode in ('normal','no-color','default-long'):
+        if mode.startswith('echo-off') or mode.startswith('newline-only'):
+            assert 'UNRELATED SENTINEL' in view,view
+            assert 'Choose [2]:' not in view[view.index('DONE'):],view
+            assert 'Profile [work]:' not in view[view.index('DONE'):],view
+            assert 'synthetic-secret' not in view,view
+        if mode in ('normal','no-color','default-long','echo-off','newline-only','newline-only-long','echo-off-long'):
             assert 'Where should your archive live?' not in view,view
             assert 'AWS profile' not in view,view
             assert 'Secret access key' not in view,view
+        if mode=='echo-off-static':
+            assert b'\x1b[' not in output,output
+            assert '> Profile [work]: \r\nOK Profile work' in output.decode(),output
         if mode=='no-color': assert b'\x1b[1m' not in output and b'\x1b[2m' not in output,'NO_COLOR styled text'
         if mode in ('wide','long'):
             assert 'AWS profile' in view,view

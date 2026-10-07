@@ -64,8 +64,12 @@ ordinary scrollback. Setup never opens an alternate screen for prompts.
 On a real input terminal, ordinary block emission temporarily suppresses only
 echo, retaining canonical editing, EOF and signal processing. Echo is restored
 before checking for a complete answer entered during the write; such an answer
-gets a static receipt on its own line. Partial canonical input cannot be probed
-without consuming it, so emission starts at column zero and completion assumes
+gets a static receipt on its own line. The renderer preserves the original
+ECHO and ECHONL settings. It counts ordinary answer wraps only when character
+echo is enabled, and supplies the receipt newline when newline echo is disabled.
+Canonical echo-off prompts still collapse when region ownership is proven;
+static and final EOF receipts begin on their own row. Partial canonical input
+cannot be probed without consuming it, so emission starts at column zero and completion assumes
 its echoed extent is unknown. Short answers and defaults can still collapse;
 an ordinary answer that could wrap from the cursor retains the question and
 appends its receipt. The same buffer retains complete and partial typed-ahead

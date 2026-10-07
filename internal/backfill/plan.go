@@ -111,11 +111,14 @@ type work struct {
 	duplicated bool
 	duplicate  bool
 	// Adapter outcomes.
-	empty         bool
-	unsafe        bool
-	sourceChanged bool
-	tooLarge      bool
-	sourceErr     error
+	empty            bool
+	unsafe           bool
+	sourceChanged    bool
+	tooLarge         bool
+	sourceErr        error
+	workspaceCurrent func(context.Context) bool
+	proposedWitness  bool
+	validated        bool
 }
 
 // subagentWork is one subagent transcript of an imported parent.
@@ -197,6 +200,11 @@ func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg con
 		return Plan{}, err
 	}
 
+	for _, w := range items {
+		if w.res.proof != nil && !w.res.included && !r.proposedRootEligible(w.res.root) {
+			w.res = resolution{skip: SkipWorktreeUnresolved}
+		}
+	}
 	if err := finalizePlanWork(ctx, env, items, &unread, since, until, now, workers); err != nil {
 		return Plan{}, err
 	}
@@ -246,6 +254,9 @@ func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg con
 		}
 		return a.SourceKey < b.SourceKey
 	})
+	if err := bindRecoveryPolicy(cfg, &plan); err != nil {
+		return Plan{}, err
+	}
 	return plan, nil
 }
 
@@ -262,7 +273,8 @@ func preparePlanWork(ctx context.Context, env Environment, cfg config.Config, fi
 	}
 	var items []*work
 	var err error
-	unread, err = enumerateDiscovery(ctx, env, agentapi.DiscoveryImport, func(c agentapi.DiscoveryCandidate) error {
+	inventory := newRecoverySourceInventory(env)
+	unread, err = enumerateDiscovery(ctx, inventory.environment(), agentapi.DiscoveryImport, func(c agentapi.DiscoveryCandidate) error {
 		t := &transcript{harness: harness(c.Session.Agent), path: c.Source.Path, size: c.Bytes, nativeID: c.Session.NativeID, cwd: c.Header.Directory, repoKey: c.Header.RepoKey, metaStart: c.Header.StartedAt, identityMismatch: c.Header.IdentityMismatch, capturePending: c.Header.CapturePending != "", cursorSlug: c.WorkspaceKey, sourcePriority: c.SourcePriority, sourceInfo: c.SourceInfo}
 		w := &work{t: t, c: Candidate{Harness: string(c.Session.Agent), TranscriptPath: t.path, SourceKind: c.Source.Kind, SourceKey: c.Source.Key, Bytes: t.size, NativeSessionID: t.nativeID}, unsafe: c.IdentityError != nil}
 		w.checkSource(env)
@@ -279,6 +291,7 @@ func preparePlanWork(ctx context.Context, env Environment, cfg config.Config, fi
 		return nil, nil, unread, workers, err
 	}
 	r := newResolver(env, cfg, filters)
+	r.inventoryCurrent = inventory.current
 	var cursorCandidates []string
 	for _, p := range cfg.Archive.Projects {
 		cursorCandidates = append(cursorCandidates, p.Root)
@@ -291,7 +304,33 @@ func preparePlanWork(ctx context.Context, env Environment, cfg config.Config, fi
 		// A settled rewrite during discovery or Git lookup cannot become a new
 		// baseline for attribution from the earlier header.
 		w.checkSource(env)
-		if w.sourceChanged || w.vanished || w.tooLarge {
+		if w.sourceChanged || w.vanished {
+			continue
+		}
+		w.res = r.resolve(w.t.cwd)
+		w.checkSource(env)
+		if w.t.cwd != "" {
+			cursorCandidates = append(cursorCandidates, w.t.cwd)
+		}
+		if w.res.root != "" {
+			cursorCandidates = append(cursorCandidates, w.res.root)
+		}
+	}
+	if err := resolveWorkspaceWitnesses(ctx, env, r, items, cursorCandidates); err != nil {
+		return nil, nil, unread, workers, err
+	}
+
+	dbWitnesses, dbIncomplete, err := prepareCursorRecoveryWitnesses(ctx, env, r, items, unread)
+	if err != nil {
+		return nil, nil, unread, workers, err
+	}
+	prepareRecoveryInventory(ctx, r, append(slices.Clone(items), dbWitnesses...), unread, dbIncomplete)
+	for _, w := range items {
+		if w.t.cursorSlug != "" || w.vanished || w.sourceChanged || w.tooLarge {
+			continue
+		}
+		w.checkSource(env)
+		if w.sourceChanged || w.vanished {
 			continue
 		}
 		w.res = r.resolveEvidence(ctx, w.t.cwd, w.t.repoKey)
@@ -302,14 +341,15 @@ func preparePlanWork(ctx context.Context, env Environment, cfg config.Config, fi
 				return w.sourceCurrent(env) && base.valid()
 			}}
 		}
-		if w.t.cwd != "" {
-			cursorCandidates = append(cursorCandidates, w.t.cwd)
-		}
-		if w.res.root != "" {
-			cursorCandidates = append(cursorCandidates, w.res.root)
-		}
 	}
+	return items, r, unread, workers, nil
+}
+
+// resolveWorkspaceWitnesses retains one renewed matcher per agent and slice.
+func resolveWorkspaceWitnesses(ctx context.Context, env Environment, r *resolver, items []*work, cursorCandidates []string) error {
 	matchers := map[string]*workspaceMatcher{}
+	freshMatchers := map[string]*workspaceMatcher{}
+	r.workspaceReset = func() { freshMatchers = map[string]*workspaceMatcher{} }
 	for _, w := range items {
 		if w.t.cursorSlug == "" {
 			continue
@@ -322,16 +362,25 @@ func preparePlanWork(ctx context.Context, env Environment, cfg config.Config, fi
 		}
 		folder, ok, err := matcher.match(ctx, w.t.cursorSlug)
 		if err != nil {
-			return nil, nil, unread, workers, err
+			return err
 		}
 		if ok {
 			w.res = r.resolve(folder)
+			w.workspaceCurrent = func(ctx context.Context) bool {
+				fresh := freshMatchers[name]
+				if fresh == nil {
+					fresh = &workspaceMatcher{env: env, agent: name, candidates: cursorCandidates}
+					freshMatchers[name] = fresh
+				}
+				current, matched, err := fresh.match(ctx, w.t.cursorSlug)
+				return err == nil && matched && env.resolved(current) == env.resolved(folder)
+			}
 		} else {
 			w.res = resolution{skip: SkipProjectUnknown}
 		}
 	}
 
-	return items, r, unread, workers, nil
+	return nil
 }
 
 // classifyPlanWork asks the archive about native IDs, then reads full
@@ -416,10 +465,10 @@ func selectAdapterWork(items []*work, since, until time.Time) []*work {
 	dated := !since.IsZero() || !until.IsZero()
 	var selected []*work
 	for _, w := range items {
-		if w.vanished || w.state == SkipAlreadyArchived || w.tooLarge || w.unsafe || w.sourceChanged || w.t.capturePending {
+		if w.vanished || (w.state == SkipAlreadyArchived && !w.proposedWitness) || w.tooLarge || w.unsafe || w.sourceChanged || w.t.capturePending {
 			continue
 		}
-		if w.duplicated || (w.state == "" && !w.filtered && (dated || (w.res.skip == "" && !w.t.identityMismatch))) {
+		if w.proposedWitness || w.duplicated || (w.state == "" && !w.filtered && (dated || (w.res.skip == "" && !w.t.identityMismatch))) {
 			selected = append(selected, w)
 		}
 	}
@@ -650,6 +699,7 @@ func applyImportInspection(ctx context.Context, inspector agentapi.ImportInspect
 		w.unsafe = true
 		return
 	}
+	w.validated = true
 	w.empty = !observed.Conversation
 	w.t.identityMismatch = w.t.identityMismatch || observed.IdentityMismatch
 	if !observed.StartedAt.IsZero() {
