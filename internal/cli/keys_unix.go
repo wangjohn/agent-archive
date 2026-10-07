@@ -241,6 +241,18 @@ func newPromptLineGuard(fd int, onSuspend func()) *promptLineGuard {
 	return g
 }
 
+// echoSuppressed records the user's modes before temporary prompt muting.
+// ECHONL can echo only the newline even when ordinary character echo is off.
+func (g *promptLineGuard) echoSuppressed() (characters, newline bool, err error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	modes, err := unix.IoctlGetTermios(g.fd, ioctlGetTermios)
+	if err != nil {
+		return false, false, err
+	}
+	return modes.Lflag&unix.ECHO == 0, modes.Lflag&(unix.ECHO|unix.ECHONL) == 0, nil
+}
+
 func (g *promptLineGuard) hidden() (func(), error) {
 	return g.hideEcho(true)
 }
