@@ -29,6 +29,8 @@ import (
 // the configuration no longer publishes is the caller's to leave out (see
 // config.Config.AcceptSession); Outstanding does not read the configuration.
 type Outstanding struct {
+	// Removal is unfinished authorized deletion; it is not an upload.
+	Removal bool
 	// Stage is admitted evidence whose verified publication/release is unfinished.
 	Stage bool
 	// Requested: a hook or import request is queued and not yet
@@ -68,7 +70,7 @@ func (o Outstanding) Owed() bool {
 // OwedAfterScan is Owed without the scan journal: what decides, once a scan
 // has run, whether its journal entry may be cleared.
 func (o Outstanding) OwedAfterScan() bool {
-	return o.Stage || o.Requested || o.Upload || o.RateLimited
+	return o.Removal || o.Stage || o.Requested || o.Upload || o.RateLimited
 }
 
 // DefersExpiry reports work that postpones the session's expiry: a queued
@@ -132,7 +134,13 @@ func (s *Store) Outstanding(reg archive.SessionRegistration, requested bool) (Ou
 		}
 		stage = !released
 	}
+	j, haveDeletion, err := s.LoadSessionDeletion(reg)
+	if err != nil {
+		return Outstanding{Removal: true}, err
+	}
+	removal := haveDeletion && !j.LocalRemoved && j.Phase != "restored" && j.Phase != "restoring"
 	o := Outstanding{
+		Removal:       removal,
 		Stage:         stage,
 		Requested:     requested,
 		Scan:          scan,

@@ -246,7 +246,16 @@ func (s *Store) admissionStageUsage() (int64, error) {
 	if stages > AdmissionStageQuota-temporary || pending > AdmissionStageQuota-temporary-stages {
 		return 0, ErrAdmissionStageCapacity
 	}
-	return temporary + stages + pending, nil
+	controls, err := s.deletionControlUsage()
+	if err != nil {
+		return 0, err
+	}
+	charge := deletionControlCharge(controls)
+	used := temporary + stages + pending
+	if charge > AdmissionStageQuota-used {
+		return 0, ErrAdmissionStageCapacity
+	}
+	return used + charge, nil
 }
 
 func (s *Store) stageQuotaUsage() (int64, error) {

@@ -54,16 +54,16 @@ func (s *Store) removeDurableSessionEvidence(reg archive.SessionRegistration) (e
 	if !found || j.Phase != "cleaned" {
 		return ErrAdmissionStageRecovery
 	}
-	unlock, err := s.namedLockWait("temporary-quota", time.Second)
-	if err != nil {
-		return err
-	}
-	defer unlock()
 	root, err := os.OpenRoot(s.home)
 	if err != nil {
 		return err
 	}
 	defer func() { err = errors.Join(err, root.Close()) }()
+	unlock, err := temporaryQuotaLock(root, time.Second)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	// Do not follow a corrupt stage directory or remove another reservation.
 	if _, err = s.stagePath(reg.ArchiveSessionID, ".json"); err != nil {
 		return err

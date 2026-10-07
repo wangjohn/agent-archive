@@ -14,7 +14,11 @@ import (
 
 // DeleteOwnedSession journals a metadata-first deletion for the unsynced local
 // owner. A hook arriving during retention keeps sources for exact restoration.
+
 func DeleteOwnedSession(ctx context.Context, local *state.Store, store storage.ObjectStore, reg archive.SessionRegistration, reason state.RemovalReason, now time.Time) error {
+	return deleteOwnedAtDecision(ctx, local, store, reg, reason, now, nil)
+}
+func deleteOwnedAtDecision(ctx context.Context, local *state.Store, store storage.ObjectStore, reg archive.SessionRegistration, reason state.RemovalReason, now time.Time, token *string) error {
 	key, err := archive.MetadataObjectKey(reg.Harness.Name, reg.ArchiveSessionID)
 	if err != nil {
 		return err
@@ -33,7 +37,11 @@ func DeleteOwnedSession(ctx context.Context, local *state.Store, store storage.O
 		if err = checkDeletionMetadata(raw); err != nil {
 			return err
 		}
-		j, err = local.PrepareSessionDeletion(reg, reason, raw, now)
+		if reason == state.RemovalReasonRetention && token != nil {
+			j, err = local.PrepareRetentionDeletion(reg, raw, now, *token)
+		} else {
+			j, err = local.PrepareSessionDeletion(reg, reason, raw, now)
+		}
 		if err != nil {
 			return err
 		}

@@ -42,7 +42,7 @@ func TestSessionDeletionRemovesIndividuallyOwnedStagesAndOriginalEvidence(t *tes
 			t.Fatal("explicitly removed evidence remains", path, err)
 		}
 	}
-	if usage, err := s.admissionStageUsage(); err != nil || usage != 0 {
+	if usage, err := s.admissionStageUsage(); err != nil || usage != deletionControlAllowance {
 		t.Fatal("removed evidence still charged", usage, err)
 	}
 }
@@ -118,6 +118,14 @@ func TestSessionDeletionInterruptedRootedCleanupRetainsOwnerAndResumes(t *testin
 	if err = os.WriteFile(outsideFile, []byte("unrelated bytes"), 0600); err != nil {
 		t.Fatal(err)
 	}
+	if _, err = s.PrepareSessionDeletion(reg, RemovalReasonUndo, nil, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	for _, phase := range []string{"deleting", "absent", "cleaned"} {
+		if err = s.AdvanceSessionDeletion(reg, phase); err != nil {
+			t.Fatal(err)
+		}
+	}
 	link := filepath.Join(s.home, publicationEvidenceDir, reg.ArchiveSessionID, "corrupt-link")
 	if err = os.Symlink(outsideFile, link); err != nil {
 		t.Fatal(err)
@@ -188,5 +196,58 @@ func TestSessionDeletionCleansOnlyOwnedScratchReservations(t *testing.T) {
 	}
 	if used, err := s.temporaryUsage(); err != nil || used != 1024+temporaryControlBytes {
 		t.Fatal("unrelated charge lost", used, err)
+	}
+}
+
+func TestSessionDeletionTerminalBookkeepingAndLostOwnerRecovery(t *testing.T) {
+	for _, completed := range []bool{false, true} {
+		t.Run(map[bool]string{false: "crash lost registration", true: "complete local removal"}[completed], func(t *testing.T) {
+			s, reg, _ := stageFixture(t)
+			if err := s.SaveRegistration(reg); err != nil {
+				t.Fatal(err)
+			}
+			if completed {
+				key, _ := agentmeta.NewSessionKey(reg.Harness.Name, reg.NativeSessionID)
+				if err := s.ForgetSession(reg.ArchiveSessionID, key); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				if _, err := s.PrepareSessionDeletion(reg, RemovalReasonUndo, nil, time.Now()); err != nil {
+					t.Fatal(err)
+				}
+				for _, phase := range []string{"deleting", "absent", "cleaned"} {
+					if err := s.AdvanceSessionDeletion(reg, phase); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if err := os.Remove(s.registrationPath(reg.ArchiveSessionID)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			restarted, err := Open(s.home)
+			if err != nil {
+				t.Fatal(err)
+			}
+			journal, found, err := restarted.LoadSessionDeletion(reg)
+			if err != nil || !found || journal.LocalRemoved != completed {
+				t.Fatal("terminal proof changed", journal, err)
+			}
+			orphans, err := restarted.OrphanedSessions(nil)
+			if err != nil || (len(orphans) == 0) != completed {
+				t.Fatal("terminal versus lost-owner status incorrect", orphans, err)
+			}
+			if err := restarted.DeletionCaptureAllowed(reg, Request{Token: "new-stale-hook", Reasons: []string{"stop"}, RequestedAt: time.Now().Add(time.Hour)}); !errors.Is(err, ErrAdmissionStageRecovery) {
+				t.Fatal("tombstone permitted stale resurrection", err)
+			}
+			if completed {
+				if err := os.WriteFile(s.pendingPath(reg.ArchiveSessionID), []byte("corrupt newly surviving state"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				orphans, err = restarted.OrphanedSessions(nil)
+				if err != nil || len(orphans) != 1 {
+					t.Fatal("terminal flag hid newly surviving evidence", orphans, err)
+				}
+			}
+		})
 	}
 }

@@ -28,7 +28,7 @@ func TestTemporaryReservationPersistsAndCleansOwnedScratch(t *testing.T) {
 	}
 	restarted := OpenReadOnly(s.Home())
 	used, err := restarted.admissionStageUsage()
-	if err != nil || used != 128<<20+temporaryControlBytes {
+	if err != nil || used != 128<<20+temporaryControlBytes+deletionControlAllowance {
 		t.Fatal(used, err)
 	}
 	duplicate, err := NewTemporaryReservation(restarted, CursorAdmission, "synthetic")
@@ -66,7 +66,7 @@ func TestTemporaryReservationQuotaBeforeAllocationAndOrphans(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = r.Close() }()
-	if err = r.Reserve(AdmissionStageQuota - temporaryControlBytes); err != nil {
+	if err = r.Reserve(AdmissionStageQuota - temporaryControlBytes - deletionControlAllowance); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = s.PrepareAdmissionStage(reg, bundle, "none", reg.AdmittedAt); !errors.Is(err, ErrAdmissionStageCapacity) {
@@ -248,7 +248,7 @@ func TestTemporaryReleaseSyncFailureRestoresVisibleCharge(t *testing.T) {
 		t.Fatal("lost cleanup failure", err)
 	}
 	used, err := OpenReadOnly(s.Home()).admissionStageUsage()
-	if err != nil || used != 4096+temporaryControlBytes {
+	if err != nil || used != 4096+temporaryControlBytes+deletionControlAllowance {
 		t.Fatal("failed cleanup lost durable charge", used, err)
 	}
 }

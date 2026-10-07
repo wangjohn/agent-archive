@@ -66,7 +66,7 @@ func (s *Store) readDeletionFile(id string) (out []byte, err error) {
 	if err != nil {
 		return nil, err
 	}
-	if !info.Mode().IsRegular() || info.Size() > stageManifestLimit {
+	if !info.Mode().IsRegular() || info.Size() > deletionControlLimit {
 		return nil, ErrAdmissionStageRecovery
 	}
 	h, err := dir.Open(name)
@@ -78,25 +78,38 @@ func (s *Store) readDeletionFile(id string) (out []byte, err error) {
 	if err != nil || !os.SameFile(info, opened) {
 		return nil, ErrAdmissionStageRecovery
 	}
-	out, err = io.ReadAll(io.LimitReader(h, stageManifestLimit+1))
+	out, err = io.ReadAll(io.LimitReader(h, deletionControlLimit+1))
 	if err != nil {
 		return nil, err
 	}
 	after, err := dir.Lstat(name)
-	if err != nil || int64(len(out)) > stageManifestLimit || !os.SameFile(opened, after) || opened.Size() != after.Size() || !opened.ModTime().Equal(after.ModTime()) {
+	if err != nil || int64(len(out)) > deletionControlLimit || !os.SameFile(opened, after) || opened.Size() != after.Size() || !opened.ModTime().Equal(after.ModTime()) {
 		return nil, ErrAdmissionStageRecovery
 	}
 	return out, nil
 }
-func (s *Store) writeDeletionFile(id string, raw []byte) (err error) {
-	if int64(len(raw)) > stageManifestLimit {
+func (s *Store) writeDeletionFile(id string, raw []byte) error {
+	return s.writeDeletionFileChecked(id, raw, nil)
+}
+func (s *Store) writeDeletionFileChecked(id string, raw []byte, check func() error) (err error) {
+	if int64(len(raw)) > deletionControlLimit {
 		return ErrAdmissionStageCapacity
 	}
-	unlock, err := s.namedLockWait("session-deletions.lock", time.Second)
+	root, err := os.OpenRoot(s.home)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, root.Close()) }()
+	unlock, err := temporaryQuotaLock(root, time.Second)
 	if err != nil {
 		return err
 	}
 	defer unlock()
+	rooted := *s
+	rooted.quotaRoot = root
+	if err = rooted.checkDeletionWriteCapacity(int64(len(raw))); err != nil {
+		return err
+	}
 	dir, err := s.openDeletionDirectory(true)
 	if err != nil {
 		return err
@@ -125,7 +138,7 @@ func (s *Store) writeDeletionFile(id string, raw []byte) (err error) {
 	if err != nil {
 		return err
 	}
-	if err = dir.Rename(temp, id+".json"); err != nil {
+	if err = s.commitDeletionFile(dir, id, temp, check); err != nil {
 		return err
 	}
 	h, err = dir.Open(".")
@@ -133,4 +146,19 @@ func (s *Store) writeDeletionFile(id string, raw []byte) (err error) {
 		return err
 	}
 	return errors.Join(h.Sync(), h.Close())
+}
+
+func (s *Store) commitDeletionFile(dir *os.Root, id, temp string, check func() error) error {
+	if check == nil {
+		return dir.Rename(temp, id+".json")
+	}
+	unlock, err := s.lockRequest(id)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if err = check(); err != nil {
+		return err
+	}
+	return dir.Rename(temp, id+".json")
 }

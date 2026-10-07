@@ -21,7 +21,7 @@ func TestPublicationEvidenceQuotaPrivateRestartAndReplacement(t *testing.T) {
 		t.Fatal(info, err)
 	}
 	used, err := s.admissionStageUsage()
-	if err != nil || used != publicationEvidenceControl+2*int64(len(raw)) {
+	if err != nil || used != deletionControlAllowance+publicationEvidenceControl+2*int64(len(raw)) {
 		t.Fatal(used, err)
 	}
 	restarted := OpenReadOnly(s.Home())
@@ -43,7 +43,7 @@ func TestPublicationEvidenceQuotaPrivateRestartAndReplacement(t *testing.T) {
 	if _, err = restarted.ReadPublicationEvidence("synthetic"); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal(err)
 	}
-	if used, err = restarted.admissionStageUsage(); err != nil || used != 0 {
+	if used, err = restarted.admissionStageUsage(); err != nil || used != deletionControlAllowance {
 		t.Fatal("cleanup not reflected", used, err)
 	}
 }
@@ -92,7 +92,7 @@ func TestPublicationEvidenceOrphansRemainChargedWithoutBodyReads(t *testing.T) {
 		t.Fatal(err)
 	}
 	used, err := s.admissionStageUsage()
-	if err != nil || used != publicationEvidenceControl+2*int64(len("retained")) || reads != 0 {
+	if err != nil || used != deletionControlAllowance+publicationEvidenceControl+2*int64(len("retained")) || reads != 0 {
 		t.Fatal(used, reads, err)
 	}
 }

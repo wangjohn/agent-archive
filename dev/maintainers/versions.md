@@ -164,3 +164,21 @@ the older whole-session undo primitive does not validate that schema. This is
 not safe downgrading of copied same-owner state. Independently paired peers do
 not own another machine's local batches; coordinate every destination writer's
 upgrade before enabling retained history or using global archive cleanup.
+
+Deletion control accounting reserves 64 KiB once inside the existing 1 GiB
+stage/scratch/pending/original-evidence pool. Each journal is limited to 32 KiB;
+the charge is the larger of that shared allowance and every retained control's
+actual bytes, including atomic old/new coexistence, corrupt files and orphan
+temporaries. A full legacy pool has no extra cleanup space: mandatory intent
+fails closed before writing or freeing evidence. Rooted scans reuse the bounded
+quota inventory and read sizes, not unrelated source bodies. These are accounted
+file payload/reservation bytes, not measurements of filesystem metadata overhead.
+
+A checksummed `local_removed` flag marks a cleaned deletion tombstone only after
+all original owner local records, index and packed-removal commits finish.
+Terminal bookkeeping remains charged but is not outstanding upload work. A
+nonterminal or corrupt lost-owner control remains recovery work; native bytes
+cannot replace it. Surviving or newly recreated local evidence invalidates the
+finished classification. Stale hooks cannot resurrect a terminal owner; later
+explicit reimport needs separate authority. Restored controls retain the exact
+local selecting successor proof and replace in place, never as an append log.

@@ -150,8 +150,10 @@ func Sweep(ctx context.Context, local *state.Store, store storage.ObjectStore, o
 		return Result{}, err
 	}
 	s.requested = make(map[string]bool, len(requests))
+	s.requestTokens = make(map[string]string, len(requests))
 	for _, req := range requests {
 		s.requested[req.ArchiveSessionID] = true
+		s.requestTokens[req.ArchiveSessionID] = req.Token
 	}
 	for id, issue := range requestIssues {
 		s.result.Errors[id] = issue
@@ -262,19 +264,23 @@ func (s *sweeper) orphan(id string) error {
 // sweeper is one Sweep: its inputs, the clock verdict it reaches at most
 // once, and its result.
 type sweeper struct {
-	ctx         context.Context
-	local       *state.Store
-	store       storage.ObjectStore
-	opts        Options
-	now         time.Time
-	metadataSHA string
-	requested   map[string]bool
-	clock       clockVerdict
-	result      Result
+	ctx           context.Context
+	local         *state.Store
+	store         storage.ObjectStore
+	opts          Options
+	now           time.Time
+	metadataSHA   string
+	requestTokens map[string]string
+	requested     map[string]bool
+	clock         clockVerdict
+	result        Result
 }
 
 // session sweeps one registered session.
 func (s *sweeper) session(reg archive.SessionRegistration) error {
+	if handled, err := s.resumeDeletion(reg); handled || err != nil {
+		return err
+	}
 	id := reg.ArchiveSessionID
 	summary, found, err := s.local.LoadPublishedSummary(id)
 	if err != nil {
@@ -455,7 +461,14 @@ func (s *sweeper) remote(reg archive.SessionRegistration, summary state.Publishe
 		if !s.clockAllowsDeletion() {
 			return nil
 		}
-		if err := DeleteOwnedSession(s.ctx, s.local, s.store, reg, state.RemovalReasonRetention, s.now); err != nil {
+		token := ""
+		if !deferForWork {
+			token = s.requestTokens[id]
+		}
+		if err := deleteOwnedAtDecision(s.ctx, s.local, s.store, reg, state.RemovalReasonRetention, s.now, &token); err != nil {
+			if errors.Is(err, state.ErrDeletionWorkChanged) {
+				return nil
+			}
 			return fmt.Errorf("delete session: %w", err)
 		}
 		// The remote deletion takes network time and is not done under the
@@ -599,6 +612,20 @@ func (s *sweeper) forget(reg archive.SessionRegistration, deferForWork bool, int
 	if !s.clockAllowsDeletion() {
 		return nil
 	}
+	if _, have, err := s.local.LoadSessionDeletion(reg); err != nil {
+		return err
+	} else if !have {
+		token := ""
+		if !deferForWork {
+			token = s.requestTokens[reg.ArchiveSessionID]
+		}
+		if _, err := s.local.PrepareRetentionDeletion(reg, nil, s.now, token); err != nil {
+			if errors.Is(err, state.ErrDeletionWorkChanged) {
+				return nil
+			}
+			return err
+		}
+	}
 	forgotten, err := forgetExpired(s.local, reg, deferForWork, s.now)
 	if forgotten {
 		*into = append(*into, reg.ArchiveSessionID)
@@ -638,4 +665,42 @@ func anySupersededExpirable(superseded []state.SupersededSource, now time.Time, 
 		}
 	}
 	return false
+}
+
+// resumeDeletion honors an existing exact intent before ordinary age/request
+// deferrals. Newer retention requests keep their evidence for restoration.
+func (s *sweeper) resumeDeletion(reg archive.SessionRegistration) (bool, error) {
+	j, found, err := s.local.LoadSessionDeletion(reg)
+	if err != nil {
+		return true, err
+	}
+	if !found || j.Phase == "restored" || j.Phase == "restoring" {
+		return false, nil
+	}
+	if j.LocalRemoved {
+		return true, state.ErrAdmissionStageRecovery
+	}
+	if j.MetadataSHA256 != "" && s.opts.CurrentDestination != nil && !s.opts.CurrentDestination(reg) {
+		return true, state.ErrAdmissionStageRecovery
+	}
+	if j.MetadataSHA256 != "" {
+		if err := DeleteOwnedSession(s.ctx, s.local, s.store, reg, j.Reason, s.now); err != nil {
+			return true, err
+		}
+	}
+	if j.Reason == state.RemovalReasonRetention {
+		req, have, err := s.local.LoadRequest(reg.ArchiveSessionID)
+		if err != nil {
+			return true, err
+		}
+		if have && req.Token != j.RequestToken {
+			return true, nil
+		}
+	}
+	key := agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(reg.Harness.Name)), NativeID: reg.NativeSessionID}
+	forgotten, err := s.local.ForgetIdleSession(reg.ArchiveSessionID, key, j.Reason == state.RemovalReasonRetention, &state.RemovalRecord{Harness: reg.Harness.Name, Reason: j.Reason, At: j.At})
+	if forgotten {
+		s.result.DeletedSessions = append(s.result.DeletedSessions, reg.ArchiveSessionID)
+	}
+	return true, err
 }

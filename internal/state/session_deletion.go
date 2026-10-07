@@ -11,9 +11,13 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 )
 
+var ErrDeletionWorkChanged = errors.New("session work changed before removal; retry after processing the newer request")
+
 // SessionDeletion retains exact whole-session deletion authority across crashes.
 // It is not permission to publish; only retention may authorize a newer hook.
 type SessionDeletion struct {
+	CoveredRequest    bool                      `json:"covered_request,omitempty"`
+	LocalRemoved      bool                      `json:"local_removed,omitempty"`
 	Version           int                       `json:"version"`
 	Owner             string                    `json:"owner"`
 	Reason            RemovalReason             `json:"reason"`
@@ -63,6 +67,12 @@ func (s *Store) LoadSessionDeletion(reg archive.SessionRegistration) (SessionDel
 	if json.Unmarshal(b, &j) != nil || j.Version != 1 || j.Owner != deletionOwner(reg) || j.At.IsZero() || j.Checksum != deletionChecksum(j) || (j.Reason != RemovalReasonRetention && j.Reason != RemovalReasonUndo) {
 		return j, true, ErrAdmissionStageRecovery
 	}
+	if j.CoveredRequest && (j.Reason != RemovalReasonRetention || j.RequestToken == "") {
+		return j, true, ErrAdmissionStageRecovery
+	}
+	if j.LocalRemoved && j.Phase != "cleaned" {
+		return j, true, ErrAdmissionStageRecovery
+	}
 	switch j.Phase {
 	case "prepared", "deleting", "absent", "cleaned", "restoring", "restored":
 	default:
@@ -87,7 +97,23 @@ func (s *Store) LoadSessionDeletion(reg archive.SessionRegistration) (SessionDel
 }
 
 // PrepareSessionDeletion journals reviewed exact selecting metadata before removal.
+
 func (s *Store) PrepareSessionDeletion(reg archive.SessionRegistration, reason RemovalReason, raw []byte, at time.Time) (SessionDeletion, error) {
+	var expected *string
+	if reason == RemovalReasonRetention {
+		empty := ""
+		expected = &empty
+	}
+	return s.prepareDeletionAtRequest(reg, reason, raw, at, expected)
+}
+
+// PrepareRetentionDeletion binds an already reviewed expiry decision to its
+// exact queued token. The caller holds collector.lock; changed work defers.
+func (s *Store) PrepareRetentionDeletion(reg archive.SessionRegistration, raw []byte, at time.Time, decisionToken string) (SessionDeletion, error) {
+	return s.prepareDeletionAtRequest(reg, RemovalReasonRetention, raw, at, &decisionToken)
+}
+
+func (s *Store) prepareDeletionAtRequest(reg archive.SessionRegistration, reason RemovalReason, raw []byte, at time.Time, expected *string) (SessionDeletion, error) {
 	if j, found, err := s.LoadSessionDeletion(reg); err != nil {
 		return j, err
 	} else if found {
@@ -139,8 +165,14 @@ func (s *Store) PrepareSessionDeletion(reg archive.SessionRegistration, reason R
 	if err != nil {
 		return j, err
 	}
-	if found {
+	if expected != nil {
+		j.RequestToken = *expected
+		j.CoveredRequest = *expected != ""
+	} else if found {
 		j.RequestToken = req.Token
+	}
+	if expected != nil {
+		return j, s.saveDeletionAtRequest(reg, j, *expected)
 	}
 	return j, s.saveSessionDeletion(reg, j)
 }
@@ -184,7 +216,7 @@ func (s *Store) RestoreAfterRetention(reg archive.SessionRegistration, p Pending
 	if j.Phase == "restored" {
 		return p, false, nil
 	}
-	if j.Reason != RemovalReasonRetention || (j.Phase != "absent" && j.Phase != "cleaned" && j.Phase != "restoring") || p.Commit == nil || p.Commit.Predecessor != PredecessorPresent || p.Commit.PredecessorSHA256 != j.MetadataSHA256 || p.Commit.DestinationID != reg.DestinationID || p.Commit.Purpose != PublicationCapture || p.RequestToken == "" || p.RequestToken == j.RequestToken {
+	if j.LocalRemoved || j.Reason != RemovalReasonRetention || (j.Phase != "absent" && j.Phase != "cleaned" && j.Phase != "restoring") || p.Commit == nil || p.Commit.Predecessor != PredecessorPresent || p.Commit.PredecessorSHA256 != j.MetadataSHA256 || p.Commit.DestinationID != reg.DestinationID || p.Commit.Purpose != PublicationCapture || p.RequestToken == "" || p.RequestToken == j.RequestToken {
 		return p, false, ErrAdmissionStageRecovery
 	}
 	if err = p.ValidatePublication(); err != nil {
@@ -251,6 +283,9 @@ func (s *Store) DeletionCaptureAllowed(reg archive.SessionRegistration, req Requ
 	if err != nil || !found {
 		return err
 	}
+	if j.LocalRemoved {
+		return ErrAdmissionStageRecovery
+	}
 	if j.Phase == "restored" {
 		return nil
 	}
@@ -284,14 +319,36 @@ func (s *Store) HasDurableSessionEvidence(id string) (bool, error) {
 	if owed, err := s.HasPending(id); err != nil || owed {
 		return owed, err
 	}
-	path, err := s.stagePath(id, ".json")
+	if !safeFileComponent(id) {
+		return true, ErrAdmissionStageRecovery
+	}
+	root, err := os.OpenRoot(s.home)
 	if err != nil {
 		return true, err
 	}
-	if _, err = os.Lstat(path); err == nil {
-		return true, nil
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return true, err
+	defer func() { _ = root.Close() }()
+	for _, directory := range []string{admissionStageDir, "session-deletions"} {
+		info, err := root.Lstat(directory)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return true, err
+		}
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return true, ErrAdmissionStageRecovery
+		}
+		rooted := *s
+		rooted.quotaRoot = root
+		entries, err := rooted.quotaReadDir(filepath.Join(s.home, directory))
+		if err != nil {
+			return true, err
+		}
+		for _, entry := range entries {
+			if strings.HasPrefix(entry.Name(), id+".") || directory == "session-deletions" && strings.HasPrefix(entry.Name(), id+"-") {
+				return true, nil
+			}
+		}
 	}
 	return false, nil
 }
@@ -326,4 +383,22 @@ func (s *Store) ValidateRetentionRestoration(reg archive.SessionRegistration, p 
 		return ErrAdmissionStageRecovery
 	}
 	return p.ValidatePublication()
+}
+
+func (s *Store) saveDeletionAtRequest(reg archive.SessionRegistration, j SessionDeletion, expected string) error {
+	j.Checksum = deletionChecksum(j)
+	raw, err := json.Marshal(j)
+	if err != nil {
+		return err
+	}
+	return s.writeDeletionFileChecked(reg.ArchiveSessionID, raw, func() error {
+		req, found, err := s.LoadRequest(reg.ArchiveSessionID)
+		if err != nil {
+			return err
+		}
+		if found && req.Token != expected || !found && expected != "" {
+			return ErrDeletionWorkChanged
+		}
+		return nil
+	})
 }
