@@ -4,7 +4,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strings"
+
+	"github.com/wangjohn/agent-archive/internal/local"
 )
 
 // Hold each owning directory and regular-file identity before local forget.
@@ -29,7 +30,7 @@ func (s *Store) pinDeletionRecords(paths []string) (_ *deletionRecords, err erro
 	}()
 	for _, path := range paths {
 		rel, e := filepath.Rel(s.home, path)
-		if e != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		if e != nil || rel == "." || !local.PathWithin(path, s.home) {
 			return nil, ErrAdmissionStageRecovery
 		}
 		directory := filepath.Dir(rel)
