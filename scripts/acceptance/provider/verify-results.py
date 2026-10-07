@@ -19,8 +19,10 @@ def verify(path, required):
             packages[event['Package']] = action
     missing = [name for name in required if outcomes.get(name) != 'pass']
     failed = [name for name, action in outcomes.items() if action == 'fail']
-    if missing or failed or not packages or any(value != 'pass' for value in packages.values()):
-        raise ValueError(f'acceptance incomplete: required={missing}, failed={failed}, packages={packages}')
+    skipped = [name for name, action in outcomes.items() if action == 'skip'
+               and any(name == parent or name.startswith(parent + '/') for parent in required)]
+    if missing or failed or skipped or not packages or any(value != 'pass' for value in packages.values()):
+        raise ValueError(f'acceptance incomplete: required={missing}, failed={failed}, skipped={skipped}, packages={packages}')
     return {'executed': list(required), 'packages': packages, 'result': 'pass'}
 
 

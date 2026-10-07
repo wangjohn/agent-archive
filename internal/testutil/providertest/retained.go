@@ -30,7 +30,7 @@ func PutRetainedFixture(t *testing.T, remote storage.ObjectStore, preserved int,
 		t.Fatal("invalid synthetic retained fixture size")
 	}
 	reg := archive.SessionRegistration{
-		ArchiveSessionID: "synthetic-provider-history", NativeSessionID: "11111111-1111-4111-8111-111111111111",
+		ArchiveSessionID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", NativeSessionID: "11111111-1111-4111-8111-111111111111",
 		ProjectID: "synthetic-provider-project", ProjectRoot: "/synthetic/provider-project",
 		Harness: archive.Harness{Name: "codex"}, SessionStartedAt: at.Add(-time.Hour), RegisteredAt: at,
 	}
@@ -63,10 +63,10 @@ func PutRetainedFixture(t *testing.T, remote storage.ObjectStore, preserved int,
 		if err := remote.Put(t.Context(), key, encoded.Bytes); err != nil {
 			t.Fatal(err)
 		}
-		switch {
-		case i == 0:
+		switch i {
+		case 0:
 			active, current = bundle, ref
-		case i == preserved+1:
+		case preserved + 1:
 			unreferenced = ref
 		default:
 			revisions = append(revisions, archive.RevisionReference{RevisionID: revision, CapturedAt: captured, Source: ref})

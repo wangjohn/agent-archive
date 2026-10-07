@@ -198,56 +198,18 @@ func (s *uncertainRestorationPut) Put(ctx context.Context, key string, body []by
 	return err
 }
 
+type providerIntentFault string
+
+const (
+	providerMissingIntent providerIntentFault = "missing"
+	providerChangedIntent providerIntentFault = "changed"
+)
+
 func TestProviderRestorationMissingOrChangedIntentRetainsPending(t *testing.T) {
-	for _, kind := range []string{"missing", "changed"} {
-		t.Run(kind, func(t *testing.T) {
-			remote := providertest.NewDisposableS3(t)
-			local := newTestStore(t)
-			at := time.Now().UTC().Add(-48 * time.Hour)
-			reg := registration("provider-intent", writeTranscript(t, t.TempDir(), "source.jsonl", codexTranscript))
-			if err := local.SaveRegistration(reg); err != nil {
-				t.Fatal(err)
-			}
-			if result := collect(t, local, remote, at); len(result.Errors) != 0 || len(result.Published) != 1 {
-				t.Fatal(result)
-			}
-			now := time.Now().UTC()
-			if err := DeleteOwnedSession(t.Context(), local, &uncertainMetadataDelete{ObjectStore: remote}, reg, state.RemovalReasonRetention, now); err == nil {
-				t.Fatal("lost delete acknowledgement accepted")
-			}
-			if err := local.SaveRequest(reg.ArchiveSessionID, "stop", now, finalResponse(t, now)); err != nil {
-				t.Fatal(err)
-			}
-			if err := DeleteOwnedSession(t.Context(), local, remote, reg, state.RemovalReasonRetention, now); err != nil {
-				t.Fatal(err)
-			}
-			if result := collect(t, local, &uncertainRestorationPut{ObjectStore: remote}, now.Add(time.Minute)); len(result.Errors) == 0 {
-				t.Fatal("lost restore acknowledgement accepted")
-			}
-			if found, err := local.HasPending(reg.ArchiveSessionID); err != nil || !found {
-				t.Fatal("restoration evidence missing")
-			}
-			key, err := archive.MetadataObjectKey(reg.Harness.Name, reg.ArchiveSessionID)
-			if err != nil {
-				t.Fatal(err)
-			}
-			selected, err := remote.Get(t.Context(), key)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if kind == "missing" {
-				if err := os.Remove(filepath.Join(local.Home(), "session-deletions", reg.ArchiveSessionID+".json")); err != nil {
-					t.Fatal(err)
-				}
-			} else {
-				published, err := local.LoadPublishedState(reg.ArchiveSessionID)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if _, err := local.PrepareSessionDeletion(reg, state.RemovalReasonUndo, published.Metadata(), now.Add(2*time.Minute)); err != nil {
-					t.Fatal(err)
-				}
-			}
+	for _, kind := range []providerIntentFault{providerMissingIntent, providerChangedIntent} {
+		t.Run(string(kind), func(t *testing.T) {
+			local, remote, reg, now, key, selected := prepareProviderRestoration(t)
+			invalidateProviderIntent(t, local, reg, now, kind)
 			if result := collect(t, local, remote, now.Add(3*time.Minute)); len(result.Errors) == 0 {
 				t.Fatal("missing/changed intent silently replayed")
 			}
@@ -259,5 +221,64 @@ func TestProviderRestorationMissingOrChangedIntentRetainsPending(t *testing.T) {
 				t.Fatal("invalid intent changed remote authority", err)
 			}
 		})
+	}
+}
+
+func prepareProviderRestoration(t *testing.T) (*state.Store, *providertest.DisposableS3, archive.SessionRegistration, time.Time, string, []byte) {
+	t.Helper()
+	remote := providertest.NewDisposableS3(t)
+	local := newTestStore(t)
+	at := time.Now().UTC().Add(-48 * time.Hour)
+	reg := registration("provider-intent", writeTranscript(t, t.TempDir(), "source.jsonl", codexTranscript))
+	if err := local.SaveRegistration(reg); err != nil {
+		t.Fatal(err)
+	}
+	if result := collect(t, local, remote, at); len(result.Errors) != 0 || len(result.Published) != 1 {
+		t.Fatal(result)
+	}
+	now := time.Now().UTC()
+	if err := DeleteOwnedSession(t.Context(), local, &uncertainMetadataDelete{ObjectStore: remote}, reg, state.RemovalReasonRetention, now); err == nil {
+		t.Fatal("lost delete acknowledgement accepted")
+	}
+	if err := local.SaveRequest(reg.ArchiveSessionID, "stop", now, finalResponse(t, now)); err != nil {
+		t.Fatal(err)
+	}
+	if err := DeleteOwnedSession(t.Context(), local, remote, reg, state.RemovalReasonRetention, now); err != nil {
+		t.Fatal(err)
+	}
+	if result := collect(t, local, &uncertainRestorationPut{ObjectStore: remote}, now.Add(time.Minute)); len(result.Errors) == 0 {
+		t.Fatal("lost restore acknowledgement accepted")
+	}
+	if found, err := local.HasPending(reg.ArchiveSessionID); err != nil || !found {
+		t.Fatal("restoration evidence missing")
+	}
+	key, err := archive.MetadataObjectKey(reg.Harness.Name, reg.ArchiveSessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected, err := remote.Get(t.Context(), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return local, remote, reg, now, key, selected
+}
+
+func invalidateProviderIntent(t *testing.T, local *state.Store, reg archive.SessionRegistration, now time.Time, kind providerIntentFault) {
+	t.Helper()
+	switch kind {
+	case providerMissingIntent:
+		if err := os.Remove(filepath.Join(local.Home(), "session-deletions", reg.ArchiveSessionID+".json")); err != nil {
+			t.Fatal(err)
+		}
+	case providerChangedIntent:
+		published, err := local.LoadPublishedState(reg.ArchiveSessionID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := local.PrepareSessionDeletion(reg, state.RemovalReasonUndo, published.Metadata(), now.Add(2*time.Minute)); err != nil {
+			t.Fatal(err)
+		}
+	default:
+		t.Fatal("unsupported synthetic intent fault")
 	}
 }

@@ -13,6 +13,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 	"github.com/wangjohn/agent-archive/internal/testutil/providertest"
 )
 
@@ -64,9 +65,17 @@ func (s unreadableProviderMetadata) Get(ctx context.Context, key string) ([]byte
 	return data, err
 }
 
+type providerSelectionFault string
+
+const (
+	providerCorrupt    providerSelectionFault = "corrupt"
+	providerIncomplete providerSelectionFault = "incomplete"
+	providerUnreadable providerSelectionFault = "unreadable"
+)
+
 func TestProviderPurgeAmbiguousSelectingMetadataFailsClosed(t *testing.T) {
-	for _, kind := range []string{"corrupt", "incomplete", "unreadable"} {
-		t.Run(kind, func(t *testing.T) {
+	for _, kind := range []providerSelectionFault{providerCorrupt, providerIncomplete, providerUnreadable} {
+		t.Run(string(kind), func(t *testing.T) {
 			remote := providertest.NewDisposableS3(t)
 			f := providertest.PutRetainedFixture(t, remote, 2, time.Now().UTC())
 			key, err := archive.MetadataObjectKey(f.Registration.Harness.Name, f.Registration.ArchiveSessionID)
@@ -75,15 +84,15 @@ func TestProviderPurgeAmbiguousSelectingMetadataFailsClosed(t *testing.T) {
 			}
 			var observed storage.ObjectStore = remote
 			switch kind {
-			case "corrupt":
+			case providerCorrupt:
 				if err := remote.Put(t.Context(), key, []byte("{")); err != nil {
 					t.Fatal(err)
 				}
-			case "incomplete":
+			case providerIncomplete:
 				if err := remote.Delete(t.Context(), f.Metadata.History.Preserved[0].Source.Key); err != nil {
 					t.Fatal(err)
 				}
-			case "unreadable":
+			case providerUnreadable:
 				observed = unreadableProviderMetadata{ObjectStore: remote, key: key}
 			}
 			if _, err := Inventory(t.Context(), observed, "synthetic-destination", "aa-disposable-acceptance", "", ModeUnreferenced, "", time.Now().UTC()); err == nil {
@@ -96,5 +105,23 @@ func TestProviderPurgeAmbiguousSelectingMetadataFailsClosed(t *testing.T) {
 				t.Fatal("failed inventory removed current evidence", err)
 			}
 		})
+	}
+}
+
+// Validates the disposable fixture through the real purge planner before the
+// separate provider job uses it. This is fixture correctness, not S3 acceptance.
+func TestSyntheticProviderPurgeFixtureUsesCanonicalNamespace(t *testing.T) {
+	remote := storagetest.NewMemoryStore()
+	now := time.Now().UTC()
+	f := providertest.PutRetainedFixture(t, remote, archive.MaxPreservedRevisions, now)
+	plan, err := Inventory(t.Context(), remote, "synthetic-destination", "synthetic-bucket", "", ModeUnreferenced, "", now)
+	if err != nil || len(plan.Candidates) != 1 || plan.Candidates[0].Key != f.Unreferenced.Key {
+		t.Fatal("fixture cannot exercise production purge", plan.Candidates, err)
+	}
+	if err := remote.Delete(t.Context(), f.Metadata.History.Preserved[0].Source.Key); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Inventory(t.Context(), remote, "synthetic-destination", "synthetic-bucket", "", ModeUnreferenced, "", now); err == nil {
+		t.Fatal("fixture did not exercise incomplete selecting evidence")
 	}
 }

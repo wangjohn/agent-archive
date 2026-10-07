@@ -47,6 +47,29 @@ class EvidenceVerifierTest(unittest.TestCase):
             )))
             self.assertEqual(verifier.verify(path, ['required'])['result'], 'pass')
 
+    def test_passed_parent_with_skipped_required_subtest_is_rejected(self):
+        verifier = module('verify-results')
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'events.jsonl'
+            path.write_text('\n'.join(json.dumps(event) for event in (
+                {'Action': 'skip', 'Package': 'p', 'Test': 'required/unavailable'},
+                {'Action': 'pass', 'Package': 'p', 'Test': 'required'},
+                {'Action': 'pass', 'Package': 'p'},
+            )))
+            with self.assertRaises(ValueError):
+                verifier.verify(path, ['required'])
+
+    def test_passed_parent_without_required_descendant_is_rejected(self):
+        verifier = module('verify-results')
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'events.jsonl'
+            path.write_text('\n'.join(json.dumps(event) for event in (
+                {'Action': 'pass', 'Package': 'p', 'Test': 'required'},
+                {'Action': 'pass', 'Package': 'p'},
+            )))
+            with self.assertRaises(ValueError):
+                verifier.verify(path, ['required', 'required/expected'])
+
     def test_credential_redaction_fails_acceptance_and_preserves_other_evidence(self):
         sanitizer = module('sanitize-evidence')
         with tempfile.TemporaryDirectory() as directory:
@@ -67,6 +90,8 @@ class ProviderHarnessPolicyTest(unittest.TestCase):
     def test_script_parses_and_provider_source_versions_are_exact(self):
         subprocess.run(['bash', '-n', str(PROVIDER / 'host.sh')], check=True)
         script = (PROVIDER / 'host.sh').read_text()
+        self.assertIn('TestProviderPurgeAmbiguousSelectingMetadataFailsClosed/incomplete', script)
+        self.assertIn('TestProviderRestorationMissingOrChangedIntentRetainsPending/changed', script)
         self.assertIn('github.com/minio/minio@v0.0.0-20260212201848-7aac2a2c5b7c', script)
         self.assertIn('github.com/minio/mc@v0.0.0-20251106162529-77f82e18b540', script)
         self.assertIn('--publish 127.0.0.1::9000', script)

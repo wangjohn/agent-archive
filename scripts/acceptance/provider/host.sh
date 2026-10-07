@@ -91,9 +91,14 @@ python3 scripts/acceptance/provider/verify-results.py "$AA_ACCEPTANCE_OUTPUT/pro
   TestProviderPublishedSourceSurvivesNativeAndLocalStateLoss \
   TestProviderPurgePreservesMaximumRetainedSetAndContent \
   TestProviderPurgeAmbiguousSelectingMetadataFailsClosed \
+  TestProviderPurgeAmbiguousSelectingMetadataFailsClosed/corrupt \
+  TestProviderPurgeAmbiguousSelectingMetadataFailsClosed/incomplete \
+  TestProviderPurgeAmbiguousSelectingMetadataFailsClosed/unreadable \
   TestProviderOwnedDeletionResumesUncertainAcknowledgement \
   TestProviderRetentionExpiryUsesServiceClock \
   TestProviderRetentionRestoresAfterNewHook \
   TestProviderRestorationMissingOrChangedIntentRetainsPending \
+  TestProviderRestorationMissingOrChangedIntentRetainsPending/missing \
+  TestProviderRestorationMissingOrChangedIntentRetainsPending/changed \
   TestProviderFullSetDeletionInnerPortsPreserveFence \
   TestProviderPrivacyRetirementRequiresVerifiedFullSelection > "$AA_ACCEPTANCE_OUTPUT/provider-summary.json"
