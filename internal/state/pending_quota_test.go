@@ -179,3 +179,24 @@ func TestPendingRAMOnlyPrivacyHandleRejectsInvalidOwnership(t *testing.T) {
 		})
 	}
 }
+
+func TestPendingQuotaCorruptStageCannotUndercharge(t *testing.T) {
+	t.Parallel()
+	s, reg, _ := saturatedStagePending(t)
+	manifest, _ := s.stagePath(reg.ArchiveSessionID, ".json")
+	raw, err := os.ReadFile(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m AdmissionStage
+	if err = json.Unmarshal(raw, &m); err != nil {
+		t.Fatal(err)
+	}
+	m.ReservedBytes = 1
+	if err = local.Write(manifest, m); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.admissionStageUsage(); !errors.Is(err, ErrAdmissionStageRecovery) {
+		t.Fatal("undercharged corrupted reservation", err)
+	}
+}

@@ -244,6 +244,10 @@ func (s *Store) temporaryUsage() (int64, error) {
 		used += m.Charged
 		roots[m.Token] = true
 	}
+	scratchDir := filepath.Join(s.home, temporaryScratchDir)
+	if info, e := os.Lstat(scratchDir); e == nil && (!info.IsDir() || info.Mode()&os.ModeSymlink != 0) {
+		return 0, ErrAdmissionStageRecovery
+	}
 	scratch, err := os.ReadDir(filepath.Join(s.home, temporaryScratchDir))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return 0, err
