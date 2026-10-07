@@ -129,6 +129,9 @@ func (s *sessionScan) run() (sessionOutcome, error) {
 	if err := s.local.GenerationCaptureAllowed(s.reg); err != nil {
 		return outcomeSkipped, err
 	}
+	if outcome, handled, err := s.stagedAdmission(); handled || err != nil {
+		return outcome, err
+	}
 	if outcome, handled, err := s.resume(); handled || err != nil {
 		return outcome, err
 	}

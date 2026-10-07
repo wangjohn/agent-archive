@@ -26,10 +26,11 @@ type SourceSemantics struct {
 
 // SourceEnvironment supplies narrow read dependencies and local database location.
 type SourceEnvironment struct {
-	CodexRollouts CodexRolloutLookup
-	Files         transcriptio.Opener
-	Policy        transcriptio.OpenPolicy
-	Database      string
+	TemporaryBytes TemporaryByteBudget
+	CodexRollouts  CodexRolloutLookup
+	Files          transcriptio.Opener
+	Policy         transcriptio.OpenPolicy
+	Database       string
 }
 
 // ReadLimits bounds raw values and each native record before filtering.
@@ -158,3 +159,22 @@ type RecoveryReadBudget interface {
 type RecoverySourcePass interface {
 	ReadRecovery(context.Context, SourceRef, ReadLimits, RecoveryReadBudget) (SourceSnapshot, error)
 }
+
+// AdmissionSourceProvider supplies complete immutable native input for durable
+// import materialization. Nil TemporaryBytes permits no temporary disk at all;
+// a provider requiring scratch must reserve it before allocation and retain the
+// reservation until cleanup succeeds. Ordinary OpenPass remains unchanged.
+type AdmissionSourceProvider interface {
+	OpenAdmissionPass(context.Context, SourceEnvironment, SourceRef) (SourcePass, error)
+}
+
+// TemporaryByteBudget reserves actual temporary allocation before it occurs.
+// Release is permitted only after every corresponding temporary file is gone.
+type TemporaryByteBudget interface {
+	Reserve(int64) error
+	Release(int64)
+}
+
+// AdmissionCatalogSnapshot retains compact identity/eligibility facts decoded
+// from the same immutable native input used by the privacy filter.
+type AdmissionCatalogSnapshot interface{ AdmissionChat() DatabaseChat }

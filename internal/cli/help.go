@@ -666,6 +666,8 @@ Import the Claude Code, Codex, and Cursor sessions already on this machine that
 the archive has not captured. First shows each project with its session count
 per app, and why any session is not imported; nothing is written until you
 confirm. Live repositories can be proposed for matching deleted worktrees.
+Confirmed imports keep private filtered evidence before admission, then upload
+in bounded groups. A full staging budget preserves completed groups for retry.
 Projects the import needs are added to capture. Prints project
 folders, counts, and recovery reasons, never conversation content.
   --harness NAME        Only claude, codex, or cursor (repeatable)
@@ -682,8 +684,8 @@ folders, counts, and recovery reasons, never conversation content.
   --dry-run             Print the plan and exit; nothing is written
   --json                With --dry-run, print the plan as JSON
   --yes                 Skip the confirmation (required without a terminal)
-  --background          Register the sessions and exit; the background
-                        collector uploads them
+  --background          Stage and register bounded groups; the background
+                        collector uploads them (retry after capacity clears)
 See agent-archive help backfill history and agent-archive help backfill undo.
 Example: agent-archive backfill --dry-run --since 30d
 `,

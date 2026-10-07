@@ -71,7 +71,6 @@ Looking for past sessions in these projects… 2 found.
 \e[1mImport the 2 past sessions from these projects?\e[0m [\e[1mY\e[0m/n] › 
 
 Registered 2 sessions as import 2026-09-25-1.
-Uploading: 2 of 2 sessions, 4 KB of 4 KB
 Uploaded 2 sessions (4 KB).
 See them with \e[36magent-archive list --imported\e[0m.
 Undo with \e[36magent-archive backfill undo 2026-09-25-1\e[0m.

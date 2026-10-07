@@ -250,3 +250,62 @@ func TestSubagentStopDurablyObservesHookOnImportedParent(t *testing.T) {
 		t.Fatalf("missing-child evidence was not queued for the imported parent: %#v err=%v", requests, err)
 	}
 }
+
+// A resumed hook queues new work without redirecting the staged obligation.
+func TestHookContinuationPreservesDurableImportAndQueuesNewerRequest(t *testing.T) {
+	home := t.TempDir()
+	activated := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	setUpTestConfig(t, home, "/work/widget", activated)
+	cfg, _, _ := config.Load(home)
+	store, err := state.Open(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := agentmeta.SessionKey{Agent: agentmeta.Claude, NativeID: "durable-parent"}
+	id, _, err := store.EnsureArchiveSessionID(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := activated.Add(time.Hour)
+	reg := archive.SessionRegistration{ArchiveSessionID: id, NativeSessionID: key.NativeID, Harness: archive.Harness{Name: string(key.Agent)}, ProjectRoot: "/work/widget", ProjectID: archive.ProjectID("/work/widget"), TranscriptPath: "/tmp/reviewed.jsonl", SessionStartedAt: activated, RegisteredAt: at, AdmittedAt: at, DestinationID: cfg.DestinationID(), Origin: archive.SessionOriginImport, StartedAtSource: archive.StartedAtSourceTranscript, ImportBatch: archive.NewImportBatch("synthetic")}
+	bundle, err := archive.NewSourceBundle(reg, durableHookAdapter{}, archive.FilteredTranscript{Format: "jsonl", Records: [][]byte{[]byte(`{"type":"user","message":{"role":"user","content":"safe"}}`)}}, at, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg.AdmissionStage, err = store.PrepareAdmissionStage(reg, bundle, "none", at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = store.SaveRegistration(reg); err != nil {
+		t.Fatal(err)
+	}
+	if err = store.SaveRequest(id, "backfill", at); err != nil {
+		t.Fatal(err)
+	}
+	prior, found, err := store.LoadRequest(id)
+	if err != nil || !found {
+		t.Fatal(prior, found, err)
+	}
+	later := at.Add(time.Hour)
+	payload := map[string]any{"hook_event_name": "SessionStart", "source": "resume", "session_id": key.NativeID, "cwd": reg.ProjectRoot, "transcript_path": "/tmp/new-location.jsonl"}
+	if err = HandleEvent(home, "claude", payload, later, WithDecoders(testDecoders)); err != nil {
+		t.Fatal(err)
+	}
+	got, found, err := store.LoadRegistration(id)
+	if err != nil || !found {
+		t.Fatal(got, found, err)
+	}
+	if got.TranscriptPath != reg.TranscriptPath || !got.RegisteredAt.Equal(at) || !got.AdmittedAt.Equal(at) || got.AdmissionStage != reg.AdmissionStage || !got.HookObservedAt.Equal(later) {
+		t.Fatal("hook redirected staged admission", got)
+	}
+	next, found, err := store.LoadRequest(id)
+	if err != nil || !found || next.Token == prior.Token {
+		t.Fatal("newer hook request lost", next, err)
+	}
+}
+
+type durableHookAdapter struct{}
+
+func (durableHookAdapter) Name() string { return "claude-code" }
+
+func (durableHookAdapter) Version() string { return "synthetic" }

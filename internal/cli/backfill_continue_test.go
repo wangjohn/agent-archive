@@ -230,7 +230,7 @@ func TestBackfillInterruptedRegistration(t *testing.T) {
 	}
 	partial, _ := importRegistrations(t, f.data, firstImport)
 	b, _ := loadBatch(t, f.data)
-	if b.CompletedAt != nil || len(partial) == 0 || len(partial) == 12 || len(b.Sessions) != len(partial) {
+	if b.CompletedAt != nil || len(partial) == 0 || len(partial) == 12 || len(b.Sessions) != len(partial) || b.AdmissionCursor == "" || b.StagingStopped != "cancelled" {
 		t.Fatalf("%d registered, batch %+v", len(partial), b)
 	}
 

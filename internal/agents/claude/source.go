@@ -161,3 +161,11 @@ func (Filter) EvidenceExtends(previous, candidate archive.SourceBundle) bool {
 func (SourceProvider) Activities(ctx context.Context, e agentapi.SourceEnvironment, refs []agentapi.SourceRef) (map[agentapi.SourceRef]time.Time, error) {
 	return (sourceio.FileProvider{}).Activities(ctx, e, refs)
 }
+
+// OpenAdmissionPass uses verified handles and allocates no temporary disk.
+func (p SourceProvider) OpenAdmissionPass(ctx context.Context, e agentapi.SourceEnvironment, ref agentapi.SourceRef) (agentapi.SourcePass, error) {
+	if _, err := p.Describe(ref); err != nil {
+		return nil, err
+	}
+	return p.OpenPass(ctx, e)
+}

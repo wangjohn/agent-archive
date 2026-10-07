@@ -29,6 +29,8 @@ import (
 // the configuration no longer publishes is the caller's to leave out (see
 // config.Config.AcceptSession); Outstanding does not read the configuration.
 type Outstanding struct {
+	// Stage is admitted evidence whose verified publication/release is unfinished.
+	Stage bool
 	// Requested: a hook or import request is queued and not yet
 	// acknowledged. The caller supplies it (see QueuedRequests), since every
 	// caller lists the requests once for all sessions.
@@ -66,7 +68,7 @@ func (o Outstanding) Owed() bool {
 // OwedAfterScan is Owed without the scan journal: what decides, once a scan
 // has run, whether its journal entry may be cleared.
 func (o Outstanding) OwedAfterScan() bool {
-	return o.Requested || o.Upload || o.RateLimited
+	return o.Stage || o.Requested || o.Upload || o.RateLimited
 }
 
 // DefersExpiry reports work that postpones the session's expiry: a queued
@@ -79,7 +81,7 @@ func (o Outstanding) OwedAfterScan() bool {
 // deferring on them would keep that session, locally and in the bucket,
 // past its retention window forever.
 func (o Outstanding) DefersExpiry() bool {
-	return o.Requested || o.Upload
+	return o.Stage || o.Requested || o.Upload
 }
 
 // Pending reports a session users see as pending: owed work, or never
@@ -122,7 +124,16 @@ func (s *Store) Outstanding(reg archive.SessionRegistration, requested bool) (Ou
 	if err != nil {
 		return Outstanding{}, err
 	}
+	stage := false
+	if reg.AdmissionStage != "" {
+		released, e := s.AdmissionStageReleased(reg)
+		if e != nil {
+			return Outstanding{}, e
+		}
+		stage = !released
+	}
 	o := Outstanding{
+		Stage:         stage,
 		Requested:     requested,
 		Scan:          scan,
 		Upload:        upload,

@@ -2,6 +2,7 @@ package backfill
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"github.com/wangjohn/agent-archive/internal/agents/builtin"
 	"reflect"
@@ -87,11 +88,13 @@ func TestImportConfigChangesAreRecordedAndUndone(t *testing.T) {
 	b := f.batch("2026-09-23-1", admitted)
 	b.AddChanges(changes)
 
-	// Every changed field is one the batch records.
+	// Ordinary policy changes are recorded. The safety fence is sticky,
+	// independent of reversible batch policy.
 	recorded := map[string]func() bool{
-		"Archive":           func() bool { return len(b.ProjectsAdded) == 2 && len(b.ProjectsKeptOut) == 1 },
-		"ImportedHarnesses": func() bool { return strings.Join(b.AppsAdded, ",") == "codex" },
-		"RetentionDays":     func() bool { return b.Retention != nil && b.Retention.From == 90 && b.Retention.To == 365 },
+		"DurableImportProtection": func() bool { return cfg.DurableImportProtection },
+		"Archive":                 func() bool { return len(b.ProjectsAdded) == 2 && len(b.ProjectsKeptOut) == 1 },
+		"ImportedHarnesses":       func() bool { return strings.Join(b.AppsAdded, ",") == "codex" },
+		"RetentionDays":           func() bool { return b.Retention != nil && b.Retention.From == 90 && b.Retention.To == 365 },
 	}
 	changed := changedFields(before, cfg)
 	if len(changed) != len(recorded) {
@@ -121,6 +124,18 @@ func TestImportConfigChangesAreRecordedAndUndone(t *testing.T) {
 	// The added projects stay, excluded; the kept-out entry is gone;
 	// everything else is as before.
 	want := cloneConfig(t, before)
+	if !after.DurableImportProtection {
+		t.Fatal("undo dropped durable writer fence", after)
+	}
+	want.DurableImportProtection = true
+	raw, err := json.Marshal(after)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var persisted config.Config
+	if err = json.Unmarshal(raw, &persisted); err != nil || persisted.SchemaVersion != 5 || !persisted.DurableImportProtection {
+		t.Fatal("undo serialized an unprotected writer", persisted, err)
+	}
 	for _, p := range after.Archive.Projects {
 		if slices.Contains([]string{"/work/new", "/work/dir"}, p.Root) {
 			if p.Included {

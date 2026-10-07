@@ -132,3 +132,12 @@ schema-2 encoding remains compatible, with filter 15 and adapter 0.15.0 unchange
 The Codex source signature includes `codex-history-v1` interpretation evidence;
 this does not change Claude or Cursor parser/adapter behavior. History mutation
 remains fenced until revision-aware lifecycle support is installed.
+
+Durable imports add the local configuration fence
+`{version: 5, writer: staged-imports-v5}` plus sticky
+`durable_import_protection`. It composes existing discovery, Codex authorization
+and generation floors without changing their consent. The private admission
+manifest is version 1; stage source bytes use the unchanged filtered source
+format. No parser, adapter or privacy filter version changes: ordinary native
+filtering and uploaded evidence remain unchanged. Actual v0.1.0/v0.1.1 refusal
+execution is a separate supported-release acceptance gate.

@@ -49,7 +49,7 @@ func (o Options) repoKeyOr(reg archive.SessionRegistration, prior func() string)
 	if reg.RepoKey != "" {
 		return reg.RepoKey
 	}
-	if reg.ProjectRoot != "" {
+	if reg.ProjectRoot != "" && reg.AdmissionStage == "" {
 		cache := o.repoKeys
 		if cache == nil {
 			// Not inside Run: nothing to share the answer with.
