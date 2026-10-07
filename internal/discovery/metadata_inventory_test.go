@@ -232,7 +232,7 @@ func TestMetadataHeaderExactRangesAndResumableMaximum(t *testing.T) {
 		t.Fatal("scratch declined")
 	}
 	ranges := &metadataReadRanges{reader: f}
-	view.cursor = &metadataCursor{file: f, reader: ranges, source: source, info: info, line: make([]byte, 0, metadataHeaderBytes)}
+	view.cursor = &metadataCursor{file: f, reader: ranges, source: source, info: info, line: make([]byte, 0, metadataHeaderBytes), scratch: metadataScratch}
 	view.queue = nil
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
@@ -599,7 +599,7 @@ func TestMetadataPartialHeaderRejectsRewriteReplacementAndCancellation(t *testin
 					}
 				}
 			}}
-			view.cursor = &metadataCursor{file: f, reader: reader, source: source, info: info, line: make([]byte, 0, metadataHeaderBytes)}
+			view.cursor = &metadataCursor{file: f, reader: reader, source: source, info: info, line: make([]byte, 0, metadataHeaderBytes), scratch: metadataScratch}
 			if err := view.ensure(ctx); err == nil {
 				t.Fatal("interrupted header accepted")
 			}
@@ -865,5 +865,106 @@ func TestMetadataAliasedHomesSharePhysicalFactsButFenceEverySpelling(t *testing.
 	}
 	if err := slice.Close(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestMetadataInventoryAccountsAdversarialParserRepresentations(t *testing.T) {
+	dense := func(n int) string {
+		var b strings.Builder
+		for i := range n {
+			b.WriteString(`,"k` + strconv.Itoa(i) + `":0`)
+		}
+		return b.String()
+	}
+	parent := "00000000-0000-4000-8000-000000000099"
+	cases := []struct {
+		name     string
+		source   string
+		extra    string
+		producer string
+		version  string
+	}{
+		{"ordinary-html", `"cli"`, `,"git":{"repository_url":"` + strings.Repeat("<", 4096) + `"}`, strings.Repeat("<", 256), "0.160.0"},
+		{"child-html-raw-source", `{"subagent":{"other":"ok"},"unknown":"` + strings.Repeat("<", 17000) + `"}`, "", strings.Repeat("<", 20000), strings.Repeat("<", 20000)},
+		{"fork-html", `"cli"`, `,"forked_from_id":"` + parent + `"`, strings.Repeat("<", 20000), strings.Repeat("<", 20000)},
+		{"dense-git", `"cli"`, `,"git":{"repository_url":"ok"` + dense(4000) + `}`, "codex-tui", "0.160.0"},
+		{"dense-source-subagent", `{"subagent":{"other":"ok"` + dense(2000) + `}` + dense(2000) + `}`, "", "codex-tui", "0.160.0"},
+		{"nested-invalid-utf8", `"cli"`, `,"git":{"repository_url":"` + string([]byte{0xff}) + `","unknown":` + strings.Repeat("[", 2000) + `0` + strings.Repeat("]", 2000) + `}`, "codex-tui", "0.160.0"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			lookup, ids, root := metadataFixture(t, 1)
+			line := `{"type":"session_meta","timestamp":"2026-10-01T12:00:00Z","payload":{"id":"` + ids[0] + `","cwd":"/` + strings.Repeat("<", 4095) + `","source":` + tc.source + `,"originator":"` + tc.producer + `","cli_version":"` + tc.version + `"` + tc.extra + `}}`
+			if len(line) >= metadataHeaderBytes {
+				t.Fatal("fixture exceeds header bound", len(line))
+			}
+			line += strings.Repeat(" ", metadataHeaderBytes-len(line)-1) + "\n"
+			path := filepath.Join(root, "sessions", "nested", "rollout-2026-10-01T12-00-00-"+ids[0]+".jsonl")
+			if err := os.WriteFile(path, []byte(line+"SENSITIVE_BODY\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			view := lookup.MetadataInventory().(*metadataInventory)
+			slice, err := view.BeginValidationSlice(t.Context(), agentapi.CodexValidationLimits{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			set, err := slice.Thread(t.Context(), ids[0])
+			if err != nil || !set.Complete || len(view.facts) != 1 {
+				t.Fatalf("accepted parser shape failed: %v %+v", err, set)
+			}
+			if view.counts.requested != metadataHeaderBytes || view.cursor != nil {
+				t.Fatal("body read or scratch retained", view.counts)
+			}
+			_, peak := lookup.readBudget.Charged()
+			if peak < 8454144 {
+				t.Fatal("proportional scratch not charged", peak)
+			}
+			t.Logf("shape=%s header=%d chargedPeak=%d retained=%d", tc.name, len(line), peak, view.charge)
+			if err := slice.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if err := lookup.CloseReadOnly(); err != nil {
+				t.Fatal(err)
+			}
+			if used, _ := lookup.readBudget.Charged(); used != 0 {
+				t.Fatal("scratch leaked", used)
+			}
+		})
+	}
+}
+
+func TestMetadataInventoryDeclinesParserBeforeDecodeAndReleasesCursor(t *testing.T) {
+	lookup, ids, root := metadataFixture(t, 1)
+	view := lookup.MetadataInventory().(*metadataInventory)
+	if err := view.start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "sessions", "nested", "rollout-2026-10-01T12-00-00-"+ids[0]+".jsonl")
+	source := SourceDescriptor{Kind: archive.SourceKindFile, Root: root, Locator: path, StableKey: ids[0]}
+	f, err := view.open(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := f.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !view.reserve(metadataScratch) {
+		t.Fatal("initial scratch refused")
+	}
+	// Deliberately invalid JSON distinguishes parser failure from prior charge refusal.
+	view.cursor = &metadataCursor{file: f, reader: f, source: source, info: info, line: []byte(strings.Repeat("x", 4096) + "\n"), scratch: metadataScratch}
+	if !view.reserve(metadataBytes - view.charge - view.headerBytes - 1) {
+		t.Fatal("pressure reserve failed")
+	}
+	err = view.fail(view.finishHeader(t.Context()))
+	if agentapi.Failure(err) != agentapi.Limit || view.cursor != nil || view.complete || len(view.facts) != 0 {
+		t.Fatalf("not truthful pre-parser refusal: %v", err)
+	}
+	if err := lookup.CloseReadOnly(); err != nil {
+		t.Fatal(err)
+	}
+	if used, _ := lookup.readBudget.Charged(); used != 0 {
+		t.Fatal("refusal leaked", used)
 	}
 }

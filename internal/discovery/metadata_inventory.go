@@ -65,11 +65,12 @@ type metadataRoot struct {
 }
 
 type metadataCursor struct {
-	file   *os.File
-	reader io.ReaderAt
-	source SourceDescriptor
-	info   os.FileInfo
-	line   []byte
+	file    *os.File
+	reader  io.ReaderAt
+	source  SourceDescriptor
+	info    os.FileInfo
+	line    []byte
+	scratch int64
 }
 
 type metadataInventory struct {
@@ -264,9 +265,10 @@ func (m *metadataInventory) closeCursor() error {
 		return nil
 	}
 	err := m.cursor.file.Close()
+	scratch := m.cursor.scratch
 	m.cursor = nil
-	m.owner.readBudget.Release(metadataScratch)
-	m.charge -= metadataScratch
+	m.owner.readBudget.Release(scratch)
+	m.charge -= scratch
 	return err
 }
 
@@ -482,7 +484,7 @@ func (m *metadataInventory) step(ctx context.Context) error {
 					m.charge -= metadataScratch
 					return err
 				}
-				m.cursor = &metadataCursor{file: f, reader: f, source: entry.Source, info: info, line: make([]byte, 0, metadataHeaderBytes)}
+				m.cursor = &metadataCursor{file: f, reader: f, source: entry.Source, info: info, line: make([]byte, 0, metadataHeaderBytes), scratch: metadataScratch}
 			}
 			continue
 		}
@@ -597,6 +599,17 @@ func (m *metadataInventory) finishHeader(ctx context.Context) error {
 	if err := m.rootsCurrent(ctx); err != nil {
 		return err
 	}
+	// Reserve transient representations before decoding. The fixed schema wraps
+	// arbitrary Git/source/subagent RawMessage maps; related records can bypass
+	// ordinary producer caps. Per input byte, allowances cover map slots (52),
+	// raw copies (6), decoded strings (16), encoder buffers (24), and scanner
+	// state (16): 114 rounded to 128, plus the fixed header/schema allowance.
+	// This is application representation accounting, not a process heap bound.
+	needed := max(int64(metadataScratch), int64(metadataHeaderBytes)+128*int64(len(c.line)))
+	if !m.reserve(needed - c.scratch) {
+		return metadataLimit()
+	}
+	c.scratch = needed
 	meta, created, found, err := codexmeta.ParseCodexMeta(c.line)
 	if err != nil || !found || created.IsZero() {
 		return metadataUnavailable()
