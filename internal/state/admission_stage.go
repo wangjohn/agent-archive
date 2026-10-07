@@ -292,10 +292,24 @@ func (s *Store) admissionStageUsage() (int64, error) {
 		if err != nil || !info.Mode().IsRegular() {
 			return 0, ErrAdmissionStageRecovery
 		}
-		if info.Size() < 0 || info.Size() > (AdmissionStageQuota-used)/2 {
+		if info.Size() < 0 || info.Size() >= AdmissionStageQuota/2 {
 			return 0, ErrAdmissionStageCapacity
 		}
-		used += 2 * info.Size()
+		charge := 2 * info.Size()
+		id := strings.TrimSuffix(e.Name(), ".json")
+		if strings.HasSuffix(e.Name(), ".json") {
+			p, found, readErr := s.LoadPending(id)
+			if readErr != nil {
+				return 0, ErrAdmissionStageRecovery
+			}
+			if found {
+				charge -= s.coveredPendingCredit(id, p, charge)
+			}
+		}
+		if charge > AdmissionStageQuota-used {
+			return 0, ErrAdmissionStageCapacity
+		}
+		used += charge
 	}
 	if used < 0 {
 		return 0, fmt.Errorf("%w: invalid accounting", ErrAdmissionStageRecovery)
