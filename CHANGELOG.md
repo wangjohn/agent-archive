@@ -37,6 +37,10 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Repeated privacy changes can reuse an admitted stage's reserved capacity while
+  publication remains pending, including after restart at the staging quota limit.
+  Quota receipts keep the immutable original stage identity across transformations.
+
 - Pending privacy maintenance keeps the oldest authenticated uncommitted content
   available across policy changes. A policy increase can refilter that retained
   evidence after an intermediate reduction, without reopening native input.

@@ -94,7 +94,13 @@ func (s *Store) writeQuotaReceipt(id string, p PendingPublication, encoded []byt
 	if err != nil || !info.Mode().IsRegular() || info.Size() != int64(len(encoded)) {
 		return ErrAdmissionStageRecovery
 	}
-	r := pendingQuotaReceipt{SessionID: id, StageDigest: p.AdmissionStage, FrozenSHA: p.SourceSHA256, PendingSHA: stageDigest(encoded), Identity: pendingQuotaIdentity(info), EncodedBytes: info.Size(), ModifiedAt: info.ModTime(), Version: 1}
+	frozenSHA := p.SourceSHA256
+	if p.Commit != nil && p.Commit.Purpose == PublicationPrivacyRewrite && p.Commit.Privacy != nil {
+		// The target's full stage transform was validated before this write.
+		// Quota credit belongs to that immutable stage, not its replacement.
+		frozenSHA = p.Commit.Privacy.StageSourceSHA256
+	}
+	r := pendingQuotaReceipt{SessionID: id, StageDigest: p.AdmissionStage, FrozenSHA: frozenSHA, PendingSHA: stageDigest(encoded), Identity: pendingQuotaIdentity(info), EncodedBytes: info.Size(), ModifiedAt: info.ModTime(), Version: 1}
 	r.Checksum = quotaReceiptDigest(r)
 	return local.WriteCompact(s.quotaReceiptPath(id), r)
 }
