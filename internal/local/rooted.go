@@ -53,7 +53,7 @@ func OpenRootedHome(home string) (*RootedHome, error) {
 // Check refuses a renamed or replaced archive home; writes never reopen it.
 func (h *RootedHome) Check() error {
 	named, err := os.Lstat(h.path)
-	if err != nil || !os.SameFile(h.info, named) || named.Mode()&os.ModeSymlink != 0 {
+	if err != nil || !os.SameFile(h.info, named) || !named.IsDir() || named.Mode()&os.ModeSymlink != 0 || named.Mode().Perm()&0077 != 0 {
 		return errors.Join(errors.New("archive home changed; retry after restoring its location"), err)
 	}
 	h.lockMu.Lock()

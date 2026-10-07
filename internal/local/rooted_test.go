@@ -110,3 +110,21 @@ func TestRootedLockDeadlineAndReplacement(t *testing.T) {
 		t.Fatal("replaced lock accepted")
 	}
 }
+
+func TestRootedHomeRejectsPermissionsChangedDuringScope(t *testing.T) {
+	home := t.TempDir()
+	if err := os.Chmod(home, 0700); err != nil {
+		t.Fatal(err)
+	}
+	held, err := OpenRootedHome(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Close()
+	if err := os.Chmod(home, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := held.Check(); err == nil {
+		t.Fatal("unsafe changed home retained authority")
+	}
+}

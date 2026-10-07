@@ -70,6 +70,10 @@ func (p *pass) observeLabels(ctx context.Context) {
 		}
 		checksum, stamp, err := p.local.LabelRevision(id)
 		if err != nil {
+			if errors.Is(err, state.ErrDurableStorageRecovery) {
+				addError(p.result.Errors, id, err)
+				p.unreadable[id] = true
+			}
 			delete(cache.Entries, id)
 			continue
 		}
@@ -146,6 +150,10 @@ func (p *pass) prepareLabelRequests(ctx context.Context, providers map[string]ag
 		}
 		checksum, stamp, err := p.local.LabelRevision(id)
 		if err != nil {
+			if errors.Is(err, state.ErrDurableStorageRecovery) {
+				addError(p.result.Errors, id, err)
+				p.unreadable[id] = true
+			}
 			continue
 		}
 		provider := providers[reg.Harness.Name]
@@ -163,6 +171,10 @@ func (p *pass) prepareLabelRequests(ctx context.Context, providers map[string]ag
 				p.opts.labelReadObserver(n)
 			}
 			if err != nil {
+				if errors.Is(err, state.ErrDurableStorageRecovery) {
+					addError(p.result.Errors, id, err)
+					p.unreadable[id] = true
+				}
 				continue
 			}
 			p.labelStates[id] = published

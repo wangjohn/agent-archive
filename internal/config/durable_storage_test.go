@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"errors"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"os"
@@ -11,14 +12,14 @@ import (
 
 func TestDurableStorageGuardExpiresAndPersistsActualFloor(t *testing.T) {
 	home := durableTestHome(t)
-	if e := Save(home, Config{MachineID: "synthetic", GenerationProtection: true, CodexHistoryProtection: true}); e != nil {
+	if e := Save(home, Config{MachineID: "synthetic", GenerationProtection: true, CodexHistoryProtection: true, CodexNameLookup: CodexNameLookupNative}); e != nil {
 		t.Fatal(e)
 	}
 	var retained DurableStorageGuard
 	if e := WithDurableStorage(home, func(g DurableStorageGuard) error {
 		retained = g
 		cfg, found, e := Load(home)
-		if e != nil || !found || cfg.SchemaVersion != 7 || !cfg.DurableStorageProtection || !cfg.GenerationProtection || !cfg.CodexHistoryProtection {
+		if e != nil || !found || cfg.SchemaVersion != 7 || !cfg.DurableStorageProtection || !cfg.GenerationProtection || !cfg.CodexHistoryProtection || cfg.CodexNameLookup != CodexNameLookupNative {
 			t.Fatalf("actual floor: %+v %v", cfg, e)
 		}
 		return g.CheckHome(home)
@@ -48,6 +49,9 @@ func TestDurableStorageRefusesMissingUnknownAndSetupConfig(t *testing.T) {
 			called := false
 			if e := WithDurableStorage(home, func(DurableStorageGuard) error { called = true; return nil }); e == nil || called {
 				t.Fatalf("gate accepted unsupported config: %v", e)
+			}
+			if _, e := os.Lstat(filepath.Join(home, "hooks.lock")); !errors.Is(e, os.ErrNotExist) {
+				t.Fatalf("refusal allocated lock: %v", e)
 			}
 			if raw != "" {
 				after, e := os.ReadFile(filepath.Join(home, "config.json"))
@@ -179,4 +183,69 @@ func TestSourceBuiltWriterRefusesDurableStorageConfiguration(t *testing.T) {
 		t.Fatal("source-built writer must be an absolute executable")
 	}
 	assertOldWriterRefusesDurableStorage(t, binary)
+}
+
+func TestDurableStorageBinaryRefusesFutureCompositionConfiguration(t *testing.T) {
+	binary := os.Getenv("AGENT_ARCHIVE_STORAGE_BINARY")
+	if binary == "" {
+		t.Skip("requires the isolated current storage writer executable")
+	}
+	if !filepath.IsAbs(binary) {
+		t.Fatal("storage writer must be an absolute executable")
+	}
+	root, pause := publishedPauseFixture(t, binary)
+	home := filepath.Join(root, "archive")
+	if err := os.Mkdir(home, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := Save(home, Config{MachineID: "synthetic-storage-writer", Archive: archive.Config{Enabled: true}}); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := pause(home); err != nil {
+		t.Fatalf("legacy control failed: %v %s", err, out)
+	}
+	if err := WithDurableStorage(home, func(g DurableStorageGuard) error { return g.CheckHome(home) }); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := pause(home); err != nil {
+		t.Fatalf("supported storage7 control failed: %v %s", err, out)
+	}
+	before, err := os.ReadFile(filepath.Join(home, "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var future map[string]json.RawMessage
+	if err := json.Unmarshal(before, &future); err != nil {
+		t.Fatal(err)
+	}
+	future["schema_version"] = json.RawMessage(`{"version":8,"writer":"publication-composition-v8"}`)
+	future["publication_composition_protection"] = json.RawMessage(`true`)
+	encoded, err := json.MarshalIndent(future, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := string(encoded)
+	if err := os.WriteFile(filepath.Join(home, "config.json"), []byte(raw), 0600); err != nil {
+		t.Fatal(err)
+	}
+	sentinel := filepath.Join(home, "publication-evidence", "original")
+	if err := os.MkdirAll(filepath.Dir(sentinel), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sentinel, []byte("retained-original"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := pause(home)
+	if err == nil || (!strings.Contains(string(out), "schema_version") && !strings.Contains(string(out), "writer fence")) {
+		t.Fatalf("storage7 accepted future8: %v %s", err, out)
+	}
+	after, err := os.ReadFile(filepath.Join(home, "config.json"))
+	if err != nil || string(after) != raw {
+		t.Fatal("future refusal mutated config", err)
+	}
+	retained, err := os.ReadFile(sentinel)
+	if err != nil || string(retained) != "retained-original" {
+		t.Fatal("future refusal changed original evidence", err)
+	}
+	t.Logf("actual storage7 writer refused future8: %s", strings.TrimSpace(string(out)))
 }

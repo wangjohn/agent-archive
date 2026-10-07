@@ -60,6 +60,12 @@ func WithDurableStorage(home string, write func(DurableStorageGuard) error) (err
 		return err
 	}
 	defer func() { err = errors.Join(err, held.Close()) }()
+	// Reject unsupported/missing current config before creating even a lock file.
+	// The protected config is loaded again under hooks; this preflight grants no witness.
+	_, present, err := LoadRooted(held)
+	if err != nil || !present {
+		return errors.Join(errors.New("durable storage requires an existing supported configuration"), err)
+	}
 	unlock, err := local.RootedLockWait(held, "hooks.lock", time.Second)
 	if err != nil {
 		return err
@@ -68,9 +74,16 @@ func WithDurableStorage(home string, write func(DurableStorageGuard) error) (err
 	if _, e := held.Root.Lstat("setup-transaction.json"); !errors.Is(e, os.ErrNotExist) {
 		return errors.New("setup pending before durable storage protection")
 	}
+	configBefore, err := held.Root.Lstat("config.json")
+	if err != nil {
+		return errors.Join(errors.New("durable storage requires an existing configuration"), err)
+	}
 	cfg, found, err := LoadRooted(held)
 	if err != nil || !found {
 		return errors.Join(errors.New("durable storage requires an existing configuration"), err)
+	}
+	if err = rootedConfigUnchanged(held, configBefore); err != nil {
+		return err
 	}
 	if !cfg.DurableStorageProtection {
 		cfg.DurableStorageProtection = true
@@ -83,12 +96,19 @@ func WithDurableStorage(home string, write func(DurableStorageGuard) error) (err
 		if err = local.RootedWrite(held.Root, "config.json", cfg); err != nil {
 			return err
 		}
+		configBefore, err = held.Root.Lstat("config.json")
+		if err != nil {
+			return err
+		}
 		verified, present, e := LoadRooted(held)
 		if e != nil || !present || !verified.DurableStorageProtection || verified.SchemaVersion != 7 {
 			return errors.Join(errors.New("durable storage protection was not persisted"), e)
 		}
 	}
 	if err = held.Check(); err != nil {
+		return err
+	}
+	if err = rootedConfigUnchanged(held, configBefore); err != nil {
 		return err
 	}
 	absolute, e := filepath.Abs(home)
@@ -125,4 +145,12 @@ func LoadRooted(home *local.RootedHome) (cfg Config, found bool, err error) {
 	}
 	cfg, found, _, err = decodeLoadedConfig(raw, readErr, filepath.Join(home.Root.Name(), "config.json"), agentmeta.Builtins())
 	return cfg, found, errors.Join(err, home.Check())
+}
+
+func rootedConfigUnchanged(home *local.RootedHome, before os.FileInfo) error {
+	after, err := home.Root.Lstat("config.json")
+	if err != nil || !after.Mode().IsRegular() || !os.SameFile(before, after) || before.Size() != after.Size() || !before.ModTime().Equal(after.ModTime()) {
+		return errors.Join(errors.New("durable storage configuration changed before write guard"), err)
+	}
+	return home.Check()
 }

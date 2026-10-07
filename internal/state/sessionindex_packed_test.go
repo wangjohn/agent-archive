@@ -19,7 +19,7 @@ import (
 
 func packedOwnerFixture(tb testing.TB) (*Store, agentmeta.SessionKey, sessionIndexMarker) {
 	tb.Helper()
-	s, err := Open(tb.TempDir())
+	s, err := openTestStore(tb.TempDir())
 	if err != nil {
 		tb.Fatal(err)
 	}

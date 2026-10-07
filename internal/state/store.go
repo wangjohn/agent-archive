@@ -845,7 +845,7 @@ func (s *Store) LoadPending(id string) (PendingPublication, bool, error) {
 		found, err = s.readOwned(s.pendingPath(id), &pending)
 	}
 	if err != nil {
-		return PendingPublication{}, protected || errors.Is(err, ErrDurableStorageRecovery), fmt.Errorf("read pending publication %q: %w", id, errors.Join(ErrDurableStorageRecovery, err))
+		return PendingPublication{}, protected || cfg.DurableStorageProtection || errors.Is(err, ErrDurableStorageRecovery), fmt.Errorf("read pending publication %q: %w", id, errors.Join(ErrDurableStorageRecovery, err))
 	}
 	if found {
 		if err := pending.ValidateHistoryBudgeted(id, s.resourceBudget); err != nil {

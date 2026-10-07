@@ -421,3 +421,147 @@ func TestDurableInspectionBoundRefusesPartialRootAndUnsafeEntries(t *testing.T) 
 		t.Fatal("outside modified", err)
 	}
 }
+
+func TestDurableFutureLabelContextUsesClosedPublishedDecoder(t *testing.T) {
+	s := newTestStore(t)
+	for _, key := range []string{"commit", "sources", "predecessor_unknown"} {
+		raw := []byte(fmt.Sprintf(`{"summary":{},%q:null}`, key))
+		if err := os.WriteFile(s.publishedPath("foreign"), raw, 0600); err != nil {
+			t.Fatal(err)
+		}
+		p, _, err := s.LoadLabelPublication("foreign", 8<<20)
+		if p != nil || !errors.Is(err, ErrDurableStorageRecovery) {
+			t.Fatalf("label context accepted %s: %v", key, err)
+		}
+		after, err := os.ReadFile(s.publishedPath("foreign"))
+		if err != nil || string(after) != string(raw) {
+			t.Fatal("foreign label state changed", err)
+		}
+	}
+}
+
+func TestDurablePublishedPrefixRequiresCurrentConfigAndRefusesFutureHeader(t *testing.T) {
+	for _, mode := range []string{"missing", "corrupt", "future", "known", "header", "header-after-summary"} {
+		t.Run(mode, func(t *testing.T) {
+			s := newTestStore(t)
+			raw := `{"summary":{"published":true,"harness":"codex"},"bundle":{}}`
+			switch mode {
+			case "missing":
+				if err := os.Remove(filepath.Join(s.home, "config.json")); err != nil {
+					t.Fatal(err)
+				}
+			case "corrupt":
+				if err := os.WriteFile(filepath.Join(s.home, "config.json"), []byte("{"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			case "future", "header-after-summary":
+				if err := os.WriteFile(filepath.Join(s.home, "config.json"), []byte(`{"schema_version":{"version":8,"writer":"publication-composition-v8"},"publication_composition_protection":true}`), 0600); err != nil {
+					t.Fatal(err)
+				}
+			case "header":
+				raw = `{"publication_version":2,"summary":{"published":true},"commit":null}`
+			}
+			if mode == "header-after-summary" {
+				raw = `{"summary":{"published":true},"publication_version":2}`
+			}
+			if err := os.WriteFile(s.publishedPath("foreign"), []byte(raw), 0600); err != nil {
+				t.Fatal(err)
+			}
+			summary, found, err := s.LoadPublishedSummary("foreign")
+			_, _, labelErr := s.LabelRevision("foreign")
+			if mode == "known" {
+				if err != nil || !found || !summary.Published || labelErr != nil {
+					t.Fatal(summary, found, err, labelErr)
+				}
+				for range 10 {
+					if _, _, err := s.LoadPublishedSummary("foreign"); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if s.durableInspection.configLoads != 1 {
+					t.Fatal("prefix repeatedly decoded current config")
+				}
+			} else if !found || !errors.Is(err, ErrDurableStorageRecovery) || summary.Published || !errors.Is(labelErr, ErrDurableStorageRecovery) {
+				t.Fatalf("prefix gained authority: %+v %v %v label=%v", summary, found, err, labelErr)
+			}
+			if _, absent, err := s.LoadPublishedSummary("absent"); absent || err != nil {
+				t.Fatalf("proven absence changed: %v %v", absent, err)
+			}
+			after, err := os.ReadFile(s.publishedPath("foreign"))
+			if err != nil || string(after) != raw {
+				t.Fatal("refusal changed published file", err)
+			}
+		})
+	}
+}
+
+func TestDurableQuotaRefusesConfigReplacementBeforeStageAllocation(t *testing.T) {
+	s := newTestStore(t)
+	s.onLockWait = func(name string) {
+		if name != "temporary-quota" {
+			return
+		}
+		raw, err := os.ReadFile(filepath.Join(s.home, "config.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		p := filepath.Join(s.home, "replacement.json")
+		if err := os.WriteFile(p, raw, 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Rename(p, filepath.Join(s.home, "config.json")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	data := []byte("original")
+	if _, err := s.StagePendingSource("session", durableRef(data), data); err == nil {
+		t.Fatal("replaced config granted quota write")
+	}
+	if _, err := os.Stat(filepath.Join(s.home, "sessions", "session")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("allocated stage despite replaced config", err)
+	}
+}
+
+func TestDurableCorruptPendingWithoutSourcesIsRetainedAndOwed(t *testing.T) {
+	s := newTestStore(t)
+	if err := config.WithDurableStorage(s.home, func(g config.DurableStorageGuard) error { return g.CheckHome(s.home) }); err != nil {
+		t.Fatal(err)
+	}
+	raw := []byte(`{"bundle":`)
+	path := s.pendingPath("corrupt")
+	if err := os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if _, found, err := s.ForCollectorPass().LoadPending("corrupt"); !found || !errors.Is(err, ErrDurableStorageRecovery) || errors.Is(err, ErrQuarantined) {
+			t.Fatalf("pending: found=%v err=%v", found, err)
+		}
+	}
+	after, err := os.ReadFile(path)
+	if err != nil || string(after) != string(raw) {
+		t.Fatalf("protected bytes changed: %q %v", after, err)
+	}
+	if len(s.QuarantinedFiles()) != 0 {
+		t.Fatal("protected corruption quarantined")
+	}
+	if pending, err := s.HasPending("corrupt"); !pending || err != nil {
+		t.Fatalf("pending visibility: %v %v", pending, err)
+	}
+	if err := config.WithDurableStorage(s.home, func(g config.DurableStorageGuard) error {
+		q, err := s.openDurableQuota(g)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = q.Close() }()
+		usage, err := q.usage()
+		if err != nil {
+			return err
+		}
+		if usage.physical != int64(len(raw)) || usage.charged != 2*int64(len(raw)) {
+			t.Fatalf("corruption uncharged: %+v", usage)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}

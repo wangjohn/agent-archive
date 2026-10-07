@@ -102,10 +102,7 @@ func TestLabelPublicationUsesSharedReadBudgetAndReleasesOwnership(t *testing.T) 
 }
 
 func TestLabelRevisionDoesNotDecodeOversizedLegacyPublication(t *testing.T) {
-	store, err := Open(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := newTestStore(t)
 	if err := os.WriteFile(store.publishedPath("synthetic"), []byte("{\"bundle\":"+strings.Repeat(" ", 8<<20)), 0600); err != nil {
 		t.Fatal(err)
 	}

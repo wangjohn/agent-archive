@@ -1,6 +1,7 @@
 package collector
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -139,5 +140,69 @@ func TestLocalBundleAnonymousTempRefusesBeforeNativeFilter(t *testing.T) {
 	bundle, err := ReadLocalBundle(t.Context(), s.Home(), reg, time.Now(), "", refuseNativeSources{t})
 	if !errors.Is(err, state.ErrDurableStorageRecovery) || bundle.ArchiveSessionID != "" {
 		t.Fatalf("anonymous preview emitted: %+v %v", bundle, err)
+	}
+}
+
+func TestFuturePublishedNamingRefusesBeforeLookupAndNativeFilter(t *testing.T) {
+	for _, mode := range []string{"missing", "corrupt", "leading-header", "changed-warm"} {
+		t.Run(mode, func(t *testing.T) {
+			s := newTestStore(t)
+			path := writeTranscript(t, t.TempDir(), "session.jsonl", codexTranscript)
+			reg := registration(t, path)
+			reg.NativeSessionID = "01900000-0000-7000-8000-000000000001"
+			if err := s.SaveRegistration(reg); err != nil {
+				t.Fatal(err)
+			}
+			remote := storagetest.NewMemoryStore()
+			now := reg.RegisteredAt.Add(time.Hour)
+			provider := &mutableLabels{}
+			opts := Options{MachineID: "machine", Sources: testSources, Parsers: testParsers, Now: func() time.Time { return now }}
+			if result, err := Run(t.Context(), s, remote, opts); err != nil || len(result.Errors) != 0 {
+				t.Fatal(result, err)
+			}
+			opts.Labels = mutableLabelLookup{provider}
+			now = now.Add(time.Hour)
+			if result, err := Run(t.Context(), s, remote, opts); err != nil || len(result.Errors) != 0 {
+				t.Fatal(result, err)
+			}
+			provider.calls = 0
+			p := filepath.Join(s.Home(), "published", reg.ArchiveSessionID+".json")
+			raw, err := os.ReadFile(p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw = bytes.TrimSpace(raw)
+			if mode == "leading-header" {
+				raw = append([]byte(`{"publication_version":2,`), raw[1:]...)
+			} else {
+				raw = append(raw[:len(raw)-1], []byte(`,"commit":null}`)...)
+			}
+			if err := os.WriteFile(p, raw, 0600); err != nil {
+				t.Fatal(err)
+			}
+			switch mode {
+			case "missing":
+				if err := os.Remove(filepath.Join(s.Home(), "config.json")); err != nil {
+					t.Fatal(err)
+				}
+			case "corrupt":
+				if err := os.WriteFile(filepath.Join(s.Home(), "config.json"), []byte("{"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			opts.Sources = refuseNativeSources{t}
+			now = now.Add(time.Hour)
+			result, err := Run(t.Context(), s, remote, opts)
+			if !errors.Is(err, state.ErrDurableStorageRecovery) && !errors.Is(result.Errors[reg.ArchiveSessionID], state.ErrDurableStorageRecovery) {
+				t.Fatalf("recovery quietly skipped: %+v %v", result, err)
+			}
+			if provider.calls != 0 || len(result.Published) != 0 {
+				t.Fatal("foreign publication launched label lookup or publication")
+			}
+			after, err := os.ReadFile(p)
+			if err != nil || string(after) != string(raw) {
+				t.Fatal("foreign naming state changed", err)
+			}
+		})
 	}
 }

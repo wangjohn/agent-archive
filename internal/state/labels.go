@@ -36,36 +36,22 @@ func (s *Store) LabelRevision(id string) (string, string, error) {
 	if !safeFileComponent(id) {
 		return "", "", errors.New("invalid label state identity")
 	}
-	info, err := os.Lstat(s.publishedPath(id))
-	if err != nil || !info.Mode().IsRegular() {
+	summary, found, head, info, err := s.publishedPrefix(id)
+	if err != nil {
+		return "", "", err
+	}
+	if !found {
 		return "", "", errors.New("label publication unavailable")
 	}
 	token := sha256.Sum256([]byte(fmt.Sprintf("%d:%d", info.Size(), info.ModTime().UnixNano())))
-	if summary, ok := readLabelSummary(s.publishedPath(id)); ok && (summary.CurrentRevision != "" || summary.SourceSchemaVersion == archive.HistorySourceSchemaVersion || summary.MetadataSchemaVersion == archive.HistoryMetadataSchemaVersion) {
+	if head && (summary.CurrentRevision != "" || summary.SourceSchemaVersion == archive.HistorySourceSchemaVersion || summary.MetadataSchemaVersion == archive.HistoryMetadataSchemaVersion) {
 		return "", "", errors.New("external labels cannot use a retained history source set")
 	}
-	checksum := readLabelChecksum(s.publishedPath(id))
+	checksum := summary.LabelSourceChecksum
+	if len(checksum) != 64 {
+		checksum = ""
+	}
 	return checksum, hex.EncodeToString(token[:]), nil
-}
-
-// This optional rejection proof never falls back to an unbounded legacy-state
-// decode. Complete positive authority is checked by the capped publication read.
-func readLabelSummary(path string) (PublishedSummary, bool) {
-	f, err := os.Open(path)
-	if err != nil {
-		return PublishedSummary{}, false
-	}
-	defer func() { _ = f.Close() }()
-	d := json.NewDecoder(io.LimitReader(f, 4096))
-	if token, err := d.Token(); err != nil || token != json.Delim('{') {
-		return PublishedSummary{}, false
-	}
-	if key, err := d.Token(); err != nil || key != "summary" {
-		return PublishedSummary{}, false
-	}
-	var summary PublishedSummary
-	err = d.Decode(&summary)
-	return summary, err == nil
 }
 
 // LoadLabelPublication enforces an aggregate caller budget before a one-time context decode.
@@ -250,31 +236,4 @@ func (s *Store) SaveLabels(cache LabelCache) error {
 		return errors.New("session label cache exceeds byte budget")
 	}
 	return local.WriteCompact(filepath.Join(s.home, "session-labels.json"), cache)
-}
-
-// The checksum is the first summary field in new state; older state uses the stat fallback.
-func readLabelChecksum(path string) string {
-	f, err := os.Open(path)
-	if err != nil {
-		return ""
-	}
-	defer func() { _ = f.Close() }()
-	decoder := json.NewDecoder(io.LimitReader(f, 8192))
-	if token, err := decoder.Token(); err != nil || token != json.Delim('{') {
-		return ""
-	}
-	if token, err := decoder.Token(); err != nil || token != "summary" {
-		return ""
-	}
-	if token, err := decoder.Token(); err != nil || token != json.Delim('{') {
-		return ""
-	}
-	if token, err := decoder.Token(); err != nil || token != "label_source_checksum" {
-		return ""
-	}
-	var checksum string
-	if decoder.Decode(&checksum) != nil || len(checksum) != 64 {
-		return ""
-	}
-	return checksum
 }

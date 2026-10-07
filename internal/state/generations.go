@@ -254,7 +254,10 @@ func (s *Store) generationRecoveryOriginal(id string) (archive.SessionRegistrati
 		return archive.SessionRegistration{}, agentmeta.SessionKey{}, errors.New("recovery requires the active archive generation")
 	}
 	summary, found, err := s.LoadPublishedSummary(id)
-	if err != nil || !found || !summary.Published || summary.BlockedReason != BlockedReasonTranscriptRewritten {
+	if err != nil {
+		return archive.SessionRegistration{}, agentmeta.SessionKey{}, err
+	}
+	if !found || !summary.Published || summary.BlockedReason != BlockedReasonTranscriptRewritten {
 		return archive.SessionRegistration{}, agentmeta.SessionKey{}, errors.New("recovery requires published history blocked by transcript_rewritten")
 	}
 	if pending, err := s.HasPending(id); err != nil || pending {

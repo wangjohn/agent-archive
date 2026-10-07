@@ -31,6 +31,8 @@ type durableUsage struct {
 	recovery          bool
 }
 type durableQuota struct {
+	guard  config.DurableStorageGuard
+	path   string
 	home   *local.RootedHome
 	unlock func()
 }
@@ -47,9 +49,9 @@ func (s *Store) openDurableQuota(g config.DurableStorageGuard) (*durableQuota, e
 	if err != nil {
 		return nil, err
 	}
-	return &durableQuota{home: home, unlock: unlock}, nil
+	return &durableQuota{home: home, unlock: unlock, guard: g, path: s.home}, nil
 }
-func (q *durableQuota) Close() error { q.unlock(); return q.home.Check() }
+func (q *durableQuota) Close() error { q.unlock(); return q.guard.CheckHome(q.path) }
 
 func privateDirectory(root *os.Root, path string, create bool) (*os.Root, error) {
 	current, err := root.OpenRoot(".")
@@ -264,7 +266,7 @@ func (q *durableQuota) write(path string, n int64, write func(io.Writer) error) 
 	if additional > durableStorageQuota-u.charged {
 		return ErrDurableStorageCapacity
 	}
-	if err = q.home.Check(); err != nil {
+	if err = q.guard.CheckHome(q.path); err != nil {
 		return err
 	}
 	dir, err := privateDirectory(q.home.Root, filepath.Dir(path), true)
@@ -277,7 +279,7 @@ func (q *durableQuota) write(path string, n int64, write func(io.Writer) error) 
 		if e := write(limited); e != nil {
 			return e
 		}
-		return q.home.Check()
+		return q.guard.CheckHome(q.path)
 	})
 }
 

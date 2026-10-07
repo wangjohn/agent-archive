@@ -21,6 +21,7 @@ type unsupportedPendingFields struct {
 }
 
 type unsupportedPublishedFields struct {
+	PublicationVersion unsupportedPublicationField `json:"publication_version"`
 	Commit             unsupportedPublicationField `json:"commit"`
 	Sources            unsupportedPublicationField `json:"sources"`
 	PredecessorUnknown unsupportedPublicationField `json:"predecessor_unknown"`
