@@ -56,6 +56,12 @@ func retainedPolicy(b archive.SourceBundle, skill string) state.PublicationPolic
 // It has no native file/Git fallback and produces no remote writes. Callers hold
 // the shared atomic pending quota gate before persisting the bounded RAM output.
 func (s *sessionScan) prepareRetainedPrivacy(raw []byte, loader retainedSourceLoader, prior state.PublicationPredecessor, authority state.PrivacyAuthority, stageDigest, stageSHA, oldSkill string) (state.PendingPublication, error) {
+	return s.prepareRetainedPrivacyWithReplay(raw, loader, nil, prior, authority, stageDigest, stageSHA, oldSkill)
+}
+
+// prepareRetainedPrivacyWithReplay keeps immediate correspondence while applying
+// current policy to authenticated oldest uncommitted content when available.
+func (s *sessionScan) prepareRetainedPrivacyWithReplay(raw []byte, loader, replay retainedSourceLoader, prior state.PublicationPredecessor, authority state.PrivacyAuthority, stageDigest, stageSHA, oldSkill string) (state.PendingPublication, error) {
 	var before archive.Metadata
 	if err := json.Unmarshal(raw, &before); err != nil {
 		return state.PendingPublication{}, err
@@ -92,6 +98,16 @@ func (s *sessionScan) prepareRetainedPrivacy(raw []byte, loader retainedSourceLo
 		reg.PreviousGenerationID = bundle.PreviousGenerationID
 		reg.ParentSessionID = bundle.ParentSessionID
 		original := bundle
+		if replay != nil {
+			bundle, err = replay(s.ctx, selected)
+			if err != nil {
+				return pending, err
+			}
+			if err := validateRetainedPrivacyFacts(original, bundle); err != nil {
+				return pending, err
+			}
+			bundle.SupplementalEvidence = mergeSupplementalEvidence(bundle.SupplementalEvidence, retainedMaintenanceEvidence(original.SupplementalEvidence))
+		}
 		bundle.SupplementalEvidence = limitSkillEvidence(bundle.SupplementalEvidence, s.opts.skillEvidence())
 		if i == 0 {
 			bundle.SupplementalEvidence = mergeSupplementalEvidence(bundle.SupplementalEvidence, retainedMaintenanceEvidence(s.req.HookEvidence))

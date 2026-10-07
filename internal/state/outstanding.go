@@ -1,6 +1,8 @@
 package state
 
 import (
+	"errors"
+
 	"github.com/wangjohn/agent-archive/internal/archive"
 )
 
@@ -113,11 +115,24 @@ func QueuedRequests(reqs []Request) map[string]bool {
 // the published state's leading summary, never a full decode of its source
 // bundles, so it is cheap enough to ask for every registered session.
 func (s *Store) Outstanding(reg archive.SessionRegistration, requested bool) (Outstanding, error) {
-	id := reg.ArchiveSessionID
-	summary, found, err := s.LoadPublishedSummary(id)
+	summary, found, err := s.LoadPublishedSummary(reg.ArchiveSessionID)
 	if err != nil {
 		return Outstanding{}, err
 	}
+	return s.outstanding(reg, requested, summary, found)
+}
+
+// Outstanding uses this scan's already loaded published state and the canonical
+// work calculation, avoiding another full decode of absent or legacy summaries.
+func (p *Published) Outstanding(reg archive.SessionRegistration, requested bool) (Outstanding, error) {
+	if reg.ArchiveSessionID != p.id {
+		return Outstanding{}, errors.New("outstanding work registration differs from loaded publication")
+	}
+	return p.store.outstanding(reg, requested, p.Summary(), p.Found())
+}
+
+func (s *Store) outstanding(reg archive.SessionRegistration, requested bool, summary PublishedSummary, found bool) (Outstanding, error) {
+	id := reg.ArchiveSessionID
 	scan, err := s.ScanPending(id)
 	if err != nil {
 		return Outstanding{}, err

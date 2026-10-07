@@ -426,3 +426,96 @@ func TestRetainedPrivacyRewritesFullReferenceLimitWithoutEviction(t *testing.T) 
 		t.Fatal("capacity evicted retained evidence", len(pending.Sources), err)
 	}
 }
+
+func TestPendingPrivacyIncreaseRefiltersOldestCompleteSourceSet(t *testing.T) {
+	s, m, _ := retainedHistoryFixture(t)
+	selections, err := state.RevisionSelections(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, selected := range selections {
+		bundle, err := reader.LoadRevisionSource(t.Context(), s.remote, m, selected, reader.Limits{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		bundle.SupplementalEvidence = []archive.SupplementalEvidence{{Kind: archive.EvidenceKindSkillSnapshot, ObservedAt: bundle.Capture.CapturedAt, Provenance: "synthetic", Payload: map[string]any{"name": "synthetic", "snapshot": fmt.Sprintf("oldest-body-%d", i)}}}
+		compressed, err := archive.BuildCompressedSource(bundle)
+		if err != nil {
+			t.Fatal(err)
+		}
+		key, err := archive.SourceObjectKey(bundle, compressed.SHA256)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.remote.Put(t.Context(), key, compressed.Bytes); err != nil {
+			t.Fatal(err)
+		}
+		ref := archive.SourceReference{Key: key, SHA256: compressed.SHA256, CompressedBytes: len(compressed.Bytes)}
+		if i == 0 {
+			m.SourceBundle = ref
+			if err := s.published.SavePublication(bundle, s.now, ref, encodeMaintenanceMetadata(t, m)); err != nil {
+				t.Fatal(err)
+			}
+		} else {
+			m.History.Preserved[i-1].Source = ref
+		}
+	}
+	raw := encodeMaintenanceMetadata(t, m)
+	current, _, _ := s.published.LastPublished()
+	if err := s.published.SavePublication(current, s.now, m.SourceBundle, raw); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.remote.Put(t.Context(), s.mustMetadataKey(), raw); err != nil {
+		t.Fatal(err)
+	}
+	s.opts.SkillEvidence = config.SkillEvidenceBody
+	root, err := s.prepareRetainedPrivacy(raw, remoteRetainedLoader(s.remote, m), s.published.PublicationPredecessor(), state.PrivacyCommitted, "", "", "body")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.persistPrivacy(root); err != nil {
+		t.Fatal(err)
+	}
+	s.opts.SkillEvidence = config.SkillEvidenceNone
+	if _, err := s.maintainPendingPrivacy(root); !errors.Is(err, archive.ErrHistoryMutationPending) {
+		t.Fatal("history fence changed", err)
+	}
+	reduced, found, err := s.local.LoadPending(s.id())
+	if err != nil || !found {
+		t.Fatal(found, err)
+	}
+	s.opts.SkillEvidence = config.SkillEvidenceBody
+	if _, err := s.maintainPendingPrivacy(reduced); !errors.Is(err, archive.ErrHistoryMutationPending) {
+		t.Fatal("history fence changed", err)
+	}
+	next, found, err := s.local.LoadPending(s.id())
+	if err != nil || !found || next.ValidatePublication() != nil {
+		t.Fatal(found, err)
+	}
+	for i, source := range next.Sources {
+		payload := source.Bytes
+		if i == 0 {
+			payload = next.SourceBytes
+		}
+		bundle, err := archive.ReadSourceBundle(bytes.NewReader(payload), archive.DecodeOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		encoded, err := json.Marshal(bundle)
+		if err != nil || !bytes.Contains(encoded, []byte(fmt.Sprintf("oldest-body-%d", i))) || bytes.Contains(encoded, []byte("obsolete-private-marker")) {
+			t.Fatal("oldest source content or current native privacy lost", i, string(encoded), err)
+		}
+		if next.Commit.Privacy.Sources[i].Previous != reduced.Commit.Privacy.Sources[i].Next {
+			t.Fatal("immediate full-set correspondence lost", i)
+		}
+	}
+}
+
+func encodeMaintenanceMetadata(t *testing.T, m archive.Metadata) []byte {
+	t.Helper()
+	raw, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
