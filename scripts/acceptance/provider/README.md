@@ -115,6 +115,8 @@ Privacy retirement has two separate required proofs: ordinary CLI publication us
 
 Legacy summary read validation is independent of new writer key limits. Every
 new hint write, including `PutRevision`, refuses unsafe historical component
-layouts. Native runtime gates require 22 named cases, including legacy read
-boundaries and direct writer refusal. Evidence verification retains prior
+layouts. The write boundary also checks the S3 store's full destination key,
+including its prefix, before allocating an object. Native runtime gates require
+23 named cases, including legacy read boundaries, direct writer refusal and full
+destination key limits. Evidence verification retains prior
 failures/skips even if later events report success.

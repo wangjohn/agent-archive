@@ -227,3 +227,37 @@ func TestPortableWriterRefusesLegacyLongComponentsBeforeStoreWrite(t *testing.T)
 		t.Fatal("writer truncated or accepted long namespace")
 	}
 }
+
+// PrefixStore models the existing S3 ObjectKey port without any network.
+type prefixStore struct {
+	storage.ObjectStore
+	prefix string
+	writes int
+}
+
+func (s *prefixStore) ObjectKey(relative string) string { return s.prefix + "/" + relative }
+
+func (s *prefixStore) Put(ctx context.Context, key string, body []byte) error {
+	s.writes++
+	return s.ObjectStore.Put(ctx, key, body)
+}
+
+func TestPortableWriterBoundsFullDestinationKeyBeforeWrite(t *testing.T) {
+	memory := storagetest.NewMemoryStore()
+	f := providertest.PutRetainedFixture(t, memory, 1, time.Now().UTC())
+	key := "sessions/codex/" + f.Registration.ArchiveSessionID + "/metadata.json"
+	r, err := listingindex.NewRevision(key, f.Body, "validator")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, prefix := range []string{strings.Repeat("p", 241), strings.Repeat(strings.Repeat("p", 200)+"/", 4) + strings.Repeat("p", 200)} {
+		store := &prefixStore{ObjectStore: memory, prefix: prefix}
+		if err := listingindex.PutRevision(t.Context(), store, r); err == nil || store.writes != 0 {
+			t.Fatal("full destination key was not refused before write", err, store.writes)
+		}
+	}
+	store := &prefixStore{ObjectStore: memory, prefix: "synthetic"}
+	if err := listingindex.PutRevision(t.Context(), store, r); err != nil || store.writes != 1 {
+		t.Fatal("valid destination prefix changed", err, store.writes)
+	}
+}

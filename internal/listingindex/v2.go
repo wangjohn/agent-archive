@@ -247,6 +247,18 @@ func PutRevision(ctx context.Context, store storage.ObjectStore, r Revision) err
 	if portable != r.Key {
 		return errors.New("listing revision requires portable encoding")
 	}
+	fullKey := r.Key
+	if keyer, ok := store.(interface{ ObjectKey(string) string }); ok {
+		fullKey = keyer.ObjectKey(r.Key)
+	}
+	if len(fullKey) > 1024 {
+		return errors.New("listing revision exceeds full object key limit")
+	}
+	for component := range strings.SplitSeq(fullKey, "/") {
+		if len(component) > 240 {
+			return errors.New("listing revision exceeds full object key component limit")
+		}
+	}
 	return store.Put(ctx, r.Key, nil)
 }
 
