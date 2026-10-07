@@ -98,7 +98,7 @@ Name-only refreshes must preserve conversation activity, `CapturedAt`, `StartedA
 
 Retry attempted pending publications with their frozen bytes before incorporating a later rename. Once the pending publication succeeds, the newer fingerprint still owes work. Respect current capture policy, destination, machine ownership and skill rules; labels neither qualify an uncaptured session nor resurrect an expired/deleted one.
 
-The current Codex history lifecycle fence rejects history-source mutation and publication, including metadata refresh. This work must respect that fence. Ship names for publishable ordinary sessions first; enable history-source name updates only after the existing history lifecycle work supports them. Do not weaken the fence as a side effect of a title feature.
+Codex history publication now uses verified retained source sets, exact predecessor authority and durable pending journals. Naming work must preserve those lifecycle checks and the permanent config-v5 writer marker. Ship external names for publishable ordinary sessions first; history-source name updates require integration with the revision-aware lifecycle rather than an ordinary metadata override. Do not widen history authority as a side effect of a title feature.
 
 ## Migration and compatibility
 

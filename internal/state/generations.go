@@ -1,17 +1,20 @@
 package state
 
 import (
-	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"os"
 	"path/filepath"
 	"reflect"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/local"
@@ -91,7 +94,10 @@ func (s *Store) GenerationSuccessor(id string) (string, bool, error) {
 	if !safeFileComponent(id) {
 		return "", false, errors.New("invalid archive session ID")
 	}
-	r, found, err := readJSON[generationRecovery](s.generationRecoveryPath(id))
+	r, found, err := s.loadGenerationRecovery(id)
+	if generationReadRefusal(err) {
+		return "", false, err
+	}
 	if err != nil || found && (r.Version != 1 || r.Previous != id || !safeFileComponent(r.Next) || r.Next == id || r.Key.Validate() != nil) {
 		return "", false, ErrSessionIndexRecoveryRequired
 	}
@@ -114,7 +120,7 @@ func (s *Store) BeginGenerationRecovery(id string, at time.Time, build func(arch
 		if err != nil {
 			return "", err
 		}
-		if err := s.resumeGenerationRecovery(id); err != nil {
+		if err := s.resumeGenerationRecovery(s.generationReadContext(), id); err != nil {
 			return "", err
 		}
 		return next, nil
@@ -131,7 +137,7 @@ func (s *Store) BeginGenerationRecovery(id string, at time.Time, build func(arch
 	if err != nil {
 		return "", err
 	}
-	if err := validateGenerationSuccessor(old, reg, pending, next, at); err != nil {
+	if err := validateGenerationSuccessor(old, reg, pending, next, at, s.resourceBudget, s.generationReadContext()); err != nil {
 		return "", err
 	}
 	token, err := local.ID()
@@ -141,16 +147,16 @@ func (s *Store) BeginGenerationRecovery(id string, at time.Time, build func(arch
 	request := Request{ArchiveSessionID: next, Token: token, Reasons: []string{"generation-recovery"}, RequestedAt: at}
 	pending.RequestToken = token
 	r := generationRecovery{Version: 1, Key: key, Previous: id, Next: next, Registration: &reg, Pending: &pending, Request: &request}
-	if err := local.Write(s.generationRecoveryPath(id), r); err != nil {
+	if err := s.writeCompact(s.generationRecoveryPath(id), r); err != nil {
 		return "", err
 	}
 	if err := s.indexStep("generation-journal"); err != nil {
 		return "", err
 	}
-	return next, s.resumeGenerationRecovery(id)
+	return next, s.resumeGenerationRecovery(s.generationReadContext(), id)
 }
 
-func validateGenerationSuccessor(old, reg archive.SessionRegistration, pending PendingPublication, next string, at time.Time) error {
+func validateGenerationSuccessor(old, reg archive.SessionRegistration, pending PendingPublication, next string, at time.Time, budget *agentapi.NativeReadBudget, ctx context.Context) error {
 	if reg.ArchiveSessionID != next || reg.PreviousGenerationID != old.ArchiveSessionID || reg.CaptureFrozen || reg.Validate() != nil || pending.Bundle.ArchiveSessionID != next || pending.Bundle.PreviousGenerationID != old.ArchiveSessionID || !pending.Bundle.Capture.CapturedAt.Equal(at) {
 		return errors.New("invalid recovery successor")
 	}
@@ -160,25 +166,32 @@ func validateGenerationSuccessor(old, reg archive.SessionRegistration, pending P
 	if !reflect.DeepEqual(preserved, old) {
 		return errors.New("recovery cannot alter original admission or provenance")
 	}
-	return validateGenerationPublication(reg, pending)
+	return validateGenerationPublication(reg, pending, budget, ctx)
 }
 
 // Validate the fixed rendered snapshot before committing any routing change.
 // A decodable journal must not redirect preserved metadata or carry bytes
 // belonging to another generation, even when its registration is intact.
-func validateGenerationPublication(reg archive.SessionRegistration, pending PendingPublication) error {
-	if err := archive.CheckHistoryMutation(pending.Bundle, archive.Metadata{}); err != nil {
+func validateGenerationPublication(reg archive.SessionRegistration, pending PendingPublication, budget *agentapi.NativeReadBudget, ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := validateGenerationHistory(reg, pending, budget); err != nil {
 		return err
 	}
 	bundle := pending.Bundle
 	if pending.MetadataOnly || bundle.NativeSessionID != reg.NativeSessionID || bundle.ProjectID != reg.ProjectID || bundle.Capture.Harness.Name != reg.Harness.Name {
 		return errors.New("recovery publication identity differs from registration")
 	}
-	source, err := archive.BuildCompressedSource(bundle)
-	if err != nil || source.SHA256 != pending.SourceSHA256 || !bytes.Equal(source.Bytes, pending.SourceBytes) {
+	source, err := generationSourceDigest(ctx, bundle, budget)
+	if err != nil {
+		return err
+	}
+	sum := sha256.Sum256(pending.SourceBytes)
+	if source.digest != pending.SourceSHA256 || source.size != int64(len(pending.SourceBytes)) || hex.EncodeToString(sum[:]) != pending.SourceSHA256 {
 		return errors.New("recovery publication source differs from its fixed bundle")
 	}
-	sourceKey, err := archive.SourceObjectKey(bundle, source.SHA256)
+	sourceKey, err := archive.SourceObjectKey(bundle, source.digest)
 	if err != nil || sourceKey != pending.SourceKey {
 		return errors.New("recovery publication source key differs from its fixed bundle")
 	}
@@ -186,9 +199,34 @@ func validateGenerationPublication(reg archive.SessionRegistration, pending Pend
 	if err != nil || metadataKey != pending.MetadataKey {
 		return errors.New("recovery publication metadata key differs from registration")
 	}
+	n := int64(len(pending.MetadataBytes))
+	if !budget.Reserve(n) {
+		return errStateBudget
+	}
+	defer budget.Release(n)
 	var metadata archive.Metadata
-	if json.Unmarshal(pending.MetadataBytes, &metadata) != nil || metadata.SchemaVersion != archive.MetadataSchemaVersion || metadata.SessionID != reg.ArchiveSessionID || metadata.PreviousGenerationID != reg.PreviousGenerationID || metadata.NativeSessionID != reg.NativeSessionID || metadata.ProjectID != reg.ProjectID || metadata.Harness.Name != reg.Harness.Name || !metadata.CapturedAt.Equal(bundle.Capture.CapturedAt) || metadata.SourceBundle != pending.SourceReference() {
+	if json.Unmarshal(pending.MetadataBytes, &metadata) != nil || !generationMetadataMatches(reg, pending, metadata) {
 		return errors.New("recovery publication metadata differs from its fixed source")
+	}
+	if pending.History != nil && (bundle.History == nil || metadata.History == nil || len(metadata.History.Preserved) != 0 || metadata.History.CurrentRevision != bundle.History.ActiveRolloutID) {
+		return errors.New("recovery successor cannot redirect retained alternatives")
+	}
+	return nil
+}
+
+// validateGenerationHistory keeps the successor self-contained and leaves the
+// original generation's complete reference set under its original prefix.
+func validateGenerationHistory(reg archive.SessionRegistration, pending PendingPublication, budget *agentapi.NativeReadBudget) error {
+	if pending.Bundle.History != nil || pending.Bundle.SchemaVersion == archive.HistorySourceSchemaVersion {
+		if pending.History == nil || pending.History.Preparing || len(pending.History.Retired) != 0 || pending.History.ExpectedMetadataSHA256 != "" {
+			return archive.ErrHistoryMutationPending
+		}
+		if err := pending.Bundle.ValidateHistory(); err != nil {
+			return err
+		}
+		if err := pending.ValidateHistoryBudgeted(reg.ArchiveSessionID, budget); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -232,6 +270,11 @@ func (s *Store) ResumeGenerationRecoveries(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	budget := s.resourceBudget
+	if budget == nil {
+		budget = agentapi.NewNativeReadBudget(128 << 20)
+	}
+	var pressure []error
 	for _, file := range files {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -240,34 +283,58 @@ func (s *Store) ResumeGenerationRecoveries(ctx context.Context) error {
 			continue
 		}
 		id := file.Name()[:len(file.Name())-5]
-		r, _, err := readJSON[generationRecovery](s.generationRecoveryPath(id))
-		if err != nil {
-			return ErrSessionIndexRecoveryRequired
-		}
-		if r.Version != 1 || r.Previous != id || !safeFileComponent(r.Next) || r.Key.Validate() != nil {
-			return ErrSessionIndexRecoveryRequired
-		}
-		if r.Complete {
-			continue
-		}
-		unlock, err := local.NamedLockWait(s.home, "hooks.lock", time.Second)
-		if err != nil {
-			return err
-		}
-		err = s.resumeGenerationRecovery(id)
-		unlock()
-		if err != nil {
-			return err
+		if err := s.resumeGenerationRecoveryFile(ctx, id, budget); err != nil {
+			if !errors.Is(err, agentapi.ErrReadBudget) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return err
+			}
+			pressure = append(pressure, fmt.Errorf("generation recovery %q remains pending: %w", id, err))
 		}
 	}
-	return nil
+	return errors.Join(pressure...)
+}
+
+// Each restart journal owns a short scope. Completed receipts and preceding
+// journals do not retain their decoded payloads while the next journal opens.
+func (s *Store) resumeGenerationRecoveryFile(ctx context.Context, id string, budget *agentapi.NativeReadBudget) error {
+	if !safeFileComponent(id) {
+		return ErrSessionIndexRecoveryRequired
+	}
+	scoped, closeScope := s.WithReadBudget(ctx, budget)
+	defer closeScope()
+	r, found, err := scoped.loadGenerationRecovery(id)
+	if generationReadRefusal(err) {
+		return err
+	}
+	if err != nil || !found || r.Version != 1 || r.Previous != id || !safeFileComponent(r.Next) || r.Key.Validate() != nil {
+		return ErrSessionIndexRecoveryRequired
+	}
+	if r.Complete {
+		return nil
+	}
+	// Only routing status was consumed. End this independent full view before
+	// rereading the locked journal that authorizes the actual replay.
+	closeScope()
+	unlock, err := local.NamedLockWait(s.home, "hooks.lock", time.Second)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	resumed, closeResume := s.WithReadBudget(ctx, budget)
+	defer closeResume()
+	return resumed.resumeGenerationRecovery(ctx, id)
 }
 
 // resumeGenerationRecovery runs with collector.lock then hooks.lock. Every
 // registration/index/request write uses its existing request-lock staging;
 // membership renames therefore retain request -> membership lock order.
-func (s *Store) resumeGenerationRecovery(id string) error {
-	r, found, err := readJSON[generationRecovery](s.generationRecoveryPath(id))
+func (s *Store) resumeGenerationRecovery(ctx context.Context, id string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	r, found, err := s.loadGenerationRecovery(id)
+	if generationReadRefusal(err) {
+		return err
+	}
 	if err != nil || !found || r.Version != 1 || r.Previous != id || !safeFileComponent(r.Next) || r.Key.Validate() != nil {
 		return ErrSessionIndexRecoveryRequired
 	}
@@ -286,7 +353,14 @@ func (s *Store) resumeGenerationRecovery(id string) error {
 	}
 	old.CaptureFrozen = false
 	key, err := registrationKey(old)
-	if err != nil || key != r.Key || validateGenerationSuccessor(old, *r.Registration, *r.Pending, r.Next, r.Request.RequestedAt) != nil {
+	if err != nil || key != r.Key {
+		return ErrSessionIndexRecoveryRequired
+	}
+	validationErr := validateGenerationSuccessor(old, *r.Registration, *r.Pending, r.Next, r.Request.RequestedAt, s.resourceBudget, ctx)
+	if generationReadRefusal(validationErr) {
+		return validationErr
+	}
+	if validationErr != nil {
 		return ErrSessionIndexRecoveryRequired
 	}
 	if err := s.freezeGenerationRecovery(r); err != nil {
@@ -424,7 +498,7 @@ func (s *Store) activateGenerationRecovery(r generationRecovery) error {
 	r.Registration = nil
 	r.Pending = nil
 	r.Request = nil
-	if err := local.Write(s.generationRecoveryPath(r.Previous), r); err != nil {
+	if err := s.writeCompact(s.generationRecoveryPath(r.Previous), r); err != nil {
 		return err
 	}
 	return s.indexStep("generation-complete")
@@ -781,4 +855,76 @@ func (s *Store) GenerationCaptureAllowed(reg archive.SessionRegistration) error 
 		return ErrSessionIndexRecoveryRequired
 	}
 	return nil
+}
+
+func (s *Store) loadGenerationRecovery(id string) (generationRecovery, bool, error) {
+	var r generationRecovery
+	err := s.readBudgeted(s.generationRecoveryPath(id), &r, true)
+	if errors.Is(err, os.ErrNotExist) {
+		return r, false, nil
+	}
+	return r, err == nil, err
+}
+
+type generationDigest struct {
+	digest string
+	size   int64
+}
+
+type generationDigestWriter struct {
+	ctx context.Context
+	hash.Hash
+	size int64
+}
+
+func (w *generationDigestWriter) Write(data []byte) (int, error) {
+	if err := w.ctx.Err(); err != nil {
+		return 0, err
+	}
+	n, err := w.Hash.Write(data)
+	w.size += int64(n)
+	return n, err
+}
+
+// Validation streams the canonical gzip into a digest, retaining no second
+// compressed publication. Encoder and compressor scratch share the caller lease.
+func generationSourceDigest(ctx context.Context, bundle archive.SourceBundle, budget *agentapi.NativeReadBudget) (generationDigest, error) {
+	const preflight = 32 << 10
+	if !budget.Reserve(preflight) {
+		return generationDigest{}, errStateBudget
+	}
+	largest, err := archive.SourceEncodingLineBound(ctx, bundle, budget.Available())
+	budget.Release(preflight)
+	if err != nil {
+		return generationDigest{}, err
+	}
+	const compressor = 1 << 20
+	if largest > (budget.Available()-compressor)/2 {
+		return generationDigest{}, errStateBudget
+	}
+	scratch := 2*largest + compressor
+	if !budget.Reserve(scratch) {
+		return generationDigest{}, errStateBudget
+	}
+	defer budget.Release(scratch)
+	writer := &generationDigestWriter{ctx: ctx, Hash: sha256.New()}
+	if err := archive.CompressSource(writer, bundle); err != nil {
+		return generationDigest{}, err
+	}
+	return generationDigest{hex.EncodeToString(writer.Sum(nil)), writer.size}, nil
+}
+
+func (s *Store) generationReadContext() context.Context {
+	if s.resourceContext != nil {
+		return s.resourceContext
+	}
+	return context.Background()
+}
+
+func generationMetadataMatches(reg archive.SessionRegistration, pending PendingPublication, metadata archive.Metadata) bool {
+	return (metadata.SchemaVersion == archive.MetadataSchemaVersion || metadata.SchemaVersion == archive.HistoryMetadataSchemaVersion) && metadata.SessionID == reg.ArchiveSessionID && metadata.PreviousGenerationID == reg.PreviousGenerationID && metadata.NativeSessionID == reg.NativeSessionID && metadata.ProjectID == reg.ProjectID && metadata.Harness.Name == reg.Harness.Name && metadata.CapturedAt.Equal(pending.Bundle.Capture.CapturedAt) && metadata.SourceBundle == pending.SourceReference()
+}
+
+func generationReadRefusal(err error) bool {
+	return errors.Is(err, agentapi.ErrReadBudget) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }

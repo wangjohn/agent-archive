@@ -238,7 +238,10 @@ func (s *sessionScan) refreshLabels() (sessionOutcome, bool, error) {
 	if err != nil {
 		return outcomeSkipped, false, err
 	}
-	last, found := s.lastPublication(key)
+	last, found, err := s.lastPublication(key)
+	if err != nil {
+		return outcomeSkipped, false, err
+	}
 	if !found || last.bundle.History != nil || !sourceEvidenceWithinPolicy(last.bundle.SupplementalEvidence, s.opts.skillEvidence()) || labelFingerprint(last.bundle) == entry.Label.Fingerprint() {
 		return outcomeSkipped, false, nil
 	}

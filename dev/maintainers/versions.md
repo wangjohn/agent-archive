@@ -133,5 +133,7 @@ remains counted. Source schema 3 and metadata schema 2 are additional readable
 formats for self-contained history and preserved revision references. Ordinary
 schema-2 encoding remains compatible, with filter 15 and adapter 0.15.0 unchanged.
 The Codex source signature includes `codex-history-v1` interpretation evidence;
-this does not change Claude or Cursor parser/adapter behavior. History mutation
-remains fenced until revision-aware lifecycle support is installed.
+this does not change Claude or Cursor parser/adapter behavior. Revision-aware
+history publication now uses verified retained source sets and exact authority
+through the pending journal; config-v5 protects it from older writers. This
+lifecycle work does not change the reader schemas or parser/filter versions.

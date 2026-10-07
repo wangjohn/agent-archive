@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/local"
 )
 
 // CacheStatus distinguishes why a bundle sits in the local published cache,
@@ -115,12 +114,24 @@ type ageClamp struct {
 	For time.Time `json:"for"`
 }
 
-// ageClampFor returns the clamp when it was recorded for bundle's capture.
-func (p publishedState) ageClampFor(bundle archive.SourceBundle) *ageClamp {
-	if p.AgeFrom != nil && p.AgeFrom.For.Equal(bundle.Capture.CapturedAt) {
-		return p.AgeFrom
+// captureAge keeps an unacknowledged meaningful candidate and the complete
+// acknowledged manifest independent. Neither can age out the other's evidence.
+func (p publishedState) captureAge(bundle archive.SourceBundle, raw []byte) time.Time {
+	var m archive.Metadata
+	if json.Unmarshal(raw, &m) != nil {
+		m = archive.Metadata{}
 	}
-	return nil
+	return captureAgeFromMetadata(bundle, m)
+}
+
+func captureAgeFromMetadata(bundle archive.SourceBundle, m archive.Metadata) time.Time {
+	at := bundle.Capture.CapturedAt
+	if m.SessionID == bundle.ArchiveSessionID && m.NativeSessionID == bundle.NativeSessionID && m.ProjectID == bundle.ProjectID && m.Harness.Name == bundle.Capture.Harness.Name {
+		if retained, err := m.MeaningfulCapturedAt(); err == nil && retained.After(at) {
+			at = retained
+		}
+	}
+	return at
 }
 
 // PublishedSummary is what a session's published state says about the
@@ -129,6 +140,14 @@ func (p publishedState) ageClampFor(bundle archive.SourceBundle) *ageClamp {
 type PublishedSummary struct {
 	// LabelSourceChecksum invalidates narrow naming context without decoding source records.
 	LabelSourceChecksum string `json:"label_source_checksum,omitempty"`
+	// Complete source-set facts are derived only when acknowledged state changes.
+	SourceSetDigest       string    `json:"source_set_digest,omitempty"`
+	CurrentRevision       string    `json:"current_revision,omitempty"`
+	SourceSchemaVersion   int       `json:"source_schema_version,omitempty"`
+	MetadataSchemaVersion int       `json:"metadata_schema_version,omitempty"`
+	SourceSetComplete     bool      `json:"source_set_complete,omitempty"`
+	MeaningfulCapturedAt  time.Time `json:"meaningful_captured_at,omitzero"`
+
 	// Harness is the cached bundle's harness: the one its objects are under.
 	Harness string `json:"harness,omitempty"`
 	// Status is the cached bundle's status, and BlockedReason why it is
@@ -154,6 +173,9 @@ func (s PublishedSummary) RetentionAge() time.Time {
 	if !s.AgeFrom.IsZero() {
 		return s.AgeFrom
 	}
+	if !s.MeaningfulCapturedAt.IsZero() {
+		return s.MeaningfulCapturedAt
+	}
 	return s.CapturedAt
 }
 
@@ -164,10 +186,18 @@ func (s PublishedSummary) LinksPublished(child string) bool {
 
 // summary derives the state's PublishedSummary.
 func (p publishedState) summary() PublishedSummary {
+	var m archive.Metadata
+	if json.Unmarshal(p.MetadataBytes, &m) != nil {
+		m = archive.Metadata{}
+	}
+	return p.summaryFromMetadata(m)
+}
+
+func (p publishedState) summaryFromMetadata(m archive.Metadata) PublishedSummary {
 	source, _ := p.lastPublishedSource()
 	_, lastPublishedAt, published := p.resolveLastPublished()
 	var ageFrom time.Time
-	if clamp := p.ageClampFor(p.Bundle); clamp != nil {
+	if clamp := p.AgeFrom; clamp != nil && clamp.For.Equal(captureAgeFromMetadata(p.Bundle, m)) {
 		ageFrom = clamp.At
 	}
 	var linked []string
@@ -176,10 +206,26 @@ func (p publishedState) summary() PublishedSummary {
 			linked = append(linked, link.SessionID)
 		}
 	}
+	digest, revision := "", ""
+	complete := false
+	sourceSchema, metadataSchema := 0, 0
+	if m.SessionID == p.Bundle.ArchiveSessionID && m.NativeSessionID == p.Bundle.NativeSessionID && m.ProjectID == p.Bundle.ProjectID && m.Harness.Name == p.Bundle.Capture.Harness.Name {
+		if observedDigest, err := m.SourceSetDigest(); err == nil {
+			digest, complete = observedDigest, true
+			acknowledged, _, _ := p.resolveLastPublished()
+			sourceSchema, metadataSchema = acknowledged.SchemaVersion, m.SchemaVersion
+			if m.History != nil {
+				revision = m.History.CurrentRevision
+			}
+		}
+	}
 	return PublishedSummary{
 		LabelSourceChecksum: source.SHA256,
-		Harness:             p.Bundle.Capture.Harness.Name,
-		Status:              p.Status, BlockedReason: p.BlockedReason, CapturedAt: p.Bundle.Capture.CapturedAt, AgeFrom: ageFrom,
+		SourceSetDigest:     digest, CurrentRevision: revision,
+		SourceSetComplete: complete, SourceSchemaVersion: sourceSchema, MetadataSchemaVersion: metadataSchema,
+		MeaningfulCapturedAt: captureAgeFromMetadata(p.Bundle, m),
+		Harness:              p.Bundle.Capture.Harness.Name,
+		Status:               p.Status, BlockedReason: p.BlockedReason, CapturedAt: p.Bundle.Capture.CapturedAt, AgeFrom: ageFrom,
 		Published: published, LastPublishedAt: lastPublishedAt, LinkedPublished: linked,
 	}
 }
@@ -308,7 +354,11 @@ func (p publishedState) next(bundle archive.SourceBundle, publishedAt time.Time,
 	if len(metadata) == 0 {
 		metadata = p.MetadataBytes
 	}
-	return publishedState{Bundle: bundle, PublishedAt: publishedAt, Status: status, BlockedReason: reason, PreBlockStatus: preBlock, DeferredHookEvidence: held, LastPublished: last, MetadataBytes: metadata, AgeFrom: p.ageClampFor(bundle)}
+	next := publishedState{Bundle: bundle, PublishedAt: publishedAt, Status: status, BlockedReason: reason, PreBlockStatus: preBlock, DeferredHookEvidence: held, LastPublished: last, MetadataBytes: metadata}
+	if p.AgeFrom != nil && p.AgeFrom.For.Equal(next.captureAge(bundle, metadata)) {
+		next.AgeFrom = p.AgeFrom
+	}
+	return next
 }
 
 // Published is one session's published state, read from published/<id>.json
@@ -353,6 +403,15 @@ func (s *Store) LoadPublishedState(archiveSessionID string) (*Published, error) 
 		return nil, fmt.Errorf("read published state %q: %w", archiveSessionID, s.afterLoss(archiveSessionID, err))
 	}
 	p.found = found
+	// Derive from the decoded source authority once per work scan, including
+	// older compact summaries missing the newer source-set/age fields.
+	if found {
+		summary, err := s.summaryBudgeted(p.state)
+		if err != nil {
+			return nil, err
+		}
+		p.state.Summary = &summary
+	}
 	if !found {
 		p.state = publishedState{}
 	}
@@ -360,9 +419,12 @@ func (s *Store) LoadPublishedState(archiveSessionID string) (*Published, error) 
 }
 
 func (p *Published) write(next publishedState) error {
-	summary := next.summary()
+	summary, err := p.store.summaryBudgeted(next)
+	if err != nil {
+		return err
+	}
 	next.Summary = &summary
-	if err := local.WriteCompact(p.store.publishedPath(p.id), next); err != nil {
+	if err := p.store.writeCompact(p.store.publishedPath(p.id), next); err != nil {
 		return err
 	}
 	p.state, p.found = next, true
@@ -373,7 +435,12 @@ func (p *Published) write(next publishedState) error {
 func (p *Published) Found() bool { return p.found }
 
 // Summary returns the state's PublishedSummary (see LoadPublishedSummary).
-func (p *Published) Summary() PublishedSummary { return p.state.summary() }
+func (p *Published) Summary() PublishedSummary {
+	if p.state.Summary != nil {
+		return *p.state.Summary
+	}
+	return p.state.summary()
+}
 
 // ClampAgeFrom records at as the time retention ages the cached bundle from,
 // in place of a capture time that was stamped by a clock running ahead. Only
@@ -383,8 +450,11 @@ func (p *Published) ClampAgeFrom(at time.Time) error {
 	if !p.found {
 		return fmt.Errorf("read published state %q: %w", p.id, os.ErrNotExist)
 	}
-	capturedAt := p.state.Bundle.Capture.CapturedAt
-	if current := p.state.ageClampFor(p.state.Bundle); (current != nil && !at.Before(current.At)) || !at.Before(capturedAt) {
+	capturedAt := p.Summary().MeaningfulCapturedAt
+	if capturedAt.IsZero() {
+		capturedAt = p.state.Bundle.Capture.CapturedAt
+	}
+	if current := p.state.AgeFrom; (current != nil && current.For.Equal(capturedAt) && !at.Before(current.At)) || !at.Before(capturedAt) {
 		return nil
 	}
 	next := p.state
@@ -463,6 +533,53 @@ func (p *Published) LastPublishedSource() (archive.SourceReference, bool) {
 	return p.state.lastPublishedSource()
 }
 
+// LastPublishedMetadata returns the supported complete acknowledged reference set.
+// Unlike LastPublishedSource, it never extracts a pointer from an unknown schema.
+func (p *Published) LastPublishedMetadata() (archive.Metadata, bool, error) {
+	if len(p.state.MetadataBytes) == 0 {
+		return archive.Metadata{}, false, nil
+	}
+	var metadata archive.Metadata
+	if err := p.store.unmarshalOwned(p.state.MetadataBytes, &metadata); err != nil {
+		return archive.Metadata{}, false, err
+	}
+	if _, err := metadata.SourceReferences(); err != nil {
+		return archive.Metadata{}, false, err
+	}
+	bundle, _, found := p.LastPublished()
+	if !found {
+		return archive.Metadata{}, false, nil
+	}
+	if metadata.SessionID != p.id || metadata.NativeSessionID != bundle.NativeSessionID || metadata.ProjectID != bundle.ProjectID || metadata.Harness != bundle.Capture.Harness || metadata.ParentSessionID != bundle.ParentSessionID || metadata.FilterVersion != bundle.Capture.FilterVersion || !metadata.CapturedAt.Equal(bundle.Capture.CapturedAt) {
+		return archive.Metadata{}, false, errors.New("acknowledged metadata disagrees with published snapshot")
+	}
+	if bundle.History != nil && (metadata.History == nil || metadata.History.CurrentRevision != bundle.History.ActiveRolloutID) {
+		return archive.Metadata{}, false, errors.New("acknowledged metadata disagrees with published revision")
+	}
+	if ref, ok := p.LastPublishedSource(); ok && metadata.SourceBundle != ref {
+		return archive.Metadata{}, false, errors.New("acknowledged metadata disagrees with published reference")
+	}
+	return metadata, true, nil
+}
+
+// RestorePublication records an independently verified remote publication after
+// local state loss. A newer local-only candidate survives this recovery.
+func (p *Published) RestorePublication(bundle archive.SourceBundle, source archive.SourceReference, metadata []byte, at time.Time) error {
+	if !p.found {
+		return p.SavePublication(bundle, at, source, metadata)
+	}
+	next := p.state
+	next.MetadataBytes = metadata
+	next.PublishedAt = at
+	next.LastPublished = &publishedSnapshot{Bundle: bundle, PublishedAt: at, Source: &source}
+	if next.Status == CacheStatusPublished {
+		next.Bundle = bundle
+		next.LastPublished.SameAsBundle = true
+		next.LastPublished.Bundle = archive.SourceBundle{}
+	}
+	return p.write(next)
+}
+
 // Metadata returns the metadata document published with the last
 // publication, or nil when none is cached (publications from before it was).
 func (p *Published) Metadata() []byte { return p.state.MetadataBytes }
@@ -484,14 +601,22 @@ func (p *Published) Save(bundle archive.SourceBundle, publishedAt time.Time, sta
 	if len(metadata) > 0 {
 		doc = metadata[0]
 	}
-	return p.write(p.state.next(bundle, publishedAt, status, "", doc, nil, nil))
+	next, err := p.nextBudgeted(bundle, publishedAt, status, "", doc, nil, nil)
+	if err != nil {
+		return err
+	}
+	return p.write(next)
 }
 
 // SavePublication records a completed publication: bundle becomes both the
 // comparison baseline and the last published snapshot, source is the object
 // its metadata points at, and metadata is the document that was uploaded.
 func (p *Published) SavePublication(bundle archive.SourceBundle, publishedAt time.Time, source archive.SourceReference, metadata []byte) error {
-	return p.write(p.state.next(bundle, publishedAt, CacheStatusPublished, "", metadata, nil, &source))
+	next, err := p.nextBudgeted(bundle, publishedAt, CacheStatusPublished, "", metadata, nil, &source)
+	if err != nil {
+		return err
+	}
+	return p.write(next)
 }
 
 // SaveBlocked records a terminal capture gap (see CacheStatusBlocked).
@@ -505,7 +630,11 @@ func (p *Published) SaveBlocked(bundle archive.SourceBundle, publishedAt time.Ti
 	if reason == "" {
 		return errors.New("blocked reason is required")
 	}
-	return p.write(p.state.next(bundle, publishedAt, CacheStatusBlocked, reason, nil, deferred, nil))
+	next, err := p.nextBudgeted(bundle, publishedAt, CacheStatusBlocked, reason, nil, deferred, nil)
+	if err != nil {
+		return err
+	}
+	return p.write(next)
 }
 
 // ClearRecoverableBlock ends a block whose condition has passed — today only a

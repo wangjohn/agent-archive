@@ -3,6 +3,7 @@ package sourcefacts
 import (
 	"encoding/json"
 
+	"github.com/wangjohn/agent-archive/internal/codexmeta"
 	"github.com/wangjohn/agent-archive/internal/nativesessions"
 )
 
@@ -20,7 +21,7 @@ const (
 // ReadCodexHeader first-task validation, identity and original-creation consent.
 // Unknown additive fields are tolerated; unknown history/source forms are not.
 func CodexFormatProfile(m CodexMeta) CodexProfile {
-	if m.Classification() != "native_format" {
+	if m.Classification() != codexmeta.NativeFormat {
 		return ""
 	}
 	switch m.HistoryMode {

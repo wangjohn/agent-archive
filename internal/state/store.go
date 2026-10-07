@@ -23,6 +23,7 @@
 package state
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -48,6 +49,9 @@ import (
 // never stores credentials or a second copy of conversation content beyond
 // what the published source bundle itself already contains.
 type Store struct {
+	resourceBudget   *agentapi.NativeReadBudget
+	resourceContext  context.Context
+	resourceReleases *[]func()
 	// indexSnapshots uses logical packed authority for qualified-index writes.
 	indexSnapshots bool
 	// onPackedEnumeration observes collector-only physical-index directory probes.
@@ -211,6 +215,15 @@ func (s *Store) updateRegistration(archiveSessionID string, update func(*archive
 		if err := json.Unmarshal(current.data, &reg); err != nil {
 			return nil, false, fmt.Errorf("read registration %q: %w", archiveSessionID, err)
 		}
+		originalBinding := reg.CodexBinding
+		if originalBinding != nil {
+			copyBinding := *originalBinding
+			if copyBinding.OwnStart != nil {
+				boundary := *copyBinding.OwnStart
+				copyBinding.OwnStart = &boundary
+			}
+			originalBinding = &copyBinding
+		}
 		var originalProof *archive.CodexAdmissionProof
 		if reg.CodexAdmission != nil {
 			proof := *reg.CodexAdmission
@@ -226,6 +239,9 @@ func (s *Store) updateRegistration(archiveSessionID string, update func(*archive
 		if err := update(&reg); err != nil {
 			updateFailed = true
 			return nil, false, err
+		}
+		if !reg.CodexBinding.PreservesFacts(originalBinding) {
+			return nil, false, errors.New("a registration update cannot change native Codex binding facts")
 		}
 		if !sameCodexAdmission(originalProof, reg.CodexAdmission) {
 			return nil, false, errors.New("a registration update cannot change Codex admission proof")
@@ -722,6 +738,10 @@ func (s *Store) CompleteRequest(archiveSessionID, coveredToken string) (bool, er
 // every retry uses the same hash and timestamps even after process restart.
 // Bundle remains available for change detection and future parser-only rebuilds.
 type PendingPublication struct {
+	// ScanSignature freezes the consumed native observation for resumed history
+	// acknowledgement. It never licenses newer input or a privacy successor.
+	ScanSignature *ScanSignature       `json:"scan_signature,omitempty"`
+	History       *PendingHistory      `json:"history,omitempty"`
 	SkillEvidence string               `json:"skill_evidence,omitempty"`
 	MetadataOnly  bool                 `json:"metadata_only,omitempty"`
 	Bundle        archive.SourceBundle `json:"bundle"`
@@ -769,7 +789,10 @@ func (s *Store) SavePending(id string, pending PendingPublication) error {
 	if pending.SourceKey == "" || pending.MetadataKey == "" || pending.SourceSHA256 == "" || len(pending.MetadataBytes) == 0 || (len(pending.SourceBytes) == 0 && (!pending.MetadataOnly || pending.SourceSize <= 0)) {
 		return errors.New("pending publication is incomplete")
 	}
-	return local.WriteCompact(s.pendingPath(id), pending)
+	if err := pending.ValidateHistoryBudgeted(id, s.resourceBudget); err != nil {
+		return err
+	}
+	return s.writeCompact(s.pendingPath(id), pending)
 }
 
 // LoadPending returns a session's outstanding publication transaction, if
@@ -783,10 +806,18 @@ func (s *Store) LoadPending(id string) (PendingPublication, bool, error) {
 	if !safeFileComponent(id) {
 		return PendingPublication{}, false, errors.New("archive session ID is not a safe file name component")
 	}
+	if err := s.checkPendingHistoryVersion(id); err != nil {
+		return PendingPublication{}, false, err
+	}
 	var pending PendingPublication
 	found, err := s.readOwned(s.pendingPath(id), &pending)
 	if err != nil {
 		return PendingPublication{}, false, fmt.Errorf("read pending publication %q: %w", id, s.afterLoss(id, err))
+	}
+	if found {
+		if err := pending.ValidateHistoryBudgeted(id, s.resourceBudget); err != nil {
+			return PendingPublication{}, false, err
+		}
 	}
 	return pending, found, nil
 }
@@ -823,9 +854,20 @@ func (s *Store) HasPending(id string) (bool, error) {
 // RemovePending discards a session's publication transaction once it has
 // been published and acknowledged locally. A missing one is not an error.
 func (s *Store) RemovePending(id string) error {
+	if !safeFileComponent(id) {
+		return errors.New("archive session ID is not a safe file name component")
+	}
+	// Keep the journal until its private cleanup succeeds. After a crash, final
+	// remote bytes can restore any stage already removed by this cleanup.
+	if err := s.removePendingSources(id, nil); err != nil {
+		return err
+	}
 	err := os.Remove(s.pendingPath(id))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("remove pending publication %q: %w", id, err)
+	}
+	if err == nil {
+		return syncPendingDirectory(filepath.Dir(s.pendingPath(id)))
 	}
 	return nil
 }
@@ -1049,6 +1091,16 @@ func (s *Store) ScanPending(id string) (bool, error) {
 type ScanSignature struct {
 	// PublishedLabel identifies retained safe native name evidence, independently of lookup time.
 	PublishedLabel string `json:"published_label,omitempty"`
+	// A settled complete authority token carries only compact acknowledged facts.
+	SourceSetDigest       string    `json:"source_set_digest,omitempty"`
+	CurrentRevision       string    `json:"current_revision,omitempty"`
+	SourceSchemaVersion   int       `json:"source_schema_version,omitempty"`
+	MetadataSchemaVersion int       `json:"metadata_schema_version,omitempty"`
+	SourceSetComplete     bool      `json:"source_set_complete,omitempty"`
+	MeaningfulCapturedAt  time.Time `json:"meaningful_captured_at,omitzero"`
+
+	// SourceSetVersion invalidates earlier Codex signatures without decoding bundles.
+	SourceSetVersion int `json:"source_set_version,omitempty"`
 	// Frozen marks completed retained-history maintenance, independently of
 	// the live native source's stat. Ordinary capture never trusts this token.
 	Frozen          bool                      `json:"frozen,omitempty"`

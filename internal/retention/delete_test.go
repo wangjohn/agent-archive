@@ -2,9 +2,14 @@ package retention
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/storage"
 	"slices"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
@@ -124,5 +129,63 @@ func TestListingDeletionFailureStillDeletesSources(t *testing.T) {
 	objects, err := store.List(ctx, "sessions/claude/session-1/")
 	if err != nil || len(objects) != 0 {
 		t.Fatalf("auxiliary failure retained sources: %v %v", objects, err)
+	}
+}
+
+func TestDeleteCompleteHistoryReopensAfterEveryObjectFailure(t *testing.T) {
+	t.Parallel()
+	const id = "history-delete"
+	const native = "11111111-1111-4111-8111-111111111111"
+	at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	ref := func(digit string) archive.SourceReference {
+		sha := strings.Repeat(digit, 64)
+		return archive.SourceReference{Key: "sessions/codex/" + id + "/source." + sha + ".jsonl.gz", SHA256: sha, CompressedBytes: 10}
+	}
+	active, old := ref("a"), ref("b")
+	metadataKey := "sessions/codex/" + id + "/metadata.json"
+	stray := "sessions/codex/" + id + "/unreferenced-stage"
+	m := archive.Metadata{SchemaVersion: archive.HistoryMetadataSchemaVersion, SessionID: id, NativeSessionID: native, Harness: archive.Harness{Name: "codex"}, ProjectID: "project-1", CapturedAt: at, SourceBundle: active, History: &archive.RevisionHistory{CurrentRevision: native, Preserved: []archive.RevisionReference{{RevisionID: "22222222-2222-4222-8222-222222222222", CapturedAt: at.Add(time.Hour), Source: old}}}}
+	raw, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fail := range []string{metadataKey, active.Key, old.Key, stray} {
+		t.Run(fail, func(t *testing.T) {
+			t.Parallel()
+			cloud := storagetest.NewMemoryStore()
+			remote := &deleteRecordingStore{MemoryStore: cloud, failKey: fail}
+			for _, key := range []string{active.Key, old.Key, stray} {
+				if err := cloud.Put(t.Context(), key, []byte("synthetic")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := cloud.Put(t.Context(), metadataKey, raw); err != nil {
+				t.Fatal(err)
+			}
+			if err := DeleteWholeSession(t.Context(), remote, "codex", id); err == nil {
+				t.Fatal("deletion failure ignored")
+			}
+			if fail == metadataKey {
+				for _, key := range []string{active.Key, old.Key, stray} {
+					if _, err := cloud.Get(t.Context(), key); err != nil {
+						t.Fatal("source removed before metadata", err)
+					}
+				}
+			} else {
+				if _, err := cloud.Get(t.Context(), metadataKey); !errors.Is(err, storage.ErrNotFound) {
+					t.Fatal("dangling sidecar", err)
+				}
+			}
+			// A fresh deletion caller can finish an absent-sidecar prefix; no retained
+			// native input, local journal or decoder is needed to own this exact prefix.
+			retry := &deleteRecordingStore{MemoryStore: cloud}
+			if err := DeleteWholeSession(t.Context(), retry, "codex", id); err != nil {
+				t.Fatal(err)
+			}
+			objects, err := cloud.List(t.Context(), "sessions/codex/"+id)
+			if err != nil || len(objects) != 0 {
+				t.Fatal(objects, err)
+			}
+		})
 	}
 }
