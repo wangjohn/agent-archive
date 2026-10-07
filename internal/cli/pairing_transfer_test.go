@@ -127,6 +127,50 @@ func TestPairingTransferCommandUsesReceivingHomeAndQuotesFilename(t *testing.T) 
 	}
 }
 
+func TestPairingReceiverDistinguishesRelativeFilenamesFromPastedBundles(t *testing.T) {
+	// Sequential because t.Chdir controls relative file resolution.
+	home := t.TempDir()
+	t.Chdir(home)
+	env := Env{UserHomeDir: func() (string, error) { return home, nil }}
+	bundle := pairing.Prefix + "SYNTHETIC"
+	for _, name := range []string{"aa-pairing.txt", "aa-pair-backup.txt", "aa-pair1:backup.txt"} {
+		must(t, os.WriteFile(filepath.Join(home, name), []byte(bundle+"\n"), 0600))
+	}
+	for _, input := range []string{"aa-pairing.txt", "aa-pair-backup.txt", "aa-pair1:backup.txt", bundle} {
+		t.Run(input, func(t *testing.T) {
+			p := newPrompter(strings.NewReader(input+"\n"), &bytes.Buffer{})
+			got, err := readPairingBundle(p, setupOptions{}, p.in, env)
+			must(t, err)
+			if got != bundle {
+				t.Fatalf("read %q, want file contents or pasted bundle %q", got, bundle)
+			}
+		})
+	}
+}
+
+func TestPairingReceiverMalformedPastedBundleKeepsValidationError(t *testing.T) {
+	// Sequential because t.Chdir isolates the pasted text from existing files.
+	t.Chdir(t.TempDir())
+	env := Env{
+		LookupEnv:  noEnv,
+		IsTerminal: func(any) bool { return true },
+		UserHomeDir: func() (string, error) {
+			t.Fatal("malformed pasted text was treated as a path")
+			return "", nil
+		},
+		Home: func() (string, error) { t.Fatal("read archive home before validation"); return "", nil },
+		PairingCode: func() (string, error) {
+			t.Fatal("requested code before validation")
+			return "", nil
+		},
+	}
+	var out bytes.Buffer
+	err := setupPairing(setupOptions{}, strings.NewReader(pairing.Prefix+"bad\n"), &out, &out, env)
+	if err == nil || !strings.Contains(err.Error(), "pairing bundle is truncated or damaged") {
+		t.Fatalf("expected damaged-bundle diagnostic, got %v", err)
+	}
+}
+
 func TestPairingReceiverFileAndClipboardInputsStayBounded(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
