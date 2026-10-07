@@ -290,7 +290,15 @@ active in the last 2 minutes, and belongs to the checkout the agent would
 start in, a terminal asks first:
 
 ```text
-The source session was active just now; continue in the same checkout? [y/N/w]
+? The source session was active just now; where should the new agent continue?
+
+  In the same checkout, both agents can edit its files until one stops.
+
+  1) Continue in the same checkout
+  2) Cancel (default)
+  3) Continue in a new git worktree
+
+› Choose [2]:
 ```
 
 `y` continues, `N` (the default) cancels with nothing launched, and `w`

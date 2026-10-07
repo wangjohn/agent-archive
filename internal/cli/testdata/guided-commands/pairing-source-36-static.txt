@@ -1,0 +1,35 @@
+
+? Name for the new machine
+
+> Choose: laptop
+OK Name for the new machine laptop
+
+? No spare key available
+
+  1) Paste a Cloudflare token to
+     create a dedicated key
+  2) Share this machine's key
+     (cannot revoke recipient
+     independently)
+
+  [Enter] Cancel
+
+> Choose: create
+OK Paste a Cloudflare token to
+   create a dedicated key
+
+Bundle expires at 2026-09-25T13:00:00Z. On laptop, run agent-archive setup --pair.
+
+? Pairing code
+
+  1) Show code on a cleared
+     alternate screen (default)
+
+  [d] Done
+  [q] Cancel pairing (dedicated
+      cleanup needs management
+      access)
+
+> Choose [1]: done
+OK Done
+

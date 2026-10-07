@@ -42,6 +42,7 @@ func TestGuidedCommandsTerminalOwnership(t *testing.T) {
 	must(t, err)
 	for _, mode := range []string{"normal", "term"} {
 		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
 			if out, err := runPTYScript(t, python, guidedCommandsPTY, binary, mode); err != nil {
 				t.Fatalf("guided command PTY %s: %v\n%s", mode, err, out)
 			}
@@ -65,7 +66,7 @@ def wait_for(text):
    try: output+=os.read(master,65536)
    except OSError: pass
 try:
- wait_for(b'Choose [print]')
+ wait_for(b'Choose:')
  os.write(master,b'w\nq\n')
  wait_for(b'Press Enter to hide.')
  os.write(master,b'\n')

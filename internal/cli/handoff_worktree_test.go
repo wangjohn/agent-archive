@@ -469,7 +469,7 @@ func TestHandoffActiveSourceCancelLaunchesNothing(t *testing.T) {
 	}
 	var out, errOut bytes.Buffer
 	code := Run([]string{"handoff", f.id, "--to", "claude"}, strings.NewReader("n\n"), &out, &errOut, f.env)
-	if code != 1 || !strings.Contains(errOut.String(), "[y/N/w]") || !strings.Contains(errOut.String(), "canceled; nothing was launched") {
+	if code != 1 || !strings.Contains(errOut.String(), "2) Cancel (default)") || !strings.Contains(errOut.String(), "canceled; nothing was launched") {
 		t.Fatalf("code=%d stderr=%q", code, errOut.String())
 	}
 	if entries, _ := os.ReadDir(filepath.Join(f.home, handoffDir)); len(entries) != 0 {

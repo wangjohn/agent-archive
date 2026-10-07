@@ -79,10 +79,11 @@ func runPairingAdd(args []string, stdin io.Reader, out, errOut io.Writer, env En
 	}
 	p := newPrompter(stdin, out)
 	defer p.close()
+	out = p.out
 	if *name == "" {
 		value, err := p.guidedText(promptModel{Question: "Name for the new machine", Helpers: []string{"Use 1 to 40 lowercase letters, digits, or hyphens."}, Validate: func(value string) error {
 			if !pairing.ValidName(value) {
-				return errors.New("Machine names use 1 to 40 lowercase letters, digits, or hyphens.")
+				return errors.New("machine names use 1 to 40 lowercase letters, digits, or hyphens")
 			}
 			return nil
 		}})
@@ -250,6 +251,7 @@ func finishPairingDelivery(p *prompter, code string, ledger pairingLedger, home 
 		}
 		return 0
 	}
+	out = p.out
 	terminal.Printf(out, "Bundle expires at %s. On %s, run agent-archive setup --pair.\n", ledger.ExpiresAt.Format(time.RFC3339), ledger.Name)
 	for {
 		choice, err := p.guidedMenu("Pairing code", "show", option{"show", "Show code on a cleared alternate screen"}, option{"done", "Done"}, option{"cancel", "Cancel pairing (dedicated cleanup needs management access)"})

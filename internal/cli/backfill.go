@@ -343,6 +343,9 @@ func reportBackfillPlan(env Env, stdout, stderr io.Writer, home string, cfg conf
 // importBackfillPlan checks storage and confirmation before entering the
 // existing import transaction. That transaction and its locks are unchanged.
 func importBackfillPlan(env Env, stdin io.Reader, stdout, stderr io.Writer, home string, cfg config.Config, plan backfill.Plan, opts backfillCommandOptions) int {
+	p := newPrompter(stdin, stdout)
+	defer p.close()
+	stdout = p.out
 	// Step 2: storage must work before anything is confirmed. The check
 	// writes one test object and deletes it again.
 	checkStyle := activityStyle(stdout)
@@ -381,8 +384,6 @@ func importBackfillPlan(env Env, stdin io.Reader, stdout, stderr io.Writer, home
 	// Step 3: confirm. edit raises the retention of the whole archive and
 	// shows the plan again with the new deletion date.
 	if !opts.yes {
-		p := newPrompter(stdin, stdout)
-		defer p.close()
 		confirmed, err := confirmImport(p, stdout, &plan, cfg.RetentionDays)
 		if err != nil {
 			terminal.Printf(stderr, "agent-archive: backfill: %v. Nothing was changed.\n", err)

@@ -1,0 +1,25 @@
+$ agent-archive handoff SESSION
+
+? Continue in
+
+  1) Claude Code (default)
+  2) Codex
+  3) Cursor
+
+  [p] print
+  [c] copy to the clipboard
+  [w] write to a file
+  [q] quit
+
+> Choose [1]: w
+OK Handoff write to a file
+
+? Write to
+
+> Choose [/Users/alex/src/project/handoff-fe8030de.md]: /Users/alex/handoff.md
+OK File
+   /Users/alex/handoff.md
+
+[stderr]
+handoff: wrote /Users/alex/handoff.md (BYTES bytes)
+[exit 0]

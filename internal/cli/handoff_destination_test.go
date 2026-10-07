@@ -128,7 +128,7 @@ func TestChooseDestinationListsTheDefaultFirst(t *testing.T) {
 	if _, err := chooseDestination(newPrompter(strings.NewReader("q\n"), &out), nil, "", true, productionAgents.Catalog()); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "[q] quit") || !strings.Contains(out.String(), "Choose [print]") || strings.Contains(out.String(), "1)") {
+	if !strings.Contains(out.String(), "[q] quit") || !strings.Contains(out.String(), "[Enter] print") || strings.Contains(out.String(), "1)") {
 		t.Fatalf("prompt with no agent installed:\n%s", out.String())
 	}
 	out.Reset()

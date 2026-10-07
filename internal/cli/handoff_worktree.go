@@ -102,14 +102,13 @@ func checkActiveSource(env worktreeDependencies, opts handoffOptions, target han
 	if err != nil {
 		return false, fmt.Errorf("%w (%w)", errHandoffCanceled, err)
 	}
-	switch answer {
-	case "yes":
+	if answer == "yes" {
 		return false, nil
-	case "w":
-		return true, nil
-	default:
-		return false, errHandoffCanceled
 	}
+	if answer == "w" {
+		return true, nil
+	}
+	return false, errHandoffCanceled
 }
 
 // sourceRegistration loads a session's registration on this machine. ok is

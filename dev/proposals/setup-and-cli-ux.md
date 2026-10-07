@@ -1,7 +1,9 @@
 # Setup and CLI experience implementation plan
 
-Status: Accepted design; step 1 shared rendering is implemented. Steps 2–6
-remain pending. See the [renderer contract](../contributing/prompt-rendering.md).
+Status: Accepted design; shared rendering, setup and remaining guided commands
+are implemented in dependent changes. Final integration review, required gates
+and platform acceptance remain pending. See the
+[renderer contract](../contributing/prompt-rendering.md).
 
 Make guided commands clearly distinguish completed answers, explanatory text,
 and the current question. Initial onboarding and later interactive setup use

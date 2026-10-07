@@ -217,7 +217,12 @@ func writeHandoffChoice(p *prompter, rendered []byte, target handoffTarget, dir 
 	def := filepath.Join(dir, "handoff-"+shortSessionID(handoffFileName(target.bundle))+".md")
 	label := "Write to"
 	for {
-		path, err := p.guidedDefault(label, def)
+		path, err := p.guidedText(promptModel{Question: label, Default: def, ResolveReceipt: func(value string) string {
+			if value == "q" || value == "" {
+				return "Handoff file cancelled"
+			}
+			return "File " + value
+		}})
 		if errors.Is(err, io.EOF) {
 			return nil
 		}
@@ -243,7 +248,7 @@ func writeHandoffChoice(p *prompter, rendered []byte, target handoffTarget, dir 
 			continue
 		}
 		if statErr == nil {
-			replace, err := p.guidedYesNo(path+" already exists. Replace it?", false)
+			replace, err := p.guidedYesNo(path + " already exists. Replace it?")
 			if errors.Is(err, io.EOF) {
 				return nil
 			}

@@ -508,7 +508,7 @@ func confirmOwnKey(p *prompter, yes, interactive bool) error {
 	if !interactive {
 		return errors.New("own-key needs an interactive terminal or deliberate --yes")
 	}
-	consent, err := p.guidedYesNo("Create and commit a dedicated key? The shared provider key stays valid for other users", false)
+	consent, err := p.guidedYesNo("Create and commit a dedicated key? The shared provider key stays valid for other users")
 	if err != nil || !consent {
 		return errors.New("own-key cancelled; nothing changed")
 	}

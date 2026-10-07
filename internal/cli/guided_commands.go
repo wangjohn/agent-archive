@@ -8,15 +8,22 @@ import (
 	"strings"
 )
 
+type guidedCommandNavigation string
+
+const (
+	guidedCommandCancel guidedCommandNavigation = "cancel"
+	guidedCommandDone   guidedCommandNavigation = "done"
+)
+
 // guidedMenu uses shared blocks while preserving command-specific option keys.
 func (p *prompter) guidedMenu(question, def string, choices ...option) (string, error) {
 	primary := []option{}
 	secondary := []actionOption{}
 	for _, o := range choices {
-		switch o.Key {
-		case "cancel":
+		switch guidedCommandNavigation(o.Key) {
+		case guidedCommandCancel:
 			secondary = append(secondary, actionOption{o.Key, "q", o.Label})
-		case "done":
+		case guidedCommandDone:
 			secondary = append(secondary, actionOption{o.Key, "d", o.Label})
 		default:
 			primary = append(primary, o)
@@ -26,12 +33,9 @@ func (p *prompter) guidedMenu(question, def string, choices ...option) (string, 
 }
 
 // guidedYesNo keeps destructive decisions opt-in and resolves named answers.
-func (p *prompter) guidedYesNo(question string, def bool) (bool, error) {
+func (p *prompter) guidedYesNo(question string) (bool, error) {
 	key := "no"
-	if def {
-		key = "yes"
-	}
-	answer, err := p.guidedChoice(promptModel{Question: question, Default: key, Primary: []option{{"yes", "Yes"}, {"no", "No"}}})
+	answer, err := p.guidedChoice(promptModel{Question: question, Default: key, Receipt: strings.SplitN(question, "?", 2)[0], Primary: []option{{"yes", "Yes"}, {"no", "No"}}})
 	return answer == "yes", err
 }
 
@@ -44,7 +48,7 @@ func (p *prompter) guidedRetention(def int) (int, error) {
 	value, err := p.guidedText(promptModel{Question: "Keep sessions for how many days?", Default: strconv.Itoa(def), Validate: func(value string) error {
 		days, err := strconv.Atoi(value)
 		if err != nil || days <= 0 || days > 36500 {
-			return errors.New("Enter a number of days between 1 and 36500.")
+			return errors.New("enter a number of days between 1 and 36500")
 		}
 		return nil
 	}})

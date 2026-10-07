@@ -1,0 +1,26 @@
+
+? Paste the encrypted pairing bundle
+
+› Credential:
+\e[2m✓ Credential received\e[0m
+
+? Pairing code (hidden)
+
+› Credential:
+\e[2m✓ Credential received\e[0m
+
+\e[1mPairing destination\e[0m
+
+AWS profile/settings transfer from studio. Proposed machine: laptop.
+Sessions will upload to s3 bucket team-archive, folder agent-archive/, account ,
+endpoint .
+Prior destination: s3 bucket prior-archive, folder .
+
+? Explicitly replace the prior destination with the displayed destination?
+
+  1) Yes
+  2) No (default)
+
+› Choose [2]: yes
+\e[2m✓ Explicitly replace the prior destination with the displayed destination Yes\e[0m
+

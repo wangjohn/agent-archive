@@ -180,7 +180,7 @@ func TestBackfillUndoGolden(t *testing.T) {
 		t.Fatalf("code %d, %s\n%s", code, errOut, out)
 	}
 	f.checkPrivate(t, "output", out)
-	checkGolden(t, "undo.txt", []byte(strings.ReplaceAll(out, f.root, "$ROOT")))
+	checkGolden(t, "undo.txt", []byte(strings.ReplaceAll(trimScreenLineEnds(out), f.root, "$ROOT")))
 
 	// Deletion order.
 	position := map[string]int{}

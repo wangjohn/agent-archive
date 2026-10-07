@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,6 +18,19 @@ import (
 	"github.com/wangjohn/agent-archive/internal/testutil/golden"
 )
 
+type guidedTranscriptFlow string
+
+const (
+	guidedFlowPairingSource          guidedTranscriptFlow = "pairing-source"
+	guidedFlowPairingReceiver        guidedTranscriptFlow = "pairing-receiver"
+	guidedFlowHandoffFile            guidedTranscriptFlow = "handoff-file"
+	guidedFlowBackfillEditImport     guidedTranscriptFlow = "backfill-edit-import"
+	guidedFlowBackfillUndo           guidedTranscriptFlow = "backfill-undo"
+	guidedFlowRecoveryPreviewConfirm guidedTranscriptFlow = "recovery-preview-confirm"
+	guidedFlowUninstallLocalPurge    guidedTranscriptFlow = "uninstall-local-purge"
+	guidedFlowPurgePlanApply         guidedTranscriptFlow = "purge-plan-apply"
+)
+
 // Full command transcripts complement the decision matrix: every transcript
 // includes command planning, prompts and committed result or cancellation.
 // Sequential KDF work bounds pairing test memory.
@@ -24,10 +39,11 @@ func TestGuidedFullCommandTranscripts(t *testing.T) {
 	code := "aardvark-abandoned-abbreviate-abdomen-abhorrence-abiding"
 	bundle, err := pairing.Seal(payload, code)
 	must(t, err)
-	for _, flow := range []string{"pairing-source", "pairing-receiver", "handoff-file", "backfill-edit-import", "uninstall-local-purge", "purge-plan-apply"} {
+	for _, flow := range []guidedTranscriptFlow{guidedFlowPairingSource, guidedFlowPairingReceiver, guidedFlowHandoffFile, guidedFlowBackfillEditImport, guidedFlowBackfillUndo, guidedFlowRecoveryPreviewConfirm, guidedFlowUninstallLocalPurge, guidedFlowPurgePlanApply} {
 		for _, size := range []struct {
-			width, height int
-			ascii         bool
+			width  int
+			height int
+			ascii  bool
 		}{{80, 24, false}, {100, 30, false}, {60, 20, false}, {36, 20, true}} {
 			for _, color := range []bool{false, true} {
 				name := fmt.Sprintf("%s-%dx%d", flow, size.width, size.height)
@@ -35,10 +51,10 @@ func TestGuidedFullCommandTranscripts(t *testing.T) {
 					name += ".color"
 				}
 				t.Run(name, func(t *testing.T) {
-					out := &guidedCommandOutput{caps: promptCapabilities{Color: color, InputTerminal: true, OutputTerminal: true, SharedTerminal: true, ASCII: size.ascii, Width: size.width, Height: size.height}}
+					out := &guidedCommandOutput{caps: promptCapabilities{Color: color, InputTerminal: true, OutputTerminal: true, SharedTerminal: true, Redraw: !size.ascii, ASCII: size.ascii, Width: size.width, Height: size.height}}
 					normalize := func(s string) string { return s }
 					run := func(args []string, answers string, env Env) {
-						in := &guidedAnswers{input: answers, out: out}
+						in := &guidedCommandAnswers{input: answers, out: out}
 						env.IsTerminal = func(any) bool { return true }
 						terminalCommand := fmt.Sprintf("$ agent-archive %s\n", strings.Join(args, " "))
 						out.WriteString(terminalCommand)
@@ -49,7 +65,7 @@ func TestGuidedFullCommandTranscripts(t *testing.T) {
 						}
 					}
 					switch flow {
-					case "pairing-source":
+					case guidedFlowPairingSource:
 						env, home, _ := pairingSourceFixture(t)
 						env.Now = func() time.Time { return screenNow }
 						env.Clipboard = func([]byte) error { return nil }
@@ -59,7 +75,7 @@ func TestGuidedFullCommandTranscripts(t *testing.T) {
 							s = strings.ReplaceAll(s, userHome, "/Users/alex")
 							return strings.ReplaceAll(s, home, "/Users/alex/.agent-archive")
 						}
-					case "pairing-receiver":
+					case guidedFlowPairingReceiver:
 						f := newScreenFixture(t)
 						f.withApps(t, "codex")
 						f.env.AWSProfiles = func() ([]AWSProfile, error) { return []AWSProfile{{Name: "archive", Region: "us-east-1"}}, nil }
@@ -69,7 +85,7 @@ func TestGuidedFullCommandTranscripts(t *testing.T) {
 						if strings.Contains(out.String(), bundle) || strings.Contains(out.String(), code) {
 							t.Fatal("pairing input leaked")
 						}
-					case "handoff-file":
+					case guidedFlowHandoffFile:
 						f := newHandoffFixture(t, false)
 						path := filepath.Join(t.TempDir(), "handoff.md")
 						run([]string{"handoff", f.id}, "w\n"+path+"\n", f.env)
@@ -82,19 +98,35 @@ func TestGuidedFullCommandTranscripts(t *testing.T) {
 						if _, err := os.Stat(path); err != nil {
 							t.Fatal(err)
 						}
-					case "backfill-edit-import":
+					case guidedFlowBackfillEditImport:
 						f, _ := newImportFixture(t)
 						run([]string{"backfill"}, "edit\n120\nyes\n", f.env)
 						normalize = func(s string) string {
 							s = strings.ReplaceAll(s, f.userHome, "/Users/alex")
 							return strings.ReplaceAll(s, f.root, "")
 						}
-					case "uninstall-local-purge":
+					case guidedFlowBackfillUndo:
+						f, _ := newUndoFixture(t)
+						run([]string{"backfill", "undo"}, "yes\n", f.env)
+						normalize = func(s string) string {
+							s = strings.ReplaceAll(s, f.userHome, "/Users/alex")
+							return strings.ReplaceAll(s, f.root, "")
+						}
+					case guidedFlowRecoveryPreviewConfirm:
+						env, home, path, id := recoverFixture(t)
+						run([]string{"recover", id}, "", env)
+						run([]string{"recover", id, "--confirm"}, "", env)
+						normalize = func(s string) string {
+							s = strings.ReplaceAll(s, id, "PREVIOUS_ID")
+							s = strings.ReplaceAll(s, home, "/Users/alex/.agent-archive")
+							return strings.ReplaceAll(s, path, "/Users/alex/src/project/session.jsonl")
+						}
+					case guidedFlowUninstallLocalPurge:
 						f := newScreenFixture(t)
 						f.installed(t)
-						run([]string{"uninstall", "--purge"}, "yes\nyes\n", f.env)
+						run([]string{"uninstall", "--delete-local-data"}, "yes\nyes\n", f.env)
 						normalize = f.normalize
-					case "purge-plan-apply":
+					case guidedFlowPurgePlanApply:
 						f := newScreenFixture(t)
 						f.installed(t)
 						// Synthetic orphan content is never an archived developer transcript.
@@ -111,7 +143,9 @@ func TestGuidedFullCommandTranscripts(t *testing.T) {
 						_, err := config.SetPaused(f.home, true)
 						must(t, err)
 						run([]string{"purge", "apply", path}, plan.Digest[:12]+"\n", f.env)
-						normalize = f.normalize
+						normalize = func(s string) string {
+							return strings.ReplaceAll(f.normalize(s), plan.Digest[:12], "DIGEST")
+						}
 					}
 					text := normalize(out.String())
 					text = regexp.MustCompile(`(handoff: wrote .*?) \([0-9]+ bytes\)`).ReplaceAllString(text, "$1 (BYTES bytes)")
@@ -121,7 +155,7 @@ func TestGuidedFullCommandTranscripts(t *testing.T) {
 					if color {
 						text = strings.ReplaceAll(text, "\x1b", `\e`)
 					}
-					golden.Check(t, filepath.Join("testdata", "guided-full", name+".txt"), []byte(text))
+					golden.Check(t, filepath.Join("testdata", "guided-full", name+".txt"), []byte(trimScreenLineEnds(text)))
 				})
 			}
 		}
@@ -134,10 +168,57 @@ func TestGuidedMachinesJSONHasNoPromptDecoration(t *testing.T) {
 	t.Parallel()
 	env, _, _ := pairingSourceFixture(t)
 	out := &guidedCommandOutput{}
-	if Run([]string{"machines", "--json"}, nil, out, out, env) != 0 {
+	var errOut bytes.Buffer
+	if Run([]string{"machines", "--json"}, nil, out, &errOut, env) != 0 {
 		t.Fatalf("JSON failed: %s", out.String())
+	}
+	var document any
+	must(t, json.Unmarshal(out.Bytes(), &document))
+	if errOut.Len() != 0 {
+		t.Fatalf("JSON stderr: %s", &errOut)
 	}
 	if !strings.HasPrefix(out.String(), "{") || strings.Contains(out.String(), "? ") || strings.Contains(out.String(), "\x1b") {
 		t.Fatalf("decorated JSON %q", out.String())
+	}
+}
+
+// Actual handoff flows retain static, readable output when cursor ownership is
+// unavailable. Stdout and stderr are captured independently in the split case.
+func TestGuidedFullHandoffOutputSurfaces(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []string{"dumb", "redirected", "stderr-split"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
+			f := newHandoffFixture(t, false)
+			out := &guidedCommandOutput{caps: promptCapabilities{InputTerminal: mode != "redirected", OutputTerminal: mode != "redirected", SharedTerminal: mode == "dumb", ASCII: mode == "dumb", Width: 80, Height: 24}}
+			var errOut bytes.Buffer
+			f.env.IsTerminal = func(any) bool { return mode != "redirected" }
+			path := filepath.Join(t.TempDir(), "handoff.md")
+			args := []string{"handoff", f.id}
+			answers := "w\n" + path + "\n"
+			if mode == "redirected" {
+				args = append(args, "--output", path)
+				answers = ""
+			}
+			in := &guidedCommandAnswers{input: answers, out: out}
+			out.WriteString("$ agent-archive handoff SESSION\n")
+			exit := Run(args, in, out, &errOut, f.env)
+			if exit != 0 {
+				t.Fatalf("handoff failed: %s\n%s", out.String(), &errOut)
+			}
+			if _, err := os.Stat(path); err != nil {
+				t.Fatal(err)
+			}
+			text := out.String() + "[stderr]\n" + errOut.String() + "[exit 0]\n"
+			text = strings.ReplaceAll(text, f.id, "SESSION")
+			text = strings.ReplaceAll(text, path, "/Users/alex/handoff.md")
+			text = strings.ReplaceAll(text, f.project, "/Users/alex/src/project")
+			text = strings.ReplaceAll(text, f.home, "/Users/alex/.agent-archive")
+			text = regexp.MustCompile(`(handoff: wrote .*?) \([0-9]+ bytes\)`).ReplaceAllString(text, "$1 (BYTES bytes)")
+			if strings.Contains(text, "\x1b") {
+				t.Fatalf("static surface emitted cursor controls: %q", text)
+			}
+			golden.Check(t, filepath.Join("testdata", "guided-full", "handoff-"+mode+".txt"), []byte(trimScreenLineEnds(text)))
+		})
 	}
 }

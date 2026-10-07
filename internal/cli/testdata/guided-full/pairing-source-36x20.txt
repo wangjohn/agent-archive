@@ -1,0 +1,19 @@
+$ agent-archive machines add --name laptop
+Storage check passed.
+Encrypted bundle copied. Clipboard managers may retain it.
+Bundle expires at 2026-09-25T12:15:00Z. On laptop, run agent-archive setup --pair.
+
+? Pairing code
+
+  1) Show code on a cleared
+     alternate screen (default)
+
+  [d] Done
+  [q] Cancel pairing (dedicated
+      cleanup needs management
+      access)
+
+> Choose [1]: done
+OK Done
+
+[exit 0]

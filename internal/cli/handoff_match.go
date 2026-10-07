@@ -159,7 +159,7 @@ func newRepoMatchGate(opts handoffOptions, interactive bool, answers io.Reader, 
 			p.source = input[0]
 		}
 		defer p.close()
-		yes, err := p.guidedYesNo("Hand off this session?", false)
+		yes, err := p.guidedYesNo("Hand off this session?")
 		if err != nil || !yes {
 			terminal.Println(stderr, "handoff: canceled; nothing was launched")
 			return errRepoMatchNotUsed

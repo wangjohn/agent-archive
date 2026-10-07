@@ -1,0 +1,106 @@
+$ agent-archive backfill
+Looking for Claude Code, Codex, and Cursor sessions on this machine… 18 found.
+Checking storage… ready.
+
+Backfill imports every session found on this machine into
+s3 / personal-agent-archive / agent-archive/. Nothing has been uploaded yet.
+
+PROJECT                                CLAUDE  CODEX  CURSOR  TOTAL
+~/agent-archive                             2      1       2      5  already included
+~/levenshtein                               3      –       –      3  will be added
+~/personal-website                          –      –       1      1  will be added
+
+Not a repository:
+Claude desktop scratch chats                2      –       –      2  will be added
+  Chats started without a folder. New ones will be captured too.
+~/old-notes (folder no longer exists)       1      –       –      1  will be added
+  Every future session in a folder under it that isn't in a nearer project
+  will be captured too.
+
+Total: 12 sessions (plus 2 subagent transcripts), 8 KB,
+       started 2026-09-17 to 2026-09-22.
+
+Not imported:
+   1  already in the archive
+   1  run from the home folder                  add --include-home
+   2  run from temporary directories            add --include-temp
+   1  Cursor chat whose project could not be determined
+   1  with no conversation
+
+If you continue:
+  • 4 projects are added, and new Claude Code sessions in them are captured.
+    New Codex and Cursor sessions need those apps added in setup.
+  • Retention is 90 days, so these sessions are deleted on 2026-12-22.
+    Choose `edit` to keep them longer.
+  • Undo any time with `agent-archive backfill undo`.
+
+? Import 12 sessions from 5 projects?
+
+  1) Import these sessions
+  2) Skip for now (default)
+
+  [e] Edit retention
+
+› Choose [2]: edit
+\e[2m✓ Edit retention\e[0m
+
+\e[1mEdit retention\e[0m
+
+Retention applies to every session in the archive, not only these.
+Here it can only be raised from 90 days, and undo puts 90 back. Shorten it in
+setup.
+
+? Keep sessions for how many days?
+
+› Choose [90]: 120
+\e[2m✓ Keep sessions for how many days? 120\e[0m
+
+
+Backfill imports every session found on this machine into
+s3 / personal-agent-archive / agent-archive/. Nothing has been uploaded yet.
+
+PROJECT                                CLAUDE  CODEX  CURSOR  TOTAL
+~/agent-archive                             2      1       2      5  already included
+~/levenshtein                               3      –       –      3  will be added
+~/personal-website                          –      –       1      1  will be added
+
+Not a repository:
+Claude desktop scratch chats                2      –       –      2  will be added
+  Chats started without a folder. New ones will be captured too.
+~/old-notes (folder no longer exists)       1      –       –      1  will be added
+  Every future session in a folder under it that isn't in a nearer project
+  will be captured too.
+
+Total: 12 sessions (plus 2 subagent transcripts), 8 KB,
+       started 2026-09-17 to 2026-09-22.
+
+Not imported:
+   1  already in the archive
+   1  run from the home folder                  add --include-home
+   2  run from temporary directories            add --include-temp
+   1  Cursor chat whose project could not be determined
+   1  with no conversation
+
+If you continue:
+  • 4 projects are added, and new Claude Code sessions in them are captured.
+    New Codex and Cursor sessions need those apps added in setup.
+  • Retention is 120 days, so these sessions are deleted on 2027-01-21.
+    Choose `edit` to keep them longer.
+  • Undo any time with `agent-archive backfill undo`.
+
+? Import 12 sessions from 5 projects?
+
+  1) Import these sessions
+  2) Skip for now (default)
+
+  [e] Edit retention
+
+› Choose [2]: yes
+\e[2m✓ Import these sessions\e[0m
+
+Added 4 projects. Registered 12 sessions and 2 subagent transcripts as import 2026-09-23-1.
+Uploading: 1 of 12 sessions, 739 bytes of 8 KB                          Uploading: 2 of 12 sessions, 1 KB of 8 KB                               Uploading: 3 of 12 sessions, 2 KB of 8 KB                               Uploading: 4 of 12 sessions, 3 KB of 8 KB                               Uploading: 5 of 12 sessions, 4 KB of 8 KB                               Uploading: 6 of 12 sessions, 4 KB of 8 KB                               Uploading: 7 of 12 sessions, 5 KB of 8 KB                               Uploading: 8 of 12 sessions, 5 KB of 8 KB                               Uploading: 9 of 12 sessions, 5 KB of 8 KB                               Uploading: 10 of 12 sessions, 6 KB of 8 KB                              Uploading: 11 of 12 sessions, 7 KB of 8 KB                              \e[KUploading: 11 of 12 sessions, 7 KB of 8 KB                              \e[KUploading: 12 of 12 sessions, 8 KB of 8 KB                              
+Uploaded 12 sessions (8 KB).
+See them with \e[36magent-archive list --imported\e[0m.
+Undo with \e[36magent-archive backfill undo 2026-09-23-1\e[0m.
+[exit 0]

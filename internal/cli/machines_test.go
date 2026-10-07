@@ -278,7 +278,7 @@ func TestMachinesTextShowsUnverifiedPairingAndSharedIdentity(t *testing.T) {
 		t.Fatalf("exit=%d %s", code, &out)
 	}
 	for _, text := range []string{"Paired 2026-10-01", "Paired unknown", "shared R2 key with source (" + source.MachineID + ")", "cannot revoke independently", "untrusted claims", "Heartbeat"} {
-		if !strings.Contains(out.String(), text) {
+		if !strings.Contains(strings.Join(strings.Fields(out.String()), " "), text) {
 			t.Fatalf("missing %q\n%s", text, &out)
 		}
 	}

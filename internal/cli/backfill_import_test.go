@@ -162,7 +162,7 @@ func TestBackfillImportGolden(t *testing.T) {
 		t.Fatalf("code %d, stderr %s\n%s", code, errOut, out)
 	}
 	f.checkPrivate(t, "output", out)
-	checkGolden(t, "import.txt", []byte(strings.ReplaceAll(out, f.root, "$ROOT")))
+	checkGolden(t, "import.txt", []byte(strings.ReplaceAll(trimScreenLineEnds(out), f.root, "$ROOT")))
 
 	cfg, _, err := config.Load(f.data)
 	if err != nil {
@@ -267,7 +267,7 @@ func TestBackfillImportGolden(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("second run: code %d, %s", code, errOut)
 	}
-	checkGolden(t, "second-run.txt", []byte(strings.ReplaceAll(out, f.root, "$ROOT")))
+	checkGolden(t, "second-run.txt", []byte(strings.ReplaceAll(trimScreenLineEnds(out), f.root, "$ROOT")))
 	before.check(t, f, bucket)
 }
 
@@ -358,7 +358,7 @@ func TestBackfillEditRetention(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("code %d, %s", code, errOut)
 	}
-	checkGolden(t, "edit.txt", []byte(strings.ReplaceAll(out, f.root, "$ROOT")))
+	checkGolden(t, "edit.txt", []byte(strings.ReplaceAll(trimScreenLineEnds(out), f.root, "$ROOT")))
 	if strings.Count(out, "Import 12 sessions from 5 projects? [y/N/edit]") != 2 || !strings.Contains(out, "Retention is 365 days, so these sessions are deleted on 2027-09-23.") {
 		t.Fatalf("plan not shown again with the new date:\n%s", out)
 	}

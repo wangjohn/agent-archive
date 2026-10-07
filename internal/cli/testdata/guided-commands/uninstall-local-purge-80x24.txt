@@ -1,0 +1,28 @@
+Remove integrations
+
+Remove the archive's hooks and background collector from this machine. Remote
+archives are kept.
+Also delete owned local state and credentials under /Users/alex/.local/share/agent-archive.
+
+? Remove integrations?
+
+  1) Yes
+  2) No (default)
+
+› Choose [2]: yes
+✓ Remove integrations Yes
+
+Delete owned local data
+
+0 pending session(s) and all owned local caches will be removed. Unpublished
+evidence cannot be recovered from the bucket.
+
+? Delete local data and stored credentials too?
+
+  1) Yes
+  2) No (default)
+
+› Choose [2]:
+✓ Delete local data and stored credentials too No
+
+Cancelled. No changes were made.

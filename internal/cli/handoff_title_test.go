@@ -179,7 +179,7 @@ func TestHandoffTitleSingleMatchOnATerminalDoesNotPick(t *testing.T) {
 	t.Parallel()
 	f := newPickerFixture(t)
 	out, errOut, code := runPicker(t, f.env, "p\n", "not uploaded")
-	if code != 0 || !strings.Contains(out, "Continue in:") || !strings.Contains(out, "Not uploaded yet") || strings.Contains(out, "Enter number") {
+	if code != 0 || !strings.Contains(out, "? Continue in") || !strings.Contains(out, "Not uploaded yet") || strings.Contains(out, "Enter number") {
 		t.Fatalf("code=%d stderr=%s\n%s", code, errOut, out)
 	}
 }

@@ -71,7 +71,9 @@ func TestMachineRemoteFakeAcceptance(t *testing.T) {
 					return source.LookupEnv(k)
 				}
 				output := run(receiver, bundle, "setup", "--pair-file", "-", "--yes", "--codex-discovery", "off", "--codex-capture-scope", "included-projects", "--project", project)
-				if strings.Index(output, "Paired with") > strings.Index(output, "Configuration saved") {
+				paired := strings.Index(output, "Paired with")
+				completed := strings.Index(output, "Setup complete")
+				if paired < 0 || completed < 0 || paired > completed {
 					t.Fatal("pair success appears after housekeeping")
 				}
 			}

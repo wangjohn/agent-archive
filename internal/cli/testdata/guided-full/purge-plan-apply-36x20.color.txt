@@ -1,0 +1,24 @@
+$ agent-archive purge plan
+Plan: /Users/alex/.agent-archive/purge-plans/MACHINE_ID.json
+Bucket: team-archive
+Prefix: agent-archive/
+Expires: 2026-09-25T12:05:00Z
+Digest: HASH
+Unreferenced source deletion candidates (1):
+  sessions/codex/MACHINE_ID/source.HASH.jsonl.gz (16 bytes, filter )
+Still-current older-filter sessions (0; never planned for deletion):
+Pause every uploading machine before apply. A versioned bucket also retains noncurrent versions and delete markers until an administrator removes them.
+[exit 0]
+$ agent-archive purge apply /Users/alex/.agent-archive/purge-plans/MACHINE_ID.json
+
+? Delete 1 unreferenced sources from
+  team-archive/agent-archive/?
+
+  Type 2b58c49401f8 to continue. Any
+  other answer cancels.
+
+> Digest: 2b58c49401f8
+\e[2mOK Purge confirmed\e[0m
+
+Deleted 1 unreferenced sources. Report: /Users/alex/.agent-archive/purge-plans/MACHINE_ID.json.report
+[exit 0]

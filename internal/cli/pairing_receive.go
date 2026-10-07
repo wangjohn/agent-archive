@@ -221,7 +221,7 @@ func reviewPairingDestination(p *prompter, payload pairing.Payload, existing con
 		return cfg, fmt.Errorf("paired destination differs from this machine's destination; run interactive pairing to approve the exact change")
 	}
 	if changed {
-		consent, e := p.guidedYesNo("Explicitly replace the prior destination with the displayed destination?", false)
+		consent, e := p.guidedYesNo("Explicitly replace the prior destination with the displayed destination?")
 		if e != nil {
 			return cfg, e
 		}
@@ -347,7 +347,7 @@ func reviewPairingSettings(p *prompter, payload pairing.Payload, cfg, existing c
 			cfg = draft.Config
 			if !destinationEqual(cfg.Storage, approvedStorage) {
 				terminal.Printf(p.out, "Edited destination: %s bucket %s, folder %s, account %s, endpoint %s.\n", cfg.Storage.Provider, cfg.Storage.Bucket, cfg.Storage.Prefix, cfg.Storage.R2AccountID, cfg.Storage.R2Endpoint)
-				consent, e := p.guidedYesNo("Explicitly approve this edited destination?", false)
+				consent, e := p.guidedYesNo("Explicitly approve this edited destination?")
 				if e != nil {
 					return cfg, e
 				}

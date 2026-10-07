@@ -211,19 +211,20 @@ func printUninstallSummary(out io.Writer, unverified []unverifiedJob) {
 // be checked again under the locks. Declining is not an error: confirmed is
 // false and nothing was changed.
 func confirmUninstall(purge, yes bool, home string, previewCfg config.Config, previewFound bool, stdin io.Reader, out io.Writer) (previewPending int, confirmed bool, err error) {
+	p := newPrompter(stdin, out)
+	defer p.close()
+	out = p.out
 	guidedExplanation(out, "Remove integrations", "Remove the archive's hooks and background collector from this machine. Remote archives are kept.")
 	if purge {
 		terminal.Printf(out, "Also delete owned local state and credentials under %s.\n", home)
 	} else {
 		terminal.Println(out, "Local evidence, settings, and credentials will be kept. Run setup to reinstall.")
 	}
-	p := newPrompter(stdin, out)
-	defer p.close()
 	confirm := func(question string) (bool, error) {
 		if yes {
 			return true, nil
 		}
-		confirmed, err := p.guidedYesNo(question, false)
+		confirmed, err := p.guidedYesNo(question)
 		if err == nil && !confirmed {
 			terminal.Println(out, "Cancelled. No changes were made.")
 		}
