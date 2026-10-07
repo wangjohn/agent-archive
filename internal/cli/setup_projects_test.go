@@ -102,7 +102,7 @@ func TestSetupMissingSelectedPathRequiresExplicitRemoval(t *testing.T) {
 	defer p.close()
 	got, err := selectSetupProjects(p, old, old, roots, "", "", nil)
 	must(t, err)
-	if got[0].Included || !strings.Contains(out.String(), "does not exist") {
+	if len(got) != 1 || got[0].Root != roots[1].Root || !got[0].Included || !strings.Contains(out.String(), "does not exist") {
 		t.Fatalf("rules %+v\n%s", got, &out)
 	}
 }

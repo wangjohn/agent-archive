@@ -294,6 +294,7 @@ func applyProjectCandidates(candidates []setupProjectCandidate, existing []archi
 	result := slices.Clone(existing)
 	indexes := map[string]int{}
 	rules := map[string]bool{}
+	newExclusions := map[string]bool{}
 	for i, rule := range result {
 		root := local.CanonicalPath(rule.Root)
 		indexes[root] = i
@@ -302,6 +303,7 @@ func applyProjectCandidates(candidates []setupProjectCandidate, existing []archi
 	// Apply saved explicit choices before deriving inherited ownership.
 	for _, c := range candidates {
 		if i, found := indexes[c.evidence.Root]; found {
+			newExclusions[c.evidence.Root] = result[i].Included && !c.selected
 			result[i].Included = c.selected
 			rules[c.evidence.Root] = c.selected
 		}
@@ -329,6 +331,19 @@ func applyProjectCandidates(candidates []setupProjectCandidate, existing []archi
 			rules[c.evidence.Root] = false
 		}
 	}
+	// Ordinary projects that were just left out are removed, so including
+	// them again starts a new activation window. Keep an exclusion when an
+	// included ancestor or imported history requires it, and keep old rules.
+	result = slices.DeleteFunc(result, func(rule archive.ProjectActivation) bool {
+		root := local.CanonicalPath(rule.Root)
+		if !newExclusions[root] || backfilled[archive.ProjectID(root)] {
+			return false
+		}
+		delete(rules, root)
+		inherited := nearestSetupProjectRule(rules, root)
+		rules[root] = false
+		return !inherited
+	})
 	return result
 }
 
@@ -399,7 +414,11 @@ func validateSetupProjects(candidates []setupProjectCandidate, home string, all 
 func chooseSpecificSetupProjects(p *prompter, candidates *[]setupProjectCandidate, existing []archive.ProjectActivation, current, home string, backfilled map[string]bool, page *int, incomplete func() bool, refresh func(), addPath func() error, validate func(bool) error) ([]archive.ProjectActivation, error) {
 	for {
 		lines := projectCandidateLines(*candidates, current, home, p.clock(), *page, true, incomplete())
-		lines = append(lines, "Enter numbers to toggle; numbers stay the same across pages.", "[a] Select all", "[p] Add a project path", "[r] Retry search", "[n] Next page · [b] Previous page", "[Enter] Confirm selection")
+		lines = append(lines, "Enter numbers to toggle; numbers stay the same across pages.", "[a] Select all", "[p] Add a project path")
+		if p.projectScan != nil {
+			lines = append(lines, "[r] Retry search")
+		}
+		lines = append(lines, "[n] Next page · [b] Previous page", "[Enter] Confirm selection")
 		answer, e := p.guidedText(promptModel{Question: "Choose specific projects", Helpers: lines, Label: "Projects", ResolveReceipt: func(answer string) string {
 			if answer == "" {
 				return fmt.Sprintf("Projects %d selected", includedCandidateCount(*candidates))
@@ -412,7 +431,12 @@ func chooseSpecificSetupProjects(p *prompter, candidates *[]setupProjectCandidat
 					return fmt.Errorf("choose at least one project")
 				}
 				return validate(false)
-			case "a", "all", "p", "path", "n", "next", "b", "previous", "r", "retry":
+			case "r", "retry":
+				if p.projectScan == nil {
+					return fmt.Errorf("retry is unavailable for this project selection")
+				}
+				return nil
+			case "a", "all", "p", "path", "n", "next", "b", "previous":
 				return nil
 			default:
 				_, ok, inRange := parseNumbers(answer, len(*candidates))
