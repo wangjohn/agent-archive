@@ -487,7 +487,7 @@ var skipLabels = map[SkipReason]string{
 	SkipAboveHome:             "run from / or /Users, above the home folder",
 	SkipTemporaryDirectory:    "run from temporary directories",
 	SkipProjectUnknown:        "%s whose project could not be determined",
-	SkipWorktreeUnresolved:    "from worktrees that no longer exist",
+	SkipWorktreeUnresolved:    "with unresolved worktree project ownership",
 	SkipIdentityMismatch:      "with conflicting or invalid session IDs",
 	SkipSourceChanged:         "that changed while being read; retry backfill",
 	SkipRelatedHistory:        "awaiting support for child, fork or revised history",
@@ -575,6 +575,7 @@ func renderSkipped(w io.Writer, p Plan) {
 			terminal.Printf(w, "%4d  %-*s%s\n", l.n, width, l.label, l.override)
 		}
 	}
+	renderDiagnostics(w, p)
 	for _, h := range p.UnreadableStores {
 		if h == "codex" && p.codexArchivedOnly {
 			terminal.Println(w, "      Codex's archived session folder could not be read (check permissions);")
@@ -713,12 +714,14 @@ func FormatSize(n int64) string {
 
 // planJSON is `backfill --dry-run --json`.
 type planJSON struct {
-	Destination      Destination        `json:"destination"`
-	Filters          filtersJSON        `json:"filters"`
-	Projects         []projectJSON      `json:"projects"`
-	Skipped          map[SkipReason]int `json:"skipped"`
-	AppsWithoutHooks []string           `json:"apps_without_hooks"`
-	RetentionDays    int                `json:"retention_days"`
+	Diagnostics      []DiagnosticSummary  `json:"diagnostics,omitempty"`
+	Inventory        *InventoryAccounting `json:"inventory,omitempty"`
+	Destination      Destination          `json:"destination"`
+	Filters          filtersJSON          `json:"filters"`
+	Projects         []projectJSON        `json:"projects"`
+	Skipped          map[SkipReason]int   `json:"skipped"`
+	AppsWithoutHooks []string             `json:"apps_without_hooks"`
+	RetentionDays    int                  `json:"retention_days"`
 	// ExpiresOn is empty when retention is off.
 	ExpiresOn string `json:"expires_on"`
 	// StorageChecked is always false. This JSON is printed only by a dry
@@ -797,6 +800,7 @@ func RenderJSON(w io.Writer, p Plan) error {
 		},
 		Projects:         []projectJSON{},
 		Skipped:          p.Skipped(),
+		Diagnostics:      p.Diagnostics(),
 		AppsWithoutHooks: p.AppsWithoutHooks(),
 		RetentionDays:    p.RetentionDays,
 		StorageChecked:   false,
@@ -836,6 +840,10 @@ func RenderJSON(w io.Writer, p Plan) error {
 			FirstStartedAt: s.FirstStart.UTC(), LastStartedAt: s.LastStart.UTC(),
 			CapturesSubfolders: s.CapturesSubfolders(), KeptOut: append([]string{}, s.KeptOut...), KeptOutUnchecked: append([]string{}, s.KeptOutUnchecked...), KeptOutComplete: s.NestedComplete,
 		})
+	}
+	if len(out.Diagnostics) > 0 {
+		accounting := p.InventoryAccounting()
+		out.Inventory = &accounting
 	}
 	encoder := json.NewEncoder(w)
 	encoder.SetIndent("", "  ")

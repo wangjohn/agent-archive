@@ -508,6 +508,7 @@ func decidePlanCandidates(items []*work, since, until, now time.Time) []*work {
 			w.c.projectResolutionReset = w.res.current.reset
 		}
 		w.c.Skip = w.reason(now)
+		w.c.Diagnostic = candidateDiagnostic(w.c.Skip, w.res.outcome)
 		if w.c.Skip == "" {
 			parents = append(parents, w)
 		}

@@ -20,7 +20,8 @@ follow [Semantic Versioning](https://semver.org/).
   answered prompts with short receipts when terminal rows can be safely owned.
   `NO_COLOR` keeps live interaction; dumb and redirected terminals use static
   prompts. Hidden fields share buffered input and restore terminal modes on
-  EOF, interrupts and suspend/resume.
+  EOF, interrupts and suspend/resume. Answers entered while a prompt is being
+  written retain safe static history when their echoed rows cannot be proven.
 
 - Readers understand self-contained Codex fork, child and revised histories,
   preserve exact raw ordinal boundaries and count only the chat's own activity.
@@ -42,6 +43,16 @@ follow [Semantic Versioning](https://semver.org/).
   coverage remains tracked for release testing.
 
 ### Fixed
+
+- Deleted-worktree project recovery supports Git installations without optional
+  configuration-path introspection, including Git 2.39.2. Bounded semantic
+  revalidation preserves clone ambiguity and exclusions, and larger Git config
+  inventories no longer consume the short remote-URL output limit.
+
+- Backfill explains deleted-worktree recovery failures with bounded diagnostic
+  counts and retry/review actions while preserving existing skip codes. Dry-run
+  JSON adds optional diagnostics and physical candidate inventory counts;
+  logical history accounting remains pending.
 
 - Pairing accepts relative filenames beginning with `aa-pair`, including existing
   files named `aa-pair1:backup.txt`, instead of mistaking them for pasted pairing text.

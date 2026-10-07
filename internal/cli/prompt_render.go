@@ -89,6 +89,7 @@ type promptModel struct {
 type promptWriter struct {
 	w          io.Writer
 	generation atomic.Uint64
+	failures   atomic.Uint64
 	mu         sync.Mutex
 	trailing   int
 }
@@ -98,6 +99,9 @@ func (w *promptWriter) Write(b []byte) (int, error) {
 	defer w.mu.Unlock()
 	w.generation.Add(1)
 	n, err := w.w.Write(b)
+	if err != nil || n != len(b) {
+		w.failures.Add(1)
+	}
 	for _, ch := range b[:n] {
 		if ch == '\n' {
 			w.trailing++
@@ -121,13 +125,14 @@ type promptRenderer struct {
 }
 
 type ownedPromptRegion struct {
-	caps               promptCapabilities
-	rows               int
-	cursorColumns      int
-	generation         uint64
-	epoch              uint64
-	valid              bool
-	inputAlreadyEchoed bool
+	caps                promptCapabilities
+	rows                int
+	cursorColumns       int
+	generation          uint64
+	epoch               uint64
+	valid               bool
+	inputAlreadyEchoed  bool
+	echoMayBeSuppressed bool
 }
 
 func (p *prompter) renderer() *promptRenderer {
@@ -197,10 +202,11 @@ func (r *promptRenderer) block(text string) {
 	terminal.Print(r.writer, text)
 }
 
-func (r *promptRenderer) begin(m promptModel) ownedPromptRegion {
+func (r *promptRenderer) begin(m promptModel, resetColumn ...bool) ownedPromptRegion {
 	for signalled(r.changes) {
 	}
 	c := r.capabilities()
+	failures := r.writer.failures.Load()
 	s := textStyle{color: c.Color, width: c.Width}
 	cursor := promptCursor
 	if c.ASCII {
@@ -249,9 +255,15 @@ func (r *promptRenderer) begin(m promptModel) ownedPromptRegion {
 	}
 	b.WriteString("\n" + cursor + " " + label + ": ")
 	text := b.String()
-	r.block(text)
+	// Canonical partial input can already have echoed without being readable.
+	// Start at column zero even when such input occupies the current blank row.
+	if c.SharedTerminal && c.Redraw && len(resetColumn) > 0 && resetColumn[0] {
+		r.block("\r" + text)
+	} else {
+		r.block(text)
+	}
 	_, cursorColumns := lineMetrics(text[strings.LastIndex(text, "\n")+1:], c.Width)
-	return ownedPromptRegion{caps: c, rows: displayLines(text, c.Width), cursorColumns: cursorColumns, generation: r.writer.generation.Load(), epoch: r.epoch.Load(), valid: c.Redraw && c.InputTerminal && c.OutputTerminal && r.suspended == 0 && !ambiguousPromptWidth(text)}
+	return ownedPromptRegion{caps: c, rows: displayLines(text, c.Width), cursorColumns: cursorColumns, generation: r.writer.generation.Load(), epoch: r.epoch.Load(), valid: c.Redraw && c.InputTerminal && c.OutputTerminal && r.suspended == 0 && !ambiguousPromptWidth(text) && r.writer.failures.Load() == failures}
 }
 
 func (r *promptRenderer) finish(region ownedPromptRegion, receipt string, echoed string, secret, typedAhead, interrupted bool) {
@@ -261,11 +273,15 @@ func (r *promptRenderer) finish(region ownedPromptRegion, receipt string, echoed
 func (r *promptRenderer) resolve(region ownedPromptRegion, mark, receipt, echoed string, secret, typedAhead, interrupted bool) {
 	c := r.capabilities()
 	rows := region.rows
+	echoRows := 0
 	if !secret && region.caps.InputTerminal {
 		// ReadString includes the newline; it moves the cursor to the next row.
-		rows += lineRows(strings.Repeat(" ", region.cursorColumns)+strings.TrimSuffix(echoed, "\n"), region.caps.Width) - lineRows(strings.Repeat(" ", region.cursorColumns), region.caps.Width)
+		echoRows = lineRows(strings.Repeat(" ", region.cursorColumns)+strings.TrimSuffix(echoed, "\n"), region.caps.Width) - lineRows(strings.Repeat(" ", region.cursorColumns), region.caps.Width)
+		rows += echoRows
 	}
-	safe := (secret || strings.HasSuffix(echoed, "\n")) && strings.IndexFunc(strings.TrimSuffix(echoed, "\n"), unicode.IsControl) < 0 && !ambiguousPromptWidth(echoed) && region.valid && c.Redraw && c.Width == region.caps.Width && c.Height == region.caps.Height && rows < c.Height && r.epoch.Load() == region.epoch && r.suspended == 0 && r.writer.generation.Load() == region.generation && !region.inputAlreadyEchoed && !typedAhead && !interrupted
+	// An ordinary prefix entered during emission was not echoed. Its length is
+	// unknown, so a possibly wrapped answer cannot prove the erased row count.
+	safe := (!region.echoMayBeSuppressed || echoRows == 0) && (secret || strings.HasSuffix(echoed, "\n")) && strings.IndexFunc(strings.TrimSuffix(echoed, "\n"), unicode.IsControl) < 0 && !ambiguousPromptWidth(echoed) && region.valid && c.Redraw && c.Width == region.caps.Width && c.Height == region.caps.Height && rows < c.Height && r.epoch.Load() == region.epoch && r.suspended == 0 && r.writer.generation.Load() == region.generation && !region.inputAlreadyEchoed && !typedAhead && !interrupted
 	// Hidden input and final EOF answers have no echoed newline; redirected
 	// streams have no echo at all. Each static receipt starts on its own row.
 	if secret || !region.caps.SharedTerminal || region.inputAlreadyEchoed || !strings.HasSuffix(echoed, "\n") {
@@ -289,11 +305,31 @@ func (r *promptRenderer) resolve(region ownedPromptRegion, mark, receipt, echoed
 // beginGuided checks for input that the terminal may have echoed before this
 // block. The last buffered answer has no new cursor movement when read, even
 // when there is no more pending input afterward.
-func (p *prompter) beginGuided(m promptModel) ownedPromptRegion {
+func (p *prompter) beginGuided(m promptModel) (ownedPromptRegion, error) {
 	pending := p.inputPending()
-	region := p.renderer().begin(m)
-	region.inputAlreadyEchoed = pending
-	return region
+	r := p.renderer()
+	epoch := r.epoch.Load()
+	muted := !m.Secret && p.lineGuard != nil && r.capabilities().Redraw
+	restore := func() {}
+	if muted {
+		var err error
+		restore, err = p.lineGuard.muted()
+		if err != nil {
+			return ownedPromptRegion{}, fmt.Errorf("cannot protect prompt output: %w", err)
+		}
+		defer func() { restore() }()
+	}
+	region := r.begin(m, p.lineGuard != nil)
+	// Restore before the final probe: an answer arriving after that probe must
+	// echo at the completed cursor, including its newline.
+	restore()
+	restore = func() {}
+	// Include a complete line arriving during any part of the output write.
+	// Partial canonical input does not move the cursor while echo is muted.
+	region.inputAlreadyEchoed = pending || (!m.Secret && p.inputPending())
+	region.echoMayBeSuppressed = muted
+	region.valid = region.valid && r.epoch.Load() == epoch
+	return region, nil
 }
 
 // guidedChoice resolves a valid choice before producing its completion receipt.
@@ -311,7 +347,10 @@ func (p *prompter) guidedChoice(m promptModel) (string, error) {
 		m.Default = ""
 	}
 	for {
-		region := p.beginGuided(m)
+		region, err := p.beginGuided(m)
+		if err != nil {
+			return "", err
+		}
 		raw, interrupted, err := p.guidedRead(m.ReadAnswer)
 		if err != nil {
 			return "", err
@@ -376,7 +415,11 @@ func (p *prompter) guidedText(m promptModel) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		region := p.beginGuided(m)
+		region, err := p.beginGuided(m)
+		if err != nil {
+			restore()
+			return "", err
+		}
 		raw, interrupted, err := p.guidedRead(m.ReadAnswer)
 		restore()
 		if err != nil {

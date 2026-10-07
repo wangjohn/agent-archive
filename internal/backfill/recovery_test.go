@@ -2,6 +2,7 @@ package backfill
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
@@ -223,7 +224,7 @@ func TestDeletedWorktreePlanningContinuesPastRecoveryCache(t *testing.T) {
 				t.Fatalf("candidate %d: %+v", i, last)
 			}
 		}
-		last.current.reset()
+		last.current.reset(t.Context())
 		if !last.current.valid() {
 			t.Fatal("last candidate lost freshness proof")
 		}
@@ -391,5 +392,81 @@ func TestImportRejectsSourceChangesAcrossHeaderAndRecovery(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestRecoveredImportRenewsSemanticContextAfterPlanning(t *testing.T) {
+	for _, mode := range []string{"caller-context", "cancelled", "nil-context"} {
+		t.Run(mode, func(t *testing.T) {
+			tr := newTree(t)
+			root := tr.repo("home/repo")
+			gone := tr.path("home/.codex/worktrees/gone/repo")
+			id := "00000000-0000-0000-0000-000000000099"
+			body := strings.Replace(codexTranscript(id, id, gone, fixedNow.Add(-time.Hour)), `"source":"cli"`, `"git":{"repository_url":"https://example.test/acme/repo"},"source":"cli"`, 1)
+			tr.write(filepath.Join("home", codexFile(id)), body)
+			key := archive.RepoKey("https://example.test/acme/repo")
+			env := tr.env()
+			observations := 0
+			admitting := false
+			priorValidation := struct{ observed context.Context }{}
+			env.RepositoryIdentity = func(ctx context.Context, path string) sourcefacts.RepositoryIdentity {
+				if ctx.Err() != nil {
+					t.Fatal("Git lookup used expired planning context")
+				}
+				if admitting && mode == "nil-context" {
+					deadline, bounded := ctx.Deadline()
+					if remaining := time.Until(deadline); !bounded || remaining <= 0 || remaining > 30*time.Second {
+						t.Fatal("nil-context admission did not bound semantic work per slice", remaining, bounded)
+					}
+					if ctx == priorValidation.observed {
+						t.Fatal("nil-context admission reused the previous slice's deadline")
+					}
+					priorValidation = struct{ observed context.Context }{observed: ctx}
+				}
+				observations++
+				return sourcefacts.RepositoryIdentity{Root: path, Key: key, Known: true, Validation: "semantic", ObservedRoot: path}
+			}
+			env.RepositoryIdentityCurrent = func(sourcefacts.RepositoryIdentity) bool { return true }
+			cfg := config.Config{Archive: archive.Config{Enabled: true, Projects: []archive.ProjectActivation{project(root, true)}}}
+			planning, cancelPlanning := context.WithCancel(t.Context())
+			p, err := BuildPlan(planning, env, states{}, cfg, Filters{})
+			if err != nil || len(p.Imported()) != 1 {
+				t.Fatal(p.Imported(), err)
+			}
+			cancelPlanning()
+			plannedObservations := observations
+			home := t.TempDir()
+			if err := config.Save(home, cfg); err != nil {
+				t.Fatal(err)
+			}
+			store, err := state.Open(home)
+			if err != nil {
+				t.Fatal(err)
+			}
+			admission, cancelAdmission := context.WithCancel(t.Context())
+			defer cancelAdmission()
+			if mode == "cancelled" {
+				cancelAdmission()
+			}
+			if mode == "nil-context" {
+				admission = nil
+			}
+			admitting = true
+			// Force separate reservation and admission holds instead of depending
+			// on whether both fit the wall-clock limit on a loaded runner.
+			result, err := (Registration{Context: admission, Home: home, Store: store, AdmittedAt: fixedNow, Batch: "synthetic", MaxHoldSteps: 1}).Run(p.Imported())
+			if mode == "cancelled" {
+				if !errors.Is(err, ErrStopped) || len(result.Sessions) != 0 {
+					t.Fatal(result, err)
+				}
+			} else if err != nil || len(result.Sessions) != 1 || observations != plannedObservations+2 {
+				t.Fatal("renewed admission failed", result, err, observations)
+			} else {
+				reg, found, err := store.LoadRegistration(result.Sessions[0])
+				if err != nil || !found || reg.ProjectResolution == nil || reg.ProjectResolution.ValidationMethod != "semantic" {
+					t.Fatal("semantic ownership provenance was not retained", reg, err)
+				}
+			}
+		})
 	}
 }

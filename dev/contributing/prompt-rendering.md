@@ -59,6 +59,18 @@ their clusters occupy fewer cells than their individual runes. Control
 characters in the rendered model likewise invalidate region ownership. Receipts stay in
 ordinary scrollback. Setup never opens an alternate screen for prompts.
 
+On a real input terminal, ordinary block emission temporarily suppresses only
+echo, retaining canonical editing, EOF and signal processing. Echo is restored
+before checking for a complete answer entered during the write; such an answer
+gets a static receipt on its own line. Partial canonical input cannot be probed
+without consuming it, so emission starts at column zero and completion assumes
+its echoed extent is unknown. Short answers and defaults can still collapse;
+an ordinary answer that could wrap from the cursor retains the question and
+appends its receipt. The same buffer retains complete and partial typed-ahead
+answers. An incomplete output write or a suspend during emission also prevents
+erasure. Deferred restoration covers output errors and panics, and the terminal
+guard restores echo before signals or suspension.
+
 Use `release := p.suspendPrompts()` **before** a spinner, credential helper,
 subprocess, browser, pairing alternate screen or pager takes the terminal;
 call `release()` afterward. This invalidates the old region permanently and
