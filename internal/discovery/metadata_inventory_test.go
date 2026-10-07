@@ -17,13 +17,29 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 )
 
+type metadataScenario string
+
+type metadataInterruptScenario string
+
+const (
+	metadataScenarioMalformed    metadataScenario          = "malformed"
+	metadataScenarioUnknown      metadataScenario          = "unknown"
+	metadataScenarioUnsafeStore  metadataScenario          = "unsafe-store"
+	metadataScenarioMembership   metadataScenario          = "membership"
+	metadataScenarioCancelled    metadataScenario          = "cancelled"
+	metadataScenarioRootReplaced metadataScenario          = "root-replaced"
+	metadataScenarioRewrite      metadataInterruptScenario = "rewrite"
+	metadataScenarioReplace      metadataInterruptScenario = "replace"
+	metadataScenarioCancel       metadataInterruptScenario = "cancel"
+)
+
 func metadataFixture(t *testing.T, count int) (*CodexRolloutLookup, []string, string) {
 	t.Helper()
 	store, cfg, at, root := fixture(t)
 	ids := make([]string, count)
 	for i := range count {
 		ids[i] = writeRollout(t, root, cfg.Archive.Projects[0].Root, at, i+1, "sessions/nested")
-		path := filepath.Join(root, "sessions/nested", "rollout-2026-10-01T12-00-00-"+ids[i]+".jsonl")
+		path := filepath.Join(root, "sessions", "nested", "rollout-2026-10-01T12-00-00-"+ids[i]+".jsonl")
 		raw, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatal(err)
@@ -48,31 +64,33 @@ func metadataFixture(t *testing.T, count int) (*CodexRolloutLookup, []string, st
 func TestMetadataInventorySharesFiveSweepsAtPhysicalScale(t *testing.T) {
 	testMetadataInventoryScale(t, false, 1100, 256)
 }
+
 func TestMetadataInventorySharesFiveSweepsWithIndexedWAL(t *testing.T) {
 	testMetadataInventoryScale(t, true, 1100, 256)
 }
+
 func testMetadataInventoryScale(t *testing.T, indexed bool, logical, pairs int) {
 	t.Helper()
 	lookup, ids, root := metadataFixture(t, logical)
 	// A second copy for every logical ID exceeds the observation cache while
 	// retaining all physical candidates in the explicitly requested epoch.
-	if err := os.MkdirAll(filepath.Join(root, "archived_sessions/nested"), 0700); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, "archived_sessions", "nested"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	for _, id := range ids {
 		name := "rollout-2026-10-01T12-00-00-" + id + ".jsonl"
-		raw, err := os.ReadFile(filepath.Join(root, "sessions/nested", name))
+		raw, err := os.ReadFile(filepath.Join(root, "sessions", "nested", name))
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(root, "archived_sessions/nested", name), raw, 0600); err != nil {
+		if err := os.WriteFile(filepath.Join(root, "archived_sessions", "nested", name), raw, 0600); err != nil {
 			t.Fatal(err)
 		}
 	}
 	if indexed {
 		db := hintDatabase(t, root, true)
 		for _, id := range ids {
-			addHint(t, db, id, filepath.Join(root, "sessions/nested", "rollout-2026-10-01T12-00-00-"+id+".jsonl"), time.Now())
+			addHint(t, db, id, filepath.Join(root, "sessions", "nested", "rollout-2026-10-01T12-00-00-"+id+".jsonl"), time.Now())
 		}
 	}
 
@@ -146,7 +164,7 @@ func testMetadataInventoryScale(t *testing.T, indexed bool, logical, pairs int) 
 func TestMetadataSliceChecksCurrentDespiteSharedFilesystemProof(t *testing.T) {
 	lookup, ids, root := metadataFixture(t, 2)
 	db := hintDatabase(t, root, true)
-	path := filepath.Join(root, "sessions/nested", "rollout-2026-10-01T12-00-00-"+ids[0]+".jsonl")
+	path := filepath.Join(root, "sessions", "nested", "rollout-2026-10-01T12-00-00-"+ids[0]+".jsonl")
 	addHint(t, db, ids[0], path, time.Now())
 	view := lookup.MetadataInventory().(*metadataInventory)
 	slice, err := view.BeginValidationSlice(t.Context(), agentapi.CodexValidationLimits{})
@@ -161,7 +179,7 @@ func TestMetadataSliceChecksCurrentDespiteSharedFilesystemProof(t *testing.T) {
 	if err := slice.Check(t.Context(), ids[0], set.Revision); err != nil {
 		t.Fatal(err)
 	}
-	other := filepath.Join(root, "sessions/nested", "rollout-2026-10-01T12-00-00-"+ids[1]+".jsonl")
+	other := filepath.Join(root, "sessions", "nested", "rollout-2026-10-01T12-00-00-"+ids[1]+".jsonl")
 	if _, err := db.ExecContext(t.Context(), "UPDATE threads SET rollout_path=? WHERE id=?", other, ids[0]); err != nil {
 		t.Fatal(err)
 	}
@@ -184,10 +202,11 @@ func (r *metadataReadRanges) ReadAt(p []byte, off int64) (int, error) {
 	r.lengths = append(r.lengths, len(p))
 	return r.reader.ReadAt(p, off)
 }
+
 func TestMetadataHeaderExactRangesAndResumableMaximum(t *testing.T) {
 	lookup, ids, root := metadataFixture(t, 1)
 	view := lookup.MetadataInventory().(*metadataInventory)
-	path := filepath.Join(root, "sessions/nested", "rollout-2026-10-01T12-00-00-"+ids[0]+".jsonl")
+	path := filepath.Join(root, "sessions", "nested", "rollout-2026-10-01T12-00-00-"+ids[0]+".jsonl")
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -250,18 +269,18 @@ func TestMetadataHeaderExactRangesAndResumableMaximum(t *testing.T) {
 }
 
 func TestMetadataInventoryGapsAndFailedSliceRenewal(t *testing.T) {
-	for _, mode := range []string{"malformed", "unknown", "unsafe-store", "membership", "cancelled", "root-replaced"} {
-		t.Run(mode, func(t *testing.T) {
+	for _, mode := range []metadataScenario{metadataScenarioMalformed, metadataScenarioUnknown, metadataScenarioUnsafeStore, metadataScenarioMembership, metadataScenarioCancelled, metadataScenarioRootReplaced} {
+		t.Run(string(mode), func(t *testing.T) {
 			lookup, ids, root := metadataFixture(t, 1)
 			view := lookup.MetadataInventory().(*metadataInventory)
-			path := filepath.Join(root, "sessions/nested", "rollout-2026-10-01T12-00-00-"+ids[0]+".jsonl")
+			path := filepath.Join(root, "sessions", "nested", "rollout-2026-10-01T12-00-00-"+ids[0]+".jsonl")
 			ctx := t.Context()
 			switch mode {
-			case "malformed":
+			case metadataScenarioMalformed:
 				if err := os.WriteFile(path, []byte("{}\nSECRET\n"), 0600); err != nil {
 					t.Fatal(err)
 				}
-			case "unknown":
+			case metadataScenarioUnknown:
 				raw, err := os.ReadFile(path)
 				if err != nil {
 					t.Fatal(err)
@@ -269,22 +288,22 @@ func TestMetadataInventoryGapsAndFailedSliceRenewal(t *testing.T) {
 				if err := os.WriteFile(path, []byte(strings.ReplaceAll(string(raw), `"source":"cli"`, `"source":"future"`)), 0600); err != nil {
 					t.Fatal(err)
 				}
-			case "unsafe-store":
+			case metadataScenarioUnsafeStore:
 				if err := os.Symlink(t.TempDir(), filepath.Join(root, "archived_sessions")); err != nil {
 					t.Fatal(err)
 				}
-			case "cancelled":
+			case metadataScenarioCancelled:
 				var cancel context.CancelFunc
 				ctx, cancel = context.WithCancel(ctx)
 				cancel()
-			case "membership", "root-replaced":
+			case metadataScenarioMembership, metadataScenarioRootReplaced:
 				first, err := view.BeginValidationSlice(ctx, agentapi.CodexValidationLimits{})
 				if err != nil || first.Valid(ctx) != nil {
 					t.Fatal(err, first.Valid(ctx))
 				}
 				_ = first.Close()
-				if mode == "membership" {
-					if err := os.WriteFile(filepath.Join(root, "sessions/new"), []byte("fixture"), 0600); err != nil {
+				if mode == metadataScenarioMembership {
+					if err := os.WriteFile(filepath.Join(root, "sessions", "new"), []byte("fixture"), 0600); err != nil {
 						t.Fatal(err)
 					}
 				} else {
@@ -297,7 +316,7 @@ func TestMetadataInventoryGapsAndFailedSliceRenewal(t *testing.T) {
 				}
 			}
 			slice, err := view.BeginValidationSlice(ctx, agentapi.CodexValidationLimits{})
-			if mode == "cancelled" {
+			if mode == metadataScenarioCancelled {
 				if !errors.Is(err, context.Canceled) {
 					t.Fatal(err)
 				}
@@ -319,7 +338,7 @@ func TestMetadataInventoryGapsAndFailedSliceRenewal(t *testing.T) {
 			if view.counts.sweeps != sweeps {
 				t.Fatal("failed slice reswept")
 			}
-			if mode == "membership" {
+			if mode == metadataScenarioMembership {
 				fresh, err := view.BeginValidationSlice(ctx, agentapi.CodexValidationLimits{})
 				if err != nil {
 					t.Fatal(err)
@@ -329,7 +348,7 @@ func TestMetadataInventoryGapsAndFailedSliceRenewal(t *testing.T) {
 					t.Fatal("renewal did not attempt one sweep")
 				}
 			}
-			if mode == "malformed" && view.counts.physical != 1 {
+			if mode == metadataScenarioMalformed && view.counts.physical != 1 {
 				t.Fatal("invalid header evaded physical acquisition count")
 			}
 			if view.cursor != nil {
@@ -342,12 +361,12 @@ func TestMetadataInventoryGapsAndFailedSliceRenewal(t *testing.T) {
 func TestMetadataInventoryRetainsMorePhysicalCopiesThanGraphLimit(t *testing.T) {
 	lookup, ids, root := metadataFixture(t, 1)
 	name := "rollout-2026-10-01T12-00-00-" + ids[0] + ".jsonl"
-	raw, err := os.ReadFile(filepath.Join(root, "sessions/nested", name))
+	raw, err := os.ReadFile(filepath.Join(root, "sessions", "nested", name))
 	if err != nil {
 		t.Fatal(err)
 	}
 	for i := range 70 {
-		dir := filepath.Join(root, "archived_sessions", fmt.Sprint(i))
+		dir := filepath.Join(root, "archived_sessions", strconv.Itoa(i))
 		if err := os.MkdirAll(dir, 0700); err != nil {
 			t.Fatal(err)
 		}
@@ -373,7 +392,7 @@ func TestMetadataInventoryRetainsMorePhysicalCopiesThanGraphLimit(t *testing.T) 
 func TestMetadataFullEpochKeepsOrdinaryDeadlineIndependent(t *testing.T) {
 	lookup, ids, root := metadataFixture(t, 1)
 	db := hintDatabase(t, root, true)
-	path := filepath.Join(root, "sessions/nested", "rollout-2026-10-01T12-00-00-"+ids[0]+".jsonl")
+	path := filepath.Join(root, "sessions", "nested", "rollout-2026-10-01T12-00-00-"+ids[0]+".jsonl")
 	addHint(t, db, ids[0], path, time.Now())
 	// Build the shared projection on the ordinary lane first, then expire that
 	// lane. The full view still uses its caller context and the same projection.
@@ -413,7 +432,7 @@ func TestMetadataFullEpochKeepsOrdinaryDeadlineIndependent(t *testing.T) {
 func TestMetadataInventoryMaximumCopiesAndJointCapacity(t *testing.T) {
 	store, _, _, root := fixture(t)
 	id := "00000000-0000-0000-0000-000000000001"
-	dir := filepath.Join(root, "sessions/nested")
+	dir := filepath.Join(root, "sessions", "nested")
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -534,12 +553,13 @@ func (r *metadataInterruptRead) ReadAt(p []byte, off int64) (int, error) {
 	}
 	return n, err
 }
+
 func TestMetadataPartialHeaderRejectsRewriteReplacementAndCancellation(t *testing.T) {
-	for _, mode := range []string{"rewrite", "replace", "cancel"} {
-		t.Run(mode, func(t *testing.T) {
+	for _, mode := range []metadataInterruptScenario{metadataScenarioRewrite, metadataScenarioReplace, metadataScenarioCancel} {
+		t.Run(string(mode), func(t *testing.T) {
 			lookup, ids, root := metadataFixture(t, 1)
 			view := lookup.MetadataInventory().(*metadataInventory)
-			path := filepath.Join(root, "sessions/nested", "rollout-2026-10-01T12-00-00-"+ids[0]+".jsonl")
+			path := filepath.Join(root, "sessions", "nested", "rollout-2026-10-01T12-00-00-"+ids[0]+".jsonl")
 			raw, err := os.ReadFile(path)
 			if err != nil {
 				t.Fatal(err)
@@ -564,16 +584,16 @@ func TestMetadataPartialHeaderRejectsRewriteReplacementAndCancellation(t *testin
 			defer cancel()
 			reader := &metadataInterruptRead{reader: f, once: func() {
 				switch mode {
-				case "cancel":
+				case metadataScenarioCancel:
 					cancel()
-				case "replace":
+				case metadataScenarioReplace:
 					if err := os.Rename(path, path+".old"); err != nil {
 						t.Fatal(err)
 					}
 					if err := os.WriteFile(path, raw, 0600); err != nil {
 						t.Fatal(err)
 					}
-				case "rewrite":
+				case metadataScenarioRewrite:
 					if err := os.WriteFile(path, []byte(strings.ReplaceAll(string(raw), "codex-tui", "codex-xyz")), 0600); err != nil {
 						t.Fatal(err)
 					}
@@ -593,6 +613,7 @@ func TestMetadataPartialHeaderRejectsRewriteReplacementAndCancellation(t *testin
 		})
 	}
 }
+
 func TestMetadataApprovedAliasAndComponentRetargetRefuse(t *testing.T) {
 	lookup, ids, root := metadataFixture(t, 1)
 	alias := filepath.Join(t.TempDir(), "home")
@@ -618,7 +639,7 @@ func TestMetadataApprovedAliasAndComponentRetargetRefuse(t *testing.T) {
 	if err := otherView.start(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	nested := filepath.Join(otherRoot, "sessions/nested")
+	nested := filepath.Join(otherRoot, "sessions", "nested")
 	if err := os.Rename(nested, nested+".old"); err != nil {
 		t.Fatal(err)
 	}
@@ -632,10 +653,11 @@ func TestMetadataApprovedAliasAndComponentRetargetRefuse(t *testing.T) {
 		t.Fatal("raced intermediate symlink accepted")
 	}
 }
+
 func TestMetadataConflictingBodiesRemainPhysicalFacts(t *testing.T) {
 	lookup, ids, root := metadataFixture(t, 1)
 	name := "rollout-2026-10-01T12-00-00-" + ids[0] + ".jsonl"
-	raw, err := os.ReadFile(filepath.Join(root, "sessions/nested", name))
+	raw, err := os.ReadFile(filepath.Join(root, "sessions", "nested", name))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -661,10 +683,11 @@ func TestMetadataConflictingBodiesRemainPhysicalFacts(t *testing.T) {
 		t.Fatal("body read or copy discarded")
 	}
 }
+
 func TestMetadataFullProjectionDoesNotExtendOrdinaryLane(t *testing.T) {
 	lookup, ids, root := metadataFixture(t, 1)
 	db := hintDatabase(t, root, true)
-	path := filepath.Join(root, "sessions/nested", "rollout-2026-10-01T12-00-00-"+ids[0]+".jsonl")
+	path := filepath.Join(root, "sessions", "nested", "rollout-2026-10-01T12-00-00-"+ids[0]+".jsonl")
 	addHint(t, db, ids[0], path, time.Now())
 	view := lookup.MetadataInventory().(*metadataInventory)
 	slice, err := view.BeginValidationSlice(t.Context(), agentapi.CodexValidationLimits{})
@@ -698,7 +721,7 @@ func TestMetadataStableFactsConflictAndMultipleHomes(t *testing.T) {
 			lookup, ids, root := metadataFixture(t, 1)
 			other := t.TempDir()
 			name := "rollout-2026-10-01T12-00-00-" + ids[0] + ".jsonl"
-			raw, err := os.ReadFile(filepath.Join(root, "sessions/nested", name))
+			raw, err := os.ReadFile(filepath.Join(root, "sessions", "nested", name))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -737,7 +760,7 @@ func TestMetadataPhysicalCeilingRefusesBeforeExtraOpen(t *testing.T) {
 		t.Fatal(err)
 	}
 	view.counts.physical = 16384
-	view.batch = []SourceEntry{{Source: SourceDescriptor{Kind: archive.SourceKindFile, Root: root, Locator: filepath.Join(root, "sessions/nested", "rollout-2026-10-01T12-00-00-"+ids[0]+".jsonl")}}}
+	view.batch = []SourceEntry{{Source: SourceDescriptor{Kind: archive.SourceKindFile, Root: root, Locator: filepath.Join(root, "sessions", "nested", "rollout-2026-10-01T12-00-00-"+ids[0]+".jsonl")}}}
 	before := view.counts.fileOpens
 	if err := view.step(t.Context()); agentapi.Failure(err) != agentapi.Limit {
 		t.Fatal(err)
@@ -750,6 +773,7 @@ func TestMetadataPhysicalCeilingRefusesBeforeExtraOpen(t *testing.T) {
 func TestMetadataInventorySmallerIndexedScale(t *testing.T) {
 	testMetadataInventoryScale(t, true, 64, 16)
 }
+
 func metadataScaleFailure(t *testing.T, phase string, err error, started time.Time, lookup *CodexRolloutLookup, view *metadataInventory) {
 	t.Helper()
 	var sourceErr *agentapi.SourceError
@@ -769,7 +793,7 @@ func metadataScaleFailure(t *testing.T, phase string, err error, started time.Ti
 func TestMetadataOwnedDeadlineRefusesAndPreservesCaller(t *testing.T) {
 	lookup, ids, root := metadataFixture(t, 1)
 	db := hintDatabase(t, root, true)
-	addHint(t, db, ids[0], filepath.Join(root, "sessions/nested", "rollout-2026-10-01T12-00-00-"+ids[0]+".jsonl"), time.Now())
+	addHint(t, db, ids[0], filepath.Join(root, "sessions", "nested", "rollout-2026-10-01T12-00-00-"+ids[0]+".jsonl"), time.Now())
 	view := lookup.MetadataInventory().(*metadataInventory)
 	slice, err := view.BeginValidationSlice(t.Context(), agentapi.CodexValidationLimits{})
 	if err != nil {

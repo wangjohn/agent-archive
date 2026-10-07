@@ -22,12 +22,26 @@ import (
 )
 
 const metadataBytes = 16 << 20
+
 const metadataHeaderBytes = 64 << 10
+
 const metadataScratch = 3 * metadataHeaderBytes
 
 type metadataCounts struct {
-	entries, physical, directories, headers, sweeps, stats, rootOpens, fileOpens, resolutions, joins, steps int
-	requested, returned, operations                                                                         int64
+	entries     int
+	physical    int
+	directories int
+	headers     int
+	sweeps      int
+	stats       int
+	rootOpens   int
+	fileOpens   int
+	resolutions int
+	joins       int
+	steps       int
+	requested   int64
+	returned    int64
+	operations  int64
 }
 
 type metadataFact struct {
@@ -39,13 +53,17 @@ type metadataFact struct {
 }
 
 type metadataDirectory struct {
-	dir           directory
-	stamp, digest string
+	dir    directory
+	stamp  string
+	digest string
 }
+
 type metadataRoot struct {
-	home, path string
-	info       os.FileInfo
+	home string
+	path string
+	info os.FileInfo
 }
+
 type metadataCursor struct {
 	file   *os.File
 	reader io.ReaderAt
@@ -55,24 +73,27 @@ type metadataCursor struct {
 }
 
 type metadataInventory struct {
-	owner               *CodexRolloutLookup
-	started, complete   bool
-	failure             error
-	roots               []metadataRoot
-	queue               []directory
-	batch               []SourceEntry
-	next                directory
-	directories         []metadataDirectory
-	directoryIndex      map[string]int
-	facts               []metadataFact
-	threads, rollouts   map[string][]int
-	cursor              *metadataCursor
-	charge, headerBytes int64
-	batchCharge         int64
-	remaining           time.Duration
-	deadline            time.Time
-	interned            map[string]string
-	counts              metadataCounts
+	owner          *CodexRolloutLookup
+	started        bool
+	complete       bool
+	failure        error
+	roots          []metadataRoot
+	queue          []directory
+	batch          []SourceEntry
+	next           directory
+	directories    []metadataDirectory
+	directoryIndex map[string]int
+	facts          []metadataFact
+	threads        map[string][]int
+	rollouts       map[string][]int
+	cursor         *metadataCursor
+	charge         int64
+	headerBytes    int64
+	batchCharge    int64
+	remaining      time.Duration
+	deadline       time.Time
+	interned       map[string]string
+	counts         metadataCounts
 }
 
 // MetadataInventory requests a full pass-local metadata epoch without reading
@@ -97,9 +118,11 @@ func metadataTypeSize[T any]() int64 {
 // metadataStamp retains exact filesystem identity without retaining an allocated
 // FileInfo and its platform Stat_t behind every metadata fact.
 type metadataStamp struct {
-	dev, ino    uint64
-	size, mtime int64
-	mode        os.FileMode
+	dev   uint64
+	ino   uint64
+	size  int64
+	mtime int64
+	mode  os.FileMode
 }
 
 func metadataDevice(value any) (uint64, bool) {
@@ -115,6 +138,7 @@ func metadataDevice(value any) (uint64, bool) {
 		return 0, false
 	}
 }
+
 func stampMetadata(info os.FileInfo) metadataStamp {
 	stat, ok := info.Sys().(*syscall.Stat_t)
 	if !ok {
@@ -126,9 +150,11 @@ func stampMetadata(info os.FileInfo) metadataStamp {
 	}
 	return metadataStamp{dev, uint64(stat.Ino), info.Size(), info.ModTime().UnixNano(), info.Mode()}
 }
+
 func (s metadataStamp) same(info os.FileInfo) bool {
 	return info != nil && s.ino != 0 && s == stampMetadata(info)
 }
+
 func (m *metadataInventory) intern(value string) (string, error) {
 	if value == "" {
 		return "", nil
@@ -144,6 +170,7 @@ func (m *metadataInventory) intern(value string) (string, error) {
 	m.interned[value] = value
 	return value, nil
 }
+
 func (m *metadataInventory) internIdentity(id codexmeta.CodexIdentity) (codexmeta.CodexIdentity, error) {
 	for _, value := range []*string{&id.ThreadID, &id.RootID, &id.ParentID, &id.ForkID, &id.RolloutID} {
 		interned, err := m.intern(*value)
@@ -215,12 +242,15 @@ func (m *metadataInventory) operationFailure(parent context.Context, err error) 
 func metadataUnavailable() error {
 	return agentapi.Wrap(agentapi.Unavailable, errors.New("native metadata inventory incomplete"))
 }
+
 func metadataChanged() error {
 	return agentapi.Wrap(agentapi.Changed, errors.New("native metadata inventory changed"))
 }
+
 func metadataLimit() error {
 	return agentapi.Wrap(agentapi.Limit, errors.New("native metadata inventory limit"))
 }
+
 func (m *metadataInventory) reserve(n int64) bool {
 	if n < 0 || m.charge+m.headerBytes+n > metadataBytes || !m.owner.readBudget.Reserve(n) {
 		return false
@@ -228,6 +258,7 @@ func (m *metadataInventory) reserve(n int64) bool {
 	m.charge += n
 	return true
 }
+
 func (m *metadataInventory) closeCursor() error {
 	if m.cursor == nil {
 		return nil
@@ -238,6 +269,7 @@ func (m *metadataInventory) closeCursor() error {
 	m.charge -= metadataScratch
 	return err
 }
+
 func (m *metadataInventory) close() error {
 	err := m.closeCursor()
 	m.owner.readBudget.Release(m.charge)
@@ -251,11 +283,13 @@ func (m *metadataInventory) close() error {
 	m.directories = nil
 	return err
 }
+
 func (m *metadataInventory) fail(err error) error {
 	m.complete = false
 	m.failure = errors.Join(err, m.closeCursor())
 	return m.failure
 }
+
 func (m *metadataInventory) rootCurrent(r metadataRoot) bool {
 	m.counts.resolutions++
 	resolved, err := filepath.EvalSymlinks(r.home)
@@ -263,6 +297,7 @@ func (m *metadataInventory) rootCurrent(r metadataRoot) bool {
 	info, statErr := os.Lstat(r.path)
 	return err == nil && statErr == nil && resolved == r.path && info.IsDir() && os.SameFile(r.info, info)
 }
+
 func (m *metadataInventory) rootsCurrent(ctx context.Context) error {
 	for _, r := range m.roots {
 		if err := ctx.Err(); err != nil {
@@ -274,6 +309,7 @@ func (m *metadataInventory) rootsCurrent(ctx context.Context) error {
 	}
 	return nil
 }
+
 func (m *metadataInventory) start(ctx context.Context) error {
 	m.started = true
 	m.remaining = 30 * time.Second
@@ -391,6 +427,7 @@ func (m *metadataInventory) open(source SourceDescriptor) (*os.File, error) {
 	}
 	return f, nil
 }
+
 func sameMetadataInfo(a, b os.FileInfo) bool {
 	return a != nil && b != nil && os.SameFile(a, b) && a.Mode() == b.Mode() && a.Size() == b.Size() && a.ModTime().Equal(b.ModTime())
 }
@@ -419,20 +456,8 @@ func (m *metadataInventory) step(ctx context.Context) error {
 			entry := m.batch[0]
 			m.batch[0] = SourceEntry{}
 			m.batch = m.batch[1:]
-			m.counts.entries++
-			// Fingerprints include directories and unrelated entries; preserve a
-			// total traversal ceiling separately from physical candidate acquisition.
-			if m.counts.entries > 16384+2048 {
-				return metadataLimit()
-			}
-			if entry.Source.Locator != "" || entry.unknownMetadata {
-				if m.counts.physical >= 16384 {
-					return metadataLimit()
-				}
-				m.counts.physical++
-			}
-			if entry.unsafeMetadata || entry.unknownMetadata {
-				return metadataUnavailable()
+			if err := m.accountEntry(entry); err != nil {
+				return err
 			}
 			if entry.Directory != "" {
 				if len(m.directories)+len(m.queue) >= 2048 {
@@ -510,6 +535,27 @@ func (m *metadataInventory) step(ctx context.Context) error {
 	}
 	return nil
 }
+
+// accountEntry keeps physical acquisition distinct from bounded fingerprints.
+func (m *metadataInventory) accountEntry(entry SourceEntry) error {
+	m.counts.entries++
+	// Fingerprints include directories and unrelated entries; preserve a
+	// total traversal ceiling separately from physical candidate acquisition.
+	if m.counts.entries > 16384+2048 {
+		return metadataLimit()
+	}
+	if entry.Source.Locator != "" || entry.unknownMetadata {
+		if m.counts.physical >= 16384 {
+			return metadataLimit()
+		}
+		m.counts.physical++
+	}
+	if entry.unsafeMetadata || entry.unknownMetadata {
+		return metadataUnavailable()
+	}
+	return nil
+}
+
 func (m *metadataInventory) readHeaderByte(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -603,6 +649,7 @@ func (m *metadataInventory) finishHeader(ctx context.Context) error {
 	m.counts.joins++
 	return m.closeCursor()
 }
+
 func (m *metadataInventory) ensure(ctx context.Context) error {
 	if m.failure != nil {
 		return m.failure
@@ -619,6 +666,7 @@ func (m *metadataInventory) ensure(ctx context.Context) error {
 	}
 	return nil
 }
+
 func (m *metadataInventory) validate(ctx context.Context) error {
 	m.counts.sweeps++
 	if err := m.rootsCurrent(ctx); err != nil {
@@ -649,6 +697,7 @@ func (m *metadataInventory) validate(ctx context.Context) error {
 	}
 	return m.rootsCurrent(ctx)
 }
+
 func (m *metadataInventory) BeginValidationSlice(ctx context.Context, limits agentapi.CodexValidationLimits) (agentapi.CodexRolloutSlice, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -680,7 +729,9 @@ func (m *metadataInventory) BeginValidationSlice(ctx context.Context, limits age
 	}
 	return &metadataSlice{inventory: m, remaining: limits.Steps, expires: time.Now().Add(limits.Duration), failure: err}, nil
 }
+
 func (m *metadataInventory) NativeReadBudget() *agentapi.NativeReadBudget { return m.owner.readBudget }
+
 func (m *metadataInventory) Thread(ctx context.Context, id string) (agentapi.CodexRolloutSet, error) {
 	s, e := m.BeginValidationSlice(ctx, agentapi.CodexValidationLimits{})
 	if e != nil {
@@ -689,6 +740,7 @@ func (m *metadataInventory) Thread(ctx context.Context, id string) (agentapi.Cod
 	defer func() { _ = s.Close() }()
 	return s.Thread(ctx, id)
 }
+
 func (m *metadataInventory) Rollout(ctx context.Context, id string) ([]agentapi.SourceRef, error) {
 	s, e := m.BeginValidationSlice(ctx, agentapi.CodexValidationLimits{})
 	if e != nil {
@@ -697,6 +749,7 @@ func (m *metadataInventory) Rollout(ctx context.Context, id string) ([]agentapi.
 	defer func() { _ = s.Close() }()
 	return s.Rollout(ctx, id)
 }
+
 func (m *metadataInventory) Check(ctx context.Context, id, revision string) error {
 	s, e := m.BeginValidationSlice(ctx, agentapi.CodexValidationLimits{})
 	if e != nil {
@@ -705,6 +758,7 @@ func (m *metadataInventory) Check(ctx context.Context, id, revision string) erro
 	defer func() { _ = s.Close() }()
 	return s.Check(ctx, id, revision)
 }
+
 func (m *metadataInventory) current(ctx context.Context, id string) (*agentapi.SourceRef, error) {
 	var current *agentapi.SourceRef
 	for _, root := range m.owner.roots {
@@ -740,6 +794,7 @@ func (m *metadataInventory) current(ctx context.Context, id string) (*agentapi.S
 	}
 	return current, nil
 }
+
 func (m *metadataInventory) refs(indices []int) []agentapi.SourceRef {
 	refs := make([]agentapi.SourceRef, 0, len(indices))
 	for _, i := range indices {
@@ -749,6 +804,7 @@ func (m *metadataInventory) refs(indices []int) []agentapi.SourceRef {
 	slices.SortFunc(refs, func(a, b agentapi.SourceRef) int { return strings.Compare(a.Path, b.Path) })
 	return refs
 }
+
 func (m *metadataInventory) thread(ctx context.Context, id string) (agentapi.CodexRolloutSet, error) {
 	current, err := m.current(ctx, id)
 	if err != nil {
@@ -792,6 +848,7 @@ func (s *metadataSlice) Valid(ctx context.Context) error {
 	}
 	return s.failure
 }
+
 func (s *metadataSlice) step(ctx context.Context) error {
 	if err := s.Valid(ctx); err != nil {
 		return err
@@ -799,6 +856,7 @@ func (s *metadataSlice) step(ctx context.Context) error {
 	s.remaining--
 	return nil
 }
+
 func (s *metadataSlice) Thread(ctx context.Context, id string) (agentapi.CodexRolloutSet, error) {
 	if err := s.step(ctx); err != nil {
 		return agentapi.CodexRolloutSet{}, err
@@ -817,12 +875,14 @@ func (s *metadataSlice) Thread(ctx context.Context, id string) (agentapi.CodexRo
 	set.Candidates = refs
 	return set, err
 }
+
 func (s *metadataSlice) Rollout(ctx context.Context, id string) ([]agentapi.SourceRef, error) {
 	if err := s.step(ctx); err != nil {
 		return nil, err
 	}
 	return s.refs(s.inventory.rollouts[id])
 }
+
 func (s *metadataSlice) Check(ctx context.Context, id, revision string) error {
 	if err := s.step(ctx); err != nil {
 		return err
@@ -842,6 +902,7 @@ func (s *metadataSlice) Check(ctx context.Context, id, revision string) error {
 	}
 	return nil
 }
+
 func (s *metadataSlice) Close() error {
 	if s.closed {
 		return nil
@@ -854,6 +915,7 @@ func (s *metadataSlice) Close() error {
 	s.charge = 0
 	return nil
 }
+
 func (s *metadataSlice) refs(indices []int) ([]agentapi.SourceRef, error) {
 	charge := int64(len(indices)) * metadataTypeSize[agentapi.SourceRef]()
 	if !s.inventory.reserve(charge) {
@@ -862,6 +924,7 @@ func (s *metadataSlice) refs(indices []int) ([]agentapi.SourceRef, error) {
 	s.charge += charge
 	return s.inventory.refs(indices), nil
 }
+
 func (s *metadataSlice) NativeReadBudget() *agentapi.NativeReadBudget {
 	return s.inventory.owner.readBudget
 }

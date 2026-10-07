@@ -260,6 +260,7 @@ func newCollectorCatalog(t *testing.T, homes []string) *collectorCatalog {
 	})
 	return &collectorCatalog{CodexRolloutLookup: owner.MetadataInventory(), owner: owner}
 }
+
 func (c *collectorCatalog) NativeReadBudget() *agentapi.NativeReadBudget {
 	if owner, ok := c.CodexRolloutLookup.(interface {
 		NativeReadBudget() *agentapi.NativeReadBudget
@@ -268,6 +269,7 @@ func (c *collectorCatalog) NativeReadBudget() *agentapi.NativeReadBudget {
 	}
 	return nil
 }
+
 func (c *collectorCatalog) BeginValidationSlice(ctx context.Context, limits agentapi.CodexValidationLimits) (agentapi.CodexRolloutSlice, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -297,14 +299,18 @@ func (s *collectorScriptSlice) Valid(ctx context.Context) error {
 	}
 	return s.failure
 }
+
 func (s *collectorScriptSlice) Thread(ctx context.Context, _ string) (agentapi.CodexRolloutSet, error) {
 	return agentapi.CodexRolloutSet{}, s.Valid(ctx)
 }
+
 func (s *collectorScriptSlice) Rollout(ctx context.Context, _ string) ([]agentapi.SourceRef, error) {
 	return nil, s.Valid(ctx)
 }
+
 func (s *collectorScriptSlice) Check(ctx context.Context, _, _ string) error { return s.Valid(ctx) }
-func (s *collectorScriptSlice) Close() error                                 { s.closed = true; return nil }
+
+func (s *collectorScriptSlice) Close() error { s.closed = true; return nil }
 
 func TestCollectorActualInventoryLimitCachesFailureAndCloses(t *testing.T) {
 	home := t.TempDir()

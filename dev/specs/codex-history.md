@@ -39,6 +39,10 @@ lazy view with separate bounds: 16 homes, 16384 physical entries, 2048 directori
 and 16MiB aggregate metadata facts/header work, charged to the shared native read
 budget. A late request starts a complete following round; neither observation
 cache membership nor requested coverage proves complete inventory.
+Physical candidates count before header validity; filesystem fingerprints include
+subdirectories and unrelated entries and retain a separate18432-entry traversal
+ceiling. Aliases of one canonical home share acquisition while every approved
+home spelling remains fenced.
 
 The full view enumerates approved active and archived stores with the same
 bounded directory adapter. Each header is acquired on one confined descriptor
