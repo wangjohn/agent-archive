@@ -55,19 +55,20 @@ var admissionVFSState = struct {
 	vfs   map[uintptr]*admissionVFS
 	files map[uintptr]*admissionFile
 }{vfs: map[uintptr]*admissionVFS{}, files: map[uintptr]*admissionFile{}}
+
 var admissionVFSSequence atomic.Uint64
 
 func callbackPointer[T any](fn T) uintptr { return *(*uintptr)(unsafe.Pointer(&struct{ f T }{fn})) }
 
-func loadAdmissionC[T any](tls *libc.TLS, ptr uintptr) T {
+func loadAdmissionC[T any](ptr uintptr) T {
 	var value T
 	target := unsafe.Slice((*byte)(unsafe.Pointer(&value)), int(unsafe.Sizeof(value)))
 	copy(target, libc.GoBytes(ptr, len(target)))
 	return value
 }
 
-func setAdmissionMethods(tls *libc.TLS, file, methods uintptr) {
-	writeAdmissionC(tls, file, sqlite3.Tsqlite3_file{FpMethods: methods})
+func setAdmissionMethods(file, methods uintptr) {
+	writeAdmissionC(file, sqlite3.Tsqlite3_file{FpMethods: methods})
 }
 
 func newAdmissionVFS(allowed map[string]os.FileInfo, writable bool, limit int64) (*admissionVFS, error) {
@@ -80,7 +81,7 @@ func newAdmissionVFS(allowed map[string]os.FileInfo, writable bool, limit int64)
 	if base == 0 {
 		return nil, errors.New("bounded admission VFS unavailable")
 	}
-	native := loadAdmissionC[sqlite3.Tsqlite3_vfs](tls, base)
+	native := loadAdmissionC[sqlite3.Tsqlite3_vfs](base)
 	if libc.GoString(native.FzName) != "unix" || native.FszOsFile != int32(unsafe.Sizeof(sqlite3.TunixFile{})) || native.FxOpen == 0 {
 		return nil, errors.New("bounded admission requires the known Unix VFS ABI")
 	}
@@ -89,11 +90,12 @@ func newAdmissionVFS(allowed map[string]os.FileInfo, writable bool, limit int64)
 	if err != nil {
 		return nil, err
 	}
-	v := &admissionVFS{name: name, namePtr: namePtr, base: base, allowed: allowed, writable: writable, limit: limit, native: native, clone: native}
-	v.clone.FzName = namePtr
-	v.clone.FpNext = 0
-	v.clone.FxOpen = callbackPointer(admissionOpen)
-	v.clone.FxDelete = callbackPointer(admissionDelete)
+	clone := native
+	clone.FzName = namePtr
+	clone.FpNext = 0
+	clone.FxOpen = callbackPointer(admissionOpen)
+	clone.FxDelete = callbackPointer(admissionDelete)
+	v := &admissionVFS{name: name, namePtr: namePtr, base: base, allowed: allowed, writable: writable, limit: limit, native: native, clone: clone}
 	v.pin.Pin(&v.clone)
 	v.ptr = libc.Xmalloc(tls, libc.Tsize_t(unsafe.Sizeof(v.clone)))
 	if v.ptr == 0 {
@@ -101,13 +103,12 @@ func newAdmissionVFS(allowed map[string]os.FileInfo, writable bool, limit int64)
 		libc.Xfree(tls, namePtr)
 		return nil, errors.New("bounded admission VFS allocation failed")
 	}
-	writeAdmissionC(tls, v.ptr, v.clone)
+	writeAdmissionC(v.ptr, v.clone)
 	admissionVFSState.Lock()
 	admissionVFSState.vfs[v.ptr] = v
 	admissionVFSState.Unlock()
 	if sqlite3.Xsqlite3_vfs_register(tls, v.ptr, 0) != sqlite3.SQLITE_OK {
-		v.Close()
-		return nil, errors.New("bounded admission VFS registration failed")
+		return nil, errors.Join(errors.New("bounded admission VFS registration failed"), v.Close())
 	}
 	return v, nil
 }
@@ -125,7 +126,7 @@ func newAdmissionDestinationVFS(ctx context.Context, path string, held *os.File,
 	v.context = ctx
 	v.clone.FxFullPathname = callbackPointer(admissionFullPathname)
 	tls := libc.NewTLS()
-	writeAdmissionC(tls, v.ptr, v.clone)
+	writeAdmissionC(v.ptr, v.clone)
 	tls.Close()
 	return v, nil
 }
@@ -206,10 +207,10 @@ func admissionOpen(tls *libc.TLS, pVFS, zName, pFile uintptr, flags int32, out u
 	if rc != sqlite3.SQLITE_OK {
 		return rc
 	}
-	original := loadAdmissionC[sqlite3.Tsqlite3_file](tls, pFile).FpMethods
-	native := loadAdmissionC[sqlite3.Tsqlite3_io_methods](tls, original)
+	original := loadAdmissionC[sqlite3.Tsqlite3_file](pFile).FpMethods
+	native := loadAdmissionC[sqlite3.Tsqlite3_io_methods](original)
 	closeFile := *(*func(*libc.TLS, uintptr) int32)(unsafe.Pointer(&native.FxClose))
-	if !admissionDescriptorMatches(loadAdmissionC[sqlite3.TunixFile](tls, pFile).Fh, approved) {
+	if !admissionDescriptorMatches(loadAdmissionC[sqlite3.TunixFile](pFile).Fh, approved) {
 		closeFile(tls, pFile)
 		return sqlite3.SQLITE_CANTOPEN
 	}
@@ -231,12 +232,12 @@ func admissionOpen(tls *libc.TLS, pVFS, zName, pFile uintptr, flags int32, out u
 		closeFile(tls, pFile)
 		return sqlite3.SQLITE_NOMEM
 	}
-	writeAdmissionC(tls, f.methods, f.table)
+	writeAdmissionC(f.methods, f.table)
 	admissionVFSState.Lock()
 	v.activeDescriptors.Add(1)
 	admissionVFSState.files[pFile] = f
 	admissionVFSState.Unlock()
-	setAdmissionMethods(tls, pFile, f.methods)
+	setAdmissionMethods(pFile, f.methods)
 	return rc
 }
 
@@ -263,10 +264,10 @@ func admissionClose(tls *libc.TLS, p uintptr) int32 {
 	rc := int32(sqlite3.SQLITE_OK)
 	if f.vfs.heldFile == nil {
 		closeFile := *(*func(*libc.TLS, uintptr) int32)(unsafe.Pointer(&m.FxClose))
-		setAdmissionMethods(tls, p, f.original)
+		setAdmissionMethods(p, f.original)
 		rc = closeFile(tls, p)
 	} else {
-		setAdmissionMethods(tls, p, 0)
+		setAdmissionMethods(p, 0)
 	}
 	admissionVFSState.Lock()
 	delete(admissionVFSState.files, p)
@@ -281,11 +282,12 @@ func admissionRead(tls *libc.TLS, p, b uintptr, n int32, offset int64) int32 {
 	_, m := admissionLookup(p)
 	f, _ := admissionLookup(p)
 	if f.vfs.heldFile != nil {
-		return admissionReadDestination(tls, f.vfs, b, n, offset)
+		return admissionReadDestination(f.vfs, b, n, offset)
 	}
 	read := *(*func(*libc.TLS, uintptr, uintptr, int32, int64) int32)(unsafe.Pointer(&m.FxRead))
 	return read(tls, p, b, n, offset)
 }
+
 func admissionWrite(tls *libc.TLS, p, b uintptr, n int32, offset int64) int32 {
 	f, m := admissionLookup(p)
 	if !f.vfs.writable {
@@ -307,11 +309,12 @@ func admissionWrite(tls *libc.TLS, p, b uintptr, n int32, offset int64) int32 {
 		}
 	}
 	if f.vfs.heldFile != nil {
-		return admissionWriteDestination(tls, f.vfs, b, n, offset)
+		return admissionWriteDestination(f.vfs, b, n, offset)
 	}
 	write := *(*func(*libc.TLS, uintptr, uintptr, int32, int64) int32)(unsafe.Pointer(&m.FxWrite))
 	return write(tls, p, b, n, offset)
 }
+
 func admissionTruncate(tls *libc.TLS, p uintptr, n int64) int32 {
 	f, m := admissionLookup(p)
 	if !f.vfs.writable {
@@ -332,17 +335,19 @@ func admissionTruncate(tls *libc.TLS, p uintptr, n int64) int32 {
 	truncate := *(*func(*libc.TLS, uintptr, int64) int32)(unsafe.Pointer(&m.FxTruncate))
 	return truncate(tls, p, n)
 }
+
 func admissionFileControl(tls *libc.TLS, p uintptr, op int32, arg uintptr) int32 {
 	// Allocation hints and unknown controls never reach the filesystem. Query
 	// controls not implemented here retain SQLite's documented NOTFOUND fallback.
 	return sqlite3.SQLITE_NOTFOUND
 }
+
 func admissionShmMap(tls *libc.TLS, p uintptr, region, size, extend int32, out uintptr) int32 {
 	f, m := admissionLookup(p)
 	if f.vfs.writable || m.FxShmMap == 0 {
 		return sqlite3.SQLITE_READONLY
 	}
-	native := loadAdmissionC[sqlite3.TunixFile](tls, p)
+	native := loadAdmissionC[sqlite3.TunixFile](p)
 	path := libc.GoString(native.FzPath) + "-shm"
 	expected, ok := f.vfs.allowed[path]
 	if !ok {
@@ -357,17 +362,18 @@ func admissionShmMap(tls *libc.TLS, p uintptr, region, size, extend int32, out u
 	if rc != sqlite3.SQLITE_OK && rc != sqlite3.SQLITE_READONLY {
 		return rc
 	}
-	native = loadAdmissionC[sqlite3.TunixFile](tls, p)
+	native = loadAdmissionC[sqlite3.TunixFile](p)
 	if native.FpShm == 0 {
 		return sqlite3.SQLITE_READONLY
 	}
-	shm := loadAdmissionC[sqlite3.TunixShm](tls, native.FpShm)
-	node := loadAdmissionC[sqlite3.TunixShmNode](tls, shm.FpShmNode)
+	shm := loadAdmissionC[sqlite3.TunixShm](native.FpShm)
+	node := loadAdmissionC[sqlite3.TunixShmNode](shm.FpShmNode)
 	if node.FisReadonly == 0 || !admissionDescriptorMatches(node.FhShm, expected) {
 		return sqlite3.SQLITE_READONLY
 	}
 	return rc
 }
+
 func admissionShmUnmap(tls *libc.TLS, p uintptr, deleteFlag int32) int32 {
 	_, m := admissionLookup(p)
 	unmap := *(*func(*libc.TLS, uintptr, int32) int32)(unsafe.Pointer(&m.FxShmUnmap))

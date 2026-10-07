@@ -35,7 +35,7 @@ func TestTemporaryReservationPersistsAndCleansOwnedScratch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer duplicate.Close()
+	defer func() { _ = duplicate.Close() }()
 	if err = duplicate.Reserve(1); !errors.Is(err, ErrAdmissionStageRecovery) {
 		t.Fatal("duplicate owner", err)
 	}
@@ -65,7 +65,7 @@ func TestTemporaryReservationQuotaBeforeAllocationAndOrphans(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 	if err = r.Reserve(AdmissionStageQuota - temporaryControlBytes); err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +85,7 @@ func TestTemporaryReservationQuotaBeforeAllocationAndOrphans(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer next.Close()
+	defer func() { _ = next.Close() }()
 	if err = next.Reserve(1); !errors.Is(err, ErrAdmissionStageRecovery) {
 		t.Fatal("unreserved orphan ignored", err)
 	}
@@ -127,9 +127,9 @@ func TestTemporaryWorkspaceRequiresDurableReservationAndRootConfinement(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 	if root, e := r.OpenWorkspace(); e == nil {
-		root.Close()
+		_ = root.Close()
 		t.Fatal("workspace allocated without reservation")
 	}
 	if err = r.Reserve(4096); err != nil {
@@ -141,7 +141,7 @@ func TestTemporaryWorkspaceRequiresDurableReservationAndRootConfinement(t *testi
 		t.Fatal(err)
 	}
 	if root, e := r.OpenWorkspace(); e == nil {
-		root.Close()
+		_ = root.Close()
 		t.Fatal("workspace escaped held home")
 	}
 	entries, err := os.ReadDir(outside)

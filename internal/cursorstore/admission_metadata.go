@@ -105,27 +105,7 @@ func (h admissionMetadataHost) Query(ctx context.Context, query string, visit fu
 	if remaining <= 0 {
 		return agentapi.Wrap(agentapi.Limit, agentapi.ErrRawLimit)
 	}
-	lengths, err := h.tx.QueryContext(ctx, `SELECT length(CAST(key AS BLOB)),length(CAST(value AS BLOB)) FROM cursorDiskKV WHERE key >= 'composerData:' AND key < 'composerData;' LIMIT ?`, remaining+1)
-	if err != nil {
-		return err
-	}
-	n := 0
-	for lengths.Next() {
-		var keyBytes int64
-		var valueBytes sql.NullInt64
-		if err = lengths.Scan(&keyBytes, &valueBytes); err != nil {
-			break
-		}
-		if keyBytes < 0 || valueBytes.Int64 < 0 || keyBytes > h.budget.RemainingBytes()-valueBytes.Int64 {
-			err = agentapi.Wrap(agentapi.Limit, agentapi.ErrRawLimit)
-			break
-		}
-		if err = h.budget.Charge(2, keyBytes+valueBytes.Int64+16); err != nil {
-			break
-		}
-		n++
-	}
-	err = errors.Join(err, lengths.Err(), lengths.Close())
+	n, err := h.metadataLengthCount(ctx, remaining)
 	if err != nil {
 		return err
 	}
@@ -152,4 +132,30 @@ func (h admissionMetadataHost) Query(ctx context.Context, query string, visit fu
 		return NotChecked(ChangedDuringRead)
 	}
 	return rows.Err()
+}
+
+func (h admissionMetadataHost) metadataLengthCount(ctx context.Context, remaining int) (n int, err error) {
+	lengths, err := h.tx.QueryContext(ctx, `SELECT length(CAST(key AS BLOB)),length(CAST(value AS BLOB)) FROM cursorDiskKV WHERE key >= 'composerData:' AND key < 'composerData;' LIMIT ?`, remaining+1)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { err = errors.Join(err, lengths.Close()) }()
+	n = 0
+	for lengths.Next() {
+		var keyBytes int64
+		var valueBytes sql.NullInt64
+		if err = lengths.Scan(&keyBytes, &valueBytes); err != nil {
+			break
+		}
+		if keyBytes < 0 || valueBytes.Int64 < 0 || keyBytes > h.budget.RemainingBytes()-valueBytes.Int64 {
+			err = agentapi.Wrap(agentapi.Limit, agentapi.ErrRawLimit)
+			break
+		}
+		if err = h.budget.Charge(2, keyBytes+valueBytes.Int64+16); err != nil {
+			break
+		}
+		n++
+	}
+	return n, errors.Join(err, lengths.Err())
+
 }

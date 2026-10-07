@@ -7,6 +7,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/cursorstore"
 	"github.com/wangjohn/agent-archive/internal/sourceio"
+	"slices"
 )
 
 // OpenAdmissionPass permits verified files and bounded immutable SQLite input.
@@ -75,10 +76,8 @@ func (p *admissionPass) Read(ctx context.Context, ref agentapi.SourceRef, l agen
 			if !ok || d.newer || d.chat.CursorFacts.Relationships == agentapi.CursorRelationshipsMalformed {
 				return errors.New("cursor admission native routing is unverified")
 			}
-			for _, child := range d.subagents {
-				if child == ref.Key {
-					return errors.New("cursor admission selected composer is now a native child; review again")
-				}
+			if slices.Contains(d.subagents, ref.Key) {
+				return errors.New("cursor admission selected composer is now a native child; review again")
 			}
 			return nil
 		})

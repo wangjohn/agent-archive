@@ -254,11 +254,13 @@ func composerWorkspaceFolder(raw json.RawMessage) string {
 }
 
 func composerFacts(fields map[string]json.RawMessage) agentapi.CursorComposerFacts {
-	facts := agentapi.CursorComposerFacts{Relationships: agentapi.CursorRelationshipsAbsent}
-	if raw, ok := fields["_v"]; ok && string(raw) != "null" {
-		facts.VersionPresent = true
-		_ = json.Unmarshal(raw, &facts.Version)
+	rawVersion, present := fields["_v"]
+	var version int
+	present = present && string(rawVersion) != "null"
+	if present {
+		_ = json.Unmarshal(rawVersion, &version)
 	}
+	facts := agentapi.CursorComposerFacts{Relationships: agentapi.CursorRelationshipsAbsent, VersionPresent: present, Version: version}
 	raw, ok := fields["subagentComposerIds"]
 	if !ok {
 		return facts

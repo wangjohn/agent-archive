@@ -60,7 +60,7 @@ func TestAdmissionSameSnapshotParentRoutingRefusesFormerTopLevel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer pass.Close()
+	defer func() { _ = pass.Close() }()
 	if snapshot, err := pass.Read(t.Context(), ref, agentapi.ReadLimits{}); snapshot != nil || err == nil {
 		t.Fatal("admitted newly routed child", snapshot, err)
 	}

@@ -72,7 +72,7 @@ func TestAdmissionPinnedLiveCopyCoherentAcrossExternalGrowth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	var got string
 	if err = db.QueryRowContext(t.Context(), "SELECT value FROM cursorDiskKV WHERE key='composerData:c'").Scan(&got); err != nil || got != before {
 		t.Fatal("unpinned snapshot", got, err)
@@ -148,7 +148,7 @@ func TestAdmissionDestinationRejectsWritesBeforeAllocation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	path, err = filepath.EvalSymlinks(path)
 	if err != nil {
 		t.Fatal(err)
@@ -157,12 +157,12 @@ func TestAdmissionDestinationRejectsWritesBeforeAllocation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer vfs.Close()
+	defer func() { _ = vfs.Close() }()
 	db, err := sql.Open("sqlite", admissionDestinationDSN(path, vfs.name, 512, 1000))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	if _, err = db.ExecContext(t.Context(), "CREATE TABLE t(v BLOB); INSERT INTO t VALUES (zeroblob(65536))"); err == nil {
 		t.Fatal("uncapped driver allocation succeeded")
 	} else {
@@ -269,7 +269,7 @@ func TestAdmissionDestinationGeometryCapabilityActualDriver(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer f.Close()
+			defer func() { _ = f.Close() }()
 			path, err = filepath.EvalSymlinks(path)
 			if err != nil {
 				t.Fatal(err)
@@ -278,7 +278,7 @@ func TestAdmissionDestinationGeometryCapabilityActualDriver(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer vfs.Close()
+			defer func() { _ = vfs.Close() }()
 			if err = verifyAdmissionDestination(t.Context(), admissionDestinationDSN(path, vfs.name, size, 100), size, 100); err != nil {
 				t.Fatal(err)
 			}
@@ -348,7 +348,7 @@ func TestAdmissionDestinationAncestorSwapCannotWriteOutside(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 	if err = verifyAdmissionImage(root, stats.Pages*stats.PageBytes); err != nil {
 		t.Fatal(err)
 	}
@@ -364,7 +364,7 @@ func TestAdmissionPrivateDestinationRetainsNativeTablesUntilReaderClose(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer held.Close()
+	defer func() { _ = held.Close() }()
 	path, err = filepath.EvalSymlinks(path)
 	if err != nil {
 		t.Fatal(err)
@@ -373,12 +373,12 @@ func TestAdmissionPrivateDestinationRetainsNativeTablesUntilReaderClose(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer vfs.Close()
+	defer func() { _ = vfs.Close() }()
 	db, err := sql.Open("sqlite", admissionDestinationDSN(path, vfs.name, 512, 8))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	db.SetMaxOpenConns(1)
 	if _, err = db.ExecContext(t.Context(), "CREATE TABLE t(v TEXT)"); err != nil {
 		t.Fatal(err)
@@ -410,7 +410,7 @@ func TestAdmissionDestinationShortReadZeroFillsNativeBuffer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer held.Close()
+	defer func() { _ = held.Close() }()
 	tls := libc.NewTLS()
 	defer tls.Close()
 	buffer := libc.Xmalloc(tls, 8)
@@ -420,7 +420,7 @@ func TestAdmissionDestinationShortReadZeroFillsNativeBuffer(t *testing.T) {
 	defer libc.Xfree(tls, buffer)
 	copy(libc.GoBytes(buffer, 8), []byte("xxxxxxxx"))
 	vfs := &admissionVFS{context: t.Context(), heldFile: held}
-	if rc := admissionReadDestination(tls, vfs, buffer, 8, 0); rc != sqlite3.SQLITE_IOERR_SHORT_READ {
+	if rc := admissionReadDestination(vfs, buffer, 8, 0); rc != sqlite3.SQLITE_IOERR_SHORT_READ {
 		t.Fatal(rc)
 	}
 	if got := string(libc.GoBytes(buffer, 8)); got != "abc\x00\x00\x00\x00\x00" {
@@ -429,7 +429,7 @@ func TestAdmissionDestinationShortReadZeroFillsNativeBuffer(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	vfs.context = ctx
-	if rc := admissionReadDestination(tls, vfs, buffer, 8, 0); rc != sqlite3.SQLITE_INTERRUPT {
+	if rc := admissionReadDestination(vfs, buffer, 8, 0); rc != sqlite3.SQLITE_INTERRUPT {
 		t.Fatal("cancelled native read", rc)
 	}
 }

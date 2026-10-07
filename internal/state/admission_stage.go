@@ -342,8 +342,7 @@ func (s *Store) pendingQuotaUsage() (int64, error) {
 			return 0, ErrAdmissionStageCapacity
 		}
 		charge := 2 * info.Size()
-		if strings.HasSuffix(e.Name(), ".json") {
-			id := strings.TrimSuffix(e.Name(), ".json")
+		if id, ok := strings.CutSuffix(e.Name(), ".json"); ok {
 			receiptBytes, credit := s.existingPendingQuotaCredit(id, info)
 			charge += receiptBytes
 			charge -= credit

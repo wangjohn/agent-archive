@@ -23,7 +23,9 @@ const (
 )
 
 const temporaryReservationDir = "temporary-reservations"
+
 const temporaryScratchDir = "temporary-scratch"
+
 const temporaryControlBytes int64 = 64 << 10
 
 type temporaryManifest struct {

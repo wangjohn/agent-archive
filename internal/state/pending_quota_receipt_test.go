@@ -56,7 +56,7 @@ func TestPendingQuotaReceiptCrashReconcilesOnlyTarget(t *testing.T) {
 func TestPendingQuotaUnrelatedWritesNeverReadRetainedBodies(t *testing.T) {
 	t.Parallel()
 	s, reg, bundle := stageFixture(t)
-	for i := 0; i < 40; i++ {
+	for i := range 40 {
 		r := reg
 		r.ArchiveSessionID = fmt.Sprintf("synthetic-%d", i)
 		r.NativeSessionID = fmt.Sprintf("native-%d", i)
@@ -78,7 +78,7 @@ func TestPendingQuotaUnrelatedWritesNeverReadRetainedBodies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer workspace.Close()
+	defer func() { _ = workspace.Close() }()
 	for range 4 {
 		if err = workspace.Reserve(1024); err != nil {
 			t.Fatal(err)

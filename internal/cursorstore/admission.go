@@ -16,7 +16,9 @@ import (
 )
 
 const admissionImageLimit int64 = 128 << 20
+
 const admissionStepPages int32 = 16
+
 const admissionBusyRetries = 64
 
 // AdmissionCopyStats reports bounded copy work and external WAL observations.
@@ -283,6 +285,7 @@ func admissionDSN(dsn, name string) string {
 	u.RawQuery = q.Encode()
 	return u.String()
 }
+
 func admissionDestinationDSN(path, name string, pageSize, pages int64) string {
 	q := url.Values{"mode": {"rw"}, "vfs": {name}}
 	for _, pragma := range []string{"journal_mode(MEMORY)", "temp_store(MEMORY)", "mmap_size(0)", "page_size(" + strconv.FormatInt(pageSize, 10) + ")", "max_page_count(" + strconv.FormatInt(pages, 10) + ")"} {
@@ -290,6 +293,7 @@ func admissionDestinationDSN(path, name string, pageSize, pages int64) string {
 	}
 	return (&url.URL{Scheme: "file", Path: path, RawQuery: q.Encode()}).String()
 }
+
 func verifyAdmissionDestination(ctx context.Context, dsn string, pageSize, pages int64) (err error) {
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {

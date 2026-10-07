@@ -43,24 +43,24 @@ func admissionOpenDestination(tls *libc.TLS, v *admissionVFS, pFile uintptr, fla
 		v.activeDescriptors.Add(-1)
 		return sqlite3.SQLITE_NOMEM
 	}
-	writeAdmissionC(tls, f.methods, f.table)
+	writeAdmissionC(f.methods, f.table)
 	admissionVFSState.Lock()
 	admissionVFSState.files[pFile] = f
 	admissionVFSState.Unlock()
 	v.opens.Add(1)
-	setAdmissionMethods(tls, pFile, f.methods)
+	setAdmissionMethods(pFile, f.methods)
 	if out != 0 {
-		writeAdmissionC(tls, out, flags)
+		writeAdmissionC(out, flags)
 	}
 	return sqlite3.SQLITE_OK
 }
 
-func writeAdmissionC[T any](tls *libc.TLS, ptr uintptr, value T) {
+func writeAdmissionC[T any](ptr uintptr, value T) {
 	source := unsafe.Slice((*byte)(unsafe.Pointer(&value)), int(unsafe.Sizeof(value)))
 	copy(libc.GoBytes(ptr, len(source)), source)
 }
 
-func admissionReadDestination(tls *libc.TLS, v *admissionVFS, b uintptr, n int32, offset int64) int32 {
+func admissionReadDestination(v *admissionVFS, b uintptr, n int32, offset int64) int32 {
 	if v.context.Err() != nil {
 		return sqlite3.SQLITE_INTERRUPT
 	}
@@ -79,7 +79,7 @@ func admissionReadDestination(tls *libc.TLS, v *admissionVFS, b uintptr, n int32
 	return sqlite3.SQLITE_OK
 }
 
-func admissionWriteDestination(tls *libc.TLS, v *admissionVFS, b uintptr, n int32, offset int64) int32 {
+func admissionWriteDestination(v *admissionVFS, b uintptr, n int32, offset int64) int32 {
 	// The caller already checked context and the reserved end offset before
 	// this bounded allocation and before the actual filesystem write.
 	if n < 0 || int64(n) > admissionImageLimit {
@@ -107,6 +107,7 @@ func admissionSyncDestination(tls *libc.TLS, p uintptr, flags int32) int32 {
 	}
 	return sqlite3.SQLITE_OK
 }
+
 func admissionSizeDestination(tls *libc.TLS, p, out uintptr) int32 {
 	f, _ := admissionLookup(p)
 	if f.vfs.context.Err() != nil {
@@ -116,13 +117,17 @@ func admissionSizeDestination(tls *libc.TLS, p, out uintptr) int32 {
 	if err != nil {
 		return sqlite3.SQLITE_IOERR_FSTAT
 	}
-	writeAdmissionC(tls, out, info.Size())
+	writeAdmissionC(out, info.Size())
 	return sqlite3.SQLITE_OK
 }
+
 func admissionPrivateLock(*libc.TLS, uintptr, int32) int32 { return sqlite3.SQLITE_OK }
+
 func admissionPrivateReserved(tls *libc.TLS, p, out uintptr) int32 {
-	writeAdmissionC(tls, out, int32(0))
+	writeAdmissionC(out, int32(0))
 	return sqlite3.SQLITE_OK
 }
-func admissionSectorSize(*libc.TLS, uintptr) int32            { return 4096 }
+
+func admissionSectorSize(*libc.TLS, uintptr) int32 { return 4096 }
+
 func admissionDeviceCharacteristics(*libc.TLS, uintptr) int32 { return 0 }

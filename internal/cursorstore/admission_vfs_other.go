@@ -13,6 +13,7 @@ type admissionVFS struct{ name string }
 func newAdmissionVFS(map[string]os.FileInfo, bool, int64) (*admissionVFS, error) {
 	return nil, errors.New("bounded live admission VFS unavailable on this platform")
 }
+
 func (*admissionVFS) Close() error { return nil }
 
 func (*admissionVFS) copyStats(*AdmissionCopyStats) {}
