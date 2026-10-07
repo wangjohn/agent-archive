@@ -20,8 +20,19 @@ func (s *Store) SavePendingWithTemporaryReservation(r *TemporaryReservation, id 
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	canonical, err := filepath.EvalSymlinks(s.home)
-	if err != nil || canonical != r.store.home || r.closed || r.err != nil || r.bytes <= 0 || r.manifest.Owner != PublicationPrivacy || r.manifest.Key != id {
+	if err != nil || canonical != r.store.home || r.closed || r.err != nil || r.manifest.Owner != PublicationPrivacy || r.manifest.Key != id {
 		return ErrAdmissionStageRecovery
+	}
+	if r.bytes == 0 {
+		if r.manifest.Charged != 0 {
+			return ErrAdmissionStageRecovery
+		}
+		if _, e := r.root.Lstat(r.manifest.Root); !errors.Is(e, os.ErrNotExist) {
+			return ErrAdmissionStageRecovery
+		}
+		if _, e := r.root.Lstat(filepath.Join(temporaryReservationDir, r.manifest.Token+".json")); !errors.Is(e, os.ErrNotExist) {
+			return ErrAdmissionStageRecovery
+		}
 	}
 	// Keep SavePending's structural validation without accidentally taking the
 	// quota lock twice: the force flag is local to this call, not stored policy.
