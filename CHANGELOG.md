@@ -29,6 +29,9 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Pairing accepts relative filenames beginning with `aa-pair`, including existing
+  files named `aa-pair1:backup.txt`, instead of mistaking them for pasted pairing text.
+
 - Machine pairing guides file or clipboard transfer, prints a receiver command
   using the transferred filename, and shows the code after transfer. Receivers
   accept file paths or pasted pairing text; spare preparation waits until delivery

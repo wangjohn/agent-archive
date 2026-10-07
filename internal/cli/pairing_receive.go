@@ -49,8 +49,11 @@ func readPairingBundle(p *prompter, opts setupOptions, stdin io.Reader, env Env)
 		if err != nil {
 			return "", err
 		}
-		if strings.HasPrefix(input, "aa-pair") {
-			return input, nil
+		if strings.HasPrefix(input, pairing.Prefix) {
+			// A regular file can share the wire prefix; prefer its contents.
+			if info, err := os.Stat(input); err != nil || !info.Mode().IsRegular() {
+				return input, nil
+			}
 		}
 		if input == "" || input == "-" {
 			return "", errors.New("enter a pairing file path or paste pairing text; use --pair-file - to read stdin")
