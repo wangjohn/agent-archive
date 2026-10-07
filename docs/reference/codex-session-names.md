@@ -27,6 +27,12 @@ available only with supported retained producer and exact projected SQLite
 column/value types. Unknown producer, schema or value shape preserves prior
 verified evidence.
 
+External naming requires acknowledged ordinary source-schema-2 and
+metadata-schema-1 authority. A history source set remains outside this lookup
+even when its active source is ordinary; cached name debt cannot replace its
+revision journal. A transition to supported history capture proceeds without
+attaching an ordinary external name observation.
+
 Unavailable observations preserve the last verified name. Confirmed absence
 clears it; an index-only miss cannot clear a previous canonical database name.
 Names whose normalized text cannot remain stable through privacy filtering
@@ -50,6 +56,8 @@ Lookup context is content-free and keyed to retained source checksum and codec
 contract. Migration reads at most 8 MiB per retained JSON publication and
 16 MiB per pass; subsequent unchanged lookup reads only a bounded leading
 checksum and stat. These limits defer work without delaying normal capture.
+Serialized and decoded context also share the pass's data budget; a borrowed
+publication remains charged until its pass scope ends.
 Aggregate exhaustion is deferred to another pass. A retained publication over
 the per-session 8 MiB ceiling remains unavailable for this rename-only path;
 cursor rotation cannot make it fit. Its prior name and pending transaction

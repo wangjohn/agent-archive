@@ -51,7 +51,7 @@ func (p *pass) skipUnchanged(reg archive.SessionRegistration, req state.Request)
 		}
 		// A warm context avoids conversation decoding until a changed label
 		// needs publication. Apply the same aggregate cap to that decode.
-		published, n, err := p.local.LoadLabelPublication(id, (16<<20)-p.labelBytes)
+		published, n, err := p.labelLocal.LoadLabelPublication(id, (16<<20)-p.labelBytes)
 		p.labelBytes += n
 		if err == nil {
 			p.labelStates[id] = published

@@ -85,8 +85,33 @@ func TestExternalRenamePublishesRetainedSourceWithoutReadingTranscript(t *testin
 			if err != nil || len(result.Errors) > 0 || len(result.Published) != 1 {
 				t.Fatalf("%+v %v", result, err)
 			}
+			if tc.upgrade {
+				// The stale-filter fixture intentionally disagrees with its
+				// acknowledged sidecar. Ordinary refiltering repairs that state
+				// before it may certify a native label lookup.
+				repaired := fetchMetadata(t, remote, "codex", reg.ArchiveSessionID)
+				if provider.calls != 0 || repaired.Name != before.Name || repaired.SourceBundle != before.SourceBundle || !repaired.CapturedAt.Equal(before.CapturedAt) {
+					t.Fatal("stale-filter state authorized a native label")
+				}
+				published, err := local.LoadPublishedState(reg.ArchiveSessionID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, found, err := published.LastPublishedMetadata(); err != nil || !found {
+					t.Fatal("ordinary refilter did not restore acknowledged authority", err)
+				}
+				now = now.Add(time.Hour)
+				result, err = Run(context.Background(), local, remote, opts)
+				if err != nil || len(result.Errors) > 0 || len(result.Published) != 1 {
+					t.Fatalf("rename after authority repair: %+v %v", result, err)
+				}
+			}
 			after := fetchMetadata(t, remote, "codex", reg.ArchiveSessionID)
 			afterBundle := fetchBundle(t, remote, after)
+			encoded, err := archive.BuildCompressedSource(afterBundle)
+			if err != nil || encoded.SHA256 != after.SourceBundle.SHA256 || len(encoded.Bytes) != after.SourceBundle.CompressedBytes || after.MachineID != opts.MachineID || after.NativeSessionID != reg.NativeSessionID || after.FilterVersion != archive.FilterVersion || after.SchemaVersion != archive.MetadataSchemaVersion || after.History != nil {
+				t.Fatal("rename did not preserve supported ordinary publication authority", err)
+			}
 			if !tc.upgrade && filter.calls != 0 {
 				t.Fatalf("name-only refresh filtered native input %d times", filter.calls)
 			}

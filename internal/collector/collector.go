@@ -253,6 +253,7 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 		result:           Result{Errors: subagents.errors, WaitingSubagents: subagents.waiting, RejectedSubagents: subagents.rejected},
 		expiredSubagents: subagents.expired,
 	}
+	defer p.releaseLabelResources()
 	if generationRecoveryErr != nil {
 		p.result.Errors["generation-recovery"] = generationRecoveryErr
 	}
@@ -300,13 +301,15 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 
 // pass is one Run: its inputs, what it has found so far, and its result.
 type pass struct {
-	labelStates map[string]*state.Published
-	labelBytes  int64
-	ctx         context.Context
-	local       *state.Store
-	remote      storage.ObjectStore
-	opts        Options
-	now         time.Time
+	labelLocal          *state.Store
+	closeLabelResources func()
+	labelStates         map[string]*state.Published
+	labelBytes          int64
+	ctx                 context.Context
+	local               *state.Store
+	remote              storage.ObjectStore
+	opts                Options
+	now                 time.Time
 
 	registrations []archive.SessionRegistration
 	requests      map[string]state.Request
@@ -427,6 +430,7 @@ func (p *pass) scan(reg archive.SessionRegistration) {
 	}
 	// The session's published state, read once for the whole scan.
 	published := p.labelStates[id]
+	delete(p.labelStates, id)
 	var err error
 	if published == nil {
 		published, err = p.local.LoadPublishedState(id)

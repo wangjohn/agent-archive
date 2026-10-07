@@ -70,3 +70,50 @@ func TestLabelTargetCursorRejectsRawGroupsAndUnboundedState(t *testing.T) {
 		t.Fatal("over-budget cursors persisted")
 	}
 }
+
+func TestLabelPublicationUsesSharedReadBudgetAndReleasesOwnership(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(store.publishedPath("synthetic"), []byte("{}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	budget := agentapi.NewNativeReadBudget(3)
+	scoped, closeScope := store.WithReadBudget(t.Context(), budget)
+	before := PublishedStateLoads()
+	if _, n, err := scoped.LoadLabelPublication("synthetic", 512); err == nil || n != 0 || PublishedStateLoads() != before {
+		t.Fatal("label decode bypassed shared serialized-plus-decoded pressure")
+	}
+	closeScope()
+	if budget.Available() != 3 {
+		t.Fatal("refused label read leaked charge")
+	}
+	budget = agentapi.NewNativeReadBudget(4)
+	scoped, closeScope = store.WithReadBudget(t.Context(), budget)
+	if _, n, err := scoped.LoadLabelPublication("synthetic", 512); err != nil || n != 2 || budget.Available() != 2 {
+		t.Fatal("decoded label state was not charged", n, err, budget.Available())
+	}
+	closeScope()
+	closeScope()
+	if budget.Available() != 4 {
+		t.Fatal("label scope did not release decoded ownership")
+	}
+}
+
+func TestLabelRevisionDoesNotDecodeOversizedLegacyPublication(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(store.publishedPath("synthetic"), []byte("{\"bundle\":"+strings.Repeat(" ", 8<<20)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	before := PublishedStateLoads()
+	if _, stamp, err := store.LabelRevision("synthetic"); err != nil || stamp == "" {
+		t.Fatal("legacy stat proof unavailable", err)
+	}
+	if _, n, err := store.LoadLabelPublication("synthetic", 16<<20); err == nil || n != 0 || PublishedStateLoads() != before {
+		t.Fatal("missing leading summary bypassed capped publication decode")
+	}
+}

@@ -392,7 +392,14 @@ func (s *sessionScan) build(read sourceRead) (archive.SourceBundle, []archive.Su
 	if haveCached {
 		baseEvidence = cached.SupplementalEvidence
 	}
-	baseEvidence = s.applyLabels(limitSkillEvidence(baseEvidence, s.opts.skillEvidence()))
+	baseEvidence = limitSkillEvidence(baseEvidence, s.opts.skillEvidence())
+	if read.filtered.History == nil {
+		baseEvidence = s.applyLabels(baseEvidence)
+	} else {
+		// An ordinary lookup may precede a native history transition in the
+		// same pass. Preserve history capture without widening name authority.
+		baseEvidence = withoutSessionLabels(baseEvidence)
+	}
 	supplemental := limitSkillEvidence(mergeSupplementalEvidence(baseEvidence, s.req.HookEvidence), s.opts.skillEvidence())
 
 	// now is a placeholder here; bundleEvidenceEqual ignores CapturedAt, so
