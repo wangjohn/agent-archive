@@ -43,6 +43,8 @@ func TestSnapshotPrefixPreservesStrictRootLocator(t *testing.T) {
 				t.Fatal(err)
 			}
 			switch mutation {
+			case prefixLocatorUnchanged:
+				// Preserve the original locator and captured bytes.
 			case prefixLocatorAppend:
 				f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
 				if err != nil {
