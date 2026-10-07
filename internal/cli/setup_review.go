@@ -4,12 +4,12 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"io"
 	"slices"
 	"strings"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/backfill"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
@@ -32,6 +32,10 @@ type setupReview struct {
 	// hooks.
 	installedHookFiles hooks.Files
 	userHome           string
+	// sourceRoots captures native capture locations for the same reviewed draft.
+	sourceRoots map[string][]string
+	// storageUnchecked is used by consent reviews before their connection probe.
+	storageUnchecked bool
 }
 
 // reviewRow is one labeled line of the review summary. A row with several
@@ -166,9 +170,8 @@ type setupReviewModel struct {
 }
 
 func buildSetupReviewModel(cfg config.Config, review setupReview, at time.Time) *setupReviewModel {
-	m := &setupReviewModel{cfg: cfg, review: review, before: map[string]reviewRow{}, changed: map[string]bool{}}
 	showSessions := cfg.RequireSkillUse || review.reconfiguring && review.existing.RequireSkillUse
-	m.rows = reviewRows(cfg, review.discoveries, showSessions, review.userHome)
+	m := &setupReviewModel{cfg: cfg, review: review, before: map[string]reviewRow{}, changed: map[string]bool{}, rows: reviewRows(cfg, review.discoveries, showSessions, review.userHome)}
 	if review.reconfiguring {
 		for _, row := range reviewRows(review.existing, review.discoveries, showSessions, review.userHome) {
 			m.before[row.label] = row
@@ -195,8 +198,29 @@ func buildSetupReviewModel(cfg config.Config, review setupReview, at time.Time) 
 			m.rows = append(m.rows, reviewRow{label: "Excluded", values: []string{"none"}})
 		}
 	}
+	// A removed optional setting still needs an old/new row at final review.
+	if review.reconfiguring {
+		for _, old := range reviewRows(review.existing, review.discoveries, showSessions, review.userHome) {
+			present := false
+			for _, row := range m.rows {
+				present = present || row.label == old.label
+			}
+			if !present && old.text() != "" {
+				m.rows = append(m.rows, reviewRow{label: old.label, values: []string{"none"}})
+			}
+		}
+	}
 	for _, row := range m.rows {
 		m.changed[row.label] = review.reconfiguring && m.before[row.label].text() != row.text()
+	}
+	var roots []string
+	for _, app := range cfg.Harnesses {
+		for _, root := range review.sourceRoots[app] {
+			roots = append(roots, appName(app)+": "+displayPath(root, review.userHome))
+		}
+	}
+	if len(roots) > 0 {
+		m.rows = append(m.rows, reviewRow{label: "Sources", values: roots})
 	}
 	var sources []string
 	for _, app := range cfg.Harnesses {
@@ -222,37 +246,64 @@ func showSetupReview(p *prompter, cfg config.Config, review setupReview) (blocke
 	return blocked
 }
 
-func compactReviewRows(m *setupReviewModel) []reviewRow {
+type reviewCompactSetupLabel string
+
+const (
+	reviewCompactDestination  reviewCompactSetupLabel = "Destination"
+	reviewCompactHookFiles    reviewCompactSetupLabel = "Hook files"
+	reviewCompactSources      reviewCompactSetupLabel = "Sources"
+	reviewCompactMachine      reviewCompactSetupLabel = "Machine"
+	reviewCompactCodexSources reviewCompactSetupLabel = "Codex sources"
+	reviewCompactStarts       reviewCompactSetupLabel = "Starts"
+	reviewCompactHistory      reviewCompactSetupLabel = "History"
+	reviewCompactCopies       reviewCompactSetupLabel = "Copies"
+	reviewCompactHooks        reviewCompactSetupLabel = "Hooks"
+	reviewCompactExceptions   reviewCompactSetupLabel = "Exceptions"
+	reviewCompactR2Keys       reviewCompactSetupLabel = "R2 keys"
+	reviewCompactSkipped      reviewCompactSetupLabel = "Skipped"
+	reviewCompactImported     reviewCompactSetupLabel = "Imported"
+	reviewCompactCodexCapture reviewCompactSetupLabel = "Codex capture"
+	reviewCompactApps         reviewCompactSetupLabel = "Apps"
+	reviewCompactProjects     reviewCompactSetupLabel = "Projects"
+	reviewCompactSkills       reviewCompactSetupLabel = "Skills"
+	reviewCompactStorage      reviewCompactSetupLabel = "Storage"
+)
+
+func reviewCompactReviewRows(m *setupReviewModel) []reviewRow {
 	var rows []reviewRow
 	for _, row := range m.rows {
-		switch row.label {
-		case "Destination", "Hook files":
+		switch reviewCompactSetupLabel(row.label) {
+		case reviewCompactDestination, reviewCompactHookFiles, reviewCompactSources:
 			continue
-		case "Machine":
+		case reviewCompactMachine:
 			if !m.changed[row.label] {
 				continue
 			}
-		case "Codex sources", "Starts", "History", "Copies", "Hooks", "Exceptions", "R2 keys", "Skipped", "Imported", "Codex capture":
+		case reviewCompactCodexSources, reviewCompactStarts, reviewCompactHistory, reviewCompactCopies, reviewCompactHooks, reviewCompactExceptions, reviewCompactR2Keys, reviewCompactSkipped, reviewCompactImported, reviewCompactCodexCapture:
 			if !m.changed[row.label] {
-				if row.label != "Imported" && row.label != "Skipped" && !(row.label == "Codex capture" && (m.cfg.Discovery == nil || !m.cfg.Discovery.Enabled)) {
+				if reviewCompactSetupLabel(row.label) != reviewCompactImported && reviewCompactSetupLabel(row.label) != reviewCompactSkipped && (reviewCompactSetupLabel(row.label) != reviewCompactCodexCapture || (m.cfg.Discovery != nil && m.cfg.Discovery.Enabled)) {
 					continue
 				}
 			}
+		case reviewCompactApps, reviewCompactProjects, reviewCompactSkills, reviewCompactStorage:
+			// These essentials stay in the compact review.
 		}
 		row.values = slices.Clone(row.values)
 		if !m.changed[row.label] {
-			switch row.label {
-			case "Apps":
+			switch reviewCompactSetupLabel(row.label) {
+			case reviewCompactApps:
 				row.values = []string{friendlyApps(m.cfg.Harnesses)}
-			case "Projects":
+			case reviewCompactProjects:
 				if len(row.values) >= 3 {
 					row.values = []string{fmt.Sprintf("%d included projects (paths in Details)", len(row.values))}
 				}
-			case "Skills":
+			case reviewCompactSkills:
 				row.values = []string{setupSkillScope(m.cfg)}
 				row.detail = ""
-			case "Storage":
+			case reviewCompactStorage:
 				row.detail = ""
+			case reviewCompactDestination, reviewCompactHookFiles, reviewCompactSources, reviewCompactMachine, reviewCompactCodexSources, reviewCompactStarts, reviewCompactHistory, reviewCompactCopies, reviewCompactHooks, reviewCompactExceptions, reviewCompactR2Keys, reviewCompactSkipped, reviewCompactImported, reviewCompactCodexCapture:
+				// Preserve the already compact values for other rows.
 			}
 		}
 		if row.label == "Codex scope" && !m.changed[row.label] {
@@ -275,7 +326,7 @@ func renderSetupReview(p *prompter, m *setupReviewModel, details bool) {
 	}
 	rows := m.rows
 	if !details {
-		rows = compactReviewRows(m)
+		rows = reviewCompactReviewRows(m)
 	}
 	printSetupReviewRows(p, rows, m)
 	if details {
@@ -312,6 +363,9 @@ func printSetupReviewRows(p *prompter, rows []reviewRow, m *setupReviewModel) in
 		width = max(width, visibleWidth(row.label))
 	}
 	cols := p.renderer().capabilities().Width
+	if cols <= 0 {
+		cols = p.style.width
+	}
 	if cols <= 0 {
 		cols = 80
 	}
@@ -384,11 +438,15 @@ type reviewCheck struct {
 
 // reviewChecklist is what the review found, for cfg: the storage check,
 // the bucket's privacy as of at, the hook files, and the step each newly
-// included app needs after setup. The review follows a storage check that
-// passed, so storage is connected.
+// included app needs after setup. Ordinary setup follows a successful storage
+// check; consent reviews before that probe mark it as not yet checked.
 func reviewChecklist(cfg config.Config, review setupReview, at time.Time) []reviewCheck {
+	connection := reviewCheck{mark: symbolOK, label: "Storage connected", detail: "write, read, list, delete"}
+	if review.storageUnchecked {
+		connection = reviewCheck{mark: symbolWarn, label: "Storage not checked yet", detail: "Connection will be checked after you confirm these settings"}
+	}
 	checks := []reviewCheck{
-		{mark: symbolOK, label: "Storage connected", detail: "write, read, list, delete"},
+		connection,
 		privacyCheck(cfg, at),
 	}
 	if len(cfg.Harnesses) > 0 && setupNeedsProject(cfg) {
@@ -578,6 +636,20 @@ func privacyReasonText(reason string) string {
 	return strings.ReplaceAll(reason, "_", " ")
 }
 
+type setupReviewAction string
+
+const (
+	setupReviewStart      setupReviewAction = "start"
+	setupReviewYes        setupReviewAction = "yes"
+	setupReviewNo         setupReviewAction = "no"
+	setupReviewCancel     setupReviewAction = "cancel"
+	setupReviewCheckAlias setupReviewAction = "c"
+	setupReviewCheck      setupReviewAction = "check"
+	setupReviewEdit       setupReviewAction = "edit"
+	setupReviewDetails    setupReviewAction = "details"
+	setupReviewMachine    setupReviewAction = "machine"
+)
+
 // reviewAction asks the final confirmation, returning start, edit, or cancel.
 // y, n, and e still work for scripted input. When the checklist is blocked
 // (a row is ✗), starting is neither offered nor accepted: the first choice
@@ -601,7 +673,23 @@ func reviewAction(p *prompter, reconfiguring, blocked, offerName bool) (string, 
 	if !blocked {
 		aliases = append(aliases, option{"yes", ""})
 	}
-	choice, err := p.guidedChoice(promptModel{Question: label, Default: first.Key, Primary: []option{first, {"edit", "Edit a setting"}}, Secondary: secondary, Aliases: aliases})
+	choice, err := p.guidedChoice(promptModel{Question: label, Default: first.Key, Primary: []option{first, {"edit", "Edit a setting"}}, Secondary: secondary, Aliases: aliases, ResolveReceipt: func(key string) string {
+		switch setupReviewAction(key) {
+		case setupReviewYes, setupReviewStart:
+			return first.Label
+		case setupReviewNo, setupReviewCancel:
+			return "Cancel; keep draft"
+		case setupReviewCheckAlias, setupReviewCheck:
+			return "Check again"
+		case setupReviewEdit:
+			return "Edit a setting"
+		case setupReviewDetails:
+			return "Full settings and privacy"
+		case setupReviewMachine:
+			return "Name this machine"
+		}
+		return key
+	}})
 	if choice == "c" {
 		choice = "check"
 	}
@@ -748,6 +836,8 @@ func setupSkillScope(cfg config.Config) string {
 		return "None"
 	case config.SkillEvidenceBody:
 		return "Filtered snapshots, including user folders"
+	case config.SkillEvidenceMetadata:
+		return "Metadata, including user folders"
 	default:
 		return "Metadata, including user folders"
 	}

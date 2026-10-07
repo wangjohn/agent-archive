@@ -35,7 +35,8 @@ func firstSetupPairingQuestion(opts setupOptions, stdin io.Reader, out io.Writer
 		return opts, stdin, nil
 	}
 	p := newPrompter(stdin, out)
-	paired, err := p.yesNo("Already set up on another machine? Import a pairing bundle", false)
+	defer p.close()
+	paired, err := p.setupYesNo("Already set up on another machine? Import a pairing bundle", false)
 	opts.pair = paired
 	return opts, p.in, err
 }

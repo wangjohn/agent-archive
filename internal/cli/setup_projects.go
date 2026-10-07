@@ -15,19 +15,30 @@ import (
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
+type setupProjectAction string
+
+const (
+	setupProjectPath     setupProjectAction = "path"
+	setupProjectRetry    setupProjectAction = "retry"
+	setupProjectNext     setupProjectAction = "next"
+	setupProjectPrevious setupProjectAction = "previous"
+	setupProjectAll      setupProjectAction = "all"
+)
+
 // setupProjectSearch keeps bounded evidence and its coverage for one setup run.
 type setupProjectSearch struct {
-	env       Env
-	home, key string
-	result    backfill.KnownProjectsResult
-	scanned   bool
+	env     Env
+	home    string
+	key     string
+	result  backfill.KnownProjectsResult
+	scanned bool
 }
 
 func (s *setupProjectSearch) projects(cfg config.Config) []backfill.KnownProject {
 	key, _ := json.Marshal(struct {
-		Apps    []string
-		Rules   []archive.ProjectActivation
-		Sources map[string][]string
+		Apps    []string                    `json:"apps"`
+		Rules   []archive.ProjectActivation `json:"rules"`
+		Sources map[string][]string         `json:"sources"`
 	}{cfg.Harnesses, cfg.Archive.Projects, s.env.nativeSessionDirectories(s.home, cfg)})
 	if s.scanned && s.key == string(key) {
 		return s.result.Projects
@@ -114,7 +125,7 @@ func setupProjectCandidates(result, existing []archive.ProjectActivation, known 
 		selected[local.CanonicalPath(rule.Root)] = rule.Included
 	}
 	for i := range out {
-		out[i].selected, _ = nearestSetupProjectRule(selected, out[i].evidence.Root)
+		out[i].selected = nearestSetupProjectRule(selected, out[i].evidence.Root)
 	}
 	for _, project := range known {
 		index := -1
@@ -201,22 +212,22 @@ func selectSetupProjects(p *prompter, result, existing []archive.ProjectActivati
 		if err != nil {
 			return nil, err
 		}
-		switch choice {
-		case "path":
+		switch setupProjectAction(choice) {
+		case setupProjectPath:
 			if err = addPath(); err != nil {
 				return nil, err
 			}
 			continue
-		case "retry":
+		case setupProjectRetry:
 			refresh()
 			continue
-		case "next":
+		case setupProjectNext:
 			page++
 			continue
-		case "previous":
+		case setupProjectPrevious:
 			page--
 			continue
-		case "all":
+		case setupProjectAll:
 			includeAllSetupProjects(p, candidates, existing)
 			return applyProjectCandidates(candidates, existing, backfilled), nil
 
@@ -294,7 +305,7 @@ func applyProjectCandidates(candidates []setupProjectCandidate, existing []archi
 		if _, found := indexes[c.evidence.Root]; found || !c.selected {
 			continue
 		}
-		if included, _ := nearestSetupProjectRule(rules, c.evidence.Root); included {
+		if included := nearestSetupProjectRule(rules, c.evidence.Root); included {
 			continue
 		}
 		result = append(result, archive.ProjectActivation{Root: c.evidence.Root, ProjectID: archive.ProjectID(c.evidence.Root), Included: true})
@@ -306,7 +317,7 @@ func applyProjectCandidates(candidates []setupProjectCandidate, existing []archi
 		if _, found := indexes[c.evidence.Root]; found || c.selected {
 			continue
 		}
-		included, _ := nearestSetupProjectRule(rules, c.evidence.Root)
+		included := nearestSetupProjectRule(rules, c.evidence.Root)
 		if included || backfilled[archive.ProjectID(c.evidence.Root)] {
 			result = append(result, archive.ProjectActivation{Root: c.evidence.Root, ProjectID: archive.ProjectID(c.evidence.Root), Included: false})
 			rules[c.evidence.Root] = false
@@ -315,14 +326,14 @@ func applyProjectCandidates(candidates []setupProjectCandidate, existing []archi
 	return result
 }
 
-func nearestSetupProjectRule(rules map[string]bool, root string) (included, found bool) {
+func nearestSetupProjectRule(rules map[string]bool, root string) (included bool) {
 	length := -1
 	for parent, choice := range rules {
 		if len(parent) > length && local.PathWithin(root, parent) {
-			included, found, length = choice, true, len(parent)
+			included, length = choice, len(parent)
 		}
 	}
-	return included, found
+	return included
 }
 
 // setupDiscoveryApps restricts discovery to the applications being configured.
@@ -363,6 +374,7 @@ func addSetupProjectPath(p *prompter, candidates *[]setupProjectCandidate, home 
 	*candidates = append(*candidates, setupProjectCandidate{evidence: backfill.KnownProject{Root: root}, selected: true})
 	return nil
 }
+
 func validateSetupProjects(candidates []setupProjectCandidate, home string, all bool) error {
 	var failures []string
 	for _, c := range candidates {
@@ -446,7 +458,7 @@ func includeAllSetupProjects(p *prompter, candidates []setupProjectCandidate, ex
 	added := 0
 	for i := range candidates {
 		candidates[i].selected = true
-		wasIncluded, _ := nearestSetupProjectRule(included, candidates[i].evidence.Root)
+		wasIncluded := nearestSetupProjectRule(included, candidates[i].evidence.Root)
 		if !wasIncluded {
 			added++
 		}

@@ -316,7 +316,7 @@ func TestBoundedProjectsAggregatesObservedSessionsAndLatestUse(t *testing.T) {
 	tr := newTree(t)
 	root := tr.repo("home/project")
 	start := time.Date(2026, 10, 6, 0, 0, 0, 0, time.UTC)
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		path := tr.write(filepath.Join("home", claudeFile("project", strconv.Itoa(i))), claudeTranscript(strconv.Itoa(i), root, start))
 		if err := os.Chtimes(path, start.Add(time.Duration(i)*time.Hour), start.Add(time.Duration(i)*time.Hour)); err != nil {
 			t.Fatal(err)

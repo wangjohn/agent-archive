@@ -186,11 +186,8 @@ func (p *prompter) defaulted(label string, bold bool, def string) (string, error
 	return answer, nil
 }
 
-func (p *prompter) yesNo(label string, def bool) (bool, error) {
-	choices, defIndex := []string{"Y", "n"}, 0
-	if !def {
-		choices, defIndex = []string{"y", "N"}, 1
-	}
+func (p *prompter) yesNo(label string) (bool, error) {
+	choices, defIndex := []string{"y", "N"}, 1
 	for {
 		answer, err := p.ask(label, true, choices, defIndex, " ")
 		if err != nil {
@@ -198,7 +195,7 @@ func (p *prompter) yesNo(label string, def bool) (bool, error) {
 		}
 		switch strings.ToLower(answer) {
 		case "":
-			return def, nil
+			return false, nil
 		case "y", "yes":
 			return true, nil
 		case "n", "no":
@@ -228,51 +225,6 @@ type actionOption struct {
 	Key      string
 	Shortcut string
 	Label    string
-}
-
-// actions keeps primary choices numbered and renders navigation separately.
-func (p *prompter) actions(question, def string, primary []option, secondary []actionOption) (string, error) {
-	p.heading(question)
-	choices := append([]option(nil), primary...)
-	for i, o := range primary {
-		terminal.Printf(p.out, "  %d) %s\n", i+1, o.Label)
-	}
-	for _, o := range secondary {
-		key := o.Shortcut
-		if o.Key == def {
-			key = "Enter"
-		}
-		terminal.Printf(p.out, "[%s] %s\n", key, o.Label)
-		choices = append(choices, option{o.Key, o.Label})
-	}
-	displayDefault := ""
-	for i, o := range primary {
-		if o.Key == def {
-			displayDefault = strconv.Itoa(i + 1)
-		}
-	}
-	for {
-		answer, err := p.choose("Choose", displayDefault)
-		if err != nil {
-			return "", err
-		}
-		answer = strings.ToLower(answer)
-		if answer == "" {
-			return def, nil
-		}
-		if n, err := strconv.Atoi(answer); err == nil && n > 0 && n <= len(primary) {
-			return primary[n-1].Key, nil
-		}
-		for _, o := range secondary {
-			if o.Shortcut != "" && answer == o.Shortcut {
-				return o.Key, nil
-			}
-		}
-		if key, ok := matchOption(answer, choices); ok {
-			return key, nil
-		}
-		terminal.Println(p.out, "Choose a listed number or action, or press Enter for the default.")
-	}
 }
 
 // menu prints a question with numbered options and returns the chosen key.
@@ -408,19 +360,6 @@ func (p *prompter) labelText(label string) string {
 		}
 	}
 	return p.promptText(question, true, choices, def, "")
-}
-
-func (p *prompter) required(label, def string) (string, error) {
-	for {
-		value, err := p.withDefault(label, def)
-		if err != nil {
-			return "", err
-		}
-		if value != "" {
-			return value, nil
-		}
-		terminal.Println(p.out, "This value is required.")
-	}
 }
 
 // typedInput is a command's standard input for the prompts that read answers:

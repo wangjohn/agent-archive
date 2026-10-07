@@ -73,7 +73,7 @@ func TestDetectedAppsSetupSkipsIndividualQuestions(t *testing.T) {
 			t.Fatalf("unexpected %q in %s", unwanted, output)
 		}
 	}
-	for _, want := range []string{"Include Codex and Claude Code?", "Keep for   90 days\n", "Start archiving?\n  1) Yes, start archiving\n  2) Edit a setting\n  3) Cancel"} {
+	for _, want := range []string{"Capture sessions from Codex and Claude Code?", "Keep for 90 days", "Start archiving? 1) Start archiving (default) 2) Edit a setting", "[q] Cancel; keep draft"} {
 		if !setupContainsText(output, want) {
 			t.Fatalf("missing %q in %s", want, output)
 		}
@@ -406,7 +406,7 @@ func TestRecentProjectsShowCountsAndATakesAll(t *testing.T) {
 	one, two := gitRepo(t), gitRepo(t)
 	known := []backfill.KnownProject{{Root: one, Sessions: 12}, {Root: two, Sessions: 1}}
 	var out bytes.Buffer
-	projects, err := addProjects(newPrompter(strings.NewReader("all\n"), &out), nil, nil, known, "")
+	projects, err := selectSetupProjects(newPrompter(strings.NewReader("all\n"), &out), nil, nil, known, "", "", nil)
 	if err != nil || includedProjects(projects) != 2 || projects[0].Root != one || projects[1].Root != two {
 		t.Fatalf("projects=%+v err=%v", projects, err)
 	}
@@ -420,7 +420,7 @@ func TestRecentProjectsEnterTakesDefaultAll(t *testing.T) {
 	one, two := gitRepo(t), gitRepo(t)
 	known := []backfill.KnownProject{{Root: one}, {Root: two}}
 	var out bytes.Buffer
-	projects, err := addProjects(newPrompter(strings.NewReader("\n"), &out), nil, nil, known, "")
+	projects, err := selectSetupProjects(newPrompter(strings.NewReader("\n"), &out), nil, nil, known, "", "", nil)
 	if err != nil || includedProjects(projects) != 2 || projects[0].Root != one || projects[1].Root != two {
 		t.Fatalf("projects=%+v err=%v\n%s", projects, err, &out)
 	}
@@ -437,7 +437,7 @@ func TestRecentProjectsDefaultRemainsAfterInvalidAnswer(t *testing.T) {
 			one, two := gitRepo(t), gitRepo(t)
 			known := []backfill.KnownProject{{Root: one}, {Root: two}}
 			var out bytes.Buffer
-			projects, err := addProjects(newPrompter(strings.NewReader(first+"\n\n"), &out), nil, nil, known, "")
+			projects, err := selectSetupProjects(newPrompter(strings.NewReader(first+"\n\n"), &out), nil, nil, known, "", "", nil)
 			if err != nil || includedProjects(projects) != 2 || strings.Count(out.String(), "Which projects?") != 2 {
 				t.Fatalf("projects=%+v err=%v\n%s", projects, err, &out)
 			}
@@ -453,7 +453,7 @@ func TestRecentProjectsDefaultCannotFinishWithNoProject(t *testing.T) {
 	}
 	known := []backfill.KnownProject{{Root: gone}}
 	var out bytes.Buffer
-	projects, err := addProjects(newPrompter(strings.NewReader("\nspecific\np\n"+fallback+"\n1\n\n"), &out), nil, nil, known, "")
+	projects, err := selectSetupProjects(newPrompter(strings.NewReader("\nspecific\np\n"+fallback+"\n1\n\n"), &out), nil, nil, known, "", "", nil)
 	if err != nil || includedProjects(projects) != 1 || projects[0].Root != fallback || !setupContainsText(out.String(), "Repair the path or leave it out") {
 		t.Fatalf("projects=%+v err=%v\n%s", projects, err, &out)
 	}
@@ -471,7 +471,7 @@ func TestLeavingAListedProjectOutRestoresItsState(t *testing.T) {
 	}
 	known := []backfill.KnownProject{{Root: excluded, Sessions: 3}}
 	var out bytes.Buffer
-	projects, err := addProjects(newPrompter(strings.NewReader("specific\n2\n1 2\n\n1\n\n"), &out), result, result, known, current)
+	projects, err := selectSetupProjects(newPrompter(strings.NewReader("specific\n2\n1 2\n\n1\n\n"), &out), result, result, known, current, "", nil)
 	want := result
 	if err != nil || !reflect.DeepEqual(projects, want) {
 		t.Fatalf("projects=%+v err=%v\n%s", projects, err, &out)
@@ -526,7 +526,7 @@ func TestProjectChosenAgainAfterDroppingAllKeepsItsActivation(t *testing.T) {
 	existing := []archive.ProjectActivation{{ProjectID: archive.ProjectID(root), Root: root, Included: true, ActivatedAt: activated}}
 	var out bytes.Buffer
 	projects, err := promptProjects(newPrompter(strings.NewReader("specific\n1\n\n1\n\n"), &out), existing, nil, nil)
-	if err != nil || !reflect.DeepEqual(projects, existing) || !setupContainsText(out.String(), "Repair the path or leave it out") {
+	if err != nil || !reflect.DeepEqual(projects, existing) || !setupContainsText(out.String(), "choose at least one project") {
 		t.Fatalf("projects=%+v err=%v\n%s", projects, err, &out)
 	}
 }
@@ -540,7 +540,7 @@ func TestRepeatedNumberIncludesOnce(t *testing.T) {
 	result := []archive.ProjectActivation{{ProjectID: archive.ProjectID(current), Root: current, Included: true}}
 	known := []backfill.KnownProject{{Root: one}, {Root: two}}
 	var out bytes.Buffer
-	projects, err := addProjects(newPrompter(strings.NewReader("specific\n2-3 3 2\n\n"), &out), result, nil, known, current)
+	projects, err := selectSetupProjects(newPrompter(strings.NewReader("specific\n2-3 3 2\n\n"), &out), result, nil, known, current, "", nil)
 	if err != nil || includedProjects(projects) != 3 {
 		t.Fatalf("projects=%+v err=%v\n%s", projects, err, &out)
 	}
@@ -563,7 +563,11 @@ func TestNestedProjectsFoldIntoTheCurrentRepository(t *testing.T) {
 		{Root: "/src/other", Sessions: 1, LastUsed: now.Add(-time.Hour)},
 		{Root: "/src/application", Sessions: 4},
 	}
-	if got := foldInto(known, "/src/app"); !reflect.DeepEqual(got, want) {
+	var got []backfill.KnownProject
+	for _, candidate := range setupProjectCandidates(nil, nil, known, "/src/app") {
+		got = append(got, candidate.evidence)
+	}
+	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %+v", got)
 	}
 }
@@ -579,10 +583,31 @@ func TestSelectionWithManyProjectsPrintsACount(t *testing.T) {
 	}
 	known := []backfill.KnownProject{{Root: gitRepo(t)}}
 	var out bytes.Buffer
-	if _, err := addProjects(newPrompter(strings.NewReader("all\n"), &out), result, result, known, ""); err != nil {
+	if _, err := selectSetupProjects(newPrompter(strings.NewReader("all\n"), &out), result, result, known, "", "", nil); err != nil {
 		t.Fatal(err)
 	}
 	if !setupContainsText(out.String(), fmt.Sprintf("Found %d projects", maxKnownProjects+2)) || !setupContainsText(out.String(), "Showing 1–12") {
 		t.Fatalf("output:\n%s", &out)
+	}
+}
+
+// Compatible named answers must still leave resolved, human action receipts.
+// Regression: 2026-10 setup review P2-R1-07.
+func TestSetupReviewNamedAnswersHaveResolvedReceipts(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		answer    string
+		want      string
+		blocked   bool
+		installed bool
+	}{{"yes", "Start archiving", false, false}, {"y", "Save changes", false, true}, {"n", "Cancel; keep draft", false, false}, {"c", "Check again", true, false}} {
+		var out bytes.Buffer
+		p := newPrompter(strings.NewReader(tc.answer+"\n"), &out)
+		_, err := reviewAction(p, tc.installed, tc.blocked, false)
+		p.close()
+		must(t, err)
+		if !strings.Contains(out.String(), "OK "+tc.want+"\n") {
+			t.Fatalf("alias %s receipt unresolved:\n%s", tc.answer, &out)
+		}
 	}
 }

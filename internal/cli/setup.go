@@ -263,6 +263,7 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env, verbose bool, skills
 	p.guidedSpacing = true
 	defer p.close()
 	p.now = env.now
+	p.projectCurrent, _ = currentProject(env, userHome)
 	p.projectScan = &setupProjectSearch{env: env, home: userHome}
 	known := knownProjectsOnce(env, userHome, p.projectScan)
 	// Said before any question: setup will refuse to install an app's hooks
@@ -707,7 +708,7 @@ func reviewAndCommitSetup(p *prompter, draft *setupDraft, save func() error, hom
 		return false, err
 	}
 	hookFiles, installedHookFiles := env.hookFiles(userHome), env.installedHookFiles(userHome, existing)
-	blocked := showSetupReview(p, draft.Config, setupReview{existing: existing, reconfiguring: installed, discoveries: reviewed, hookFiles: hookFiles, installedHookFiles: installedHookFiles, userHome: userHome})
+	blocked := showSetupReview(p, draft.Config, setupReview{existing: existing, reconfiguring: installed, discoveries: reviewed, hookFiles: hookFiles, installedHookFiles: installedHookFiles, userHome: userHome, sourceRoots: env.nativeSessionDirectories(userHome, draft.Config)})
 	var implications bytes.Buffer
 	notes := newPrompter(strings.NewReader(""), &implications)
 	defer notes.close()
@@ -805,6 +806,12 @@ func finishSetup(p *prompter, errOut io.Writer, home string, cfg config.Config, 
 		terminal.Printf(errOut, "Could not prune pending session starts after setup: %v\n", e)
 	}
 	completion := "Setup complete · Automatic capture is on"
+	if len(cfg.Harnesses) == 0 {
+		completion = "Setup complete · Capture is configured"
+	}
+	if len(cfg.Harnesses) == 1 && cfg.Harnesses[0] == "codex" && (cfg.Discovery == nil || !cfg.Discovery.Enabled) {
+		completion = "Setup complete · Codex hook capture is configured"
+	}
 	if paused {
 		completion = "Setup complete · Capture stays paused"
 	}
@@ -1284,7 +1291,7 @@ func chooseCapture(p *prompter, cfg *config.Config, userHome string, env Env, kn
 	if refused != "" {
 		terminal.Println(p.out, p.style.dim(refused))
 	}
-	done, err := offerFirstCapture(env.setupNames(), p, cfg, detected, current, userHome, known)
+	done, err := offerFirstCapture(env.setupNames(), p, cfg, detected)
 	if err == nil && !done {
 		err = chooseHarnesses(env.setupNames(), p, detected, cfg)
 	}
@@ -1324,7 +1331,7 @@ func chooseCapture(p *prompter, cfg *config.Config, userHome string, env Env, kn
 
 // offerFirstCapture offers detected applications while leaving project consent
 // to the shared selector, inside and outside a repository.
-func offerFirstCapture(available []string, p *prompter, cfg *config.Config, detected []string, current, userHome string, known func(config.Config) []backfill.KnownProject) (bool, error) {
+func offerFirstCapture(available []string, p *prompter, cfg *config.Config, detected []string) (bool, error) {
 	if len(cfg.Harnesses) > 0 || len(cfg.DeclinedHarnesses) > 0 {
 		return false, nil
 	}
@@ -1400,34 +1407,6 @@ func broadFolder(dir, userHome string, temps []string) string {
 		}
 	}
 	return ""
-}
-
-// foldInto merges the listed projects inside root, such as a repository
-// nested in it, into root's own entry, as they resolve once root is a
-// configured project: their sessions count toward it, and they are not
-// offered on their own.
-func foldInto(known []backfill.KnownProject, root string) []backfill.KnownProject {
-	merged := backfill.KnownProject{Root: root, Kind: backfill.ProjectKindRepository}
-	folded := false
-	var out []backfill.KnownProject
-	for _, project := range known {
-		if !local.PathWithin(project.Root, root) {
-			out = append(out, project)
-			continue
-		}
-		if project.Root == root {
-			merged.Kind = project.Kind
-		}
-		folded = true
-		merged.Sessions += project.Sessions
-		if project.LastUsed.After(merged.LastUsed) {
-			merged.LastUsed = project.LastUsed
-		}
-	}
-	if folded {
-		out = append([]backfill.KnownProject{merged}, out...)
-	}
-	return out
 }
 
 // storedCredentialReadable reports whether the credential saved under ref
@@ -1659,20 +1638,6 @@ func promptProjects(p *prompter, existing []archive.ProjectActivation, backfille
 
 // maxKnownProjects limits each display page; selection includes every candidate.
 const maxKnownProjects = 12
-
-// addProjects asks for projects to add to result: by number from known,
-// when the apps' history mentions any result does not include, or by path.
-// current, when not "", is the Git repository setup runs in: it heads the
-// list, with the state result gives it, and its numbers switch a listed
-// project in or out. a includes every listed project. A project in existing
-// keeps its activation time.
-func addProjects(p *prompter, result, existing []archive.ProjectActivation, known []backfill.KnownProject, current string, userHomes ...string) ([]archive.ProjectActivation, error) {
-	home := ""
-	if len(userHomes) > 0 {
-		home = userHomes[0]
-	}
-	return selectSetupProjects(p, result, existing, known, current, home, p.projectBackfilled)
-}
 
 // projectDetails describes a listed project: whether it is the folder setup
 // runs in, how many sessions the apps' history holds for it, and when one
