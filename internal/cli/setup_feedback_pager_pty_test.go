@@ -18,13 +18,16 @@ func TestSetupDetailsPagerTerminalChild(t *testing.T) {
 	p := newPrompter(os.Stdin, os.Stdout)
 	defer p.close()
 	p.reviewModel = buildSetupReviewModel(config.Config{}, setupReview{}, time.Now())
-	env := Env{LookupEnv: func(name string) (string, bool) { return "test-pager", name == "PAGER" }, Interrupts: noInterrupts}
-	env.RunPager = func(_ context.Context, _ string, _ []string, in io.Reader, out, _ io.Writer) error {
-		if _, err := io.WriteString(out, "PAGER SELECTED\n"); err != nil {
+	env := Env{
+		LookupEnv:  func(name string) (string, bool) { return "test-pager", name == "PAGER" },
+		Interrupts: noInterrupts,
+		RunPager: func(_ context.Context, _ string, _ []string, in io.Reader, out, _ io.Writer) error {
+			if _, err := io.WriteString(out, "PAGER SELECTED\n"); err != nil {
+				return err
+			}
+			_, err := io.Copy(out, in)
 			return err
-		}
-		_, err := io.Copy(out, in)
-		return err
+		},
 	}
 	must(t, showSetupReviewDetails(p, env, os.Stderr))
 }
