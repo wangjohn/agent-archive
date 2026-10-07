@@ -28,6 +28,7 @@ const (
 	promptModeExternal      promptTestMode = "external"
 	promptModePager         promptTestMode = "pager"
 	promptModeEof           promptTestMode = "eof"
+	promptModeFinalEof      promptTestMode = "final-answer-eof"
 	promptModeSecretEof     promptTestMode = "secret-eof"
 	promptModeInterrupt     promptTestMode = "interrupt"
 	promptModeTerm          promptTestMode = "term"
@@ -105,7 +106,7 @@ func TestGuidedPromptTerminalCells(t *testing.T) {
 	}
 	binary, err := os.Executable()
 	must(t, err)
-	for _, mode := range []promptTestMode{promptModeNormal, promptModeNoColor, promptModeWide, promptModeControlEcho, promptModeComposed, promptModeLong, promptModeDefaultLong, promptModeRetry, promptModeResize, promptModeScroll, promptModeTypedAhead, promptModeTypedAheadTwo, promptModeSuspend, promptModeExternal, promptModePager, promptModeEof, promptModeSecretEof, promptModeInterrupt, promptModeTerm, promptModeHup, promptModeQuit} {
+	for _, mode := range []promptTestMode{promptModeNormal, promptModeNoColor, promptModeWide, promptModeControlEcho, promptModeComposed, promptModeLong, promptModeDefaultLong, promptModeRetry, promptModeResize, promptModeScroll, promptModeTypedAhead, promptModeTypedAheadTwo, promptModeSuspend, promptModeExternal, promptModePager, promptModeEof, promptModeFinalEof, promptModeSecretEof, promptModeInterrupt, promptModeTerm, promptModeHup, promptModeQuit} {
 		t.Run(string(mode), func(t *testing.T) {
 			t.Parallel()
 			if out, err := runPTYScript(t, python, guidedPromptPTY, binary, string(mode)); err != nil {
@@ -194,7 +195,8 @@ try:
             fcntl.ioctl(master,termios.TIOCSWINSZ,struct.pack('HHHH',20,60,0,0))
             signal.signal(signal.SIGTTOU,signal.SIG_DFL)
             p.send_signal(signal.SIGWINCH)
-        if mode=='composed': os.write(master,('👍🏽'*30+'\n').encode())
+        if mode=='final-answer-eof': os.write(master,b'work'+termios.tcgetattr(slave)[6][termios.VEOF]*2)
+        elif mode=='composed': os.write(master,('👍🏽'*30+'\n').encode())
         elif mode not in ('typed-ahead','typed-ahead-two'): os.write(master,(('xxx漢漢漢漢xx漢x漢漢x漢漢x漢x漢漢xx漢漢漢xxx漢漢漢x漢xxxxx漢x漢xx漢漢漢漢漢xxx漢x漢x漢xx漢x漢x漢xx漢xxxxxx漢漢漢漢漢xxx漢x漢x漢xxx漢漢xxxx漢xx漢漢xxx漢漢xx漢漢漢漢漢漢漢漢漢漢x漢漢漢xx漢漢x漢xxx漢x漢x漢x漢漢xxxxxx漢漢xxx漢'.encode() if mode=='wide' else b'x'*90) if mode in ('wide','long') else b'\x01'*170 if mode=='control-echo' else b'x'*900 if mode=='scroll' else b'' if mode=='default-long' else b'work')+b'\n')
         wait(b'Credential: ')
         if mode!='typed-ahead': echo(False)
@@ -228,6 +230,10 @@ try:
     assert termios.tcgetattr(slave)[3] & termios.ECHO,'echo not restored'
     if mode!='typed-ahead': assert b'synthetic-secret' not in output,'hidden input echoed'
     assert b'\x1b[?1049' not in output or mode=='pager','setup used alternate screen'
+    if mode=='final-answer-eof':
+        profile=output[output.index(b'Profile [work]: '):output.index(b'Credential: ')]
+        assert b'\r\n\x1b[2m'+ '✓ Profile work'.encode() in profile,'final EOF receipt shares input row: '+repr(profile)
+        assert b'\x1b[2K' not in profile,'final EOF erased unowned rows'
     view=cells(output,width)
     if expected==0:
         assert 'DONE' in view,view

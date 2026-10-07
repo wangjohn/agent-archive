@@ -37,7 +37,7 @@ another reader, read the file descriptor directly or turn a bounded payload into
 an unbounded `ReadString`. The same buffer supplies legacy line prompts and
 browser hand-back. Empty or whitespace-only EOF is an error and never chooses a default. A final
 nonempty answer without a newline is accepted, with a conservative static
-receipt.
+receipt on its own line.
 
 `promptCapabilities` separates color, input/output terminals, redraw, ASCII,
 width and height. Tests can implement `promptOutput` on a writer. `NO_COLOR`
