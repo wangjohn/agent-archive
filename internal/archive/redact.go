@@ -37,12 +37,8 @@ func stripInjectedInstructions(value string) (bool, string) {
 	changed, safe := stripKnownInjectedInstructions(value)
 	// Native open-page context is a leading wrapper. A mention in prose or a
 	// quoted/code example is user text, not proof of injected page context.
-	for {
-		// Four spaces or a tab starts a Markdown code example.
-		line := strings.TrimLeft(safe, "\r\n")
-		if strings.HasPrefix(line, "    ") || strings.HasPrefix(line, "\t") {
-			break
-		}
+	// Four spaces or a tab starts a Markdown code example.
+	for !startsWithIndentedCode(safe) {
 		leading := strings.TrimLeft(safe, " \t\r\n")
 		open := injectedInstructionOpenByTag["external_codex_apps_open_page"].FindStringIndex(leading)
 		if open == nil || open[0] != 0 {
@@ -60,14 +56,32 @@ func stripInjectedInstructions(value string) (bool, string) {
 		// Keep Markdown indentation through repeated sanitization passes.
 		// Removing a separate injected block must not turn a code example
 		// into a leading native context wrapper on the next pass.
-		line := strings.TrimLeft(safe, "\r\n")
-		if strings.HasPrefix(line, "    ") || strings.HasPrefix(line, "\t") {
+		if startsWithIndentedCode(safe) {
 			safe = strings.TrimRight(safe, " \t\r\n")
 		} else {
 			safe = strings.TrimSpace(safe)
 		}
 	}
 	return changed, safe
+}
+
+// startsWithIndentedCode checks the first nonblank line without removing its
+// indentation. Markdown blank lines may themselves contain spaces or tabs.
+func startsWithIndentedCode(value string) bool {
+	for {
+		end := strings.IndexAny(value, "\r\n")
+		line := value
+		if end >= 0 {
+			line = value[:end]
+		}
+		if strings.Trim(line, " \t") != "" {
+			return strings.HasPrefix(line, "    ") || strings.HasPrefix(line, "\t")
+		}
+		if end < 0 {
+			return false
+		}
+		value = value[end+1:]
+	}
 }
 
 func stripKnownInjectedInstructions(value string) (bool, string) {

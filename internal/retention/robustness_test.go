@@ -418,3 +418,45 @@ func TestSweepIsolatesUnreadableStateFiles(t *testing.T) {
 		t.Fatalf("errors = %v", result.Errors)
 	}
 }
+
+func testLimitedGet(ctx context.Context, store storage.ObjectStore, key string, limit int64) ([]byte, error) {
+	bounded, ok := store.(storage.LimitedGetter)
+	if !ok {
+		return nil, errors.New("synthetic store lacks bounded reads")
+	}
+	return bounded.GetLimited(ctx, key, limit)
+}
+
+func (f *flakyStore) GetLimited(ctx context.Context, key string, limit int64) ([]byte, error) {
+	return testLimitedGet(ctx, f.ObjectStore, key, limit)
+}
+
+func (r *recordingStore) GetLimited(ctx context.Context, key string, limit int64) ([]byte, error) {
+	r.touch()
+	return testLimitedGet(ctx, r.ObjectStore, key, limit)
+}
+
+func (f failingDeleteStore) GetLimited(ctx context.Context, key string, limit int64) ([]byte, error) {
+	return testLimitedGet(ctx, f.ObjectStore, key, limit)
+}
+
+func (h *hookDuringDeleteStore) GetLimited(ctx context.Context, key string, limit int64) ([]byte, error) {
+	return testLimitedGet(ctx, h.ObjectStore, key, limit)
+}
+
+func (c *countingStore) GetLimited(ctx context.Context, key string, limit int64) ([]byte, error) {
+	c.gets++
+	return testLimitedGet(ctx, c.ObjectStore, key, limit)
+}
+
+func (s *replaceMetadataOnSecondRead) GetLimited(ctx context.Context, key string, limit int64) ([]byte, error) {
+	if key == s.key {
+		s.reads++
+		if s.reads == 2 {
+			if err := s.Put(ctx, key, s.replacement); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return testLimitedGet(ctx, s.ObjectStore, key, limit)
+}

@@ -38,16 +38,25 @@ type Options struct {
 	Labels           agentapi.LabelsLookup
 	LabelEnvironment agentapi.LabelEnvironment
 	labels           map[string]state.LabelEntry
+	// PrepareCodexCoverage advances caller-owned qualified coverage once after admission work loads.
+	PrepareCodexCoverage func(context.Context, []archive.SessionRegistration) error
 	// CodexRollouts is one caller-owned bounded locator view shared by the pass.
 	CodexRollouts agentapi.CodexRolloutLookup
+	// ConfiguredCodexHomes supplies confined migration roots from configuration,
+	// independently of current-locator hints. Native evidence still validates identity.
+	ConfiguredCodexHomes []string
+	// ResolveCodexReadHomes revalidates trusted default/hook/import/config roots
+	// against current configuration; lookup observations never supply authority.
+	ResolveCodexReadHomes func(config.Config) ([]string, error)
 	// SkipSessionIndexRecovery is set after the CLI has already attempted its
 	// bounded local recovery stage. Direct collector callers recover once.
 	SkipSessionIndexRecovery bool
 	// Parsers resolves pure derivation separately from native source access.
-	Parsers      agentapi.ParsersLookup
-	parserCache  map[string]agentapi.TranscriptParser
-	Sources      agentapi.SourcesLookup
-	sourcePasses *sourcePassSet
+	Parsers       agentapi.ParsersLookup
+	parserCache   map[string]agentapi.TranscriptParser
+	Sources       agentapi.SourcesLookup
+	sourcePasses  *sourcePassSet
+	retainedOwner *sessionScan
 	// Decoders translates retained legacy admission intents; no lookup is needed for new generic effects.
 	Decoders agentapi.DecodersLookup
 	// ParserVersion identifies metadata derivation independently of source capture.
@@ -205,8 +214,11 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	if opts.MachineID == "" {
 		return Result{}, errors.New("machine ID is required")
 	}
-	if err := local.ResumeGenerationRecoveries(ctx); err != nil {
-		return Result{}, err
+	recoveryLocal, closeRecovery := local.WithReadBudget(ctx, (&sessionScan{opts: opts}).readBudget())
+	generationRecoveryErr := recoveryLocal.ResumeGenerationRecoveries(ctx)
+	if generationRecoveryErr != nil && (!errors.Is(generationRecoveryErr, agentapi.ErrReadBudget) || errors.Is(generationRecoveryErr, context.Canceled) || errors.Is(generationRecoveryErr, context.DeadlineExceeded)) {
+		closeRecovery()
+		return Result{}, generationRecoveryErr
 	}
 	opts.parserCache = make(map[string]agentapi.TranscriptParser)
 	now := opts.now()
@@ -214,8 +226,9 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	// user's turn before scanning registrations for this pass.
 	var recoveryErr error
 	if ctx.Err() == nil && !opts.SkipSessionIndexRecovery {
-		_, recoveryErr = local.RecoverSessionIndexScheduled(ctx, state.SessionIndexRecoverySlice)
+		_, recoveryErr = recoveryLocal.RecoverSessionIndexScheduled(ctx, state.SessionIndexRecoverySlice)
 	}
+	closeRecovery()
 	if state.SessionIndexRecoveryInterrupted(recoveryErr) {
 		recoveryErr = nil
 	}
@@ -240,6 +253,10 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 		result:           Result{Errors: subagents.errors, WaitingSubagents: subagents.waiting, RejectedSubagents: subagents.rejected},
 		expiredSubagents: subagents.expired,
 	}
+	defer p.releaseLabelResources()
+	if generationRecoveryErr != nil {
+		p.result.Errors["generation-recovery"] = generationRecoveryErr
+	}
 	if recoveryErr != nil {
 		p.result.Errors["session-index"] = recoveryErr
 	}
@@ -251,6 +268,11 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	// is informational, and each parent's capture gap is already saved.
 	if err := p.loadWork(); err != nil {
 		return Result{}, err
+	}
+	if p.opts.PrepareCodexCoverage != nil {
+		if err := p.opts.PrepareCodexCoverage(ctx, p.registrations); err != nil {
+			p.result.Errors["native-coverage"] = err
+		}
 	}
 	p.observeLabels(ctx)
 	p.repairListingIndex()
@@ -279,13 +301,15 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 
 // pass is one Run: its inputs, what it has found so far, and its result.
 type pass struct {
-	labelStates map[string]*state.Published
-	labelBytes  int64
-	ctx         context.Context
-	local       *state.Store
-	remote      storage.ObjectStore
-	opts        Options
-	now         time.Time
+	labelLocal          *state.Store
+	closeLabelResources func()
+	labelStates         map[string]*state.Published
+	labelBytes          int64
+	ctx                 context.Context
+	local               *state.Store
+	remote              storage.ObjectStore
+	opts                Options
+	now                 time.Time
 
 	registrations []archive.SessionRegistration
 	requests      map[string]state.Request
@@ -385,6 +409,10 @@ func (p *pass) fail(id string, err error) {
 // scan gives one session its turn in the pass: skip it if nothing about it
 // changed, otherwise scan it (sessionScan.run) and account for the outcome.
 func (p *pass) scan(reg archive.SessionRegistration) {
+	priorLocal := p.local
+	scopedLocal, closeLocal := p.local.WithReadBudget(p.ctx, (&sessionScan{opts: p.opts}).readBudget())
+	p.local = scopedLocal
+	defer func() { closeLocal(); p.local = priorLocal }()
 	id := reg.ArchiveSessionID
 	p.result.Scanned++
 	if p.unreadable[id] {
@@ -402,6 +430,7 @@ func (p *pass) scan(reg archive.SessionRegistration) {
 	}
 	// The session's published state, read once for the whole scan.
 	published := p.labelStates[id]
+	delete(p.labelStates, id)
 	var err error
 	if published == nil {
 		published, err = p.local.LoadPublishedState(id)
@@ -415,6 +444,7 @@ func (p *pass) scan(reg archive.SessionRegistration) {
 		p.pending++
 	}
 	scan := newSessionScan(p.ctx, p.local, p.remote, reg, req, published, p.now, p.opts)
+	defer scan.releaseRetained()
 	outcome, err := scan.run()
 	for _, warning := range scan.warnings {
 		addError(p.result.Errors, id, warning)

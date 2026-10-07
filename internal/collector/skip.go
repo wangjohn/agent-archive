@@ -51,7 +51,7 @@ func (p *pass) skipUnchanged(reg archive.SessionRegistration, req state.Request)
 		}
 		// A warm context avoids conversation decoding until a changed label
 		// needs publication. Apply the same aggregate cap to that decode.
-		published, n, err := p.local.LoadLabelPublication(id, (16<<20)-p.labelBytes)
+		published, n, err := p.labelLocal.LoadLabelPublication(id, (16<<20)-p.labelBytes)
 		p.labelBytes += n
 		if err == nil {
 			p.labelStates[id] = published
@@ -129,7 +129,7 @@ func (p *pass) unchangedSinceLastScan(reg archive.SessionRegistration) (unchange
 		return p.owesNothing(id, false)
 	}
 	signature, found, err := p.local.LoadScanSignature(id)
-	if err != nil || !found || signature.Frozen {
+	if err != nil || !found || signature.Frozen || signature.SourceSetVersion != sourceSetVersion(reg) {
 		return false, signature, err
 	}
 	if signature.SourceFormat == cursorTextSourceFormat && signature.Blocked != state.BlockedReasonTranscriptMissing {
@@ -255,9 +255,18 @@ func (p *pass) linkOwed(reg archive.SessionRegistration) (bool, error) {
 // scan consumed, so the next pass can skip it. It is written only at an exit
 // that owes no further work.
 func (s *sessionScan) recordScanSignature(observed sourceState, bundle archive.SourceBundle) error {
-	return s.local.SaveScanSignature(s.id(), state.ScanSignature{
-		SkillEvidence:  string(s.opts.skillEvidence()),
-		TranscriptSize: observed.size(), TranscriptMtime: observed.file.Mtime,
+	return s.local.SaveScanSignature(s.id(), s.scanSignature(observed, bundle))
+}
+
+func (s *sessionScan) scanSignature(observed sourceState, bundle archive.SourceBundle) state.ScanSignature {
+	summary := s.published.Summary()
+	return state.ScanSignature{
+		SourceSetDigest: summary.SourceSetDigest, CurrentRevision: summary.CurrentRevision,
+		SourceSchemaVersion: summary.SourceSchemaVersion, MetadataSchemaVersion: summary.MetadataSchemaVersion,
+		SourceSetComplete: summary.SourceSetComplete, MeaningfulCapturedAt: summary.MeaningfulCapturedAt,
+		SourceSetVersion: sourceSetVersion(s.reg),
+		SkillEvidence:    string(s.opts.skillEvidence()),
+		TranscriptSize:   observed.size(), TranscriptMtime: observed.file.Mtime,
 		ParserVersion: s.parserVersion(), FilterVersion: bundle.Capture.FilterVersion,
 		AdapterVersion: bundle.Capture.AdapterVersion, SourceFormat: bundle.Capture.SourceFormat,
 		SourceSignature: signaturePointer(observed), SourceKind: observed.kind, CursorLastUpdatedAt: observed.cursor.LastUpdatedAt,
@@ -265,7 +274,7 @@ func (s *sessionScan) recordScanSignature(observed sourceState, bundle archive.S
 		CursorMessageRows: observed.cursor.MessageRows, CursorLastMessageHash: observed.cursor.LastMessageHash,
 		PublishedLastHead: s.publishedLastHead(),
 		PublishedLabel:    labelFingerprint(bundle),
-	})
+	}
 }
 
 // recordBlockedSignature marks a session sitting in a recorded gap at the
@@ -279,8 +288,9 @@ func (s *sessionScan) recordBlockedSignature(reason state.BlockedReason, observe
 		return s.local.RemoveScanSignature(s.id())
 	}
 	return s.local.SaveScanSignature(s.id(), state.ScanSignature{
-		SkillEvidence:  string(s.opts.skillEvidence()),
-		TranscriptSize: observed.size(), TranscriptMtime: observed.file.Mtime,
+		SourceSetVersion: sourceSetVersion(s.reg),
+		SkillEvidence:    string(s.opts.skillEvidence()),
+		TranscriptSize:   observed.size(), TranscriptMtime: observed.file.Mtime,
 		ParserVersion: s.parserVersion(), FilterVersion: archive.FilterVersion, AdapterVersion: adapterVersion,
 		SourceSignature: signaturePointer(*observed), SourceKind: observed.kind, CursorLastUpdatedAt: observed.cursor.LastUpdatedAt,
 		CursorHeaderCount: observed.cursor.HeaderCount, CursorLastBubbleID: observed.cursor.LastBubbleID,
@@ -298,4 +308,11 @@ func missingSource(reg archive.SessionRegistration) *sourceState {
 		return &sourceState{kind: archive.SourceKindCursorSQLite}
 	}
 	return &sourceState{}
+}
+
+func sourceSetVersion(reg archive.SessionRegistration) int {
+	if reg.Harness.Name == "codex" {
+		return 2
+	}
+	return 0
 }

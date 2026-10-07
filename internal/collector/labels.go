@@ -33,6 +33,9 @@ func (p *pass) observeLabels(ctx context.Context) {
 	if p.opts.Labels == nil {
 		return
 	}
+	if p.labelLocal == nil {
+		p.labelLocal, p.closeLabelResources = p.local.WithReadBudget(ctx, (&sessionScan{opts: p.opts}).readBudget())
+	}
 	providers := map[string]agentapi.LabelProvider{}
 	cache, err := p.local.LoadLabels()
 	if err != nil {
@@ -42,10 +45,7 @@ func (p *pass) observeLabels(ctx context.Context) {
 	eligible := map[string]archive.SessionRegistration{}
 	ids := []string{}
 	for _, reg := range p.registrations {
-		if reg.CaptureFrozen || reg.Imported() || p.unreadable[reg.ArchiveSessionID] || (p.opts.AcceptSession != nil && !p.opts.AcceptSession(reg)) {
-			continue
-		}
-		if p.local.GenerationCaptureAllowed(reg) != nil {
+		if !p.labelEligible(reg) {
 			continue
 		}
 		_, ok := providers[reg.Harness.Name]
@@ -68,7 +68,12 @@ func (p *pass) observeLabels(ctx context.Context) {
 			delete(cache.Entries, id)
 			continue
 		}
-		if entry.Label.State != "" && p.labelProofCurrent(id, entry) {
+		checksum, stamp, err := p.local.LabelRevision(id)
+		if err != nil {
+			delete(cache.Entries, id)
+			continue
+		}
+		if entry.Label.State != "" && stamp == entry.SourceStamp && (checksum == "" || checksum == entry.SourceChecksum) {
 			p.opts.labels[id] = entry
 		}
 	}
@@ -118,11 +123,11 @@ func (p *pass) observeLabels(ctx context.Context) {
 	}
 }
 
-// A cached label can owe publication during lookup backoff. Revalidate its
-// content-free state token before it may trigger any native or publication work.
-func (p *pass) labelProofCurrent(id string, entry state.LabelEntry) bool {
-	checksum, stamp, err := p.local.LabelRevision(id)
-	return err == nil && stamp == entry.SourceStamp && (checksum == "" || checksum == entry.SourceChecksum)
+func (p *pass) labelEligible(reg archive.SessionRegistration) bool {
+	if reg.CaptureFrozen || reg.Imported() || p.unreadable[reg.ArchiveSessionID] || (p.opts.AcceptSession != nil && !p.opts.AcceptSession(reg)) {
+		return false
+	}
+	return p.local.GenerationCaptureAllowed(reg) == nil
 }
 
 func (p *pass) prepareLabelRequests(ctx context.Context, providers map[string]agentapi.LabelProvider, cache *state.LabelCache, ids []string, eligible map[string]archive.SessionRegistration) []agentapi.LabelRequest {
@@ -152,7 +157,7 @@ func (p *pass) prepareLabelRequests(ctx context.Context, providers map[string]ag
 		contract := hex.EncodeToString(revision[:])
 		validContext := entry.Context.Contract == contract && entry.Context.NativeID == reg.NativeSessionID && stamp == entry.SourceStamp && (checksum == "" || checksum == entry.SourceChecksum)
 		if !validContext {
-			published, n, err := p.local.LoadLabelPublication(id, (16<<20)-p.labelBytes)
+			published, n, err := p.labelLocal.LoadLabelPublication(id, (16<<20)-p.labelBytes)
 			p.labelBytes += n
 			if p.opts.labelReadObserver != nil {
 				p.opts.labelReadObserver(n)
@@ -203,8 +208,8 @@ func labelPublicationOwned(published *state.Published, bundle archive.SourceBund
 	if bundle.ArchiveSessionID != reg.ArchiveSessionID || bundle.NativeSessionID != reg.NativeSessionID || bundle.Capture.Harness.Name != reg.Harness.Name {
 		return false
 	}
-	var metadata archive.Metadata
-	if json.Unmarshal(published.Metadata(), &metadata) != nil || metadata.SessionID != reg.ArchiveSessionID || metadata.NativeSessionID != reg.NativeSessionID || metadata.MachineID != machine || metadata.Harness.Name != reg.Harness.Name || metadata.ValidateSourceReference() != nil {
+	metadata, found, err := published.LastPublishedMetadata()
+	if err != nil || !found || metadata.SchemaVersion != archive.MetadataSchemaVersion || metadata.History != nil || bundle.SchemaVersion != archive.SourceSchemaVersion || bundle.History != nil || metadata.SessionID != reg.ArchiveSessionID || metadata.NativeSessionID != reg.NativeSessionID || metadata.MachineID != machine || metadata.Harness.Name != reg.Harness.Name {
 		return false
 	}
 	source, known := published.LastPublishedSource()
@@ -217,6 +222,16 @@ func (s *sessionScan) applyLabels(evidence []archive.SupplementalEvidence) []arc
 		return evidence
 	}
 	return archive.MergeSupplementalEvidence(evidence, []archive.SupplementalEvidence{entry.Label.Evidence(entry.ObservedAt, s.reg.Harness.Name)})
+}
+
+func withoutSessionLabels(evidence []archive.SupplementalEvidence) []archive.SupplementalEvidence {
+	out := make([]archive.SupplementalEvidence, 0, len(evidence))
+	for _, item := range evidence {
+		if item.Kind != archive.EvidenceKindSessionLabels {
+			out = append(out, item)
+		}
+	}
+	return out
 }
 
 func labelFingerprint(bundle archive.SourceBundle) string {
@@ -238,8 +253,11 @@ func (s *sessionScan) refreshLabels() (sessionOutcome, bool, error) {
 	if err != nil {
 		return outcomeSkipped, false, err
 	}
-	last, found := s.lastPublication(key)
-	if !found || last.bundle.History != nil || !sourceEvidenceWithinPolicy(last.bundle.SupplementalEvidence, s.opts.skillEvidence()) || labelFingerprint(last.bundle) == entry.Label.Fingerprint() {
+	last, found, err := s.lastPublication(key)
+	if err != nil {
+		return outcomeSkipped, false, err
+	}
+	if !found || !labelPublicationOwned(s.published, last.bundle, s.reg, s.opts.MachineID) || !sourceEvidenceWithinPolicy(last.bundle.SupplementalEvidence, s.opts.skillEvidence()) || labelFingerprint(last.bundle) == entry.Label.Fingerprint() {
 		return outcomeSkipped, false, nil
 	}
 	reader, hasReader := newSourceReader(s.reg, s.opts)
@@ -286,6 +304,15 @@ func (s *sessionScan) refreshLabels() (sessionOutcome, bool, error) {
 func (s *sessionScan) publishedLabel() string {
 	bundle, _, _ := s.published.LastPublished()
 	return labelFingerprint(bundle)
+}
+
+func (p *pass) releaseLabelResources() {
+	p.labelStates = nil
+	if p.closeLabelResources != nil {
+		p.closeLabelResources()
+		p.closeLabelResources = nil
+	}
+	p.labelLocal = nil
 }
 
 func prioritizeLabelRequests(requests []agentapi.LabelRequest, providers map[string]agentapi.LabelProvider, env agentapi.LabelEnvironment, cache *state.LabelCache) []agentapi.LabelRequest {

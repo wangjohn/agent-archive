@@ -41,8 +41,31 @@ func (s *Store) LabelRevision(id string) (string, string, error) {
 		return "", "", errors.New("label publication unavailable")
 	}
 	token := sha256.Sum256([]byte(fmt.Sprintf("%d:%d", info.Size(), info.ModTime().UnixNano())))
+	if summary, ok := readLabelSummary(s.publishedPath(id)); ok && (summary.CurrentRevision != "" || summary.SourceSchemaVersion == archive.HistorySourceSchemaVersion || summary.MetadataSchemaVersion == archive.HistoryMetadataSchemaVersion) {
+		return "", "", errors.New("external labels cannot use a retained history source set")
+	}
 	checksum := readLabelChecksum(s.publishedPath(id))
 	return checksum, hex.EncodeToString(token[:]), nil
+}
+
+// This optional rejection proof never falls back to an unbounded legacy-state
+// decode. Complete positive authority is checked by the capped publication read.
+func readLabelSummary(path string) (PublishedSummary, bool) {
+	f, err := os.Open(path)
+	if err != nil {
+		return PublishedSummary{}, false
+	}
+	defer func() { _ = f.Close() }()
+	d := json.NewDecoder(io.LimitReader(f, 4096))
+	if token, err := d.Token(); err != nil || token != json.Delim('{') {
+		return PublishedSummary{}, false
+	}
+	if key, err := d.Token(); err != nil || key != "summary" {
+		return PublishedSummary{}, false
+	}
+	var summary PublishedSummary
+	err = d.Decode(&summary)
+	return summary, err == nil
 }
 
 // LoadLabelPublication enforces an aggregate caller budget before a one-time context decode.
@@ -63,6 +86,26 @@ func (s *Store) LoadLabelPublication(id string, budget int64) (*Published, int64
 	if err != nil || !os.SameFile(info, opened) {
 		return nil, 0, errors.New("label context changed before read")
 	}
+	// Serialized input and decoded state coexist. The decoded charge remains
+	// owned by the caller's scope while its Published value is still borrowed.
+	keep := false
+	if s.resourceBudget != nil {
+		if err := s.resourceContext.Err(); err != nil {
+			return nil, 0, err
+		}
+		if !s.resourceBudget.Reserve(info.Size()) {
+			return nil, 0, errStateBudget
+		}
+		defer s.resourceBudget.Release(info.Size())
+		if !s.resourceBudget.Reserve(info.Size()) {
+			return nil, 0, errStateBudget
+		}
+		defer func() {
+			if !keep {
+				s.resourceBudget.Release(info.Size())
+			}
+		}()
+	}
 	// Retained state is plain JSON, including its native records. Limit the
 	// actual read as well as the stat so growth cannot defeat the byte cap.
 	data, err := io.ReadAll(io.LimitReader(f, info.Size()))
@@ -77,6 +120,13 @@ func (s *Store) LoadLabelPublication(id string, budget int64) (*Published, int64
 	p := &Published{store: s, id: id, found: true}
 	if err := json.Unmarshal(data, &p.state); err != nil {
 		return nil, int64(len(data)), err
+	}
+	if s.resourceBudget != nil {
+		if err := s.resourceContext.Err(); err != nil {
+			return nil, int64(len(data)), err
+		}
+		keep = true
+		*s.resourceReleases = append(*s.resourceReleases, func() { s.resourceBudget.Release(info.Size()) })
 	}
 	return p, int64(len(data)), nil
 }

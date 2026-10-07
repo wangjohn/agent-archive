@@ -15,77 +15,77 @@ import (
 // PrepareGenerationRecovery filters the current admitted file without reading
 // or rewriting retained history. The returned builder renders a fixed snapshot
 // with the latest locked registration and its explicit successor identity.
-func PrepareGenerationRecovery(ctx context.Context, reg archive.SessionRegistration, at time.Time, opts Options) (func(archive.SessionRegistration, string) (archive.SessionRegistration, state.PendingPublication, error), error) {
+// The caller closes the returned data lease
+// after the preview and any returned publication have finished their consumers.
+func PrepareGenerationRecovery(ctx context.Context, reg archive.SessionRegistration, at time.Time, opts Options) (builder func(archive.SessionRegistration, string) (archive.SessionRegistration, state.PendingPublication, error), release func(), resultErr error) {
 	if reg.ParentSessionID != "" || !reg.ReadsTranscriptFile() {
-		return nil, errors.New("recovery supports top-level transcript files only; start a fresh parent session for subagent recovery")
+		return nil, func() {}, errors.New("recovery supports top-level transcript files only; start a fresh parent session for subagent recovery")
 	}
 	semantics, err := sourceSemantics(opts.Sources, reg)
 	if err != nil {
-		return nil, err
+		return nil, func() {}, err
 	}
 	if semantics.Mutation != agentapi.AppendOnly {
-		return nil, errors.New("recovery requires an append-only native transcript")
+		return nil, func() {}, errors.New("recovery requires an append-only native transcript")
 	}
 	adapter, err := sourceAdapter(opts.Sources, reg.Harness.Name)
 	if err != nil {
-		return nil, err
+		return nil, func() {}, err
 	}
+	owner := newSessionScan(ctx, nil, nil, reg, state.Request{}, nil, at, opts)
+	closePass := openCursorPass(nil, &owner.opts)
+	keep := false
+	defer func() {
+		resultErr = errors.Join(resultErr, closePass())
+		if !keep || resultErr != nil {
+			owner.releaseRetained()
+			builder, release = nil, func() {}
+		}
+	}()
+	opts = owner.opts
 	reader, available := newSourceReader(reg, opts)
 	if !available {
-		return nil, errors.New("current native transcript is unavailable")
+		return nil, func() {}, errors.New("current native transcript is unavailable")
 	}
 	filtered, _, err := reader.Filter(ctx, adapter, opts.maxTranscriptBytes())
 	if err != nil {
-		return nil, fmt.Errorf("filter current native transcript: %w", err)
+		return nil, func() {}, fmt.Errorf("filter current native transcript: %w", err)
 	}
 	// Recovery may replace a compacted transcript, but cannot reassign evidence
 	// from another native session. An authoritative retained metadata identity
 	// wins; copied/resumed records may contain several ownership IDs provided the
 	// admitted session is among them. Missing identity facts retain hook authority.
 	if filtered.LocalIdentity.ID != "" && filtered.LocalIdentity.ID != reg.NativeSessionID || len(filtered.SessionIDs) > 0 && !slices.Contains(filtered.SessionIDs, reg.NativeSessionID) {
-		return nil, errors.New("current transcript identity differs from the registered session; recovery cannot attach another native session")
+		return nil, func() {}, errors.New("current transcript identity differs from the registered session; recovery cannot attach another native session")
 	}
 	// Verify the candidate before presenting confirmation; no journal or archive ID
 	// is allocated for empty/unsafe input or a publication excluded by skill policy.
-	preview, err := archive.NewSourceBundle(reg, adapter, filtered, at, nil)
+	previewOwner := len(owner.retainedReleases)
+	preview, err := owner.newSourceBundle(reg, adapter, filtered, at, nil)
 	if err != nil {
-		return nil, err
+		return nil, func() {}, err
 	}
-	if err := archive.CheckHistoryMutation(preview, archive.Metadata{}); err != nil {
-		return nil, err
+	if err := preview.ValidateHistory(); err != nil {
+		return nil, func() {}, err
 	}
 	if opts.RequireSkillUse {
+		mark := len(owner.retainedReleases)
 		rendered, err := renderPublication(ctx, opts.parserFor(reg.Harness.Name), opts.parserVersionFor(reg.Harness.Name), preview, reg, at, opts, func() string { return reg.RepoKey })
 		if err != nil {
-			return nil, err
+			return nil, func() {}, err
 		}
+		owner.releaseRetainedAfter(mark)
 		if rendered.declined {
-			return nil, errors.New("current transcript does not meet configured skill-use policy")
+			return nil, func() {}, errors.New("current transcript does not meet configured skill-use policy")
 		}
 	}
 	if len(preview.NativeRecords) == 0 && len(preview.NativeText) == 0 {
-		return nil, errors.New("current transcript retains no evidence")
+		return nil, func() {}, errors.New("current transcript retains no evidence")
 	}
-	return func(latest archive.SessionRegistration, id string) (archive.SessionRegistration, state.PendingPublication, error) {
-		if latest.NativeSessionID != reg.NativeSessionID || latest.ProjectRoot != reg.ProjectRoot || latest.TranscriptPath != reg.TranscriptPath || latest.DestinationID != reg.DestinationID {
-			return latest, state.PendingPublication{}, errors.New("registration changed during recovery; preview again")
-		}
-		latest.ArchiveSessionID = id
-		latest.PreviousGenerationID = reg.ArchiveSessionID
-		bundle, err := archive.NewSourceBundle(latest, adapter, filtered, at, nil)
-		if err != nil {
-			return latest, state.PendingPublication{}, err
-		}
-		rendered, err := renderPublication(ctx, opts.parserFor(latest.Harness.Name), opts.parserVersionFor(latest.Harness.Name), bundle, latest, at, opts, func() string { return latest.RepoKey })
-		if err != nil {
-			return latest, state.PendingPublication{}, err
-		}
-		if rendered.declined {
-			return latest, state.PendingPublication{}, errors.New("current transcript does not meet configured skill-use policy")
-		}
-		pending := state.PendingPublication{SkillEvidence: string(opts.skillEvidence()), Bundle: bundle, SourceKey: rendered.source.Key, SourceSHA256: rendered.source.SHA256, SourceBytes: rendered.sourceBytes, MetadataKey: rendered.metadataKey, MetadataBytes: rendered.metadata, ReadyAt: at, Attempted: true}
-		return latest, pending, nil
-	}, nil
+	owner.releaseRetainedIndex(previewOwner)
+	keep = true
+	builder, release = generationRecoveryBuilder(ctx, owner, filtered, adapter)
+	return builder, release, nil
 }
 
 // maintainFrozen runs only from retained evidence. Privacy and parser upgrades
@@ -102,6 +102,9 @@ func (s *sessionScan) maintainFrozen() (sessionOutcome, error) {
 	if pending, found, err := s.local.LoadPending(s.id()); err != nil {
 		return outcomeSkipped, err
 	} else if found {
+		if pending.History != nil {
+			return s.resumeHistory(pending)
+		}
 		if pending.Bundle.Capture.FilterVersion != archive.FilterVersion || pending.Bundle.Capture.AdapterVersion != adapter.Version() || !sourceEvidenceWithinPolicy(pending.Bundle.SupplementalEvidence, s.opts.skillEvidence()) {
 			// Stronger privacy supersedes a retained-history maintenance retry.
 			// Rebuild below from the last acknowledged publication, without native
@@ -124,14 +127,14 @@ func (s *sessionScan) maintainFrozen() (sessionOutcome, error) {
 		}
 	}
 	updated := mergeSupplementalEvidence(bundle.SupplementalEvidence, retained)
-	sameLinks, err := jsonEncodingsEqual(bundle.SupplementalEvidence, updated)
+	sameLinks, err := s.jsonEncodingsEqual(bundle.SupplementalEvidence, updated)
 	if err != nil {
 		return outcomeSkipped, err
 	}
 	if !sameLinks || bundle.Capture.FilterVersion != archive.FilterVersion || bundle.Capture.AdapterVersion != adapter.Version() || !sourceEvidenceWithinPolicy(bundle.SupplementalEvidence, s.opts.skillEvidence()) {
 		bundle.SupplementalEvidence = updated
 		bundle.SupplementalEvidence = limitSkillEvidence(bundle.SupplementalEvidence, s.opts.skillEvidence())
-		filtered, err := refilterBundle(s.ctx, s.reg, adapter, bundle)
+		filtered, err := s.refilterRetained(adapter, bundle)
 		if err != nil {
 			return outcomeSkipped, fmt.Errorf("refilter frozen retained history: %w", err)
 		}
@@ -174,7 +177,7 @@ func (p *pass) unchangedFrozenSinceLastScan(reg archive.SessionRegistration) (bo
 		return false, signature, err
 	}
 	signature, found, err := p.local.LoadScanSignature(reg.ArchiveSessionID)
-	if err != nil || !found || !signature.Frozen || signature.Failed {
+	if err != nil || !found || !signature.Frozen || signature.SourceSetVersion != sourceSetVersion(reg) || signature.Failed {
 		return false, signature, err
 	}
 	adapterVersion, known := harnessAdapterVersion(p.opts.Sources, reg.Harness.Name)
@@ -199,9 +202,64 @@ func (s *sessionScan) recordFrozenSignature() error {
 	if !known {
 		return nil
 	}
+	summary := s.published.Summary()
 	return s.local.SaveScanSignature(s.id(), state.ScanSignature{
-		Frozen: true, SkillEvidence: string(s.opts.skillEvidence()),
+		SourceSetDigest: summary.SourceSetDigest, CurrentRevision: summary.CurrentRevision,
+		SourceSchemaVersion: summary.SourceSchemaVersion, MetadataSchemaVersion: summary.MetadataSchemaVersion,
+		SourceSetComplete: summary.SourceSetComplete, MeaningfulCapturedAt: summary.MeaningfulCapturedAt,
+		SourceSetVersion: sourceSetVersion(s.reg),
+		Frozen:           true, SkillEvidence: string(s.opts.skillEvidence()),
 		ParserVersion: s.parserVersion(), FilterVersion: archive.FilterVersion,
 		AdapterVersion: adapterVersion, PublishedLastHead: s.publishedLastHead(),
 	})
+}
+
+// generationRecoveryBuilder retains immutable preview data until every returned
+// publication finishes its consumer, including durable confirmation.
+func generationRecoveryBuilder(ctx context.Context, owner *sessionScan, filtered archive.FilteredTranscript, adapter archive.Adapter) (func(archive.SessionRegistration, string) (archive.SessionRegistration, state.PendingPublication, error), func()) {
+	reg, at, opts := owner.reg, owner.now, owner.opts
+	closed := false
+	closeData := func() { closed = true; owner.releaseRetained() }
+	return func(latest archive.SessionRegistration, id string) (archive.SessionRegistration, state.PendingPublication, error) {
+		if closed {
+			return latest, state.PendingPublication{}, agentapi.ErrClosed
+		}
+		if err := ctx.Err(); err != nil {
+			return latest, state.PendingPublication{}, err
+		}
+		if latest.NativeSessionID != reg.NativeSessionID || latest.ProjectRoot != reg.ProjectRoot || latest.TranscriptPath != reg.TranscriptPath || latest.DestinationID != reg.DestinationID {
+			return latest, state.PendingPublication{}, errors.New("registration changed during recovery; preview again")
+		}
+		mark := len(owner.retainedReleases)
+		returned := false
+		defer func() {
+			if !returned {
+				owner.releaseRetainedAfter(mark)
+			}
+		}()
+		latest.ArchiveSessionID = id
+		latest.PreviousGenerationID = reg.ArchiveSessionID
+		bundle, err := owner.newSourceBundle(latest, adapter, filtered, at, nil)
+		if err != nil {
+			return latest, state.PendingPublication{}, err
+		}
+		rendered, err := renderPublication(ctx, opts.parserFor(latest.Harness.Name), opts.parserVersionFor(latest.Harness.Name), bundle, latest, at, opts, func() string { return latest.RepoKey })
+		if err != nil {
+			return latest, state.PendingPublication{}, err
+		}
+		if rendered.declined {
+			return latest, state.PendingPublication{}, errors.New("current transcript does not meet configured skill-use policy")
+		}
+		var history *state.PendingHistory
+		if bundle.History != nil {
+			// The original generation retains all alternatives under its prefix.
+			history = &state.PendingHistory{Version: 1, FilterVersion: bundle.Capture.FilterVersion, AdapterVersion: bundle.Capture.AdapterVersion, PreparedAt: at}
+		}
+		pending := state.PendingPublication{History: history, SkillEvidence: string(opts.skillEvidence()), Bundle: bundle, SourceKey: rendered.source.Key, SourceSHA256: rendered.source.SHA256, SourceBytes: rendered.sourceBytes, MetadataKey: rendered.metadataKey, MetadataBytes: rendered.metadata, ReadyAt: at, Attempted: true}
+		if err := pending.ValidateHistoryBudgeted(id, owner.readBudget()); err != nil {
+			return latest, state.PendingPublication{}, err
+		}
+		returned = true
+		return latest, pending, nil
+	}, closeData
 }

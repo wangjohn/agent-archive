@@ -19,7 +19,9 @@ follow [Semantic Versioning](https://semver.org/).
   0.159.2 settled storage, including verified legacy database/index fallback. Changes publish filtered
   source evidence without renewing activity or retention; unavailable live-WAL
   storage preserves the last verified name. Deferred lookup targets rotate within
-  prioritized homes even after backoff expires. The default files mode starts no native process.
+  prioritized homes even after backoff expires. Names that cannot remain stable
+  through privacy filtering preserve the last verified name. The default files
+  mode starts no native process.
 
 
 ### Added
@@ -44,6 +46,14 @@ follow [Semantic Versioning](https://semver.org/).
   coverage remains tracked for release testing.
 
 ### Fixed
+
+- Pairing accepts relative filenames beginning with `aa-pair`, including existing
+  files named `aa-pair1:backup.txt`, instead of mistaking them for pasted pairing text.
+
+- Machine pairing guides file or clipboard transfer, prints a receiver command
+  using the transferred filename, and shows the code after transfer. Receivers
+  accept file paths or pasted pairing text; spare preparation waits until delivery
+  finishes.
 
 - Deleted Codex worktrees can recover an existing configured project from a
   unique recorded repository identity, or an exact historical backfill mapping.

@@ -98,6 +98,8 @@ type Config struct {
 	// MCPServerNames supplies display labels for server IDs in stats.
 	MCPServerNames map[string]string `json:"mcp_server_names,omitempty"`
 
+	// CodexHistoryProtection permanently fences writers without revision lifecycle support.
+	CodexHistoryProtection bool `json:"codex_history_protection,omitempty"`
 	// GenerationProtection permanently fences writers that cannot freeze archive generations.
 	GenerationProtection bool               `json:"generation_protection,omitempty"`
 	SchemaVersion        int                `json:"schema_version"`

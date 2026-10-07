@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -359,23 +360,35 @@ func BuildCompressedSource(bundle SourceBundle) (CompressedSource, error) {
 		return CompressedSource{}, err
 	}
 	var output bytes.Buffer
-	writer, err := gzip.NewWriterLevel(&output, gzip.DefaultCompression)
-	if err != nil {
+	if err := CompressSource(&output, bundle); err != nil {
 		return CompressedSource{}, err
+	}
+	bytes := output.Bytes()
+	digest := sha256.Sum256(bytes)
+	return CompressedSource{Bytes: append([]byte(nil), bytes...), SHA256: hex.EncodeToString(digest[:])}, nil
+}
+
+// CompressSource streams the canonical deterministic source gzip to output.
+// The caller owns output's allocation and lifetime; errors publish no authority.
+func CompressSource(output io.Writer, bundle SourceBundle) error {
+	if err := validateBundle(bundle); err != nil {
+		return err
+	}
+	writer, err := gzip.NewWriterLevel(output, gzip.DefaultCompression)
+	if err != nil {
+		return err
 	}
 	// A non-zero epoch avoids gzip's special "unknown time" representation
 	// while remaining independent of capture and wall-clock time.
 	writer.ModTime = time.Unix(1, 0).UTC()
 	writer.OS = 255
 	if err = EncodeSource(writer, bundle); err != nil {
-		return CompressedSource{}, err
+		return err
 	}
 	if err = writer.Close(); err != nil {
-		return CompressedSource{}, err
+		return err
 	}
-	bytes := output.Bytes()
-	digest := sha256.Sum256(bytes)
-	return CompressedSource{Bytes: append([]byte(nil), bytes...), SHA256: hex.EncodeToString(digest[:])}, nil
+	return nil
 }
 
 func validateBundle(bundle SourceBundle) error {
