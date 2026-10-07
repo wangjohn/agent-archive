@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/codexmeta"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 )
@@ -56,29 +57,36 @@ const (
 
 // Observation is one bounded metadata probe and its typed outcome.
 type Observation struct {
-	// SourceInfo is the transient observation that produced the header.
 	SourceInfo os.FileInfo `json:"-"`
-	Candidate  Candidate
-	Outcome    Outcome
-	Bytes      int64
+	// Identity is validated native lookup evidence, independent of Candidate admission.
+	Identity             *codexmeta.CodexIdentity
+	NativeCreatedAt      time.Time
+	Candidate            Candidate
+	Outcome              Outcome
+	Bytes                int64
+	NativeReadBytes      int64 `json:"-"`
+	NativeReadOperations int64 `json:"-"`
 }
 
 // Fingerprint is a retry/scheduling hint, never native start evidence.
 type Fingerprint struct {
-	Size  int64
-	Mtime int64
+	Size  int64 `json:"Size"`
+	Mtime int64 `json:"Mtime"`
 }
 
 // SourceEntry is a source or child directory in a bounded enumeration batch.
 type SourceEntry struct {
-	Source      SourceDescriptor
-	Fingerprint Fingerprint
-	Directory   string
+	// CoverageFingerprint includes every directory entry, even non-rollouts.
+	CoverageFingerprint string
+	Source              SourceDescriptor
+	Fingerprint         Fingerprint
+	Directory           string
 }
 
 // SourceBatch carries a durable enumeration cookie and at most 256 entries.
 // A cookie is a coverage hint, never freshness or completeness evidence.
 type SourceBatch struct {
+	coverage     *coverageBatch
 	Entries      []SourceEntry
 	Continuation int64
 	Complete     bool
@@ -121,16 +129,23 @@ func (a codexAdapter) Enumerate(ctx context.Context, root, path string, cookie i
 	if err := ctx.Err(); err != nil {
 		return SourceBatch{}, err
 	}
+	stampBefore := directoryCoverageStamp(root, path)
 	names, next, complete, err := readBatch(directory{Root: root, Path: path, Offset: cookie})
 	if err != nil {
 		return SourceBatch{}, err
 	}
-	b := SourceBatch{Continuation: next, Complete: complete}
+	stampAfter := directoryCoverageStamp(root, path)
+	b := SourceBatch{Continuation: next, Complete: complete, coverage: &coverageBatch{Stamp: stampBefore, Unavailable: stampBefore == "" || stampBefore != stampAfter}}
 	for _, name := range names {
 		if err := ctx.Err(); err != nil {
 			return SourceBatch{}, err
 		}
-		b.Entries = append(b.Entries, a.Describe(root, path, name))
+		entry := a.Describe(root, path, name)
+		b.Entries = append(b.Entries, entry)
+		if entry.CoverageFingerprint == "" {
+			b.coverage.Unavailable = true
+		}
+		b.coverage.Entries = append(b.coverage.Entries, entry.CoverageFingerprint)
 	}
 	return b, nil
 }
@@ -142,21 +157,21 @@ func (codexAdapter) Describe(root, path, name string) SourceEntry {
 		return SourceEntry{}
 	}
 	if info.IsDir() {
-		return SourceEntry{Directory: filepath.Join(path, name)}
+		return SourceEntry{Directory: filepath.Join(path, name), CoverageFingerprint: entryFingerprint(name, info)}
 	}
 	if !info.Mode().IsRegular() || !strings.HasPrefix(name, "rollout-") || sourcefacts.RolloutID(name) == "" {
-		return SourceEntry{}
+		return SourceEntry{CoverageFingerprint: entryFingerprint(name, info)}
 	}
 	priority := 0
 	if local.PathWithin(loc, filepath.Join(root, "archived_sessions")) {
 		priority = 1
 	}
-	return SourceEntry{Source: SourceDescriptor{Priority: priority, Kind: archive.SourceKindFile, StableKey: sourcefacts.RolloutID(name), Locator: loc, Root: root}, Fingerprint: Fingerprint{Size: info.Size(), Mtime: info.ModTime().UnixNano()}}
+	return SourceEntry{CoverageFingerprint: entryFingerprint(name, info), Source: SourceDescriptor{Priority: priority, Kind: archive.SourceKindFile, StableKey: sourcefacts.RolloutID(name), Locator: loc, Root: root}, Fingerprint: Fingerprint{Size: info.Size(), Mtime: info.ModTime().UnixNano()}}
 }
 
 func (a codexAdapter) Inspect(ctx context.Context, source SourceDescriptor) Observation {
 	h := sourcefacts.ReadHeader(ctx, source.Root, source.Locator)
-	o := Observation{Outcome: Outcome(h.Outcome), Bytes: h.Bytes, SourceInfo: h.SourceInfo}
+	o := Observation{SourceInfo: h.SourceInfo, Outcome: Outcome(h.Outcome), Bytes: h.Bytes, Identity: h.Identity, NativeCreatedAt: h.NativeCreatedAt, NativeReadBytes: h.NativeReadBytes, NativeReadOperations: h.NativeReadOperations}
 	if o.Outcome != outcomeUsable {
 		return o
 	}

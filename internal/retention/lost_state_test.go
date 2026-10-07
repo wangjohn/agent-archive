@@ -49,8 +49,8 @@ func TestSessionWhosePublishedStateWasLostIsStillDeletedFromTheBucket(t *testing
 		t.Fatalf("errors = %v", r.Errors)
 	}
 	collect(t, local, store, t0.Add(2*time.Hour))
-	if summary, found, _ := local.LoadPublishedSummary("s1"); found && summary.Published {
-		t.Fatal("test precondition: the session should look never published")
+	if summary, found, err := local.LoadPublishedSummary("s1"); err != nil || !found || !summary.Published || !summary.SourceSetComplete {
+		t.Fatal("verified remote authority was not recovered", err)
 	}
 	result := sweep(t, local, store, t0.Add(retentionWindow+time.Hour), Options{})
 	if len(result.Errors) != 0 || len(result.DeletedSessions) != 1 {

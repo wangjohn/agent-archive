@@ -66,15 +66,43 @@ func (s *sessionScan) rewrittenSinceCapture(read sourceRead) (bool, error) {
 // now drop or redact changes. What the earlier filter already dropped stays
 // dropped.
 func refilterBundle(ctx context.Context, reg archive.SessionRegistration, adapter archive.Adapter, bundle archive.SourceBundle) (archive.SourceBundle, error) {
-	if err := archive.CheckHistoryMutation(bundle, archive.Metadata{}); err != nil {
+	return refilterBundleBounded(ctx, reg, adapter, bundle, agentapi.ReadLimits{})
+}
+
+func refilterBundleBounded(ctx context.Context, reg archive.SessionRegistration, adapter archive.Adapter, bundle archive.SourceBundle, limits agentapi.ReadLimits) (archive.SourceBundle, error) {
+	if err := ctx.Err(); err != nil {
 		return archive.SourceBundle{}, err
 	}
-	filtered, err := refilterNative(ctx, reg, adapter, bundle)
+	if bundle.SchemaVersion != archive.SourceSchemaVersion && bundle.SchemaVersion != archive.HistorySourceSchemaVersion {
+		return archive.SourceBundle{}, errors.New("unsupported retained source schema")
+	}
+	if bundle.ArchiveSessionID != reg.ArchiveSessionID || bundle.NativeSessionID != reg.NativeSessionID || bundle.ProjectID != reg.ProjectID || bundle.Capture.Harness.Name != reg.Harness.Name || bundle.ParentSessionID != reg.ParentSessionID {
+		return archive.SourceBundle{}, errors.New("retained refilter identity mismatch")
+	}
+	if err := bundle.ValidateHistory(); err != nil {
+		return archive.SourceBundle{}, err
+	}
+	var filtered archive.FilteredTranscript
+	var err error
+	if limits.FilteredBytes > 0 {
+		f, ok := adapter.(agentapi.BoundedTranscriptRefilter)
+		if !ok {
+			return archive.SourceBundle{}, errRetainedBudget
+		}
+		filtered, err = f.RefilterBounded(ctx, bundle, reg.SessionStartedAt, limits)
+	} else {
+		filtered, err = refilterNative(ctx, reg, adapter, bundle)
+	}
 	if err != nil {
 		return archive.SourceBundle{}, err
 	}
 	refiltered, err := archive.NewSourceBundle(reg, adapter, filtered, bundle.Capture.CapturedAt, bundle.SupplementalEvidence)
 	if err != nil {
+		return archive.SourceBundle{}, err
+	}
+	// Retained maintenance cannot adopt current producer/version observations.
+	refiltered.Capture.Harness = bundle.Capture.Harness
+	if err := refiltered.ValidateHistory(); err != nil {
 		return archive.SourceBundle{}, err
 	}
 	refiltered.Capture.Gaps = mergeCaptureGaps(bundle.Capture.Gaps, refiltered.Capture.Gaps)
@@ -110,14 +138,14 @@ func mergeCaptureGaps(first, second []archive.CaptureGap) []archive.CaptureGap {
 // snapshot that cannot be filtered again leaves candidate to replace it, as
 // before this existed, with a warning: the new filter's output, though
 // poorer, is still safer to publish than the old filter's.
-func (s *sessionScan) refilterRewritten(ctx context.Context, read sourceRead, snapshot, candidate archive.SourceBundle) (_ archive.SourceBundle, replaced bool, err error) {
+func (s *sessionScan) refilterRewritten(_ context.Context, read sourceRead, snapshot, candidate archive.SourceBundle) (_ archive.SourceBundle, replaced bool, err error) {
 	rewritten, err := s.rewrittenSinceCapture(read)
 	if err != nil || !rewritten {
 		return candidate, false, err
 	}
-	refiltered, err := refilterBundle(ctx, s.reg, read.adapter, snapshot)
+	refiltered, err := s.refilterRetained(read.adapter, snapshot)
 	if err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		if errors.Is(err, agentapi.ErrReadBudget) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return candidate, false, err
 		}
 		s.warn(fmt.Errorf("filter the retained snapshot of a rewritten transcript again (the rewritten transcript replaces it): %w", err))

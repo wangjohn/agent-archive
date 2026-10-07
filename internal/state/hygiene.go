@@ -120,7 +120,7 @@ func (s *Store) ForCollectorPass() *Store {
 // when the store belongs to a collector pass (the error then wraps
 // ErrQuarantined, once) and reported otherwise.
 func (s *Store) readOwned(path string, value any) (found bool, err error) {
-	err = local.Read(path, value)
+	err = s.readBudgeted(path, value, true)
 	switch {
 	case err == nil:
 		return true, nil

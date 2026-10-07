@@ -98,7 +98,7 @@ func TestAQueuedReplayStartIsAdmittedAsAReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := handleBatch(home, "claude", batch, at, busy, nil, eventOptions{replay: &archive.Replay{RunID: "run-7"}, decoders: testDecoders}); err != nil {
+	if err := handleBatch(home, "claude", batch, at, busy, nil, eventOptions{replay: &archive.Replay{RunID: "run-7"}}); err != nil {
 		t.Fatalf("queued start: %v", err)
 	}
 	release()
