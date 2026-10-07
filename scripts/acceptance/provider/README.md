@@ -16,9 +16,12 @@ kernel/OS, Go and Git versions. Labels follow the [official runner
 reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
 This is execution, separate from the existing architecture release cross-builds.
 Synthetic producer fixtures do not establish actual Codex/Cursor/app-version
-support. The inherited native published-writer script must execute both available
-old assets after the owning deletion dependency lands. Linux has no published old
-assets: any source-tag build must be labeled separately.
+support. The native asset wrapper executes both pinned Darwin amd64 releases v0.1.0
+and v0.1.1 through the inherited config-refusal and history-command engines.
+Darwin arm64 executes pinned v0.1.1 config-refusal checks; a v0.1.0 arm64
+asset is not pinned or claimed. Linux has no published old assets: any source-tag
+build must be labeled separately. These synthetic endpoint checks are separate
+from genuine MinIO acceptance.
 
 The Linux amd64 provider job executes `bash scripts/acceptance/provider/host.sh`
 inside a fresh disposable non-root Actions VM. It requires Docker already supplied
@@ -90,3 +93,13 @@ acceptance before readiness. MinIO establishes genuine disposable S3-compatible
 behavior; it does not establish AWS/R2 account permissions, live app layouts,
 network homes, or other provider-specific guarantees. Record those gaps where the
 task or supported-provider correctness contract requires them.
+
+The provider suite also exercises purge preservation at the complete 65-reference
+bound, corrupt/incomplete/unreadable selecting metadata refusal, uncertain
+metadata-first owned deletion after native loss, service-clock retention expiry,
+new-hook exact restoration and missing/changed restoration-intent refusal.
+Full-history deletion uses the production inner journal/verification/namespace
+ports while explicitly asserting the public history fence. Privacy retirement
+uses actual CLI verification evidence and the production full-selection cleanup
+guard; every retained revision is read back with content and capture-age checks.
+Successful outer historical lifecycle commands remain prospective P4c acceptance.

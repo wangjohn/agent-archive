@@ -82,10 +82,18 @@ export AA_PROVIDER_ACCESS="$access" AA_PROVIDER_SECRET="$secret" AA_PROVIDER_BUC
 # Go test source/native/state stays under temporary roots. The provider adapter
 # also refuses ambient credentials, redirects, non-loopback origins and runaway requests.
 cd "$root"
-CGO_ENABLED=1 go test -json -race -p 2 -count=1 -timeout=8m -run '^TestProvider' ./internal/collector > "$AA_ACCEPTANCE_OUTPUT/provider-tests.jsonl"
+CGO_ENABLED=1 go test -json -race -p 2 -count=1 -timeout=8m -run '^TestProvider' ./internal/collector ./internal/purge ./internal/retention ./internal/cli > "$AA_ACCEPTANCE_OUTPUT/provider-tests.jsonl"
 python3 scripts/acceptance/provider/verify-results.py "$AA_ACCEPTANCE_OUTPUT/provider-tests.jsonl" \
   TestProviderAdmissionSurvivesNativeLossAndUncertainCommit \
   TestProviderFullSetPrivacyReadbackAndIndependentWinner \
   TestProviderIndependentOwnersPublishAndReadSeparateSessions \
   TestProviderImmutableMismatchNeverOverwritesSource \
-  TestProviderPublishedSourceSurvivesNativeAndLocalStateLoss > "$AA_ACCEPTANCE_OUTPUT/provider-summary.json"
+  TestProviderPublishedSourceSurvivesNativeAndLocalStateLoss \
+  TestProviderPurgePreservesMaximumRetainedSetAndContent \
+  TestProviderPurgeAmbiguousSelectingMetadataFailsClosed \
+  TestProviderOwnedDeletionResumesUncertainAcknowledgement \
+  TestProviderRetentionExpiryUsesServiceClock \
+  TestProviderRetentionRestoresAfterNewHook \
+  TestProviderRestorationMissingOrChangedIntentRetainsPending \
+  TestProviderFullSetDeletionInnerPortsPreserveFence \
+  TestProviderPrivacyRetirementRequiresVerifiedFullSelection > "$AA_ACCEPTANCE_OUTPUT/provider-summary.json"

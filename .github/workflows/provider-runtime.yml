@@ -6,6 +6,7 @@ on:
       - 'internal/**'
       - 'scripts/acceptance/**'
       - 'scripts/test_published_writer.sh'
+      - 'scripts/test_history_published_compatibility.py'
   workflow_dispatch:
 permissions:
   contents: read
@@ -72,10 +73,11 @@ jobs:
       - name: Execute published Darwin compatibility assets
         if: runner.os == 'macOS'
         env:
+          AA_ACCEPTANCE_OUTPUT: ${{ runner.temp }}/acceptance-evidence
           GOMAXPROCS: '2'
           GOFLAGS: '-p=2'
           GOCACHE: ${{ runner.temp }}/native-runtime-go-cache
-        run: bash scripts/test_published_writer.sh > "$RUNNER_TEMP/acceptance-evidence/published-writers.txt" 2>&1
+        run: bash scripts/acceptance/provider/published-assets.sh > "$RUNNER_TEMP/acceptance-evidence/published-writers.txt" 2>&1
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
