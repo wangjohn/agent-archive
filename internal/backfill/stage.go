@@ -2,6 +2,8 @@ package backfill
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"github.com/wangjohn/agent-archive/internal/agentapi"
@@ -10,6 +12,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/state"
+	"reflect"
 )
 
 // materialize uses one provider snapshot for header, identity and privacy
@@ -38,15 +41,8 @@ func (r Registration) materialize(ctx context.Context, c Candidate, reg *archive
 		return out, err
 	}
 	defer func() { err = errors.Join(err, snap.Close()) }()
-	if c.SourceKind == archive.SourceKindCursorSQLite {
-		facts, ok := snap.(agentapi.AdmissionCatalogSnapshot)
-		if !ok || c.reviewedChat == nil {
-			return out, errors.New("durable Cursor import reviewed identity facts unavailable")
-		}
-		chat := facts.AdmissionChat()
-		if chat != *c.reviewedChat || chat.ID != c.NativeSessionID || chat.KeyID != c.SourceKey || !chat.CreatedAt.Equal(c.StartedAt) || chat.Malformed {
-			return out, errors.New("durable Cursor import identity, workspace or selection changed; review again")
-		}
+	if err = checkAdmissionChat(c, snap); err != nil {
+		return out, err
 	}
 	input := snap.Input()
 	var header agentapi.NativeHeader
@@ -60,6 +56,9 @@ func (r Registration) materialize(ctx context.Context, c Candidate, reg *archive
 	if err != nil {
 		return out, err
 	}
+	if child == nil && c.reviewedPrefix != "" && (len(filtered.Records) < c.reviewedRecords || filteredPrefixDigest(filtered, c.reviewedRecords) != c.reviewedPrefix) {
+		return out, errors.New("durable import reviewed source selection changed; review again")
+	}
 	if int64(filtered.Boundary.RetainedBytes) > state.AdmissionStageFilteredLimit {
 		return out, archive.ErrSourceTooLarge
 	}
@@ -71,27 +70,8 @@ func (r Registration) materialize(ctx context.Context, c Candidate, reg *archive
 	if c.sourceAdmissionCurrent != nil && !c.sourceAdmissionCurrent() {
 		return out, errors.New("durable import reviewed file identity or creation changed")
 	}
-	if child != nil {
-		if err = collector.CheckImportedSubagent(filtered, reg.ParentNativeSessionID, child.AgentID, c.StartedAt, r.AdmittedAt); err != nil {
-			return out, err
-		}
-		reg.SessionStartedAt = filtered.NativeStartAt
-	} else {
-		imports, ok := r.Sources.(agentapi.ImportsLookup)
-		if !ok {
-			return out, errors.New("durable import identity capability unavailable")
-		}
-		inspector, ok := imports.LookupImport(c.Harness)
-		if !ok {
-			return out, errors.New("durable import identity inspection unavailable")
-		}
-		inspection, e := inspector.InspectImport(ctx, agentapi.ImportInspectionRequest{Session: agentapi.NativeSession{Agent: agentmeta.ID(archive.CanonicalHarness(c.Harness)), NativeID: c.NativeSessionID}, Source: ref, Header: header, Filtered: filtered})
-		if e != nil {
-			return out, e
-		}
-		if !inspection.Conversation || inspection.IdentityMismatch || (!inspection.StartedAt.IsZero() && !inspection.StartedAt.Equal(c.StartedAt)) {
-			return out, errors.New("durable import selected conversation changed")
-		}
+	if err = r.checkMaterializedIdentity(ctx, c, reg, child, header, filtered); err != nil {
+		return out, err
 	}
 	return archive.NewSourceBundle(*reg, filter, filtered, r.AdmittedAt, supplemental)
 }
@@ -155,27 +135,21 @@ func (r Registration) prepareWork(ctx context.Context, cfg config.Config, w *par
 	if !cfg.DurableImportProtection {
 		return errors.New("durable import writer fence was not committed")
 	}
-	if prior, retained, digest, found, e := r.Store.PreparedAdmissionStage(w.id); e != nil {
-		return e
-	} else if found {
-		current := reg
-		current.AdmittedAt = prior.Reservation.AdmittedAt
-		current.RegisteredAt = prior.Reservation.RegisteredAt
-		if state.CheckAdmissionStageOwnership(current, prior) != nil || prior.SkillEvidence != string(cfg.EffectiveSkillEvidence()) || !r.stagePrivacyCurrent(retained) {
+	prior, retained, priorDigest, found, err := r.Store.PreparedAdmissionStage(w.id)
+	if err != nil {
+		return err
+	}
+	if found {
+		reg.AdmittedAt = prior.Reservation.AdmittedAt
+		reg.RegisteredAt = prior.Reservation.RegisteredAt
+		if state.CheckAdmissionStageOwnership(reg, prior) != nil || prior.SkillEvidence != string(cfg.EffectiveSkillEvidence()) || !r.stagePrivacyCurrent(retained) {
 			return state.ErrAdmissionStageRecovery
 		}
-		reg = prior.Reservation
-		reg.AdmissionStage = digest
-		w.stagedRegistration = reg
-		w.prepared = true
-		w.stageSkillEvidence = prior.SkillEvidence
-		w.next = len(w.c.Subagents)
-		w.childRegistrations = prior.Children
-		for _, child := range prior.Children {
-			w.children = append(w.children, child.ArchiveSessionID)
-		}
-		return nil
+		// A reservation is not admission. Re-read the newly reviewed selection
+		// using its original capture time, then compare exact filtered bytes.
+		r.AdmittedAt = reg.AdmittedAt
 	}
+
 	if r.Sources == nil {
 		return errors.New("durable import source integrations unavailable")
 	}
@@ -196,6 +170,20 @@ func (r Registration) prepareWork(ctx context.Context, cfg config.Config, w *par
 	bundle, err := r.materialize(ctx, w.c, &reg, nil, w.links)
 	if err != nil {
 		return fmt.Errorf("stage selected parent: %w", err)
+	}
+	if found {
+		compressed, e := archive.BuildCompressedSource(bundle)
+		if e != nil {
+			return e
+		}
+		if compressed.SHA256 != prior.SHA256 || int64(len(compressed.Bytes)) != prior.Bytes || !reflect.DeepEqual(w.childRegistrations, prior.Children) {
+			return state.ErrAdmissionStageRecovery
+		}
+		reg.AdmissionStage = priorDigest
+		w.stagedRegistration, w.prepared = reg, true
+		w.stageSkillEvidence = prior.SkillEvidence
+		w.next = len(w.c.Subagents)
+		return nil
 	}
 	digest, err := r.Store.PrepareAdmissionStage(reg, bundle, string(cfg.EffectiveSkillEvidence()), r.AdmittedAt, w.childRegistrations...)
 	if err != nil {
@@ -248,6 +236,21 @@ func (r Registration) prepareChild(ctx context.Context, cfg config.Config, w *pa
 		childReg.AdmittedAt = prior.Reservation.AdmittedAt
 		childReg.RegisteredAt = prior.Reservation.RegisteredAt
 		if state.CheckAdmissionStageOwnership(childReg, prior) != nil || prior.SkillEvidence != string(cfg.EffectiveSkillEvidence()) || !r.stagePrivacyCurrent(retained) {
+			return state.ErrAdmissionStageRecovery
+		}
+		childCandidate := w.c
+		childCandidate.TranscriptPath, childCandidate.SourceKind, childCandidate.SourceKey = sub.Path, archive.SourceKindFile, ""
+		original := r
+		original.AdmittedAt = prior.Reservation.AdmittedAt
+		bundle, e := original.materialize(ctx, childCandidate, &childReg, &sub, nil)
+		if e != nil {
+			return e
+		}
+		compressed, e := archive.BuildCompressedSource(bundle)
+		if e != nil {
+			return e
+		}
+		if compressed.SHA256 != prior.SHA256 || int64(len(compressed.Bytes)) != prior.Bytes {
 			return state.ErrAdmissionStageRecovery
 		}
 		childReg = prior.Reservation
@@ -306,4 +309,59 @@ func (e admissionPreparationError) Error() string {
 	}
 	return "import source remains unadmitted; restore readable unchanged evidence and review backfill again"
 }
+
 func (e admissionPreparationError) Unwrap() error { return e.cause }
+
+func checkAdmissionChat(c Candidate, snap agentapi.SourceSnapshot) error {
+	if c.SourceKind == archive.SourceKindCursorSQLite {
+		facts, ok := snap.(agentapi.AdmissionCatalogSnapshot)
+		if !ok || c.reviewedChat == nil {
+			return errors.New("durable Cursor import reviewed identity facts unavailable")
+		}
+		chat := facts.AdmissionChat()
+		if chat != *c.reviewedChat || chat.ID != c.NativeSessionID || chat.KeyID != c.SourceKey || !chat.CreatedAt.Equal(c.StartedAt) || chat.Malformed {
+			return errors.New("durable Cursor import identity, workspace or selection changed; review again")
+		}
+	}
+	return nil
+}
+
+// filteredPrefixDigest retains constant-size review evidence. Ordinary appends
+// may extend the reviewed prefix; rewrites of identity/producer or conversation
+// records cannot silently replace it between review and materialization.
+func filteredPrefixDigest(filtered archive.FilteredTranscript, count int) string {
+	h := sha256.New()
+	_, _ = h.Write([]byte(filtered.Format))
+	_, _ = h.Write([]byte{0})
+	for _, record := range filtered.Records[:count] {
+		_, _ = h.Write(record)
+		_, _ = h.Write([]byte{0})
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+func (r Registration) checkMaterializedIdentity(ctx context.Context, c Candidate, reg *archive.SessionRegistration, child *Subagent, header agentapi.NativeHeader, filtered archive.FilteredTranscript) error {
+	if child != nil {
+		if err := collector.CheckImportedSubagent(filtered, reg.ParentNativeSessionID, child.AgentID, c.StartedAt, r.AdmittedAt); err != nil {
+			return err
+		}
+		reg.SessionStartedAt = filtered.NativeStartAt
+	} else {
+		imports, ok := r.Sources.(agentapi.ImportsLookup)
+		if !ok {
+			return errors.New("durable import identity capability unavailable")
+		}
+		inspector, ok := imports.LookupImport(c.Harness)
+		if !ok {
+			return errors.New("durable import identity inspection unavailable")
+		}
+		inspection, e := inspector.InspectImport(ctx, agentapi.ImportInspectionRequest{Session: agentapi.NativeSession{Agent: agentmeta.ID(archive.CanonicalHarness(c.Harness)), NativeID: c.NativeSessionID}, Source: agentapi.SourceRef{Kind: c.SourceKind, Path: c.TranscriptPath, Key: c.SourceKey}, Header: header, Filtered: filtered})
+		if e != nil {
+			return e
+		}
+		if !inspection.Conversation || inspection.IdentityMismatch || (!inspection.StartedAt.IsZero() && !inspection.StartedAt.Equal(c.StartedAt)) {
+			return errors.New("durable import selected conversation changed")
+		}
+	}
+	return nil
+}

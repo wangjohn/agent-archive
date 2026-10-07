@@ -13,8 +13,10 @@ import (
 
 type stageAdapter struct{}
 
-func (stageAdapter) Name() string    { return "claude-code" }
+func (stageAdapter) Name() string { return "claude-code" }
+
 func (stageAdapter) Version() string { return "synthetic" }
+
 func stageFixture(t *testing.T) (*Store, archive.SessionRegistration, archive.SourceBundle) {
 	t.Helper()
 	s, err := Open(t.TempDir())
@@ -29,6 +31,7 @@ func stageFixture(t *testing.T) (*Store, archive.SessionRegistration, archive.So
 	}
 	return s, reg, b
 }
+
 func TestAdmissionStageCorruptionAndPreparedManifestNeverAdmit(t *testing.T) {
 	s, reg, b := stageFixture(t)
 	digest, err := s.PrepareAdmissionStage(reg, b, "none", reg.AdmittedAt)
@@ -56,6 +59,7 @@ func TestAdmissionStageCorruptionAndPreparedManifestNeverAdmit(t *testing.T) {
 		t.Fatal("corruption quarantined evidence", e)
 	}
 }
+
 func TestAdmissionStageQuotaIncludesPendingAndLeavesReservationUnadmitted(t *testing.T) {
 	s, reg, b := stageFixture(t)
 	path := filepath.Join(s.Home(), "pending", "synthetic-large.json")
@@ -262,5 +266,46 @@ func TestAdmissionStageReleaseJournalDetectsValidJSONCorruption(t *testing.T) {
 	}
 	if _, err = s.AdmissionStageReleased(reg); !errors.Is(err, ErrAdmissionStageRecovery) {
 		t.Fatal("completion corruption accepted", err)
+	}
+}
+
+func TestAdmittedStageFreezesBatchSourceAndCreationProvenance(t *testing.T) {
+	for _, field := range []string{"batch", "path", "kind", "key", "provenance", "registered", "child-observation", "resolution"} {
+		t.Run(field, func(t *testing.T) {
+			s, reg, b := stageFixture(t)
+			reg.ProjectResolution = &archive.ProjectResolution{Root: reg.ProjectRoot, Context: "reviewed"}
+			digest, err := s.PrepareAdmissionStage(reg, b, "none", reg.AdmittedAt)
+			if err != nil {
+				t.Fatal(err)
+			}
+			reg.AdmissionStage = digest
+			if err = s.SaveRegistration(reg); err != nil {
+				t.Fatal(err)
+			}
+			_, err = s.UpdateRegistration(reg.ArchiveSessionID, func(r *archive.SessionRegistration) error {
+				switch field {
+				case "batch":
+					r.ImportBatch = archive.NewImportBatch("different")
+				case "path":
+					r.TranscriptPath = "/different"
+				case "kind":
+					r.SourceKind = archive.SourceKindCursorSQLite
+				case "key":
+					r.SourceKey = "different"
+				case "provenance":
+					r.StartedAtSource = archive.StartedAtSourceFileCreated
+				case "registered":
+					r.RegisteredAt = r.RegisteredAt.Add(time.Second)
+				case "resolution":
+					r.ProjectResolution.Context = "changed"
+				case "child-observation":
+					r.SubagentObservedAt = r.AdmittedAt
+				}
+				return nil
+			})
+			if err == nil {
+				t.Fatalf("mutable staged %s: %v", field, err)
+			}
+		})
 	}
 }

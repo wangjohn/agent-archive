@@ -699,7 +699,7 @@ func TestBackfillInterruptedUpload(t *testing.T) {
 	out := &syncBuffer{}
 	const notice = "Stopping after the current session; press Ctrl-C again to quit."
 	f.env.backfillCheckpoint = func(step string) error {
-		if step != "uploading" {
+		if step != "registered" {
 			return nil
 		}
 		signals <- os.Interrupt
@@ -721,7 +721,7 @@ func TestBackfillInterruptedUpload(t *testing.T) {
 	if !strings.Contains(out.String(), notice) {
 		t.Errorf("no notice of the stop:\n%s", out.String())
 	}
-	if code != 0 || !strings.Contains(out.String(), "Stopped. The remaining 12 sessions will be uploaded by the background collector.") || !strings.Contains(out.String(), "list --imported") {
+	if code != 1 || !strings.Contains(out.String(), "Stopped. 1 session registered as import") || !strings.Contains(out.String(), "same options to finish it") {
 		t.Fatalf("code %d, %s\n%s", code, errOut.String(), out.String())
 	}
 	parents, _ := importRegistrations(t, f.data, firstImport)
@@ -731,7 +731,7 @@ func TestBackfillInterruptedUpload(t *testing.T) {
 			t.Errorf("%s has no pending request", reg.ArchiveSessionID)
 		}
 	}
-	if len(parents) != 12 {
+	if len(parents) != 1 {
 		t.Fatalf("%d registered", len(parents))
 	}
 }

@@ -77,6 +77,7 @@ func TestAdmissionPassSettledIdentityAndEveryPathAvoidsBackup(t *testing.T) {
 		t.Fatal("scratch allocated", entries, err)
 	}
 }
+
 func TestAdmissionPassLiveWALRemainsUnadmittedWithoutScratch(t *testing.T) {
 	scratch := t.TempDir()
 	cursorstore.SnapshotTempDirForTesting = scratch
@@ -86,7 +87,7 @@ func TestAdmissionPassLiveWALRemainsUnadmittedWithoutScratch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	if _, err = db.ExecContext(t.Context(), `PRAGMA journal_mode=WAL; CREATE TABLE cursorDiskKV (key TEXT PRIMARY KEY,value BLOB); INSERT INTO cursorDiskKV VALUES ('composerData:c','{"composerId":"c","createdAt":1,"conversation":[{"type":2,"text":"synthetic"}]}')`); err != nil {
 		t.Fatal(err)
 	}

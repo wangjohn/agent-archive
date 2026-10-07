@@ -10,6 +10,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -98,10 +99,11 @@ func TestDurableImportHeaderlessExceptionRequiresDeclaredPolicyAndEmptyReview(t 
 	}
 	for _, harness := range []string{"cursor", "claude-code"} {
 		t.Run(harness, func(t *testing.T) {
-			candidate := Candidate{Harness: harness, NativeSessionID: "native", TranscriptPath: path, StartedAt: fixedNow.Add(-100000000000), reviewedHeader: &agentapi.NativeHeader{Directory: "/changed"}}
+			header := &agentapi.NativeHeader{Directory: "/changed"}
 			if harness == "claude-code" {
-				candidate.reviewedHeader = &agentapi.NativeHeader{}
+				header = &agentapi.NativeHeader{}
 			}
+			candidate := Candidate{Harness: harness, NativeSessionID: "native", TranscriptPath: path, StartedAt: fixedNow.Add(-100000000000), reviewedHeader: header}
 			lookup := missingHeaderSources{SourcesLookup: testSources, ImportsLookup: testSources}
 			reg := archive.SessionRegistration{ArchiveSessionID: "synthetic", NativeSessionID: "native", Harness: archive.Harness{Name: harness}, Origin: archive.SessionOriginImport}
 			if _, err := (Registration{Sources: lookup, AdmittedAt: fixedNow}).materialize(t.Context(), candidate, &reg, nil, nil); err == nil {
@@ -119,4 +121,72 @@ type missingHeaderSources struct {
 func (missingHeaderSources) LookupNativeHeaders(string) (agentapi.NativeHeaderInspector, bool) {
 	return nil, false
 }
+
 func (missingHeaderSources) NativeHeaderAgents() []string { return nil }
+
+func TestPreparedImportRevalidatesSelectionAndBatchBeforeAdmission(t *testing.T) {
+	for _, change := range []string{"unchanged", "parent", "child", "children", "batch", "creation", "pause", "reactivated"} {
+		t.Run(change, func(t *testing.T) {
+			home, project := t.TempDir(), t.TempDir()
+			at, start := fixedNow.UTC(), fixedNow.Add(-100000000000).UTC()
+			cfg := config.Config{DurableImportProtection: true, Archive: archive.Config{Enabled: true, Projects: []archive.ProjectActivation{{ProjectID: archive.ProjectID(project), Root: project, Included: true, ActivatedAt: start}}}}
+			if err := config.Save(home, cfg); err != nil {
+				t.Fatal(err)
+			}
+			store, err := state.Open(home)
+			if err != nil {
+				t.Fatal(err)
+			}
+			parent, child := filepath.Join(project, "parent.jsonl"), filepath.Join(project, "agent-child.jsonl")
+			parentBody, childBody := claudeTranscript("parent", project, start), subagentTranscript("parent", "child", start.Add(1000000000))
+			if err = os.WriteFile(parent, []byte(parentBody), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err = os.WriteFile(child, []byte(childBody), 0600); err != nil {
+				t.Fatal(err)
+			}
+			candidate := Candidate{Harness: "claude-code", NativeSessionID: "parent", TranscriptPath: parent, ProjectRoot: project, StartedAt: start, StartedAtSource: archive.StartedAtSourceTranscript, Subagents: []Subagent{{Path: child, AgentID: "child"}}}
+			reg := Registration{Durable: true, Sources: testSources, Home: home, Store: store, Batch: "synthetic", AdmittedAt: at}
+			work := &parentWork{c: candidate}
+			if err = reg.prepareWork(t.Context(), cfg, work, &RegistrationResult{}); err != nil {
+				t.Fatal(err)
+			}
+			// Simulate a crash before the first registration, then a new review.
+			reg.AdmittedAt = at.Add(1000000000)
+			switch change {
+			case "parent":
+				if err = os.WriteFile(parent, []byte(strings.ReplaceAll(parentBody, "please check it", "new selection")), 0600); err != nil {
+					t.Fatal(err)
+				}
+			case "child":
+				if err = os.WriteFile(child, []byte(strings.ReplaceAll(childBody, "looked", "changed selection")), 0600); err != nil {
+					t.Fatal(err)
+				}
+			case "children":
+				candidate.Subagents = nil
+			case "batch":
+				reg.Batch = "different"
+			case "creation":
+				candidate.sourceAdmissionCurrent = func() bool { return false }
+			case "reactivated":
+				cfg.Archive.Projects[0].ActivatedAt = reg.AdmittedAt
+				if err = config.Save(home, cfg); err != nil {
+					t.Fatal(err)
+				}
+			case "pause":
+				cfg.Paused = true
+				if err = config.Save(home, cfg); err != nil {
+					t.Fatal(err)
+				}
+			}
+			result, err := reg.Run([]Candidate{candidate})
+			if change == "unchanged" {
+				if err != nil || len(result.Sessions) != 1 || len(result.Subagents) != 1 {
+					t.Fatal(result, err)
+				}
+			} else if len(result.Sessions) != 0 {
+				t.Fatalf("changed %s admitted old prepared selection: %+v (%v)", change, result, err)
+			}
+		})
+	}
+}

@@ -439,7 +439,7 @@ func (r SessionRegistration) Validate() error {
 			return errors.New("invalid durable admission stage pointer")
 		}
 		for _, c := range r.AdmissionStage {
-			if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
 				return errors.New("invalid durable admission stage pointer")
 			}
 		}

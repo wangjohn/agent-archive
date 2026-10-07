@@ -531,7 +531,7 @@ func applyObservation(target *archive.Harness, session agentapi.NativeSession) {
 }
 
 func applyLocator(reg *archive.SessionRegistration, event agentapi.LifecycleEvent) {
-	if event.Source.Path == "" || !reg.ReadsTranscriptFile() || reg.Origin == archive.SessionOriginDiscovery {
+	if event.Source.Path == "" || !reg.ReadsTranscriptFile() || reg.Origin == archive.SessionOriginDiscovery || reg.AdmissionStage != "" {
 		return
 	}
 	if event.Locator == agentapi.LocatorReplaceFile || event.Locator == agentapi.LocatorFillFile && reg.TranscriptPath == "" {
@@ -874,7 +874,9 @@ func continueHookSession(store *state.Store, cfg config.Config, event agentapi.L
 			}
 		}
 		applyLocator(existing, event)
-		existing.RegisteredAt = now
+		if existing.AdmissionStage == "" {
+			existing.RegisteredAt = now
+		}
 		existing.HookObservedAt = now
 		applyObservation(&existing.Harness, event.Session)
 		return nil
