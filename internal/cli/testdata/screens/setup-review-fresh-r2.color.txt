@@ -12,7 +12,7 @@ Choose Cloudflare R2 or Amazon S3 for private archive storage. Setup will guide 
   2) No
 
 › Choose [1]:
-\e[2m✓ Yes\e[0m
+\e[2m✓ Capture sessions from Claude Code Yes\e[0m
 
 ? Which projects?
 
@@ -57,12 +57,12 @@ Choose Cloudflare R2 or Amazon S3 for private archive storage. Setup will guide 
 › Answer: team-archive
 \e[2m✓ Bucket name team-archive\e[0m
 
-? Access key ID
+? Access key ID (hidden)
 
   [:back] Back to storage options
 
-› Answer: ACCESSKEYID
-\e[2m✓ Access key ID ACCESSKEYID\e[0m
+› Credential:
+\e[2m✓ Credential received\e[0m
 
 ? Secret access key (hidden)
 

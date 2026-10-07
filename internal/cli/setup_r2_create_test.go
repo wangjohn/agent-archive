@@ -282,7 +282,7 @@ func TestGuidedR2GroupsTokenInstructionsAfterTheQuestion(t *testing.T) {
 	if ask < 0 || link < ask || create < link || intro < create || !setupContainsText(out, "Account > Account API Tokens > Edit") {
 		t.Fatalf("instructions:\n%s", out)
 	}
-	answer := strings.Index(out[ask:], "> Credential:")
+	answer := strings.Index(out[ask:], "Credential:")
 	if answer < 0 {
 		t.Fatalf("missing credential answer cursor\n%s", out)
 	}

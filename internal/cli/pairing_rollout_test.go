@@ -149,11 +149,11 @@ func TestFirstSetupPairingPromptPreservesDefaultAliasesAndEOF(t *testing.T) {
 				t.Fatalf("pair=%v err=%v\n%s", opts.pair, err, &out)
 			}
 			if !tc.fails {
-				receipt := "OK No"
+				receipt := "Already set up on another machine No"
 				if tc.paired {
-					receipt = "OK Yes"
+					receipt = "Already set up on another machine Yes"
 				}
-				if !strings.Contains(out.String(), receipt) {
+				if setupReceiptIndex(out.String(), receipt) < 0 {
 					t.Fatalf("missing resolved receipt: %s", &out)
 				}
 			}

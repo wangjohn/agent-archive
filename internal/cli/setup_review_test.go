@@ -317,7 +317,7 @@ func TestSetupReviewBlocksStartOnHookFileBrokenAfterPreflight(t *testing.T) {
 	if blocked < 0 || refused < blocked || !setupContainsText(output, "Fix the blocking checks first.") {
 		t.Fatalf("✗ did not block starting:\n%s", output)
 	}
-	checked := strings.Index(output, "OK Check again")
+	checked := setupReceiptIndex(output, "Check again")
 	if checked < 0 {
 		t.Fatalf("missing check receipt: %s", output)
 	}

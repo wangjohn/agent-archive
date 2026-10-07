@@ -105,7 +105,7 @@ func TestSetupStorageFailureMenu(t *testing.T) {
 			if n := strings.Count(output, "Access denied."); n != 2 {
 				t.Fatalf("diagnosis printed %d times, want once per check:\n%s", n, output)
 			}
-			if !setupContainsText(output, "1) Change storage settings (default)") || !setupContainsText(output, "> Choose [1]") {
+			if !setupContainsText(output, "1) Change storage settings (default)") || !setupContainsText(output, "Choose [1]") {
 				t.Fatalf("menu does not default to the fix:\n%s", output)
 			}
 		})

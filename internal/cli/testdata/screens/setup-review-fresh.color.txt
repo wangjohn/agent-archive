@@ -13,7 +13,7 @@ Choose Cloudflare R2 or Amazon S3 for private archive storage. Setup will guide 
   2) No
 
 › Choose [1]: y
-\e[2m✓ Yes\e[0m
+\e[2m✓ Capture sessions from Codex and Claude Code Yes\e[0m
 
 ? Codex capture scope
 

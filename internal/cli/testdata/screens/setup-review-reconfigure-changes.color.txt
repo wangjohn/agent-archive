@@ -26,7 +26,7 @@ Also found on this computer: Claude Code and Cursor.
   2) No
 
 › Choose [1]: y
-\e[2m✓ Yes\e[0m
+\e[2m✓ Add them Yes\e[0m
 
 ? Which projects?
 

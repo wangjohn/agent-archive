@@ -18,6 +18,18 @@ func TestSetupSelectorTerminalChild(t *testing.T) {
 	}
 	p := newPrompter(os.Stdin, os.Stdout)
 	defer p.close()
+	if os.Getenv("ARCHIVE_SETUP_YESNO_CHILD") == "1" {
+		terminal.Println(p.out, "UNRELATED SENTINEL")
+		codex, err := p.setupYesNo("Include Codex?", false)
+		must(t, err)
+		claude, err := p.setupYesNo("Include Claude Code?", true)
+		must(t, err)
+		if !codex || claude {
+			t.Fatal("resolved setup decisions changed")
+		}
+		terminal.Println(p.out, "DECISIONS SAVED")
+		return
+	}
 	n, home := 14, ""
 	if os.Getenv("ARCHIVE_SETUP_SELECTOR_COMPACT") == "1" {
 		n = 2
@@ -52,7 +64,7 @@ func TestSetupSelectorTerminalMatrix(t *testing.T) {
 	}
 	binary, err := os.Executable()
 	must(t, err)
-	for _, mode := range []string{"80x24", "100x30", "60x20", "36x20", "typed-ahead", "compact"} {
+	for _, mode := range []string{"80x24", "100x30", "60x20", "36x20", "typed-ahead", "compact", "yes-no"} {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
 			out, err := runPTYScript(t, python, setupSelectorPTY, binary, mode)
@@ -65,10 +77,10 @@ func TestSetupSelectorTerminalMatrix(t *testing.T) {
 
 const setupSelectorPTY = `import os,pty,select,subprocess,sys,fcntl,termios,struct,time,re,unicodedata
 binary,mode=sys.argv[1:]
-width,height=(80,24) if mode in ('typed-ahead','compact') else tuple(map(int,mode.split('x')))
+width,height=(80,24) if mode in ('typed-ahead','compact','yes-no') else tuple(map(int,mode.split('x')))
 master,slave=pty.openpty()
 fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',height,width,0,0))
-env=dict(os.environ,TERM='xterm-256color',NO_COLOR='1',ARCHIVE_SETUP_SELECTOR_CHILD='1',ARCHIVE_SETUP_SELECTOR_COMPACT='1' if mode=='compact' else '0')
+env=dict(os.environ,ARCHIVE_SETUP_YESNO_CHILD='1' if mode=='yes-no' else '0',TERM='xterm-256color',NO_COLOR='1',ARCHIVE_SETUP_SELECTOR_CHILD='1',ARCHIVE_SETUP_SELECTOR_COMPACT='1' if mode=='compact' else '0')
 p=subprocess.Popen([binary,'-test.run=^TestSetupSelectorTerminalChild$'],stdin=slave,stdout=slave,stderr=slave,env=env)
 out=b''
 def wait(text):
@@ -105,6 +117,18 @@ def cells(data,cols):
  return '\n'.join(''.join(line).rstrip() for line in lines)
 
 try:
+ if mode=='yes-no':
+  wait(b'Choose [2]');os.write(master,b'y\n')
+  wait(b'? Include Claude Code?');os.write(master,b'n\n')
+  wait(b'DECISIONS SAVED');p.wait(timeout=30)
+  view=cells(out,width)
+  assert 'Include Codex Yes' in view and 'Include Claude Code No' in view,view
+  assert '? Include' not in view and 'Choose [' not in view,view
+  assert 'UNRELATED SENTINEL' in view,view
+  assert termios.tcgetattr(slave)[3] & termios.ECHO,'terminal echo not restored'
+  assert p.returncode==0,out
+  print('setup contextual decisions passed')
+  sys.exit(0)
  wait(b'Choose [1]')
  if mode=='compact': os.write(master,b'\n')
  elif mode=='typed-ahead': os.write(master,b'specific\n1\nnext\n\n')

@@ -50,7 +50,7 @@ func (p *prompter) setupYesNo(question string, def bool) (bool, error) {
 	if def {
 		key = "yes"
 	}
-	answer, err := p.guidedChoice(promptModel{Question: strings.TrimSpace(question), Default: key, Primary: []option{{"yes", "Yes"}, {"no", "No"}}, Aliases: []option{{"y", ""}, {"n", ""}}, ResolveReceipt: func(value string) string {
+	answer, err := p.guidedChoice(promptModel{Question: strings.TrimSpace(question), Receipt: strings.TrimSpace(strings.SplitN(question, "?", 2)[0]), Default: key, Primary: []option{{"yes", "Yes"}, {"no", "No"}}, Aliases: []option{{"y", ""}, {"n", ""}}, ResolveReceipt: func(value string) string {
 		if setupAffirmed(value) {
 			return "Yes"
 		}
@@ -89,7 +89,15 @@ func (p *prompter) setupRetentionDays(def int) (int, error) {
 // Storage field actions use a reserved prefix so valid bucket/profile names
 // remain literal, including "b" and "back".
 func (p *prompter) setupStorageRequired(label, def string) (string, error) {
-	value, err := p.guidedText(promptModel{Question: label, Helpers: []string{"[:back] Back to storage options"}, Label: "Answer", Default: def, Receipt: label, Validate: func(value string) error {
+	return p.setupStorageField(label, def, false)
+}
+
+func (p *prompter) setupStorageField(label, def string, secret bool) (string, error) {
+	answerLabel := "Answer"
+	if secret {
+		answerLabel = "Credential"
+	}
+	value, err := p.guidedText(promptModel{Question: label, Secret: secret, Helpers: []string{"[:back] Back to storage options"}, Label: answerLabel, Default: def, Receipt: label, Validate: func(value string) error {
 		if value == "" {
 			return fmt.Errorf("this value is required")
 		}

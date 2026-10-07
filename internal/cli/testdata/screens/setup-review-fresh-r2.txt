@@ -12,7 +12,7 @@ Step 1 of 3 · Choose what to capture
   2) No
 
 › Choose [1]:
-✓ Yes
+✓ Capture sessions from Claude Code Yes
 
 ? Which projects?
 
@@ -57,12 +57,12 @@ Step 2 of 3 · Connect storage
 › Answer: team-archive
 ✓ Bucket name team-archive
 
-? Access key ID
+? Access key ID (hidden)
 
   [:back] Back to storage options
 
-› Answer: ACCESSKEYID
-✓ Access key ID ACCESSKEYID
+› Credential:
+✓ Credential received
 
 ? Secret access key (hidden)
 

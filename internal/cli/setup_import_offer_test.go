@@ -189,17 +189,25 @@ func TestAnotherMachineCommandNeverCarriesTheR2Secret(t *testing.T) {
 		t.Parallel()
 		home := t.TempDir()
 		env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
-		input := strings.Join([]string{"y", "n", "n", "included-projects", t.TempDir(), "", "r2-existing", testR2Account, "test-bucket", keyID, secret, "y"}, "\n") + "\n"
+		input := strings.Join([]string{"y", "n", "n", "included-projects", t.TempDir(), "", "r2-existing", testR2Account, "test-bucket", keyID, secret, "y", "details"}, "\n") + "\n"
 		check(t, setupRun(t, env, input, 0))
 	})
 	t.Run("yes", func(t *testing.T) {
 		t.Parallel()
-		env := withEnvironment(setupTestEnv(t, t.TempDir(), t.TempDir(), newFakeKeychain(), time.Now()), map[string]string{envR2AccessKeyID: keyID, envR2SecretAccessKey: secret})
+		home := t.TempDir()
+		env := withEnvironment(setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now()), map[string]string{envR2AccessKeyID: keyID, envR2SecretAccessKey: secret})
 		var out bytes.Buffer
 		args := []string{"setup", "--yes", "--provider", "r2", "--r2-account", testR2Account, "--bucket", "test-bucket", "--apps", "codex", "--codex-discovery", "on", "--codex-capture-scope", "included-projects", "--project", t.TempDir()}
 		if code := Run(args, strings.NewReader(""), &out, &out, env); code != 0 {
 			t.Fatalf("exit %d\n%s", code, &out)
 		}
+		if strings.Contains(out.String(), secret) || strings.Contains(out.String(), keyID) || strings.Contains(out.String(), "To set up another machine with this storage") || !strings.Contains(out.String(), "Setup complete") {
+			t.Fatalf("unsafe or expanded completion:\n%s", &out)
+		}
+		cfg, _, err := config.Load(home)
+		must(t, err)
+		out.Reset()
+		printAnotherMachine(newPrompter(strings.NewReader(""), &out), cfg, "")
 		check(t, out.String())
 	})
 }
@@ -351,7 +359,7 @@ func TestSetupImportNamedAnswerHasResolvedReceipt(t *testing.T) {
 	t.Parallel()
 	f := newImportOfferFixture(t)
 	out := f.runSetup(t, setupImportAnswers("y"))
-	if !strings.Contains(out, "OK Import 2 sessions\n") || strings.Contains(out, "OK y\n") {
+	if setupReceiptIndex(out, "Import 2 sessions") < 0 || setupReceiptIndex(out, "y") >= 0 {
 		t.Fatalf("unresolved import receipt:\n%s", out)
 	}
 }
