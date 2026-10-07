@@ -95,7 +95,7 @@ func (o Outstanding) Pending() bool {
 // SyncCanFinish reports a pending session a sync could finish: every pending
 // one except a session only waiting for its transcript.
 func (o Outstanding) SyncCanFinish() bool {
-	return o.Pending() && !o.WaitingForTranscript
+	return o.Pending() && (o.Removal || !o.WaitingForTranscript)
 }
 
 // QueuedRequests is the set of sessions with a queued request, the

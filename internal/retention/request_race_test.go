@@ -393,8 +393,12 @@ func TestExplicitRemovalRefusesRetainedOrNativeRestoration(t *testing.T) {
 		t.Fatal(err)
 	}
 	replay := collect(t, local, remote, t0.Add(2*time.Hour))
-	if !errors.Is(replay.Errors[reg.ArchiveSessionID], state.ErrAdmissionStageRecovery) || len(replay.Published) != 0 {
-		t.Fatal("explicit removal resurrected", replay.Errors)
+	if len(replay.Errors) != 0 || len(replay.Published) != 0 {
+		t.Fatal("explicit removal routed as publication", replay.Errors)
+	}
+	owed, err := local.Outstanding(reg, true)
+	if err != nil || !owed.Removal || owed.Upload || !owed.Pending() {
+		t.Fatal("removal mislabeled as upload", owed, err)
 	}
 	if _, err := remote.Get(t.Context(), "sessions/codex/removed/metadata.json"); !errors.Is(err, storage.ErrNotFound) {
 		t.Fatal(err)

@@ -11,6 +11,10 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 )
 
+// ErrRemovalPending identifies an authorized removal awaiting completion.
+var ErrRemovalPending = errors.New("authorized session removal is unfinished")
+
+// ErrDeletionWorkChanged requires a fresh decision after newer queued work.
 var ErrDeletionWorkChanged = errors.New("session work changed before removal; retry after processing the newer request")
 
 // SessionDeletion retains exact whole-session deletion authority across crashes.
@@ -58,6 +62,9 @@ func (s *Store) LoadSessionDeletion(reg archive.SessionRegistration) (SessionDel
 	}
 	b, err := s.readDeletionFile(reg.ArchiveSessionID)
 	if errors.Is(err, os.ErrNotExist) {
+		if temporary, e := s.hasDeletionTemporary(reg.ArchiveSessionID); e != nil || temporary {
+			return SessionDeletion{}, true, errors.Join(ErrAdmissionStageRecovery, e)
+		}
 		return SessionDeletion{}, false, nil
 	}
 	if err != nil {
@@ -97,7 +104,6 @@ func (s *Store) LoadSessionDeletion(reg archive.SessionRegistration) (SessionDel
 }
 
 // PrepareSessionDeletion journals reviewed exact selecting metadata before removal.
-
 func (s *Store) PrepareSessionDeletion(reg archive.SessionRegistration, reason RemovalReason, raw []byte, at time.Time) (SessionDeletion, error) {
 	var expected *string
 	if reason == RemovalReasonRetention {
@@ -290,7 +296,7 @@ func (s *Store) DeletionCaptureAllowed(reg archive.SessionRegistration, req Requ
 		return nil
 	}
 	if j.Reason != RemovalReasonRetention || j.Phase == "prepared" || j.Phase == "deleting" {
-		return ErrAdmissionStageRecovery
+		return ErrRemovalPending
 	}
 	if j.Phase == "restoring" {
 		pending, found, err := s.LoadPending(reg.ArchiveSessionID)

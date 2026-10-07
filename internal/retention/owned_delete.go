@@ -14,11 +14,13 @@ import (
 
 // DeleteOwnedSession journals a metadata-first deletion for the unsynced local
 // owner. A hook arriving during retention keeps sources for exact restoration.
-
 func DeleteOwnedSession(ctx context.Context, local *state.Store, store storage.ObjectStore, reg archive.SessionRegistration, reason state.RemovalReason, now time.Time) error {
 	return deleteOwnedAtDecision(ctx, local, store, reg, reason, now, nil)
 }
 func deleteOwnedAtDecision(ctx context.Context, local *state.Store, store storage.ObjectStore, reg archive.SessionRegistration, reason state.RemovalReason, now time.Time, token *string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	key, err := archive.MetadataObjectKey(reg.Harness.Name, reg.ArchiveSessionID)
 	if err != nil {
 		return err
@@ -59,6 +61,9 @@ func deleteOwnedAtDecision(ctx context.Context, local *state.Store, store storag
 }
 func deleteOwnedMetadata(ctx context.Context, local *state.Store, store storage.ObjectStore, reg archive.SessionRegistration, j *state.SessionDeletion, key string, raw []byte) error {
 	var err error
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if j.Phase == "prepared" {
 		if len(raw) == 0 && j.MetadataSHA256 != "" {
 			return storage.ErrPublicationConflict
@@ -78,6 +83,9 @@ func deleteOwnedMetadata(ctx context.Context, local *state.Store, store storage.
 		}
 		if e == nil && storage.SHA256Hex(fresh) != j.MetadataSHA256 {
 			return storage.ErrPublicationConflict
+		}
+		if err := ctx.Err(); err != nil {
+			return err
 		}
 		if err = store.Delete(ctx, key); err != nil {
 			return err
@@ -99,6 +107,9 @@ func deleteOwnedNamespace(ctx context.Context, local *state.Store, store storage
 	var err error
 	if j.Phase == "cleaned" {
 		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	if err = listingindex.DeleteSession(ctx, store, reg.Harness.Name, reg.ArchiveSessionID); err != nil {
 		return err

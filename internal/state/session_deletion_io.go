@@ -15,6 +15,10 @@ func (s *Store) openDeletionDirectory(create bool) (_ *os.Root, err error) {
 		return nil, err
 	}
 	defer func() { err = errors.Join(err, root.Close()) }()
+	return openDeletionDirectoryAt(root, create)
+}
+
+func openDeletionDirectoryAt(root *os.Root, create bool) (_ *os.Root, err error) {
 	info, e := root.Lstat("session-deletions")
 	if errors.Is(e, os.ErrNotExist) && create {
 		if e = root.Mkdir("session-deletions", 0700); e != nil {
@@ -110,7 +114,7 @@ func (s *Store) writeDeletionFileChecked(id string, raw []byte, check func() err
 	if err = rooted.checkDeletionWriteCapacity(int64(len(raw))); err != nil {
 		return err
 	}
-	dir, err := s.openDeletionDirectory(true)
+	dir, err := openDeletionDirectoryAt(root, true)
 	if err != nil {
 		return err
 	}
@@ -125,6 +129,12 @@ func (s *Store) writeDeletionFileChecked(id string, raw []byte, check func() err
 		return err
 	}
 	defer func() {
+		if s.onDeletionCleanup != nil {
+			if e := s.onDeletionCleanup(); e != nil {
+				err = errors.Join(err, e)
+				return
+			}
+		}
 		e := dir.Remove(temp)
 		if !errors.Is(e, os.ErrNotExist) {
 			err = errors.Join(err, e)
@@ -138,12 +148,22 @@ func (s *Store) writeDeletionFileChecked(id string, raw []byte, check func() err
 	if err != nil {
 		return err
 	}
+	if s.onDeletionBeforeCommit != nil {
+		if err = s.onDeletionBeforeCommit(); err != nil {
+			return err
+		}
+	}
 	if err = s.commitDeletionFile(dir, id, temp, check); err != nil {
 		return err
 	}
 	h, err = dir.Open(".")
 	if err != nil {
 		return err
+	}
+	if s.onDeletionSync != nil {
+		if err = s.onDeletionSync(); err != nil {
+			return errors.Join(err, h.Close())
+		}
 	}
 	return errors.Join(h.Sync(), h.Close())
 }

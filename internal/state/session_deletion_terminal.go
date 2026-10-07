@@ -105,3 +105,26 @@ func (s *Store) localDeletionRecordsGone(id string) bool {
 	}
 	return true
 }
+
+func (s *Store) hasDeletionTemporary(id string) (bool, error) {
+	root, err := os.OpenRoot(s.home)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = root.Close() }()
+	rooted := *s
+	rooted.quotaRoot = root
+	entries, err := rooted.quotaReadDir(filepath.Join(s.home, "session-deletions"))
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), id+"-") && strings.HasSuffix(entry.Name(), ".tmp") {
+			return true, nil
+		}
+	}
+	return false, nil
+}

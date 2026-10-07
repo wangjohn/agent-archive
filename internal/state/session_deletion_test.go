@@ -236,7 +236,7 @@ func TestSessionDeletionTerminalBookkeepingAndLostOwnerRecovery(t *testing.T) {
 			if err != nil || (len(orphans) == 0) != completed {
 				t.Fatal("terminal versus lost-owner status incorrect", orphans, err)
 			}
-			if err := restarted.DeletionCaptureAllowed(reg, Request{Token: "new-stale-hook", Reasons: []string{"stop"}, RequestedAt: time.Now().Add(time.Hour)}); !errors.Is(err, ErrAdmissionStageRecovery) {
+			if err := restarted.DeletionCaptureAllowed(reg, Request{Token: "new-stale-hook", Reasons: []string{"stop"}, RequestedAt: time.Now().Add(time.Hour)}); !errors.Is(err, ErrAdmissionStageRecovery) && !errors.Is(err, ErrRemovalPending) {
 				t.Fatal("tombstone permitted stale resurrection", err)
 			}
 			if completed {

@@ -104,17 +104,12 @@ func (s *Store) removeSessionScratch(root *os.Root, id string) error {
 	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return ErrAdmissionStageRecovery
 	}
-	dir, err := root.OpenRoot(temporaryReservationDir)
+	dir, err := openRemovalDirectory(root, temporaryReservationDir)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = dir.Close() }()
-	h, err := dir.Open(".")
-	if err != nil {
-		return err
-	}
-	entries, err := h.ReadDir(-1)
-	err = errors.Join(err, h.Close())
+	entries, err := removalDirectoryEntries(dir)
 	if err != nil {
 		return err
 	}
@@ -130,29 +125,15 @@ func (s *Store) removeSessionScratch(root *os.Root, id string) error {
 		if m.Key != id {
 			continue
 		}
-		scratch, err := root.Lstat(temporaryScratchDir)
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err := removeOwnedScratch(root, m.Token); err != nil {
 			return err
 		}
-		if err == nil && (!scratch.IsDir() || scratch.Mode()&os.ModeSymlink != 0) {
-			return ErrAdmissionStageRecovery
-		}
-		if err = root.RemoveAll(m.Root); err != nil {
-			return err
-		}
-		if scratch, err := root.Open(temporaryScratchDir); err == nil {
-			err = errors.Join(scratch.Sync(), scratch.Close())
-			if err != nil {
-				return err
-			}
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return err
-		}
+
 		if err = dir.Remove(entry.Name()); err != nil {
 			return err
 		}
 	}
-	h, err = dir.Open(".")
+	h, err := dir.Open(".")
 	if err != nil {
 		return err
 	}
@@ -197,15 +178,9 @@ func readRemovalReceipt(root *os.Root, name string) (raw []byte, err error) {
 
 func removeOwnedStageFiles(root *os.Root, id string) error {
 	var err error
-	dir, e := root.OpenRoot(admissionStageDir)
+	dir, e := openRemovalDirectory(root, admissionStageDir)
 	if e == nil {
-		names, e := dir.Open(".")
-		if e != nil {
-			_ = dir.Close()
-			return e
-		}
-		entries, e := names.ReadDir(-1)
-		e = errors.Join(e, names.Close())
+		entries, e := removalDirectoryEntries(dir)
 		if e != nil {
 			_ = dir.Close()
 			return e
@@ -242,16 +217,17 @@ func removeOwnedStageFiles(root *os.Root, id string) error {
 func removeOwnedOriginalFiles(root *os.Root, id string) error {
 	// An explicit removal covers confined original journals, including orphan
 	// atomic files. Corrupt subdirectories/symlinks stay charged and actionable.
-	rel := filepath.Join(publicationEvidenceDir, id)
-	evidence, e := root.OpenRoot(rel)
+	parent, e := openRemovalDirectory(root, publicationEvidenceDir)
+	if errors.Is(e, os.ErrNotExist) {
+		return nil
+	}
+	if e != nil {
+		return e
+	}
+	defer func() { _ = parent.Close() }()
+	evidence, e := openRemovalDirectory(parent, id)
 	if e == nil {
-		h, e := evidence.Open(".")
-		if e != nil {
-			_ = evidence.Close()
-			return e
-		}
-		entries, e := h.ReadDir(-1)
-		e = errors.Join(e, h.Close())
+		entries, e := removalDirectoryEntries(evidence)
 		if e != nil {
 			_ = evidence.Close()
 			return e
@@ -267,7 +243,7 @@ func removeOwnedOriginalFiles(root *os.Root, id string) error {
 				return e
 			}
 		}
-		h, e = evidence.Open(".")
+		h, e := evidence.Open(".")
 		if e == nil {
 			e = errors.Join(h.Sync(), h.Close())
 		}
@@ -275,7 +251,7 @@ func removeOwnedOriginalFiles(root *os.Root, id string) error {
 		if e != nil {
 			return e
 		}
-		if e = root.Remove(rel); e != nil {
+		if e = parent.Remove(id); e != nil {
 			return e
 		}
 	} else if !errors.Is(e, os.ErrNotExist) {
@@ -283,4 +259,47 @@ func removeOwnedOriginalFiles(root *os.Root, id string) error {
 	}
 
 	return nil
+}
+
+func openRemovalDirectory(root *os.Root, name string) (*os.Root, error) {
+	info, err := root.Lstat(name)
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return nil, ErrAdmissionStageRecovery
+	}
+	dir, err := root.OpenRoot(name)
+	if err != nil {
+		return nil, err
+	}
+	opened, err := dir.Stat(".")
+	if err != nil || !os.SameFile(info, opened) {
+		return nil, errors.Join(ErrAdmissionStageRecovery, err, dir.Close())
+	}
+	return dir, nil
+}
+
+func removalDirectoryEntries(dir *os.Root) ([]os.DirEntry, error) {
+	rooted := Store{home: ".", quotaRoot: dir}
+	return rooted.quotaReadDir(".")
+}
+
+func removeOwnedScratch(root *os.Root, token string) (err error) {
+	parent, err := openRemovalDirectory(root, temporaryScratchDir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, parent.Close()) }()
+	if err = parent.RemoveAll(token); err != nil {
+		return err
+	}
+	h, err := parent.Open(".")
+	if err != nil {
+		return err
+	}
+	return errors.Join(h.Sync(), h.Close())
 }

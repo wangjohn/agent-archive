@@ -110,8 +110,9 @@ type appStatus struct {
 	// UploadingSessions counts the app's top-level sessions, captured or
 	// imported, with work not yet published (state.Outstanding's Pending)
 	// that is not a recorded capture gap; Uploading lists them.
-	UploadingSessions int                `json:"uploading_sessions"`
-	Uploading         []uploadingSession `json:"uploading"`
+	PendingRemovalSessions int                `json:"pending_removal_sessions,omitempty"`
+	UploadingSessions      int                `json:"uploading_sessions"`
+	Uploading              []uploadingSession `json:"uploading"`
 	// WaitingForTranscriptSessions counts the app's top-level sessions
 	// that are pending only because no transcript was ever written for
 	// them (state.Outstanding's WaitingForTranscript), such as a Cursor
@@ -566,16 +567,13 @@ func readSessionStatus(view *statusView, cfg config.Config, home string, store *
 	pending := 0
 	for _, reg := range regs {
 		accepted := cfg.AcceptSession(reg)
-		if !accepted && !reg.Imported() {
-			continue
-		}
 		o, err := store.Outstanding(reg, queued[reg.ArchiveSessionID])
 		if err != nil {
 			skip(reg.ArchiveSessionID, err)
 			continue
 		}
 		owed[reg.ArchiveSessionID] = o
-		if accepted && o.Pending() {
+		if (accepted || o.Removal) && o.Pending() {
 			pending++
 		}
 	}
@@ -601,10 +599,20 @@ func readSessionStatus(view *statusView, cfg config.Config, home string, store *
 	return statusSessions{store: store, regs: regs, skip: skip, owed: owed}
 }
 
+func (s statusSessions) removalCount(name string) int {
+	count := 0
+	for _, reg := range s.regs {
+		if reg.Harness.Name == name && reg.ParentSessionID == "" && s.owed[reg.ArchiveSessionID].Removal {
+			count++
+		}
+	}
+	return count
+}
+
 // appStatus is one configured app's capture evidence: its sessions, per
 // project and overall, from hook observation to read-back verification.
 func (s statusSessions) appStatus(name string, cfg config.Config, home string, issues map[string]string) appStatus {
-	app := appStatus{Name: name, State: "waiting for first session", Configured: true, Trust: "unknown", VerificationState: "not_verified", Uploading: []uploadingSession{}}
+	app := appStatus{Name: name, State: "waiting for first session", Configured: true, Trust: "unknown", VerificationState: "not_verified", Uploading: []uploadingSession{}, PendingRemovalSessions: s.removalCount(name)}
 	pairIndex := map[string]int{}
 	configuredRoots := map[string]archive.ProjectActivation{}
 	for _, project := range cfg.Archive.Projects {
@@ -658,7 +666,10 @@ func (s statusSessions) appStatus(name string, cfg config.Config, home string, i
 		// A session is the app's when the app registered it and the
 		// configuration publishes it now (AcceptSession), as the
 		// collector decides.
-		if reg.Harness.Name != name || !cfg.AcceptSession(reg) {
+		if reg.Harness.Name != name {
+			continue
+		}
+		if !cfg.AcceptSession(reg) {
 			continue
 		}
 		// Explicit observation survives imports and discovery. Registrations
@@ -726,7 +737,7 @@ func (s statusSessions) appStatus(name string, cfg config.Config, home string, i
 // which the app's gaps report instead.
 func (s statusSessions) addUploading(app *appStatus, project *projectCaptureStatus, reg archive.SessionRegistration, issues map[string]string) {
 	o, found := s.owed[reg.ArchiveSessionID]
-	if !found || !o.Pending() || o.Blocked {
+	if !found || !o.Pending() || o.Blocked || o.Removal {
 		return
 	}
 	if o.WaitingForTranscript {
@@ -1294,7 +1305,7 @@ func importedSessionCounts(cfg config.Config, regs []archive.SessionRegistration
 		if o.Blocked || issues[reg.ArchiveSessionID] != "" {
 			withIssues++
 		}
-		if cfg.AcceptSession(reg) && o.Pending() {
+		if (cfg.AcceptSession(reg) || o.Removal) && o.Pending() {
 			pending++
 		}
 	}
@@ -1305,9 +1316,6 @@ func importedSessionCounts(cfg config.Config, regs []archive.SessionRegistration
 // the one definition state.Outstanding gives, for a caller that has not
 // listed the queued requests.
 func importPending(store *state.Store, cfg config.Config, reg archive.SessionRegistration) (bool, error) {
-	if !cfg.AcceptSession(reg) {
-		return false, nil
-	}
 	_, requested, err := store.LoadRequest(reg.ArchiveSessionID)
 	if err != nil {
 		return false, err
@@ -1316,7 +1324,7 @@ func importPending(store *state.Store, cfg config.Config, reg archive.SessionReg
 	if err != nil {
 		return false, err
 	}
-	return owed.Pending(), nil
+	return (cfg.AcceptSession(reg) || owed.Removal) && owed.Pending(), nil
 }
 
 const (
@@ -1688,6 +1696,9 @@ func (sc statusScreen) appRow(app appStatus, limit int) statusRow {
 			}
 		}
 	}
+	if app.PendingRemovalSessions > 0 {
+		row.notes = append(row.notes, statusNote{sc.style.warnMark(), "Removal is unfinished; agent-archive sync retries the existing removal intent."})
+	}
 	row.notes = append(row.notes, sc.uploadingNotes(app, limit)...)
 	if failure := app.readBackFailure; failure.Attempts > 0 {
 		row.notes = append(row.notes, statusNote{s.warnMark(), sc.readBackFailure(failure)})
@@ -1709,6 +1720,9 @@ func (sc statusScreen) importedAppRow(app appStatus, limit int) statusRow {
 	// Its hooks were never set up, so there are no sessions of its own to
 	// count.
 	row := statusRow{mark: sc.info(), cells: []string{appName(app.Name), "imported only"}, detail: strings.TrimPrefix(appCounts(app), "no sessions yet · ")}
+	if app.PendingRemovalSessions > 0 {
+		row.notes = append(row.notes, statusNote{sc.style.warnMark(), "Removal is unfinished; agent-archive sync retries the existing removal intent."})
+	}
 	row.notes = append(row.notes, sc.uploadingNotes(app, limit)...)
 	row.notes = append(row.notes, sc.gapNotes(app)...)
 	return row
@@ -1778,6 +1792,9 @@ func appCounts(app appStatus) string {
 	}
 	if app.UploadingSessions > 0 {
 		parts = append(parts, fmt.Sprintf("%d uploading", app.UploadingSessions))
+	}
+	if app.PendingRemovalSessions > 0 {
+		parts = append(parts, fmt.Sprintf("%d removal pending", app.PendingRemovalSessions))
 	}
 	return strings.Join(parts, " · ")
 }
