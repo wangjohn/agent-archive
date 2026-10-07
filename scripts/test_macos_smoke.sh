@@ -24,6 +24,7 @@ go test -race -count=1 -timeout 10m \
 cli_tests=(
   TestScreens
   TestGuidedPromptTerminalCells
+  TestGuidedPromptEmissionPreservesTerminalOwnership
   TestGuidedCommandsTerminalOwnership
   TestPairingCodeDisplayRecognizesWrappedTerminal
   TestGuidedPromptCollapseRequiresOwnedVisibleRows

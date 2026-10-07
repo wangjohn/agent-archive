@@ -263,6 +263,16 @@ func (g *promptLineGuard) screenLifecycle(hide, show func()) func() {
 }
 
 func (g *promptLineGuard) hidden() (func(), error) {
+	return g.hideEcho(true)
+}
+
+// muted suppresses echo only while a block is emitted. Canonical editing,
+// EOF and signal processing retain their existing terminal settings.
+func (g *promptLineGuard) muted() (func(), error) {
+	return g.hideEcho(false)
+}
+
+func (g *promptLineGuard) hideEcho(canonical bool) (func(), error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	modes, err := unix.IoctlGetTermios(g.fd, ioctlGetTermios)
@@ -271,8 +281,10 @@ func (g *promptLineGuard) hidden() (func(), error) {
 	}
 	hidden := *modes
 	hidden.Lflag &^= unix.ECHO | unix.ECHONL
-	hidden.Lflag |= unix.ICANON | unix.ISIG
-	hidden.Iflag |= unix.ICRNL
+	if canonical {
+		hidden.Lflag |= unix.ICANON | unix.ISIG
+		hidden.Iflag |= unix.ICRNL
+	}
 	if err := unix.IoctlSetTermios(g.fd, ioctlSetTermios, &hidden); err != nil {
 		return nil, err
 	}

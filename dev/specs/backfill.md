@@ -185,6 +185,30 @@ writes nothing; the storage check writes a test object), then
 `cursor_database_newer_format`, `cursor_subagents_not_imported`,
 `subagents_skipped`, `unreadable_folders`, and `unreadable_stores`.
 
+Plans with diagnostic details also include optional `diagnostics` (bounded
+aggregate records with the winning primary `skip`, typed `detail`, `action`,
+and `count`) and `inventory`. Existing skip codes and precedence are unchanged.
+Text renders the same content-free explanation and actionable recovery advice.
+No diagnostic includes native locators, IDs, Git command output or content.
+File and database-only candidates use the same diagnostic vocabulary. The broad
+`unsafe_format` skip has `source_inspection_unavailable` detail and `review_source`
+action: check access and format support, without assuming a format incompatibility.
+Recovery outcomes remain distinct even when their primary skip is
+`worktree_unresolved`; history stays `related_history_pending` with
+`history_lookup_pending` until a shared selection/dependency lookup is available.
+
+`inventory.unique_candidate_files` counts distinct candidate transcript paths;
+`database_candidates` counts database-only candidates separately. Each file has
+one disposition (`planned_import`, `already_archived`, `duplicate_candidate`,
+`excluded`, or `unresolved`), whose counts reconcile to unique candidate files.
+Recorded recovery exclusions count as excluded while keeping `worktree_unresolved`
+as their primary skip. Repeated observations of a selected file do not count that
+file as a discarded duplicate; planned import or archived selection wins, and
+conflicting remaining dispositions are unresolved.
+This foundation does not infer identical bytes, physical dependency roles,
+logical histories or retained revisions. `logical_history_pending` is true.
+Unenumerated stores and unreadable folders retain their separate existing fields.
+
 ### `history` and `undo`
 
 `history` lists each import with its ID, date, session count, projects added,
@@ -1081,8 +1105,37 @@ Recovery evidence is rechecked before admitting a new owner. Git dependency
 stamps include HEAD, worktree/common config paths, empty or absent included
 files, all candidate global/system config paths reported by Git, and scratch
 ancestors with no Git metadata and absent nearer checkout markers for configured
-Git subdirectories. Unsupported Git path queries remain unavailable; a documented no-value result
-establishes that no config path applies.
+Git subdirectories. A documented no-value result establishes that no config path
+applies. Optional `git var GIT_CONFIG_GLOBAL`/`GIT_CONFIG_SYSTEM` usage errors
+select semantic validation instead of making otherwise known identity unknown.
+The capability cache and retained root observations belong to one pass and are
+invalidated by executable metadata or effective environment changes; version
+strings are never authority. A content-free observer-scope digest binds temporary
+inventory evidence to that executable and environment. Exact mappings share a
+single planned identity per destination root; a later candidate cannot overwrite
+the observation on which an earlier proof depends.
+Name/origin enumeration has a 256 KiB output cap; URLs and short queries retain
+the 4 KiB cap. Each command has the existing 500 ms timeout and dependency
+collection has a shared 500 ms deadline, at most 128 paths and 64 ancestors.
+
+A semantic epoch binds the full sorted configured inventory (including excluded
+roots), canonical configured paths, policy/mapping context, and each root's
+known/unknown state, canonical checkout top level and normalized repository key.
+The planning sweep and second admission sweep must agree on every root, even
+scratch or excluded roots that did not match the selected key. Unknown, changed
+or cancelled evidence stays pending. The second sweep is coalesced once per
+bounded admission slice and costs at most 1024 root observations independently
+of its number of imported sessions. The initial discovery sweep retains its
+128-lookup continuation cursor; its partial entries never establish uniqueness.
+Each lookup verifies its root/key again after collecting bounded metadata.
+Semantic sweeps cannot stamp unknown absent system/global paths and are not an
+atomic filesystem snapshot: a change after the last observation, or a change
+and reversal between sweeps, can escape observation. Enumerated local stamps,
+canonical original cwd and native source observation checks remain required.
+Git reads occur before the admission lock, which rechecks configuration,
+destination and consent. `validation_method=semantic` is retained privately as
+ownership provenance. Validation caches and observation contexts are temporary;
+retained admitted ownership does not acquire a continuing live-Git requirement.
 New discovery checks the original source observation and original cwd again; imports validate each source and
 cwd and coalesce the common inventory check for each short registration hold.
 Import and recovered discovery attribution retain the file identity, size and modification time sampled
@@ -1104,6 +1157,8 @@ prefix and admit a recovered source. Further candidates remain retryable.
 `repository_metadata_operations` reports those invocation units; a canonical
 path invocation may perform multiple filesystem probes. Import resets this
 allowance per short hold, with one common inventory check for its candidates.
-Git identity lookup limits remain unchanged. Filesystem proof checks cannot
+Initial Git identity lookup limits remain unchanged; semantic admission has the
+separate 1024-root bound above. No-context programmatic import callers get a
+30-second validation deadline per slice. Filesystem proof checks cannot
 prevent a change after their final observation; the next admission slice or
 pass refreshes the evidence.

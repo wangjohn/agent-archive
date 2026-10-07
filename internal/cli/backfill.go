@@ -705,8 +705,9 @@ func (e Env) backfillTempDirs() []string {
 // it holds.
 func (e Env) backfillEnvironment(userHome string, cfg config.Config) backfill.Environment {
 	dirs := e.nativeSessionDirectories(userHome, cfg)
+	observer := &gitremote.IdentityObserver{}
 	env := backfill.Environment{
-		RepositoryIdentity:        gitremote.ProjectIdentity,
+		RepositoryIdentity:        observer.Lookup,
 		RepositoryIdentityCurrent: gitremote.ProjectIdentityCurrent,
 		Home:                      userHome, NativeDirectories: dirs, Sources: e.agentRegistry(), Discovery: e.agentRegistry(), DatabaseCatalogs: e.agentRegistry(), NativePaths: e.agentRegistry(), Worktrees: e.agentRegistry(), Workspaces: e.agentRegistry(), Children: e.agentRegistry(), Imports: e.agentRegistry(),
 		TempDirs: e.backfillTempDirs(), Now: e.now, OS: e.OS,
