@@ -737,7 +737,8 @@ func (s statusSessions) appStatus(name string, cfg config.Config, home string, i
 // which the app's gaps report instead.
 func (s statusSessions) addUploading(app *appStatus, project *projectCaptureStatus, reg archive.SessionRegistration, issues map[string]string) {
 	o, found := s.owed[reg.ArchiveSessionID]
-	if !found || !o.Pending() || o.Blocked || o.Removal {
+	uploadWork := o.Upload || o.Stage || o.Requested || o.RateLimited || o.Scan
+	if !found || !o.Pending() || o.Blocked || o.Removal && !uploadWork {
 		return
 	}
 	if o.WaitingForTranscript {

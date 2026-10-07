@@ -10,6 +10,7 @@ import (
 // whole store. It covers a bounded journal's old/new atomic coexistence, never
 // extra capacity outside AdmissionStageQuota.
 const deletionControlAllowance int64 = 64 << 10
+
 const deletionControlLimit int64 = deletionControlAllowance / 2
 
 // deletionControlUsage counts every regular control, including retained,

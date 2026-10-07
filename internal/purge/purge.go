@@ -110,7 +110,7 @@ func Inventory(ctx context.Context, store storage.ObjectStore, destinationID, bu
 		if path.Dir(meta.SourceBundle.Key) != path.Dir(object.Key) || !validSourceKey(meta.SourceBundle.Key) {
 			return Plan{}, fmt.Errorf("metadata %q has an invalid source reference", object.Key)
 		}
-		refs, err := checkedReferences(meta, object.Key, listedSources)
+		refs, err := checkedReferences(ctx, store, meta, object.Key, listedSources)
 		if err != nil {
 			return Plan{}, err
 		}
@@ -333,7 +333,7 @@ func applyNext(ctx context.Context, store storage.ObjectStore, plan Plan, report
 		if path.Dir(meta.SourceBundle.Key) != path.Dir(objects[i].Key) || !validSourceKey(meta.SourceBundle.Key) {
 			return fmt.Errorf("metadata %q has an invalid source reference", objects[i].Key)
 		}
-		refs, err := checkedReferences(meta, objects[i].Key, listedSources)
+		refs, err := checkedReferences(ctx, store, meta, objects[i].Key, listedSources)
 		if err != nil {
 			return err
 		}
@@ -370,7 +370,7 @@ func findCandidate(candidates []Candidate, key string) (Candidate, bool) {
 }
 
 // checkedReferences protects every selecting reference, including preserved revisions.
-func checkedReferences(meta archive.Metadata, metadataKey string, listed map[string]bool) ([]archive.SourceReference, error) {
+func checkedReferences(ctx context.Context, store storage.ObjectStore, meta archive.Metadata, metadataKey string, listed map[string]bool) ([]archive.SourceReference, error) {
 	refs, err := meta.SourceReferences()
 	if err != nil {
 		return nil, fmt.Errorf("invalid selecting metadata %q: %w", metadataKey, err)
@@ -382,6 +382,13 @@ func checkedReferences(meta archive.Metadata, metadataKey string, listed map[str
 		if !listed[ref.Key] {
 			return nil, fmt.Errorf("metadata %q references a missing source", metadataKey)
 		}
+	}
+	sources := make([]storage.SourcePublication, len(refs))
+	for i, ref := range refs {
+		sources[i] = storage.SourcePublication{Key: ref.Key, SHA256: ref.SHA256, Size: ref.CompressedBytes}
+	}
+	if err := storage.VerifySourceSet(ctx, store, sources, storage.RetryPolicy{}); err != nil {
+		return nil, fmt.Errorf("verify selecting metadata %q: %w", metadataKey, err)
 	}
 	return refs, nil
 }

@@ -21,6 +21,7 @@ func fillReservedPool(t *testing.T, s *Store) *TemporaryReservation {
 	t.Cleanup(func() { _ = r.Close() })
 	return r
 }
+
 func TestDeletionAllowanceInsideSaturatedPoolAndAtomicCoexistence(t *testing.T) {
 	s, reg, _ := stageFixture(t)
 	fillReservedPool(t, s)
@@ -49,6 +50,7 @@ func TestDeletionAllowanceInsideSaturatedPoolAndAtomicCoexistence(t *testing.T) 
 		t.Fatal("pool cap changed", used, err)
 	}
 }
+
 func TestDeletionIntentRefusesPreexistingFullPhysicalPool(t *testing.T) {
 	s, reg, _ := stageFixture(t)
 	f, err := os.Create(filepath.Join(s.home, admissionStageDir, "legacy-orphan.source.gz"))
@@ -77,6 +79,7 @@ func TestDeletionIntentRefusesPreexistingFullPhysicalPool(t *testing.T) {
 		t.Fatal("capacity failure evicted evidence", err)
 	}
 }
+
 func TestDeletionAllowanceSerializesWithTemporaryReservation(t *testing.T) {
 	s, reg, _ := stageFixture(t)
 	r, err := NewTemporaryReservation(s, CursorAdmission, "concurrent")
@@ -103,6 +106,7 @@ func TestDeletionAllowanceSerializesWithTemporaryReservation(t *testing.T) {
 		t.Fatal(used, err)
 	}
 }
+
 func TestDeletionControlAccountingIncludesCorruptOrphansWithoutBodyReads(t *testing.T) {
 	s, _, _ := stageFixture(t)
 	reads := 0
@@ -121,5 +125,30 @@ func TestDeletionControlAccountingIncludesCorruptOrphansWithoutBodyReads(t *test
 	}
 	if used, err := s.admissionStageUsage(); err != nil || used != 3*deletionControlLimit || reads != 0 {
 		t.Fatal("retained controls not conservatively charged", used, reads, err)
+	}
+}
+
+func TestOrdinaryPendingChargesDeletionOnlyPool(t *testing.T) {
+	s, _, _ := stageFixture(t)
+	dir := filepath.Join(s.home, "session-deletions")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Create(filepath.Join(dir, "orphan.tmp"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = f.Truncate(AdmissionStageQuota - 100); err != nil {
+		t.Fatal(err)
+	}
+	if err = f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	p := publicationFixture(t, publicationThread, time.Now())
+	if err = s.SavePending(p.Bundle.ArchiveSessionID, p); !errors.Is(err, ErrAdmissionStageCapacity) {
+		t.Fatal("deletion controls bypassed shared pool", err)
+	}
+	if _, err = os.Stat(s.pendingPath(p.Bundle.ArchiveSessionID)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("capacity refusal allocated pending", err)
 	}
 }

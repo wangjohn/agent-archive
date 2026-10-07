@@ -1,6 +1,7 @@
 package state
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
@@ -17,6 +18,24 @@ var ErrRemovalPending = errors.New("authorized session removal is unfinished")
 // ErrDeletionWorkChanged requires a fresh decision after newer queued work.
 var ErrDeletionWorkChanged = errors.New("session work changed before removal; retry after processing the newer request")
 
+// SessionDeletionPhase identifies a durable removal transition.
+type SessionDeletionPhase string
+
+const (
+	// DeletionPrepared identifies the prepared removal phase.
+	DeletionPrepared SessionDeletionPhase = "prepared"
+	// DeletionDeleting identifies the deleting removal phase.
+	DeletionDeleting SessionDeletionPhase = "deleting"
+	// DeletionAbsent identifies the absent removal phase.
+	DeletionAbsent SessionDeletionPhase = "absent"
+	// DeletionCleaned identifies the cleaned removal phase.
+	DeletionCleaned SessionDeletionPhase = "cleaned"
+	// DeletionRestoring identifies the restoring removal phase.
+	DeletionRestoring SessionDeletionPhase = "restoring"
+	// DeletionRestored identifies the restored removal phase.
+	DeletionRestored SessionDeletionPhase = "restored"
+)
+
 // SessionDeletion retains exact whole-session deletion authority across crashes.
 // It is not permission to publish; only retention may authorize a newer hook.
 type SessionDeletion struct {
@@ -25,7 +44,7 @@ type SessionDeletion struct {
 	Version           int                       `json:"version"`
 	Owner             string                    `json:"owner"`
 	Reason            RemovalReason             `json:"reason"`
-	Phase             string                    `json:"phase"`
+	Phase             SessionDeletionPhase      `json:"phase"`
 	MetadataSHA256    string                    `json:"metadata_sha256,omitempty"`
 	References        []archive.SourceReference `json:"references,omitempty"`
 	RequestToken      string                    `json:"request_token,omitempty"`
@@ -37,26 +56,33 @@ type SessionDeletion struct {
 
 func deletionOwner(reg archive.SessionRegistration) string {
 	raw, _ := json.Marshal(struct {
-		ID, Native, Project, Harness, Destination, Stage string
-		Admission                                        time.Time
+		ID          string    `json:"ID"`
+		Native      string    `json:"Native"`
+		Project     string    `json:"Project"`
+		Harness     string    `json:"Harness"`
+		Destination string    `json:"Destination"`
+		Stage       string    `json:"Stage"`
+		Admission   time.Time `json:"Admission"`
 	}{reg.ArchiveSessionID, reg.NativeSessionID, reg.ProjectID, reg.Harness.Name, reg.DestinationID, reg.AdmissionStage, reg.Admitted()})
 	return publicationSHA256(raw)
 }
+
 func deletionChecksum(j SessionDeletion) string {
 	j.Checksum = ""
 	b, _ := json.Marshal(j)
 	return publicationSHA256(b)
 }
-func (s *Store) deletionPath(id string) (string, error) {
+
+func validateDeletionID(id string) error {
 	if !safeFileComponent(id) {
-		return "", ErrAdmissionStageRecovery
+		return ErrAdmissionStageRecovery
 	}
-	return filepath.Join(s.home, "session-deletions", id+".json"), nil
+	return nil
 }
 
 // LoadSessionDeletion refuses malformed authority without quarantining evidence.
 func (s *Store) LoadSessionDeletion(reg archive.SessionRegistration) (SessionDeletion, bool, error) {
-	_, err := s.deletionPath(reg.ArchiveSessionID)
+	err := validateDeletionID(reg.ArchiveSessionID)
 	if err != nil {
 		return SessionDeletion{}, false, err
 	}
@@ -71,17 +97,17 @@ func (s *Store) LoadSessionDeletion(reg archive.SessionRegistration) (SessionDel
 		return SessionDeletion{}, true, err
 	}
 	var j SessionDeletion
-	if json.Unmarshal(b, &j) != nil || j.Version != 1 || j.Owner != deletionOwner(reg) || j.At.IsZero() || j.Checksum != deletionChecksum(j) || (j.Reason != RemovalReasonRetention && j.Reason != RemovalReasonUndo) {
+	if json.Unmarshal(b, &j) != nil || j.Version != 1 || j.Owner != deletionOwner(reg) || j.At.IsZero() || j.Checksum != deletionChecksum(j) || !canonicalDeletion(b, j) || (j.Reason != RemovalReasonRetention && j.Reason != RemovalReasonUndo) {
 		return j, true, ErrAdmissionStageRecovery
 	}
 	if j.CoveredRequest && (j.Reason != RemovalReasonRetention || j.RequestToken == "") {
 		return j, true, ErrAdmissionStageRecovery
 	}
-	if j.LocalRemoved && j.Phase != "cleaned" {
+	if j.LocalRemoved && j.Phase != DeletionCleaned {
 		return j, true, ErrAdmissionStageRecovery
 	}
 	switch j.Phase {
-	case "prepared", "deleting", "absent", "cleaned", "restoring", "restored":
+	case DeletionPrepared, DeletionDeleting, DeletionAbsent, DeletionCleaned, DeletionRestoring, DeletionRestored:
 	default:
 		return j, true, ErrAdmissionStageRecovery
 	}
@@ -125,7 +151,7 @@ func (s *Store) prepareDeletionAtRequest(reg archive.SessionRegistration, reason
 	} else if found {
 		if reason == RemovalReasonUndo && j.Reason == RemovalReasonRetention {
 			// Explicit removal revokes an unfinished retention restoration.
-		} else if j.Phase == "restored" && len(raw) > 0 {
+		} else if j.Phase == DeletionRestored && len(raw) > 0 {
 			published, e := s.LoadPublishedState(reg.ArchiveSessionID)
 			if e != nil {
 				return j, e
@@ -143,14 +169,17 @@ func (s *Store) prepareDeletionAtRequest(reg archive.SessionRegistration, reason
 	if reason != RemovalReasonRetention && reason != RemovalReasonUndo {
 		return SessionDeletion{}, ErrAdmissionStageRecovery
 	}
-	j := SessionDeletion{Version: 1, Owner: deletionOwner(reg), Reason: reason, Phase: "prepared", At: at.UTC()}
+	j := SessionDeletion{Version: 1, Owner: deletionOwner(reg), Reason: reason, Phase: DeletionPrepared, At: at.UTC()}
 	if len(raw) > 0 {
 		published, e := s.LoadPublishedState(reg.ArchiveSessionID)
 		if e != nil {
 			return j, e
 		}
+		// An intact registered owner may remove a freshly verified remote selector
+		// after losing its local publication cache. A known different selector
+		// still refuses; this grants no restoration/publication authority.
 		prior := published.PublicationPredecessor()
-		if prior.State != PredecessorPresent || publicationSHA256(prior.Body) != publicationSHA256(raw) {
+		if prior.State == PredecessorPresent && publicationSHA256(prior.Body) != publicationSHA256(raw) {
 			return j, ErrAdmissionStageRecovery
 		}
 		if _, e = published.CommittedSources(); e != nil {
@@ -182,8 +211,9 @@ func (s *Store) prepareDeletionAtRequest(reg archive.SessionRegistration, reason
 	}
 	return j, s.saveSessionDeletion(reg, j)
 }
+
 func (s *Store) saveSessionDeletion(reg archive.SessionRegistration, j SessionDeletion) error {
-	if _, err := s.deletionPath(reg.ArchiveSessionID); err != nil {
+	if err := validateDeletionID(reg.ArchiveSessionID); err != nil {
 		return err
 	}
 	j.Checksum = deletionChecksum(j)
@@ -195,7 +225,7 @@ func (s *Store) saveSessionDeletion(reg archive.SessionRegistration, j SessionDe
 }
 
 // AdvanceSessionDeletion durably advances only the existing exact deletion intent.
-func (s *Store) AdvanceSessionDeletion(reg archive.SessionRegistration, phase string) error {
+func (s *Store) AdvanceSessionDeletion(reg archive.SessionRegistration, phase SessionDeletionPhase) error {
 	j, found, err := s.LoadSessionDeletion(reg)
 	if err != nil {
 		return err
@@ -203,7 +233,7 @@ func (s *Store) AdvanceSessionDeletion(reg archive.SessionRegistration, phase st
 	if !found {
 		return ErrAdmissionStageRecovery
 	}
-	allowed := j.Phase == phase || j.Phase == "prepared" && phase == "deleting" || j.Phase == "deleting" && phase == "absent" || j.Phase == "absent" && (phase == "cleaned" || phase == "restored") || j.Phase == "cleaned" && phase == "restored"
+	allowed := j.Phase == phase || j.Phase == DeletionPrepared && phase == DeletionDeleting || j.Phase == DeletionDeleting && phase == DeletionAbsent || j.Phase == DeletionAbsent && (phase == DeletionCleaned || phase == DeletionRestored) || j.Phase == DeletionCleaned && phase == DeletionRestored
 	if !allowed {
 		return ErrAdmissionStageRecovery
 	}
@@ -219,10 +249,10 @@ func (s *Store) RestoreAfterRetention(reg archive.SessionRegistration, p Pending
 	if err != nil || !found {
 		return p, false, err
 	}
-	if j.Phase == "restored" {
+	if j.Phase == DeletionRestored {
 		return p, false, nil
 	}
-	if j.LocalRemoved || j.Reason != RemovalReasonRetention || (j.Phase != "absent" && j.Phase != "cleaned" && j.Phase != "restoring") || p.Commit == nil || p.Commit.Predecessor != PredecessorPresent || p.Commit.PredecessorSHA256 != j.MetadataSHA256 || p.Commit.DestinationID != reg.DestinationID || p.Commit.Purpose != PublicationCapture || p.RequestToken == "" || p.RequestToken == j.RequestToken {
+	if j.LocalRemoved || j.Reason != RemovalReasonRetention || (j.Phase != DeletionAbsent && j.Phase != DeletionCleaned && j.Phase != DeletionRestoring) || p.Commit == nil || p.Commit.Predecessor != PredecessorPresent || p.Commit.PredecessorSHA256 != j.MetadataSHA256 || p.Commit.DestinationID != reg.DestinationID || p.Commit.Purpose != PublicationCapture || p.RequestToken == "" || p.RequestToken == j.RequestToken {
 		return p, false, ErrAdmissionStageRecovery
 	}
 	if err = p.ValidatePublication(); err != nil {
@@ -250,11 +280,11 @@ func (s *Store) RestoreAfterRetention(reg archive.SessionRegistration, p Pending
 	if err != nil {
 		return p, false, err
 	}
-	if j.Phase == "restoring" && (j.RestorationSHA256 != next.Commit.MetadataSHA256 || j.RestorationToken != p.RequestToken) {
+	if j.Phase == DeletionRestoring && (j.RestorationSHA256 != next.Commit.MetadataSHA256 || j.RestorationToken != p.RequestToken) {
 		return p, false, ErrAdmissionStageRecovery
 	}
 	next.Commit.Retention = &RetentionRestoration{DeletionSHA256: deletionIntentSHA(j), OwnerSHA256: j.Owner, ReplacementSHA256: next.Commit.MetadataSHA256, PredecessorSHA256: j.MetadataSHA256, CoveredToken: p.RequestToken}
-	j.Phase = "restoring"
+	j.Phase = DeletionRestoring
 	j.RestorationSHA256 = next.Commit.MetadataSHA256
 	j.RestorationToken = p.RequestToken
 	if err = s.saveSessionDeletion(reg, j); err != nil {
@@ -269,7 +299,7 @@ func (s *Store) CompleteRetentionRestoration(reg archive.SessionRegistration, p 
 	if err != nil || !found {
 		return err
 	}
-	if j.Phase != "restoring" {
+	if j.Phase != DeletionRestoring {
 		return nil
 	}
 	if p.Commit == nil || p.Commit.MetadataSHA256 != j.RestorationSHA256 || p.RequestToken != j.RestorationToken || publicationSHA256(published.Metadata()) != j.RestorationSHA256 {
@@ -278,7 +308,7 @@ func (s *Store) CompleteRetentionRestoration(reg archive.SessionRegistration, p 
 	if _, err = published.CommittedSources(); err != nil {
 		return err
 	}
-	j.Phase = "restored"
+	j.Phase = DeletionRestored
 	return s.saveSessionDeletion(reg, j)
 }
 
@@ -292,13 +322,13 @@ func (s *Store) DeletionCaptureAllowed(reg archive.SessionRegistration, req Requ
 	if j.LocalRemoved {
 		return ErrAdmissionStageRecovery
 	}
-	if j.Phase == "restored" {
+	if j.Phase == DeletionRestored {
 		return nil
 	}
-	if j.Reason != RemovalReasonRetention || j.Phase == "prepared" || j.Phase == "deleting" {
+	if j.Reason != RemovalReasonRetention || j.Phase == DeletionPrepared || j.Phase == DeletionDeleting {
 		return ErrRemovalPending
 	}
-	if j.Phase == "restoring" {
+	if j.Phase == DeletionRestoring {
 		pending, found, err := s.LoadPending(reg.ArchiveSessionID)
 		if err != nil {
 			return err
@@ -351,7 +381,7 @@ func (s *Store) HasDurableSessionEvidence(id string) (bool, error) {
 			return true, err
 		}
 		for _, entry := range entries {
-			if strings.HasPrefix(entry.Name(), id+".") || directory == "session-deletions" && strings.HasPrefix(entry.Name(), id+"-") {
+			if directory == admissionStageDir && ownedStageFilename(id, entry.Name()) || directory == "session-deletions" && (entry.Name() == id+".json" || strings.HasPrefix(entry.Name(), id+"-")) {
 				return true, nil
 			}
 		}
@@ -369,7 +399,7 @@ type RetentionRestoration struct {
 }
 
 func deletionIntentSHA(j SessionDeletion) string {
-	j.Phase = "prepared"
+	j.Phase = DeletionPrepared
 	j.RestorationSHA256 = ""
 	j.RestorationToken = ""
 	return deletionChecksum(j)
@@ -385,7 +415,7 @@ func (s *Store) ValidateRetentionRestoration(reg archive.SessionRegistration, p 
 	if err != nil {
 		return err
 	}
-	if !found || j.Reason != RemovalReasonRetention || (j.Phase != "restoring" && j.Phase != "restored") || j.Owner != r.OwnerSHA256 || r.ReplacementSHA256 != p.Commit.MetadataSHA256 || deletionIntentSHA(j) != r.DeletionSHA256 || j.MetadataSHA256 != r.PredecessorSHA256 || j.RestorationSHA256 != p.Commit.MetadataSHA256 || j.RestorationToken != r.CoveredToken || r.CoveredToken != p.RequestToken {
+	if !found || j.Reason != RemovalReasonRetention || (j.Phase != DeletionRestoring && j.Phase != DeletionRestored) || j.Owner != r.OwnerSHA256 || r.ReplacementSHA256 != p.Commit.MetadataSHA256 || deletionIntentSHA(j) != r.DeletionSHA256 || j.MetadataSHA256 != r.PredecessorSHA256 || j.RestorationSHA256 != p.Commit.MetadataSHA256 || j.RestorationToken != r.CoveredToken || r.CoveredToken != p.RequestToken {
 		return ErrAdmissionStageRecovery
 	}
 	return p.ValidatePublication()
@@ -407,4 +437,9 @@ func (s *Store) saveDeletionAtRequest(reg archive.SessionRegistration, j Session
 		}
 		return nil
 	})
+}
+
+func canonicalDeletion(raw []byte, j SessionDeletion) bool {
+	canonical, err := json.Marshal(j)
+	return err == nil && bytes.Equal(raw, canonical)
 }

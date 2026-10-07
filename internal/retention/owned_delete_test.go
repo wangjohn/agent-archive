@@ -2,14 +2,15 @@ package retention
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
-	"github.com/wangjohn/agent-archive/internal/archive"
 	"os"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
@@ -44,7 +45,7 @@ func TestOwnedDeletionResumesUncertainMetadataDeleteWithoutNative(t *testing.T) 
 		t.Fatal("uncertain delete reported success")
 	}
 	journal, found, err := local.LoadSessionDeletion(reg)
-	if err != nil || !found || journal.Phase != "deleting" {
+	if err != nil || !found || journal.Phase != state.DeletionDeleting {
 		t.Fatal("uncertain result lost exact authority", journal, err)
 	}
 	objects, err := memory.List(context.Background(), "sessions/codex/s1/")
@@ -66,7 +67,7 @@ func TestOwnedDeletionResumesUncertainMetadataDeleteWithoutNative(t *testing.T) 
 		t.Fatal("namespace not completely removed", objects, err)
 	}
 	journal, found, err = restarted.LoadSessionDeletion(reg)
-	if err != nil || !found || journal.Phase != "cleaned" {
+	if err != nil || !found || journal.Phase != state.DeletionCleaned {
 		t.Fatal("cleanup authority not committed", journal, err)
 	}
 }
@@ -85,10 +86,12 @@ func (s *hookBeforeIntentStore) Get(ctx context.Context, key string) ([]byte, er
 	}
 	return r, err
 }
+
 func (s *hookBeforeIntentStore) Delete(ctx context.Context, key string) error {
 	s.deletes++
 	return s.ObjectStore.Delete(ctx, key)
 }
+
 func TestRetentionHookBeforeFirstIntentNeverBecomesDecisionAuthority(t *testing.T) {
 	local := newTestStore(t)
 	remote := storagetest.NewMemoryStore()
@@ -112,6 +115,7 @@ func TestRetentionHookBeforeFirstIntentNeverBecomesDecisionAuthority(t *testing.
 		t.Fatal("new request lost", req, err)
 	}
 }
+
 func TestRetentionInterruptedIntentResumesBeforeNewerRequestDeferral(t *testing.T) {
 	local := newTestStore(t)
 	remote := storagetest.NewMemoryStore()
@@ -137,7 +141,7 @@ func TestRetentionInterruptedIntentResumesBeforeNewerRequestDeferral(t *testing.
 		t.Fatal("new work dropped or intent stalled", result)
 	}
 	j, found, err := restarted.LoadSessionDeletion(reg)
-	if err != nil || !found || j.Phase != "absent" {
+	if err != nil || !found || j.Phase != state.DeletionAbsent {
 		t.Fatal("request prevented exact intent resumption", j, err)
 	}
 	if req, found, err := restarted.LoadRequest(reg.ArchiveSessionID); err != nil || !found || len(req.HookEvidence) != 1 {
@@ -148,6 +152,7 @@ func TestRetentionInterruptedIntentResumesBeforeNewerRequestDeferral(t *testing.
 		t.Fatal("resumed exact retention cannot restore", completed)
 	}
 }
+
 func TestRetentionExcludedOldDecisionRequestStillExpires(t *testing.T) {
 	local := newTestStore(t)
 	remote := storagetest.NewMemoryStore()
@@ -172,8 +177,9 @@ func TestRetentionExcludedOldDecisionRequestStillExpires(t *testing.T) {
 
 type cancelSelectingRead struct {
 	storage.ObjectStore
-	cancel                 context.CancelFunc
-	metadataReads, deletes int
+	cancel        context.CancelFunc
+	metadataReads int
+	deletes       int
 }
 
 func (s *cancelSelectingRead) Get(ctx context.Context, key string) ([]byte, error) {
@@ -186,10 +192,12 @@ func (s *cancelSelectingRead) Get(ctx context.Context, key string) ([]byte, erro
 	}
 	return raw, err
 }
+
 func (s *cancelSelectingRead) Delete(ctx context.Context, key string) error {
 	s.deletes++
 	return s.ObjectStore.Delete(ctx, key)
 }
+
 func TestOwnedDeletionCancellationAfterSelectingRecheckRetainsAuthority(t *testing.T) {
 	local := newTestStore(t)
 	remote := storagetest.NewMemoryStore()
@@ -205,10 +213,166 @@ func TestOwnedDeletionCancellationAfterSelectingRecheckRetainsAuthority(t *testi
 	if err := DeleteOwnedSession(ctx, local, wrapped, reg, state.RemovalReasonUndo, at); !errors.Is(err, context.Canceled) || wrapped.deletes != 0 {
 		t.Fatal("cancelled selecting proof allowed deletion", err, wrapped.deletes)
 	}
-	if j, found, err := local.LoadSessionDeletion(reg); err != nil || !found || j.Phase != "deleting" {
+	if j, found, err := local.LoadSessionDeletion(reg); err != nil || !found || j.Phase != state.DeletionDeleting {
 		t.Fatal("cancelled intent not recoverable", j, err)
 	}
 	if err := DeleteOwnedSession(t.Context(), local, remote, reg, state.RemovalReasonUndo, at); err != nil {
 		t.Fatal("cancelled exact intent did not resume", err)
+	}
+}
+
+func TestOwnedDeletionRetryVerifiesStillSelectedSources(t *testing.T) {
+	local := newTestStore(t)
+	remote := storagetest.NewMemoryStore()
+	at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	reg := registration("s1", writeTranscript(t, t.TempDir(), "s1.jsonl", codexTranscript))
+	if err := local.SaveRegistration(reg); err != nil {
+		t.Fatal(err)
+	}
+	collect(t, local, remote, at)
+	ctx, cancel := context.WithCancel(t.Context())
+	wrapped := &cancelSelectingRead{ObjectStore: remote, cancel: cancel}
+	if err := DeleteOwnedSession(ctx, local, wrapped, reg, state.RemovalReasonUndo, at); !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+	m := fetchMetadata(t, remote, "s1")
+	if err := remote.Put(t.Context(), m.SourceBundle.Key, []byte("corrupt selected source")); err != nil {
+		t.Fatal(err)
+	}
+	if err := DeleteOwnedSession(t.Context(), local, remote, reg, state.RemovalReasonUndo, at); err == nil {
+		t.Fatal("resumed deletion accepted corrupt selected source")
+	}
+	if _, err := remote.Get(t.Context(), "sessions/codex/s1/metadata.json"); err != nil {
+		t.Fatal("selecting metadata removed without full source proof", err)
+	}
+}
+
+type winnerDuringVerification struct {
+	storage.ObjectStore
+	key      string
+	metadata []byte
+	once     sync.Once
+}
+
+func (s *winnerDuringVerification) Get(ctx context.Context, key string) ([]byte, error) {
+	raw, err := s.ObjectStore.Get(ctx, key)
+	if strings.Contains(key, "/source.") {
+		s.once.Do(func() { err = s.Put(ctx, s.key, s.metadata) })
+	}
+	return raw, err
+}
+
+func TestOwnedDeletionRefusesWinnerChangedDuringSourceVerification(t *testing.T) {
+	local := newTestStore(t)
+	remote := storagetest.NewMemoryStore()
+	at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	reg := registration("s1", writeTranscript(t, t.TempDir(), "s1.jsonl", codexTranscript))
+	if err := local.SaveRegistration(reg); err != nil {
+		t.Fatal(err)
+	}
+	collect(t, local, remote, at)
+	ctx, cancel := context.WithCancel(t.Context())
+	if err := DeleteOwnedSession(ctx, local, &cancelSelectingRead{ObjectStore: remote, cancel: cancel}, reg, state.RemovalReasonUndo, at); !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+	m := fetchMetadata(t, remote, "s1")
+	m.Title = "changed authoritative winner"
+	raw, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := "sessions/codex/s1/metadata.json"
+	wrapped := &winnerDuringVerification{ObjectStore: remote, key: key, metadata: raw}
+	if err = DeleteOwnedSession(t.Context(), local, wrapped, reg, state.RemovalReasonUndo, at); !errors.Is(err, storage.ErrPublicationConflict) {
+		t.Fatal("verification interval deleted different winner", err)
+	}
+	got, err := remote.Get(t.Context(), key)
+	if err != nil || string(got) != string(raw) {
+		t.Fatal("different winner removed", err)
+	}
+}
+
+type homeReplacementDuringVerification struct {
+	storage.ObjectStore
+	home  string
+	moved string
+	once  sync.Once
+}
+
+func (s *homeReplacementDuringVerification) Get(ctx context.Context, key string) ([]byte, error) {
+	raw, err := s.ObjectStore.Get(ctx, key)
+	if strings.Contains(key, "/source.") {
+		s.once.Do(func() {
+			err = os.Rename(s.home, s.moved)
+			if err == nil {
+				err = os.Mkdir(s.home, 0700)
+			}
+		})
+	}
+	return raw, err
+}
+
+func TestOwnedDeletionRefusesLostJournalDuringSourceVerification(t *testing.T) {
+	local := newTestStore(t)
+	remote := storagetest.NewMemoryStore()
+	at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	reg := registration("s1", writeTranscript(t, t.TempDir(), "s1.jsonl", codexTranscript))
+	if err := local.SaveRegistration(reg); err != nil {
+		t.Fatal(err)
+	}
+	collect(t, local, remote, at)
+	ctx, cancel := context.WithCancel(t.Context())
+	if err := DeleteOwnedSession(ctx, local, &cancelSelectingRead{ObjectStore: remote, cancel: cancel}, reg, state.RemovalReasonUndo, at); !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+	moved := local.Home() + "-held"
+	t.Cleanup(func() { _ = os.RemoveAll(moved) })
+	wrapped := &homeReplacementDuringVerification{ObjectStore: remote, home: local.Home(), moved: moved}
+	if err := DeleteOwnedSession(t.Context(), local, wrapped, reg, state.RemovalReasonUndo, at); err == nil {
+		t.Fatal("lost journal allowed deletion")
+	}
+	if _, err := remote.Get(t.Context(), "sessions/codex/s1/metadata.json"); err != nil {
+		t.Fatal("lost journal removed selector before refusing", err)
+	}
+}
+
+type homeReplacementDuringNamespace struct {
+	storage.ObjectStore
+	home  string
+	moved string
+	once  sync.Once
+}
+
+func (s *homeReplacementDuringNamespace) List(ctx context.Context, prefix string) ([]storage.Object, error) {
+	objects, err := s.ObjectStore.List(ctx, prefix)
+	if strings.HasPrefix(prefix, "sessions/codex/s1/") {
+		s.once.Do(func() {
+			err = os.Rename(s.home, s.moved)
+			if err == nil {
+				err = os.Mkdir(s.home, 0700)
+			}
+		})
+	}
+	return objects, err
+}
+
+func TestOwnedDeletionRefusesLostJournalDuringNamespaceCleanup(t *testing.T) {
+	local := newTestStore(t)
+	remote := storagetest.NewMemoryStore()
+	at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	reg := registration("s1", writeTranscript(t, t.TempDir(), "s1.jsonl", codexTranscript))
+	if err := local.SaveRegistration(reg); err != nil {
+		t.Fatal(err)
+	}
+	collect(t, local, remote, at)
+	m := fetchMetadata(t, remote, "s1")
+	moved := local.Home() + "-held"
+	t.Cleanup(func() { _ = os.RemoveAll(moved) })
+	wrapped := &homeReplacementDuringNamespace{ObjectStore: remote, home: local.Home(), moved: moved}
+	if err := DeleteOwnedSession(t.Context(), local, wrapped, reg, state.RemovalReasonUndo, at); err == nil {
+		t.Fatal("lost journal allowed cleanup")
+	}
+	if _, err := remote.Get(t.Context(), m.SourceBundle.Key); err != nil {
+		t.Fatal("lost journal removed source before refusing", err)
 	}
 }

@@ -153,7 +153,7 @@ func (s *Store) outstanding(reg archive.SessionRegistration, requested bool, sum
 	if err != nil {
 		return Outstanding{Removal: true}, err
 	}
-	removal := haveDeletion && !j.LocalRemoved && j.Phase != "restored" && j.Phase != "restoring"
+	removal := haveDeletion && !j.LocalRemoved && j.Phase != DeletionRestored && j.Phase != DeletionRestoring
 	o := Outstanding{
 		Removal:       removal,
 		Stage:         stage,

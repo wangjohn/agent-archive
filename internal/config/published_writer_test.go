@@ -17,6 +17,13 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 )
 
+type publishedRelease string
+
+const (
+	publishedRelease010 publishedRelease = "v0.1.0"
+	publishedRelease011 publishedRelease = "v0.1.1"
+)
+
 // This opt-in acceptance check executes the actual published v0.1.1 writer,
 // not a source build or a decoder model. Extended macOS supplies its asset.
 func publishedWriterBinary(t *testing.T) string {
@@ -33,14 +40,14 @@ func publishedWriterBinary(t *testing.T) string {
 		t.Fatal(err)
 	}
 	digest := sha256.Sum256(raw)
-	release := os.Getenv("AGENT_ARCHIVE_OLD_RELEASE")
+	release := publishedRelease(os.Getenv("AGENT_ARCHIVE_OLD_RELEASE"))
 	if release == "" {
-		release = "v0.1.1"
+		release = publishedRelease011
 	}
 	want := ""
 	switch runtime.GOARCH {
 	case "amd64":
-		if release == "v0.1.0" {
+		if release == publishedRelease010 {
 			want = "43fbe6d8d65d2d32ebad66d55d116e10d517c40908032297bd5977beb45ab5ad"
 			break
 		}
@@ -50,14 +57,16 @@ func publishedWriterBinary(t *testing.T) string {
 	default:
 		t.Fatal("unsupported published Darwin architecture")
 	}
-	if release != "v0.1.0" && release != "v0.1.1" {
+	switch release {
+	case publishedRelease010, publishedRelease011:
+	default:
 		t.Fatal("unsupported release")
 	}
-	if release == "v0.1.0" && runtime.GOARCH != "amd64" {
+	if release == publishedRelease010 && runtime.GOARCH != "amd64" {
 		t.Fatal("v0.1.0 fixture is pinned only on amd64")
 	}
 	if hex.EncodeToString(digest[:]) != want {
-		t.Fatal("published binary checksum differs from pinned v0.1.1 asset")
+		t.Fatalf("published binary checksum differs from pinned %s asset", release)
 	}
 	return binary
 }

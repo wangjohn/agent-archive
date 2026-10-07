@@ -26,7 +26,11 @@ const sidecar = "sessions/claude/" + session + "/metadata.json"
 
 func putMetadata(t *testing.T, store storage.ObjectStore, source, filter string) {
 	t.Helper()
-	meta := archive.Metadata{SchemaVersion: archive.MetadataSchemaVersion, SourceBundle: archive.SourceReference{Key: source, SHA256: strings.Repeat("a", 64)}, FilterVersion: filter}
+	body, err := store.Get(context.Background(), source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	meta := archive.Metadata{SchemaVersion: archive.MetadataSchemaVersion, SourceBundle: archive.SourceReference{Key: source, SHA256: storage.SHA256Hex(body), CompressedBytes: len(body)}, FilterVersion: filter}
 	data, err := json.Marshal(meta)
 	if err != nil {
 		t.Fatal(err)
@@ -218,7 +222,11 @@ func TestApplyFailsClosedOnNewAmbiguousMetadata(t *testing.T) {
 			name: "invalid source reference",
 			put: func(t *testing.T, store storage.ObjectStore) {
 				t.Helper()
-				putMetadata(t, store, "sessions/claude/other/source."+strings.Repeat("a", 64)+".jsonl.gz", "10")
+				invalidKey := "sessions/claude/other/source." + strings.Repeat("a", 64) + ".jsonl.gz"
+				if err := store.Put(t.Context(), invalidKey, compressedHeader(t, "10")); err != nil {
+					t.Fatal(err)
+				}
+				putMetadata(t, store, invalidKey, "10")
 			},
 		},
 	} {

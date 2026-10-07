@@ -107,7 +107,7 @@ func TestHookRequestWrittenMidExpiryRetainsPendingAfterRemoteDeletion(t *testing
 		t.Fatal("covered request not completed", found, err)
 	}
 	j, found, err := restarted.LoadSessionDeletion(registration("s1", dir+"/s1.jsonl"))
-	if err != nil || !found || j.Phase != "restored" {
+	if err != nil || !found || j.Phase != state.DeletionRestored {
 		t.Fatal(j, err)
 	}
 

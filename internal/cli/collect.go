@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"path/filepath"
 	"strings"
 	"time"
@@ -283,9 +284,11 @@ func finishPassWithRetention(home string, env Env, cfg config.Config, localStore
 		addStatusProblem(localStore, sweepErr.Error())
 		return result, errors.Join(verifyErr, sweepErr)
 	}
-	if err := reconcileCompletedRemoval(localStore, cfg, &result, sweepResult, summary); err != nil {
+	nextSummary, err := reconcileCompletedRemoval(localStore, cfg, &result, sweepResult, summary)
+	if err != nil {
 		return result, errors.Join(verifyErr, fmt.Errorf("record completed removal: %w", err))
 	}
+	summary = nextSummary
 	if len(sweepResult.Errors) > 0 {
 		recordRetentionErrors(localStore, &result, sweepResult, summary)
 	}
@@ -544,41 +547,52 @@ func skillEvidenceRoots(env Env, name string, l agentapi.SkillLocations) []agent
 	return nil
 }
 
-func reconcileCompletedRemoval(localStore *state.Store, cfg config.Config, result *collector.Result, sweep retention.Result, summary string) error {
+func reconcileCompletedRemoval(localStore *state.Store, cfg config.Config, result *collector.Result, sweep retention.Result, summary string) (string, error) {
 	if len(sweep.DeletedSessions)+len(sweep.PrunedSessions) == 0 {
-		return nil
+		return summary, nil
+	}
+	if result.Errors == nil {
+		result.Errors = map[string]error{}
 	}
 	for _, ids := range [][]string{sweep.DeletedSessions, sweep.PrunedSessions} {
 		for _, id := range ids {
 			delete(result.Errors, id)
 		}
 	}
-	if _, err := recordSessionIssues(localStore, result.Errors, subagentLookup(localStore), summary); err != nil {
-		return err
-	}
-	regs, err := localStore.LoadRegistrations()
+	regs, regIssues, err := localStore.ScanRegistrations()
 	if err != nil {
-		return err
+		return summary, err
 	}
-	reqs, err := localStore.LoadRequests()
+	maps.Copy(result.Errors, regIssues)
+	reqs, reqIssues, err := localStore.ScanRequests()
 	if err != nil {
-		return err
+		return summary, err
 	}
+	maps.Copy(result.Errors, reqIssues)
 	queued := state.QueuedRequests(reqs)
+	for id := range reqIssues {
+		queued[id] = true
+	}
 	pending := 0
 	for _, reg := range regs {
 		owed, err := localStore.Outstanding(reg, queued[reg.ArchiveSessionID])
 		if err != nil {
-			return err
+			result.Errors[reg.ArchiveSessionID] = err
+			pending++
+			continue
 		}
 		if (cfg.AcceptSession(reg) || owed.Removal) && owed.Pending() {
 			pending++
 		}
 	}
+	summary, err = recordSessionIssues(localStore, result.Errors, subagentLookup(localStore), summary)
+	if err != nil {
+		return summary, err
+	}
 	status, err := localStore.LoadStatus()
 	if err != nil {
-		return err
+		return summary, err
 	}
 	status.PendingCount = pending
-	return localStore.SaveStatus(status)
+	return summary, localStore.SaveStatus(status)
 }

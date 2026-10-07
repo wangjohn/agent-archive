@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -19,29 +18,29 @@ func (s *Store) prepareLocalRemoval(reg archive.SessionRegistration) error {
 	if err != nil {
 		return err
 	}
-	if !found || j.Phase == "restoring" || j.Phase == "restored" {
+	if !found || j.Phase == DeletionRestoring || j.Phase == DeletionRestored {
 		j, err = s.PrepareSessionDeletion(reg, RemovalReasonUndo, nil, time.Now())
 		if err != nil {
 			return err
 		}
 	}
-	if j.Phase == "prepared" {
-		if err = s.AdvanceSessionDeletion(reg, "deleting"); err != nil {
+	if j.Phase == DeletionPrepared {
+		if err = s.AdvanceSessionDeletion(reg, DeletionDeleting); err != nil {
 			return err
 		}
-		j.Phase = "deleting"
+		j.Phase = DeletionDeleting
 	}
-	if j.Phase == "deleting" {
+	if j.Phase == DeletionDeleting {
 		if j.MetadataSHA256 != "" {
 			return ErrAdmissionStageRecovery
 		}
-		if err = s.AdvanceSessionDeletion(reg, "absent"); err != nil {
+		if err = s.AdvanceSessionDeletion(reg, DeletionAbsent); err != nil {
 			return err
 		}
-		j.Phase = "absent"
+		j.Phase = DeletionAbsent
 	}
-	if j.Phase == "absent" {
-		return s.AdvanceSessionDeletion(reg, "cleaned")
+	if j.Phase == DeletionAbsent {
+		return s.AdvanceSessionDeletion(reg, DeletionCleaned)
 	}
 	return nil
 }
@@ -51,7 +50,7 @@ func (s *Store) removeDurableSessionEvidence(reg archive.SessionRegistration) (e
 	if err != nil {
 		return err
 	}
-	if !found || j.Phase != "cleaned" {
+	if !found || j.Phase != DeletionCleaned {
 		return ErrAdmissionStageRecovery
 	}
 	root, err := os.OpenRoot(s.home)
@@ -80,7 +79,7 @@ func (s *Store) removeDurableSessionEvidence(reg archive.SessionRegistration) (e
 	if err = s.removeSessionScratch(root, reg.ArchiveSessionID); err != nil {
 		return err
 	}
-	if err = s.removeQuotaReceipt(reg.ArchiveSessionID); err != nil {
+	if err = removeDeletionReceipt(root, reg.ArchiveSessionID); err != nil {
 		return err
 	}
 	h, err := root.Open(".")
@@ -186,7 +185,7 @@ func removeOwnedStageFiles(root *os.Root, id string) error {
 			return e
 		}
 		for _, entry := range entries {
-			if !strings.HasPrefix(entry.Name(), id+".") {
+			if !ownedStageFilename(id, entry.Name()) {
 				continue
 			}
 			info, e := dir.Lstat(entry.Name())
@@ -258,7 +257,11 @@ func removeOwnedOriginalFiles(root *os.Root, id string) error {
 		return e
 	}
 
-	return nil
+	h, e := parent.Open(".")
+	if e != nil {
+		return e
+	}
+	return errors.Join(h.Sync(), h.Close())
 }
 
 func openRemovalDirectory(root *os.Root, name string) (*os.Root, error) {
@@ -294,6 +297,19 @@ func removeOwnedScratch(root *os.Root, token string) (err error) {
 		return err
 	}
 	defer func() { err = errors.Join(err, parent.Close()) }()
+	owned, e := openRemovalDirectory(parent, token)
+	if e != nil && !errors.Is(e, os.ErrNotExist) {
+		return e
+	}
+	if e == nil {
+		remaining := 65536
+		var used int64
+		e = scanTemporaryPhysical(owned, ".", 0, &remaining, &used)
+		e = errors.Join(e, owned.Close())
+		if e != nil {
+			return e
+		}
+	}
 	if err = parent.RemoveAll(token); err != nil {
 		return err
 	}
@@ -302,4 +318,40 @@ func removeOwnedScratch(root *os.Root, token string) (err error) {
 		return err
 	}
 	return errors.Join(h.Sync(), h.Close())
+}
+
+func removeDeletionReceipt(root *os.Root, id string) error {
+	dir, err := openRemovalDirectory(root, "pending")
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer func() { _ = dir.Close() }()
+	name := id + ".quota"
+	info, err := dir.Lstat(name)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return ErrAdmissionStageRecovery
+	}
+	if err = dir.Remove(name); err != nil {
+		return err
+	}
+	h, err := dir.Open(".")
+	if err != nil {
+		return err
+	}
+	return errors.Join(h.Sync(), h.Close())
+}
+
+// Only exact per-session stage names confer ownership. Session IDs may contain
+// dots, so prefix matching could remove a different session's admitted evidence.
+func ownedStageFilename(id, name string) bool {
+	return name == id+".json" || name == id+".source.gz" || name == id+".released"
 }

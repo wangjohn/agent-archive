@@ -2,6 +2,7 @@ package retention
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -17,6 +18,7 @@ import (
 func DeleteOwnedSession(ctx context.Context, local *state.Store, store storage.ObjectStore, reg archive.SessionRegistration, reason state.RemovalReason, now time.Time) error {
 	return deleteOwnedAtDecision(ctx, local, store, reg, reason, now, nil)
 }
+
 func deleteOwnedAtDecision(ctx context.Context, local *state.Store, store storage.ObjectStore, reg archive.SessionRegistration, reason state.RemovalReason, now time.Time, token *string) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -33,7 +35,7 @@ func deleteOwnedAtDecision(ctx context.Context, local *state.Store, store storag
 	if err != nil {
 		return err
 	}
-	if !found || j.Phase == "restored" || reason == state.RemovalReasonUndo && j.Reason == state.RemovalReasonRetention {
+	if !found || j.Phase == state.DeletionRestored || reason == state.RemovalReasonUndo && j.Reason == state.RemovalReasonRetention {
 		// Preserve the shipped history entrypoint fence; the underlying selection
 		// validation/journal also understands every preserved ref for enablement.
 		if err = checkDeletionMetadata(raw); err != nil {
@@ -48,7 +50,7 @@ func deleteOwnedAtDecision(ctx context.Context, local *state.Store, store storag
 			return err
 		}
 	}
-	if j.Reason != reason || j.Phase == "restored" || j.Phase == "restoring" {
+	if j.Reason != reason || j.Phase == state.DeletionRestored || j.Phase == state.DeletionRestoring {
 		return state.ErrAdmissionStageRecovery
 	}
 	if len(raw) > 0 && storage.SHA256Hex(raw) != j.MetadataSHA256 {
@@ -59,30 +61,48 @@ func deleteOwnedAtDecision(ctx context.Context, local *state.Store, store storag
 	}
 	return deleteOwnedNamespace(ctx, local, store, reg, j, key)
 }
+
 func deleteOwnedMetadata(ctx context.Context, local *state.Store, store storage.ObjectStore, reg archive.SessionRegistration, j *state.SessionDeletion, key string, raw []byte) error {
 	var err error
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if j.Phase == "prepared" {
+	if j.Phase == state.DeletionPrepared {
 		if len(raw) == 0 && j.MetadataSHA256 != "" {
 			return storage.ErrPublicationConflict
 		}
 		if err = verifyDeletionReferences(ctx, store, j.References); err != nil {
 			return err
 		}
-		if err = local.AdvanceSessionDeletion(reg, "deleting"); err != nil {
+		if err = local.AdvanceSessionDeletion(reg, state.DeletionDeleting); err != nil {
 			return err
 		}
-		j.Phase = "deleting"
+		j.Phase = state.DeletionDeleting
 	}
-	if j.Phase == "deleting" {
+	if j.Phase == state.DeletionDeleting {
 		fresh, e := storage.ReadPublicationMetadata(ctx, store, key)
 		if e != nil && !errors.Is(e, storage.ErrNotFound) {
 			return e
 		}
 		if e == nil && storage.SHA256Hex(fresh) != j.MetadataSHA256 {
 			return storage.ErrPublicationConflict
+		}
+		if e == nil {
+			if err = verifyDeletionReferences(ctx, store, j.References); err != nil {
+				return err
+			}
+		}
+		if e == nil {
+			confirmed, readErr := storage.ReadPublicationMetadata(ctx, store, key)
+			if readErr != nil {
+				return readErr
+			}
+			if storage.SHA256Hex(confirmed) != j.MetadataSHA256 {
+				return storage.ErrPublicationConflict
+			}
+		}
+		if err = checkDeletionIntent(local, reg, *j); err != nil {
+			return err
 		}
 		if err := ctx.Err(); err != nil {
 			return err
@@ -96,19 +116,23 @@ func deleteOwnedMetadata(ctx context.Context, local *state.Store, store storage.
 			}
 			return err
 		}
-		if err = local.AdvanceSessionDeletion(reg, "absent"); err != nil {
+		if err = local.AdvanceSessionDeletion(reg, state.DeletionAbsent); err != nil {
 			return err
 		}
-		j.Phase = "absent"
+		j.Phase = state.DeletionAbsent
 	}
 	return nil
 }
+
 func deleteOwnedNamespace(ctx context.Context, local *state.Store, store storage.ObjectStore, reg archive.SessionRegistration, j state.SessionDeletion, key string) error {
 	var err error
-	if j.Phase == "cleaned" {
+	if j.Phase == state.DeletionCleaned {
 		return nil
 	}
 	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err = checkDeletionIntent(local, reg, j); err != nil {
 		return err
 	}
 	if err = listingindex.DeleteSession(ctx, store, reg.Harness.Name, reg.ArchiveSessionID); err != nil {
@@ -138,11 +162,17 @@ func deleteOwnedNamespace(ctx context.Context, local *state.Store, store storage
 				return nil
 			}
 		}
+		if err = checkDeletionIntent(local, reg, j); err != nil {
+			return err
+		}
+		if err = ctx.Err(); err != nil {
+			return err
+		}
 		if err = store.Delete(ctx, object.Key); err != nil {
 			return err
 		}
 	}
-	return local.AdvanceSessionDeletion(reg, "cleaned")
+	return local.AdvanceSessionDeletion(reg, state.DeletionCleaned)
 }
 
 func verifyDeletionReferences(ctx context.Context, store storage.ObjectStore, refs []archive.SourceReference) error {
@@ -154,4 +184,26 @@ func verifyDeletionReferences(ctx context.Context, store storage.ObjectStore, re
 		sources[i] = storage.SourcePublication{Key: ref.Key, SHA256: ref.SHA256, Size: ref.CompressedBytes}
 	}
 	return storage.VerifySourceSet(ctx, store, sources, storage.RetryPolicy{})
+}
+
+// Revalidate the exact durable control after provider reads and before destructive
+// work. Phase advances update the cached phase, so hash its complete canonical
+// value rather than trusting the checksum captured before that advance.
+func checkDeletionIntent(local *state.Store, reg archive.SessionRegistration, expected state.SessionDeletion) error {
+	current, found, err := local.LoadSessionDeletion(reg)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return state.ErrAdmissionStageRecovery
+	}
+	expected.Checksum = ""
+	raw, err := json.Marshal(expected)
+	if err != nil {
+		return err
+	}
+	if current.Checksum != storage.SHA256Hex(raw) {
+		return state.ErrAdmissionStageRecovery
+	}
+	return nil
 }

@@ -17,8 +17,11 @@ func (s *Store) completeLocalDeletion(reg archive.SessionRegistration) error {
 	if err != nil {
 		return err
 	}
-	if !found || j.Phase != "cleaned" {
+	if !found || j.Phase != DeletionCleaned {
 		return ErrAdmissionStageRecovery
+	}
+	if err := s.syncLocalDeletion(); err != nil {
+		return err
 	}
 	if !s.localDeletionRecordsGone(reg.ArchiveSessionID) {
 		return ErrAdmissionStageRecovery
@@ -33,12 +36,16 @@ func (s *Store) terminalDeletion(id string) bool {
 	if !safeFileComponent(id) {
 		return false
 	}
+	temporary, err := s.hasDeletionTemporary(id)
+	if err != nil || temporary {
+		return false
+	}
 	raw, err := s.readDeletionFile(id)
 	if err != nil {
 		return false
 	}
 	var j SessionDeletion
-	return s.localDeletionRecordsGone(id) && json.Unmarshal(raw, &j) == nil && j.Version == 1 && j.LocalRemoved && j.Phase == "cleaned" && !j.At.IsZero() && validPublicationDigest(j.Owner) && j.Checksum == deletionChecksum(j) && (j.Reason == RemovalReasonRetention || j.Reason == RemovalReasonUndo)
+	return s.localDeletionRecordsGone(id) && json.Unmarshal(raw, &j) == nil && canonicalDeletion(raw, j) && j.Version == 1 && j.LocalRemoved && j.Phase == DeletionCleaned && !j.At.IsZero() && validPublicationDigest(j.Owner) && j.Checksum == deletionChecksum(j) && (j.Reason == RemovalReasonRetention || j.Reason == RemovalReasonUndo)
 }
 
 func (s *Store) deletionOrphanStems(directory string) (out []string, err error) {
@@ -64,8 +71,18 @@ func (s *Store) deletionOrphanStems(directory string) (out []string, err error) 
 		return nil, err
 	}
 	for _, entry := range entries {
-		if strings.HasSuffix(entry.Name(), ".json") {
-			id := strings.TrimSuffix(entry.Name(), ".json")
+		if stem, temporary := strings.CutSuffix(entry.Name(), ".tmp"); directory == "session-deletions" && temporary {
+			// IDs may contain dashes; atomic tokens are the final 32 hex digits.
+			if len(stem) > 33 && stem[len(stem)-33] == '-' {
+				id := stem[:len(stem)-33]
+				if safeFileComponent(id) {
+					out = append(out, id)
+				}
+			} else {
+				return nil, ErrAdmissionStageRecovery
+			}
+		}
+		if id, final := strings.CutSuffix(entry.Name(), ".json"); final {
 			if safeFileComponent(id) {
 				out = append(out, id)
 			}
@@ -80,7 +97,7 @@ func (s *Store) localDeletionRecordsGone(id string) bool {
 		return false
 	}
 	defer func() { _ = root.Close() }()
-	for _, path := range []string{"registrations/" + id + ".json", "requests/" + id + ".json", "published/" + id + ".json", "pending/" + id + ".json", "superseded/" + id + ".json", filepath.Join(publicationEvidenceDir, id)} {
+	for _, path := range []string{"registrations/" + id + ".json", "requests/" + id + ".json", "published/" + id + ".json", "pending/" + id + ".json", "superseded/" + id + ".json", "pending/" + id + ".quota", "pending-scans/" + id + ".json", "scan-signatures/" + id + ".json", "refresh-skips/" + id + ".json", "listing-repairs/" + id + ".json", filepath.Join(publicationEvidenceDir, id)} {
 		if _, err := root.Lstat(path); !errors.Is(err, os.ErrNotExist) {
 			return false
 		}
@@ -99,7 +116,7 @@ func (s *Store) localDeletionRecordsGone(id string) bool {
 		return false
 	}
 	for _, entry := range entries {
-		if strings.HasPrefix(entry.Name(), id+".") {
+		if ownedStageFilename(id, entry.Name()) {
 			return false
 		}
 	}
@@ -127,4 +144,42 @@ func (s *Store) hasDeletionTemporary(id string) (bool, error) {
 		}
 	}
 	return false, nil
+}
+
+// Sync each directory whose owning unlink must survive before the terminal flag.
+// A home sync alone does not durably commit nested directory changes.
+func (s *Store) syncLocalDeletion() (err error) {
+	root, err := os.OpenRoot(s.home)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, root.Close()) }()
+	for _, name := range []string{"registrations", "requests", "published", "pending", "pending-scans", "scan-signatures", "superseded", "refresh-skips", "listing-repairs", "request-locks", "sessions", admissionStageDir, publicationEvidenceDir, temporaryReservationDir, temporaryScratchDir} {
+		dir, e := openRemovalDirectory(root, name)
+		if errors.Is(e, os.ErrNotExist) {
+			continue
+		}
+		if e != nil {
+			return e
+		}
+		h, e := dir.Open(".")
+		if e == nil && s.onLocalDeletionSync != nil {
+			e = s.onLocalDeletionSync(name)
+		}
+		if h != nil {
+			if e == nil {
+				e = h.Sync()
+			}
+			e = errors.Join(e, h.Close())
+		}
+		e = errors.Join(e, dir.Close())
+		if e != nil {
+			return e
+		}
+	}
+	h, err := root.Open(".")
+	if err != nil {
+		return err
+	}
+	return errors.Join(h.Sync(), h.Close())
 }
