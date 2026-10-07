@@ -153,7 +153,11 @@ and policy. Its input authority distinguishes exact committed predecessor,
 immutable admitted stage, and an exact previously sealed authorized pending
 candidate. Pending replay revalidates the original authorized transition. Repeated pending
 rewrites bind that checked authority to the exact immediate receipt before
-releasing the decoded original and transforming the selected revisions. Replay
+releasing the decoded original. Each selected revision is refiltered from its
+oldest authenticated uncommitted content, so an intermediate policy reduction
+cannot erase content needed by a later policy before commitment. The immediate
+candidate still supplies exact previous correspondence and policy; immutable
+stage evidence remains the original content authority until commitment. Replay
 correspondence must match every ordered reference in the immediate input body. An
 already remotely selected candidate is verified and recorded locally without
 acknowledging its request or releasing staging, then transformed under current
@@ -196,7 +200,9 @@ directories without reading bodies, so corruption/orphan files remain visible to
 work status, generation guards and removal checks even if pending is absent.
 Absent pending plus retained evidence requires explicit successor restoration.
 Journal cleanup validates exact selecting local metadata and the full source set;
-remote PUT alone never authorizes release. Explicit authoritative deletion and
+remote PUT alone never authorizes release. If cleanup finishes before interrupted
+pending removal, a later policy change uses the exact verified committed source
+instead of requiring the legitimately removed original journal. Explicit authoritative deletion and
 orphan restoration remain responsibilities of the later lifecycle milestone.
 
 Generation recovery journals exact prior committed metadata/source-set authority

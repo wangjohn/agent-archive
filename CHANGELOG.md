@@ -37,6 +37,12 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Pending privacy maintenance keeps the oldest authenticated uncommitted content
+  available across policy changes. A policy increase can refilter that retained
+  evidence after an intermediate reduction, without reopening native input.
+  Policy changes also recover from verified committed sources if original-journal
+  cleanup finished before interrupted pending removal.
+
 - Confirmed imports retain private, filtered evidence before admission, so the
   first upload can finish after native transcripts disappear. Imports use bounded
   groups and disk capacity, and preserve later hook requests during retries.

@@ -1,6 +1,7 @@
 package collector
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -108,7 +109,7 @@ func (s *sessionScan) preservePrivacyInput(original state.PendingPublication, ne
 		return err
 	}
 	if original.Commit.Privacy != nil && original.Commit.Privacy.InputJournalSHA256 != "" {
-		if !found || !privacyJournalMatches(j, raw, original) {
+		if !found && !s.exactLocalPrivacySuccessor(original) || found && !privacyJournalMatches(j, raw, original) {
 			return errors.New("privacy original evidence journal is missing or differs; retain pending")
 		}
 	}
@@ -405,4 +406,42 @@ func (s *sessionScan) unreleasedPrivacyStage(p state.PendingPublication) (bool, 
 	}
 	released, err := s.local.AdmissionStageReleased(s.reg)
 	return !released, err
+}
+
+// oldestRetainedLoader maps only the exact immediate role/revision/age to its
+// authenticated oldest source. Decoded originals are not retained by the loader.
+func (s *sessionScan) oldestRetainedLoader(immediate, root state.PendingPublication) (retainedSourceLoader, error) {
+	var before, oldest archive.Metadata
+	if err := json.Unmarshal(immediate.MetadataBytes, &before); err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(root.MetadataBytes, &oldest); err != nil {
+		return nil, err
+	}
+	selected, err := state.RevisionSelections(before)
+	if err != nil {
+		return nil, err
+	}
+	originals, err := state.RevisionSelections(oldest)
+	if err != nil || len(originals) != len(selected) {
+		return nil, errors.New("oldest privacy source selection differs")
+	}
+	mapping := make(map[archive.RevisionReference]archive.RevisionReference, len(selected))
+	for i, ref := range selected {
+		if ref.RevisionID != originals[i].RevisionID || !ref.CapturedAt.Equal(originals[i].CapturedAt) {
+			return nil, errors.New("oldest privacy revision role or age differs")
+		}
+		mapping[ref] = originals[i]
+	}
+	load, err := s.pendingRetainedLoader(root)
+	if err != nil {
+		return nil, err
+	}
+	return func(ctx context.Context, ref archive.RevisionReference) (archive.SourceBundle, error) {
+		old, ok := mapping[ref]
+		if !ok {
+			return archive.SourceBundle{}, errors.New("immediate privacy reference is not authenticated")
+		}
+		return load(ctx, old)
+	}, nil
 }

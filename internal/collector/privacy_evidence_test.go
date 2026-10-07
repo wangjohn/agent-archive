@@ -579,3 +579,112 @@ func TestPrivacyReplayAuthorizationBindsExactImmediateReceipt(t *testing.T) {
 		t.Fatal("authorization reused for a changed immediate receipt")
 	}
 }
+
+func TestPrivacyUncommittedReductionRefiltersOldestContentOnPolicyIncrease(t *testing.T) {
+	for _, remoteOriginal := range []bool{false, true} {
+		t.Run(fmt.Sprintf("remote-original-%t", remoteOriginal), func(t *testing.T) {
+			local, reg, remote, opts, old := unuploadedPrivacyFixture(t)
+			if remoteOriginal {
+				if err := remote.Put(t.Context(), old.SourceKey, old.SourceBytes); err != nil {
+					t.Fatal(err)
+				}
+			}
+			_, _ = Run(t.Context(), local, remote, opts)
+			reduced, found, err := local.LoadPending(reg.ArchiveSessionID)
+			if err != nil || !found || !sourceEvidenceWithinPolicy(reduced.Bundle.SupplementalEvidence, config.SkillEvidenceNone) {
+				t.Fatal("initial reduction failed", found, err)
+			}
+			opts.SkillEvidence = config.SkillEvidenceBody
+			_, _ = Run(t.Context(), local, remote, opts)
+			next, found, err := local.LoadPending(reg.ArchiveSessionID)
+			if err != nil || !found || next.SkillEvidence != string(config.SkillEvidenceBody) {
+				t.Fatal("policy increase stalled", found, err)
+			}
+			encoded, err := json.Marshal(next.Bundle)
+			if err != nil || !bytes.Contains(encoded, []byte("private-original-evidence")) {
+				t.Fatal("uncommitted reduction erased oldest retained content", string(encoded), err)
+			}
+			if next.Commit.Privacy.Sources[0].Previous.Source != reduced.SourceReference() || next.Commit.Privacy.ReplayInput.MetadataSHA256 != old.Commit.MetadataSHA256 {
+				t.Fatal("immediate correspondence or oldest authority changed")
+			}
+			remote.failMetadata = false
+			result, err := Run(t.Context(), local, remote, opts)
+			if err != nil || len(result.Errors) != 0 || len(result.Published) != 1 {
+				t.Fatal(result, err)
+			}
+		})
+	}
+}
+
+func TestPrivacyPolicyChangeAfterOriginalCleanupUsesCommittedSource(t *testing.T) {
+	local, reg, remote, opts, _ := unuploadedPrivacyFixture(t)
+	_, _ = Run(t.Context(), local, remote, opts)
+	pending, found, err := local.LoadPending(reg.ArchiveSessionID)
+	if err != nil || !found || pending.Commit.Privacy.InputJournalSHA256 == "" {
+		t.Fatal(found, err)
+	}
+	published, err := local.LoadPublishedState(reg.ArchiveSessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	remote.failMetadata = false
+	scan := newSessionScan(t.Context(), local, remote, reg, state.Request{}, published, opts.Now(), opts)
+	if err := scan.upload(pending); err != nil {
+		t.Fatal(err)
+	}
+	if err := published.SaveCommittedPublication(pending, opts.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := local.CompleteRequest(reg.ArchiveSessionID, pending.RequestToken); err != nil {
+		t.Fatal(err)
+	}
+	if err := scan.cleanupPrivacyInput(pending); err != nil {
+		t.Fatal(err)
+	}
+	// Crash after successful original cleanup, before pending removal.
+	opts.SkillEvidence = config.SkillEvidenceMetadata
+	result, err := Run(t.Context(), local, remote, opts)
+	if err != nil || len(result.Errors) != 0 || len(result.Published) != 1 {
+		t.Fatal("committed source required legitimately deleted original journal", result, err)
+	}
+	if _, found, err := local.LoadPending(reg.ArchiveSessionID); err != nil || found {
+		t.Fatal("committed successor did not settle", found, err)
+	}
+}
+
+func TestStagedUncommittedReductionRefiltersImmutableContentOnPolicyIncrease(t *testing.T) {
+	local, reg := stagedPolicyFixture(t, config.SkillEvidenceBody, archive.SupplementalEvidence{Kind: archive.EvidenceKindSkillSnapshot, Provenance: "synthetic", Payload: map[string]any{"name": "synthetic", "snapshot": "private-stage-original"}})
+	if err := os.Remove(reg.TranscriptPath); err != nil {
+		t.Fatal(err)
+	}
+	remote := &metadataFailStore{MemoryStore: storagetest.NewMemoryStore(), failMetadata: true}
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "synthetic", SkillEvidence: config.SkillEvidenceNone}
+	for i := range 4 {
+		if i%2 == 0 {
+			opts.SkillEvidence = config.SkillEvidenceNone
+		} else {
+			opts.SkillEvidence = config.SkillEvidenceBody
+		}
+		at := reg.RegisteredAt.Add(time.Hour + time.Duration(i)*time.Minute)
+		opts.Now = func() time.Time { return at }
+		result, err := Run(t.Context(), local, remote, opts)
+		if err != nil || result.Errors[reg.ArchiveSessionID] == nil {
+			t.Fatal("expected uncommitted metadata checkpoint", result, err)
+		}
+		pending, found, err := local.LoadPending(reg.ArchiveSessionID)
+		if err != nil || !found || pending.SkillEvidence != string(opts.SkillEvidence) {
+			t.Fatal("staged transition stalled", found, err, result.Errors)
+		}
+		encoded, err := json.Marshal(pending.Bundle)
+		if err != nil || bytes.Contains(encoded, []byte("private-stage-original")) != (opts.SkillEvidence == config.SkillEvidenceBody) {
+			t.Fatal("staged current policy lost immutable content or retained obsolete content", string(encoded), err)
+		}
+		if released, err := local.AdmissionStageReleased(reg); err != nil || released {
+			t.Fatal("uncommitted stage released", released, err)
+		}
+	}
+	remote.failMetadata = false
+	if result, err := Run(t.Context(), local, remote, opts); err != nil || len(result.Errors) != 0 || len(result.Published) != 1 {
+		t.Fatal("stage did not settle", result, err)
+	}
+}

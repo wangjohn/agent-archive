@@ -45,8 +45,13 @@ func TestPendingRAMOnlyPrivacyHandleRejectsInvalidOwnership(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer func() {
-				if err := handle.Close(); err != nil {
-					t.Error(err)
+				closeErr := handle.Close()
+				if kind == "corrupt" {
+					if !errors.Is(closeErr, ErrAdmissionStageRecovery) || !errors.Is(handle.Err(), ErrAdmissionStageRecovery) {
+						t.Error("corrupt handle lost its recovery error", closeErr, handle.Err())
+					}
+				} else if closeErr != nil {
+					t.Error(closeErr)
 				}
 			}()
 			if kind == "root" {
