@@ -1,8 +1,11 @@
 package cli
 
 import (
+	"bufio"
+	"io"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -60,6 +63,24 @@ func TestGuidedSetupTerminalChild(t *testing.T) {
 	}
 	model := promptExample()
 	model.Helpers = nil
+	// The normal-collapse harness sends only after the renderer has returned
+	// ownership and entered its one buffered read. Early input has a separate
+	// deterministic emission harness; observing a visible cursor is not proof
+	// that the terminal echo restoration/pending-input probe has finished.
+	var readAnswer func(*bufio.Reader) (string, error)
+	if fdText := os.Getenv("ARCHIVE_GUIDED_READ_READY_FD"); fdText != "" {
+		fd, err := strconv.Atoi(fdText)
+		must(t, err)
+		ready := os.NewFile(uintptr(fd), "prompt-read-ready")
+		defer func() { _ = ready.Close() }()
+		readAnswer = func(in *bufio.Reader) (string, error) {
+			if _, err := io.WriteString(ready, "r"); err != nil {
+				return "", err
+			}
+			return in.ReadString('\n')
+		}
+	}
+	model.ReadAnswer = readAnswer
 	if mode == promptModeExternal || mode == promptModePager {
 		r := p.renderer()
 		region := r.begin(model)
@@ -68,7 +89,7 @@ func TestGuidedSetupTerminalChild(t *testing.T) {
 		if mode == promptModePager {
 			terminal.Print(p.out, "\x1b[?1049hPAGER CONTENT\x1b[?1049l")
 		}
-		raw, interrupted, err := p.guidedRead(nil)
+		raw, interrupted, err := p.guidedRead(readAnswer)
 		must(t, err)
 		release()
 		r.finish(region, "Provider Amazon S3", raw, false, p.inputPending(), interrupted)
@@ -83,12 +104,12 @@ func TestGuidedSetupTerminalChild(t *testing.T) {
 	if mode == promptModeDefaultLong {
 		profileDefault = strings.Repeat("d", 90)
 	}
-	value, err := p.guidedText(promptModel{Question: "AWS profile", Label: "Profile", Default: profileDefault, Receipt: "Profile"})
+	value, err := p.guidedText(promptModel{Question: "AWS profile", Label: "Profile", Default: profileDefault, Receipt: "Profile", ReadAnswer: readAnswer})
 	must(t, err)
 	if mode == promptModeLong && value != strings.Repeat("x", 90) {
 		t.Fatalf("lost long answer")
 	}
-	secret, err := p.guidedText(promptModel{Question: "Secret access key (hidden)", Label: "Credential", Secret: true})
+	secret, err := p.guidedText(promptModel{Question: "Secret access key (hidden)", Label: "Credential", Secret: true, ReadAnswer: readAnswer})
 	must(t, err)
 	if secret != "synthetic-secret" {
 		t.Fatalf("lost hidden input")
@@ -119,9 +140,11 @@ func TestGuidedPromptTerminalCells(t *testing.T) {
 const guidedPromptPTY = `import os, pty, select, subprocess, sys, termios, time, fcntl, struct, signal, re, unicodedata
 binary, mode = sys.argv[1:]
 master, slave = pty.openpty()
+readyRead,readyWrite=os.pipe()
 width, height = (36,20) if mode == 'scroll' else (60,20) if mode in ('long','default-long') else (100,30) if mode == 'no-color' else (80,24)
 fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH',height,width,0,0))
 env = dict(os.environ, TERM='xterm-256color', ARCHIVE_GUIDED_PROMPT_CHILD='1', ARCHIVE_GUIDED_PROMPT_MODE=mode)
+env['ARCHIVE_GUIDED_READ_READY_FD']=str(readyWrite)
 env.pop('NO_COLOR',None)
 if mode == 'no-color': env['NO_COLOR']='1'
 os.setsid()
@@ -131,7 +154,8 @@ def session():
     signal.signal(signal.SIGTTOU,signal.SIG_IGN)
     os.tcsetpgrp(0,os.getpid())
     signal.signal(signal.SIGTTOU,signal.SIG_DFL)
-p = subprocess.Popen([binary,'-test.run=^TestGuidedSetupTerminalChild$'],stdin=slave,stdout=slave,stderr=slave,env=env,preexec_fn=session)
+p = subprocess.Popen([binary,'-test.run=^TestGuidedSetupTerminalChild$'],stdin=slave,stdout=slave,stderr=slave,env=env,preexec_fn=session,pass_fds=(readyWrite,))
+os.close(readyWrite)
 output = b''
 deadline = time.monotonic()+60
 
@@ -152,6 +176,10 @@ def echo(on):
     while bool(termios.tcgetattr(slave)[3] & termios.ECHO)!=on:
         if time.monotonic()>limit: raise RuntimeError('echo mode',on,output[-1500:])
         read()
+
+def answerReady():
+    if not select.select([readyRead],[],[],30)[0] or os.read(readyRead,1)!=b'r':
+        raise RuntimeError('buffered read entry',output[-1500:])
 
 # This small terminal oracle handles the renderer's cursor/erase vocabulary,
 # canonical echo and wrap. Keep scrollback, so erasing an unrelated row fails.
@@ -182,16 +210,16 @@ def cells(data,cols):
 
 try:
     wait(b'Choose [2]: ')
-    if mode not in ('typed-ahead','typed-ahead-two'): echo(True)
+    if mode not in ('typed-ahead','typed-ahead-two'): answerReady()
     if mode=='eof': os.write(master,termios.tcgetattr(slave)[6][termios.VEOF])
     else:
         if mode=='retry':
-            offset=len(output);os.write(master,b'bad\n');wait(b'Choose [2]: ',offset)
+            offset=len(output);os.write(master,b'bad\n');wait(b'Choose [2]: ',offset);answerReady()
         if mode=='typed-ahead': os.write(master,b'2\nwork\nsynthetic-secret\n')
         elif mode=='typed-ahead-two': os.write(master,b'2\n'+b'x'*170+b'\n')
         else: os.write(master,b'2\n')
         wait(b'Profile ['+ (b'd'*90 if mode=='default-long' else b'work') + b']: ')
-        if mode not in ('typed-ahead','typed-ahead-two'): echo(True)
+        if mode not in ('typed-ahead','typed-ahead-two'): answerReady()
         if mode=='resize':
             signal.signal(signal.SIGTTOU,signal.SIG_IGN)
             fcntl.ioctl(master,termios.TIOCSWINSZ,struct.pack('HHHH',20,60,0,0))
@@ -201,6 +229,7 @@ try:
         elif mode=='composed': os.write(master,('👍🏽'*30+'\n').encode())
         elif mode not in ('typed-ahead','typed-ahead-two'): os.write(master,(('xxx漢漢漢漢xx漢x漢漢x漢漢x漢x漢漢xx漢漢漢xxx漢漢漢x漢xxxxx漢x漢xx漢漢漢漢漢xxx漢x漢x漢xx漢x漢x漢xx漢xxxxxx漢漢漢漢漢xxx漢x漢x漢xxx漢漢xxxx漢xx漢漢xxx漢漢xx漢漢漢漢漢漢漢漢漢漢x漢漢漢xx漢漢x漢xxx漢x漢x漢x漢漢xxxxxx漢漢xxx漢'.encode() if mode=='wide' else b'x'*90) if mode in ('wide','long') else b'\x01'*170 if mode=='control-echo' else b'x'*900 if mode=='scroll' else b'' if mode=='default-long' else b'work')+b'\n')
         wait(b'Credential: ')
+        if mode not in ('typed-ahead','typed-ahead-two'): answerReady()
         if mode!='typed-ahead': echo(False)
         if mode=='suspend':
             p.send_signal(signal.SIGTSTP)
@@ -263,7 +292,7 @@ try:
 finally:
     if p.poll() is None: p.kill();p.wait()
     signal.signal(signal.SIGHUP,signal.SIG_IGN)
-    os.close(master);os.close(slave)
+    os.close(master);os.close(slave);os.close(readyRead)
 `
 
 // A real file terminal must remain identifiable through the prompt writer.
