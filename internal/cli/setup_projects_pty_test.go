@@ -27,7 +27,7 @@ func TestSetupSelectorTerminalChild(t *testing.T) {
 	fd, err := strconv.Atoi(os.Getenv("ARCHIVE_SETUP_SELECTOR_READY_FD"))
 	must(t, err)
 	ready := os.NewFile(uintptr(fd), "selector-read-ready")
-	defer ready.Close()
+	defer func() { _ = ready.Close() }()
 	p.in = bufio.NewReader(selectorReadyReader{input: os.Stdin, ready: ready})
 	if os.Getenv("ARCHIVE_SETUP_YESNO_CHILD") == "1" {
 		terminal.Println(p.out, "UNRELATED SENTINEL")
