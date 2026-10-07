@@ -33,7 +33,7 @@ func TestStorageActionsAcceptOnlyUnambiguousChoices(t *testing.T) {
 	if err != nil || secret != "e" {
 		t.Fatalf("secret intercepted: %q %v", secret, err)
 	}
-	name, err := p.setupRequired("Name", "")
+	name, err := p.setupStorageRequired("Name", "")
 	if err != nil || name != "b" {
 		t.Fatalf("name intercepted: %q %v", name, err)
 	}

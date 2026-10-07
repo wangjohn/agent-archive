@@ -204,14 +204,17 @@ func promptCodexExceptions(p *prompter, cfg *config.Config, userHome string) err
 		if err != nil || choice == "done" {
 			return err
 		}
-		path, err := p.setupRequired("Directory", "")
+		var root string
+		_, err = p.guidedText(promptModel{Question: "Directory", Label: "Answer", Validate: func(path string) error {
+			if path == "" {
+				return fmt.Errorf("this value is required")
+			}
+			var err error
+			root, err = projectDir(path, userHome)
+			return err
+		}, ResolveReceipt: func(string) string { return "Directory " + root }})
 		if err != nil {
 			return err
-		}
-		root, err := projectDir(path, userHome)
-		if err != nil {
-			p.warn(err.Error())
-			continue
 		}
 		included := choice == "include"
 		var otherApps []string
