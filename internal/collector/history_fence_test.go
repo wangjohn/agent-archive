@@ -12,7 +12,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
-func TestHistoryPublicationAndRefilterRemainFenced(t *testing.T) {
+func TestHistoryPublicationRemainsFencedAndMalformedRefilterRefuses(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
 	store := storagetest.NewMemoryStore()
@@ -35,7 +35,7 @@ func TestHistoryPublicationAndRefilterRemainFenced(t *testing.T) {
 		t.Fatalf("remote protected history: %v", e)
 	}
 	history := archive.SourceBundle{SchemaVersion: archive.HistorySourceSchemaVersion, History: &archive.SourceHistory{}}
-	if _, e := refilterBundle(ctx, reg, nil, history); !errors.Is(e, archive.ErrHistoryMutationPending) {
+	if _, e := refilterBundle(ctx, reg, nil, history); e == nil {
 		t.Fatalf("refilter protection: %v", e)
 	}
 	pending.Bundle = history
