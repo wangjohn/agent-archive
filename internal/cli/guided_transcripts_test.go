@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -12,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/pairing"
 	"github.com/wangjohn/agent-archive/internal/purge"
@@ -275,6 +277,52 @@ func TestPairingReviewEditorOffersCurrentProjectWithoutSelectingIt(t *testing.T)
 	must(t, err)
 	if !bytes.Equal(before, after) {
 		t.Fatal("opening the pairing project editor changed capture rules without selection")
+	}
+}
+
+// Paired consent must expose the exact roots hidden by the compact review,
+// then return to the same captured facts without consuming the next answer.
+func TestPairingReviewDetailsKeepsCapturedFactsAndBufferedConsent(t *testing.T) {
+	t.Parallel()
+	f := newScreenFixture(t)
+	f.withApps(t, "codex", "claude")
+	cfg := config.Config{Harnesses: []string{"codex", "claude"}, RetentionDays: 90}
+	for _, name := range []string{"one", "two", "项目-three"} {
+		cfg.Archive.Projects = append(cfg.Archive.Projects, archive.ProjectActivation{Root: f.project(t, "src/"+name), Included: true})
+	}
+	out := &guidedCommandOutput{caps: promptCapabilities{Width: 36, Height: 20}}
+	p := newPrompter(strings.NewReader("d\nsave\nnext-answer\n"), out)
+	defer p.close()
+	var details string
+	f.env.IsTerminal = func(any) bool { return true }
+	f.env.RunPager = func(_ context.Context, _ string, _ []string, input io.Reader, _, _ io.Writer) error {
+		data, err := io.ReadAll(input)
+		details = string(data)
+		// A post-pager clock change must not rebuild consent observations.
+		p.now = func() time.Time { t.Fatal("Details refreshed the captured review"); return time.Time{} }
+		return err
+	}
+	before, err := json.Marshal(cfg)
+	must(t, err)
+	reviewed, err := reviewPairingSettings(p, pairing.Payload{}, cfg, config.Config{}, false, f.userHome, setupOptions{}, f.env)
+	must(t, err)
+	after, err := json.Marshal(reviewed)
+	must(t, err)
+	if !bytes.Equal(before, after) {
+		t.Fatal("Details changed paired capture settings")
+	}
+	for _, fact := range []string{"Full settings and privacy", "  Apps\n    Codex", "~/src/one", "~/src/two", "~/src/项目-three", "Codex: ~/.codex", "Claude Code: ~/.claude", "Storage not checked yet", "docs/security/privacy.md"} {
+		if !strings.Contains(details, fact) {
+			t.Fatalf("paired narrow Details omitted %q:\n%s", fact, details)
+		}
+	}
+	if strings.Contains(details, "Storage connected") || strings.Count(strings.Join(strings.Fields(out.String()), " "), "3 included projects (paths in Details)") != 2 {
+		t.Fatalf("Details did not return to the same unchecked compact review:\n%s\n%s", details, out.String())
+	}
+	next, err := p.in.ReadString('\n')
+	must(t, err)
+	if next != "next-answer\n" || p.renderer().suspended != 0 || p.renderer().delegated != 0 {
+		t.Fatal("pager lost buffered input or retained terminal ownership")
 	}
 }
 

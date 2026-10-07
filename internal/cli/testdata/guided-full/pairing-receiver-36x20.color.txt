@@ -54,6 +54,7 @@ endpoint .
      and capture settings
   2) Edit settings
 
+  [d] Full settings and privacy
   [Enter] Cancel
 
 > Choose: save

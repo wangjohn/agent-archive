@@ -43,10 +43,11 @@ Step 3 of 3 · Review and start
   1) Save the displayed destination and capture settings
   2) Edit settings
 
+  [d] Full settings and privacy
   [Enter] Cancel
 
 › Choose: save
-\e[8A\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[8A✓ Save the displayed destination and capture settings
+\e[9A\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[9A✓ Save the displayed destination and capture settings
 
   ✓ Codex hooks: ~/.codex/hooks.json
   ✓ Background job: launchctl responds

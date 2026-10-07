@@ -37,10 +37,11 @@ Sessions will upload to s3 bucket synthetic, folder , account , endpoint .
   1) Save the displayed destination and capture settings
   2) Edit settings
 
+  [d] Full settings and privacy
   [Enter] Cancel
 
 › Choose: save
-\e[8A\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[8A\e[2m✓ Save the displayed destination and capture settings\e[0m
+\e[9A\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[9A\e[2m✓ Save the displayed destination and capture settings\e[0m
 
   \e[32m✓\e[0m Codex hooks: ~/.codex/hooks.json
   \e[32m✓\e[0m Background job: launchctl responds

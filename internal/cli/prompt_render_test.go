@@ -191,7 +191,7 @@ func TestGuidedSecretKeepsBoundedReadersAndSanitizesValidation(t *testing.T) {
 	for _, input := range []string{"123456789\n", "bad\nvalid\nnext\n"} {
 		out := &promptScreen{}
 		p := newPrompter(strings.NewReader(input), out)
-		read := func(r *bufio.Reader) (string, error) { return boundedPairingLine(r, 8) }
+		read := func(r *bufio.Reader) (string, error) { return boundedPairingAnswer(r, 8) }
 		value, err := p.guidedText(promptModel{Question: "Pairing input", Default: "forbidden-secret-default", Receipt: "forbidden-secret-receipt", Secret: true, ReadAnswer: read, Validate: func(value string) error {
 			if value == "bad" {
 				return fmt.Errorf("never show %s", value)

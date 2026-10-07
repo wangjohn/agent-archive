@@ -19,6 +19,16 @@ import (
 )
 
 func boundedPairingLine(r *bufio.Reader, limit int) (string, error) {
+	line, err := boundedPairingAnswer(r, limit)
+	if errors.Is(err, io.EOF) && line != "" {
+		err = nil
+	}
+	return strings.TrimSpace(line), err
+}
+
+// boundedPairingAnswer preserves the raw answer and EOF for guidedRead, which
+// distinguishes an explicit blank line from exhausted private input.
+func boundedPairingAnswer(r *bufio.Reader, limit int) (string, error) {
 	var line []byte
 	for {
 		chunk, err := r.ReadSlice('\n')
@@ -32,16 +42,13 @@ func boundedPairingLine(r *bufio.Reader, limit int) (string, error) {
 		if err != nil && !errors.Is(err, io.EOF) {
 			return "", fmt.Errorf("pairing input could not be read")
 		}
-		if len(line) == 0 {
-			return "", io.EOF
-		}
-		return strings.TrimSpace(string(line)), nil
+		return string(line), err
 	}
 }
 
 func readPairingBundle(p *prompter, opts setupOptions, stdin io.Reader, env Env) (string, error) {
 	if !opts.yes && opts.pairFile == "" {
-		input, err := p.guidedText(promptModel{Question: "Pairing file path or text", Helpers: []string{"On your configured machine, run agent-archive machines add.", "Transfer the pairing file here, then enter its path. You can also paste copied pairing text."}, Secret: true, ReadAnswer: func(in *bufio.Reader) (string, error) { return boundedPairingLine(in, pairing.MaxBundle+1) }})
+		input, err := p.guidedText(promptModel{Question: "Pairing file path or text", Helpers: []string{"On your configured machine, run agent-archive machines add.", "Transfer the pairing file here, then enter its path. You can also paste copied pairing text."}, Secret: true, ReadAnswer: func(in *bufio.Reader) (string, error) { return boundedPairingAnswer(in, pairing.MaxBundle+1) }})
 		if err != nil {
 			return "", err
 		}
@@ -360,7 +367,14 @@ func reviewPairingSettings(p *prompter, payload pairing.Payload, cfg, existing c
 		p.projectCurrent, _ = currentProject(env, userHome)
 		for {
 			showSetupReview(p, cfg, setupReview{existing: existing, reconfiguring: found, hookFiles: env.hookFiles(userHome), installedHookFiles: env.installedHookFiles(userHome, existing), userHome: userHome, storageUnchecked: true, sourceRoots: env.nativeSessionDirectories(userHome, cfg)})
-			choice, e := p.guidedMenu("Review pairing settings", "cancel", option{"save", "Save the displayed destination and capture settings"}, option{"edit", "Edit settings"}, option{"cancel", "Cancel"})
+			choice, e := pairingReviewAction(p)
+			for e == nil && choice == "details" {
+				if e = showSetupReviewDetails(p, env, p.out); e != nil {
+					break
+				}
+				renderSetupReview(p, p.reviewModel, false)
+				choice, e = pairingReviewAction(p)
+			}
 			if e != nil {
 				return cfg, e
 			}
@@ -396,6 +410,12 @@ func reviewPairingSettings(p *prompter, payload pairing.Payload, cfg, existing c
 		}
 	}
 	return cfg, nil
+}
+
+func pairingReviewAction(p *prompter) (string, error) {
+	return p.guidedChoice(promptModel{Question: "Review pairing settings", Default: "cancel",
+		Primary:   []option{{"save", "Save the displayed destination and capture settings"}, {"edit", "Edit settings"}},
+		Secondary: []actionOption{{"details", "d", "Full settings and privacy"}, {"cancel", "q", "Cancel"}}})
 }
 
 func stagePairingCredential(home string, cfg config.Config, payload pairing.Payload, env Env) (config.Config, error) {

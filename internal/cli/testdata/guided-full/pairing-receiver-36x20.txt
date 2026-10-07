@@ -54,6 +54,7 @@ Step 3 of 3 · Review and start
      and capture settings
   2) Edit settings
 
+  [d] Full settings and privacy
   [Enter] Cancel
 
 > Choose: save

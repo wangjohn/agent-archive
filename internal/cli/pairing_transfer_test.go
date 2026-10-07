@@ -3,6 +3,9 @@ package cli
 import (
 	"bufio"
 	"bytes"
+	"errors"
+	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -270,7 +273,7 @@ func TestPairingTransferKeepsSharedPromptInput(t *testing.T) {
 	defer p.close()
 	got, err := readPairingBundle(p, setupOptions{}, p.in, Env{})
 	must(t, err)
-	code, err := p.guidedText(promptModel{Question: "Pairing code (hidden)", Secret: true, ReadAnswer: func(in *bufio.Reader) (string, error) { return boundedPairingLine(in, 512) }})
+	code, err := p.guidedText(promptModel{Question: "Pairing code (hidden)", Secret: true, ReadAnswer: func(in *bufio.Reader) (string, error) { return boundedPairingAnswer(in, 512) }})
 	must(t, err)
 	consent, err := p.guidedYesNo("Replace destination?")
 	must(t, err)
@@ -290,7 +293,7 @@ func TestPairingTransferConsentDefaultsToNoAndKeepsBufferedAnswer(t *testing.T) 
 	defer p.close()
 	got, err := readPairingBundle(p, setupOptions{}, p.in, Env{})
 	must(t, err)
-	code, err := p.guidedText(promptModel{Question: "Pairing code (hidden)", Secret: true, ReadAnswer: func(in *bufio.Reader) (string, error) { return boundedPairingLine(in, 512) }})
+	code, err := p.guidedText(promptModel{Question: "Pairing code (hidden)", Secret: true, ReadAnswer: func(in *bufio.Reader) (string, error) { return boundedPairingAnswer(in, 512) }})
 	must(t, err)
 	consent, err := p.guidedYesNo("Replace destination?")
 	must(t, err)
@@ -338,5 +341,23 @@ func TestPairingStatusGlyphsRespectTerminalCapabilities(t *testing.T) {
 		if ascii && strings.Contains(out.String(), "✓") {
 			t.Fatalf("dumb status emitted Unicode: %q", out.String())
 		}
+	}
+}
+
+// The bounded guided adapter must retain EOF and raw line boundaries until
+// guidedRead distinguishes a submitted blank from exhausted private input.
+func TestPairingBundleWhitespaceEOFDoesNotCompleteSecretPrompt(t *testing.T) {
+	t.Parallel()
+	for _, input := range []string{"", " ", " \t"} {
+		t.Run(fmt.Sprintf("input-%q", input), func(t *testing.T) {
+			t.Parallel()
+			var out bytes.Buffer
+			p := newPrompter(strings.NewReader(input), &out)
+			defer p.close()
+			_, err := readPairingBundle(p, setupOptions{}, p.source, Env{})
+			if !errors.Is(err, io.EOF) || strings.Contains(out.String(), "Credential skipped") || strings.Contains(out.String(), "Credential received") {
+				t.Fatalf("exhausted private input completed a prompt: %v\n%s", err, &out)
+			}
+		})
 	}
 }
