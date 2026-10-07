@@ -180,6 +180,9 @@ func (s *sessionScan) resume() (outcome sessionOutcome, handled bool, err error)
 		return outcomeSkipped, true, err
 	}
 	if !havePending {
+		if err := s.requireNoOrphanPrivacyInput(); err != nil {
+			return outcomeSkipped, true, err
+		}
 		if signature, found, e := s.local.LoadScanSignature(s.id()); e != nil {
 			return outcomeSkipped, true, e
 		} else if found && pendingSkillMode(signature.SkillEvidence) != s.opts.skillEvidence() {
@@ -187,10 +190,10 @@ func (s *sessionScan) resume() (outcome sessionOutcome, handled bool, err error)
 		}
 		return regenerateMetadata(s)
 	}
-	if pendingSkillMode(pending.SkillEvidence) != s.opts.skillEvidence() {
-		return outcomeSkipped, true, errors.New("pending source privacy policy changed; retain evidence for refilter and reconcile")
+	if s.pendingPrivacyChanged(pending) {
+		outcome, err := s.maintainPendingPrivacy(pending)
+		return outcome, true, err
 	}
-	// Validate policy and frozen context before a new request may replace replay evidence.
 	if err := s.sealPending(&pending); err != nil {
 		return outcomeSkipped, true, err
 	}

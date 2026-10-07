@@ -70,6 +70,7 @@ func PrepareGenerationRecovery(ctx context.Context, reg archive.SessionRegistrat
 		if latest.NativeSessionID != reg.NativeSessionID || latest.ProjectRoot != reg.ProjectRoot || latest.TranscriptPath != reg.TranscriptPath || latest.DestinationID != reg.DestinationID {
 			return latest, state.PendingPublication{}, errors.New("registration changed during recovery; preview again")
 		}
+		latest.AdmissionStage = ""
 		latest.ArchiveSessionID = id
 		latest.PreviousGenerationID = reg.ArchiveSessionID
 		bundle, err := archive.NewSourceBundle(latest, adapter, filtered, at, nil)
@@ -102,11 +103,15 @@ func (s *sessionScan) maintainFrozen() (sessionOutcome, error) {
 	if pending, found, err := s.local.LoadPending(s.id()); err != nil {
 		return outcomeSkipped, err
 	} else if found {
-		if pending.Bundle.Capture.FilterVersion != archive.FilterVersion || pending.Bundle.Capture.AdapterVersion != adapter.Version() || !sourceEvidenceWithinPolicy(pending.Bundle.SupplementalEvidence, s.opts.skillEvidence()) {
-			return outcomeSkipped, errors.New("frozen pending privacy policy changed; retain evidence for refilter and reconcile")
+		if s.pendingPrivacyChanged(pending) {
+			if _, err := s.maintainPendingPrivacy(pending); err != nil {
+				return outcomeSkipped, err
+			}
 		} else if _, err := s.publishPending(pending); err != nil {
 			return outcomeSkipped, err
 		}
+	} else if err := s.requireNoOrphanPrivacyInput(); err != nil {
+		return outcomeSkipped, err
 	}
 	bundle, _, found := s.published.LastPublished()
 	if !found {
@@ -124,6 +129,9 @@ func (s *sessionScan) maintainFrozen() (sessionOutcome, error) {
 		return outcomeSkipped, err
 	}
 	if !sameLinks || bundle.Capture.FilterVersion != archive.FilterVersion || bundle.Capture.AdapterVersion != adapter.Version() || !sourceEvidenceWithinPolicy(bundle.SupplementalEvidence, s.opts.skillEvidence()) {
+		if bundle.History != nil {
+			return s.maintainCommittedPrivacy()
+		}
 		bundle.SupplementalEvidence = updated
 		bundle.SupplementalEvidence = limitSkillEvidence(bundle.SupplementalEvidence, s.opts.skillEvidence())
 		filtered, err := refilterBundle(s.ctx, s.reg, adapter, bundle)

@@ -79,7 +79,8 @@ func (s *Store) savePendingQuota(id string, p PendingPublication, required bool)
 }
 
 // coveredPendingCredit consumes only an admitted stage's verified future-copy
-// allowance. Unknown, released, transformed or malformed evidence gets none.
+// allowance. Only an exact source or validated immutable-stage privacy receipt
+// is covered; unknown, released or malformed evidence gets no credit.
 func (s *Store) coveredPendingCredit(id string, p PendingPublication, charge int64) int64 {
 	reg, found, err := s.LoadRegistration(id)
 	if err != nil || !found || reg.AdmissionStage == "" || p.AdmissionStage != reg.AdmissionStage {
@@ -93,13 +94,22 @@ func (s *Store) coveredPendingCredit(id string, p PendingPublication, charge int
 		s.onQuotaBodyRead("stage")
 	}
 	m, bundle, err := s.ReadAdmissionStage(id, reg.AdmissionStage)
-	if err != nil || CheckAdmissionStageOwnership(reg, m) != nil || p.SourceSHA256 != m.SHA256 || int64(len(p.SourceBytes)) != m.Bytes || stageDigest(p.SourceBytes) != m.SHA256 {
+	if err != nil || CheckAdmissionStageOwnership(reg, m) != nil {
 		return 0
 	}
-	expected, e := json.Marshal(bundle)
-	actual, a := json.Marshal(p.Bundle)
-	if e != nil || a != nil || !bytes.Equal(expected, actual) {
-		return 0
+	if p.Commit != nil && p.Commit.Purpose == PublicationPrivacyRewrite {
+		if p.CheckAdmissionStageTransform(reg, m, bundle) != nil {
+			return 0
+		}
+	} else {
+		if p.SourceSHA256 != m.SHA256 || int64(len(p.SourceBytes)) != m.Bytes || stageDigest(p.SourceBytes) != m.SHA256 {
+			return 0
+		}
+		expected, e := json.Marshal(bundle)
+		actual, a := json.Marshal(p.Bundle)
+		if e != nil || a != nil || !bytes.Equal(expected, actual) {
+			return 0
+		}
 	}
 	manifest, _ := s.stagePath(id, ".json")
 	info, err := os.Lstat(manifest)

@@ -3,7 +3,6 @@ package collector
 import (
 	"bytes"
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,7 +13,6 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/evidence"
-	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
@@ -80,7 +78,7 @@ func TestSkillPolicyLimitsPendingAndUploadedBytes(t *testing.T) {
 	}
 }
 
-func TestStricterPolicyRetainsFrozenPendingEvidence(t *testing.T) {
+func TestStricterPolicyRefiltersFrozenPendingWithoutNative(t *testing.T) {
 	t.Parallel()
 	project := t.TempDir()
 	skill := filepath.Join(project, ".agents", "skills", "sample", "SKILL.md")
@@ -117,23 +115,34 @@ func TestStricterPolicyRetainsFrozenPendingEvidence(t *testing.T) {
 		t.Fatal(err)
 	}
 	remote.failMetadata = false
+	if err := os.Remove(reg.TranscriptPath); err != nil {
+		t.Fatal(err)
+	}
 	result, err := Run(t.Context(), local, remote, options)
-	if err != nil || result.Errors[reg.ArchiveSessionID] == nil {
-		t.Fatal("changed policy did not report pending refilter", result, err)
+	if err != nil || len(result.Errors) != 0 || len(result.Published) != 1 {
+		t.Fatal(result, err)
 	}
-	next, found, err := local.LoadPending(reg.ArchiveSessionID)
-	if err != nil || !found || next.SourceSHA256 != old.SourceSHA256 || !bytes.Equal(next.SourceBytes, old.SourceBytes) {
-		t.Fatal("changed policy discarded frozen evidence", found, err)
+	metadata := fetchMetadata(t, remote, reg.Harness.Name, reg.ArchiveSessionID)
+	if metadata.SourceBundle.SHA256 == old.SourceSHA256 {
+		t.Fatal("old policy source selected")
 	}
-	if _, found, err := local.LoadRequest(reg.ArchiveSessionID); err != nil || !found {
-		t.Fatal("obsolete-policy request completed prematurely", found, err)
+	raw, err := remote.Get(t.Context(), metadata.SourceBundle.Key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rewritten, err := archive.ReadSourceBundle(bytes.NewReader(raw), archive.DecodeOptions{})
+	if err != nil || !sourceEvidenceWithinPolicy(rewritten.SupplementalEvidence, config.SkillEvidenceNone) {
+		t.Fatal("obsolete policy evidence selected", rewritten, err)
+	}
+	if !rewritten.Capture.CapturedAt.Equal(old.Bundle.Capture.CapturedAt) {
+		t.Fatal("capture time changed")
+	}
+	if _, found, err := local.LoadPending(reg.ArchiveSessionID); err != nil || found {
+		t.Fatal("pending not settled", found, err)
 	}
 	work, err := local.Outstanding(reg, false)
-	if err != nil || !work.Upload || !work.Pending() || !work.DefersExpiry() {
-		t.Fatal("obsolete-policy evidence disappeared from work status", work, err)
-	}
-	if _, err := remote.Get(t.Context(), old.MetadataKey); !errors.Is(err, storage.ErrNotFound) {
-		t.Fatal("obsolete source became authoritative", err)
+	if err != nil || work.Upload {
+		t.Fatal("committed upload remains pending", work, err)
 	}
 
 }

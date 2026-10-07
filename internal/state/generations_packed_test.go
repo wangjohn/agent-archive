@@ -22,16 +22,31 @@ func packedGenerationFixture(t *testing.T) (*Store, archive.SessionRegistration,
 	if err != nil {
 		t.Fatal(err)
 	}
-	at := reg.RegisteredAt.Add(time.Hour)
-	bundle := archive.SourceBundle{SchemaVersion: archive.SourceSchemaVersion, ArchiveSessionID: reg.ArchiveSessionID, NativeSessionID: key.NativeID, ProjectID: reg.ProjectID, Capture: archive.SourceCapture{Harness: reg.Harness, CapturedAt: reg.RegisteredAt}}
+	captured := reg.SessionStartedAt
+	at := captured.Add(time.Hour)
+	bundle := archive.SourceBundle{SchemaVersion: archive.SourceSchemaVersion, ArchiveSessionID: reg.ArchiveSessionID, NativeSessionID: key.NativeID, ProjectID: reg.ProjectID, Capture: archive.SourceCapture{Harness: reg.Harness, CapturedAt: captured, AdapterName: "test", AdapterVersion: "test-v1", FilterVersion: archive.FilterVersion, SourceFormat: "test-jsonl"}}
 	p, err := s.LoadPublishedState(reg.ArchiveSessionID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := p.Save(bundle, reg.RegisteredAt, CacheStatusPublished); err != nil {
+	compressed, err := archive.BuildCompressedSource(bundle)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := p.SaveBlocked(bundle, reg.RegisteredAt, BlockedReasonTranscriptRewritten); err != nil {
+	sourceKey, err := archive.SourceObjectKey(bundle, compressed.SHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := archive.SourceReference{Key: sourceKey, SHA256: compressed.SHA256, CompressedBytes: len(compressed.Bytes)}
+	metadata := archive.Metadata{SchemaVersion: archive.MetadataSchemaVersion, SessionID: reg.ArchiveSessionID, NativeSessionID: reg.NativeSessionID, ProjectID: reg.ProjectID, MachineID: "synthetic", StartedAt: reg.SessionStartedAt, CapturedAt: captured, MetadataDerivedAt: captured, Harness: reg.Harness, FilterVersion: archive.FilterVersion, SourceBundle: ref}
+	raw, err := json.Marshal(metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.SavePublication(bundle, captured, ref, raw); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.SaveBlocked(bundle, captured, BlockedReasonTranscriptRewritten); err != nil {
 		t.Fatal(err)
 	}
 	// Populate the other empty shards so expiry exercises the real packed

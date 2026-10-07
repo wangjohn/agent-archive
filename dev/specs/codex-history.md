@@ -96,8 +96,8 @@ commit identity plus up to 65 exact source payload references: one current and
 64 physical graph-span limit. Inline compressed replay payloads are capped at
 128 MiB in aggregate; the active payload is stored once. Ref-only remote sources
 may exceed that aggregate, but each is verified sequentially with a 128 MiB
-object bound and caller cancellation. No stage handles or durable import staging
-are shipped by this publication step. Malformed journals remain visible pending
+object bound and caller cancellation. Durable admission staging binds immutable
+manifest digests to registration and covered requests. Malformed journals remain visible pending
 evidence and block replacement; older quarantined copies remain visible to status
 and retention. An obsolete adapter/filter/skill policy retains replay evidence
 for explicit refiltering rather than uploading or discarding it.
@@ -124,9 +124,9 @@ snapshots and require a provider-approved continuation bound to both source
 digests, plus consistent retained filtered ordinals, spans and record prefixes.
 Filtered equality alone cannot prove raw native prefix continuity or authorize
 using a filtered source as a raw dependency. Missing proof stays pending. Privacy
-full-set replacement requires revision validation and durable old-key retirement
-in the later maintenance milestone; selection-only publication cannot evict or
-rewrite preserved evidence. At capacity, preserve the committed archive and stop.
+full-set replacement uses the typed maintenance correspondence below and durable
+old-key retirement intent; selection-only publication cannot evict or rewrite
+preserved evidence. At capacity, preserve the committed archive and stop.
 
 Listing repair reads the authoritative remote winner, never stale pending bytes.
 The verified metadata and full local source set become durable before covered
@@ -137,6 +137,89 @@ staging only after that local commit and request completion. No native reread or
 Git reattribution may replace admitted evidence. Remote wire schemas and filter
 versions are unchanged; the additive private journal is not a writer downgrade
 fence. History-specific config compatibility protection remains a later gate.
+
+Full-set maintenance resolves current and all preserved sources one at a time,
+verifies each exact key/checksum/size/namespace and capture age, and invokes the
+injected native retained filter. A missing, corrupt, foreign, oversized or canceled
+reference stops the whole replacement with prior metadata and pending evidence
+intact. Every physical revision keeps its ID, role, creation/ownership/producer
+facts, relationships, raw ordinal spans and capture time. Filtered record offsets
+may change as private records are removed. The full output remains under the
+128 MiB inline replay cap; reaching a cap never evicts a preserved revision.
+
+The private `privacy` purpose binds complete previous-to-next correspondence to
+raw metadata hashes, deterministic source-set identities, destination, admission
+and policy. Its input authority distinguishes exact committed predecessor,
+immutable admitted stage, and an exact previously sealed authorized pending
+candidate. Pending replay revalidates the original authorized transition. Repeated pending
+rewrites bind that checked authority to the exact immediate receipt before
+releasing the decoded original. Each selected revision is refiltered from its
+oldest authenticated uncommitted content, so an intermediate policy reduction
+cannot erase content needed by a later policy before commitment. The immediate
+candidate still supplies exact previous correspondence and policy; immutable
+stage evidence remains the original content authority until commitment. Replay
+correspondence must match every ordered reference in the immediate input body. An
+already remotely selected candidate is verified and recorded locally without
+acknowledging its request or releasing staging, then transformed under current
+policy. An exact original predecessor permits transforming the entire newer
+candidate; unknown/different/unreadable remote evidence permits neither guessing
+a predecessor nor dropping newer candidate evidence.
+
+Skill policy evidence distinguishes an exact configured stage/pending policy
+from an observed retained envelope (`none`, `metadata`, or `body`). The latter
+never claims knowledge of a historical configured mode. Current policy is always
+obtained from the active injected adapter/filter and actual configured skill mode.
+Parser/head/feedback maintenance preserves the complete prior selection and its
+immutable facts; history metadata never observes live Git for attribution.
+
+A transformed admission receipt binds the immutable manifest digest and original
+source/policy to the verified final selecting commit. Repeated policy changes
+compose one bounded original-to-latest receipt, retaining immediate full-set
+correspondence plus exact prior receipt and selecting-body digests. Prior receipt
+loss or corruption remains actionable pending evidence; no checksum assertion or
+unbounded proof chain can authorize cleanup. Original stage bytes and reservations
+remain until exact remote and atomic local commit, covered request completion,
+then actual cleanup. Completed release recovery uses verified committed remote
+sources when the original staged payload is already gone. Newer uncovered request
+tokens remain queued. RAM-only
+transformation allocates no scratch payload; the shared atomic pending gate charges
+all actual coexistence and borrows only the exact validated stage future allowance
+under the unchanged aggregate 1 GiB quota.
+Quota-only pending receipts bind the original immutable stage SHA even when the
+pending source has been transformed. Target validation still checks the complete
+stage transform; aggregate scans can retain that credit across restart without
+reading unrelated pending or source bodies.
+
+Unuploaded original replay bytes remain durably recoverable until that exact local
+successor commit. A bounded per-session `publication-evidence/<id>/journal.json`
+retains one oldest sealed original plus immediate/prepared successor bindings;
+its actual bytes, atomic coexistence, control overhead and orphan temporary files
+are charged under shared quota. Before pending replacement, originals already
+resolvable from an immutable stage or verified checksum-addressed remote objects
+may instead use bounded embedded exact authority/metadata bytes. Their backing
+objects are reverified on replay. Missing/corrupt journals, vanished or unreadable
+backing objects, or insufficient quota preserve pending work rather than uploading
+obsolete bytes or reopening native sources. `HasPending` observes confined evidence
+directories without reading bodies, so corruption/orphan files remain visible to
+work status, generation guards and removal checks even if pending is absent.
+Absent pending plus retained evidence requires explicit successor restoration.
+Journal cleanup validates exact selecting local metadata and the full source set;
+remote PUT alone never authorizes release. If cleanup finishes before interrupted
+pending removal, a later policy change uses the exact verified committed source
+instead of requiring the legitimately removed original journal. Explicit authoritative deletion and
+orphan restoration remain responsibilities of the later lifecycle milestone.
+
+Generation recovery journals exact prior committed metadata/source-set authority
+before fencing routing. An admitted predecessor must have completed its verified
+stage release. The successor clears only old-stage linkage, preserves admission
+and provenance, and owns a new namespace; old references remain in the frozen
+predecessor. A changed prior selection stops recovery before freezing. Legacy
+in-flight journals without complete authority need explicit reconciliation.
+
+These additive private receipts and journals do not alter remote schemas or the
+filter version. Deletion, retention, purge, actual old-binary safety, restoration
+bridges, and provider acceptance still belong to later gates. All outer history
+mutation fences remain until those gates are complete.
 
 The initial same-handle `SourceAdmission` check binds native ID and cwd only.
 Lifecycle integration must extend it with immutable creation, producer and
