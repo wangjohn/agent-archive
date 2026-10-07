@@ -110,7 +110,7 @@ var storeDirs = []string{"registrations", "requests", "request-locks", "publishe
 
 // lazyStoreDirs are the directories the store creates under home on first
 // use rather than up front.
-var lazyStoreDirs = []string{admissionStageDir, generationHeadsDir, generationNodesDir, generationRecoveryDir, "superseded", "forgotten", refreshSkipDir, listingRepairDir}
+var lazyStoreDirs = []string{"session-deletions", "session-deletions.lock", admissionStageDir, generationHeadsDir, generationNodesDir, generationRecoveryDir, "superseded", "forgotten", refreshSkipDir, listingRepairDir}
 
 // OwnedEntries lists every top-level entry a Store can create under its
 // home: its directories, its status file, and the storage clock reading

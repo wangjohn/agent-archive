@@ -70,6 +70,7 @@ type PublicationSource struct {
 
 // PublicationCommit binds replay to the complete source set and admitted context.
 type PublicationCommit struct {
+	Retention         *RetentionRestoration       `json:"retention,omitempty"`
 	Privacy           *PublicationPrivacyEvidence `json:"privacy,omitempty"`
 	Continuity        *PublicationContinuity      `json:"continuity,omitempty"`
 	Version           int                         `json:"version"`
@@ -193,6 +194,9 @@ func (p PendingPublication) ValidatePublication() error {
 		return errors.New("pending publication identity mismatch")
 	}
 	if err := p.validatePrivacyEvidence(); err != nil {
+		return err
+	}
+	if err := p.validateRetentionProof(); err != nil {
 		return err
 	}
 	if c.Continuity != nil && (c.Predecessor != PredecessorPresent || !validPublicationDigest(c.Continuity.PreviousSourceSHA256) || c.Continuity.NextSourceSHA256 != p.SourceSHA256) {
@@ -352,6 +356,14 @@ func (p PendingPublication) validateUncommittedPrivacy(prior PublicationPredeces
 	}
 	if len(prior.Body) != 0 {
 		return errors.New("unexpected publication predecessor body")
+	}
+	return nil
+}
+
+func (p PendingPublication) validateRetentionProof() error {
+	c := p.Commit
+	if c.Retention != nil && (c.Predecessor != PredecessorAbsent || c.Purpose != PublicationCapture || !validPublicationDigest(c.Retention.DeletionSHA256) || !validPublicationDigest(c.Retention.OwnerSHA256) || c.Retention.ReplacementSHA256 != c.MetadataSHA256 || !validPublicationDigest(c.Retention.PredecessorSHA256) || c.Retention.CoveredToken == "" || c.Retention.CoveredToken != p.RequestToken) {
+		return errors.New("invalid retention restoration authority")
 	}
 	return nil
 }

@@ -245,6 +245,16 @@ func (s *Store) hasWork(archiveSessionID string) (bool, error) {
 	if err != nil || requested {
 		return requested, err
 	}
+	reg, found, err := s.LoadRegistration(archiveSessionID)
+	if err != nil {
+		return false, err
+	}
+	if found && reg.AdmissionStage != "" {
+		released, err := s.AdmissionStageReleased(reg)
+		if err != nil || !released {
+			return true, err
+		}
+	}
 	return s.HasPending(archiveSessionID)
 }
 
@@ -404,20 +414,8 @@ func (s *Store) forgetSession(archiveSessionID string, key agentmeta.SessionKey,
 	if !safeFileComponent(archiveSessionID) {
 		return errors.New("archive session ID is not a safe file name component")
 	}
-	if key.NativeID != "" {
-		if err := key.Validate(); err != nil {
-			return err
-		}
-		reg, found, err := s.LoadRegistration(archiveSessionID)
-		if err != nil {
-			return err
-		}
-		if found {
-			actual, err := registrationKey(reg)
-			if err != nil || actual != key || reg.ArchiveSessionID != archiveSessionID {
-				return ErrSessionIdentityConflict
-			}
-		}
+	if err := s.prepareForgetEvidence(archiveSessionID, key); err != nil {
+		return err
 	}
 	if withCandidates {
 		if err := s.removeSubagentCandidatesForSession(archiveSessionID); err != nil {
@@ -493,5 +491,42 @@ func (s *Store) forgetSession(archiveSessionID string, key agentmeta.SessionKey,
 			return fmt.Errorf("remove session directory %q: %w", dir, err)
 		}
 	}
+	return nil
+}
+
+func (s *Store) prepareForgetEvidence(archiveSessionID string, key agentmeta.SessionKey) error {
+	if key.NativeID != "" {
+		if err := key.Validate(); err != nil {
+			return err
+		}
+		reg, found, err := s.LoadRegistration(archiveSessionID)
+		if err != nil {
+			return err
+		}
+		if found {
+			actual, err := registrationKey(reg)
+			if err != nil || actual != key || reg.ArchiveSessionID != archiveSessionID {
+				return ErrSessionIdentityConflict
+			}
+		}
+	}
+	reg, haveReg, err := s.LoadRegistration(archiveSessionID)
+	if err != nil {
+		return err
+	}
+	if haveReg {
+		if err = s.prepareLocalRemoval(reg); err != nil {
+			return err
+		}
+		if err = s.removeDurableSessionEvidence(reg); err != nil {
+			return err
+		}
+	} else if owed, err := s.HasDurableSessionEvidence(archiveSessionID); err != nil || owed {
+		if err != nil {
+			return err
+		}
+		return ErrAdmissionStageRecovery
+	}
+
 	return nil
 }

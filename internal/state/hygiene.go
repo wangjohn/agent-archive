@@ -67,6 +67,8 @@ const (
 // names.
 var corruptionPolicies = map[string]corruption{
 	admissionStageDir:         readAsRecoveryRequired,
+	"session-deletions":       readAsRecoveryRequired,
+	"session-deletions.lock":  holdsNoContent,
 	generationHeadsDir:        readAsRecoveryRequired,
 	generationNodesDir:        readAsRecoveryRequired,
 	generationRecoveryDir:     readAsRecoveryRequired,

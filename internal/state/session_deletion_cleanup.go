@@ -1,0 +1,286 @@
+package state
+
+import (
+	"encoding/json"
+	"errors"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/wangjohn/agent-archive/internal/archive"
+)
+
+// prepareLocalRemoval records explicit local whole-session authority before any
+// admitted bytes disappear. Remote callers must have completed their own deletion.
+func (s *Store) prepareLocalRemoval(reg archive.SessionRegistration) error {
+	j, found, err := s.LoadSessionDeletion(reg)
+	if err != nil {
+		return err
+	}
+	if !found || j.Phase == "restoring" || j.Phase == "restored" {
+		j, err = s.PrepareSessionDeletion(reg, RemovalReasonUndo, nil, time.Now())
+		if err != nil {
+			return err
+		}
+	}
+	if j.Phase == "prepared" {
+		if err = s.AdvanceSessionDeletion(reg, "deleting"); err != nil {
+			return err
+		}
+		j.Phase = "deleting"
+	}
+	if j.Phase == "deleting" {
+		if j.MetadataSHA256 != "" {
+			return ErrAdmissionStageRecovery
+		}
+		if err = s.AdvanceSessionDeletion(reg, "absent"); err != nil {
+			return err
+		}
+		j.Phase = "absent"
+	}
+	if j.Phase == "absent" {
+		return s.AdvanceSessionDeletion(reg, "cleaned")
+	}
+	return nil
+}
+
+func (s *Store) removeDurableSessionEvidence(reg archive.SessionRegistration) (err error) {
+	j, found, err := s.LoadSessionDeletion(reg)
+	if err != nil {
+		return err
+	}
+	if !found || j.Phase != "cleaned" {
+		return ErrAdmissionStageRecovery
+	}
+	unlock, err := s.namedLockWait("temporary-quota", time.Second)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	root, err := os.OpenRoot(s.home)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, root.Close()) }()
+	// Do not follow a corrupt stage directory or remove another reservation.
+	if _, err = s.stagePath(reg.ArchiveSessionID, ".json"); err != nil {
+		return err
+	}
+	if _, err = s.evidencePath(reg.ArchiveSessionID); err != nil {
+		return err
+	}
+	if err = removeOwnedStageFiles(root, reg.ArchiveSessionID); err != nil {
+		return err
+	}
+	if err = removeOwnedOriginalFiles(root, reg.ArchiveSessionID); err != nil {
+		return err
+	}
+	if err = s.removeSessionScratch(root, reg.ArchiveSessionID); err != nil {
+		return err
+	}
+	if err = s.removeQuotaReceipt(reg.ArchiveSessionID); err != nil {
+		return err
+	}
+	h, err := root.Open(".")
+	if err != nil {
+		return err
+	}
+	return errors.Join(h.Sync(), h.Close())
+}
+
+// removeSessionScratch runs under the existing shared quota lock, after explicit
+// whole-session removal. Only checksum-free accounting receipts with a fully
+// validated session/owner/root tuple authorize their own scratch cleanup.
+func (s *Store) removeSessionScratch(root *os.Root, id string) error {
+	info, err := root.Lstat(temporaryReservationDir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return ErrAdmissionStageRecovery
+	}
+	dir, err := root.OpenRoot(temporaryReservationDir)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = dir.Close() }()
+	h, err := dir.Open(".")
+	if err != nil {
+		return err
+	}
+	entries, err := h.ReadDir(-1)
+	err = errors.Join(err, h.Close())
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		raw, err := readRemovalReceipt(dir, entry.Name())
+		if err != nil {
+			return err
+		}
+		m, err := decodeRemovalReceipt(raw, entry.Name())
+		if err != nil {
+			return err
+		}
+		if m.Key != id {
+			continue
+		}
+		scratch, err := root.Lstat(temporaryScratchDir)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		if err == nil && (!scratch.IsDir() || scratch.Mode()&os.ModeSymlink != 0) {
+			return ErrAdmissionStageRecovery
+		}
+		if err = root.RemoveAll(m.Root); err != nil {
+			return err
+		}
+		if scratch, err := root.Open(temporaryScratchDir); err == nil {
+			err = errors.Join(scratch.Sync(), scratch.Close())
+			if err != nil {
+				return err
+			}
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		if err = dir.Remove(entry.Name()); err != nil {
+			return err
+		}
+	}
+	h, err = dir.Open(".")
+	if err != nil {
+		return err
+	}
+	return errors.Join(h.Sync(), h.Close())
+}
+
+func decodeRemovalReceipt(raw []byte, name string) (temporaryManifest, error) {
+	var m temporaryManifest
+	if json.Unmarshal(raw, &m) != nil || m.Version != 1 || !safeFileComponent(m.Key) || !safeFileComponent(m.Token) || name != m.Token+".json" || m.Root != filepath.Join(temporaryScratchDir, m.Token) || m.Charged < temporaryControlBytes || m.Charged > AdmissionStageQuota || (m.Owner != CursorAdmission && m.Owner != PublicationPrivacy) {
+		return m, ErrAdmissionStageRecovery
+	}
+	return m, nil
+}
+
+func readRemovalReceipt(root *os.Root, name string) (raw []byte, err error) {
+	before, err := root.Lstat(name)
+	if err != nil {
+		return nil, err
+	}
+	if !before.Mode().IsRegular() || before.Size() > temporaryControlBytes {
+		return nil, ErrAdmissionStageRecovery
+	}
+	h, err := root.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { err = errors.Join(err, h.Close()) }()
+	opened, err := h.Stat()
+	if err != nil || !os.SameFile(before, opened) {
+		return nil, ErrAdmissionStageRecovery
+	}
+	raw, err = io.ReadAll(io.LimitReader(h, temporaryControlBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	after, err := root.Lstat(name)
+	if err != nil || int64(len(raw)) > temporaryControlBytes || !os.SameFile(opened, after) || opened.Size() != after.Size() || !opened.ModTime().Equal(after.ModTime()) {
+		return nil, ErrAdmissionStageRecovery
+	}
+	return raw, nil
+}
+
+func removeOwnedStageFiles(root *os.Root, id string) error {
+	var err error
+	dir, e := root.OpenRoot(admissionStageDir)
+	if e == nil {
+		names, e := dir.Open(".")
+		if e != nil {
+			_ = dir.Close()
+			return e
+		}
+		entries, e := names.ReadDir(-1)
+		e = errors.Join(e, names.Close())
+		if e != nil {
+			_ = dir.Close()
+			return e
+		}
+		for _, entry := range entries {
+			if !strings.HasPrefix(entry.Name(), id+".") {
+				continue
+			}
+			info, e := dir.Lstat(entry.Name())
+			if e != nil || !info.Mode().IsRegular() {
+				_ = dir.Close()
+				return ErrAdmissionStageRecovery
+			}
+			if e = dir.Remove(entry.Name()); e != nil {
+				_ = dir.Close()
+				return e
+			}
+		}
+		h, e := dir.Open(".")
+		if e == nil {
+			e = errors.Join(h.Sync(), h.Close())
+		}
+		err = errors.Join(e, dir.Close())
+		if err != nil {
+			return err
+		}
+	} else if !errors.Is(e, os.ErrNotExist) {
+		return e
+	}
+
+	return nil
+}
+
+func removeOwnedOriginalFiles(root *os.Root, id string) error {
+	// An explicit removal covers confined original journals, including orphan
+	// atomic files. Corrupt subdirectories/symlinks stay charged and actionable.
+	rel := filepath.Join(publicationEvidenceDir, id)
+	evidence, e := root.OpenRoot(rel)
+	if e == nil {
+		h, e := evidence.Open(".")
+		if e != nil {
+			_ = evidence.Close()
+			return e
+		}
+		entries, e := h.ReadDir(-1)
+		e = errors.Join(e, h.Close())
+		if e != nil {
+			_ = evidence.Close()
+			return e
+		}
+		for _, entry := range entries {
+			info, e := evidence.Lstat(entry.Name())
+			if e != nil || !info.Mode().IsRegular() {
+				_ = evidence.Close()
+				return ErrAdmissionStageRecovery
+			}
+			if e = evidence.Remove(entry.Name()); e != nil {
+				_ = evidence.Close()
+				return e
+			}
+		}
+		h, e = evidence.Open(".")
+		if e == nil {
+			e = errors.Join(h.Sync(), h.Close())
+		}
+		e = errors.Join(e, evidence.Close())
+		if e != nil {
+			return e
+		}
+		if e = root.Remove(rel); e != nil {
+			return e
+		}
+	} else if !errors.Is(e, os.ErrNotExist) {
+		return e
+	}
+
+	return nil
+}

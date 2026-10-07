@@ -415,7 +415,11 @@ func pointCurrentAt(t *testing.T, store storage.ObjectStore, id, key string) {
 	} else if err != nil {
 		t.Fatal(err)
 	}
-	metadata.SourceBundle = archive.SourceReference{Key: key, SHA256: sha, CompressedBytes: 8}
+	actual, err := store.Get(context.Background(), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata.SourceBundle = archive.SourceReference{Key: key, SHA256: storage.SHA256Hex(actual), CompressedBytes: len(actual)}
 	data, err := json.Marshal(metadata)
 	if err != nil {
 		t.Fatal(err)
@@ -617,8 +621,8 @@ func TestSweepSkipsRemoteReadWhenNothingIsExpirable(t *testing.T) {
 	if err != nil || len(result.Errors) != 0 || result.DeletedSnapshots != 1 {
 		t.Fatalf("%#v %v", result, err)
 	}
-	if store.gets != 1 {
-		t.Fatalf("expected exactly one remote metadata read; gets=%d", store.gets)
+	if store.gets != 3 {
+		t.Fatalf("expected initial/fresh metadata and complete source verification; gets=%d", store.gets)
 	}
 	if _, err := mem.Get(context.Background(), first); err == nil {
 		t.Fatal("older snapshot retained")

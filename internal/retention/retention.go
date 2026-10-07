@@ -222,6 +222,13 @@ func (s *sweeper) orphans(keep map[string]bool) {
 var knownHarnesses = agentmeta.Names(agentmeta.Builtins())
 
 func (s *sweeper) orphan(id string) error {
+	// Lost ownership is not whole-session removal authority for durable evidence.
+	if owed, err := s.local.HasDurableSessionEvidence(id); err != nil || owed {
+		if err != nil {
+			return err
+		}
+		return state.ErrAdmissionStageRecovery
+	}
 	ageFrom := s.local.OrphanChangedAt(id)
 	summary, found, err := s.local.LoadPublishedSummary(id)
 	if err != nil {
@@ -255,14 +262,15 @@ func (s *sweeper) orphan(id string) error {
 // sweeper is one Sweep: its inputs, the clock verdict it reaches at most
 // once, and its result.
 type sweeper struct {
-	ctx       context.Context
-	local     *state.Store
-	store     storage.ObjectStore
-	opts      Options
-	now       time.Time
-	requested map[string]bool
-	clock     clockVerdict
-	result    Result
+	ctx         context.Context
+	local       *state.Store
+	store       storage.ObjectStore
+	opts        Options
+	now         time.Time
+	metadataSHA string
+	requested   map[string]bool
+	clock       clockVerdict
+	result      Result
 }
 
 // session sweeps one registered session.
@@ -447,7 +455,7 @@ func (s *sweeper) remote(reg archive.SessionRegistration, summary state.Publishe
 		if !s.clockAllowsDeletion() {
 			return nil
 		}
-		if err := DeleteWholeSession(s.ctx, s.store, reg.Harness.Name, id); err != nil {
+		if err := DeleteOwnedSession(s.ctx, s.local, s.store, reg, state.RemovalReasonRetention, s.now); err != nil {
 			return fmt.Errorf("delete session: %w", err)
 		}
 		// The remote deletion takes network time and is not done under the
@@ -468,56 +476,71 @@ func (s *sweeper) remote(reg archive.SessionRegistration, summary state.Publishe
 	if remoteErr != nil {
 		return fmt.Errorf("current metadata is missing; preserve superseded sources")
 	}
-	return s.deleteSuperseded(reg, superseded, metadata.SourceBundle.Key)
+	return s.deleteSuperseded(reg, superseded, metadata)
 }
 
 // currentMetadata reads the session's live metadata, the pointer every
 // deletion is checked against. A missing object is storage.ErrNotFound;
 // metadata that does not describe this session is an error.
 func (s *sweeper) currentMetadata(reg archive.SessionRegistration) (archive.Metadata, error) {
-	metadataKey, err := archive.MetadataObjectKey(reg.Harness.Name, reg.ArchiveSessionID)
+	m, raw, err := s.selectingMetadata(reg)
 	if err != nil {
-		return archive.Metadata{}, err
+		return m, err
 	}
-	data, err := s.store.Get(s.ctx, metadataKey)
-	if errors.Is(err, storage.ErrNotFound) {
-		return archive.Metadata{}, err
+	if err = archive.CheckHistoryMutation(archive.SourceBundle{}, m); err != nil {
+		return m, err
 	}
+	s.metadataSHA = storage.SHA256Hex(raw)
+	return m, nil
+}
+
+func (s *sweeper) selectingMetadata(reg archive.SessionRegistration) (archive.Metadata, []byte, error) {
+	key, err := archive.MetadataObjectKey(reg.Harness.Name, reg.ArchiveSessionID)
 	if err != nil {
-		return archive.Metadata{}, fmt.Errorf("read current metadata before cleanup: %w", err)
+		return archive.Metadata{}, nil, err
 	}
-	var metadata archive.Metadata
-	if err := json.Unmarshal(data, &metadata); err != nil {
-		return archive.Metadata{}, fmt.Errorf("decode current metadata: %w", err)
+	raw, err := storage.ReadPublicationMetadata(s.ctx, s.store, key)
+	if err != nil {
+		return archive.Metadata{}, nil, err
 	}
-	if err := metadata.ValidateSourceReference(); err != nil {
-		return archive.Metadata{}, fmt.Errorf("invalid current metadata: %w", err)
+	var m archive.Metadata
+	if err = json.Unmarshal(raw, &m); err != nil {
+		return m, nil, err
 	}
-	if metadata.SessionID != reg.ArchiveSessionID || metadata.Harness.Name != reg.Harness.Name || !strings.HasPrefix(metadata.SourceBundle.Key, fmt.Sprintf("sessions/%s/%s/", reg.Harness.Name, reg.ArchiveSessionID)) {
-		return archive.Metadata{}, fmt.Errorf("current metadata belongs to another session")
+	if _, err = m.SourceReferences(); err != nil {
+		return m, nil, err
 	}
-	if err := archive.CheckHistoryMutation(archive.SourceBundle{}, metadata); err != nil {
-		return archive.Metadata{}, err
+	if m.SessionID != reg.ArchiveSessionID || m.NativeSessionID != reg.NativeSessionID || m.ProjectID != reg.ProjectID || m.Harness.Name != reg.Harness.Name {
+		return m, nil, fmt.Errorf("current metadata belongs to another session")
 	}
-	return metadata, nil
+	return m, raw, nil
 }
 
 // deleteSuperseded deletes the ledger's snapshots past their grace period,
 // keeping the current source and the ordinary immediate predecessor.
-func (s *sweeper) deleteSuperseded(reg archive.SessionRegistration, superseded []state.SupersededSource, currentKey string) error {
+func (s *sweeper) deleteSuperseded(reg archive.SessionRegistration, superseded []state.SupersededSource, current archive.Metadata) error {
 	id := reg.ArchiveSessionID
+	refs, err := current.SourceReferences()
+	if err != nil {
+		return err
+	}
+	selected := map[string]bool{}
+	for _, ref := range refs {
+		selected[ref.Key] = true
+	}
+	selection := s.metadataSHA
 	// Append order records supersession order even if the clock moves backward.
 	var predecessorKey string
 	for _, entry := range superseded {
 		if !strings.HasPrefix(entry.Key, fmt.Sprintf("sessions/%s/%s/source.", reg.Harness.Name, id)) {
 			return fmt.Errorf("superseded source belongs to another session")
 		}
-		if entry.Key != currentKey {
+		if !selected[entry.Key] {
 			predecessorKey = entry.Key
 		}
 	}
 	for _, entry := range superseded {
-		if entry.Key == currentKey {
+		if selected[entry.Key] {
 			// Defensive: a key must never be both current and superseded;
 			// if it somehow is, trust "current" and just clean the ledger.
 			if err := s.local.RemoveSuperseded(id, entry.Key); err != nil {
@@ -528,23 +551,30 @@ func (s *sweeper) deleteSuperseded(reg archive.SessionRegistration, superseded [
 		if (entry.Key == predecessorKey && !entry.PrivacySensitive) || s.now.Sub(entry.SupersededAt) < s.opts.gracePeriod() {
 			continue
 		}
+		if !s.clockAllowsDeletion() {
+			return nil
+		}
+		fresh, freshRaw, err := s.selectingMetadata(reg)
+		if err != nil {
+			return err
+		}
+		if storage.SHA256Hex(freshRaw) != selection {
+			return fmt.Errorf("current selecting metadata changed during cleanup")
+		}
+		freshRefs, err := fresh.SourceReferences()
+		if err != nil {
+			return err
+		}
+		if err = verifyDeletionReferences(s.ctx, s.store, freshRefs); err != nil {
+			return err
+		}
 		if entry.PrivacySensitive {
 			if s.opts.PrivacyVerified == nil {
 				continue
 			}
-			fresh, err := s.currentMetadata(reg)
-			if err != nil {
-				return err
-			}
-			if fresh.SourceBundle.Key != currentKey {
-				return fmt.Errorf("current metadata changed during privacy cleanup")
-			}
 			if !s.opts.PrivacyVerified(reg, fresh) {
 				continue
 			}
-		}
-		if !s.clockAllowsDeletion() {
-			return nil
 		}
 		if err := s.store.Delete(s.ctx, entry.Key); err != nil {
 			return fmt.Errorf("delete superseded source %q: %w", entry.Key, err)

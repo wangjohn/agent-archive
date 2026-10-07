@@ -202,3 +202,14 @@ cleanup journals remain private. The first durable import keeps a configuration
 writer fence across setup rollback so older binaries cannot discard its ownership.
 Related-history admission remains protected; this does not enable Codex history
 imports or complete privacy maintenance of retained history.
+
+Whole-session undo removes each owned private stage, original evidence and scratch
+reservation only after durable removal intent and remote namespace cleanup.
+Corrupt ownership or cleanup state remains recovery work. Ordinary retention can
+accept a newer hook through a journal-bound complete publication; explicit undo
+or exclusion does not grant permission to restore a removed session.
+
+Retained history requires a coordinated upgrade of the machines sharing its
+destination. Published v0.1.0 and v0.1.1 have no `purge` command and cannot read
+retained-history metadata. Their older undo implementation is not a downgrade
+safety boundary. Never copy active local ownership state to run an older writer.

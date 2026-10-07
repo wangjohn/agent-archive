@@ -34,6 +34,14 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Purge and superseded-source cleanup protect the complete validated current and
+  preserved source set. Whole-session removal journals its selecting metadata
+  before deleting remote or private retained evidence. Interrupted removal keeps
+  recovery work visible; a new hook during ordinary retention can restore its
+  exact complete publication without treating missing metadata as a new session.
+  Explicit removal cannot restore through that path. History admission remains
+  protected pending the remaining enablement gates.
+
 - Confirmed imports retain private, filtered evidence before admission, so the
   first upload can finish after native transcripts disappear. Imports use bounded
   groups and disk capacity, and preserve later hook requests during retries.
