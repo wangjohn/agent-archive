@@ -26,6 +26,8 @@ type verificationEvidence struct {
 	PublishedAt     time.Time `json:"published_at"`
 	VerifiedAt      time.Time `json:"verified_at"`
 	SourceSHA256    string    `json:"source_sha256"`
+	SourceSetDigest string    `json:"source_set_digest,omitempty"`
+	MetadataDigest  string    `json:"metadata_digest,omitempty"`
 	// Outcome is the most recent attempt's result for this publication:
 	// verificationOutcomeVerified, verificationOutcomeFailed (the remote was
 	// unreachable or the object is missing; worth retrying) or
@@ -156,6 +158,13 @@ func privacyPublicationVerified(home string, cfg config.Config, store *state.Sto
 	record, err := readVerification(home, reg.ArchiveSessionID)
 	if err != nil || record.Outcome != verificationOutcomeVerified || record.VerifiedAt.IsZero() || record.ConfigurationID != sessionVerificationConfigurationID(cfg, reg) || record.SourceSHA256 != current.SourceBundle.SHA256 {
 		return false
+	}
+	if current.History != nil {
+		set, err := current.SourceSetDigest()
+		raw, marshalErr := json.Marshal(current)
+		if err != nil || marshalErr != nil || record.SourceSetDigest != set || record.MetadataDigest != storage.SHA256Hex(raw) {
+			return false
+		}
 	}
 	published, err := store.LoadPublishedState(reg.ArchiveSessionID)
 	if err != nil {
@@ -318,7 +327,16 @@ func verifyPublicationsWithin(ctx context.Context, home string, cfg config.Confi
 		}
 		summary.Attempted++
 		sha, err := verifyPublication(ctx, cfg, remote, c.reg, published)
-		record := verificationEvidence{ConfigurationID: c.cfgID, PublishedAt: c.at, SourceSHA256: sha, Attempts: c.prior.Attempts + 1}
+		setDigest, metadataDigest := "", ""
+		if err == nil {
+			var m archive.Metadata
+			if decodeErr := json.Unmarshal(published.Metadata(), &m); decodeErr == nil {
+				setDigest, _ = m.SourceSetDigest()
+				raw, _ := json.Marshal(m)
+				metadataDigest = storage.SHA256Hex(raw)
+			}
+		}
+		record := verificationEvidence{ConfigurationID: c.cfgID, PublishedAt: c.at, SourceSHA256: sha, Attempts: c.prior.Attempts + 1, SourceSetDigest: setDigest, MetadataDigest: metadataDigest}
 		switch {
 		case err == nil:
 			summary.Verified++
@@ -381,6 +399,30 @@ func verifyPublication(ctx context.Context, cfg config.Config, remote storage.Ob
 	}
 	if metadata.MachineID != cfg.MachineID {
 		return "", fmt.Errorf("%w: metadata ownership does not match this machine", errVerificationMismatch)
+	}
+	if metadata.History != nil {
+		var expectedMetadata archive.Metadata
+		if err := json.Unmarshal(published.Metadata(), &expectedMetadata); err != nil {
+			return "", err
+		}
+		expectedDigest, err := expectedMetadata.SourceSetDigest()
+		if err != nil {
+			return "", err
+		}
+		remoteDigest, err := metadata.SourceSetDigest()
+		if err != nil {
+			return "", err
+		}
+		expectedBytes, _ := json.Marshal(expectedMetadata)
+		remoteBytes, _ := json.Marshal(metadata)
+		if expectedDigest != remoteDigest || storage.SHA256Hex(expectedBytes) != storage.SHA256Hex(remoteBytes) {
+			return "", fmt.Errorf("%w: remote revision set differs from the local publication", errVerificationMismatch)
+		}
+		for _, revision := range metadata.History.Preserved {
+			if _, err := reader.LoadRevision(ctx, remote, metadata, revision.RevisionID, reader.Limits{}); err != nil {
+				return "", err
+			}
+		}
 	}
 	if _, err := reader.LoadSource(ctx, remote, metadata, reader.Limits{}); err != nil {
 		return "", err

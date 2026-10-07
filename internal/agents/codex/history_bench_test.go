@@ -116,7 +116,7 @@ func benchmarkHistory(b *testing.B, n, children int) {
 	b.SetBytes(int64(baseBytes * children))
 	b.ResetTimer()
 	for range b.N {
-		p, e := (SourceProvider{}).OpenPass(context.Background(), agentapi.SourceEnvironment{Files: counted, CodexRollouts: lookup})
+		p, e := (SourceProvider{}).OpenPass(context.Background(), agentapi.SourceEnvironment{Files: counted, CodexRollouts: lookup, Policy: transcriptio.OpenPolicy{Root: dir, RejectSymlinks: true}})
 		if e != nil {
 			b.Fatal(e)
 		}
@@ -173,7 +173,7 @@ func TestSharedHistoryPassReusesBaseDescriptor(t *testing.T) {
 	base, raw := historyFile(t, dir, threadA, threadA, 0, nil, "shared")
 	counted := &historyIO{}
 	lookup := &historyLookup{rollouts: map[string][]agentapi.SourceRef{threadA: {base}}}
-	p, e := (SourceProvider{}).OpenPass(t.Context(), agentapi.SourceEnvironment{Files: counted, CodexRollouts: lookup})
+	p, e := (SourceProvider{}).OpenPass(t.Context(), agentapi.SourceEnvironment{Files: counted, CodexRollouts: lookup, Policy: transcriptio.OpenPolicy{Root: dir, RejectSymlinks: true}})
 	if e != nil {
 		t.Fatal(e)
 	}

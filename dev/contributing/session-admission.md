@@ -150,3 +150,47 @@ unchanged after the request-lock registration check. Recovery repairs corrupt,
 conflicting, requested, absent or unfinished reservation entries instead of
 using that optimization. Existing-index and missing-index migration benchmarks
 are separate cases; their allocation and elapsed distributions are not pooled.
+
+## Pass-owned Codex current lookup
+
+The CLI owns one `discovery.CodexRolloutLookup` per collector pass and shares it
+with the discovery directory worker and the native source factory. Declared
+hook/import homes may supply read facts; only the enabled configured discovery
+homes can create discovered registrations. Current locators, cached headers and
+SQL metadata never supply admission permission. Original creation, project,
+current consent, exclusions and destination are checked independently.
+
+Native SQLite main and WAL files are confined read-only regular-file handles.
+SQLite opens only the private projected main. After one bounded whole refresh,
+same-generation committed WAL appends can be checksum/prefix revalidated and
+replayed into that existing private view, followed by a real targeted row query.
+Changed main stamps/content, reset generations or checkpoint uncertainty stay
+retryable. This uses filesystem stamp observations and does not acquire a native
+SQLite reader lock or claim an atomic filesystem snapshot.
+
+Requested coverage keeps at most 256 requests and 64 candidates per request,
+with conservative bounds before accumulation and serialization: 1 MiB per
+request and 16 MiB combined requested proofs and lookup hints. Hints use at most
+half that allowance so they cannot monopolize request progress. They are also
+charged to the shared native read ledger. Observation leaves one second of the
+same pass allowance for its durable checkpoint. The checkpoint inherits the
+original caller's cancellation, so expiry of the observation slice preserves
+queued requests and proofs without extending the pass deadline. The prunable observation cache remains
+at most 2048 entries. Completed attempts rotate only after their consumer receives
+the result; unfinished and undelivered work stays enrolled. Physical dependencies
+use the same worker and requested facts, including those outside the hint cache.
+A validation epoch digests every observed directory entry fingerprint before
+completeness; it does not protect against same-stamp rewrites.
+
+Already admitted, unbound ordinary legacy registrations can retain their prior
+anchored source representation when current evidence is unavailable. The native
+provider verifies absent history mode, matching physical/thread identity, local
+ordinary execution and absence of relationships. It checks actual identity/cwd,
+source prefix and the real lookup token, without manufacturing modern bindings
+from optional legacy evidence. Generic non-native hook files use the existing
+registered lane with actual ownership and current-row revalidation. Bound,
+discovered, paginated, forked and revised sources remain strict. This compatibility
+lane creates no registrations. History publication and maintenance require a supported complete source set,
+durable frozen journal and all-reference verification. Unknown home migration uses
+configured confined evidence, rechecked before saving the binding; lookup hints
+never provide admission permission.

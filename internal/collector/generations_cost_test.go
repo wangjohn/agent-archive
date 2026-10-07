@@ -27,7 +27,8 @@ func settledGenerationFixture(t *testing.T) (*state.Store, *storagetest.MemorySt
 	if err != nil {
 		t.Fatal(err)
 	}
-	build, err := PrepareGenerationRecovery(t.Context(), reg, at.Add(2*time.Hour), opts)
+	build, closePreview, err := PrepareGenerationRecovery(t.Context(), reg, at.Add(2*time.Hour), opts)
+	defer closePreview()
 	if err != nil {
 		t.Fatal(err)
 	}
