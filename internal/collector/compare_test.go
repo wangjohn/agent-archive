@@ -107,3 +107,11 @@ func TestBundleEvidenceEqualMatchesEncoding(t *testing.T) {
 		}
 	}
 }
+
+// jsonValuesEqual reports whether a and b encode to the same JSON, without
+// encoding them when they hold what decoded JSON holds (objects, arrays,
+// strings, numbers, booleans, null) of the same kinds. Anything else is
+// encoded and compared.
+func jsonValuesEqual(a, b any) (bool, error) {
+	return jsonValuesEqualWith(a, b, jsonEncodingsEqual)
+}

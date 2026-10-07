@@ -38,6 +38,8 @@ const (
 // keeps `pause` out (it takes that lock), so collection cannot be paused
 // while registration runs; each hold still rereads the configuration.
 type Registration struct {
+	// Context bounds outside-lock repository validation; nil gets 30 seconds per slice.
+	Context    context.Context
 	Sources    agentapi.SourcesLookup
 	Home       string
 	Store      *state.Store
@@ -116,6 +118,10 @@ type parentWork struct {
 // Run registers every candidate, in order.
 func (r Registration) Run(candidates []Candidate) (RegistrationResult, error) {
 	var result RegistrationResult
+	ctx := r.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	works := make([]*parentWork, len(candidates))
 	for i, c := range candidates {
 		works[i] = &parentWork{c: c}
@@ -131,7 +137,7 @@ func (r Registration) Run(candidates []Candidate) (RegistrationResult, error) {
 		return r.AfterHold(sessions, subagents)
 	}
 	for i := 0; i < len(works); {
-		if r.Stop != nil && r.Stop() {
+		if ctx.Err() != nil || (r.Stop != nil && r.Stop()) {
 			return result, ErrStopped
 		}
 		if err := r.checkChats(works[i:]); err != nil {
@@ -143,15 +149,24 @@ func (r Registration) Run(candidates []Candidate) (RegistrationResult, error) {
 		if r.MaxHoldSteps > 0 {
 			limit = r.MaxHoldSteps
 		}
+		validationCtx := ctx
+		cancelValidation := func() {}
+		if r.Context == nil {
+			validationCtx, cancelValidation = context.WithTimeout(ctx, 30*time.Second)
+		}
 		for _, w := range works[i : i+min(limit, len(works)-i)] {
 			if w.c.projectResolutionReset != nil {
-				w.c.projectResolutionReset()
+				w.c.projectResolutionReset(validationCtx)
 			}
 		}
 		for _, w := range works[i : i+min(limit, len(works)-i)] {
 			if w.c.projectResolutionCurrent != nil {
 				w.projectEvidenceStale = !w.c.projectResolutionCurrent()
 			}
+		}
+		cancelValidation()
+		if ctx.Err() != nil || (r.Stop != nil && r.Stop()) {
+			return result, ErrStopped
 		}
 		err := r.hold(works, &i, &result)
 		if flushErr := flush(); err == nil {

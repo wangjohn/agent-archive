@@ -88,21 +88,27 @@ type sessionScan struct {
 	// publishes the retained snapshot filtered again in its place (see
 	// refilter.go); once that is published, the rewrite is recorded as the
 	// gap it is, with this candidate cached as the state it was reached at.
-	rewritten *archive.SourceBundle
+	retainedBudget   *agentapi.NativeReadBudget
+	retainedReleases []func()
+	revisions        *revisionPlan
+	rewritten        *archive.SourceBundle
 }
 
 // filteredSource is a source read and filtered once in a scan.
 type filteredSource struct {
-	adapter    agentapi.TranscriptFilter
-	transcript archive.FilteredTranscript
-	observed   sourceState
+	filterLease *int
+	adapter     agentapi.TranscriptFilter
+	transcript  archive.FilteredTranscript
+	observed    sourceState
 }
 
 // warn records a failure that does not end the scan.
 func (s *sessionScan) warn(err error) { s.warnings = append(s.warnings, err) }
 
 func newSessionScan(ctx context.Context, local *state.Store, remote storage.ObjectStore, reg archive.SessionRegistration, req state.Request, published *state.Published, now time.Time, opts Options) *sessionScan {
-	return &sessionScan{ctx: ctx, local: local, remote: remote, opts: opts, now: now, reg: reg, req: req, published: published}
+	scan := &sessionScan{ctx: ctx, local: local, remote: remote, opts: opts, now: now, reg: reg, req: req, published: published}
+	scan.opts.retainedOwner = scan
+	return scan
 }
 
 type sessionOutcome int
@@ -116,6 +122,12 @@ const (
 func (s *sessionScan) id() string { return s.reg.ArchiveSessionID }
 
 func (s *sessionScan) run() (sessionOutcome, error) {
+	if err := s.recoverReferenceAuthority(); err != nil {
+		return outcomeSkipped, err
+	}
+	if outcome, handled, err := s.prepareRetainedHistoryWork(); handled || err != nil {
+		return outcome, err
+	}
 	if err := s.checkRetainedHistory(); err != nil {
 		return outcomeSkipped, err
 	}
@@ -142,6 +154,19 @@ func (s *sessionScan) run() (sessionOutcome, error) {
 	candidate, supplemental, err := s.build(read)
 	if err != nil {
 		return outcomeSkipped, err
+	}
+	s.revisions, err = s.reconcileRevisions(read, candidate)
+	if err != nil {
+		return outcomeSkipped, err
+	}
+	if s.revisions != nil && (candidate.History != nil || len(s.revisions.Preserved) > 0) {
+		if err := s.guardRevisionCandidate(read, &candidate); err != nil {
+			return outcomeSkipped, err
+		}
+		if settled, err := s.settleRevisionCandidate(read, &candidate); settled || err != nil {
+			return outcomeSkipped, err
+		}
+		return s.publish(read, candidate)
 	}
 	if err := archive.CheckHistoryMutation(candidate, archive.Metadata{}); err != nil {
 		return outcomeSkipped, err
@@ -184,6 +209,10 @@ func (s *sessionScan) resume() (outcome sessionOutcome, handled bool, err error)
 		}
 		return regenerateMetadata(s)
 	}
+	if pending.History != nil {
+		outcome, err := s.resumeHistory(pending)
+		return outcome, true, err
+	}
 	if pendingSkillMode(pending.SkillEvidence) != s.opts.skillEvidence() {
 		// An older pending file may contain broader evidence. Discard it
 		// before any retry; the next scan rebuilds under the active policy.
@@ -219,9 +248,10 @@ func (s *sessionScan) resume() (outcome sessionOutcome, handled bool, err error)
 
 // sourceRead is what reading the session's source produced.
 type sourceRead struct {
-	adapter  agentapi.TranscriptFilter
-	filtered archive.FilteredTranscript
-	observed sourceState
+	filterLease *int
+	adapter     agentapi.TranscriptFilter
+	filtered    archive.FilteredTranscript
+	observed    sourceState
 	// outcome is the scan's outcome when the read ended it.
 	outcome sessionOutcome
 }
@@ -242,11 +272,14 @@ func (s *sessionScan) read() (read sourceRead, ok bool, err error) {
 	if s.filtered != nil {
 		read.adapter = s.filtered.adapter
 		read.filtered, read.observed = s.filtered.transcript, s.filtered.observed
+		read.filterLease = s.filtered.filterLease
 	} else {
 		if read.adapter, err = sourceAdapter(s.opts.Sources, s.reg.Harness.Name); err != nil {
 			return read, false, err
 		}
+		mark := len(s.retainedReleases)
 		read.filtered, read.observed, err = reader.Filter(s.ctx, read.adapter, s.opts.maxTranscriptBytes())
+		read.filterLease = s.nativeFilterLease(mark)
 	}
 	if err != nil {
 		read.outcome, err = s.readFailed(read, err)
@@ -273,13 +306,16 @@ func (s *sessionScan) read() (read sourceRead, ok bool, err error) {
 	} else if err != nil {
 		return read, false, err
 	}
+	if err := s.persistCodexBinding(read.observed.binding); err != nil {
+		return read, false, err
+	}
 	return read, true, nil
 }
 
 // readFailed turns a failed read into the scan's end: a recorded gap for a
 // condition retrying cannot fix, otherwise the error.
 func (s *sessionScan) readFailed(read sourceRead, err error) (sessionOutcome, error) {
-	if agentapi.HasFailure(err, agentapi.Cleanup) || agentapi.HasFailure(err, agentapi.Changed) || agentapi.HasFailure(err, agentapi.Unavailable) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	if agentapi.HasFailure(err, agentapi.Cleanup) || agentapi.HasFailure(err, agentapi.Changed) || agentapi.HasFailure(err, agentapi.Unavailable) || errors.Is(err, agentapi.ErrReadBudget) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return outcomeSkipped, err
 	}
 	switch {
@@ -359,7 +395,8 @@ func (s *sessionScan) build(read sourceRead) (archive.SourceBundle, []archive.Su
 	// now is a placeholder here; bundleEvidenceEqual ignores CapturedAt, so
 	// it has no effect on the comparison. The real value is assigned once it
 	// is known whether this is genuinely new evidence.
-	candidate, err := archive.NewSourceBundle(s.reg, read.adapter, read.filtered, s.now, supplemental)
+	candidateOwner := len(s.retainedReleases)
+	candidate, err := s.newSourceBundle(s.reg, read.adapter, read.filtered, s.now, supplemental)
 	if err != nil {
 		return archive.SourceBundle{}, nil, fmt.Errorf("build source bundle: %w", err)
 	}
@@ -379,7 +416,10 @@ func (s *sessionScan) build(read sourceRead) (archive.SourceBundle, []archive.Su
 	}
 	supplemental = mergeSupplementalEvidence(baseEvidence, observed, s.req.HookEvidence)
 	supplemental = limitSkillEvidence(supplemental, s.opts.skillEvidence())
-	candidate, err = archive.NewSourceBundle(s.reg, read.adapter, read.filtered, s.now, supplemental)
+	// The activity probe's decoded rows are no longer consumed. The filtered
+	// input still owns history/ordinal/text aliases needed by the final build.
+	s.releaseRetainedIndex(candidateOwner)
+	candidate, err = s.newSourceBundle(s.reg, read.adapter, read.filtered, s.now, supplemental)
 	if err != nil {
 		return archive.SourceBundle{}, nil, fmt.Errorf("build observed source bundle: %w", err)
 	}
@@ -417,7 +457,7 @@ func (s *sessionScan) compare(read sourceRead, candidate *archive.SourceBundle) 
 	cached, _, status, haveCached := s.published.Cached()
 	changed := true
 	if haveCached {
-		same, err := bundleEvidenceEqual(cached, *candidate)
+		same, err := s.bundleEvidenceEqual(cached, *candidate)
 		if err != nil {
 			return false, fmt.Errorf("compare source bundles: %w", err)
 		}
@@ -483,7 +523,7 @@ func (s *sessionScan) refilteredUnchanged(read sourceRead, cached, candidate arc
 		return false, nil
 	}
 	if len(cached.SupplementalEvidence) > 0 || len(candidate.SupplementalEvidence) > 0 {
-		same, err := jsonEncodingsEqual(cached.SupplementalEvidence, candidate.SupplementalEvidence)
+		same, err := s.jsonEncodingsEqual(cached.SupplementalEvidence, candidate.SupplementalEvidence)
 		if err != nil {
 			return false, fmt.Errorf("compare supplemental evidence: %w", err)
 		}
@@ -540,7 +580,7 @@ func (s *sessionScan) guard(ctx context.Context, read sourceRead, candidate arch
 	// now is, not a damaged copy of it, and blocking it would stop capturing
 	// the chat for good. The new snapshot replaces the old one, and the
 	// chat's one rewrite gap, which names no content, counts the replacement.
-	rebuilt, err := archive.NewSourceBundle(s.reg, read.adapter, read.filtered, s.now, withCursorRewriteGap(supplemental, s.now))
+	rebuilt, err := s.newSourceBundle(s.reg, read.adapter, read.filtered, s.now, withCursorRewriteGap(supplemental, s.now))
 	if err != nil {
 		return candidate, false, fmt.Errorf("build rewritten source bundle: %w", err)
 	}
@@ -550,12 +590,20 @@ func (s *sessionScan) guard(ctx context.Context, read sourceRead, candidate arch
 // publish renders candidate's publication and decides what happens to it:
 // declined by policy, held back by the upload interval, or published now.
 func (s *sessionScan) publish(read sourceRead, candidate archive.SourceBundle) (sessionOutcome, error) {
+	var err error
+	candidate, err = s.finishNativeFilter(&read, candidate)
+	if err != nil {
+		return outcomeSkipped, err
+	}
 	rendered, err := renderPublication(s.ctx, s.resolveParser(), s.parserVersion(), candidate, s.reg, s.now, s.opts, s.priorRepoKey)
 	if err != nil {
 		return outcomeSkipped, err
 	}
 	_, lastPublishedAt, _ := s.published.LastPublished()
 	if rendered.declined {
+		if s.revisions != nil && (candidate.History != nil || len(s.revisions.Preserved) > 0) {
+			return outcomeSkipped, archive.ErrHistoryMutationPending
+		}
 		// Nothing was ever actually published, so this candidate carries no
 		// real publish history; a zero PublishedAt correctly signals that to
 		// the rate-limit check once this decline is reconsidered by a later
@@ -574,14 +622,32 @@ func (s *sessionScan) publish(read sourceRead, candidate archive.SourceBundle) (
 	// A publication due now is uploaded straight after it is saved, so it is
 	// saved already marked attempted (see publishPending): marking it
 	// separately would write the whole file a second time.
+	var frozenSignature *state.ScanSignature
+	if s.revisions != nil && (candidate.History != nil || len(s.revisions.Preserved) > 0) {
+		proof := s.scanSignature(read.observed, candidate)
+		frozenSignature = &proof
+	}
 	pending := state.PendingPublication{
+		ScanSignature: frozenSignature,
 		SkillEvidence: string(s.opts.skillEvidence()),
 		Bundle:        candidate, SourceKey: rendered.source.Key, MetadataKey: rendered.metadataKey,
 		SourceSHA256: rendered.source.SHA256, SourceBytes: rendered.sourceBytes, MetadataBytes: rendered.metadata,
 		RequestToken: s.req.Token, ReadyAt: readyAt, Attempted: !readyAt.After(s.now),
 	}
+	if s.revisions != nil && (candidate.History != nil || len(s.revisions.Preserved) > 0) {
+		if err := s.freezeRevisionPublication(&pending); err != nil {
+			return outcomeSkipped, err
+		}
+	}
 	if err := s.local.SavePending(s.id(), pending); err != nil {
 		return outcomeSkipped, fmt.Errorf("persist pending publication: %w", err)
+	}
+	if pending.History != nil {
+		outcome, err := s.resumeHistory(pending)
+		if err != nil || outcome != outcomePublished {
+			return outcome, err
+		}
+		return outcome, nil
 	}
 	if readyAt.After(s.now) {
 		if err := s.published.Save(candidate, lastPublishedAt, state.CacheStatusRateLimited); err != nil {
@@ -610,7 +676,13 @@ type renderedPublication struct {
 // renderPublication compresses candidate, derives its object keys, and
 // builds its metadata document.
 func renderPublication(ctx context.Context, parser agentapi.TranscriptParser, parserVersion string, candidate archive.SourceBundle, reg archive.SessionRegistration, now time.Time, opts Options, priorRepoKey func() string) (renderedPublication, error) {
-	compressed, err := archive.BuildCompressedSource(candidate)
+	var compressed archive.CompressedSource
+	var err error
+	if opts.retainedOwner != nil {
+		compressed, err = opts.retainedOwner.compressSource(candidate)
+	} else {
+		compressed, err = archive.BuildCompressedSource(candidate)
+	}
 	if err != nil {
 		return renderedPublication{}, fmt.Errorf("compress source bundle: %w", err)
 	}
@@ -644,7 +716,12 @@ func renderPublication(ctx context.Context, parser agentapi.TranscriptParser, pa
 	if opts.RequireSkillUse && !archive.IsParseError(buildErr) && len(metadata.SkillsUsed) == 0 {
 		return renderedPublication{declined: true}, nil
 	}
-	encoded, err := json.Marshal(metadata)
+	var encoded []byte
+	if opts.retainedOwner != nil {
+		encoded, err = opts.retainedOwner.marshalRetained(metadata)
+	} else {
+		encoded, err = json.Marshal(metadata)
+	}
 	if err != nil {
 		return renderedPublication{}, fmt.Errorf("marshal metadata: %w", err)
 	}

@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"os"
 	"path/filepath"
 	"testing"
@@ -31,7 +33,12 @@ func TestBlanketUnknownPhysicalProjectsPublishAndReadBackWithoutConfigGrowth(t *
 			if e := config.Save(store.Home(), cfg); e != nil {
 				t.Fatal(e)
 			}
-			before, _ := os.ReadFile(filepath.Join(store.Home(), "config.json"))
+			beforeCfg, _, beforeErr := config.Load(store.Home())
+			if beforeErr != nil {
+				t.Fatal(beforeErr)
+			}
+			beforeCfg.CodexHistoryProtection = true
+			before, _ := json.Marshal(beforeCfg)
 			want := map[string]bool{}
 			for i := range 4 {
 				project := filepath.Join(parent, fmt.Sprintf("project-%d", i))
@@ -82,7 +89,13 @@ func TestBlanketUnknownPhysicalProjectsPublishAndReadBackWithoutConfigGrowth(t *
 			objects := storagetest.NewMemoryStore()
 			result, e := collector.Run(context.Background(), store, objects, collector.Options{Parsers: builtin.NewBuiltins(), Sources: builtin.NewBuiltins(), MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: func() time.Time { return at.Add(3 * time.Minute) }})
 			if e != nil || len(result.Published) != 4 || len(result.Errors) != 0 {
-				t.Fatalf("publication %#v %v", result, e)
+				for _, issue := range result.Errors {
+					var native *agentapi.SourceError
+					if errors.As(issue, &native) {
+						t.Logf("native cause: %v", native.Err)
+					}
+				}
+				t.Fatalf("publication %#v %v errors=%v", result, e, result.Errors)
 			}
 			for _, r := range regs {
 				b, e := store.PublishedMetadata(r.ArchiveSessionID)
@@ -100,7 +113,11 @@ func TestBlanketUnknownPhysicalProjectsPublishAndReadBackWithoutConfigGrowth(t *
 				}
 				validatePublishedDiscovery(t, b, source)
 			}
-			after, _ := os.ReadFile(filepath.Join(store.Home(), "config.json"))
+			afterCfg, _, afterErr := config.Load(store.Home())
+			if afterErr != nil {
+				t.Fatal(afterErr)
+			}
+			after, _ := json.Marshal(afterCfg)
 			if !bytes.Equal(before, after) {
 				t.Fatal("discovered projects wrote permissions")
 			}
@@ -285,7 +302,7 @@ func TestBlanketLegacyOwnerPublicationHonorsStoredCwdExceptions(t *testing.T) {
 				t.Helper()
 				result, err := collector.Run(context.Background(), store, objects, collector.Options{Parsers: builtin.NewBuiltins(), Sources: builtin.NewBuiltins(), MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: func() time.Time { return now }})
 				if err != nil || len(result.Errors) != 0 {
-					t.Fatalf("publication %#v %v", result, err)
+					t.Fatalf("publication %#v %v errors=%v", result, err, result.Errors)
 				}
 				return result
 			}
@@ -506,7 +523,7 @@ func TestBlanketHookLocatorDiscoveryRejectsExcludedCwdAndDifferentPhysicalProjec
 				expected = 1
 			}
 			if err != nil || len(result.Published) != expected {
-				t.Fatalf("publication %#v %v", result, err)
+				t.Fatalf("publication %#v %v errors=%v", result, err, result.Errors)
 			}
 			regs, err = store.LoadRegistrations()
 			if err != nil || len(regs) != 1 {

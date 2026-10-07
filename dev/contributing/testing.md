@@ -32,6 +32,12 @@ revive's doc-comment rule checks only code the pull request adds or changes.
 All jobs use Go 1.27.1 exactly (go.mod's `toolchain` line). A new push to a
 pull request cancels that pull request's older Test and Levenshtein runs.
 
+The Git identity compatibility job separately runs isolated native Git tests on
+pinned upstream Git 2.30.2 and 2.39.2, and the runner's current Git. It logs exact
+executable versions and verifies the pinned cases. Upstream 2.30.2 tests older
+command semantics; it does not establish acceptance of a Debian-patched Git
+package. Older distribution package acceptance is recorded separately.
+
 A run-owned `release-candidate/**` branch push runs the same Test jobs and
 Levenshtein `verify` against the pushed commit, plus Extended `macos-full`,
 `fuzz`, and `real-systemd`. This provides an automatic final integration

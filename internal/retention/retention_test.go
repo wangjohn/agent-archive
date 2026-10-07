@@ -617,8 +617,8 @@ func TestSweepSkipsRemoteReadWhenNothingIsExpirable(t *testing.T) {
 	if err != nil || len(result.Errors) != 0 || result.DeletedSnapshots != 1 {
 		t.Fatalf("%#v %v", result, err)
 	}
-	if store.gets != 1 {
-		t.Fatalf("expected exactly one remote metadata read; gets=%d", store.gets)
+	if store.gets != 2 {
+		t.Fatalf("expected the initial pointer read and immediate deletion recheck; gets=%d", store.gets)
 	}
 	if _, err := mem.Get(context.Background(), first); err == nil {
 		t.Fatal("older snapshot retained")
