@@ -183,10 +183,32 @@ func (s *sessionScan) refilterRewritten(_ context.Context, read sourceRead, snap
 // stable child owner still identifies that earlier evidence; a different known
 // parent remains a conflict.
 func retainedParentMatches(reg archive.SessionRegistration, bundle archive.SourceBundle) bool {
-	return bundle.ParentSessionID == reg.ParentSessionID || reg.NativeChild && bundle.NativeChild && bundle.ParentSessionID == ""
+	return bundle.ParentSessionID == reg.ParentSessionID || nativeChildOwned(reg, bundle) && bundle.ParentSessionID == ""
 }
 
 // Only positively identified native child evidence can acquire its first archive parent.
 func nativeParentResolved(reg archive.SessionRegistration, bundle archive.SourceBundle) bool {
-	return reg.NativeChild && bundle.NativeChild && bundle.ParentSessionID == "" && reg.ParentSessionID != ""
+	return nativeChildOwned(reg, bundle) && bundle.ParentSessionID == "" && reg.ParentSessionID != ""
+}
+
+// A missing optional marker is unknown on older sources. Only the same already
+// admitted owner and a supported persisted child binding may upgrade it; parent
+// links and current native observations cannot supply that proof.
+func nativeChildOwned(reg archive.SessionRegistration, bundle archive.SourceBundle) bool {
+	if !reg.NativeChild {
+		return false
+	}
+	if bundle.NativeChild {
+		return true
+	}
+	binding := reg.CodexBinding
+	return binding != nil && binding.Child && binding.Validate() == nil &&
+		reg.Harness.Name == archive.HarnessCodex && bundle.Capture.Harness.Name == archive.HarnessCodex &&
+		binding.NativeThreadID == reg.NativeSessionID && bundle.NativeSessionID == reg.NativeSessionID &&
+		bundle.ArchiveSessionID == reg.ArchiveSessionID && bundle.ProjectID == reg.ProjectID &&
+		binding.Home != "" && nativeBindingRelationshipsMatch(reg, binding)
+}
+
+func nativeChildMarkerPending(reg archive.SessionRegistration, bundle archive.SourceBundle) bool {
+	return !bundle.NativeChild && nativeChildOwned(reg, bundle)
 }

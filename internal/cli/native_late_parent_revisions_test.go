@@ -24,9 +24,10 @@ import (
 )
 
 func TestNativeLateParentPreservedReadback(t *testing.T) {
-	for _, name := range []string{"settled", "preparing", "stronger_policy_during_repair", "stronger_policy_legacy_repair"} {
+	for _, name := range []string{"settled", "preparing", "stronger_policy_during_repair", "stronger_policy_legacy_repair", "legacy_marker_settled", "legacy_marker_midcursor", "legacy_marker_stronger_policy"} {
 		during := name == "preparing"
-		tighten := strings.HasPrefix(name, "stronger_policy_")
+		tighten := strings.Contains(name, "stronger_policy")
+		legacyMarker := strings.HasPrefix(name, "legacy_marker_")
 		t.Run(name, func(t *testing.T) {
 			origin := archive.SessionOriginHook
 			canonical := func() string { p, err := filepath.EvalSymlinks(t.TempDir()); must(t, err); return p }
@@ -135,6 +136,38 @@ func TestNativeLateParentPreservedReadback(t *testing.T) {
 				for _, revision := range before.History.Preserved {
 					originalSources[revision.RevisionID], err = reader.LoadRevision(t.Context(), cloud, before, revision.RevisionID, reader.Limits{})
 					must(t, err)
+				}
+			}
+
+			if legacyMarker {
+				before = legacyNativeChildEnvelope(t, local, cloud, reg, before, originalSources)
+				interrupted := false
+				for range 8 {
+					result, err := runOnePass(env, true)
+					must(t, err)
+					for _, issue := range result.Errors {
+						if !errors.Is(issue, archive.ErrHistoryMutationPending) {
+							t.Fatal("legacy ownership migration", issue)
+						}
+					}
+					if name != "legacy_marker_settled" {
+						pending, found, err := local.LoadPending(reg.ArchiveSessionID)
+						must(t, err)
+						if found && pending.History.Preparing && pending.History.PrivacyCursor > 0 {
+							// An older descriptor omitted original parent provenance.
+							for i := range pending.History.Inputs {
+								pending.History.Inputs[i].ParentSessionID = nil
+							}
+							must(t, local.SavePending(reg.ArchiveSessionID, pending))
+							local, err = state.Open(home)
+							must(t, err)
+							interrupted = true
+							break
+						}
+					}
+				}
+				if name != "legacy_marker_settled" && !interrupted {
+					t.Fatal("legacy control never interrupted ownership preparation")
 				}
 			}
 
@@ -261,13 +294,13 @@ func TestNativeLateParentPreservedReadback(t *testing.T) {
 					t.Fatal("resolved parent remains pending")
 				}
 			}
-			if metadata.ParentSessionID != parentReg.ArchiveSessionID {
+			if !metadata.NativeChild || metadata.ParentSessionID != parentReg.ArchiveSessionID {
 				t.Fatal("parent repair not published", metadata.ParentSessionID)
 			}
 			currentBundle, err := reader.LoadSource(t.Context(), cloud, metadata, reader.Limits{})
 			must(t, err)
 			original := originalSources[metadata.History.CurrentRevision]
-			if !reflect.DeepEqual(original.NativeRecords, currentBundle.NativeRecords) || !reflect.DeepEqual(original.Ordinals, currentBundle.Ordinals) || !reflect.DeepEqual(original.History.Spans, currentBundle.History.Spans) {
+			if !reflect.DeepEqual(original.NativeRecords, currentBundle.NativeRecords) || !reflect.DeepEqual(original.Ordinals, currentBundle.Ordinals) || !reflect.DeepEqual(original.History, currentBundle.History) {
 				t.Fatal("late parent repair changed active native evidence or raw ownership")
 			}
 			verifyPolicy := func(bundle archive.SourceBundle) {
@@ -289,6 +322,9 @@ func TestNativeLateParentPreservedReadback(t *testing.T) {
 				}
 			}
 			verifyPolicy(currentBundle)
+			if !currentBundle.NativeChild {
+				t.Fatal("active source ownership marker missing")
+			}
 			encoded, err := json.Marshal(currentBundle)
 			must(t, err)
 			if !strings.Contains(string(encoded), "synthetic current-only") || strings.Contains(string(encoded), "synthetic outgoing-only") || metadata.History == nil || len(metadata.History.Preserved) == 0 {
@@ -305,8 +341,11 @@ func TestNativeLateParentPreservedReadback(t *testing.T) {
 				previous, err := reader.LoadRevision(t.Context(), cloud, metadata, revision.RevisionID, reader.Limits{})
 				must(t, err)
 				verifyPolicy(previous)
+				if !previous.NativeChild {
+					t.Fatal("preserved source ownership marker missing")
+				}
 				original := originalSources[revision.RevisionID]
-				if !previous.Capture.CapturedAt.Equal(original.Capture.CapturedAt) || !reflect.DeepEqual(original.NativeRecords, previous.NativeRecords) || !reflect.DeepEqual(original.Ordinals, previous.Ordinals) || !reflect.DeepEqual(original.History.Spans, previous.History.Spans) {
+				if !previous.Capture.CapturedAt.Equal(original.Capture.CapturedAt) || !reflect.DeepEqual(original.NativeRecords, previous.NativeRecords) || !reflect.DeepEqual(original.Ordinals, previous.Ordinals) || !reflect.DeepEqual(original.History, previous.History) {
 					t.Fatal("late parent repair changed preserved evidence, age or raw ownership")
 				}
 				data, err := json.Marshal(previous)

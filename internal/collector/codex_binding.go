@@ -136,6 +136,9 @@ func applyNativeChildBinding(reg *archive.SessionRegistration, binding *archive.
 	if reg.NativeRootSessionID != "" && binding.RootID != "" && reg.NativeRootSessionID != binding.RootID {
 		return errors.New("native child root facts conflict")
 	}
+	if reg.NativeSourceHome != "" && binding.Home != "" && reg.NativeSourceHome != binding.Home {
+		return errors.New("native child source home facts conflict")
+	}
 	reg.NativeChild = true
 	if binding.ParentID != "" {
 		reg.ParentNativeSessionID = binding.ParentID
@@ -205,4 +208,29 @@ func (s *sessionScan) validateMigrationHome(cfg config.Config, binding *archive.
 		return errors.New("trusted confined source home changed before binding migration")
 	}
 	return nil
+}
+
+// Earlier writers persisted child facts before the public marker existed.
+// Upgrade only the same acknowledged owner using its admitted binding;
+// current native files cannot license this retained maintenance.
+func (s *sessionScan) prepareRetainedOwnership() error {
+	if err := s.recoverReferenceAuthority(); err != nil {
+		return err
+	}
+	binding := s.reg.CodexBinding
+	if binding == nil || !binding.Child || s.reg.NativeChild {
+		return nil
+	}
+	bundle, _, found := s.published.LastPublished()
+	if !found {
+		return nil
+	}
+	owner := s.reg
+	if err := applyNativeChildBinding(&owner, binding); err != nil {
+		return err
+	}
+	if !nativeChildOwned(owner, bundle) {
+		return errors.New("legacy child source does not match its admitted binding")
+	}
+	return s.persistCodexBinding(binding)
 }

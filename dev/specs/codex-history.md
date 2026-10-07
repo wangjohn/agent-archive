@@ -129,6 +129,14 @@ link reconciled. Resolving a missing parent preserves the child's capture age an
 own usage. Privacy maintenance accepts an unresolved historical parent only for
 positively identified native child evidence; conflicting known parents are refused.
 
+Earlier writers could retain native children without the optional public ownership
+marker. A supported persisted child binding for the exact already admitted owner
+can migrate that marker before retained maintenance. All current and preserved
+headers are upgraded under their original source authority; unknown or conflicting
+owners stay refused. This migration reads no current native inventory and does
+not change admission, capture age or raw ownership. Absent legacy public markers
+remain compatible with readers.
+
 `native_child` in retained source and metadata records ownership independently of
 `parent_session_id`. A captured child with an unresolved archive parent includes
 `native_parent_link_pending`. Source-history dependencies remain distinct from

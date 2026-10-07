@@ -352,7 +352,7 @@ func (s *sessionScan) prepareRetainedHistoryWork() (sessionOutcome, bool, error)
 	// sequential maintenance against the original authority before native
 	// reconciliation can combine old-parent inputs with a new-parent sidecar.
 	parentResolved := nativeParentResolved(s.reg, bundle)
-	needed := parentResolved || bundle.Capture.FilterVersion != archive.FilterVersion || bundle.Capture.AdapterVersion != adapter.Version() || !sourceEvidenceWithinPolicy(bundle.SupplementalEvidence, s.opts.skillEvidence()) || authority.Parser.Version != s.parserVersion() || s.reg.CaptureFrozen && s.req.Token != "" || headFingerprint(s.reg.LastHead) != s.publishedLastHead()
+	needed := parentResolved || nativeChildMarkerPending(s.reg, bundle) || bundle.Capture.FilterVersion != archive.FilterVersion || bundle.Capture.AdapterVersion != adapter.Version() || !sourceEvidenceWithinPolicy(bundle.SupplementalEvidence, s.opts.skillEvidence()) || authority.Parser.Version != s.parserVersion() || s.reg.CaptureFrozen && s.req.Token != "" || headFingerprint(s.reg.LastHead) != s.publishedLastHead()
 	for _, revision := range authority.History.Preserved {
 		needed = needed || revision.FilterVersion != archive.FilterVersion
 	}
@@ -481,6 +481,9 @@ func (s *sessionScan) freezeRetainedMaintenance(authority archive.Metadata, bund
 	if nativeParentResolved(s.reg, bundle) {
 		bundle.ParentSessionID = s.reg.ParentSessionID
 		bundle.Capture.Gaps = withoutNativeParentPendingGap(bundle.Capture.Gaps)
+	}
+	if nativeChildMarkerPending(s.reg, bundle) {
+		bundle.NativeChild = true
 	}
 	// Live requests still owe native reads; frozen requests cover retained observations.
 	requestToken := ""
