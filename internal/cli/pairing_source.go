@@ -360,7 +360,7 @@ func showPairingCode(p *prompter, code string, env Env) error {
 	if !env.interactive(underlyingWriter(p.out)) {
 		return errors.New("pairing code display needs terminal output")
 	}
-	release := p.suspendPrompts(true)
+	release := p.suspendPrompts()
 	defer release()
 	// Use checked writes for secret-bearing output. Always restore the screen.
 	if _, err := io.WriteString(p.out, "\x1b[?1049h\x1b[2J\x1b[H"); err != nil {
@@ -379,17 +379,50 @@ func showPairingCode(p *prompter, code string, env Env) error {
 		case <-screen.done:
 		}
 	}()
+	display := "Pairing code: " + strings.Join(words, " ") + "\nType the first three characters of each word (yo- for yo-yo). Recording or screen sharing may capture it.\nPress Enter to hide.\n"
+	resumeErrors := make(chan error, 1)
+	if p.lineGuard != nil {
+		restoreLifecycle := p.lineGuard.screenLifecycle(screen.hide, func() {
+			screen.mu.Lock()
+			defer screen.mu.Unlock()
+			if !screen.active {
+				return
+			}
+			// Never repaint a secret if returning to the alternate screen failed.
+			control := "\x1b[?1049h\x1b[2J\x1b[H"
+			n, err := io.WriteString(p.out, control)
+			if err == nil && n != len(control) {
+				err = io.ErrShortWrite
+			}
+			if err == nil {
+				_, err = io.WriteString(p.out, display)
+			}
+			if err != nil {
+				select {
+				case resumeErrors <- err:
+				default:
+				}
+			}
+		})
+		defer restoreLifecycle()
+	}
 	screen.mu.Lock()
 	if !screen.active {
 		screen.mu.Unlock()
 		return errors.New("pairing code display interrupted")
 	}
-	_, err = fmt.Fprintln(p.out, "Pairing code: "+strings.Join(words, " ")+"\nType the first three characters of each word (yo- for yo-yo). Recording or screen sharing may capture it.\nPress Enter to hide.")
+	_, err = io.WriteString(p.out, display)
 	screen.mu.Unlock()
 	if err != nil {
 		return err
 	}
 	_, err = boundedPairingLine(p.in, 512)
+	if err == nil {
+		select {
+		case err = <-resumeErrors:
+		default:
+		}
+	}
 	return err
 }
 
