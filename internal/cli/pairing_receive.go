@@ -362,7 +362,7 @@ func reviewPairingSettings(p *prompter, payload pairing.Payload, cfg, existing c
 	approvedStorage := cfg.Storage
 	if !opts.yes {
 		for {
-			showSetupReview(p, cfg, setupReview{existing: existing, reconfiguring: found, hookFiles: env.hookFiles(userHome), installedHookFiles: env.installedHookFiles(userHome, existing), userHome: userHome})
+			showSetupReview(p, cfg, setupReview{existing: existing, reconfiguring: found, hookFiles: env.hookFiles(userHome), installedHookFiles: env.installedHookFiles(userHome, existing), userHome: userHome, storageUnchecked: true})
 			choice, e := p.menu("Review pairing settings", "cancel", option{"save", "Save the displayed destination and capture settings"}, option{"edit", "Edit settings"}, option{"cancel", "Cancel"})
 			if e != nil {
 				return cfg, e
