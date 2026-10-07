@@ -8,11 +8,10 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- A bounded shared Codex catalog observes active and archived rollout identity
-  across approved homes, validates optional read-only current locators and
-  independently confines each history dependency. Pending-history diagnostics
-  can report candidate locator evidence; history writes remain disabled and
-  ordinary capture performs no catalog inventory.
+- An explicitly requested Codex metadata inventory shares the existing discovery
+  owner, retains active and archived physical copies and validates bounded
+  slices with live native-current checks. Pending-history diagnostics preserve
+  the original refusal; ordinary capture keeps its requested lookup lane.
 
 - Readers understand self-contained Codex fork, child and revised histories,
   preserve exact raw ordinal boundaries and count only the chat's own activity.
@@ -34,6 +33,19 @@ follow [Semantic Versioning](https://semver.org/).
   coverage remains tracked for release testing.
 
 ### Fixed
+
+- Backfill explains deleted-worktree recovery failures with bounded diagnostic
+  counts and retry/review actions while preserving existing skip codes. Dry-run
+  JSON adds optional diagnostics and physical candidate inventory counts;
+  logical history accounting remains pending.
+
+- Pairing accepts relative filenames beginning with `aa-pair`, including existing
+  files named `aa-pair1:backup.txt`, instead of mistaking them for pasted pairing text.
+
+- Machine pairing guides file or clipboard transfer, prints a receiver command
+  using the transferred filename, and shows the code after transfer. Receivers
+  accept file paths or pasted pairing text; spare preparation waits until delivery
+  finishes.
 
 - Deleted Codex worktrees can recover an existing configured project from a
   unique recorded repository identity, or an exact historical backfill mapping.

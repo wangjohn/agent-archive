@@ -32,49 +32,45 @@ a child reset its counters. Independent own per-call usage remains useful.
 
 ## Shared native catalog
 
-`internal/rolloutcatalog` implements one lazy, serial observation epoch over
-explicitly approved Codex homes. It exhaustively enumerates `sessions` and
-nested `archived_sessions`, with separate root, directory, entry and header
-budgets. Missing stores are observed as absent; unreadable stores, unknown
-headers, cancellation and exhausted budgets cannot establish completeness.
-Thread identity remains Codex-qualified and independent of the source home.
-Creation, producer, relationship, cwd and recorded repository conflicts remain
-unresolved. Physical copies coalesce only after identity and bounded observed
-prefix agreement; lexical order only breaks ties between proven copies.
+`discovery.CodexRolloutLookup` owns the pass's requested coverage, native current
+projection and optional full metadata epoch. Ordinary collection and generation
+preview retain their requested lane. `MetadataInventory` explicitly requests a
+lazy view with separate bounds: 16 homes, 16384 physical entries, 2048 directories
+and 16MiB aggregate metadata facts/header work, charged to the shared native read
+budget. A late request starts a complete following round; neither observation
+cache membership nor requested coverage proves complete inventory.
 
-Settled `state_5.sqlite` files supply optional id-indexed current locators through
-a confined read-only VFS and a bounded read transaction. Schema and indexed
-query-plan probes precede lookup. Missing, stale, unfamiliar or live WAL/journal
-state falls back to complete file-lineage evidence. SQLite paths must match
-opened catalog identity beneath an approved store. No database snapshot or
-sidecar is copied, and no native write is permitted.
+The full view enumerates approved active and archived stores with the same
+bounded directory adapter. Each header is acquired on one confined descriptor
+using one-byte ReadAt requests through the first newline, at most64KiB including
+that delimiter. A resumable step performs at most1024 reads and100ms of work,
+retaining one in-memory partial header. Cancellation or changed root/source
+clears the cursor. It reads no body, task event or duplicate prefix. Missing
+stores have absence evidence; unreadable stores, unknown/malformed headers,
+identity conflicts and exhausted bounds leave incomplete evidence. Every
+physical copy remains represented; complete enumeration does not establish
+content agreement or ancestor capture permission.
 
-Revision tokens bind candidates, header/prefix evidence and current selection.
-`Check` revalidates all observed nested directory membership, file identities,
-changed headers/prefixes and native locator state, within an aggregate budget.
-Unchanged header evidence is shared across lookups; revalidation stats are counted
-separately from enumeration. Single-source appends preserve header evidence;
-appended duplicate copies require a renewed epoch before choosing a copy.
-Filesystem observations use the same practical size/mtime/identity contract as
-verified transcript snapshots; restored timestamps are not a filesystem lock.
-Optional caller-owned validation slices share one complete relevant sweep for
-up to 512 lookup/check calls and 30 seconds after the sweep (hard maxima 512
-calls and 60 seconds). Sweep/read contexts default to 30 seconds when the caller
-has no deadline. Cached sweep failures stop readers within the slice; expiry
-permits fresh validation after all active readers, snapshots and provider passes
-close. Observed epoch changes require a new catalog and reconfirmation.
-Each dependency uses its independently approved root opener, including across
-homes. Catalog metadata grants no authorization to retain ancestor content.
+Caller-owned validation slices share one filesystem sweep for up to512 lookup
+and check calls and30seconds after the sweep, with a60second maximum. A sweep
+rechecks captured directory membership stamps and every physical file
+observation; selected providers independently check opened headers/content.
+Thread and Check retain live targeted current-row queries and WAL refresh/replay
+despite filesystem proof reuse. The existing total five-second owner allowance
+is shared across enumeration, sweeps and current checks. Slice renewal never
+replenishes it. Failed sweeps are retained only in their bounded slice; callers
+close snapshots before renewal. CloseReadOnly releases resources without a
+capture-catalog checkpoint. Filesystem observations use the practical
+size/mtime/identity contract; restored timestamps are not a filesystem lock.
 
-Ordinary collection leaves this catalog unopened. Only a validated pending
-related-history refusal triggers a bounded metadata-only locator diagnostic,
-using approved discovery homes and one shared pass catalog. This diagnostic
-has a 100ms caller deadline and caps inventory at 256 entries, 64 directories
-and 256KiB of header reads; exceeding a cap leaves completeness unavailable. It
-reads no duplicate transcript prefixes and establishes neither recoverability
-nor permission to publish. Explicit source/filter callers can opt into the
-existing lookup port; history admission and mutation remain fenced until the
-later lifecycle and import stages are implemented.
+Only actual path-specific related-history refusal requests the same owner's
+view for a content-free diagnostic under a100ms caller deadline. It preserves
+the original error and says this operation remains pending. Upstream admitted
+and retained history paths retain their existing behavior. No second production
+catalog, new content authority or new history admission is introduced here.
+The standalone `internal/rolloutcatalog` helper retains its legacy prefix
+coalescing and settled-VFS semantics for explicit legacy callers and tests;
+production diagnostics use the discovery owner instead.
 
 ## Captured-prefix consistency and resources
 
@@ -123,21 +119,26 @@ references. Every source key must be checksum-addressed under the same archive
 session prefix. Prior source-schema-2 references are permitted. Reader validation
 precedes derivation and selection; a malformed reference cannot widen reads.
 
-Until lifecycle support installs publication journaling and writer protection,
-collector capture, metadata refresh, privacy mutation, generation recovery and
-retention/deletion refuse history artifacts. The temporary Codex publication
-fence reads the previous remote metadata body once before a mutation, including
-metadata-only refreshes and pending-publication retries. Unchanged admission
-continues using the existing summary/signature path, without full published-state
-decodes or per-session writes. Explicit generation recovery separately checks
-local cached, published and metadata history before changing generation state.
-The next lifecycle stage replaces these temporary fences with validated
-source-set summaries, atomic publication and protected retention.
+The collector publishes related histories through its existing durable pending
+journal. Every final reference is verified before exact predecessor preflight and
+metadata replacement, and every reference plus exact metadata bytes is read back
+before acknowledgement. An exact committed retry performs no source or metadata
+PUT. Stronger privacy resolves predecessor/final state before replacing private
+work; unknown authority remains pending. Older config writers remain protected by
+the permanent config-v5 writer marker.
 
-The initial same-handle `SourceAdmission` check binds native ID and cwd only.
-Lifecycle integration must extend it with immutable creation, producer and
-relationship facts needed by the original admission; these two fields alone
-are not a complete ongoing authorization proof.
+Retained maintenance carries the complete source set and original captures.
+Frozen generations use retained bytes and recorded Git facts. Retention uses the
+latest meaningful archive capture across the set, with the existing clock clamp;
+parser, link, privacy and representation work do not manufacture activity. Cleanup
+protects all live references, rechecks metadata before source deletion and removes
+metadata before whole-prefix deletion. Unknown schemas and identities refuse.
+
+Capture admission independently validates immutable native creation, producer,
+relationship and project facts. A previously unknown native home can migrate only
+through a configured confined root containing the admitted locator, rechecked
+before binding persistence. Lookup hints never grant that permission. Read-only
+source interpretation remains separate from capture authority.
 
 Producer references: [ordinal writer](https://raw.githubusercontent.com/openai/codex/rust-v0.160.0/codex-rs/rollout/src/ordinal.rs)
 and [history materialization](https://raw.githubusercontent.com/openai/codex/rust-v0.160.0/codex-rs/thread-store/src/local/thread_history_materialization.rs).

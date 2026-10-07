@@ -40,7 +40,7 @@ type CodexIdentity struct {
 	ParentID        string                `json:"ParentID"`
 	ForkID          string                `json:"ForkID"`
 	RolloutID       string                `json:"RolloutID"`
-	HistoryMode     HistoryMode           `json:"HistoryMode"`
+	HistoryMode     HistoryMode           `json:"history_mode,omitempty"`
 	ForkOrdinal     *uint64               `json:"ForkOrdinal"`
 	SubagentOrdinal *uint64               `json:"SubagentOrdinal"`
 	HistoryBase     *CodexHistoryPosition `json:"HistoryBase"`

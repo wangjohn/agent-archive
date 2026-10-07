@@ -130,13 +130,14 @@ func TestFormattersImportBoundary(t *testing.T) {
 	direct, all := importgraph.Imports(t, "github.com/wangjohn/agent-archive/internal/statsfmt")
 	importgraph.Forbid(t, "internal/statsfmt", direct,
 		"os", "os/exec", "io/fs", "path/filepath", "net", "net/http", "math/rand", "math/rand/v2", "time", "golang.org/x/term",
-		"github.com/wangjohn/agent-archive/internal/agentmeta")
+		"github.com/wangjohn/agent-archive/internal/agentmeta", "github.com/wangjohn/agent-archive/internal/jsonwire")
 	importgraph.Forbid(t, "internal/statsfmt (transitively)", all, "net/http", "os/exec")
 	for _, path := range all {
 		if strings.HasPrefix(path, "github.com/wangjohn/agent-archive/internal/") &&
 			path != "github.com/wangjohn/agent-archive/internal/archive" &&
-			path != "github.com/wangjohn/agent-archive/internal/agentmeta" {
-			t.Errorf("internal/statsfmt reaches %s; only internal/archive and its pure agentmeta dependency are allowed", path)
+			path != "github.com/wangjohn/agent-archive/internal/agentmeta" &&
+			path != "github.com/wangjohn/agent-archive/internal/jsonwire" {
+			t.Errorf("internal/statsfmt reaches %s; only internal/archive and its pure agentmeta/jsonwire dependencies are allowed", path)
 		}
 	}
 }

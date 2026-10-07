@@ -9,15 +9,6 @@ import (
 	"github.com/wangjohn/agent-archive/internal/codexmeta"
 )
 
-// FilterCodexCaptureJSONL refuses partial related histories before privacy
-// filtering drops their metadata. Refiltering retained sources stays separate.
-func FilterCodexCaptureJSONL(r io.Reader, filename string) (archive.FilteredTranscript, error) {
-	return filterJSONL(r, "codex-jsonl", map[string]bool{
-		"session_meta": true, "turn_context": true, "response_item": true,
-		"event_msg": true, "message": true, "token_usage_record": true,
-	}, nil, func(line []byte) error { return codexCaptureMetadata(line, filename) })
-}
-
 func codexCaptureMetadata(line []byte, filename string) error {
 	var record struct {
 		Payload codexmeta.CodexMeta `json:"payload"`
@@ -40,4 +31,14 @@ func codexCaptureMetadata(line []byte, filename string) error {
 		return &archive.FilterError{Reason: "unsupported Codex history"}
 	}
 	return nil
+}
+
+// FilterCodexRetainedEncodedJSONL borrows bounded encoding scratch for retained records.
+func FilterCodexRetainedEncodedJSONL(r io.Reader, encoder func(map[string]any) ([]byte, error), beforeRecord func(int) (func(), error), boundary archive.CaptureBoundary) (archive.FilteredTranscript, error) {
+	return filterJSONLEncoded(r, "codex-jsonl", map[string]bool{"session_meta": true, "turn_context": true, "response_item": true, "event_msg": true, "message": true, "token_usage_record": true}, nil, nil, encoder, beforeRecord, boundary)
+}
+
+// FilterCodexCaptureEncodedJSONL keeps the capture proof while borrowing record resources.
+func FilterCodexCaptureEncodedJSONL(r io.Reader, filename string, encoder func(map[string]any) ([]byte, error), beforeRecord func(int) (func(), error), boundary archive.CaptureBoundary) (archive.FilteredTranscript, error) {
+	return filterJSONLEncoded(r, "codex-jsonl", map[string]bool{"session_meta": true, "turn_context": true, "response_item": true, "event_msg": true, "message": true, "token_usage_record": true}, nil, func(line []byte) error { return codexCaptureMetadata(line, filename) }, encoder, beforeRecord, boundary)
 }

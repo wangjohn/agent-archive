@@ -6,6 +6,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
@@ -14,7 +15,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
-func runRecoverCommand(args []string, stdout, stderr io.Writer, env Env) int {
+func runRecoverCommand(args []string, stdout, stderr io.Writer, env Env) (code int) {
 	fs := env.newCommandFlags("recover", stderr)
 	confirm := fs.Bool("confirm", false, "start or resume the reviewed archive generation")
 	id, ok := fs.parseWithArgument(args)
@@ -37,9 +38,12 @@ func runRecoverCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		return fail(errNotSetUp)
 	}
 	store := state.OpenReadOnly(home)
-	if next, recorded, err := store.GenerationSuccessor(id); err != nil {
+	receiptStore, closeReceipt := store.WithReadBudget(context.Background(), agentapi.NewNativeReadBudget(128<<20))
+	defer closeReceipt()
+	if next, recorded, err := receiptStore.GenerationSuccessor(id); err != nil {
 		return fail(err)
 	} else if recorded {
+		closeReceipt() // only the bounded successor ID survives this read
 		if *confirm {
 			unlock, err := lockCollector(home, "recover", env.now())
 			if err != nil {
@@ -50,6 +54,8 @@ func runRecoverCommand(args []string, stdout, stderr io.Writer, env Env) int {
 			if err != nil {
 				return fail(err)
 			}
+			store, closeResume := store.WithReadBudget(context.Background(), agentapi.NewNativeReadBudget(128<<20))
+			defer closeResume()
 			if err := store.ResumeGenerationRecoveries(context.Background()); err != nil {
 				return fail(err)
 			}
@@ -57,10 +63,16 @@ func runRecoverCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		terminal.Printf(stdout, "Generation %s already links to %s. Repeating recovery preserves that identity and its original capture time.\n", id, next)
 		return 0
 	}
+	closeReceipt()
 	preview, err := loadGenerationPreview(store, cfg, id, env)
 	if err != nil {
 		return fail(err)
 	}
+	defer func() {
+		if err := preview.close(); err != nil {
+			code = fail(err)
+		}
+	}()
 	reg, at, builder := preview.reg, preview.at, preview.build
 	terminal.Printf(stdout, "Session %s cannot prove that the current transcript extends its retained history.\n", id)
 	terminal.Printf(stdout, "Recovery preserves its archived history, feedback and handoffs under %s, freezes further native capture there, and starts a new linked archive ID from the current filtered transcript. Missing earlier records remain a capture gap.\n", id)
@@ -70,7 +82,7 @@ func runRecoverCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		terminal.Printf(stdout, "To start this generation, run agent-archive recover %s --confirm.\n", id)
 		return 0
 	}
-	next, err := confirmGenerationRecovery(home, reg, cfg, at, builder)
+	next, err := confirmGenerationRecovery(home, reg, cfg, at, builder, preview.budget)
 	if err != nil {
 		return fail(err)
 	}
@@ -79,15 +91,14 @@ func runRecoverCommand(args []string, stdout, stderr io.Writer, env Env) int {
 }
 
 type generationPreview struct {
-	reg   archive.SessionRegistration
-	at    time.Time
-	build func(archive.SessionRegistration, string) (archive.SessionRegistration, state.PendingPublication, error)
+	budget *agentapi.NativeReadBudget
+	close  func() error
+	reg    archive.SessionRegistration
+	at     time.Time
+	build  func(archive.SessionRegistration, string) (archive.SessionRegistration, state.PendingPublication, error)
 }
 
-func loadGenerationPreview(store *state.Store, cfg config.Config, id string, env Env) (generationPreview, error) {
-	if err := store.CheckHistoryRecovery(id); err != nil {
-		return generationPreview{}, err
-	}
+func loadGenerationPreview(store *state.Store, cfg config.Config, id string, env Env) (preview generationPreview, resultErr error) {
 	reg, found, err := store.LoadRegistration(id)
 	if err != nil {
 		return generationPreview{}, err
@@ -98,6 +109,22 @@ func loadGenerationPreview(store *state.Store, cfg config.Config, id string, env
 	if !cfg.AcceptSession(reg) {
 		return generationPreview{}, errors.New("session is outside current capture permission or storage destination; review setup first")
 	}
+	lookup, homes, err := passCodexRollouts(context.Background(), store, cfg, env)
+	if err != nil {
+		return generationPreview{}, err
+	}
+	keep := false
+	defer func() {
+		if !keep {
+			resultErr = errors.Join(resultErr, lookup.CloseReadOnly())
+		}
+	}()
+	scoped, closeLocal := store.WithReadBudget(context.Background(), lookup.NativeReadBudget())
+	defer closeLocal()
+	if err := scoped.CheckHistoryRecovery(id); err != nil {
+		return generationPreview{}, err
+	}
+	store = scoped
 	summary, found, err := store.LoadPublishedSummary(id)
 	if err != nil {
 		return generationPreview{}, err
@@ -113,16 +140,18 @@ func loadGenerationPreview(store *state.Store, cfg config.Config, id string, env
 	} else if outstanding.Upload {
 		return generationPreview{}, errors.New("settle pending publication with agent-archive sync before recovery")
 	}
-	opts := collector.Options{Sources: registryFor(env), Parsers: parsersFor(env), MachineID: cfg.MachineID, SkillEvidence: cfg.EffectiveSkillEvidence(), RequireSkillUse: cfg.RequireSkillUse, RepoKey: env.repoKey}
+	closeLocal() // retained authority validation has no remaining data consumer
+	opts := collector.Options{CodexRollouts: lookup, ConfiguredCodexHomes: homes, Sources: registryFor(env), Parsers: parsersFor(env), MachineID: cfg.MachineID, SkillEvidence: cfg.EffectiveSkillEvidence(), RequireSkillUse: cfg.RequireSkillUse, RepoKey: env.repoKey}
 	at := env.now().UTC()
-	builder, err := collector.PrepareGenerationRecovery(context.Background(), reg, at, opts)
+	builder, closeData, err := collector.PrepareGenerationRecovery(context.Background(), reg, at, opts)
 	if err != nil {
 		return generationPreview{}, err
 	}
-	return generationPreview{reg: reg, at: at, build: builder}, nil
+	keep = true
+	return generationPreview{reg: reg, at: at, build: builder, budget: lookup.NativeReadBudget(), close: func() error { closeData(); return lookup.CloseReadOnly() }}, nil
 }
 
-func confirmGenerationRecovery(home string, reg archive.SessionRegistration, cfg config.Config, at time.Time, builder func(archive.SessionRegistration, string) (archive.SessionRegistration, state.PendingPublication, error)) (string, error) {
+func confirmGenerationRecovery(home string, reg archive.SessionRegistration, cfg config.Config, at time.Time, builder func(archive.SessionRegistration, string) (archive.SessionRegistration, state.PendingPublication, error), budget *agentapi.NativeReadBudget) (string, error) {
 	if cfg.Paused {
 		return "", errPaused
 	}
@@ -135,6 +164,8 @@ func confirmGenerationRecovery(home string, reg archive.SessionRegistration, cfg
 	if err != nil {
 		return "", err
 	}
+	store, closeLocal := store.WithReadBudget(context.Background(), budget)
+	defer closeLocal()
 	// Fence downgrade writers before committing any generation transition. Setup
 	// writes use hooks.lock too; revalidation inside the builder closes the gap
 	// between this fence and state.BeginGenerationRecovery's own short hold.

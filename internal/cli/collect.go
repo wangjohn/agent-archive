@@ -19,7 +19,6 @@ import (
 	"github.com/wangjohn/agent-archive/internal/gitremote"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/retention"
-	"github.com/wangjohn/agent-archive/internal/rolloutcatalog"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -101,7 +100,7 @@ type passOptions struct {
 	stop     func() bool
 }
 
-func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, error) {
+func runPass(env Env, quietOnBusy bool, pass passOptions) (result collector.Result, resultErr error) {
 	// Read-only until the configuration is found: sync before setup leaves
 	// no data directory behind.
 	home, err := env.readHome()
@@ -167,7 +166,13 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 		recordPreflightError(localStore, recoveryErr)
 	}
 	recoveryCancel()
-	_, discoveryErr := discovery.Run(ctx, localStore, cfg, discovery.Options{Now: env.Now, Stop: stop, RepositoryIdentity: gitremote.ProjectIdentity, RepositoryIdentityCurrent: gitremote.ProjectIdentityCurrent})
+	rollouts, readHomes, err := passCodexRollouts(ctx, localStore, cfg, env)
+	if err != nil {
+		recordPreflightError(localStore, err)
+		return collector.Result{}, err
+	}
+	defer func() { resultErr = errors.Join(resultErr, rollouts.Close()) }()
+	_, discoveryErr := discovery.Run(ctx, localStore, cfg, discovery.Options{Now: env.Now, Stop: stop, Rollouts: rollouts, RepositoryIdentity: gitremote.ProjectIdentity, RepositoryIdentityCurrent: gitremote.ProjectIdentityCurrent})
 	if discoveryErr != nil {
 		recordPreflightError(localStore, errors.Join(recoveryErr, discoveryErr))
 	}
@@ -185,13 +190,15 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 	if previous, err := localStore.LoadStatus(); err == nil {
 		previousScanAt = previous.LastScanAt
 	}
-	// Approved discovery homes authorize bounded metadata observation only.
-	// Ordinary capture leaves this pass-local catalog unopened. Pending diagnostics
-	// disallow transcript prefix reads; duplicate proofs remain unavailable here.
-	pendingRollouts := pendingCodexRollouts(cfg.Discovery)
-	result, err := collector.Run(ctx, localStore, objectStore, collector.Options{
+	result, err = collector.Run(ctx, localStore, objectStore, collector.Options{
+		PrepareCodexCoverage: func(ctx context.Context, regs []archive.SessionRegistration) error {
+			return rollouts.PrepareRegistered(ctx, cfg, regs, discovery.Options{Now: env.Now, Stop: stop})
+		},
 		SkipSessionIndexRecovery: true,
-		PendingCodexRollouts:     pendingRollouts,
+		CodexRollouts:            rollouts,
+		PendingCodexRollouts:     pendingCodexRollouts(rollouts),
+		ConfiguredCodexHomes:     readHomes,
+		ResolveCodexReadHomes:    func(current config.Config) ([]string, error) { return trustedCodexReadHomes(current, env) },
 		Parsers:                  parsersFor(env),
 		Sources:                  registryFor(env),
 		Decoders:                 env.agentRegistry(),
@@ -546,19 +553,12 @@ func skillEvidenceRoots(env Env, name string, l agentapi.SkillLocations) []agent
 	return nil
 }
 
-// pendingCodexRollouts shares one lazy diagnostic inventory without capture authority.
-func pendingCodexRollouts(discovery *config.DiscoveryConfig) func() agentapi.CodexRolloutLookup {
-	var catalog *rolloutcatalog.Catalog
+// pendingCodexRollouts requests the existing pass owner's metadata view lazily.
+func pendingCodexRollouts(lookup *discovery.CodexRolloutLookup) func() agentapi.CodexRolloutLookup {
 	return func() agentapi.CodexRolloutLookup {
-		if discovery == nil || !discovery.Enabled || len(discovery.CodexHomes) == 0 {
+		if lookup == nil {
 			return nil
 		}
-		if catalog == nil {
-			catalog = rolloutcatalog.New(discovery.CodexHomes, rolloutcatalog.Limits{
-				Entries: 256, Directories: 64, HeaderBytes: 256 << 10,
-				CheckOperations: 1024, PrefixBytes: 1,
-			})
-		}
-		return catalog
+		return lookup.MetadataInventory()
 	}
 }
