@@ -97,6 +97,18 @@ func (s *Store) localDeletionRecordsGone(id string) bool {
 		return false
 	}
 	defer func() { _ = root.Close() }()
+	for _, name := range []string{"registrations", "requests", "published", "pending", "superseded", "pending-scans", "scan-signatures", "refresh-skips", "listing-repairs", "sessions", admissionStageDir, publicationEvidenceDir, temporaryReservationDir, temporaryScratchDir} {
+		dir, err := openRemovalDirectory(root, name)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return false
+		}
+		if err := dir.Close(); err != nil {
+			return false
+		}
+	}
 	for _, path := range []string{"registrations/" + id + ".json", "requests/" + id + ".json", "published/" + id + ".json", "pending/" + id + ".json", "superseded/" + id + ".json", "pending/" + id + ".quota", "pending-scans/" + id + ".json", "scan-signatures/" + id + ".json", "refresh-skips/" + id + ".json", "listing-repairs/" + id + ".json", filepath.Join(publicationEvidenceDir, id)} {
 		if _, err := root.Lstat(path); !errors.Is(err, os.ErrNotExist) {
 			return false
@@ -104,14 +116,27 @@ func (s *Store) localDeletionRecordsGone(id string) bool {
 	}
 	rooted := *s
 	rooted.quotaRoot = root
-	entries, err := rooted.quotaReadDir(filepath.Join(s.home, "sessions", id))
+	sessions, err := openRemovalDirectory(root, "sessions")
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return false
 	}
-	if len(entries) != 0 {
-		return false
+	if sessions != nil {
+		dir, err := openRemovalDirectory(sessions, id)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			_ = sessions.Close()
+			return false
+		}
+		if dir != nil {
+			entries, err := removalDirectoryEntries(dir)
+			err = errors.Join(err, dir.Close(), sessions.Close())
+			if err != nil || len(entries) != 0 {
+				return false
+			}
+		} else if err := sessions.Close(); err != nil {
+			return false
+		}
 	}
-	entries, err = rooted.quotaReadDir(filepath.Join(s.home, admissionStageDir))
+	entries, err := rooted.quotaReadDir(filepath.Join(s.home, admissionStageDir))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return false
 	}
@@ -119,6 +144,9 @@ func (s *Store) localDeletionRecordsGone(id string) bool {
 		if ownedStageFilename(id, entry.Name()) {
 			return false
 		}
+	}
+	if owed, err := sessionScratchOutstanding(root, id); err != nil || owed {
+		return false
 	}
 	return true
 }

@@ -355,3 +355,34 @@ func removeDeletionReceipt(root *os.Root, id string) error {
 func ownedStageFilename(id, name string) bool {
 	return name == id+".json" || name == id+".source.gz" || name == id+".released"
 }
+
+// Compact receipts identify scratch obligations, never publication authority.
+// Unreadable receipts cannot prove that a terminal session has no owned work.
+func sessionScratchOutstanding(root *os.Root, id string) (bool, error) {
+	dir, err := openRemovalDirectory(root, temporaryReservationDir)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return true, err
+	}
+	defer func() { _ = dir.Close() }()
+	entries, err := removalDirectoryEntries(dir)
+	if err != nil {
+		return true, err
+	}
+	for _, entry := range entries {
+		raw, err := readRemovalReceipt(dir, entry.Name())
+		if err != nil {
+			return true, err
+		}
+		m, err := decodeRemovalReceipt(raw, entry.Name())
+		if err != nil {
+			return true, err
+		}
+		if m.Key == id {
+			return true, nil
+		}
+	}
+	return false, nil
+}

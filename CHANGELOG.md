@@ -44,6 +44,9 @@ follow [Semantic Versioning](https://semver.org/).
   exact complete publication without treating missing metadata as a new session.
   Explicit removal cannot restore through that path. History admission remains
   protected pending the remaining enablement gates.
+  Superseded cleanup rechecks the selecting winner after source verification.
+  Local removal pins owning directories and regular records, and surviving
+  scratch receipts or corrupt directories keep removal recovery visible.
 
 - Repeated privacy changes can reuse an admitted stage's reserved capacity while
   publication remains pending, including after restart at the staging quota limit.

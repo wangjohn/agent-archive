@@ -99,3 +99,21 @@ func TestRetainedCleanupSelectingMetadataChangeHoldsPrivacyKeys(t *testing.T) {
 		}
 	}
 }
+
+func TestRetainedCleanupRefusesWinnerChangedDuringSourceVerification(t *testing.T) {
+	s, reg, m, keys := retainedCleanup(t)
+	original := m
+	m.History = &archive.RevisionHistory{CurrentRevision: m.History.CurrentRevision, Preserved: append([]archive.RevisionReference(nil), m.History.Preserved...)}
+	m.History.Preserved = append(m.History.Preserved, archive.RevisionReference{RevisionID: "44444444-4444-4444-8444-444444444444", CapturedAt: s.now, Source: archive.SourceReference{Key: keys[3], SHA256: storage.SHA256Hex([]byte("obsolete first")), CompressedBytes: len("obsolete first")}})
+	raw, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.store = &winnerDuringVerification{ObjectStore: s.store, key: "sessions/codex/synthetic/metadata.json", metadata: raw}
+	if err := s.deleteSuperseded(reg, cleanupLedger(keys[3:], s.now), original); err == nil {
+		t.Fatal("changed winner authorized superseded deletion")
+	}
+	if _, err := s.store.Get(t.Context(), keys[3]); err != nil {
+		t.Fatal("new selected source deleted", err)
+	}
+}
