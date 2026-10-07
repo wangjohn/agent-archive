@@ -34,6 +34,24 @@ identities, not validation of every unselected sidecar.
 
 Canonical metadata is authoritative. Keys are
 `listing/v3/<harness>/<id>/<19-digit reverse Unix nanoseconds>/<summary>`.
+A newly written summary of at most 240 base64 bytes stays in that single
+component. Longer summaries use
+`listing/v3/<harness>/<id>/<reverse>/c/<chunk>/<chunk>...`: every non-final
+chunk has exactly 240 bytes, and the final chunk has 1–240 bytes. The chunks
+join to the same canonical base64/JSON summary, without truncating fields,
+nonce or provider validator. Publication and repair share the encoder. The
+complete key, including `c` and separators, must fit 1,024 bytes; newly emitted
+namespace components also fit the 240-byte portable bound. Exceeding either
+bound preserves actionable listing maintenance rather than truncating identity.
+This avoids filesystem-backed S3-compatible providers rejecting a long filename.
+
+Readers validate both the joined canonical summary and the exact chunk layout;
+empty, shifted, unnecessary, malformed and overbudget chunks cannot establish
+indexed coverage. Existing single-component v3 hints, including long ones,
+remain readable and deletable. Older single-component readers reject chunked
+hints and use their canonical metadata coverage fallback. This does not promise
+transparent older cleanup-writer compatibility or cloned-owner downgrade safety.
+
 Legacy v2 keys put the reverse timestamp before harness/id. Both forms
 encode the same validated summaries; v3 needs no separate cleanup pointer.
 The summary is canonical JSON encoded as unpadded base64url, containing the

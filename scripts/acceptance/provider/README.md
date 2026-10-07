@@ -103,3 +103,10 @@ ports while explicitly asserting the public history fence. Privacy retirement
 uses actual CLI verification evidence and the production full-selection cleanup
 guard; every retained revision is read back with content and capture-age checks.
 Successful outer historical lifecycle commands remain prospective P4c acceptance.
+
+Native jobs require portable listing encoder/repair, canonical malformed-chunk
+refusal, mixed historical hint migration/deletion and reader fallback regressions.
+Actual MinIO executes the unchanged discovery summaries; fixture shortening is
+not a substitute for provider compatibility. Required grouped provider tests
+include five fixed child expectations, and a skipped descendant cannot turn its
+passed parent into acceptance.

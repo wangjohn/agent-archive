@@ -461,9 +461,15 @@ func TestListingRepeatedPublicationAndBoundedCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	parts := strings.Split(summary.Key, "/")
-	parts[len(parts)-1] = base64.RawURLEncoding.EncodeToString(encoded)
-	if err := store.Put(ctx, strings.Join(parts, "/"), nil); err != nil {
+	legacy, err := listingindex.New(key, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts := strings.Split(strings.TrimPrefix(legacy.Key, listingindex.Prefix), "/")
+	// Emit a real historical single-component v3 summary, including when the
+	// newly emitted survivor uses portable chunks.
+	conflict := listingindex.V3Prefix + parts[1] + "/" + parts[2] + "/" + parts[0] + "/" + base64.RawURLEncoding.EncodeToString(encoded)
+	if err := store.Put(ctx, conflict, nil); err != nil {
 		t.Fatal(err)
 	}
 	scanned = false

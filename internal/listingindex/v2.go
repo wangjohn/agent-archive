@@ -72,12 +72,74 @@ func newRevision(key string, data []byte, etag, nonce string) (Revision, error) 
 	if err != nil {
 		return Revision{}, err
 	}
-	components := strings.Split(strings.TrimPrefix(legacy.Key, Prefix), "/")
-	r.Key = V3Prefix + components[1] + "/" + components[2] + "/" + components[0] + "/" + base64.RawURLEncoding.EncodeToString(encoded)
-	if len(r.Key) > 1024 {
-		return Revision{}, errors.New("listing entry exceeds object key limit")
+	r.Key, err = portableRevisionKey(legacy.MetadataKey, legacy.CapturedAt, encoded)
+	if err != nil {
+		return Revision{}, err
 	}
 	return r, nil
+}
+
+// revisionComponentBytes leaves room below filesystem-backed provider limits.
+// Old long single-component hints remain readable, but are never regenerated.
+const revisionComponentBytes = 240
+
+func portableRevisionKey(metadataKey string, capturedAt time.Time, encoded []byte) (string, error) {
+	parts := strings.Split(metadataKey, "/")
+	if len(parts) != 4 || parts[0] != "sessions" || parts[3] != "metadata.json" || len(parts[1]) > revisionComponentBytes || len(parts[2]) > revisionComponentBytes {
+		return "", errors.New("invalid listing metadata identity")
+	}
+	reverse := fmt.Sprintf("%019d", maxTime-uint64(capturedAt.UnixNano()))
+	key := V3Prefix + parts[1] + "/" + parts[2] + "/" + reverse + "/"
+	payloadLength := base64.RawURLEncoding.EncodedLen(len(encoded))
+	overhead := 0
+	if payloadLength > revisionComponentBytes {
+		overhead = 2 + (payloadLength-1)/revisionComponentBytes
+	}
+	if len(key)+payloadLength+overhead > 1024 {
+		return "", errors.New("listing entry exceeds object key limit")
+	}
+	payload := base64.RawURLEncoding.EncodeToString(encoded)
+	if len(payload) <= revisionComponentBytes {
+		key += payload
+	} else {
+		var chunks []string
+		for len(payload) > revisionComponentBytes {
+			chunks = append(chunks, payload[:revisionComponentBytes])
+			payload = payload[revisionComponentBytes:]
+		}
+		chunks = append(chunks, payload)
+		key += "c/" + strings.Join(chunks, "/")
+	}
+	if len(key) > 1024 {
+		return "", errors.New("listing entry exceeds object key limit")
+	}
+	return key, nil
+}
+
+// revisionKeyParts normalizes supported layouts to the historical date-first
+// identity, validating chunk boundaries before decoding the joined summary.
+func revisionKeyParts(key string) ([]string, bool, error) {
+	parts := strings.Split(strings.TrimPrefix(strings.TrimPrefix(key, V2Prefix), V3Prefix), "/")
+	chunked := strings.HasPrefix(key, V3Prefix) && len(parts) >= 5 && parts[3] == "c"
+	if chunked {
+		chunks := parts[4:]
+		for i, chunk := range chunks {
+			if len(chunk) == 0 || len(chunk) > revisionComponentBytes || i < len(chunks)-1 && len(chunk) != revisionComponentBytes {
+				return nil, false, errors.New("noncanonical listing chunks")
+			}
+		}
+		payload := strings.Join(chunks, "")
+		if len(payload) <= revisionComponentBytes {
+			return nil, false, errors.New("unnecessary listing chunks")
+		}
+		parts = []string{parts[2], parts[0], parts[1], payload}
+	} else if strings.HasPrefix(key, V3Prefix) && len(parts) == 4 {
+		parts[0], parts[1], parts[2] = parts[2], parts[0], parts[1]
+	}
+	if len(parts) != 4 || len(parts[0]) != 19 {
+		return nil, false, errors.New("invalid listing entry")
+	}
+	return parts, chunked, nil
 }
 
 // ParseRevision rejects unsupported and noncanonical encodings.
@@ -85,12 +147,9 @@ func ParseRevision(key string) (Revision, error) {
 	if (!strings.HasPrefix(key, V2Prefix) && !strings.HasPrefix(key, V3Prefix)) || len(key) > 1024 {
 		return Revision{}, errors.New("unsupported listing entry")
 	}
-	parts := strings.Split(strings.TrimPrefix(strings.TrimPrefix(key, V2Prefix), V3Prefix), "/")
-	if strings.HasPrefix(key, V3Prefix) && len(parts) == 4 {
-		parts[0], parts[1], parts[2] = parts[2], parts[0], parts[1]
-	}
-	if len(parts) != 4 || len(parts[0]) != 19 {
-		return Revision{}, errors.New("invalid listing entry")
+	parts, chunked, err := revisionKeyParts(key)
+	if err != nil {
+		return Revision{}, err
 	}
 	encoded, err := base64.RawURLEncoding.DecodeString(parts[3])
 	if err != nil {
@@ -110,6 +169,12 @@ func ParseRevision(key string) (Revision, error) {
 	canonical, _ := json.Marshal(r)
 	if base64.RawURLEncoding.EncodeToString(canonical) != parts[3] {
 		return Revision{}, errors.New("noncanonical listing summary")
+	}
+	if chunked {
+		expected, err := portableRevisionKey(legacy.MetadataKey, legacy.CapturedAt, canonical)
+		if err != nil || expected != key {
+			return Revision{}, errors.New("noncanonical listing chunk layout")
+		}
 	}
 	r.Key = key
 	r.MetadataKey = legacy.MetadataKey
@@ -202,9 +267,10 @@ func repairRevision(ctx context.Context, store storage.ObjectStore, r Revision, 
 	if err != nil {
 		return err
 	}
-	parts := strings.Split(strings.TrimPrefix(r.MetadataKey, "sessions/"), "/")
-	reverse := fmt.Sprintf("%019d", maxTime-uint64(r.CapturedAt.UnixNano()))
-	r.Key = V3Prefix + parts[0] + "/" + parts[1] + "/" + reverse + "/" + base64.RawURLEncoding.EncodeToString(encoded)
+	r.Key, err = portableRevisionKey(r.MetadataKey, r.CapturedAt, encoded)
+	if err != nil {
+		return err
+	}
 	candidates, err := store.List(ctx, revisionSessionPrefix(r.MetadataKey))
 	if err != nil {
 		return err

@@ -2,6 +2,8 @@ package reader
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -17,8 +19,16 @@ func legacyRevision(t *testing.T, key string, data []byte, validator string) lis
 	if err != nil {
 		t.Fatal(err)
 	}
-	parts := strings.Split(strings.TrimPrefix(r.Key, listingindex.V3Prefix), "/")
-	r.Key = listingindex.V2Prefix + parts[2] + "/" + parts[0] + "/" + parts[1] + "/" + parts[3]
+	legacy, err := listingindex.New(key, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts := strings.Split(strings.TrimPrefix(legacy.Key, listingindex.Prefix), "/")
+	r.Key = listingindex.V2Prefix + strings.Join(parts[:3], "/") + "/" + base64.RawURLEncoding.EncodeToString(encoded)
 	r, err = listingindex.ParseRevision(r.Key)
 	if err != nil {
 		t.Fatal(err)
