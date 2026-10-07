@@ -13,7 +13,11 @@ func TestDisposableRequestOriginAndBudgetRefuseBeforeNetwork(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := client.Do(r); err == nil || client.requests != 0 {
+			response, err := client.Do(r)
+			if response != nil {
+				_ = response.Body.Close()
+			}
+			if err == nil || client.requests != 0 {
 				t.Fatal("disallowed request reached network or request counter", err)
 			}
 		})
@@ -23,7 +27,11 @@ func TestDisposableRequestOriginAndBudgetRefuseBeforeNetwork(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.Do(r); err == nil || client.requests != 4096 {
+	response, err := client.Do(r)
+	if response != nil {
+		_ = response.Body.Close()
+	}
+	if err == nil || client.requests != 4096 {
 		t.Fatal("exhausted budget opened network or counted an unsent attempt", err)
 	}
 }

@@ -58,10 +58,10 @@ jobs:
           id -u > "$RUNNER_TEMP/acceptance-evidence/euid.txt"
           go version | grep -q ' go1\.27\.1 '
           git rev-parse HEAD > "$RUNNER_TEMP/acceptance-evidence/candidate.txt"
-          uname -sm > "$RUNNER_TEMP/acceptance-evidence/native-platform.txt"
+          uname -srm > "$RUNNER_TEMP/acceptance-evidence/native-platform.txt"
           go version >> "$RUNNER_TEMP/acceptance-evidence/native-platform.txt"
           git --version >> "$RUNNER_TEMP/acceptance-evidence/native-platform.txt"
-          if [ "$(uname -s)" = Darwin ]; then sw_vers >> "$RUNNER_TEMP/acceptance-evidence/native-platform.txt"; fi
+          if [ "$(uname -s)" = Darwin ]; then sw_vers >> "$RUNNER_TEMP/acceptance-evidence/native-platform.txt"; else cat /etc/os-release >> "$RUNNER_TEMP/acceptance-evidence/native-platform.txt"; fi
       - name: Execute native lifecycle components (not cross compilation)
         env:
           GOMAXPROCS: '2'
@@ -104,8 +104,11 @@ jobs:
           go version | grep -q ' go1\.27\.1 '
           mkdir -p "$RUNNER_TEMP/acceptance-evidence"
           git rev-parse HEAD > "$RUNNER_TEMP/acceptance-evidence/candidate.txt"
-          uname -sm > "$RUNNER_TEMP/acceptance-evidence/native-platform.txt"
+          uname -srm > "$RUNNER_TEMP/acceptance-evidence/native-platform.txt"
           go version >> "$RUNNER_TEMP/acceptance-evidence/native-platform.txt"
+          cat /etc/os-release >> "$RUNNER_TEMP/acceptance-evidence/native-platform.txt"
+          test "$(id -u)" != 0
+          id -u > "$RUNNER_TEMP/acceptance-evidence/euid.txt"
           docker version --format '{{.Server.Version}}' >> "$RUNNER_TEMP/acceptance-evidence/native-platform.txt"
       - name: Execute actual disposable S3-compatible provider
         timeout-minutes: 25
