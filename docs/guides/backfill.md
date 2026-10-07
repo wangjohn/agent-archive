@@ -214,7 +214,10 @@ writers' WAL growth is observed but is outside agent-archive's quota.
 
 Review and admission compare the supported native producer version and child
 relationships on the filtered snapshot. A newly discovered parent relationship
-or changed reviewed facts requires another review. Quota accounting reads compact
+or changed reviewed facts requires another review. Malformed present producer
+versions are refused. Quota controls stay in the held private archive root if an
+ancestor path moves; visible scratch files remain charged after interruption.
+Quota accounting reads compact
 manifests and physical sizes; quota receipts never authorize publication content.
 
 Corrupt evidence or a changed privacy policy remains pending for recovery; it

@@ -256,7 +256,6 @@ func composerWorkspaceFolder(raw json.RawMessage) string {
 func composerFacts(fields map[string]json.RawMessage) agentapi.CursorComposerFacts {
 	rawVersion, present := fields["_v"]
 	var version int
-	present = present && string(rawVersion) != "null"
 	if present {
 		_ = json.Unmarshal(rawVersion, &version)
 	}

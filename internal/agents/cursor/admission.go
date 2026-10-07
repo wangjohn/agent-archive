@@ -73,7 +73,7 @@ func (p *admissionPass) Read(ctx context.Context, ref agentapi.SourceRef, l agen
 	c, err := cursorstore.ReadAdmissionComposer(ctx, p.prepared, ref.Key, l.RawBytes, l.RecordBytes, p.budget, func(ctx context.Context, host agentapi.DatabaseCatalogHost) error {
 		return host.Query(ctx, cursorComposerQuery, func(record agentapi.DatabaseRecord) error {
 			d, ok := decodeComposerData(record.Key, record.Value)
-			if !ok || d.newer || d.chat.CursorFacts.Relationships == agentapi.CursorRelationshipsMalformed {
+			if !ok || d.newer || (d.chat.CursorFacts.VersionPresent && d.chat.CursorFacts.Version < 1) || d.chat.CursorFacts.Relationships == agentapi.CursorRelationshipsMalformed {
 				return errors.New("cursor admission native routing is unverified")
 			}
 			if slices.Contains(d.subagents, ref.Key) {

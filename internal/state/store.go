@@ -48,6 +48,10 @@ import (
 // never stores credentials. Durable imports temporarily retain an additional
 // bounded filtered source until complete local publication is verified.
 type Store struct {
+	// quotaRoot confines a reservation's accounting reads to its held home.
+	quotaRoot *os.Root
+	// onTemporaryRelease injects a directory-sync failure after control removal.
+	onTemporaryRelease func() error
 	// onQuotaBodyRead observes targeted quota reconciliation, never unrelated scans.
 	onQuotaBodyRead func(string)
 	// onQuotaReceipt injects interruption after pending write and before receipt.
