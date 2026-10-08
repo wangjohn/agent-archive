@@ -21,6 +21,9 @@ import (
 func TestRecoverRelatedHistoryUsesReadOnlyTrustedPreviewAndReopens(t *testing.T) {
 	canonical := func() string { p, e := filepath.EvalSymlinks(t.TempDir()); must(t, e); return p }
 	home, userHome, project := canonical(), canonical(), canonical()
+	if err := os.Chmod(home, 0700); err != nil {
+		t.Fatal(err)
+	}
 	nativeHome := filepath.Join(userHome, ".codex")
 	must(t, os.MkdirAll(filepath.Join(nativeHome, "sessions"), 0700))
 	at := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)

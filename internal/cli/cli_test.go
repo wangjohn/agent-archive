@@ -166,6 +166,9 @@ func must(t *testing.T, err error) {
 func publishedThroughSync(t *testing.T, now time.Time) (Env, string, string, storage.ObjectStore) {
 	t.Helper()
 	home, project := t.TempDir(), t.TempDir()
+	if err := os.Chmod(home, 0700); err != nil {
+		t.Fatal(err)
+	}
 	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), now)
 	setupRun(t, env, s3SetupInput("bucket", "us-east-1", "profile", true, false, false, project), 0)
 	bucket := storagetest.NewMemoryStore()

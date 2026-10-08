@@ -15,12 +15,12 @@ import (
 
 func TestLocalBundleMissingSourceRetainsCleanupFailure(t *testing.T) {
 	fault := errors.New("synthetic source cleanup fault")
-	reg := archive.SessionRegistration{TranscriptPath: "/synthetic/transcript.jsonl", Harness: archive.Harness{Name: "codex"}}
-	_, err := ReadLocalBundle(t.Context(), t.TempDir(), reg, time.Time{}, "", missingCleanupSources{fault: fault})
+	reg := archive.SessionRegistration{ArchiveSessionID: "session", TranscriptPath: "/synthetic/transcript.jsonl", Harness: archive.Harness{Name: "codex"}}
+	_, err := ReadLocalBundle(t.Context(), newTestStore(t).Home(), reg, time.Time{}, "", missingCleanupSources{fault: fault})
 	if !errors.Is(err, fault) || !agentapi.HasFailure(err, agentapi.Cleanup) || errors.Is(err, ErrNoTranscript) {
 		t.Fatalf("missing source hid cleanup or allowed archive fallback: %v", err)
 	}
-	_, err = ReadLocalBundle(t.Context(), t.TempDir(), reg, time.Time{}, "", missingCleanupSources{})
+	_, err = ReadLocalBundle(t.Context(), newTestStore(t).Home(), reg, time.Time{}, "", missingCleanupSources{})
 	if !errors.Is(err, ErrNoTranscript) {
 		t.Fatalf("ordinary missing source no longer allows archive fallback: %v", err)
 	}

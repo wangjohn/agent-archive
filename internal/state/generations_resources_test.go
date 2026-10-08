@@ -146,12 +146,13 @@ func TestScheduledGenerationReplayEndsEachReceiptOwner(t *testing.T) {
 	}
 	for i := range 3 {
 		id := fmt.Sprintf("receipt-%d", i)
-		raw := fmt.Sprintf(`{"version":1,"key":{"Agent":"codex","NativeID":"synthetic"},"previous":%q,"next":"next","complete":true,"padding":%q}`, id, strings.Repeat("x", 64<<10))
+		raw := fmt.Sprintf(`{"version":1,"key":{"Agent":"codex","NativeID":"synthetic"},"previous":%q,"next":"next","complete":true}`, id) + strings.Repeat(" ", 60<<10)
 		if err := os.WriteFile(s.generationRecoveryPath(id), []byte(raw), 0600); err != nil {
 			t.Fatal(err)
 		}
 	}
-	budget := agentapi.NewNativeReadBudget(140 << 10)
+	// One decoded receipt plus the fixed strict proof fits; three retained owners do not.
+	budget := agentapi.NewNativeReadBudget(400 << 10)
 	scoped, closeScope := s.WithReadBudget(t.Context(), budget)
 	defer closeScope()
 	if err := scoped.ResumeGenerationRecoveries(t.Context()); err != nil {

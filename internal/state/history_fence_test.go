@@ -11,7 +11,7 @@ import (
 
 func TestHistoryGenerationRecoveryLeavesStateUnchanged(t *testing.T) {
 	t.Parallel()
-	store, err := Open(t.TempDir())
+	store, err := openTestStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}

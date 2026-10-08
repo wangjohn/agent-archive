@@ -24,7 +24,7 @@ func TestRunStagesCompleteRevisionJournalAndResumesWithoutNativeReads(t *testing
 	opts.RepoKey = func(string) string { return "" }
 	for pass := range 3 {
 		if pass > 0 {
-			reopened, err := state.Open(scan.local.Home())
+			reopened, err := openTestStore(scan.local.Home())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -163,7 +163,7 @@ func TestHistoryPolicyMismatchReplacesDescriptorButKeepsOriginalEvidence(t *test
 	}
 }
 
-func TestJournalSaveFailureLeavesOnlySweepableStages(t *testing.T) {
+func TestJournalSaveFailureRetainsVisibleSourceOnlyRecovery(t *testing.T) {
 	scan, _ := reconciliationFixture(t)
 	journal := filepath.Join(scan.local.Home(), "pending", scan.id()+".json")
 	if err := os.MkdirAll(journal, 0700); err != nil {
@@ -211,11 +211,22 @@ func TestJournalSaveFailureLeavesOnlySweepableStages(t *testing.T) {
 	if err := os.Remove(journal); err != nil {
 		t.Fatal(err)
 	}
-	if err := scan.local.SweepPendingSources(scan.id()); err != nil {
-		t.Fatal(err)
+	if err := scan.local.SweepPendingSources(scan.id()); !errors.Is(err, state.ErrDurableStorageRecovery) {
+		t.Fatal("source-only sweep did not refuse", err)
 	}
-	if _, err := os.Stat(dir); !os.IsNotExist(err) {
-		t.Fatal("abandoned stages retained", err)
+	if _, found, err := scan.local.LoadPending(scan.id()); !found || !errors.Is(err, state.ErrDurableStorageRecovery) {
+		t.Fatalf("source-only recovery lost: %v %v", found, err)
+	}
+	if present, err := scan.local.HasPending(scan.id()); !present || err != nil {
+		t.Fatalf("source-only visibility: %v %v", present, err)
+	}
+	for _, stage := range pending.History.Sources {
+		if _, err := scan.local.ReadPendingSource(scan.id(), stage); err != nil {
+			t.Fatal("retained bytes lost", err)
+		}
+	}
+	if _, err := os.Stat(dir); err != nil {
+		t.Fatal("abandoned stages lost", err)
 	}
 }
 

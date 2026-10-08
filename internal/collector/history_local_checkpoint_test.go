@@ -39,7 +39,7 @@ func TestRunHistoryStageCreationFailureReopensWithoutPublication(t *testing.T) {
 	}
 	assertHistoryRequest(t, scan, request.Token)
 	restore()
-	scan.local, err = state.Open(scan.local.Home())
+	scan.local, err = openTestStore(scan.local.Home())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -158,6 +159,9 @@ func TestRefreshLeavesRegistrationUntouchedUntilCollectorUpdatesVersion(t *testi
 	Version = "registry-old"
 	t.Cleanup(func() { Version = old })
 	home, project := t.TempDir(), t.TempDir()
+	if err := os.Chmod(home, 0700); err != nil {
+		t.Fatal(err)
+	}
 	now := time.Now()
 	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), now)
 	s := storagetest.NewMemoryStore()

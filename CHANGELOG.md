@@ -87,6 +87,11 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Pending publication and historical source staging share a bounded durable
+  storage budget. Interrupted or unregistered source stages remain visible as
+  recovery work; automatic cleanup retains original evidence. A sticky storage
+  writer fence makes older writers refuse these protected configurations.
+
 - Codex current-history validation uses the remaining bounded pass allowance
   for private SQLite queries, avoiding spurious retries after a scheduling delay
   while retaining caller cancellation and native source identity checks.

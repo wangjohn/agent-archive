@@ -169,7 +169,7 @@ func TestOutstandingFacets(t *testing.T) {
 }
 
 func pendingPublication(bundle archive.SourceBundle, readyAt time.Time) PendingPublication {
-	return PendingPublication{Bundle: bundle, SourceKey: "k", MetadataKey: "m", SourceSHA256: "s", SourceBytes: []byte{1}, MetadataBytes: []byte{1}, ReadyAt: readyAt}
+	return PendingPublication{Bundle: bundle, SourceKey: "k", MetadataKey: "m", SourceSHA256: durableRef([]byte{1}).SHA256, SourceBytes: []byte{1}, MetadataBytes: []byte(`{}`), ReadyAt: readyAt}
 }
 
 func savePublished(t *testing.T, s *Store, reg archive.SessionRegistration, bundle archive.SourceBundle, status CacheStatus) {
