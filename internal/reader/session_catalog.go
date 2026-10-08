@@ -606,10 +606,7 @@ func (c *SQLiteSessionCatalog) Query(ctx context.Context, q CatalogQuery) (Catal
 		if offset > page.Total {
 			return CatalogPage{}, ErrStaleCatalogCursor
 		}
-		limit := q.Metadata.Limit
-		if limit <= 0 {
-			limit = -1
-		}
+		limit := catalogSQLLimit(q.Metadata.Limit)
 		statement += " LIMIT ? OFFSET ?"
 		args = append(args, limit, offset)
 	}
@@ -662,6 +659,13 @@ func (c *SQLiteSessionCatalog) Query(ctx context.Context, q CatalogQuery) (Catal
 	}
 	span.Count("summaries", len(page.Rows))
 	return page, nil
+}
+
+func catalogSQLLimit(limit int) int {
+	if limit <= 0 {
+		return -1
+	}
+	return limit
 }
 
 func catalogQueryPredicates(q CatalogQuery) (string, string, []any) {
