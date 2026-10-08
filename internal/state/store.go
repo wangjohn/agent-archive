@@ -743,7 +743,14 @@ func (s *Store) CompleteRequest(archiveSessionID, coveredToken string) (bool, er
 // and metadata bytes are persisted together before the first remote write, so
 // every retry uses the same hash and timestamps even after process restart.
 // Bundle remains available for change detection and future parser-only rebuilds.
+// CatalogPublication freezes the remote transaction before source upload.
+type CatalogPublication struct {
+	ID               string `json:"id"`
+	ExpectedRevision string `json:"expected_revision"`
+}
+
 type PendingPublication struct {
+	Catalog *CatalogPublication `json:"commit,omitempty"`
 	// ScanSignature freezes the consumed native observation for resumed history
 	// acknowledgement. It never licenses newer input or a privacy successor.
 	ScanSignature *ScanSignature       `json:"scan_signature,omitempty"`
@@ -788,6 +795,9 @@ func (s *Store) pendingPath(id string) string {
 // validateComplete is the supported transaction structure shared by writes
 // and protected reads. History validation keeps its separate budget ownership.
 func (pending PendingPublication) validateComplete() error {
+	if pending.Catalog != nil && (pending.Catalog.ID == "" || len(pending.Catalog.ID) > 128) {
+		return errors.New("invalid catalog publication")
+	}
 	if len(pending.SourceBytes) > maxPendingHistoryBytes {
 		return ErrDurableStorageCapacity
 	}
