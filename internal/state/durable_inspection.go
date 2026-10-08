@@ -7,6 +7,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/local"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -150,7 +151,7 @@ func (s *Store) inspectPendingRoot(home *local.RootedHome, name string, remainin
 			if legacy && strings.HasPrefix(entry.Name(), ".pending-") {
 				s.durableInspection.legacyTemps = true
 			}
-			if legacy && info.Mode().IsRegular() && strings.HasPrefix(entry.Name(), ".pending-") && info.ModTime().Before(time.Now().Add(-staleTempAge)) {
+			if legacy && info.Mode().IsRegular() && (acknowledgedLegacyQuarantine(entry.Name()) || strings.HasPrefix(entry.Name(), ".pending-") && info.ModTime().Before(time.Now().Add(-staleTempAge))) {
 				continue
 			}
 			id := strings.TrimSuffix(entry.Name(), ".json")
@@ -229,16 +230,83 @@ func (s *Store) inspectDurableReadRoots() (cfg config.Config, err error) {
 		return cfg, errors.Join(ErrDurableStorageRecovery, err)
 	}
 	defer func() { err = errors.Join(err, home.Close()) }()
-	var found bool
+	cfg, _, err = s.inspectHeldDurableReadRoots(home)
+	return cfg, err
+}
+
+func (s *Store) inspectHeldDurableReadRoots(home *local.RootedHome) (cfg config.Config, found bool, err error) {
 	cfg, found, err = s.loadDurableInspectionConfig(home)
 	if err != nil {
-		return cfg, errors.Join(ErrDurableStorageRecovery, err)
+		return cfg, found, errors.Join(ErrDurableStorageRecovery, err)
 	}
-	_, anonymous, _, err := s.inspectPendingRoots(home, found && !cfg.DurableStorageProtection)
-	if anonymous || err != nil {
-		return cfg, errors.Join(ErrDurableStorageRecovery, err)
+	_, anonymous, entries, err := s.inspectPendingRoots(home, found && !cfg.DurableStorageProtection)
+	if anonymous || err != nil || !found && entries > 0 {
+		return cfg, found, errors.Join(ErrDurableStorageRecovery, err)
 	}
-	return cfg, nil
+	return cfg, found, nil
+}
+
+func acknowledgedLegacyQuarantine(name string) bool {
+	const layout = "20060102T150405.000000000Z"
+	stem, ok := strings.CutSuffix(name, quarantineSuffix)
+	if !ok || len(stem) <= len(layout)+len(".json.") {
+		return false
+	}
+	stamp := stem[len(stem)-len(layout):]
+	id, ok := strings.CutSuffix(stem[:len(stem)-len(layout)], ".json.")
+	if !ok || !safeFileComponent(id) {
+		return false
+	}
+	parsed, err := time.Parse(layout, stamp)
+	return err == nil && parsed.UTC().Format(layout) == stamp
+}
+
+// CheckDurableSessionRead refuses unknown session obligations before preview
+// opens a provider. It shares the root/config cache and bounded local probes.
+func (s *Store) CheckDurableSessionRead(id string) (err error) {
+	if !safeFileComponent(id) {
+		return ErrDurableStorageRecovery
+	}
+	home, err := local.OpenRootedHome(s.home)
+	if errors.Is(err, os.ErrNotExist) {
+		return s.durableContext().Err()
+	}
+	if err != nil {
+		return errors.Join(ErrDurableStorageRecovery, err)
+	}
+	defer func() {
+		err = errors.Join(err, home.Check(), home.Close())
+		if err != nil {
+			err = errors.Join(ErrDurableStorageRecovery, err)
+		}
+	}()
+	_, found, err := s.inspectHeldDurableReadRoots(home)
+	if err != nil {
+		return err
+	}
+	evidence, err := rootHasEntries(home.Root, filepath.Join("publication-evidence", id))
+	if err != nil || evidence {
+		return errors.Join(ErrDurableStorageRecovery, err)
+	}
+	history, err := rootHasEntries(home.Root, filepath.Join("sessions", id, "pending-sources"))
+	if err != nil {
+		return errors.Join(ErrDurableStorageRecovery, err)
+	}
+	info, pendingErr := home.Root.Lstat(filepath.Join("pending", id+".json"))
+	present := pendingErr == nil
+	if pendingErr != nil && !errors.Is(pendingErr, os.ErrNotExist) || present && !info.Mode().IsRegular() {
+		return errors.Join(ErrDurableStorageRecovery, pendingErr)
+	}
+	if (history || present) && !found {
+		return ErrDurableStorageRecovery
+	}
+	if history || present {
+		pending, readable, readErr := s.LoadPending(id)
+		if readErr != nil || !readable || history && pending.History == nil {
+			return errors.Join(ErrDurableStorageRecovery, readErr)
+		}
+	}
+	return s.durableContext().Err()
 }
 
 // CheckDurableReadRoots refuses anonymous recovery work before native content is read.

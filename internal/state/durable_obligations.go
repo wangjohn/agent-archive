@@ -89,8 +89,9 @@ func (s *Store) protectedStorage(id string) (bool, error) {
 	return history || evidence || herr != nil || eerr != nil, errors.Join(herr, eerr)
 }
 
-// DurableStorageObligations probes bounded private roots without decoding bodies
-// or inventing registrations. Unknown roots are recovery work, not deletion permission.
+// DurableStorageObligations probes bounded private roots and small completed
+// generation receipts without inventing registrations. Unknown roots remain
+// recovery work, never deletion permission.
 func (s *Store) DurableStorageObligations() (out []DurableStorageObligation, err error) {
 	home, err := local.OpenRootedHome(s.home)
 	if errors.Is(err, os.ErrNotExist) {
@@ -105,7 +106,19 @@ func (s *Store) DurableStorageObligations() (out []DurableStorageObligation, err
 		return []DurableStorageObligation{{Namespace: UnavailableStorage}}, errors.Join(ErrDurableStorageRecovery, e)
 	}
 	pending, _, used, e := s.inspectPendingRoots(home, found && !cfg.DurableStorageProtection)
-	out = append(out, pending...)
+	for _, obligation := range pending {
+		if found && obligation.Namespace == GenerationRecoveryStorage && obligation.SessionID != "" {
+			complete, receiptErr := s.completedGenerationReceipt(home, obligation.SessionID)
+			if receiptErr != nil {
+				out = append(out, obligation)
+				return out, errors.Join(ErrDurableStorageRecovery, receiptErr)
+			}
+			if complete {
+				continue
+			}
+		}
+		out = append(out, obligation)
+	}
 	if e != nil {
 		return append(out, DurableStorageObligation{Namespace: UnavailableStorage}), errors.Join(ErrDurableStorageRecovery, e)
 	}

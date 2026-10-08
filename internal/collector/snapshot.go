@@ -29,8 +29,9 @@ var ErrNoTranscript = errors.New("the session's transcript is not available on t
 // own when Cursor is running, which is removed before it returns.
 func ReadLocalBundle(ctx context.Context, home string, reg archive.SessionRegistration, capturedAt time.Time, cursorDatabase string, sources agentapi.SourcesLookup) (archive.SourceBundle, error) {
 	defer trace.Start("read local transcript").End()
-	store := state.OpenReadOnly(home)
-	if err := store.CheckDurableReadRoots(); err != nil {
+	store, closeRead := state.OpenReadOnly(home).WithReadBudget(ctx, nil)
+	defer closeRead()
+	if err := store.CheckDurableSessionRead(reg.ArchiveSessionID); err != nil {
 		return archive.SourceBundle{}, err
 	}
 	published, publishedErr := store.LoadPublishedState(reg.ArchiveSessionID)

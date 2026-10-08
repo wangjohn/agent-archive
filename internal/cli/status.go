@@ -564,6 +564,7 @@ func readSessionStatus(view *statusView, cfg config.Config, home string, store *
 	// import counts below both come from it (state.Outstanding).
 	owed := map[string]state.Outstanding{}
 	pending := 0
+	counted := map[string]bool{}
 	for _, reg := range regs {
 		accepted := cfg.AcceptSession(reg)
 		if !accepted && !reg.Imported() {
@@ -576,6 +577,7 @@ func readSessionStatus(view *statusView, cfg config.Config, home string, store *
 		}
 		owed[reg.ArchiveSessionID] = o
 		if accepted && o.Pending() {
+			counted[reg.ArchiveSessionID] = true
 			pending++
 		}
 	}
@@ -594,6 +596,11 @@ func readSessionStatus(view *statusView, cfg config.Config, home string, store *
 			pending++
 			view.Warnings = append(view.Warnings, "A private durable storage root requires recovery.")
 			continue
+		}
+		if registered[id] && obligation.Namespace == state.GenerationRecoveryStorage && !counted[id] {
+			counted[id] = true
+			pending++
+			view.Warnings = append(view.Warnings, fmt.Sprintf("Session %q retains a generation recovery obligation; recover it before collecting or cleaning up.", id))
 		}
 		if !registered[id] && !orphans[id] {
 			orphans[id] = true

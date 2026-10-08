@@ -224,7 +224,10 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 		}
 	}
 	recoveryLocal, closeRecovery := local.WithReadBudget(ctx, (&sessionScan{opts: opts}).readBudget())
-	generationRecoveryErr := recoveryLocal.ResumeGenerationRecoveries(ctx)
+	var generationRecoveryErr error
+	if ctx.Err() == nil {
+		generationRecoveryErr = recoveryLocal.ResumeGenerationRecoveries(ctx)
+	}
 	if generationRecoveryErr != nil && (!errors.Is(generationRecoveryErr, agentapi.ErrReadBudget) || errors.Is(generationRecoveryErr, context.Canceled) || errors.Is(generationRecoveryErr, context.DeadlineExceeded)) {
 		closeRecovery()
 		return Result{}, generationRecoveryErr

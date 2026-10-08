@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -563,5 +564,78 @@ func TestDurableCorruptPendingWithoutSourcesIsRetainedAndOwed(t *testing.T) {
 		return nil
 	}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestDurableLegacyQuarantineIsInactiveOnlyBeforeFloorUpgrade(t *testing.T) {
+	s := newTestStore(t)
+	name := "session.json.20261007T200000.000000000Z.corrupt"
+	path := filepath.Join(s.home, "pending", name)
+	if err := os.WriteFile(path, []byte("original"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := s.LoadPending("session"); found || err != nil {
+		t.Fatalf("legacy quarantine: %v %v", found, err)
+	}
+	for _, invalid := range []string{"session.json.20261307T200000.000000000Z.corrupt", "session.json.20261007T200000.000000000Z.corrupt.more", "session.json.20261007T200000Z.corrupt"} {
+		if acknowledgedLegacyQuarantine(invalid) {
+			t.Fatalf("invalid producer name acknowledged: %s", invalid)
+		}
+	}
+	if err := config.WithDurableStorage(s.home, func(g config.DurableStorageGuard) error {
+		q, err := s.openDurableQuota(g)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = q.Close() }()
+		usage, err := q.usage()
+		if !errors.Is(err, ErrDurableStorageRecovery) || usage.physical != 8 || usage.charged != 16 {
+			t.Fatalf("quarantine quota: %+v %v", usage, err)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := s.LoadPending("session"); !found || !errors.Is(err, ErrDurableStorageRecovery) {
+		t.Fatalf("floor upgrade hid quarantine: %v %v", found, err)
+	}
+	if raw, err := os.ReadFile(path); err != nil || string(raw) != "original" {
+		t.Fatal("quarantine bytes lost", err)
+	}
+}
+
+func TestDurableGlobalGenerationReceiptsAreRevalidatedAndBounded(t *testing.T) {
+	s := newTestStore(t)
+	if err := os.MkdirAll(filepath.Join(s.home, generationRecoveryDir), 0700); err != nil {
+		t.Fatal(err)
+	}
+	path := s.generationRecoveryPath("previous")
+	complete := `{"version":1,"key":{"agent":"codex","NativeID":"native"},"previous":"previous","next":"next","complete":true}`
+	if err := os.WriteFile(path, []byte(complete), 0600); err != nil {
+		t.Fatal(err)
+	}
+	obligations, err := s.DurableStorageObligations()
+	if err != nil || len(obligations) != 0 {
+		t.Fatalf("valid complete receipt: %+v %v", obligations, err)
+	}
+	scans := s.durableInspection.scans
+	for _, raw := range []string{strings.Replace(complete, `"complete":true`, `"complete":false`, 1), strings.Replace(complete, `"complete":true`, `"complete":true,"future":null`, 1), `{`, strings.Repeat(" ", int(durableControlBytes)+1)} {
+		if err := os.WriteFile(path, []byte(raw), 0600); err != nil {
+			t.Fatal(err)
+		}
+		obligations, err = s.DurableStorageObligations()
+		if err != nil || len(obligations) != 1 || obligations[0].SessionID != "previous" {
+			t.Fatalf("unknown receipt omitted: %+v %v", obligations, err)
+		}
+	}
+	if s.durableInspection.scans != scans {
+		t.Fatal("receipt change introduced another root enumeration")
+	}
+	if err := os.WriteFile(path, []byte(complete), 0600); err != nil {
+		t.Fatal(err)
+	}
+	obligations, err = s.DurableStorageObligations()
+	if err != nil || len(obligations) != 0 {
+		t.Fatalf("completed replacement not observed: %+v %v", obligations, err)
 	}
 }

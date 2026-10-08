@@ -7,9 +7,12 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/state"
+	"github.com/wangjohn/agent-archive/internal/state/statetest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestFuturePublishedStatusGrantsNoPublicationAuthority(t *testing.T) {
@@ -98,5 +101,44 @@ func TestStatusAnonymousGenerationAndPendingTempsAreOwed(t *testing.T) {
 	sessions := readSessionStatus(&view, config.Config{}, home, store)
 	if len(sessions.regs) != 0 || view.Collector.PendingCount != 2 || len(view.Warnings) < 2 {
 		t.Fatalf("anonymous work omitted: %+v %v", view.Collector, view.Warnings)
+	}
+}
+
+func TestStatusRegisteredGenerationReceiptClassification(t *testing.T) {
+	home := t.TempDir()
+	if err := os.Chmod(home, 0700); err != nil {
+		t.Fatal(err)
+	}
+	store, err := state.Open(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := config.Save(home, config.Config{MachineID: "synthetic"}); err != nil {
+		t.Fatal(err)
+	}
+	reg := saveImportedSession(t, store, time.Now(), "previous", t.TempDir())
+	if err := statetest.SavePublished(store, reg.ArchiveSessionID, archive.SourceBundle{ArchiveSessionID: reg.ArchiveSessionID, Capture: archive.SourceCapture{Harness: reg.Harness, CapturedAt: time.Now()}}, time.Now(), state.CacheStatusPublished); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(home, "generation-recovery", "previous.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	complete := `{"version":1,"key":{"Agent":"codex","NativeID":"native"},"previous":"previous","next":"next","complete":true}`
+	for _, tc := range []struct {
+		raw  string
+		want int
+	}{{complete, 0}, {strings.Replace(complete, `"complete":true`, `"complete":false`, 1), 1}, {"{", 1}, {complete, 0}} {
+		if err := os.WriteFile(path, []byte(tc.raw), 0600); err != nil {
+			t.Fatal(err)
+		}
+		var view statusView
+		readSessionStatus(&view, config.Config{}, home, store)
+		if view.Collector.PendingCount != tc.want {
+			t.Fatalf("registered generation census: want%d got%+v warnings%v", tc.want, view.Collector, view.Warnings)
+		}
+		if tc.want > 0 && len(view.Warnings) == 0 {
+			t.Fatal("owed generation omitted warning")
+		}
 	}
 }

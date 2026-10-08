@@ -2,6 +2,7 @@ package collector
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -202,6 +203,53 @@ func TestFuturePublishedNamingRefusesBeforeLookupAndNativeFilter(t *testing.T) {
 			after, err := os.ReadFile(p)
 			if err != nil || string(after) != string(raw) {
 				t.Fatal("foreign naming state changed", err)
+			}
+		})
+	}
+}
+
+func TestLocalBundleSessionObligationsRefuseBeforeNative(t *testing.T) {
+	for _, mode := range []string{"source-only", "opaque", "missing-pending", "missing-source", "corrupt-pending", "canceled"} {
+		t.Run(mode, func(t *testing.T) {
+			s := newTestStore(t)
+			switch mode {
+			case "source-only", "missing-source":
+				data := []byte("original")
+				sum := sha256.Sum256(data)
+				if _, err := s.StagePendingSource("session", archive.SourceReference{SHA256: hex.EncodeToString(sum[:]), Key: "synthetic", CompressedBytes: len(data)}, data); err != nil {
+					t.Fatal(err)
+				}
+			case "opaque":
+				path := filepath.Join(s.Home(), "publication-evidence", "session", "opaque")
+				if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte("original"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			case "missing-pending", "corrupt-pending":
+				if err := os.WriteFile(filepath.Join(s.Home(), "pending", "session.json"), []byte("{"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if mode == "missing-pending" || mode == "missing-source" {
+				if err := os.Remove(filepath.Join(s.Home(), "config.json")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			ctx := t.Context()
+			if mode == "canceled" {
+				canceled, cancel := context.WithCancel(ctx)
+				cancel()
+				ctx = canceled
+			}
+			reg := archive.SessionRegistration{ArchiveSessionID: "session", Harness: archive.Harness{Name: "codex"}, TranscriptPath: "/synthetic/never-open"}
+			bundle, err := ReadLocalBundle(ctx, s.Home(), reg, time.Now(), "", refuseNativeSources{t})
+			if !errors.Is(err, state.ErrDurableStorageRecovery) || bundle.ArchiveSessionID != "" {
+				t.Fatalf("unknown preview emitted: %+v %v", bundle, err)
+			}
+			if mode == "canceled" && !errors.Is(err, context.Canceled) {
+				t.Fatal("cancellation lost", err)
 			}
 		})
 	}
