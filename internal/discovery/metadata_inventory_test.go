@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
@@ -1017,5 +1018,104 @@ func TestMetadataEnumerationPressurePreservesLimitAndCleanup(t *testing.T) {
 				t.Fatal("reservation refusal leaked charge", used)
 			}
 		})
+	}
+}
+
+// Expiry belongs to the fixed epoch even while a permitted longer slice is live.
+func TestMetadataSliceRolloutSharesPubliclyExhaustedEpoch(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		lookup, ids, root := metadataFixture(t, 1)
+		native := hintDatabase(t, root, true)
+		addHint(t, native, ids[0], filepath.Join(root, "sessions", "nested", "rollout-2026-10-01T12-00-00-"+ids[0]+".jsonl"), time.Now())
+		view := lookup.MetadataInventory().(*metadataInventory)
+		slice, err := view.BeginValidationSlice(t.Context(), agentapi.CodexValidationLimits{Duration: 60 * time.Second})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := slice.Thread(t.Context(), ids[0]); err != nil {
+			t.Fatal(err)
+		}
+		held, err := lookup.indexes[root].db.Conn(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Occupy the real projection's sole connection. Public Thread calls then
+		// consume the epoch via the targeted current query's nested five-second cap.
+		for i := range 6 {
+			results := make(chan error, 1)
+			go func() { _, err := slice.Thread(t.Context(), ids[0]); results <- err }()
+			synctest.Wait()
+			time.Sleep(5 * time.Second)
+			synctest.Wait()
+			err := <-results
+			want := agentapi.Unavailable
+			if i == 5 {
+				want = agentapi.Limit
+			}
+			if agentapi.Failure(err) != want || t.Context().Err() != nil {
+				t.Fatal("query did not preserve local versus epoch refusal", i, err)
+			}
+		}
+		if view.remaining > 0 || slice.Valid(t.Context()) != nil {
+			t.Fatal("fixture did not exhaust only the owned epoch", view.remaining)
+		}
+		before := view.counts
+		charge, _ := lookup.readBudget.Charged()
+		refs, err := slice.Rollout(t.Context(), ids[0])
+		if err == nil || agentapi.Failure(err) != agentapi.Limit || len(refs) != 0 {
+			t.Fatal("exhausted epoch returned cached metadata refs", len(refs), err)
+		}
+		cancelled, cancel := context.WithCancel(t.Context())
+		cancel()
+		if refs, err := slice.Rollout(cancelled, ids[0]); !errors.Is(err, context.Canceled) || len(refs) != 0 {
+			t.Fatal("caller cancellation lost", err)
+		}
+		expired, stop := context.WithDeadline(t.Context(), time.Now().Add(-time.Second))
+		defer stop()
+		if refs, err := slice.Rollout(expired, ids[0]); !errors.Is(err, context.DeadlineExceeded) || len(refs) != 0 {
+			t.Fatal("caller deadline lost", err)
+		}
+		after, _ := lookup.readBudget.Charged()
+		if before != view.counts || charge != after {
+			t.Fatal("exhausted projection performed work or retained refs")
+		}
+		if err := held.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if err := slice.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if err := lookup.CloseReadOnly(); err != nil {
+			t.Fatal(err)
+		}
+		if used, _ := lookup.readBudget.Charged(); used != 0 {
+			t.Fatal("cleanup charge", used)
+		}
+	})
+}
+
+func TestMetadataSliceRolloutDebitsProjectionWork(t *testing.T) {
+	lookup, ids, _ := metadataFixture(t, 1)
+	view := lookup.MetadataInventory().(*metadataInventory)
+	slice, err := view.BeginValidationSlice(t.Context(), agentapi.CodexValidationLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, counts := view.remaining, view.counts
+	refs, err := slice.Rollout(t.Context(), ids[0])
+	if err != nil || len(refs) != 1 {
+		t.Fatal("physical projection failed", refs, err)
+	}
+	if view.remaining >= before || view.counts != counts {
+		t.Fatal("projection did not consume active work independently of native I/O", before, view.remaining)
+	}
+	if err := slice.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := lookup.CloseReadOnly(); err != nil {
+		t.Fatal(err)
+	}
+	if used, _ := lookup.readBudget.Charged(); used != 0 {
+		t.Fatal("projection cleanup charge", used)
 	}
 }

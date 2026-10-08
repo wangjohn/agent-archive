@@ -889,15 +889,28 @@ func (s *metadataSlice) Thread(ctx context.Context, id string) (agentapi.CodexRo
 		return set, err
 	}
 	refs, err := s.refs(s.inventory.threads[id])
+	err = s.inventory.operationFailure(ctx, err)
+	if err != nil {
+		return agentapi.CodexRolloutSet{}, err
+	}
 	set.Candidates = refs
-	return set, err
+	return set, nil
 }
 
 func (s *metadataSlice) Rollout(ctx context.Context, id string) ([]agentapi.SourceRef, error) {
 	if err := s.step(ctx); err != nil {
 		return nil, err
 	}
-	return s.refs(s.inventory.rollouts[id])
+	_, done, err := s.inventory.beginOperation(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer done()
+	refs, err := s.refs(s.inventory.rollouts[id])
+	if err := s.inventory.operationFailure(ctx, err); err != nil {
+		return nil, err
+	}
+	return refs, nil
 }
 
 func (s *metadataSlice) Check(ctx context.Context, id, revision string) error {
