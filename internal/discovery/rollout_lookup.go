@@ -33,6 +33,8 @@ const maxCurrentThreads = 64
 // Neither the SQLite current locator nor a cached identity grants admission.
 // Observation-cache membership never implies complete filesystem coverage.
 type CodexRolloutLookup struct {
+	metadata         *metadataInventory
+	homes            []string
 	store            *state.Store
 	catalog          *catalog
 	readBudget       *agentapi.NativeReadBudget
@@ -81,7 +83,7 @@ func NewCodexRolloutLookup(ctx context.Context, store *state.Store, homes []stri
 	if len(roots) > 1024 {
 		return nil, agentapi.Wrap(agentapi.Limit, errors.New("native home limit"))
 	}
-	lookup := &CodexRolloutLookup{store: store, readBudget: agentapi.NewNativeReadBudget(currentSnapshotLimit), roots: roots, deadline: time.Now().Add(Budget), remaining: Budget, coverage: newCoverage(roots), observations: map[string]rolloutObservation{}, byThread: map[string]map[string]struct{}{}, byPhysical: map[string]map[string]struct{}{}, threads: map[string]agentapi.CodexRolloutSet{}, indexes: map[string]*currentIndexView{}}
+	lookup := &CodexRolloutLookup{store: store, homes: slices.Clone(homes), readBudget: agentapi.NewNativeReadBudget(currentSnapshotLimit), roots: roots, deadline: time.Now().Add(Budget), remaining: Budget, coverage: newCoverage(roots), observations: map[string]rolloutObservation{}, byThread: map[string]map[string]struct{}{}, byPhysical: map[string]map[string]struct{}{}, threads: map[string]agentapi.CodexRolloutSet{}, indexes: map[string]*currentIndexView{}}
 	lookup.coverage.reserveFacts = lookup.reserveCatalog
 	var prior catalog
 	if err := lookup.readCatalog(ctx, filepath.Join(store.Home(), "discovery-catalog.json"), &prior); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -633,6 +635,10 @@ func equalIndexStamps(a, b []os.FileInfo) bool {
 }
 
 func (l *CodexRolloutLookup) index(ctx context.Context, root string, refresh bool) (*currentIndexView, error) {
+	return l.indexDeadline(ctx, root, refresh, l.deadline)
+}
+
+func (l *CodexRolloutLookup) indexDeadline(ctx context.Context, root string, refresh bool, deadline time.Time) (*currentIndexView, error) {
 	view := l.indexes[root]
 	if view != nil {
 		if !refresh || equalIndexStamps(view.stamps, indexStamps(root)) {
@@ -674,7 +680,7 @@ func (l *CodexRolloutLookup) index(ctx context.Context, root string, refresh boo
 		view = &currentIndexView{}
 		l.indexes[root] = view
 	}
-	ctx, cancel := context.WithDeadline(ctx, l.deadline)
+	ctx, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
 	capturedStamps := indexStamps(root)
 	snapshot, err := snapshotCurrentIndexBudget(ctx, root, nil, l.readBudget)
@@ -807,6 +813,9 @@ func (l *CodexRolloutLookup) closeWithContext(ctx context.Context) error {
 		l.coverage.hintBytes = 0
 	}
 	var errs []error
+	if l.metadata != nil {
+		errs = append(errs, l.metadata.close())
+	}
 	for _, view := range l.indexes {
 		if view.db != nil {
 			errs = append(errs, view.db.Close())

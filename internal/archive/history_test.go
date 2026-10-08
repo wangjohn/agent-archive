@@ -3,6 +3,7 @@ package archive
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 	"strings"
 	"testing"
@@ -243,5 +244,30 @@ func TestSourceSetDigestIncludesActiveCaptureAndRevisionProvenance(t *testing.T)
 	changed, err = m.SourceSetDigest()
 	if err != nil || first == changed {
 		t.Fatal("revision provenance omitted", err)
+	}
+}
+
+// Preserved source references across revisions are distinct from one graph's nodes.
+func TestHistorySourceUnionKeepsActivePlus64Preserved(t *testing.T) {
+	b := retainedHistoryFixture()
+	makeRef := func(i int) SourceReference {
+		hash := fmt.Sprintf("%064x", i+1)
+		key, err := SourceObjectKey(b, hash)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return SourceReference{Key: key, SHA256: hash, CompressedBytes: 1}
+	}
+	m := Metadata{SchemaVersion: HistoryMetadataSchemaVersion, SessionID: b.ArchiveSessionID, NativeSessionID: b.NativeSessionID, ProjectID: b.ProjectID, Harness: b.Capture.Harness, CapturedAt: b.Capture.CapturedAt, SourceBundle: makeRef(0), History: &RevisionHistory{CurrentRevision: b.History.ActiveRolloutID}}
+	for i := range 64 {
+		m.History.Preserved = append(m.History.Preserved, RevisionReference{RevisionID: fmt.Sprintf("%08x-2222-4222-8222-222222222222", i+1), CapturedAt: m.CapturedAt, Source: makeRef(i + 1)})
+	}
+	refs, err := m.SourceReferences()
+	if err != nil || len(refs) != 65 {
+		t.Fatal("active plus64 preserved rejected", len(refs), err)
+	}
+	m.History.Preserved = append(m.History.Preserved, RevisionReference{RevisionID: "ffffffff-2222-4222-8222-222222222222", CapturedAt: m.CapturedAt, Source: makeRef(65)})
+	if _, err := m.SourceReferences(); err == nil {
+		t.Fatal("65 preserved refs accepted")
 	}
 }
