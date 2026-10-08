@@ -12,6 +12,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/catalog"
 	"github.com/wangjohn/agent-archive/internal/listingindex"
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/trace"
 )
 
 // CatalogAuthority reports opt-in catalog metadata authority truthfully.
@@ -37,6 +38,10 @@ func catalogRows(ctx context.Context, snapshot *catalog.Snapshot) ([]catalog.Row
 }
 
 func hydrateCatalogRows(ctx context.Context, snapshot *catalog.Snapshot, rows []catalog.Row, opts ListOptions) ([]archive.Metadata, error) {
+	span := trace.Start("read sidecars")
+	span.Count("sidecars", len(rows))
+	cacheHits, downloaded := 0, 0
+	defer func() { span.Count("from cache", cacheHits); span.Count("downloaded", downloaded); span.End() }()
 	result := make([]archive.Metadata, 0, len(rows))
 	for i, row := range rows {
 		raw, cached := opts.Cache.get(row.Key, row.Entry.Revision)
@@ -62,6 +67,11 @@ func hydrateCatalogRows(ctx context.Context, snapshot *catalog.Snapshot, rows []
 		}
 		if !cached {
 			opts.Cache.putVerified(row.Key, row.Entry.Revision, raw)
+		}
+		if cached {
+			cacheHits++
+		} else {
+			downloaded++
 		}
 		if opts.BodyRead != nil {
 			opts.BodyRead(row.Key, cached)
@@ -110,9 +120,8 @@ func selectCatalogMetadata(ctx context.Context, store storage.ObjectStore, prefi
 	if boundedCatalogSelection(prefix, q, opts) {
 		return selectBoundedCatalog(ctx, snapshot, q, opts)
 	}
-	if opts.CompatibilityScan != nil {
-		opts.CompatibilityScan("query requires complete catalog summaries")
-	}
+	span := trace.Start("catalog summary fallback")
+	defer span.End()
 	rows, err := catalogRows(ctx, snapshot)
 	if err != nil {
 		return RecentResult{}, err
@@ -180,6 +189,9 @@ func CatalogSummaries(ctx context.Context, store storage.ObjectStore, filter Fil
 // roots rebuild the complete summary universe. It never asserts canonical LIST
 // completeness for a subset of remote leaves.
 func (c *SQLiteSessionCatalog) RefreshRemote(ctx context.Context) error {
+	span := trace.Start("refresh session catalog")
+	reused := 0
+	defer func() { span.Count("from catalog", reused); span.End() }()
 	c.viewMu.Lock()
 	defer c.viewMu.Unlock()
 	snapshot, err := catalog.OpenSnapshot(ctx, c.store, nil)
@@ -312,6 +324,23 @@ func (c *SQLiteSessionCatalog) RefreshRemote(ctx context.Context) error {
 	}
 	if err = tx.Commit(); err != nil {
 		return err
+	}
+	if !delta.Rebuild {
+		refreshed := map[string]bool{}
+		for _, key := range invalid {
+			refreshed[key] = true
+		}
+		for _, row := range delta.Changed {
+			refreshed[row.Key] = true
+		}
+		for _, key := range delta.Removed {
+			refreshed[key] = true
+		}
+		for key := range cachedKeys {
+			if !refreshed[key] {
+				reused++
+			}
+		}
 	}
 	c.viewEpoch, c.viewGeneration, c.viewReady = epoch, generation, true
 	return nil

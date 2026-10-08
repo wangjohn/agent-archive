@@ -15,6 +15,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/catalog"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/destination"
+	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
@@ -69,6 +70,9 @@ func normalizePrivateCatalogSources(t *testing.T, source *storagetest.MemoryStor
 		if err = source.Put(t.Context(), object.Key, raw); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if _, err = reader.RebuildIndex(t.Context(), source, "sessions"); err != nil {
+		t.Fatal(err)
 	}
 }
 
