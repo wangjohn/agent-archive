@@ -649,6 +649,16 @@ func (m *metadataInventory) finishHeader(ctx context.Context) error {
 	if indices := m.threads[identity.ThreadID]; len(indices) > 0 && m.facts[indices[0]].stable != stableHash {
 		return metadataUnavailable()
 	}
+	// A physical UUID has one immutable identity, even across logical buckets.
+	// Separate rollout revisions may have different pagination; copies of one
+	// rollout cannot. Metadata agreement does not compare or authorize bodies.
+	rolloutKey := strings.ToLower(identity.RolloutID)
+	if indices := m.rollouts[rolloutKey]; len(indices) > 0 {
+		prior := m.facts[indices[0]]
+		if prior.stable != stableHash || !sameMetadataPagination(prior.identity, identity) {
+			return metadataUnavailable()
+		}
+	}
 	// The fact array is reserved at start. Per-entry allowance covers two
 	// map/index entries, slice capacity/allocator rounding and the unique locator.
 	// Parsed temporary metadata uses the separately reserved bounded scratch.
@@ -660,15 +670,38 @@ func (m *metadataInventory) finishHeader(ctx context.Context) error {
 	if internErr != nil {
 		return internErr
 	}
+	rolloutKey, internErr = m.intern(rolloutKey)
+	if internErr != nil {
+		return internErr
+	}
 	c.source.StableKey = identity.RolloutID
 
 	i := len(m.facts)
 	m.facts = append(m.facts, metadataFact{c.source, identity, stampMetadata(c.info), sha256.Sum256(c.line), stableHash})
 	m.threads[identity.ThreadID] = append(m.threads[identity.ThreadID], i)
-	m.rollouts[identity.RolloutID] = append(m.rollouts[identity.RolloutID], i)
+	m.rollouts[rolloutKey] = append(m.rollouts[rolloutKey], i)
 	m.counts.headers++
 	m.counts.joins++
 	return m.closeCursor()
+}
+
+// sameMetadataPagination compares physical links without equating distinct rollouts.
+func sameMetadataPagination(a, b codexmeta.CodexIdentity) bool {
+	mode := func(value codexmeta.HistoryMode) codexmeta.HistoryMode {
+		if value == "" {
+			return codexmeta.CodexHistoryLegacy
+		}
+		return value
+	}
+	if mode(a.HistoryMode) != mode(b.HistoryMode) {
+		return false
+	}
+	if a.HistoryBase == nil || b.HistoryBase == nil {
+		return a.HistoryBase == b.HistoryBase
+	}
+	return strings.EqualFold(a.HistoryBase.RolloutID, b.HistoryBase.RolloutID) &&
+		a.HistoryBase.EndOrdinal == b.HistoryBase.EndOrdinal &&
+		a.HistoryBase.EndByteOffset == b.HistoryBase.EndByteOffset
 }
 
 func (m *metadataInventory) ensure(ctx context.Context) error {
@@ -910,7 +943,12 @@ func (s *metadataSlice) Rollout(ctx context.Context, id string) ([]agentapi.Sour
 		return nil, err
 	}
 	defer done()
-	refs, err := s.refs(s.inventory.rollouts[id])
+	var indices []int
+	// Physical UUIDs have a fixed width; unknown inputs need no copied key.
+	if len(id) == 36 {
+		indices = s.inventory.rollouts[strings.ToLower(id)]
+	}
+	refs, err := s.refs(indices)
 	if err := s.inventory.operationFailure(ctx, err); err != nil {
 		return nil, err
 	}

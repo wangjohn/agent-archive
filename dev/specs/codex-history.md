@@ -51,7 +51,10 @@ that delimiter. A resumable step performs at most1024 reads and100ms of work,
 retaining one in-memory partial header. Cancellation or changed root/source
 clears the cursor. It reads no body, task event or duplicate prefix. Missing
 stores have absence evidence; unreadable stores, unknown/malformed headers,
-identity conflicts and exhausted bounds leave incomplete evidence. Every
+identity conflicts and exhausted bounds leave incomplete evidence. One physical
+rollout UUID has one stable logical identity and immutable pagination links;
+UUID spelling variants denote that same physical rollout. Different rollout
+UUIDs may carry different revision-local pagination. Every
 physical copy remains represented; complete enumeration does not establish
 content agreement or ancestor capture permission.
 

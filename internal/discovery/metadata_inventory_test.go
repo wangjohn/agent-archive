@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/codexmeta"
 )
 
 type metadataScenario string
@@ -1233,6 +1235,142 @@ func TestMetadataInventoryCloseClearsAcquiredRepresentations(t *testing.T) {
 			}
 			if _, err := os.Stat(filepath.Join(lookup.store.Home(), "discovery-catalog.json")); !errors.Is(err, os.ErrNotExist) {
 				t.Fatal("metadata close checkpointed capture catalog", err)
+			}
+		})
+	}
+}
+
+// One physical rollout cannot claim conflicting thread or pagination identities.
+func TestMetadataPhysicalIdentityConflictsLeaveIncompleteInventory(t *testing.T) {
+	const otherThread = "22222222-2222-4222-8222-222222222222"
+	const otherRollout = "33333333-3333-4333-8333-333333333333"
+	const baseRollout = "abcdefab-abcd-4abc-8abc-abcdefabcdef"
+	const physicalRollout = "abcdefab-abcd-4abc-8abc-abcdefabcdea"
+	base := `,"history_base":{"thread_id":"` + baseRollout + `","end_ordinal_exclusive":1,"end_byte_offset":2}`
+	for _, tc := range []struct {
+		name          string
+		thread        string
+		rollout       string
+		extra         string
+		complete      bool
+		originalExtra string
+	}{
+		{"conflicting-thread", otherThread, "", "", false, ""},
+		{"case-variant-conflicting-thread", otherThread, strings.ToUpper(physicalRollout), "", false, ""},
+		{"case-variant-copy", "", strings.ToUpper(physicalRollout), "", true, ""},
+		{"case-variant-base-copy", "", "", strings.Replace(base, baseRollout, strings.ToUpper(baseRollout), 1), true, base},
+		{"conflicting-mode", "", "", `,"history_mode":"paginated"`, false, ""},
+		{"conflicting-base", "", "", base, false, ""},
+		{"conflicting-base-rollout", "", "", strings.Replace(base, baseRollout, otherRollout, 1), false, base},
+		{"conflicting-base-ordinal", "", "", strings.Replace(base, `"end_ordinal_exclusive":1`, `"end_ordinal_exclusive":2`, 1), false, base},
+		{"conflicting-base-offset", "", "", strings.Replace(base, `"end_byte_offset":2`, `"end_byte_offset":3`, 1), false, base},
+		{"identical-base-copy", "", "", base, true, base},
+		{"identical-copy", "", "", "", true, ""},
+		{"explicit-legacy-copy", "", "", `,"history_mode":"legacy"`, true, ""},
+		{"distinct-paginated-revision", "", otherRollout, `,"history_mode":"paginated"` + base, true, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			lookup, ids, root := metadataFixture(t, 1)
+			id := ids[0]
+			name := "rollout-2026-10-01T12-00-00-" + id + ".jsonl"
+			raw, err := os.ReadFile(filepath.Join(root, "sessions", "nested", name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			physicalName := "rollout-" + physicalRollout + ".jsonl"
+			if err := os.Rename(filepath.Join(root, "sessions", "nested", name), filepath.Join(root, "sessions", "nested", physicalName)); err != nil {
+				t.Fatal(err)
+			}
+			name = physicalName
+			header := string(raw[:strings.IndexByte(string(raw), '\n')])
+			if tc.originalExtra != "" {
+				header = strings.Replace(header, `"source":"cli"`, `"source":"cli"`+tc.originalExtra, 1)
+				if err := os.WriteFile(filepath.Join(root, "sessions", "nested", name), []byte(header+"\nPRIVATE_BODY\n"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			copyHeader := string(raw[:strings.IndexByte(string(raw), '\n')])
+			if tc.thread != "" {
+				copyHeader = strings.Replace(copyHeader, `"id":"`+id+`"`, `"id":"`+tc.thread+`"`, 1)
+			}
+			copyHeader = strings.Replace(copyHeader, `"source":"cli"`, `"source":"cli"`+tc.extra, 1) + "\n"
+			if !json.Valid([]byte(copyHeader)) {
+				t.Fatal("invalid fixture header", copyHeader)
+			}
+			copyName := name
+			if tc.rollout != "" {
+				copyName = "rollout-" + tc.rollout + ".jsonl"
+			}
+			dir := filepath.Join(root, "archived_sessions")
+			if err := os.MkdirAll(dir, 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, copyName), []byte(copyHeader+"PRIVATE_DIFFERENT_BODY\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			meta, created, found, parseErr := codexmeta.ParseCodexMeta([]byte(copyHeader))
+			_, identityOutcome := meta.Identity(filepath.Join(dir, copyName))
+			if parseErr != nil || !found || created.IsZero() || identityOutcome != "" {
+				t.Fatal("fixture identity invalid", parseErr, identityOutcome)
+			}
+			t.Cleanup(func() {
+				if err := lookup.CloseReadOnly(); err != nil {
+					t.Error(err)
+				}
+				if used, _ := lookup.readBudget.Charged(); used != 0 {
+					t.Error("cleanup charge", used)
+				}
+			})
+			view := lookup.MetadataInventory().(*metadataInventory)
+			slice, err := view.BeginValidationSlice(t.Context(), agentapi.CodexValidationLimits{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			set, err := slice.Thread(t.Context(), id)
+			if tc.complete {
+				if err != nil || !set.Complete || len(set.Candidates) != 2 {
+					t.Fatalf("valid physical copies/revisions rejected: %+v %v", set, err)
+				}
+				if refs, err := slice.Rollout(t.Context(), strings.Repeat("A", 4096)); err != nil || len(refs) != 0 {
+					t.Fatal("unknown physical lookup changed semantics", refs, err)
+				}
+				if tc.rollout == "" || strings.EqualFold(tc.rollout, physicalRollout) {
+					for _, query := range []string{physicalRollout, strings.ToUpper(physicalRollout)} {
+						if refs, err := slice.Rollout(t.Context(), query); err != nil || len(refs) != 2 {
+							t.Fatal("physical UUID query spelling lost copies", query, refs, err)
+						}
+					}
+				}
+			} else {
+				if agentapi.Failure(err) != agentapi.Unavailable || set.Complete || set.Current != nil || set.Revision != "" || len(set.Candidates) != 0 || view.complete || view.cursor != nil {
+					t.Fatalf("conflicting physical identity returned authority: %+v %v", set, err)
+				}
+				before := view.counts
+				for range 2 {
+					if refs, err := slice.Rollout(t.Context(), physicalRollout); agentapi.Failure(err) != agentapi.Unavailable || len(refs) != 0 {
+						t.Fatal("conflicting physical refs accepted", refs, err)
+					}
+				}
+				if before != view.counts {
+					t.Fatal("conflict repeated acquisition")
+				}
+				cancelled, cancel := context.WithCancel(t.Context())
+				cancel()
+				if _, err := slice.Thread(cancelled, id); !errors.Is(err, context.Canceled) {
+					t.Fatal("conflict hid caller cancellation", err)
+				}
+			}
+			if view.counts.physical != 2 || view.counts.requested != int64(len(header)+1+len(copyHeader)) {
+				t.Fatal("physical census or header-only ranges lost", view.counts)
+			}
+			if err := slice.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if err := lookup.CloseReadOnly(); err != nil {
+				t.Fatal(err)
+			}
+			if used, _ := lookup.readBudget.Charged(); used != 0 {
+				t.Fatal("physical identity cleanup charge", used)
 			}
 		})
 	}

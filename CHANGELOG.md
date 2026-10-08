@@ -34,6 +34,8 @@ follow [Semantic Versioning](https://semver.org/).
   owner, retains active and archived physical copies and validates bounded
   slices with live native-current checks. Pending-history diagnostics preserve
   the original refusal; ordinary capture keeps its requested lookup lane.
+  Conflicting logical or pagination identities for one physical rollout leave
+  the inventory incomplete, including UUID spelling variants.
 
 - Pairing, handoff, standalone history import and undo, uninstall and purge
   use grouped questions and safe completion receipts. Secondary actions use
