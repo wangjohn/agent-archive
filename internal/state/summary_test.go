@@ -213,7 +213,7 @@ func readTestLeadingSummary(path string) (PublishedSummary, bool) {
 	if err != nil {
 		return PublishedSummary{}, false
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	summary, found, _ := readLeadingSummary(f)
 	return summary, found
 }

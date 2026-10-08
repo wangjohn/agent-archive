@@ -153,7 +153,7 @@ func (s *Store) beginGenerationRecoveryGuard(g config.DurableStorageGuard, id st
 	request := Request{ArchiveSessionID: next, Token: token, Reasons: []string{"generation-recovery"}, RequestedAt: at}
 	pending.RequestToken = token
 	r := generationRecovery{Version: 1, Key: key, Previous: id, Next: next, Registration: &reg, Pending: &pending, Request: &request}
-	if err := s.writeDurableGuard(g, filepath.Join(generationRecoveryDir, id+".json"), r); err != nil {
+	if err := s.writeDurableGuard(s.generationReadContext(), g, filepath.Join(generationRecoveryDir, id+".json"), r); err != nil {
 		return "", err
 	}
 	if err := s.indexStep("generation-journal"); err != nil {
@@ -375,10 +375,10 @@ func (s *Store) resumeGenerationRecovery(g config.DurableStorageGuard, ctx conte
 	if err := s.freezeGenerationRecovery(r); err != nil {
 		return fmt.Errorf("freeze recovery predecessor: %w", err)
 	}
-	if err := s.registerGenerationRecovery(g, r); err != nil {
+	if err := s.registerGenerationRecovery(ctx, g, r); err != nil {
 		return fmt.Errorf("register recovery successor: %w", err)
 	}
-	if err := s.activateGenerationRecovery(g, r); err != nil {
+	if err := s.activateGenerationRecovery(ctx, g, r); err != nil {
 		return fmt.Errorf("activate recovery successor: %w", err)
 	}
 	return nil
@@ -434,7 +434,7 @@ func (s *Store) freezeGenerationRecovery(r generationRecovery) error {
 	return nil
 }
 
-func (s *Store) registerGenerationRecovery(g config.DurableStorageGuard, r generationRecovery) error {
+func (s *Store) registerGenerationRecovery(ctx context.Context, g config.DurableStorageGuard, r generationRecovery) error {
 	reg := *r.Registration
 	if err := s.writeUnderRequestLock(r.Next, s.registrationPath(r.Next), nil, func(current fileSnapshot) (any, bool, error) {
 		if current.found {
@@ -451,7 +451,7 @@ func (s *Store) registerGenerationRecovery(g config.DurableStorageGuard, r gener
 	if err := s.indexStep("generation-registration"); err != nil {
 		return err
 	}
-	if err := s.savePendingGuard(g, r.Next, *r.Pending); err != nil {
+	if err := s.savePendingGuard(ctx, g, r.Next, *r.Pending); err != nil {
 		return err
 	}
 	if err := s.indexStep("generation-pending"); err != nil {
@@ -474,7 +474,7 @@ func (s *Store) registerGenerationRecovery(g config.DurableStorageGuard, r gener
 	return nil
 }
 
-func (s *Store) activateGenerationRecovery(g config.DurableStorageGuard, r generationRecovery) error {
+func (s *Store) activateGenerationRecovery(ctx context.Context, g config.DurableStorageGuard, r generationRecovery) error {
 	if err := s.writeGenerationIndexUnderRequestLock(r.Next, qualifiedSessionIndexPath(s.home, r.Key), nil, func(current fileSnapshot) (any, bool, error) {
 		if current.found {
 			var prior qualifiedSessionIndexEntry
@@ -507,7 +507,7 @@ func (s *Store) activateGenerationRecovery(g config.DurableStorageGuard, r gener
 	r.Registration = nil
 	r.Pending = nil
 	r.Request = nil
-	if err := s.writeDurableGuard(g, filepath.Join(generationRecoveryDir, r.Previous+".json"), r); err != nil {
+	if err := s.writeDurableGuard(ctx, g, filepath.Join(generationRecoveryDir, r.Previous+".json"), r); err != nil {
 		return err
 	}
 	return s.indexStep("generation-complete")

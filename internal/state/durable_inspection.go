@@ -14,6 +14,7 @@ import (
 )
 
 type durableRootStamp struct{ info os.FileInfo }
+
 type durableInspectionCache struct {
 	mu          sync.Mutex
 	home        os.FileInfo
@@ -39,6 +40,7 @@ func sameDurableStamp(a, b os.FileInfo) bool {
 	}
 	return os.SameFile(a, b) && a.Size() == b.Size() && a.ModTime().Equal(b.ModTime())
 }
+
 func (s *Store) durableContext() context.Context {
 	if s.resourceContext != nil {
 		return s.resourceContext

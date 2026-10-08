@@ -61,6 +61,7 @@ func rootHasEntries(root *os.Root, path string) (owed bool, err error) {
 	}
 	return len(entries) > 0 || err != nil, err
 }
+
 func (s *Store) hasStorageEntries(path string) (owed bool, err error) {
 	home, err := local.OpenRootedHome(s.home)
 	if errors.Is(err, os.ErrNotExist) {
@@ -77,12 +78,15 @@ func (s *Store) hasStorageEntries(path string) (owed bool, err error) {
 	}()
 	return rootHasEntries(home.Root, path)
 }
+
 func (s *Store) hasPendingHistorySources(id string) (bool, error) {
 	return s.hasStorageEntries(filepath.Join("sessions", id, "pending-sources"))
 }
+
 func (s *Store) hasPublicationEvidence(id string) (bool, error) {
 	return s.hasStorageEntries(filepath.Join("publication-evidence", id))
 }
+
 func (s *Store) protectedStorage(id string) (bool, error) {
 	history, herr := s.hasPendingHistorySources(id)
 	evidence, eerr := s.hasPublicationEvidence(id)

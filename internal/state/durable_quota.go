@@ -17,7 +17,9 @@ import (
 )
 
 const durableStorageQuota int64 = 1 << 30
+
 const durableControlBytes int64 = 64 << 10
+
 const durableEntryLimit = 65536
 
 // ErrDurableStorageCapacity leaves durable evidence intact until capacity is freed.
@@ -26,10 +28,26 @@ var ErrDurableStorageCapacity = errors.New("durable publication capacity exhaust
 // ErrDurableStorageRecovery preserves unknown or damaged obligations without native substitution.
 var ErrDurableStorageRecovery = errors.New("durable publication evidence requires recovery; native substitution and automatic cleanup are forbidden")
 
-type durableUsage struct {
-	physical, charged int64
-	recovery          bool
+type durableRootPath string
+
+const (
+	pendingDurableRoot     durableRootPath = "pending"
+	generationDurableRoot  durableRootPath = generationRecoveryDir
+	admissionDurableRoot   durableRootPath = "admission-stages"
+	reservationDurableRoot durableRootPath = "temporary-reservations"
+	scratchDurableRoot     durableRootPath = "temporary-scratch"
+)
+
+func protectedDurableRoot(path string) bool {
+	return durableRootPath(path) == pendingDurableRoot || durableRootPath(path) == generationDurableRoot
 }
+
+type durableUsage struct {
+	physical int64
+	charged  int64
+	recovery bool
+}
+
 type durableQuota struct {
 	guard  config.DurableStorageGuard
 	path   string
@@ -51,6 +69,7 @@ func (s *Store) openDurableQuota(g config.DurableStorageGuard) (*durableQuota, e
 	}
 	return &durableQuota{home: home, unlock: unlock, guard: g, path: s.home}, nil
 }
+
 func (q *durableQuota) Close() error { q.unlock(); return q.guard.CheckHome(q.path) }
 
 func privateDirectory(root *os.Root, path string, create bool) (*os.Root, error) {
@@ -58,7 +77,7 @@ func privateDirectory(root *os.Root, path string, create bool) (*os.Root, error)
 	if err != nil {
 		return nil, err
 	}
-	for _, part := range strings.Split(filepath.ToSlash(path), "/") {
+	for part := range strings.SplitSeq(filepath.ToSlash(path), "/") {
 		if !safeFileComponent(part) {
 			_ = current.Close()
 			return nil, ErrDurableStorageRecovery
@@ -99,7 +118,7 @@ func privateDirectory(root *os.Root, path string, create bool) (*os.Root, error)
 func (q *durableQuota) usage() (u durableUsage, err error) {
 	remaining := durableEntryLimit
 	for _, dir := range []string{"pending", generationRecoveryDir, "publication-evidence", "temporary-reservations", "temporary-scratch", "admission-stages"} {
-		recovery := dir == "admission-stages" || dir == "temporary-reservations" || dir == "temporary-scratch"
+		recovery := durableRootPath(dir) == admissionDurableRoot || durableRootPath(dir) == reservationDurableRoot || durableRootPath(dir) == scratchDurableRoot
 		e := q.scan(dir, 0, &remaining, &u)
 		if errors.Is(e, os.ErrNotExist) {
 			continue
@@ -167,6 +186,7 @@ func (q *durableQuota) usage() (u durableUsage, err error) {
 	}
 	return u, q.finishUsage(u)
 }
+
 func (q *durableQuota) finishUsage(u durableUsage) error {
 	if u.recovery {
 		return ErrDurableStorageRecovery
@@ -215,7 +235,7 @@ func (q *durableQuota) scan(path string, depth int, remaining *int, u *durableUs
 				return ErrDurableStorageRecovery
 			}
 			if info.IsDir() {
-				if path == "pending" || path == generationRecoveryDir || strings.HasSuffix(path, "pending-sources") {
+				if protectedDurableRoot(path) || strings.HasSuffix(path, "pending-sources") {
 					u.recovery = true
 				}
 				if e = q.scan(filepath.Join(path, entry.Name()), depth+1, remaining, u); e != nil {
@@ -229,7 +249,7 @@ func (q *durableQuota) scan(path string, depth int, remaining *int, u *durableUs
 			if info.Size() > (durableStorageQuota-u.charged)/2 {
 				return ErrDurableStorageCapacity
 			}
-			if (path == "pending" || path == generationRecoveryDir) && !strings.HasSuffix(entry.Name(), ".json") {
+			if (protectedDurableRoot(path)) && !strings.HasSuffix(entry.Name(), ".json") {
 				u.recovery = true
 			}
 			u.physical += info.Size()
@@ -297,13 +317,14 @@ func (w *boundedDurableWriter) Write(p []byte) (int, error) {
 	return n, e
 }
 
-func (s *Store) savePendingGuard(g config.DurableStorageGuard, id string, p PendingPublication) error {
+func (s *Store) savePendingGuard(ctx context.Context, g config.DurableStorageGuard, id string, p PendingPublication) error {
 	if len(p.SourceBytes) > maxPendingHistoryBytes {
 		return ErrDurableStorageCapacity
 	}
-	return s.writeDurableGuard(g, filepath.Join("pending", id+".json"), p)
+	return s.writeDurableGuard(ctx, g, filepath.Join("pending", id+".json"), p)
 }
-func (s *Store) writeDurableGuard(g config.DurableStorageGuard, path string, p any) (err error) {
+
+func (s *Store) writeDurableGuard(ctx context.Context, g config.DurableStorageGuard, path string, p any) (err error) {
 	if err = g.CheckHome(s.home); err != nil {
 		return err
 	}
@@ -315,10 +336,6 @@ func (s *Store) writeDurableGuard(g config.DurableStorageGuard, path string, p a
 			return errStateBudget
 		}
 		limit = min(limit, s.resourceBudget.Available()-1)
-	}
-	ctx := s.resourceContext
-	if ctx == nil {
-		ctx = context.Background()
 	}
 	n, err := jsonwire.Bound(ctx, p, limit)
 	if s.resourceBudget != nil {

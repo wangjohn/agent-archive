@@ -447,7 +447,7 @@ func (s *Store) RemoveStaleTemps() {
 	}
 	dirs := []string{s.home}
 	for _, dir := range append(append([]string{}, storeDirs...), lazyStoreDirs...) {
-		if protect && (dir == "pending" || dir == generationRecoveryDir) {
+		if protect && protectedDurableRoot(dir) {
 			continue
 		}
 		dirs = append(dirs, filepath.Join(s.home, dir))

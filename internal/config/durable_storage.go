@@ -40,6 +40,7 @@ func (g DurableStorageGuard) CheckHome(home string) error {
 	}
 	return nil
 }
+
 func (s *durableStorageScope) homePath() string { return s.path }
 
 // RootedHome returns the held home only during the guarded callback. Callers

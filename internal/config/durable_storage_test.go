@@ -37,6 +37,7 @@ func TestDurableStorageGuardExpiresAndPersistsActualFloor(t *testing.T) {
 		t.Fatalf("rollback lost floor: %+v %v", cfg, e)
 	}
 }
+
 func TestDurableStorageRefusesMissingUnknownAndSetupConfig(t *testing.T) {
 	for _, raw := range []string{"", `{"schema_version":{"version":6,"writer":"history-lifecycle-v6"},"history_protection":true}`, `{"schema_version":{"version":5,"writer":"staged-imports-v5"},"durable_import_protection":true}`, `{"schema_version":{"version":7,"writer":"durable-storage-v7"}}`, `{"schema_version":{"version":8,"writer":"publication-composition-v8"},"publication_composition_protection":true}`} {
 		t.Run(raw, func(t *testing.T) {
@@ -76,6 +77,7 @@ func TestDurableStorageRefusesMissingUnknownAndSetupConfig(t *testing.T) {
 		t.Fatal("setup refusal changed floor", e)
 	}
 }
+
 func TestDurableStorageSymlinkHomeRefusesBeforeLockAllocation(t *testing.T) {
 	parent := durableTestHome(t)
 	outside := durableTestHome(t)

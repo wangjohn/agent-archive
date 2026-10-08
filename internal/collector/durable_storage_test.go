@@ -19,6 +19,36 @@ import (
 
 type refuseNativeSources struct{ t *testing.T }
 
+type durableConfigMode string
+
+const (
+	durableConfigModeProtected durableConfigMode = "protected"
+	durableConfigModeFuture    durableConfigMode = "future"
+	durableConfigModeMissing   durableConfigMode = "missing"
+	durableConfigModeCorrupt   durableConfigMode = "corrupt"
+	durableConfigModeLegacy    durableConfigMode = "legacy"
+)
+
+type durableNamingMode string
+
+const (
+	durableNamingModeMissing       durableNamingMode = "missing"
+	durableNamingModeCorrupt       durableNamingMode = "corrupt"
+	durableNamingModeLeadingHeader durableNamingMode = "leading-header"
+	durableNamingModeChangedWarm   durableNamingMode = "changed-warm"
+)
+
+type durableSessionMode string
+
+const (
+	durableSessionModeSourceOnly     durableSessionMode = "source-only"
+	durableSessionModeOpaque         durableSessionMode = "opaque"
+	durableSessionModeMissingPending durableSessionMode = "missing-pending"
+	durableSessionModeMissingSource  durableSessionMode = "missing-source"
+	durableSessionModeCorruptPending durableSessionMode = "corrupt-pending"
+	durableSessionModeCanceled       durableSessionMode = "canceled"
+)
+
 func (s refuseNativeSources) LookupSources(string) (agentapi.SourceProvider, agentapi.TranscriptFilter, bool) {
 	s.t.Fatal("refused durable work opened a native provider/filter")
 	return nil, nil, false
@@ -68,26 +98,27 @@ func TestCollectorSourceOnlyRecoveryWithoutRegistration(t *testing.T) {
 }
 
 func TestCollectorAnonymousTempsRefuseBeforeNativeAndRemainCharged(t *testing.T) {
-	for _, mode := range []string{"protected", "future", "missing", "corrupt", "legacy"} {
-		t.Run(mode, func(t *testing.T) {
+	for _, mode := range []durableConfigMode{durableConfigModeProtected, durableConfigModeFuture, durableConfigModeMissing, durableConfigModeCorrupt, durableConfigModeLegacy} {
+		t.Run(string(mode), func(t *testing.T) {
 			for _, name := range []string{".pending-123", ".pending-abcdef0123456789abcdef0123456789"} {
 				t.Run(name, func(t *testing.T) {
 					s := newTestStore(t)
-					if mode == "protected" {
+					if mode == durableConfigModeProtected {
 						if err := config.WithDurableStorage(s.Home(), func(g config.DurableStorageGuard) error { return g.CheckHome(s.Home()) }); err != nil {
 							t.Fatal(err)
 						}
 					}
 					switch mode {
-					case "future":
+					case durableConfigModeProtected, durableConfigModeLegacy: // This mode needs no additional fixture mutation.
+					case durableConfigModeFuture:
 						if err := os.WriteFile(filepath.Join(s.Home(), "config.json"), []byte(`{"schema_version":{"version":8,"writer":"publication-composition-v8"},"publication_composition_protection":true}`), 0600); err != nil {
 							t.Fatal(err)
 						}
-					case "missing":
+					case durableConfigModeMissing:
 						if err := os.Remove(filepath.Join(s.Home(), "config.json")); err != nil {
 							t.Fatal(err)
 						}
-					case "corrupt":
+					case durableConfigModeCorrupt:
 						if err := os.WriteFile(filepath.Join(s.Home(), "config.json"), []byte("{"), 0600); err != nil {
 							t.Fatal(err)
 						}
@@ -101,7 +132,7 @@ func TestCollectorAnonymousTempsRefuseBeforeNativeAndRemainCharged(t *testing.T)
 						t.Fatal(err)
 					}
 					result, err := Run(t.Context(), s, storagetest.NewMemoryStore(), Options{MachineID: "synthetic", Sources: refuseNativeSources{t}})
-					if mode == "legacy" {
+					if mode == durableConfigModeLegacy {
 						if err != nil {
 							t.Fatal(err)
 						}
@@ -118,7 +149,7 @@ func TestCollectorAnonymousTempsRefuseBeforeNativeAndRemainCharged(t *testing.T)
 					if err != nil || string(raw) != "sole-original" {
 						t.Fatal("original discarded", err)
 					}
-					if mode == "protected" {
+					if mode == durableConfigModeProtected {
 						data := []byte("new")
 						sum := sha256.Sum256(data)
 						_, err = s.StagePendingSource("new", archive.SourceReference{Key: "synthetic", SHA256: hex.EncodeToString(sum[:]), CompressedBytes: len(data)}, data)
@@ -145,8 +176,8 @@ func TestLocalBundleAnonymousTempRefusesBeforeNativeFilter(t *testing.T) {
 }
 
 func TestFuturePublishedNamingRefusesBeforeLookupAndNativeFilter(t *testing.T) {
-	for _, mode := range []string{"missing", "corrupt", "leading-header", "changed-warm"} {
-		t.Run(mode, func(t *testing.T) {
+	for _, mode := range []durableNamingMode{durableNamingModeMissing, durableNamingModeCorrupt, durableNamingModeLeadingHeader, durableNamingModeChangedWarm} {
+		t.Run(string(mode), func(t *testing.T) {
 			s := newTestStore(t)
 			path := writeTranscript(t, t.TempDir(), "session.jsonl", codexTranscript)
 			reg := registration(t, path)
@@ -173,7 +204,7 @@ func TestFuturePublishedNamingRefusesBeforeLookupAndNativeFilter(t *testing.T) {
 				t.Fatal(err)
 			}
 			raw = bytes.TrimSpace(raw)
-			if mode == "leading-header" {
+			if mode == durableNamingModeLeadingHeader {
 				raw = append([]byte(`{"publication_version":2,`), raw[1:]...)
 			} else {
 				raw = append(raw[:len(raw)-1], []byte(`,"commit":null}`)...)
@@ -182,11 +213,12 @@ func TestFuturePublishedNamingRefusesBeforeLookupAndNativeFilter(t *testing.T) {
 				t.Fatal(err)
 			}
 			switch mode {
-			case "missing":
+			case durableNamingModeLeadingHeader, durableNamingModeChangedWarm: // This mode needs no additional fixture mutation.
+			case durableNamingModeMissing:
 				if err := os.Remove(filepath.Join(s.Home(), "config.json")); err != nil {
 					t.Fatal(err)
 				}
-			case "corrupt":
+			case durableNamingModeCorrupt:
 				if err := os.WriteFile(filepath.Join(s.Home(), "config.json"), []byte("{"), 0600); err != nil {
 					t.Fatal(err)
 				}
@@ -209,17 +241,18 @@ func TestFuturePublishedNamingRefusesBeforeLookupAndNativeFilter(t *testing.T) {
 }
 
 func TestLocalBundleSessionObligationsRefuseBeforeNative(t *testing.T) {
-	for _, mode := range []string{"source-only", "opaque", "missing-pending", "missing-source", "corrupt-pending", "canceled"} {
-		t.Run(mode, func(t *testing.T) {
+	for _, mode := range []durableSessionMode{durableSessionModeSourceOnly, durableSessionModeOpaque, durableSessionModeMissingPending, durableSessionModeMissingSource, durableSessionModeCorruptPending, durableSessionModeCanceled} {
+		t.Run(string(mode), func(t *testing.T) {
 			s := newTestStore(t)
 			switch mode {
-			case "source-only", "missing-source":
+			case durableSessionModeCanceled: // This mode needs no additional fixture mutation.
+			case durableSessionModeSourceOnly, durableSessionModeMissingSource:
 				data := []byte("original")
 				sum := sha256.Sum256(data)
 				if _, err := s.StagePendingSource("session", archive.SourceReference{SHA256: hex.EncodeToString(sum[:]), Key: "synthetic", CompressedBytes: len(data)}, data); err != nil {
 					t.Fatal(err)
 				}
-			case "opaque":
+			case durableSessionModeOpaque:
 				path := filepath.Join(s.Home(), "publication-evidence", "session", "opaque")
 				if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 					t.Fatal(err)
@@ -227,18 +260,18 @@ func TestLocalBundleSessionObligationsRefuseBeforeNative(t *testing.T) {
 				if err := os.WriteFile(path, []byte("original"), 0600); err != nil {
 					t.Fatal(err)
 				}
-			case "missing-pending", "corrupt-pending":
+			case durableSessionModeMissingPending, durableSessionModeCorruptPending:
 				if err := os.WriteFile(filepath.Join(s.Home(), "pending", "session.json"), []byte("{"), 0600); err != nil {
 					t.Fatal(err)
 				}
 			}
-			if mode == "missing-pending" || mode == "missing-source" {
+			if mode == durableSessionModeMissingPending || mode == durableSessionModeMissingSource {
 				if err := os.Remove(filepath.Join(s.Home(), "config.json")); err != nil {
 					t.Fatal(err)
 				}
 			}
 			ctx := t.Context()
-			if mode == "canceled" {
+			if mode == durableSessionModeCanceled {
 				canceled, cancel := context.WithCancel(ctx)
 				cancel()
 				ctx = canceled
@@ -248,7 +281,7 @@ func TestLocalBundleSessionObligationsRefuseBeforeNative(t *testing.T) {
 			if !errors.Is(err, state.ErrDurableStorageRecovery) || bundle.ArchiveSessionID != "" {
 				t.Fatalf("unknown preview emitted: %+v %v", bundle, err)
 			}
-			if mode == "canceled" && !errors.Is(err, context.Canceled) {
+			if mode == durableSessionModeCanceled && !errors.Is(err, context.Canceled) {
 				t.Fatal("cancellation lost", err)
 			}
 		})

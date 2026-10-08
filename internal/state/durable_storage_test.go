@@ -21,10 +21,22 @@ import (
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
+type durableFixtureMode string
+
+const (
+	durableFixtureMissing            durableFixtureMode = "missing"
+	durableFixtureCorrupt            durableFixtureMode = "corrupt"
+	durableFixtureFuture             durableFixtureMode = "future"
+	durableFixtureKnown              durableFixtureMode = "known"
+	durableFixtureHeader             durableFixtureMode = "header"
+	durableFixtureHeaderAfterSummary durableFixtureMode = "header-after-summary"
+)
+
 func durableRef(data []byte) archive.SourceReference {
 	sum := sha256.Sum256(data)
 	return archive.SourceReference{Key: "synthetic", SHA256: hex.EncodeToString(sum[:]), CompressedBytes: len(data)}
 }
+
 func sparseDurable(t *testing.T, path string, n int64) {
 	t.Helper()
 	if e := os.MkdirAll(filepath.Dir(path), 0700); e != nil {
@@ -57,6 +69,7 @@ func TestDurableQuotaRefusesBeforeHistoryAllocation(t *testing.T) {
 		t.Fatalf("durable gate: %+v %v", cfg, e)
 	}
 }
+
 func TestDurableQuotaChargesPhysicalHistoryDuplicatesAndTemps(t *testing.T) {
 	s := newTestStore(t)
 	data := []byte("synthetic")
@@ -85,6 +98,7 @@ func TestDurableQuotaChargesPhysicalHistoryDuplicatesAndTemps(t *testing.T) {
 		t.Fatal(e)
 	}
 }
+
 func TestDurableAtomicShrinkGrowthAndInterruptedCopies(t *testing.T) {
 	s := newTestStore(t)
 	sparseDurable(t, filepath.Join(s.home, "pending", "old.json"), 100)
@@ -132,6 +146,7 @@ func TestSourceOnlyDurableWorkSurvivesWithoutRegistration(t *testing.T) {
 		t.Fatalf("cleanup: %v", e)
 	}
 }
+
 func TestOpaqueEvidenceProtectsHistoryAndCorruptPending(t *testing.T) {
 	s := newTestStore(t)
 	id := "session"
@@ -160,6 +175,7 @@ func TestOpaqueEvidenceProtectsHistoryAndCorruptPending(t *testing.T) {
 		t.Fatal("corrupt descriptor lost", e)
 	}
 }
+
 func TestUnavailableAdmissionGetsNoQuotaCredit(t *testing.T) {
 	s := newTestStore(t)
 	sparseDurable(t, filepath.Join(s.home, "admission-stages", "orphan.source.gz"), 9)
@@ -171,6 +187,7 @@ func TestUnavailableAdmissionGetsNoQuotaCredit(t *testing.T) {
 		t.Fatalf("allocated after unknown admission: %v", e)
 	}
 }
+
 func TestDurableWriterHomeSwapCannotWriteOutsideHeldRoot(t *testing.T) {
 	s := newTestStore(t)
 	outside := t.TempDir()
@@ -196,6 +213,7 @@ func TestDurableWriterHomeSwapCannotWriteOutsideHeldRoot(t *testing.T) {
 		t.Fatalf("outside writes: %v %v", entries, e)
 	}
 }
+
 func TestDurableSharedStoresSerializeHistoryWrites(t *testing.T) {
 	s := newTestStore(t)
 	other := OpenReadOnly(s.home)
@@ -401,7 +419,11 @@ func TestDurableInspectionBoundRefusesPartialRootAndUnsafeEntries(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer held.Close()
+	defer func() {
+		if err := held.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	remaining := 1
 	_, _, err = s.inspectPendingRoot(held, "pending", &remaining, false)
 	if !errors.Is(err, ErrDurableStorageRecovery) {
@@ -443,27 +465,28 @@ func TestDurableFutureLabelContextUsesClosedPublishedDecoder(t *testing.T) {
 }
 
 func TestDurablePublishedPrefixRequiresCurrentConfigAndRefusesFutureHeader(t *testing.T) {
-	for _, mode := range []string{"missing", "corrupt", "future", "known", "header", "header-after-summary"} {
-		t.Run(mode, func(t *testing.T) {
+	for _, mode := range []durableFixtureMode{durableFixtureMissing, durableFixtureCorrupt, durableFixtureFuture, durableFixtureKnown, durableFixtureHeader, durableFixtureHeaderAfterSummary} {
+		t.Run(string(mode), func(t *testing.T) {
 			s := newTestStore(t)
 			raw := `{"summary":{"published":true,"harness":"codex"},"bundle":{}}`
 			switch mode {
-			case "missing":
+			case durableFixtureKnown: // Supported positive control keeps its complete configuration.
+			case durableFixtureMissing:
 				if err := os.Remove(filepath.Join(s.home, "config.json")); err != nil {
 					t.Fatal(err)
 				}
-			case "corrupt":
+			case durableFixtureCorrupt:
 				if err := os.WriteFile(filepath.Join(s.home, "config.json"), []byte("{"), 0600); err != nil {
 					t.Fatal(err)
 				}
-			case "future", "header-after-summary":
+			case durableFixtureFuture, durableFixtureHeaderAfterSummary:
 				if err := os.WriteFile(filepath.Join(s.home, "config.json"), []byte(`{"schema_version":{"version":8,"writer":"publication-composition-v8"},"publication_composition_protection":true}`), 0600); err != nil {
 					t.Fatal(err)
 				}
-			case "header":
+			case durableFixtureHeader:
 				raw = `{"publication_version":2,"summary":{"published":true},"commit":null}`
 			}
-			if mode == "header-after-summary" {
+			if mode == durableFixtureHeaderAfterSummary {
 				raw = `{"summary":{"published":true},"publication_version":2}`
 			}
 			if err := os.WriteFile(s.publishedPath("foreign"), []byte(raw), 0600); err != nil {
@@ -471,7 +494,7 @@ func TestDurablePublishedPrefixRequiresCurrentConfigAndRefusesFutureHeader(t *te
 			}
 			summary, found, err := s.LoadPublishedSummary("foreign")
 			_, _, labelErr := s.LabelRevision("foreign")
-			if mode == "known" {
+			if mode == durableFixtureKnown {
 				if err != nil || !found || !summary.Published || labelErr != nil {
 					t.Fatal(summary, found, err, labelErr)
 				}
@@ -676,7 +699,11 @@ func TestDurableGenerationCensusDoesNotMaterializeUnclearedPayload(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer home.Close()
+	defer func() {
+		if err := home.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	var before, after runtime.MemStats
 	runtime.ReadMemStats(&before)
 	complete, err := s.completedGenerationReceipt(home, "previous")

@@ -53,7 +53,11 @@ func TestRootedConcurrentLockCreation(t *testing.T) {
 				errs <- e
 				return
 			}
-			defer h.Close()
+			defer func() {
+				if err := h.Close(); err != nil {
+					t.Error(err)
+				}
+			}()
 			unlock, e := RootedLockWait(h, "hooks.lock", time.Second)
 			if e == nil {
 				unlock()
@@ -79,7 +83,11 @@ func TestRootedLockDeadlineAndReplacement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer first.Close()
+	defer func() {
+		if err := first.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	unlock, err := RootedLockWait(first, "hooks.lock", time.Second)
 	if err != nil {
 		t.Fatal(err)
@@ -89,7 +97,11 @@ func TestRootedLockDeadlineAndReplacement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer other.Close()
+	defer func() {
+		if err := other.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	started := time.Now()
 	if release, e := RootedLockWait(other, "hooks.lock", 30*time.Millisecond); !errors.Is(e, ErrBusy) {
 		if release != nil {
@@ -120,7 +132,11 @@ func TestRootedHomeRejectsPermissionsChangedDuringScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer held.Close()
+	defer func() {
+		if err := held.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	if err := os.Chmod(home, 0755); err != nil {
 		t.Fatal(err)
 	}

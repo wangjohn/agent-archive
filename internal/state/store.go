@@ -799,7 +799,9 @@ func (s *Store) SavePending(id string, pending PendingPublication) error {
 	if err := pending.ValidateHistoryBudgeted(id, s.resourceBudget); err != nil {
 		return err
 	}
-	return config.WithDurableStorage(s.home, func(g config.DurableStorageGuard) error { return s.savePendingGuard(g, id, pending) })
+	return config.WithDurableStorage(s.home, func(g config.DurableStorageGuard) error {
+		return s.savePendingGuard(s.durableContext(), g, id, pending)
+	})
 }
 
 // LoadPending returns a session's outstanding publication transaction, if

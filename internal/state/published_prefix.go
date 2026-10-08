@@ -64,9 +64,11 @@ func (s *Store) publishedPrefix(id string) (summary PublishedSummary, found, hea
 		defer s.resourceBudget.Release(16 << 10)
 	}
 	summary, head, err = readLeadingSummary(io.LimitReader(f, 8192))
-	if err != nil {
+	if errors.Is(err, ErrDurableStorageRecovery) {
 		return summary, true, false, info, err
 	}
+	// Malformed or older prefixes defer to the existing closed full decoder.
+	err = nil
 	named, fileErr := home.Root.Lstat(path)
 	cfgAfter, cfgErr := home.Root.Lstat("config.json")
 	if fileErr != nil || cfgErr != nil || !sameDurableStamp(info, named) || !sameDurableStamp(cfgBefore, cfgAfter) {

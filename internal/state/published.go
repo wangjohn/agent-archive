@@ -502,11 +502,11 @@ func (s *Store) LoadPublishedSummary(archiveSessionID string) (summary Published
 func readLeadingSummary(reader io.Reader) (summary PublishedSummary, ok bool, err error) {
 	decoder := json.NewDecoder(bufio.NewReaderSize(reader, 4096))
 	if token, err := decoder.Token(); err != nil || token != json.Delim('{') {
-		return summary, false, nil
+		return summary, false, errors.Join(io.ErrUnexpectedEOF, err)
 	}
 	key, err := decoder.Token()
 	if err != nil {
-		return summary, false, nil
+		return summary, false, err
 	}
 	if key == "publication_version" {
 		return summary, false, ErrDurableStorageRecovery
@@ -516,7 +516,7 @@ func readLeadingSummary(reader io.Reader) (summary PublishedSummary, ok bool, er
 	}
 	var head *PublishedSummary
 	if err := decoder.Decode(&head); err != nil || head == nil {
-		return summary, false, nil
+		return summary, false, errors.Join(io.ErrUnexpectedEOF, err)
 	}
 	return *head, true, nil
 }

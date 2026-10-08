@@ -162,11 +162,11 @@ func (s *Store) checkPendingHistoryVersion(id string) error {
 	return nil
 }
 
-func (s *Store) pendingHistorySourcePath(id, name string) (string, error) {
+func validatePendingHistorySource(id, name string) error {
 	if !safeFileComponent(id) || !stagedSourceName.MatchString(name) {
-		return "", errors.New("invalid history stage identity")
+		return errors.New("invalid history stage identity")
 	}
-	return filepath.Join(s.home, "sessions", id, "pending-sources", name), nil
+	return nil
 }
 
 // StagePendingSource durably freezes bytes before the journal references them.
@@ -176,7 +176,7 @@ func (s *Store) StagePendingSource(id string, ref archive.SourceReference, data 
 		return PendingSource{}, errors.New("invalid staged source size")
 	}
 	name := ref.SHA256 + ".gz"
-	_, err := s.pendingHistorySourcePath(id, name)
+	err := validatePendingHistorySource(id, name)
 	if err != nil {
 		return PendingSource{}, err
 	}
@@ -190,7 +190,7 @@ func (s *Store) StagePendingSource(id string, ref archive.SourceReference, data 
 
 // ReadPendingSource reads only the journal's bounded private checksum stage.
 func (s *Store) ReadPendingSource(id string, stage PendingSource) ([]byte, error) {
-	_, err := s.pendingHistorySourcePath(id, stage.Name)
+	err := validatePendingHistorySource(id, stage.Name)
 	if err != nil {
 		return nil, err
 	}

@@ -36,6 +36,7 @@ func (p *PendingPublication) UnmarshalJSON(data []byte) error {
 	}{pendingJSON: (*pendingJSON)(p)}
 	return json.Unmarshal(data, &wire)
 }
+
 func (p *publishedState) UnmarshalJSON(data []byte) error {
 	type publishedJSON publishedState
 	wire := struct {
