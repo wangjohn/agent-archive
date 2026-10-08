@@ -6,6 +6,9 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Open the metadata cache without scanning session directories. Commands clean
+  up at most 64 cached sessions, with progress saved for later commands.
+
 - Preserve settled capture and source bytes when cached native naming reads are
   unavailable and the same observation uses an equivalent timezone offset.
 

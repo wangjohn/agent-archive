@@ -28,6 +28,7 @@ type RecentResult struct {
 // ListRecent proves coverage from fresh canonical headers before choosing bodies.
 // Unsupported predicates and incomplete indexes use the exhaustive cache reader.
 func ListRecent(ctx context.Context, store storage.ObjectStore, prefix string, filter Filter, limit int, opts ListOptions) (RecentResult, error) {
+	opts.Cache.maintain(ctx, 64)
 	fallback := func(reason string) (RecentResult, error) {
 		if opts.CompatibilityScan != nil {
 			opts.CompatibilityScan(reason)

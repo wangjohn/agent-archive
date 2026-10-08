@@ -181,6 +181,7 @@ type ListOptions struct {
 // a sequential read would. A listing split into ranges fails with the error
 // of the first range to fail, which need not be the lowest in key order.
 func ListMetadataWithOptions(ctx context.Context, store storage.ObjectStore, prefix string, filter Filter, options ListOptions) ([]archive.Metadata, error) {
+	options.Cache.maintain(ctx, 64)
 	span := trace.Start("list metadata")
 	defer span.End()
 	listPrefix := listPrefixFor(prefix, filter.Harness)
