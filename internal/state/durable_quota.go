@@ -74,14 +74,28 @@ func (s *Store) openDurableQuota(g config.DurableStorageGuard) (*durableQuota, e
 func (q *durableQuota) Close() error { q.unlock(); return q.guard.CheckHome(q.path) }
 
 func privateDirectory(root *os.Root, path string, create bool) (*os.Root, error) {
+	return privateDirectoryWithParentSync(root, path, create, syncDurableParent)
+}
+
+// syncDurableParent persists directory entries through the held parent capability.
+func syncDurableParent(parent *os.Root) error {
+	dir, err := parent.Open(".")
+	if err != nil {
+		return err
+	}
+	return errors.Join(dir.Sync(), dir.Close())
+}
+
+// The dependency is local to this traversal; production always uses the held
+// parent barrier above. Tests can observe ordering and inject a barrier failure.
+func privateDirectoryWithParentSync(root *os.Root, path string, create bool, syncParent func(*os.Root) error) (*os.Root, error) {
 	current, err := root.OpenRoot(".")
 	if err != nil {
 		return nil, err
 	}
 	for part := range strings.SplitSeq(filepath.ToSlash(path), "/") {
 		if !safeFileComponent(part) {
-			_ = current.Close()
-			return nil, ErrDurableStorageRecovery
+			return nil, errors.Join(ErrDurableStorageRecovery, current.Close())
 		}
 		info, e := current.Lstat(part)
 		if errors.Is(e, os.ErrNotExist) && create {
@@ -91,24 +105,30 @@ func privateDirectory(root *os.Root, path string, create bool) (*os.Root, error)
 			}
 		}
 		if e != nil {
-			_ = current.Close()
-			return nil, e
+			return nil, errors.Join(e, current.Close())
 		}
 		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0077 != 0 {
-			_ = current.Close()
-			return nil, ErrDurableStorageRecovery
+			return nil, errors.Join(ErrDurableStorageRecovery, current.Close())
 		}
 		next, e := current.OpenRoot(part)
 		if e == nil {
 			opened, x := next.Stat(".")
 			named, n := current.Lstat(part)
 			if x != nil || n != nil || named.Mode()&os.ModeSymlink != 0 || !os.SameFile(info, named) || !os.SameFile(info, opened) {
-				_ = next.Close()
-				e = ErrDurableStorageRecovery
+				e = errors.Join(ErrDurableStorageRecovery, next.Close())
+				next = nil
 			}
 		}
-		_ = current.Close()
+		if e == nil && create {
+			// Persist every required parent-child link, including existing links
+			// encountered when retrying after an earlier failed durability barrier.
+			e = syncParent(current)
+		}
+		e = errors.Join(e, current.Close())
 		if e != nil {
+			if next != nil {
+				e = errors.Join(e, next.Close())
+			}
 			return nil, e
 		}
 		current = next
