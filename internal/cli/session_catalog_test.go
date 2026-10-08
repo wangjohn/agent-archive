@@ -238,7 +238,8 @@ func TestCatalogWarmShowQueryReadsOnlySelectedBodyAndMatchesFallback(t *testing.
 		{"child needle", 0, 1, "child001"},
 		{"replay01", 0, 1, "private-replay-run"},
 		{"replay hidden", 1, 0, "no archived session"},
-		{a.id, 0, 1, a.id},
+		// Full-ID lookup keeps the existing direct harness/key probes.
+		{a.id, 0, 4, a.id},
 	} {
 		t.Run(tc.query, func(t *testing.T) {
 			decoded = 0
