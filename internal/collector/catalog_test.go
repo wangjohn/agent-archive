@@ -137,3 +137,36 @@ func TestFrozenHistoryUsesCatalogAuthority(t *testing.T) {
 		t.Fatal("legacy destination admitted catalog pending")
 	}
 }
+
+// A crash after the catalog head commits but before acknowledgement leaves
+// a listing repair journal. Restart must not publish legacy discovery hints.
+func TestCatalogListingRepairDoesNotPublishLegacyIndex(t *testing.T) {
+	t.Parallel()
+	scan, pending, cloud, _ := frozenHistoryFixture(t)
+	remote, err := catalog.Wrap(&historyCatalogStore{cloud})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = scan.local.SaveRegistration(scan.reg); err != nil {
+		t.Fatal(err)
+	}
+	if err = remote.Publication("committed-before-crash", pending.MetadataKey, "").Put(t.Context(), pending.MetadataKey, pending.MetadataBytes); err != nil {
+		t.Fatal(err)
+	}
+	if err = scan.local.SaveListingRepair(scan.id(), state.ListingRepair{MetadataKey: pending.MetadataKey, DestinationID: scan.reg.DestinationID}); err != nil {
+		t.Fatal(err)
+	}
+	p := &pass{ctx: t.Context(), local: scan.local, remote: remote, result: Result{Errors: make(map[string]error)}}
+	p.repairListingIndex()
+	if len(p.result.Errors) != 0 {
+		t.Fatal(p.result.Errors)
+	}
+	objects, err := cloud.List(t.Context(), "listing/")
+	if err != nil || len(objects) != 0 {
+		t.Fatal("catalog repair published legacy index", len(objects), err)
+	}
+	repairs, err := scan.local.ListingRepairs(32)
+	if err != nil || len(repairs) != 0 {
+		t.Fatal("catalog repair journal remained", err)
+	}
+}

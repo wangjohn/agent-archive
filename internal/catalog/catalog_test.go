@@ -895,3 +895,73 @@ func TestCatalogSourceReferencesRequireCanonicalSessionOwnership(t *testing.T) {
 		})
 	}
 }
+
+// Catalog object writes must remain behind the immutable writer and head CAS,
+// including callers using the frozen publication adapter as an ObjectStore.
+func TestCatalogAdapterRefusesDirectCatalogObjectWrites(t *testing.T) {
+	t.Parallel()
+	w, raw := fixture(t)
+	adapter, err := Wrap(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := mutation(t, w, "direct-write")
+	if _, err = w.Commit(t.Context(), m); err != nil {
+		t.Fatal(err)
+	}
+	h, _, err := w.Head(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for phase := range 2 {
+		if phase == 1 {
+			if err = w.Collect(t.Context(), heldBarrier{refs: []ObjectRef{{Key: "missing", SHA256: strings.Repeat("0", 64)}}}); err == nil {
+				t.Fatal("incomplete inventory unexpectedly released GC lease")
+			}
+			leased, _, err := w.Head(t.Context())
+			if err != nil || leased.GCLease == "" {
+				t.Fatal("expected durable GC lease", err)
+			}
+		}
+		for _, remote := range []storage.ObjectStore{adapter, adapter.Publication("frozen", m.SessionKey, "")} {
+			for _, key := range []string{HeadKey, h.Identity.Key, m.Next.Metadata.Key, "catalog-v4/nodes/new.json"} {
+				before, readErr := raw.Get(t.Context(), key)
+				if err = remote.Put(t.Context(), key, []byte("unconditional replacement")); err == nil {
+					t.Fatalf("direct catalog PUT accepted for %s", key)
+				}
+				after, afterErr := raw.Get(t.Context(), key)
+				if string(before) != string(after) || !errors.Is(afterErr, readErr) {
+					t.Fatalf("refused PUT changed %s", key)
+				}
+			}
+		}
+	}
+}
+
+// A checksum of currently matching bytes cannot certify an immutable catalog
+// metadata reference at an arbitrary mutable object key.
+func TestCommitRequiresImmutableMetadataNamespace(t *testing.T) {
+	t.Parallel()
+	for _, key := range []string{"mutable/private-title.json", "sessions/claude/metadata-ref/metadata.json", "catalog-v4/nodes/wrong-kind.json", "catalog-v4/metadata/wrong-digest.json"} {
+		t.Run(key, func(t *testing.T) {
+			t.Parallel()
+			w, raw := fixture(t)
+			m := mutation(t, w, "metadata-ref")
+			body, err := raw.Get(t.Context(), m.Next.Metadata.Key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = raw.Put(t.Context(), key, body); err != nil {
+				t.Fatal(err)
+			}
+			m.Next.Metadata.Key = key
+			if _, err = w.Commit(t.Context(), m); err == nil {
+				t.Fatal("mutable metadata reference committed")
+			}
+			if _, err = raw.Get(t.Context(), HeadKey); !errors.Is(err, storage.ErrNotFound) {
+				t.Fatal("invalid reference changed head", err)
+			}
+		})
+	}
+}

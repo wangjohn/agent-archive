@@ -115,6 +115,9 @@ func (s *Store) ObjectKey(key string) string {
 
 // Put refuses unfrozen metadata and creates immutable source bytes.
 func (s *Store) Put(ctx context.Context, key string, raw []byte) error {
+	if strings.HasPrefix(key, "catalog-v4/") {
+		return errors.New("catalog objects require immutable writes or head compare-and-swap")
+	}
 	if metadataKey(key) {
 		return errors.New("catalog metadata requires a frozen mutation")
 	}
