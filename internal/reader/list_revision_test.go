@@ -200,6 +200,13 @@ func TestListRevisionActivityAndChildSummariesMatchExhaustive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	unlimited, err := SelectMetadata(ctx, store, "sessions", MetadataQuery{Order: ActivityOrder, TopLevelOnly: true}, ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(unlimited, full) {
+		t.Fatalf("unlimited activity/child summary differs: got=%+v want=%+v", unlimited, full)
+	}
 	if !reflect.DeepEqual(bounded.Sessions, full.Sessions[:2]) || bounded.TotalMatched != 4 || bounded.Hidden != 3 || bounded.Children["codex/s3"] != 3 {
 		t.Fatalf("summary parity failed: total=%d hidden=%d children=%v", bounded.TotalMatched, bounded.Hidden, bounded.Children)
 	}

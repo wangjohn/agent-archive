@@ -27,8 +27,47 @@ type RecentResult struct {
 }
 
 // ListRecent proves coverage from fresh canonical headers before choosing bodies.
-// Unsupported predicates and incomplete indexes use the exhaustive cache reader.
+// Unsupported predicates, incomplete indexes, and nonpositive limits use the
+// exhaustive cache reader for compatibility. SelectMetadata supports indexed
+// unlimited queries.
 func ListRecent(ctx context.Context, store storage.ObjectStore, prefix string, filter Filter, limit int, opts ListOptions) (RecentResult, error) {
+	if limit <= 0 {
+		if opts.CompatibilityScan != nil {
+			opts.CompatibilityScan("query requires an exhaustive metadata scan")
+		}
+		return listRecentFullWithHeaders(ctx, store, prefix, filter, limit, opts, nil)
+	}
+	order := CaptureOrder
+	if opts.ActivityOrder {
+		order = ActivityOrder
+	}
+	return SelectMetadata(ctx, store, prefix, MetadataQuery{Filter: filter, Limit: limit, Order: order, TopLevelOnly: opts.TopLevelOnly}, opts)
+}
+
+// QueryOrder selects the ordering used before applying the query limit.
+type QueryOrder uint8
+
+const (
+	// CaptureOrder sorts newest capture first, with identity ties.
+	CaptureOrder QueryOrder = iota
+	// ActivityOrder sorts newest activity first, then capture and identity.
+	ActivityOrder
+)
+
+// MetadataQuery selects metadata from fresh headers before downloading bodies.
+// A nonpositive Limit selects every matching session.
+type MetadataQuery struct {
+	Filter       Filter
+	Limit        int
+	Order        QueryOrder
+	TopLevelOnly bool
+}
+
+// SelectMetadata proves discovery coverage and supports unlimited date queries.
+// Unsupported predicates and incomplete summaries use the exhaustive reader.
+func SelectMetadata(ctx context.Context, store storage.ObjectStore, prefix string, query MetadataQuery, opts ListOptions) (RecentResult, error) {
+	filter, limit := query.Filter, query.Limit
+	opts.ActivityOrder, opts.TopLevelOnly = query.Order == ActivityOrder, query.TopLevelOnly
 	var snapshot *HeaderSnapshot
 	fallback := func(reason string) (RecentResult, error) {
 		if opts.CompatibilityScan != nil {
@@ -37,7 +76,7 @@ func ListRecent(ctx context.Context, store storage.ObjectStore, prefix string, f
 		return listRecentFullWithHeaders(ctx, store, prefix, filter, limit, opts, snapshot)
 	}
 	getter, ok := store.(storage.VersionedGetter)
-	if !ok || limit <= 0 || filter.Model != "" || filter.Skill != "" || filter.SkillSHA256 != "" || filter.RequireCompleteCoverage {
+	if !ok || filter.Model != "" || filter.Skill != "" || filter.SkillSHA256 != "" || filter.RequireCompleteCoverage {
 		return fallback("query requires an exhaustive metadata scan")
 	}
 	headers, err := discoverHeaders(ctx, store, prefix, filter, opts.Cache)
@@ -361,7 +400,7 @@ func selectListingRevisions(objects []storage.Object, revisions map[RevisionID]l
 		}
 		return a.MetadataKey < b.MetadataKey
 	})
-	if len(selected) > limit {
+	if limit > 0 && len(selected) > limit {
 		selected = selected[:limit]
 	}
 	return selected, result, nil

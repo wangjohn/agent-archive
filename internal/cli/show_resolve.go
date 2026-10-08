@@ -23,8 +23,8 @@ type showLookup struct {
 }
 
 // resolveShowQuery turns a show argument into a session. Exact SESSION_ID
-// lookups win. Otherwise the argument is words, matched as list matches them
-// (sessionQuery) over every archived sidecar, in the tiers of the search: the
+// lookups win. Otherwise the argument is words, combining identity prefixes
+// with text matches (sessionQuery) over every archived sidecar, in the tiers of the search: the
 // working directory's repository first, then every project, subagents last.
 // Several matches on a terminal open the browser over them, with the words in
 // its filter: it shows the sessions' details itself (and the lookup is
@@ -35,7 +35,7 @@ type showLookup struct {
 func resolveShowQuery(ctx context.Context, store storage.ObjectStore, env showQueryDependencies, stdin io.Reader, stdout, stderr io.Writer, harness, query string, cfgProjects map[string]string, noPager, pickOne bool) (showLookup, int) {
 	// Full archive IDs use the direct-read path. With --harness, a short ID
 	// or title would otherwise be mistaken for a literal object key.
-	if harness == "" || len(query) == 32 {
+	if len(query) >= 32 {
 		key, err := locateMetadataKey(ctx, store, harness, query)
 		if err == nil {
 			parts := strings.Split(strings.TrimPrefix(key, archiveSessionsPrefix+"/"), "/")
@@ -59,10 +59,13 @@ func resolveShowQuery(ctx context.Context, store storage.ObjectStore, env showQu
 		terminal.Printf(stderr, "agent-archive: show: %v\n", err)
 		return showLookup{}, 1
 	}
+	// Keep the complete inventory for child counts and scope fallback. Titles
+	// and PR numbers are absent from canonical headers, so text completeness
+	// still requires all bodies until the search catalog is available.
 	stopSearch := startActivity(stdout, "Finding sessions…")
-	sessions, err := reader.ListMetadataWithOptions(ctx, store, archiveSessionsPrefix, reader.Filter{Harness: harness}, reader.ListOptions{
+	sessions, err := reader.FindMetadataPrefix(ctx, store, archiveSessionsPrefix, query, reader.Filter{Harness: harness}, reader.ListOptions{
 		Cache: listCache(env, false), Skipped: warnSkippedSidecar(stderr, "show"),
-	})
+	}, func(archive.Metadata) bool { return true })
 	stopSearch()
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: show: %v\n", err)
@@ -77,10 +80,10 @@ func resolveShowQuery(ctx context.Context, store storage.ObjectStore, env showQu
 	}
 	// A replay opens only by its ID, never through a search of titles and
 	// names, as it stays out of list and handoff's pickers.
-	if len(exactIDWins(sessions, q, fields)) == 0 {
-		sessions = slices.DeleteFunc(sessions, func(m archive.Metadata) bool { return m.IsReplay() })
-	}
-	found := searchSessions(sessions, q, scope, fields)
+	sessions = slices.DeleteFunc(sessions, func(m archive.Metadata) bool {
+		return m.IsReplay() && len(exactIDWins([]archive.Metadata{m}, q, fields)) == 0
+	})
+	found := searchShowSessions(sessions, q, scope, fields)
 	matches := found.matches
 	if note := found.outsideNote(scope); note != "" {
 		terminal.Println(stderr, note)

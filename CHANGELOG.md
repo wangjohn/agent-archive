@@ -6,6 +6,12 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Select supported stats capture windows from fresh listing headers before
+  downloading metadata, including comparison periods and month highlights.
+- Resolve short show IDs with one canonical discovery. Prefix matches and title
+  or pull request matches share the existing scope tiers and remain ambiguous
+  when both match; full session IDs and handoff retain their precedence.
+
 - Overlap canonical and listing-index header discovery, narrow v3 headers by
   harness, and reuse canonical headers when a listing needs a full metadata scan.
 

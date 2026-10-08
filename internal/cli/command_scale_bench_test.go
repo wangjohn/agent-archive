@@ -18,6 +18,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/listingindex"
 	"github.com/wangjohn/agent-archive/internal/platform"
+	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
@@ -227,6 +228,10 @@ func seedBenchmarkParent(b *testing.B, mem *storagetest.MemoryStore, children in
 // seedBenchmarkStats spans 90 days: a one-day query includes about 1/90 of
 // sessions. Model and token fields exercise aggregation as well as selection.
 func seedBenchmarkStats(b *testing.B, mem *storagetest.MemoryStore, count int) {
+	seedBenchmarkStatsDays(b, mem, count, 90)
+}
+
+func seedBenchmarkStatsDays(b *testing.B, mem *storagetest.MemoryStore, count, days int) {
 	b.Helper()
 	ctx := context.Background()
 	for i := range count {
@@ -240,7 +245,7 @@ func seedBenchmarkStats(b *testing.B, mem *storagetest.MemoryStore, count int) {
 		if err = json.Unmarshal(data, &m); err != nil {
 			b.Fatal(err)
 		}
-		m.CapturedAt = storagetest.BenchmarkTime.Add(24*time.Hour - time.Duration(i%90)*24*time.Hour)
+		m.CapturedAt = storagetest.BenchmarkTime.Add(24*time.Hour - time.Duration(i%days)*24*time.Hour)
 		m.StartedAt = m.CapturedAt
 		input, output := 1000+i, 200+i%100
 		m.Counts = archive.Counts{InputTokens: &input, OutputTokens: &output}
@@ -263,6 +268,38 @@ func seedBenchmarkStats(b *testing.B, mem *storagetest.MemoryStore, count int) {
 		}
 		if err = listingindex.PutRevision(ctx, mem, revision); err != nil {
 			b.Fatal(err)
+		}
+	}
+}
+
+// BenchmarkStatsYearWindow pairs exhaustive and indexed reads over identical
+// synthetic metadata older than the CLI's six-month fetch floor.
+func BenchmarkStatsYearWindow(b *testing.B) {
+	for _, delay := range []time.Duration{0, time.Millisecond} {
+		for _, exhaustive := range []bool{false, true} {
+			b.Run(fmt.Sprintf("exhaustive=%v/delay=%s", exhaustive, delay), func(b *testing.B) {
+				b.StopTimer()
+				mem := storagetest.NewMemoryStore()
+				storagetest.SeedArchive(b, mem, 800, 0)
+				seedBenchmarkStatsDays(b, mem, 800, 400)
+				store := storagetest.NewMeasuredStore(mem, delay)
+				filter := reader.Filter{From: statsFetchFrom(storagetest.BenchmarkTime.Add(24*time.Hour), time.UTC, 1)}
+				b.ReportAllocs()
+				b.StartTimer()
+				for range b.N {
+					var err error
+					if exhaustive {
+						_, err = reader.ListMetadataWithOptions(context.Background(), store, "sessions", filter, reader.ListOptions{})
+					} else {
+						_, err = reader.SelectMetadata(context.Background(), store, "sessions", reader.MetadataQuery{Filter: filter}, reader.ListOptions{})
+					}
+					if err != nil {
+						b.Fatal(err)
+					}
+				}
+				b.StopTimer()
+				storagetest.ReportReadMetrics(b, store.Metrics())
+			})
 		}
 	}
 }
