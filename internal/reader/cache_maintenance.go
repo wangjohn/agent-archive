@@ -18,6 +18,7 @@ type CacheMaintenance struct {
 }
 
 const maintenanceFile = ".maintenance"
+
 const cacheMaintenanceDirectoryBudget = 64
 
 func (c *MetadataCache) directoryEntries(dir string) ([]os.DirEntry, error) {

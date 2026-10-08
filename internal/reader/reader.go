@@ -72,15 +72,15 @@ const (
 // says what to do with sessions a replay tool ran; its zero value includes
 // them, so only a caller that asks hides them.
 type Filter struct {
-	Harness                 string
-	Model                   string
-	Skill                   string
-	SkillSHA256             string
-	From                    time.Time
-	To                      time.Time
-	RequireCompleteCoverage bool
-	SkillUsage              SkillUsage
-	Replays                 ReplayFilter
+	Harness                 string       `json:"Harness"`
+	Model                   string       `json:"Model"`
+	Skill                   string       `json:"Skill"`
+	SkillSHA256             string       `json:"SkillSHA256"`
+	From                    time.Time    `json:"From"`
+	To                      time.Time    `json:"To"`
+	RequireCompleteCoverage bool         `json:"RequireCompleteCoverage"`
+	SkillUsage              SkillUsage   `json:"SkillUsage"`
+	Replays                 ReplayFilter `json:"Replays"`
 }
 
 // ReplayFilter selects by whether a session is a replay (archive.Replay).

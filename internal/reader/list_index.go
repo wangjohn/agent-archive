@@ -57,10 +57,10 @@ const (
 // MetadataQuery selects metadata from fresh headers before downloading bodies.
 // A nonpositive Limit selects every matching session.
 type MetadataQuery struct {
-	Filter       Filter
-	Limit        int
-	Order        QueryOrder
-	TopLevelOnly bool
+	Filter       Filter     `json:"Filter"`
+	Limit        int        `json:"Limit"`
+	Order        QueryOrder `json:"Order"`
+	TopLevelOnly bool       `json:"TopLevelOnly"`
 }
 
 // SelectMetadata proves discovery coverage and supports unlimited date queries.
