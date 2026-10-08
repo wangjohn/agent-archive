@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"math"
 	"sort"
 	"strings"
 
@@ -146,8 +147,8 @@ func selectCatalogMetadata(ctx context.Context, store storage.ObjectStore, prefi
 	for _, revision := range selected {
 		rows = append(rows, byKey[revision.MetadataKey])
 	}
-	result.Sessions, err = hydrateCatalogRows(ctx, snapshot, rows, opts)
-	return result, err
+	sessions, err := hydrateCatalogRows(ctx, snapshot, rows, opts)
+	return RecentResult{Complete: true, TotalMatched: matched, Children: children, Hidden: hiddenTotal, Sessions: sessions}, err
 }
 
 // CatalogSummaries discovers the complete fresh catalog summary universe.
@@ -211,7 +212,7 @@ func (c *SQLiteSessionCatalog) RefreshRemote(ctx context.Context) error {
 	}
 	var raw []byte
 	err = tx.QueryRowContext(ctx, "SELECT root FROM remote_root WHERE id=1").Scan(&raw)
-	if err != nil && err != sql.ErrNoRows {
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
 	var prior catalog.ObjectRef
@@ -222,29 +223,7 @@ func (c *SQLiteSessionCatalog) RefreshRemote(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	// Validate the complete persisted tuple before reusing unchanged leaves.
-	// Missing local rows require a complete verified summary rebuild as well.
-	rows, err := tx.QueryContext(ctx, "SELECT key,etag,hash,capture,activity,summary,search,lowerid,unlabeled,summary_hash FROM sessions")
-	if err != nil {
-		return err
-	}
-	var invalid []string
-	cachedKeys := map[string]bool{}
-	for rows.Next() {
-		var record catalogRecord
-		if err = record.scan(rows); err != nil {
-			_ = rows.Close()
-			return err
-		}
-		cachedKeys[record.key] = true
-		if !record.valid() {
-			invalid = append(invalid, record.key)
-		}
-	}
-	err = rows.Err()
-	if closeErr := rows.Close(); err == nil {
-		err = closeErr
-	}
+	cachedKeys, invalid, err := remoteCachedRows(ctx, tx)
 	if err != nil {
 		return err
 	}
@@ -252,32 +231,9 @@ func (c *SQLiteSessionCatalog) RefreshRemote(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if !delta.Rebuild {
-		for _, key := range invalid {
-			entry, e := snapshot.Find(ctx, key)
-			if e != nil {
-				return e
-			}
-			if entry == nil {
-				delta.Removed = append(delta.Removed, key)
-			} else {
-				delta.Changed = append(delta.Changed, catalog.Row{Key: key, Entry: *entry})
-			}
-		}
-	}
-	if !delta.Rebuild {
-		for _, key := range delta.Removed {
-			delete(cachedKeys, key)
-		}
-		for _, row := range delta.Changed {
-			cachedKeys[row.Key] = true
-		}
-		if uint64(len(cachedKeys)) != expected {
-			delta, err = snapshot.Delta(ctx, catalog.ObjectRef{})
-			if err != nil {
-				return err
-			}
-		}
+	delta, err = reconcileRemoteDelta(ctx, snapshot, delta, cachedKeys, invalid, expected)
+	if err != nil {
+		return err
 	}
 	if delta.Rebuild {
 		if _, err = tx.ExecContext(ctx, "DELETE FROM sessions"); err != nil {
@@ -391,7 +347,12 @@ func selectBoundedCatalog(ctx context.Context, snapshot *catalog.Snapshot, q Met
 	if err != nil {
 		return RecentResult{}, err
 	}
-	result := RecentResult{Complete: true, TotalMatched: int(total), Children: map[string]int{}}
+	matched, err := catalogCountInt(total)
+	if err != nil {
+		return RecentResult{}, err
+	}
+	children := map[string]int{}
+	hiddenTotal := 0
 	var rows []catalog.Row
 	cursor := ""
 	for len(rows) < q.Limit || q.Limit <= 0 {
@@ -422,7 +383,10 @@ func selectBoundedCatalog(ctx context.Context, snapshot *catalog.Snapshot, q Met
 		if e != nil {
 			return RecentResult{}, e
 		}
-		result.Hidden = int(hidden)
+		hiddenTotal, err = catalogCountInt(hidden)
+		if err != nil {
+			return RecentResult{}, err
+		}
 		for _, row := range rows {
 			m := row.Entry.Summary
 			count := row.Entry.OrdinaryChildren
@@ -430,10 +394,72 @@ func selectBoundedCatalog(ctx context.Context, snapshot *catalog.Snapshot, q Met
 				count = row.Entry.ReplayChildren
 			}
 			if count > 0 {
-				result.Children[m.Harness.Name+"/"+m.SessionID] = int(count)
+				converted, e := catalogCountInt(count)
+				if e != nil {
+					return RecentResult{}, e
+				}
+				children[m.Harness.Name+"/"+m.SessionID] = converted
 			}
 		}
 	}
-	result.Sessions, err = hydrateCatalogRows(ctx, snapshot, rows, opts)
-	return result, err
+	sessions, err := hydrateCatalogRows(ctx, snapshot, rows, opts)
+	return RecentResult{Complete: true, TotalMatched: matched, Children: children, Hidden: hiddenTotal, Sessions: sessions}, err
+}
+
+func remoteCachedRows(ctx context.Context, tx *sql.Tx) (cachedKeys map[string]bool, invalid []string, err error) {
+	rows, err := tx.QueryContext(ctx, "SELECT key,etag,hash,capture,activity,summary,search,lowerid,unlabeled,summary_hash FROM sessions")
+	if err != nil {
+		return nil, nil, err
+	}
+	defer func() {
+		if closeErr := rows.Close(); err == nil {
+			err = closeErr
+		}
+	}()
+	cachedKeys = map[string]bool{}
+	for rows.Next() {
+		var record catalogRecord
+		if err = record.scan(rows); err != nil {
+			return nil, nil, err
+		}
+		cachedKeys[record.key] = true
+		if !record.valid() {
+			invalid = append(invalid, record.key)
+		}
+	}
+	return cachedKeys, invalid, rows.Err()
+}
+
+func reconcileRemoteDelta(ctx context.Context, snapshot *catalog.Snapshot, delta catalog.Delta, cachedKeys map[string]bool, invalid []string, expected uint64) (catalog.Delta, error) {
+	if delta.Rebuild {
+		return delta, nil
+	}
+	for _, key := range invalid {
+		entry, err := snapshot.Find(ctx, key)
+		if err != nil {
+			return delta, err
+		}
+		if entry == nil {
+			delta.Removed = append(delta.Removed, key)
+		} else {
+			delta.Changed = append(delta.Changed, catalog.Row{Key: key, Entry: *entry})
+		}
+	}
+	for _, key := range delta.Removed {
+		delete(cachedKeys, key)
+	}
+	for _, row := range delta.Changed {
+		cachedKeys[row.Key] = true
+	}
+	if uint64(len(cachedKeys)) != expected {
+		return snapshot.Delta(ctx, catalog.ObjectRef{})
+	}
+	return delta, nil
+}
+
+func catalogCountInt(count uint64) (int, error) {
+	if count > uint64(math.MaxInt) {
+		return 0, errors.New("catalog count exceeds local integer capacity")
+	}
+	return int(count), nil
 }

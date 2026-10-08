@@ -836,6 +836,7 @@ func (s *writerReadBreakdown) GetCatalogVersion(ctx context.Context, key string,
 	}
 	return s.MeasuredStore.GetCatalogVersion(ctx, key, limit)
 }
+
 func (s *writerReadBreakdown) PutConditional(ctx context.Context, key string, raw []byte, condition storage.PutCondition) (string, error) {
 	if strings.HasPrefix(key, "catalog-v4/nodes/") || strings.HasPrefix(key, "catalog-v4/heads/") || strings.HasPrefix(key, "catalog-v4/metadata/") {
 		s.immutablePuts++

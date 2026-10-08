@@ -3,6 +3,7 @@ package catalog
 import (
 	"context"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -633,6 +634,9 @@ func TestPublicAdapterCASAndReadonlyMeasuredWriterRefuseMutation(t *testing.T) {
 	}
 	ctx := WithReadView(t.Context())
 	snapshot, err := OpenSnapshot(ctx, measured, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	entry, err := snapshot.Find(t.Context(), m.SessionKey)
 	if err != nil || entry == nil {
 		t.Fatal("measured snapshot lost reads", err)
@@ -766,4 +770,8 @@ func TestNodeCountRejectsOverflowBeforeAggregateReuse(t *testing.T) {
 	if _, err = decodeNode(raw); err == nil {
 		t.Fatal("wrapped aggregate accepted")
 	}
+}
+
+func fixtureProjectPrefix(project string) string {
+	return "project/" + hex.EncodeToString([]byte(project)) + "/"
 }

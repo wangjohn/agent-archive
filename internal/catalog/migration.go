@@ -22,8 +22,10 @@ const MigrationKey = "catalog-v4/migrations/current.json"
 // source read-only policy and all participating writers' protocol version.
 // This cannot be supplied by flags or by a local process/home inventory.
 type CutoverProof struct {
-	ID, Source, Destination string
-	Protocol                uint64
+	ID          string
+	Source      string
+	Destination string
+	Protocol    uint64
 }
 
 // CutoverAuthority verifies actual destination policy and revoked old write
@@ -33,6 +35,18 @@ type CutoverAuthority interface {
 	VerifyCatalogCutover(context.Context, destination.Config, destination.Config) (CutoverProof, error)
 }
 
+// MigrationPhase names a durable migration checkpoint phase.
+type MigrationPhase string
+
+// Supported migration checkpoint phases.
+const (
+	MigrationCopying   MigrationPhase = "copying"
+	MigrationVerifying MigrationPhase = "verifying"
+	MigrationVerified  MigrationPhase = "verified"
+	MigrationActive    MigrationPhase = "active"
+	MigrationRollback  MigrationPhase = "rollback"
+)
+
 // CatalogMigration resumes bounded source pages under exact global ownership.
 // Original metadata and source/history bytes are preserved, including retention
 // timestamps. Activation and rollback are separate durable checkpoint phases.
@@ -41,7 +55,7 @@ type CutoverAuthority interface {
 type CatalogMigration struct {
 	Source       destination.Config `json:"source"`
 	Destination  destination.Config `json:"destination"`
-	Phase        string             `json:"phase"`
+	Phase        MigrationPhase     `json:"phase"`
 	Cursor       string             `json:"cursor"`
 	ExpectedHead string             `json:"expected_head"`
 	Owner        string             `json:"owner"`
@@ -163,7 +177,7 @@ func OpenMigration(ctx context.Context, source, target storage.ObjectStore, sour
 	m.State.Owner = owner
 	m.State.ID = id
 	m.State.Proof = proof.ID
-	m.State.Phase = "copying"
+	m.State.Phase = MigrationCopying
 	if err = m.save(ctx); err != nil {
 		return nil, err
 	}
@@ -274,12 +288,12 @@ func (m *Migration) copyMetadata(ctx context.Context, obj storage.Object) error 
 // preserved history and immutable metadata has been verified and committed.
 // Retrying a crashed page uses frozen receipts and cannot double-publish.
 func (m *Migration) Step(ctx context.Context) (bool, error) {
-	if m.State.Phase == "verifying" {
+	if m.State.Phase == MigrationVerifying {
 		err := m.Verify(ctx)
 		return err == nil, err
 	}
-	if m.State.Phase != "copying" {
-		return m.State.Phase == "verified" || m.State.Phase == "active", nil
+	if m.State.Phase != MigrationCopying {
+		return m.State.Phase == MigrationVerified || m.State.Phase == MigrationActive, nil
 	}
 	if err := m.held(ctx); err != nil {
 		return false, err
@@ -316,7 +330,7 @@ func (m *Migration) Step(ctx context.Context) (bool, error) {
 	m.State.ExpectedHead = etag
 	m.State.Cursor = page.Next
 	if page.Next == "" {
-		m.State.Phase = "verifying"
+		m.State.Phase = MigrationVerifying
 	}
 	if err = m.save(ctx); err != nil {
 		return false, err
@@ -333,7 +347,7 @@ func (m *Migration) Step(ctx context.Context) (bool, error) {
 // and hashes every source/history object on both sides. No LIST coverage hint
 // or successful batch checkpoint is treated as exhaustive completeness proof.
 func (m *Migration) Verify(ctx context.Context) error {
-	if m.State.Phase != "verifying" && m.State.Phase != "verified" {
+	if m.State.Phase != MigrationVerifying && m.State.Phase != MigrationVerified {
 		return errors.New("migration is not ready for exhaustive verification")
 	}
 	if err := m.held(ctx); err != nil {
@@ -419,7 +433,7 @@ func (m *Migration) Verify(ctx context.Context) error {
 	}
 	m.State.ExpectedHead = etag
 	m.State.VerifiedRoot = snapshot.Root()
-	m.State.Phase = "verified"
+	m.State.Phase = MigrationVerified
 	return m.save(ctx)
 }
 
@@ -443,7 +457,7 @@ func migrationRows(ctx context.Context, snapshot *Snapshot) ([]Row, error) {
 // making readers visible. Admission stays sealed until local configuration is
 // durably switched and FinishActivation acknowledges that step.
 func (m *Migration) Activate(ctx context.Context) error {
-	if m.State.Phase == "active" {
+	if m.State.Phase == MigrationActive {
 		state, _, err := m.writer.Coordinator().read(ctx)
 		if err != nil {
 			return err
@@ -452,7 +466,7 @@ func (m *Migration) Activate(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if proof.ID != m.State.Proof || state.Mode != "active" || state.Proof != m.State.Proof {
+		if proof.ID != m.State.Proof || state.Mode != admissionActive || state.Proof != m.State.Proof {
 			return ErrAdmissionClosed
 		}
 		if state.Seal == "" {
@@ -466,20 +480,20 @@ func (m *Migration) Activate(ctx context.Context) error {
 	if err := m.writer.Coordinator().Activate(ctx, m.State.Owner, m.State.Proof); err != nil {
 		return err
 	}
-	m.State.Phase = "active"
+	m.State.Phase = MigrationActive
 	return m.save(ctx)
 }
 
 // FinishActivation releases the global writer seal after configuration cutover.
 func (m *Migration) FinishActivation(ctx context.Context) error {
-	if m.State.Phase != "active" {
+	if m.State.Phase != MigrationActive {
 		return errors.New("migration is not active")
 	}
 	state, _, err := m.writer.Coordinator().read(ctx)
 	if err != nil {
 		return err
 	}
-	if state.Seal == "" && state.Mode == "active" && state.Proof == m.State.Proof {
+	if state.Seal == "" && state.Mode == admissionActive && state.Proof == m.State.Proof {
 		return nil
 	}
 	return m.writer.Coordinator().Release(ctx, m.State.Owner)
@@ -489,7 +503,7 @@ func (m *Migration) FinishActivation(ctx context.Context) error {
 // read-only, so rollback cannot discard newer publications or reenable legacy
 // writes. Configuration rollback is allowed only under this exact-root gate.
 func (m *Migration) Rollback(ctx context.Context) error {
-	if m.State.Phase != "active" {
+	if m.State.Phase != MigrationActive {
 		return errors.New("only active migration can roll back")
 	}
 	owner, err := m.writer.Coordinator().Seal(ctx)
@@ -513,7 +527,7 @@ func (m *Migration) Rollback(ctx context.Context) error {
 	if err = m.writer.Coordinator().Deactivate(ctx, owner); err != nil {
 		return err
 	}
-	m.State.Phase = "rollback"
+	m.State.Phase = MigrationRollback
 	return m.save(ctx)
 }
 
@@ -551,8 +565,8 @@ func (state CatalogMigration) validate() error {
 		return invalid
 	}
 	switch state.Phase {
-	case "copying":
-	case "verifying", "verified", "active", "rollback":
+	case MigrationCopying:
+	case MigrationVerifying, MigrationVerified, MigrationActive, MigrationRollback:
 		if state.Cursor != "" || state.ExpectedHead == "" {
 			return invalid
 		}
@@ -562,7 +576,7 @@ func (state CatalogMigration) validate() error {
 	if state.VerifiedRoot != (ObjectRef{}) && state.VerifiedRoot.validate() != nil {
 		return invalid
 	}
-	if (state.Phase == "verified" || state.Phase == "active" || state.Phase == "rollback") && state.Copied > 0 && state.VerifiedRoot == (ObjectRef{}) {
+	if (state.Phase == MigrationVerified || state.Phase == MigrationActive || state.Phase == MigrationRollback) && state.Copied > 0 && state.VerifiedRoot == (ObjectRef{}) {
 		return invalid
 	}
 	return nil

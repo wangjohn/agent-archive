@@ -77,19 +77,7 @@ func runCatalogOperator(args []string, stdout, stderr io.Writer, env Env) int {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	if action == catalogProbe {
-		target, err := catalogProbeTarget(cfg, bucket, prefix, isolated)
-		if err != nil {
-			return catalogOperatorError(stderr, err)
-		}
-		remote, err := env.openStoreContext(ctx, target)
-		if err != nil {
-			return catalogOperatorError(stderr, err)
-		}
-		if err = storage.ProbeConditionalSemantics(ctx, remote); err != nil {
-			return catalogOperatorError(stderr, err)
-		}
-		terminal.Println(stdout, "Atomic conditional-write observation passed; provider clock and release qualification remain unproven. No destination was activated.")
-		return 0
+		return runCatalogProbe(ctx, cfg, bucket, prefix, isolated, stdout, stderr, env)
 	}
 	if cfg.Storage.EffectiveArchiveFormat() != destination.FormatCatalogV4 {
 		return catalogOperatorError(stderr, errors.New("catalog maintenance requires a catalog-v4 destination"))
@@ -156,4 +144,20 @@ func catalogProbeTarget(cfg config.Config, bucket, prefix string, isolated bool)
 func catalogOperatorError(stderr io.Writer, err error) int {
 	terminal.Printf(stderr, "agent-archive: _catalog: %v\n", err)
 	return 1
+}
+
+func runCatalogProbe(ctx context.Context, cfg config.Config, bucket, prefix string, isolated bool, stdout, stderr io.Writer, env Env) int {
+	target, err := catalogProbeTarget(cfg, bucket, prefix, isolated)
+	if err != nil {
+		return catalogOperatorError(stderr, err)
+	}
+	remote, err := env.openStoreContext(ctx, target)
+	if err != nil {
+		return catalogOperatorError(stderr, err)
+	}
+	if err = storage.ProbeConditionalSemantics(ctx, remote); err != nil {
+		return catalogOperatorError(stderr, err)
+	}
+	terminal.Println(stdout, "Atomic conditional-write observation passed; provider clock and release qualification remain unproven. No destination was activated.")
+	return 0
 }

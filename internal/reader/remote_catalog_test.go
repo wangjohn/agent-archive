@@ -31,13 +31,7 @@ func remoteReaderFixture(t *testing.T, count int) (*catalog.Store, *storagetest.
 		source := []byte("synthetic source " + id)
 		sha := storage.SHA256Hex(source)
 		sourceKey := "sessions/claude/" + id + "/source." + sha + ".jsonl.gz"
-		m := archive.Metadata{SchemaVersion: 1, SessionID: id, Harness: archive.Harness{Name: "claude"}, ProjectID: "project", Title: "Résumé #212", CapturedAt: baseTime.Add(time.Duration(i) * time.Minute), SourceBundle: archive.SourceReference{Key: sourceKey, SHA256: sha, CompressedBytes: len(source)}}
-		if i%4 == 0 {
-			m.ParentSessionID = "session-0001"
-		}
-		if i%7 == 0 {
-			m.Replay = &archive.Replay{}
-		}
+		m := archive.Metadata{SchemaVersion: 1, SessionID: id, ParentSessionID: fixtureRemoteParent(i), Replay: fixtureRemoteReplay(i), Harness: archive.Harness{Name: "claude"}, ProjectID: "project", Title: "Résumé #212", CapturedAt: baseTime.Add(time.Duration(i) * time.Minute), SourceBundle: archive.SourceReference{Key: sourceKey, SHA256: sha, CompressedBytes: len(source)}}
 		data, err := json.Marshal(m)
 		if err != nil {
 			t.Fatal(err)
@@ -175,7 +169,7 @@ func TestRemoteRefreshRepairsTupleDamageAndMissingRows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	if err = c.RefreshRemote(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -200,5 +194,64 @@ func TestRemoteRefreshRepairsTupleDamageAndMissingRows(t *testing.T) {
 				t.Fatal("unverified row survived")
 			}
 		}
+	}
+}
+
+func fixtureRemoteParent(i int) string {
+	if i%4 == 0 {
+		return "session-0001"
+	}
+	return ""
+}
+func fixtureRemoteReplay(i int) *archive.Replay {
+	if i%7 == 0 {
+		return &archive.Replay{}
+	}
+	return nil
+}
+func TestCatalogCountIntRejectsOverflow(t *testing.T) {
+	if _, err := catalogCountInt(^uint64(0)); err == nil {
+		t.Fatal("count wrapped local integer")
+	}
+	if got, err := catalogCountInt(50); err != nil || got != 50 {
+		t.Fatal(got, err)
+	}
+}
+
+func TestRemoteAuthenticatedCountOverflowRefusesSelection(t *testing.T) {
+	remote, _ := remoteReaderFixture(t, 2)
+	head, etag, err := remote.Writer.Head(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	maximum := uint64(^uint(0) >> 1)
+	// Hash-valid parent aggregate received from a provider may exceed a local int.
+	// Count must reject it before selected metadata or partial output is exposed.
+	raw, err := json.Marshal(map[string]any{"Count": maximum + 2, "children": []map[string]any{
+		{"Max": "0", "Ref": head.Capture, "Count": uint64(1)},
+		{"Max": "9", "Ref": head.Capture, "Count": maximum + 1},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	head.Capture, err = remote.Writer.PutImmutable(t.Context(), catalog.KindNodes, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := remote.ObjectStore.(storage.ConditionalPutter)
+	if _, err = provider.PutConditional(t.Context(), catalog.HeadKey, encoded, storage.PutCondition{MatchETag: etag}); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := catalog.OpenSnapshot(t.Context(), remote, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := selectBoundedCatalog(t.Context(), snapshot, MetadataQuery{Order: CaptureOrder, Limit: 50, Filter: Filter{Replays: ReplaysIncluded}}, ListOptions{})
+	if err == nil || !strings.Contains(err.Error(), "integer capacity") || len(result.Sessions) != 0 {
+		t.Fatal("oversized authenticated count exposed selection", err)
 	}
 }

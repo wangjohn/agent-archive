@@ -121,11 +121,11 @@ const (
 
 func (s *sessionScan) id() string { return s.reg.ArchiveSessionID }
 
-func (s *sessionScan) run() (sessionOutcome, error) {
+func (s *sessionScan) run(ctx context.Context) (sessionOutcome, error) {
 	if err := s.recoverReferenceAuthority(); err != nil {
 		return outcomeSkipped, err
 	}
-	if outcome, handled, err := s.prepareRetainedHistoryWork(); handled || err != nil {
+	if outcome, handled, err := s.prepareRetainedHistoryWork(ctx); handled || err != nil {
 		return outcome, err
 	}
 	if err := s.checkRetainedHistory(); err != nil {
@@ -213,7 +213,7 @@ func (s *sessionScan) resume() (outcome sessionOutcome, handled bool, err error)
 		return regenerateMetadata(s)
 	}
 	if pending.History != nil {
-		outcome, err := s.resumeHistory(pending)
+		outcome, err := s.resumeHistory(s.ctx, pending)
 		return outcome, true, err
 	}
 	if pendingSkillMode(pending.SkillEvidence) != s.opts.skillEvidence() {
@@ -245,7 +245,7 @@ func (s *sessionScan) resume() (outcome sessionOutcome, handled bool, err error)
 		s.readyAt = pending.ReadyAt
 		return outcomeRateLimited, true, nil
 	}
-	outcome, err = s.publishPending(pending)
+	outcome, err = s.publishPending(s.ctx, pending)
 	return outcome, true, err
 }
 
@@ -654,7 +654,7 @@ func (s *sessionScan) publish(read sourceRead, candidate archive.SourceBundle) (
 		return outcomeSkipped, fmt.Errorf("persist pending publication: %w", err)
 	}
 	if pending.History != nil {
-		outcome, err := s.resumeHistory(pending)
+		outcome, err := s.resumeHistory(s.ctx, pending)
 		if err != nil || outcome != outcomePublished {
 			return outcome, err
 		}
@@ -667,7 +667,7 @@ func (s *sessionScan) publish(read sourceRead, candidate archive.SourceBundle) (
 		s.readyAt = readyAt
 		return outcomeRateLimited, nil
 	}
-	outcome, err := s.publishPending(pending)
+	outcome, err := s.publishPending(s.ctx, pending)
 	if err != nil || outcome != outcomePublished {
 		return outcome, err
 	}

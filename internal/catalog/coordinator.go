@@ -23,9 +23,17 @@ type admission struct {
 	Refs   []ObjectRef `json:"refs"`
 }
 
+type admissionMode string
+
+const (
+	admissionCandidate admissionMode = "candidate"
+	admissionActive    admissionMode = "active"
+	admissionRollback  admissionMode = "rollback"
+)
+
 type admissions struct {
 	Protocol   uint64               `json:"protocol"`
-	Mode       string               `json:"mode"`
+	Mode       admissionMode        `json:"mode"`
 	Proof      string               `json:"proof"`
 	Generation uint64               `json:"generation"`
 	Seal       string               `json:"seal"`
@@ -46,7 +54,7 @@ func (w *Writer) Coordinator() *Coordinator { return &Coordinator{writer: w} }
 func (c *Coordinator) read(ctx context.Context) (admissions, string, error) {
 	raw, v, err := c.writer.versioned.GetCatalogVersion(ctx, CoordinatorKey, 4<<20)
 	if errors.Is(err, storage.ErrNotFound) {
-		return admissions{Protocol: 9, Mode: "candidate", Owners: map[string]admission{}}, "", nil
+		return admissions{Protocol: 9, Mode: admissionCandidate, Owners: map[string]admission{}}, "", nil
 	}
 	if err != nil {
 		return admissions{}, "", err
@@ -335,7 +343,7 @@ func (c *Coordinator) Activate(ctx context.Context, owner, proof string) error {
 		if state.Seal != owner || len(state.Owners) != 0 || state.Hold != "" {
 			return ErrAdmissionClosed
 		}
-		state.Mode = "active"
+		state.Mode = admissionActive
 		state.Proof = proof
 		return nil
 	})
@@ -349,7 +357,7 @@ func (c *Coordinator) Active(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if state.Mode != "active" || state.Proof == "" {
+	if state.Mode != admissionActive || state.Proof == "" {
 		return errors.New("catalog migration is not activated")
 	}
 	return nil
@@ -361,7 +369,7 @@ func (c *Coordinator) Deactivate(ctx context.Context, owner string) error {
 		if state.Seal != owner || len(state.Owners) != 0 || state.Hold != "" {
 			return ErrAdmissionClosed
 		}
-		state.Mode = "rollback"
+		state.Mode = admissionRollback
 		return nil
 	})
 }

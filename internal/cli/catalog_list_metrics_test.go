@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -40,10 +41,12 @@ func (s *catalogListReads) record(key string) {
 	s.paths[kind]++
 	s.mu.Unlock()
 }
+
 func (s *catalogListReads) GetLimited(ctx context.Context, key string, limit int64) ([]byte, error) {
 	s.record(key)
 	return s.MeasuredStore.GetLimited(ctx, key, limit)
 }
+
 func (s *catalogListReads) GetCatalogVersion(ctx context.Context, key string, limit int64) ([]byte, storage.CatalogObjectVersion, error) {
 	s.record(key)
 	return s.MeasuredStore.GetCatalogVersion(ctx, key, limit)
@@ -51,7 +54,7 @@ func (s *catalogListReads) GetCatalogVersion(ctx context.Context, key string, li
 
 func TestRealCLICatalogDefaultList50Bounded(t *testing.T) {
 	for _, size := range []int{128, 512} {
-		t.Run(fmt.Sprint(size), func(t *testing.T) {
+		t.Run(strconv.Itoa(size), func(t *testing.T) {
 			a := newScopedArchive(t)
 			for i := range size {
 				m := a.base

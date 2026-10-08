@@ -3,15 +3,19 @@ package catalog
 import (
 	"context"
 	"errors"
+	"slices"
 
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
 type publicationClaimKey struct{}
+
 type publicationClaim struct {
-	store             *Store
-	id, owner, digest string
-	refs              []ObjectRef
+	store  *Store
+	id     string
+	owner  string
+	digest string
+	refs   []ObjectRef
 }
 
 // Caller holds pendingMu through its complete subordinate operation so End
@@ -48,14 +52,7 @@ func (s *Store) putClaimedSource(ctx context.Context, key string, raw []byte) er
 		return err
 	}
 	ref := ObjectRef{key, storage.SHA256Hex(raw)}
-	allowed := false
-	for _, protected := range claim.refs {
-		if protected == ref {
-			allowed = true
-			break
-		}
-	}
-	if !allowed {
+	if !slices.Contains(claim.refs, ref) {
 		return errors.New("source is outside frozen publication admission")
 	}
 	_, err = s.Writer.conditional.PutConditional(ctx, key, raw, storage.PutCondition{CreateOnly: true})

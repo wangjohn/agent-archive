@@ -311,7 +311,7 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 		if p.opts.AcceptSession != nil && !p.opts.AcceptSession(reg) {
 			continue
 		}
-		p.scan(reg)
+		p.scan(ctx, reg)
 	}
 	return p.result, p.saveStatus()
 }
@@ -456,7 +456,7 @@ func (p *pass) fail(id string, err error) {
 
 // scan gives one session its turn in the pass: skip it if nothing about it
 // changed, otherwise scan it (sessionScan.run) and account for the outcome.
-func (p *pass) scan(reg archive.SessionRegistration) {
+func (p *pass) scan(ctx context.Context, reg archive.SessionRegistration) {
 	priorLocal := p.local
 	scopedLocal, closeLocal := p.local.WithReadBudget(p.ctx, (&sessionScan{opts: p.opts}).readBudget())
 	p.local = scopedLocal
@@ -495,7 +495,7 @@ func (p *pass) scan(reg archive.SessionRegistration) {
 	}
 	scan := newSessionScan(p.ctx, p.local, p.remote, reg, req, published, p.now, p.opts)
 	defer scan.releaseRetained()
-	outcome, err := scan.run()
+	outcome, err := scan.run(ctx)
 	for _, warning := range scan.warnings {
 		addError(p.result.Errors, id, warning)
 	}

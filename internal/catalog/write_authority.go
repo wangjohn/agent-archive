@@ -3,9 +3,12 @@ package catalog
 import "context"
 
 type writeAuthorityKey struct{}
+
 type writeAuthority struct {
-	writer              *Writer
-	owner, digest, seal string
+	writer *Writer
+	owner  string
+	digest string
+	seal   string
 }
 
 // Private helpers still check actual durable lifecycle or migration ownership;

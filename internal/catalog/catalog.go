@@ -323,11 +323,6 @@ func ChildPrefix(harness, parent string, replay bool) string {
 	return "!child/" + hex.EncodeToString([]byte(harness+"/"+parent)) + "/" + kind
 }
 
-// ProjectPrefix addresses an exact project without namespace collisions.
-func ProjectPrefix(project string) string {
-	return "project/" + hex.EncodeToString([]byte(project)) + "/"
-}
-
 func descendingIdentity(key string) string {
 	b := []byte(key)
 	for i := range b {

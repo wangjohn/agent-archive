@@ -72,10 +72,10 @@ func (s *sessionScan) block(reason state.BlockedReason, candidate *archive.Sourc
 // bytes, a check of the recorded source then metadata), the superseded
 // source in the ledger, the new published state, the covered request, and
 // finally the removal of the pending file.
-func (s *sessionScan) publishPending(pending state.PendingPublication) (sessionOutcome, error) {
+func (s *sessionScan) publishPending(ctx context.Context, pending state.PendingPublication) (sessionOutcome, error) {
 	if remote, ok := s.remote.(storage.CatalogPublisher); ok && remote.CatalogMetadataAuthority() {
 		if pending.Catalog == nil {
-			id, revision, err := remote.FreezeCatalogMutation(s.ctx, pending.MetadataKey)
+			id, revision, err := remote.FreezeCatalogMutation(ctx, pending.MetadataKey)
 			if err != nil {
 				return outcomeSkipped, err
 			}
@@ -89,7 +89,7 @@ func (s *sessionScan) publishPending(pending state.PendingPublication) (sessionO
 	}
 
 	if remote, ok := s.remote.(storage.CatalogLifecycle); ok && pending.Catalog != nil {
-		admittedCtx, err := remote.BeginPublication(s.ctx, pending.Catalog.ID, pending.MetadataBytes)
+		admittedCtx, err := remote.BeginPublication(ctx, pending.Catalog.ID, pending.MetadataBytes)
 		if err != nil {
 			return outcomeSkipped, err
 		}

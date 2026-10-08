@@ -11,9 +11,26 @@ import (
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
+type gcTestScenario string
+
+const (
+	gcTestBeforeLease      gcTestScenario = "before-lease"
+	gcTestAfterLease       gcTestScenario = "after-lease"
+	gcTestBeforeRelease    gcTestScenario = "before-release"
+	gcTestAfterRelease     gcTestScenario = "after-release"
+	gcTestAfterHoldRelease gcTestScenario = "after-hold-release"
+	gcTestGeneration       gcTestScenario = "generation"
+	gcTestInventory        gcTestScenario = "inventory"
+	gcTestReleasedBytes    gcTestScenario = "released-bytes"
+	gcTestForeignHead      gcTestScenario = "foreign-head"
+	gcTestUncertain        gcTestScenario = "uncertain"
+	gcTestRegressing       gcTestScenario = "regressing"
+	gcTestPrecision        gcTestScenario = "precision"
+)
+
 type gcCrashStore struct {
 	*qualifiedStore
-	fault string
+	fault gcTestScenario
 	fired bool
 }
 
@@ -26,16 +43,16 @@ func (s *gcCrashStore) PutConditional(ctx context.Context, key string, raw []byt
 			if err := json.Unmarshal(raw, &head); err != nil {
 				return "", err
 			}
-			if head.GCLease != "" && (s.fault == "before-lease" || s.fault == "after-lease") {
+			if head.GCLease != "" && (s.fault == gcTestBeforeLease || s.fault == gcTestAfterLease) {
 				fail = true
-				after = s.fault == "after-lease"
+				after = s.fault == gcTestAfterLease
 			}
-			if head.GCLease == "" && (s.fault == "before-release" || s.fault == "after-release") {
+			if head.GCLease == "" && (s.fault == gcTestBeforeRelease || s.fault == gcTestAfterRelease) {
 				fail = true
-				after = s.fault == "after-release"
+				after = s.fault == gcTestAfterRelease
 			}
 		}
-		if key == CoordinatorKey && s.fault == "after-hold-release" {
+		if key == CoordinatorKey && s.fault == gcTestAfterHoldRelease {
 			var state admissions
 			if err := json.Unmarshal(raw, &state); err != nil {
 				return "", err
@@ -60,8 +77,8 @@ func (s *gcCrashStore) PutConditional(ctx context.Context, key string, raw []byt
 }
 
 func TestGCRecoveryPhasesKeepExactDurableAuthority(t *testing.T) {
-	for _, phase := range []string{"before-lease", "after-lease", "before-release", "after-release", "after-hold-release"} {
-		t.Run(phase, func(t *testing.T) {
+	for _, phase := range []gcTestScenario{gcTestBeforeLease, gcTestAfterLease, gcTestBeforeRelease, gcTestAfterRelease, gcTestAfterHoldRelease} {
+		t.Run(string(phase), func(t *testing.T) {
 			raw := &gcCrashStore{qualifiedStore: &qualifiedStore{storagetest.NewMemoryStore()}}
 			w, err := New(raw)
 			if err != nil {
@@ -161,8 +178,8 @@ func TestUnleasedSealRecoveryRequiresExactOwnerGeneration(t *testing.T) {
 }
 
 func TestGCRecoveryRefusesForeignHeadAndDamagedDescriptor(t *testing.T) {
-	for _, damage := range []string{"foreign-head", "generation", "inventory", "released-bytes", "unknown-field"} {
-		t.Run(damage, func(t *testing.T) {
+	for _, damage := range []gcTestScenario{gcTestForeignHead, gcTestGeneration, gcTestInventory, gcTestReleasedBytes, "unknown-field"} {
+		t.Run(string(damage), func(t *testing.T) {
 			raw := &gcCrashStore{qualifiedStore: &qualifiedStore{storagetest.NewMemoryStore()}}
 			w, err := New(raw)
 			if err != nil {
@@ -172,7 +189,7 @@ func TestGCRecoveryRefusesForeignHeadAndDamagedDescriptor(t *testing.T) {
 			if _, err = w.Commit(t.Context(), m); err != nil {
 				t.Fatal(err)
 			}
-			raw.fault = "before-release"
+			raw.fault = gcTestBeforeRelease
 			if err = w.Collect(t.Context(), heldBarrier{}); err == nil {
 				t.Fatal("crash ignored")
 			}
@@ -181,7 +198,7 @@ func TestGCRecoveryRefusesForeignHeadAndDamagedDescriptor(t *testing.T) {
 				t.Fatal(err)
 			}
 			owner := state.GCLink.Owner
-			if damage == "foreign-head" {
+			if damage == gcTestForeignHead {
 				head, headETag, err := w.Head(t.Context())
 				if err != nil {
 					t.Fatal(err)
@@ -196,11 +213,11 @@ func TestGCRecoveryRefusesForeignHeadAndDamagedDescriptor(t *testing.T) {
 				}
 			} else {
 				switch damage {
-				case "generation":
+				case gcTestGeneration:
 					state.Generation++
-				case "inventory":
+				case gcTestInventory:
 					state.GCLink.Inventory = append(state.GCLink.Inventory, m.Next.Metadata)
-				case "released-bytes":
+				case gcTestReleasedBytes:
 					state.GCLink.ReleasedHead = []byte(`{"foreign":true}`)
 				}
 				body, err := json.Marshal(state)
@@ -238,8 +255,8 @@ func TestGCRecoveryRefusesForeignHeadAndDamagedDescriptor(t *testing.T) {
 }
 
 func TestCoordinatorMaintenanceClockRefusalPerformsNoWrites(t *testing.T) {
-	for _, mode := range []string{"uncertain", "regressing", "precision"} {
-		t.Run(mode, func(t *testing.T) {
+	for _, mode := range []gcTestScenario{gcTestUncertain, gcTestRegressing, gcTestPrecision} {
+		t.Run(string(mode), func(t *testing.T) {
 			raw := &clockFixture{qualifiedStore: &qualifiedStore{storagetest.NewMemoryStore()}}
 			w, err := New(raw)
 			if err != nil {
@@ -250,13 +267,13 @@ func TestCoordinatorMaintenanceClockRefusalPerformsNoWrites(t *testing.T) {
 				t.Fatal(err)
 			}
 			switch mode {
-			case "uncertain":
+			case gcTestUncertain:
 				raw.override = true
 				raw.clock = storage.CatalogTime{Earliest: time.Now().Add(-time.Hour), Latest: time.Now().Add(time.Hour)}
-			case "regressing":
+			case gcTestRegressing:
 				raw.override = true
 				raw.clock = storage.CatalogTime{Earliest: time.Now().Add(-time.Hour), Latest: time.Now().Add(-time.Hour)}
-			case "precision":
+			case gcTestPrecision:
 				raw.missingPrecision = true
 			}
 			store, err := Wrap(raw)

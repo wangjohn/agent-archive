@@ -20,6 +20,13 @@ type gcCompletion struct {
 	ReleasedSHA256 string `json:"released_sha256"`
 }
 
+type gcPhase string
+
+const (
+	gcPrepared  gcPhase = "prepared"
+	gcReleasing gcPhase = "releasing"
+)
+
 type gcLink struct {
 	Owner           string               `json:"owner"`
 	Witness         gcCoordinatorWitness `json:"witness"`
@@ -30,10 +37,11 @@ type gcLink struct {
 	LeasedSHA256    string               `json:"leased_sha256"`
 	ReleasedSHA256  string               `json:"released_sha256,omitempty"`
 	ReleasedHead    []byte               `json:"released_head,omitempty"`
-	Phase           string               `json:"phase"`
+	Phase           gcPhase              `json:"phase"`
 }
 
 func headHash(h CatalogHead) string { raw, _ := json.Marshal(h); return storage.SHA256Hex(raw) }
+
 func inventoryHash(refs []ObjectRef) string {
 	canonical := make([]ObjectRef, len(refs))
 	copy(canonical, refs)
@@ -55,7 +63,7 @@ func (w *Writer) bindGCLease(ctx context.Context, _ CatalogHead, etag string, le
 		}
 		witness := gcCoordinatorWitness{state.Generation, state.Seal, state.Hold, inventoryHash(inventory)}
 		leased.GCCoordinator = witness
-		state.GCLink = &gcLink{Owner: leased.GCLease, Witness: witness, StateGeneration: state.Generation + 1, Inventory: append([]ObjectRef(nil), inventory...), PriorETag: etag, PriorSHA256: priorHash, LeasedSHA256: headHash(*leased), Phase: "prepared"}
+		state.GCLink = &gcLink{Owner: leased.GCLease, Witness: witness, StateGeneration: state.Generation + 1, Inventory: append([]ObjectRef(nil), inventory...), PriorETag: etag, PriorSHA256: priorHash, LeasedSHA256: headHash(*leased), Phase: gcPrepared}
 		return nil
 	})
 }
@@ -116,7 +124,7 @@ func (w *Writer) bindGCRelease(ctx context.Context, h CatalogHead, owner string)
 		}
 		link.ReleasedHead = raw
 		link.ReleasedSHA256 = storage.SHA256Hex(raw)
-		link.Phase = "releasing"
+		link.Phase = gcReleasing
 		link.StateGeneration = state.Generation + 1
 		return nil
 	})
@@ -229,7 +237,7 @@ func (w *Writer) recoverLinkedGC(ctx context.Context, owner string) error {
 	if hash == link.LeasedSHA256 && (h.GCLease != owner || h.GCCoordinator != link.Witness) {
 		return ErrConflict
 	}
-	if hash != link.LeasedSHA256 && !(hash == link.PriorSHA256 && etag == link.PriorETag) {
+	if hash != link.LeasedSHA256 && (hash != link.PriorSHA256 || etag != link.PriorETag) {
 		return ErrConflict
 	}
 	raw, err := w.bindGCRelease(ctx, h, owner)
@@ -283,6 +291,7 @@ func (b completedCoordinator) Hold(ctx context.Context) ([]ObjectRef, func(), er
 	}
 	return nil, func() {}, nil
 }
+
 func (w *Writer) completedGC(ctx context.Context, owner string) error {
 	state, _, err := w.Coordinator().read(ctx)
 	if err != nil {

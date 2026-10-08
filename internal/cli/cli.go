@@ -582,20 +582,7 @@ Docs: https://github.com/wangjohn/agent-archive/tree/main/docs
 func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int {
 	stdin, stdout, stderr = defaultStreams(stdin, stdout, stderr)
 	if len(args) == 0 {
-		if !nonInteractiveSettingUsable(args, stderr, env) {
-			return 2
-		}
-		if browseInteractive(env, stdin, stdout) && !notSetUp(env) {
-			startTrace("list", stderr, env)
-			defer finishTraceNow()
-			return runListCommand(nil, stdin, stdout, stderr, env)
-		}
-		if notSetUp(env) {
-			terminal.Println(stdout, "Not set up yet — run agent-archive setup.")
-			terminal.Println(stdout)
-		}
-		terminal.Print(stdout, usage)
-		return 0
+		return runEmptyInvocation(args, stdin, stdout, stderr, env)
 	}
 	if err := pairingInvocationError(args, env); err != nil {
 		terminal.Println(stderr, err.Error())
@@ -683,3 +670,20 @@ func defaultStreams(stdin io.Reader, stdout, stderr io.Writer) (in io.Reader, ou
 }
 
 func (e Env) listBodyObserver() func(string, bool) { return e.observeListBody }
+
+func runEmptyInvocation(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int {
+	if !nonInteractiveSettingUsable(args, stderr, env) {
+		return 2
+	}
+	if browseInteractive(env, stdin, stdout) && !notSetUp(env) {
+		startTrace("list", stderr, env)
+		defer finishTraceNow()
+		return runListCommand(nil, stdin, stdout, stderr, env)
+	}
+	if notSetUp(env) {
+		terminal.Println(stdout, "Not set up yet — run agent-archive setup.")
+		terminal.Println(stdout)
+	}
+	terminal.Print(stdout, usage)
+	return 0
+}

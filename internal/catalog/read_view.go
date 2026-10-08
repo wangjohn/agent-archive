@@ -11,6 +11,7 @@ import (
 )
 
 type readViewKey struct{}
+
 type readView struct {
 	mu       sync.Mutex
 	started  time.Time

@@ -33,9 +33,10 @@ const (
 // No predicate is silently post-filtered: text, parent/root, replay and combined
 // filters belong to a complete summary fallback above this API.
 type Query struct {
-	Index        Index
-	Lower, Upper string
-	Reverse      bool
+	Index   Index  `json:"index"`
+	Lower   string `json:"lower"`
+	Upper   string `json:"upper"`
+	Reverse bool   `json:"reverse"`
 }
 
 // Row identifies an immutable metadata revision selected from an index.
@@ -217,12 +218,12 @@ func (s *Snapshot) readNode(ctx context.Context, ref ObjectRef) (node, error) {
 }
 
 type snapshotCursor struct {
-	Nonce string
-	Root  ObjectRef
-	Query Query
-	After string
-	Limit int
-	Seal  string
+	Nonce string    `json:"nonce"`
+	Root  ObjectRef `json:"root"`
+	Query Query     `json:"query"`
+	After string    `json:"after"`
+	Limit int       `json:"limit"`
+	Seal  string    `json:"seal"`
 }
 
 // Query traverses only paths intersecting the selected range. With the three
@@ -412,6 +413,8 @@ func defaultRange(q Query) Query {
 		case CaptureIndex, ActivityIndex:
 			q.Lower = "0"
 			q.Upper = ":"
+		case IdentityIndex:
+			// Identity ranges intentionally include tombstones.
 		case ProjectIndex:
 			q.Lower = "project/"
 			q.Upper = "project0"
