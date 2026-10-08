@@ -7,6 +7,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -131,7 +132,7 @@ func TestWarmShowProjectionLoadsAuthoritativeJSONAndTranscript(t *testing.T) {
 				if err = json.Unmarshal(got.Bytes(), &authoritative); err != nil {
 					t.Fatal(err)
 				}
-				if authoritative.SourceBundle != metadata.SourceBundle || authoritative.Counts != metadata.Counts {
+				if authoritative.SourceBundle != metadata.SourceBundle || !reflect.DeepEqual(authoritative.Counts, metadata.Counts) {
 					t.Fatal("projection lost body-only source/count fields")
 				}
 			}
