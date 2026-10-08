@@ -3,6 +3,7 @@ package reader
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"testing"
 
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -10,7 +11,7 @@ import (
 
 func BenchmarkCacheOpen(b *testing.B) {
 	for _, count := range []int{0, 800} {
-		b.Run(fmt.Sprint(count), func(b *testing.B) {
+		b.Run(strconv.Itoa(count), func(b *testing.B) {
 			home := b.TempDir()
 			cache, err := OpenMetadataCache(home)
 			if err != nil {
@@ -37,7 +38,7 @@ func BenchmarkCacheOpen(b *testing.B) {
 // inventory and deletion costs are deliberately separate from this measurement.
 func BenchmarkCacheLiveEviction(b *testing.B) {
 	for _, count := range []int{800, 10000, 50000} {
-		b.Run(fmt.Sprint(count), func(b *testing.B) {
+		b.Run(strconv.Itoa(count), func(b *testing.B) {
 			cache, err := OpenMetadataCache(b.TempDir())
 			if err != nil {
 				b.Fatal(err)

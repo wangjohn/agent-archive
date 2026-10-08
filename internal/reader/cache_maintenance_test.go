@@ -2,6 +2,7 @@ package reader
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,79 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
+
+type cacheFailureStore struct {
+	storage.ObjectStore
+	beforeGet func()
+	listError error
+}
+
+func (s cacheFailureStore) Get(ctx context.Context, key string) ([]byte, error) {
+	if s.beforeGet != nil {
+		s.beforeGet()
+	}
+	return s.ObjectStore.Get(ctx, key)
+}
+
+func (s cacheFailureStore) List(ctx context.Context, prefix string) ([]storage.Object, error) {
+	objects, err := s.ObjectStore.List(ctx, prefix)
+	if s.listError != nil {
+		return objects[:len(objects)/2], s.listError
+	}
+	return objects, err
+}
+
+func TestCacheDeletionEvictionUsesCompleteHeadersDespiteBodyFailure(t *testing.T) {
+	for _, failure := range []string{"body error", "body cancellation", "incomplete discovery"} {
+		t.Run(failure, func(t *testing.T) {
+			store := newCountingStore()
+			cache, err := OpenMetadataCache(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			deleted := putSession(t, store, "codex", "deleted", baseTime)
+			outside := putSession(t, store, "claude", "outside", baseTime)
+			opts := ListOptions{Cache: cache}
+			if _, err := ListMetadataWithOptions(context.Background(), store, "sessions", Filter{}, opts); err != nil {
+				t.Fatal(err)
+			}
+			validator := listedETag(t, store, outside)
+			if err := store.Delete(context.Background(), deleted); err != nil {
+				t.Fatal(err)
+			}
+			live := putSession(t, store, "codex", "live", baseTime)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			outage := errors.New("synthetic outage")
+			failing := cacheFailureStore{ObjectStore: store}
+			wantError := outage
+			switch failure {
+			case "body error":
+				store.failGet[live] = outage
+			case "body cancellation":
+				failing.beforeGet = cancel
+				wantError = context.Canceled
+			case "incomplete discovery":
+				failing.listError = outage
+			}
+			if _, err := ListMetadataWithOptions(ctx, failing, "sessions", Filter{Harness: "codex"}, opts); !errors.Is(err, wantError) {
+				t.Fatalf("listing error = %v, want %v", err, wantError)
+			}
+			dir, _ := cache.keyDir(deleted)
+			_, err = os.Stat(dir)
+			if failure == "incomplete discovery" {
+				if err != nil {
+					t.Fatalf("failed discovery evicted an unproven deletion: %v", err)
+				}
+			} else if !os.IsNotExist(err) {
+				t.Fatalf("complete headers retained deleted key after %s: %v", failure, err)
+			}
+			if _, ok := cache.get(outside, validator); !ok {
+				t.Fatal("scoped failure evicted another harness's cache")
+			}
+		})
+	}
+}
 
 func maintenanceFixture(t *testing.T, count int) (string, []string) {
 	t.Helper()

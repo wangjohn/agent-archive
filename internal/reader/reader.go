@@ -201,12 +201,13 @@ func ListMetadataWithOptions(ctx context.Context, store storage.ObjectStore, pre
 	}
 	span.Count("keys", len(objects))
 	span.Count("sidecars", len(sidecars))
+	// Complete fresh headers establish deletion independently of whether the
+	// remaining bodies can be read. A later read error must not retain an
+	// absent session's cached metadata.
+	options.Cache.evictUnlisted(known, sidecars)
 	loaded, skipped, err := readSidecars(ctx, store, sidecars, options.Cache, options.Progress)
 	if err != nil {
 		return nil, err
-	}
-	if options.Cache != nil {
-		options.Cache.evictUnlisted(known, sidecars)
 	}
 	if options.Skipped != nil {
 		for _, s := range skipped {
