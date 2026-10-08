@@ -134,6 +134,22 @@ func (s *Snapshot) Root() ObjectRef { return s.head.Identity }
 // check after decoding and before a joined selection returns.
 func (s *Snapshot) ValidateRead(ctx context.Context) error { return s.check(ctx) }
 
+// ValidateContinuation verifies one fresh head version under this snapshot's
+// original request lifetime. It never renews the root or exposes cursor authority.
+func (s *Snapshot) ValidateContinuation(ctx context.Context) error {
+	if err := s.check(ctx); err != nil {
+		return err
+	}
+	_, etag, err := s.writer.Head(ctx)
+	if err != nil {
+		return err
+	}
+	if etag != s.etag {
+		return ErrStaleCursor
+	}
+	return s.check(ctx)
+}
+
 func (s *Snapshot) check(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -157,14 +173,7 @@ func (s *Snapshot) freshRequest(ctx context.Context) error {
 	if first {
 		return nil
 	}
-	_, etag, err := s.writer.Head(ctx)
-	if err != nil {
-		return err
-	}
-	if etag != s.etag {
-		return ErrStaleCursor
-	}
-	return s.check(ctx)
+	return s.ValidateContinuation(ctx)
 }
 
 func (s *Snapshot) root(q Query) (ObjectRef, error) {

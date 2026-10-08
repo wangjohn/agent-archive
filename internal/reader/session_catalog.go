@@ -130,6 +130,7 @@ type SQLiteSessionCatalog struct {
 	viewGeneration int64
 	viewReady      bool
 	remoteSnapshot *catalog.Snapshot
+	remoteBinding  string
 }
 
 // OpenSessionCatalog opens a disposable private SQLite index. Each connection
@@ -141,6 +142,9 @@ func OpenSessionCatalog(ctx context.Context, cache *MetadataCache, store storage
 func openSessionCatalog(ctx context.Context, cache *MetadataCache, store storage.ObjectStore, opts ListOptions, repair bool) (*SQLiteSessionCatalog, error) {
 	if cache == nil {
 		return nil, errors.New("session catalog requires a metadata cache")
+	}
+	if opts.Cache == nil {
+		opts.Cache = cache
 	}
 	dir := filepath.Join(filepath.Dir(cache.dir), "catalog")
 	if err := os.MkdirAll(dir, 0700); err != nil {
@@ -558,6 +562,9 @@ func (c *SQLiteSessionCatalog) Query(ctx context.Context, q CatalogQuery) (Catal
 	if !c.viewReady {
 		return CatalogPage{}, ctx.Err()
 	}
+	if err := c.validateRemoteQuery(ctx, q.Cursor != ""); err != nil {
+		return CatalogPage{}, err
+	}
 	tx, err := c.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return CatalogPage{}, err
@@ -572,7 +579,7 @@ func (c *SQLiteSessionCatalog) Query(ctx context.Context, q CatalogQuery) (Catal
 	if epoch != c.viewEpoch || generation != c.viewGeneration {
 		return CatalogPage{}, ErrStaleCatalogCursor
 	}
-	offset, token, err := catalogCursor(q, epoch, generation)
+	offset, token, err := catalogCursor(q, epoch, generation, c.remoteBinding)
 	if err != nil {
 		return CatalogPage{}, err
 	}
@@ -651,15 +658,32 @@ func (c *SQLiteSessionCatalog) Query(ctx context.Context, q CatalogQuery) (Catal
 	if err = rows.Close(); err != nil {
 		return CatalogPage{}, err
 	}
+	if err = tx.Commit(); err != nil {
+		return CatalogPage{}, err
+	}
+	if err = c.validateRemoteQuery(ctx, false); err != nil {
+		return CatalogPage{}, err
+	}
 	span.Count("summaries", len(page.Rows))
-	return page, tx.Commit()
+	return page, nil
 }
 
-func catalogCursor(q CatalogQuery, epoch string, generation int64) (int, string, error) {
+func (c *SQLiteSessionCatalog) validateRemoteQuery(ctx context.Context, continuation bool) error {
+	if c.remoteSnapshot == nil {
+		return ctx.Err()
+	}
+	if continuation {
+		return c.remoteSnapshot.ValidateContinuation(ctx)
+	}
+	return c.remoteSnapshot.ValidateRead(ctx)
+}
+
+func catalogCursor(q CatalogQuery, epoch string, generation int64, remoteBinding string) (int, string, error) {
 	binding, err := json.Marshal(struct {
 		Metadata MetadataQuery `json:"metadata"`
 		Words    []string      `json:"words"`
-	}{q.Metadata, q.Words})
+		Remote   string        `json:"remote,omitempty"`
+	}{q.Metadata, q.Words, remoteBinding})
 	if err != nil {
 		return 0, "", err
 	}

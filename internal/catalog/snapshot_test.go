@@ -799,3 +799,49 @@ func TestSnapshotValidateReadExpiryCancellationDoesNotReadProvider(t *testing.T)
 		t.Fatal("validation refreshed provider", counts)
 	}
 }
+
+func TestSnapshotValidateContinuationPreservesLifetimeAndRoot(t *testing.T) {
+	w, raw := fixture(t)
+	if _, err := w.Commit(t.Context(), mutation(t, w, "continuation")); err != nil {
+		t.Fatal(err)
+	}
+	activateFixture(t, w)
+	measured := storagetest.NewMeasuredStore(raw, 0)
+	snapshot, err := OpenSnapshot(t.Context(), measured, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, started := snapshot.Root(), snapshot.started
+	measured.Reset()
+	if err = snapshot.ValidateContinuation(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if counts := measured.Metrics(); counts.Gets != 1 || counts.Lists != 0 {
+		t.Fatal("continuation version observations", counts)
+	}
+	if snapshot.Root() != root || snapshot.started != started || snapshot.requests != 0 {
+		t.Fatal("continuation renewed authority")
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err = snapshot.ValidateContinuation(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatal("canceled continuation", err)
+	}
+	snapshot.started = time.Now().Add(-SnapshotLifetime)
+	if err = snapshot.ValidateContinuation(t.Context()); !errors.Is(err, ErrStaleCursor) {
+		t.Fatal("expired continuation", err)
+	}
+	if counts := measured.Metrics(); counts.Gets != 1 {
+		t.Fatal("invalid lifetime read provider", counts)
+	}
+	snapshot.started = started
+	if _, err = w.Commit(t.Context(), mutation(t, w, "new-root")); err != nil {
+		t.Fatal(err)
+	}
+	if err = snapshot.ValidateContinuation(t.Context()); !errors.Is(err, ErrStaleCursor) {
+		t.Fatal("changed head continuation", err)
+	}
+	if snapshot.Root() != root || snapshot.started != started {
+		t.Fatal("head mismatch renewed view")
+	}
+}

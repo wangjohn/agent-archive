@@ -128,3 +128,15 @@ owner disposition exists; collection never republishes broader evidence just to
 clear an owner. Only positively completed work with its originating held guard
 and durable exact completion tombstone can be unlinked. Legacy replacement and
 source-unavailable skip behavior remain available to legacy journals.
+
+Remote-backed SQLite queries retain the captured request lifetime. Initial and
+completed queries validate that lifetime; cursor continuations observe exactly
+one fresh head version and reject a changed root. `Snapshot.ValidateContinuation`
+does not renew the request or expose cursor authority. Local SQL cursors also bind
+the captured root and a private refresh nonce, so a refreshed handle cannot reuse
+an earlier cursor even when the root is unchanged.
+
+Remote summary reconciliation runs the existing bounded64-directory cache
+maintenance once per cache. Only a committed, complete verified delta or rebuild
+can remove body cache directories: exact removed keys for a delta, or absence from
+the complete rebuilt identity universe. Selected ranges never prove deletion.

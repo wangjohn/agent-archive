@@ -1,6 +1,7 @@
 package reader
 
 import (
+	"context"
 	"errors"
 	"os"
 	"testing"
@@ -69,6 +70,9 @@ func TestRemoteRefreshEvictsOnlyProvenDeletedBodyCache(t *testing.T) {
 				t.Fatal("uncacheable fixture")
 			}
 			liveDir, _ := cache.keyDir(live.Key)
+			otherKey := "other/claude/private/metadata.json"
+			cache.putVerified(otherKey, "private", []byte(`{}`))
+			otherDir, _ := cache.keyDir(otherKey)
 			if err = remote.DeleteSession(t.Context(), deleted.Key); err != nil {
 				t.Fatal(err)
 			}
@@ -86,6 +90,53 @@ func TestRemoteRefreshEvictsOnlyProvenDeletedBodyCache(t *testing.T) {
 			if _, err = os.Stat(liveDir); err != nil {
 				t.Fatal("live body evicted", err)
 			}
+			if _, err = os.Stat(otherDir); err != nil {
+				t.Fatal("unrelated prefix evicted", err)
+			}
 		})
+	}
+}
+
+func TestRemoteSQLCursorBindsRefreshedRequestAndCancellation(t *testing.T) {
+	remote, _ := remoteReaderFixture(t, 8)
+	cache, err := OpenMetadataCache(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := OpenSessionCatalog(t.Context(), cache, remote, ListOptions{Cache: cache})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = first.Close() }()
+	if err = first.RefreshRemote(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	q := CatalogQuery{Metadata: MetadataQuery{Limit: 1}}
+	page, err := first.Query(t.Context(), q)
+	if err != nil || page.Next == "" {
+		t.Fatal(page, err)
+	}
+	canceled, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err = first.Query(canceled, q); !errors.Is(err, context.Canceled) {
+		t.Fatal("canceled query accepted", err)
+	}
+	second, err := OpenSessionCatalog(t.Context(), cache, remote, ListOptions{Cache: cache})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = second.Close() }()
+	if err = second.RefreshRemote(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	q.Cursor = page.Next
+	if _, err = second.Query(t.Context(), q); !errors.Is(err, ErrStaleCatalogCursor) {
+		t.Fatal("identical-root renewed request accepted old cursor", err)
+	}
+	if err = first.RefreshRemote(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = first.Query(t.Context(), q); !errors.Is(err, ErrStaleCatalogCursor) {
+		t.Fatal("same-handle refresh accepted old request", err)
 	}
 }

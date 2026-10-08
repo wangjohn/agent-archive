@@ -203,12 +203,19 @@ func (c *SQLiteSessionCatalog) RefreshRemote(ctx context.Context) error {
 	span := trace.Start("refresh session catalog")
 	reused := 0
 	defer func() { span.Count("from catalog", reused); span.End() }()
+	c.opts.Cache.maintain(ctx)
 	c.viewMu.Lock()
 	defer c.viewMu.Unlock()
 	snapshot, err := catalog.OpenSnapshot(ctx, c.store, nil)
 	if err != nil {
 		return err
 	}
+	nonce, err := catalog.NewMutationID()
+	if err != nil {
+		return err
+	}
+	root := snapshot.Root()
+	binding := nonce + ":" + root.Key + ":" + root.SHA256
 	tx, err := c.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -273,6 +280,9 @@ func (c *SQLiteSessionCatalog) RefreshRemote(ctx context.Context) error {
 	if err = tx.QueryRowContext(ctx, "SELECT epoch,generation FROM catalog_state WHERE id=1").Scan(&epoch, &generation); err != nil {
 		return err
 	}
+	if err = snapshot.ValidateRead(ctx); err != nil {
+		return err
+	}
 	if err = tx.Commit(); err != nil {
 		return err
 	}
@@ -293,9 +303,29 @@ func (c *SQLiteSessionCatalog) RefreshRemote(ctx context.Context) error {
 			}
 		}
 	}
+	if err = snapshot.ValidateRead(ctx); err != nil {
+		return err
+	}
+	c.evictRemoteBodies(delta)
+	c.remoteBinding = binding
 	c.remoteSnapshot = snapshot
 	c.viewEpoch, c.viewGeneration, c.viewReady = epoch, generation, true
 	return nil
+}
+
+// evictRemoteBodies consumes only a committed complete reconciliation proof.
+// Candidate ranges never authorize absence, and unrelated cache prefixes remain.
+func (c *SQLiteSessionCatalog) evictRemoteBodies(delta catalog.Delta) {
+	if !delta.Rebuild {
+		c.opts.Cache.evictUnlisted(delta.Removed, nil)
+		return
+	}
+	known := c.opts.Cache.keys("sessions/")
+	live := make([]storage.Object, 0, len(delta.Changed))
+	for _, row := range delta.Changed {
+		live = append(live, storage.Object{Key: row.Key})
+	}
+	c.opts.Cache.evictUnlisted(known, live)
 }
 
 func canonicalCatalogPrefix(prefix string) string {
