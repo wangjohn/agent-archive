@@ -26,28 +26,12 @@ type MetadataPredecessor struct {
 	SHA256 string
 }
 
-// PutSourceSetThenMetadata verifies all selected source objects, reconciles an
-// exact predecessor, writes the frozen next metadata and verifies its exact body.
-// Missing ref-only sources and mismatching immutable objects are never replaced.
-// At most 65 references and 128 MiB per object are checked sequentially; total
-// referenced bytes may be larger. A completed uncertain Put replays idempotently.
-func PutSourceSetThenMetadata(ctx context.Context, store ObjectStore, sources []SourcePublication, key string, metadata []byte, prior MetadataPredecessor, retry RetryPolicy) error {
-	return PutResolvedSourceSetThenMetadata(ctx, store, sources, key, metadata, prior, retry, nil, nil)
-}
-
 // SourceResolver borrows exactly one bounded replay payload. Release ends memory
 // ownership only; durable evidence remains until the local selecting commit.
 type SourceResolver func(context.Context, int) ([]byte, func(), error)
 
 // SourceVerifier validates exact remote bytes under the caller's shared ledger.
 type SourceVerifier func(context.Context, string, string, int) error
-
-// PutResolvedSourceSetThenMetadata resolves one payload at a time and shares
-// the same predecessor/readback protocol as inline publication.
-func PutResolvedSourceSetThenMetadata(ctx context.Context, store ObjectStore, sources []SourcePublication, key string, metadata []byte, prior MetadataPredecessor, retry RetryPolicy, resolve SourceResolver, verify SourceVerifier) error {
-	_, err := PutResolvedSourceSetThenMetadataReadback(ctx, store, sources, key, metadata, prior, retry, resolve, verify)
-	return err
-}
 
 // ValidatedPublicationReadback is phase C, produced only by an actual bounded
 // exact readback. It is consumed once inside the transaction frame.

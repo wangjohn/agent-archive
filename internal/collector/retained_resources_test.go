@@ -139,14 +139,14 @@ func TestHistoryVerificationRefusesSharedPressureThenMakesProgress(t *testing.T)
 	if !budget.Reserve(pressure) {
 		t.Fatal("pressure")
 	}
-	if err := scan.ensureHistorySource(pending.SourceKey, pending.SourceSHA256, pending.SourceBytes); !errors.Is(err, agentapi.ErrReadBudget) {
+	if err := scan.verifyHistorySource(scan.ctx, pending.SourceKey, pending.SourceSHA256, len(pending.SourceBytes)); !errors.Is(err, agentapi.ErrReadBudget) {
 		t.Fatalf("verification bypassed exhausted shared ledger: %v", err)
 	}
 	if remote.sourceLimitedGets != 0 || remote.sourceGets != 0 {
 		t.Fatal("source was read before reserving")
 	}
 	budget.Release(pressure)
-	if err := scan.ensureHistorySource(pending.SourceKey, pending.SourceSHA256, pending.SourceBytes); err != nil {
+	if err := scan.verifyHistorySource(scan.ctx, pending.SourceKey, pending.SourceSHA256, len(pending.SourceBytes)); err != nil {
 		t.Fatal(err)
 	}
 	if used, _ := budget.Charged(); used != 0 {

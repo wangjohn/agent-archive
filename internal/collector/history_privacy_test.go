@@ -70,7 +70,7 @@ func TestRetainedSource3RefilterKeepsGraphOwnershipAndRawGaps(t *testing.T) {
 	}
 	originalSpans := slices.Clone(b.History.Spans)
 	originalOrdinals := slices.Clone(b.Ordinals)
-	out, err := refilterBundle(t.Context(), scan.reg, codex.Filter{}, b)
+	out, err := refilterBundle(t, t.Context(), scan.reg, codex.Filter{}, b)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,7 @@ func TestRetainedSource3RefilterKeepsGraphOwnershipAndRawGaps(t *testing.T) {
 	if ownText != quoted {
 		t.Fatalf("history refilter changed indented quote: %q want %q", ownText, quoted)
 	}
-	again, err := refilterBundle(t.Context(), scan.reg, codex.Filter{}, out)
+	again, err := refilterBundle(t, t.Context(), scan.reg, codex.Filter{}, out)
 	if err != nil {
 		t.Fatal(err)
 	}

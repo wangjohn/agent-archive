@@ -4,7 +4,7 @@
 // local state through internal/state, builds on internal/local for atomic
 // file I/O and the machine-level lock, and does not own transcript reading
 // (archive adapters), privacy filtering (archive adapters), or storage
-// upload mechanics (storage.PutSourceSetThenMetadata). A caller runs Run under
+// upload mechanics (storage.PutResolvedSourceSetThenMetadataReadback). A caller runs Run under
 // local.Lock(home) so only one collector process acts on a given home at a
 // time; Run itself does not take that lock.
 //

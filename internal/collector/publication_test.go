@@ -520,7 +520,7 @@ func (s *winnerAfterUploadStore) GetLimited(ctx context.Context, key string, lim
 	if key == s.metadataKey && s.readsAfterPut > 0 {
 		s.readsAfterPut++
 		if s.readsAfterPut == 3 {
-			body, err := s.GetLimited(ctx, key, limit)
+			body, err := s.MemoryStore.GetLimited(ctx, key, limit)
 			if err != nil {
 				return nil, err
 			}
@@ -539,7 +539,7 @@ func (s *winnerAfterUploadStore) GetLimited(ctx context.Context, key string, lim
 			}
 		}
 	}
-	return s.GetLimited(ctx, key, limit)
+	return s.MemoryStore.GetLimited(ctx, key, limit)
 }
 
 func TestPublicationChangedWinnerIsNotIndexedWithoutSourceVerification(t *testing.T) {
@@ -634,7 +634,7 @@ func TestPublicationSealingUsesInjectedRetainedComparatorWithoutEnablingWriter(t
 			reg.NativeSessionID = "11111111-1111-4111-8111-111111111111"
 			at := reg.RegisteredAt.Add(time.Hour)
 			old := historyPublication(t, reg, at)
-			sealed, err := state.PreparePublication(old, state.PublicationPredecessor{State: state.PredecessorAbsent}, "", "a", "p", state.PublicationCapture)
+			sealed, err := state.PreparePublicationV2(old, state.PublicationPredecessor{State: state.PredecessorAbsent}, "", "a", "p", state.PublicationCapture)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -735,7 +735,7 @@ func (s *winnerAfterUploadStore) GetVersionedLimited(ctx context.Context, key st
 	if key == s.metadataKey && s.readsAfterPut > 0 {
 		s.readsAfterPut++
 		if s.readsAfterPut == 3 {
-			body, err := s.GetLimited(ctx, key, limit)
+			body, err := s.MemoryStore.GetLimited(ctx, key, limit)
 			if err != nil {
 				return nil, "", err
 			}

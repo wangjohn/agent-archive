@@ -214,6 +214,6 @@ func readTestLeadingSummary(path string) (PublishedSummary, bool) {
 		return PublishedSummary{}, false
 	}
 	defer func() { _ = f.Close() }()
-	summary, found, _ := readLeadingSummary(f)
+	summary, found, _ := readLeadingSummaryProtocol(f, false)
 	return summary, found
 }

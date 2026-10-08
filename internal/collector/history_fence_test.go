@@ -51,7 +51,7 @@ func TestHistoryPublicationRemainsFencedAndMalformedRefilterRefuses(t *testing.T
 		t.Fatalf("foreign remote protected history: %v", e)
 	}
 	history := archive.SourceBundle{SchemaVersion: archive.HistorySourceSchemaVersion, History: &archive.SourceHistory{}}
-	if _, e := refilterBundle(ctx, reg, nil, history); e == nil {
+	if _, e := refilterBundle(t, ctx, reg, nil, history); e == nil {
 		t.Fatalf("refilter protection: %v", e)
 	}
 	pending.Bundle = history

@@ -535,9 +535,6 @@ func (s *Store) LoadPublishedSummary(archiveSessionID string) (summary Published
 // published state file. ok is false when there is none to trust: no file,
 // an older file without one, or anything unexpected, all of which the
 // caller answers with a full decode.
-func readLeadingSummary(reader io.Reader) (summary PublishedSummary, ok bool, err error) {
-	return readLeadingSummaryProtocol(reader, false)
-}
 
 func readLeadingSummaryProtocol(reader io.Reader, composition bool) (summary PublishedSummary, ok bool, err error) {
 	decoder := json.NewDecoder(bufio.NewReaderSize(reader, 4096))

@@ -130,18 +130,13 @@ references. Every source key must be checksum-addressed under the same archive
 session prefix. Prior source-schema-2 references are permitted. Reader validation
 precedes derivation and selection; a malformed reference cannot widen reads.
 
-Until lifecycle support installs publication journaling and writer protection,
-collector capture, metadata refresh, privacy mutation, generation recovery and
-retention/deletion refuse history artifacts. The temporary Codex publication
-fence reads the previous remote metadata body once before a mutation, including
-metadata-only refreshes and pending-publication retries. Unchanged admission
-continues using the existing summary/signature path, without full published-state
-decodes or per-session writes. Explicit generation recovery separately checks
-local cached, published and metadata history before changing generation state.
-The source-set publication journal extends ordinary capture with exact body
-verification and complete local reference sets. History entry fences remain until
-admission staging, all lifecycle mutators, compatibility and provider acceptance
-are complete; this journal does not enable related-history writers.
+The collector's already-enabled history publication uses exact retained source
+sets. Private composition version 8 (`publication-composition-v8`) permanently
+protects protocol-2 publication and derives the version-7 durable-storage guard
+inside the same held private root. It preserves existing native consent and
+history ownership checks; it does not enable historical import admission or
+future native ancestor authority. Unchanged settled admission keeps its bounded
+summary/signature path. Generation recovery validates the exact frozen successor.
 
 Private pending state retains legacy active-source fields and adds a versioned
 commit identity plus up to 65 exact source payload references: one current and
@@ -149,8 +144,9 @@ commit identity plus up to 65 exact source payload references: one current and
 64 physical graph-span limit. Inline compressed replay payloads are capped at
 128 MiB in aggregate; the active payload is stored once. Ref-only remote sources
 may exceed that aggregate, but each is verified sequentially with a 128 MiB
-object bound and caller cancellation. No stage handles or durable import staging
-are shipped by this publication step. Malformed journals remain visible pending
+object bound and caller cancellation. Owned history-stage handles resolve serially under the same shared memory and
+1 GiB physical disk budget. Admission-stage handles remain unavailable until
+the durable import staging milestone. Malformed journals remain visible pending
 evidence and block replacement; older quarantined copies remain visible to status
 and retention. An obsolete adapter/filter/skill policy retains replay evidence
 for explicit refiltering rather than uploading or discarding it.
@@ -177,26 +173,33 @@ snapshots and require a provider-approved continuation bound to both source
 digests, plus consistent retained filtered ordinals, spans and record prefixes.
 Filtered equality alone cannot prove raw native prefix continuity or authorize
 using a filtered source as a raw dependency. Missing proof stays pending. Privacy
-full-set replacement requires revision validation and durable old-key retirement
-in the later maintenance milestone; selection-only publication cannot evict or
-rewrite preserved evidence. At capacity, preserve the committed archive and stop.
+full-set replacement requires typed transformation receipts, exact predecessor
+and next sets, and durable old-key retirement. Successful full local settlement
+prunes obsolete private raw proof bodies; maintenance-owed baseline acknowledgement
+retains the exact original proof and obligations. Selection-only publication
+cannot evict or rewrite preserved evidence. At capacity, preserve the committed archive and stop.
 
-Listing repair reads the authoritative remote winner, never stale pending bytes.
+Listing repair indexes the exact validated phase-C response and its same-response
+validator. A later phase-D conflict can leave a harmless stale hint, with repair
+still owed; that hint never authorizes adopting an unverified winner.
 The verified metadata and full local source set become durable before covered
 requests complete; pending removal is last. A later admission-stage port must
 resolve one immutable size/checksum-bound object at a time under aggregate disk
 quota (including temporary/pending copies), protect referenced handles and release
 staging only after that local commit and request completion. No native reread or
 Git reattribution may replace admitted evidence. Remote wire schemas and filter
-versions are unchanged; the additive private journal is not a writer downgrade
-fence. History-specific config compatibility protection remains a later gate.
+versions are unchanged. Leading publication_version 2 and closed pending phase
+codecs agree with the permanent composition writer floor; legacy dispatch remains
+explicit. Future historical admission and native ancestor authority are separate
+gates.
 The collector publishes related histories through its existing durable pending
 journal. Every final reference is verified before exact predecessor preflight and
 metadata replacement, and every reference plus exact metadata bytes is read back
 before acknowledgement. An exact committed retry performs no source or metadata
 PUT. Stronger privacy resolves predecessor/final state before replacing private
 work; unknown authority remains pending. Older config writers remain protected by
-the permanent config-v5 writer marker.
+the permanent composition-v8 marker, preserving prior history and storage
+protections.
 
 Retained maintenance carries the complete source set and original captures.
 Frozen generations use retained bytes and recorded Git facts. Retention uses the
