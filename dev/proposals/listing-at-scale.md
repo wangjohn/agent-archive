@@ -1,7 +1,9 @@
 # Archive listing at scale: implementation plan
 
 Prepared 2026-09-30 against `main` at `dc443c7`. Status: phases 1
-and 2 implemented; phase 3 planned; phase 4 needs its own spec before any code.
+and 2 implemented; phase 3 planned; phase 4 has a proposed specification in
+[CLI performance implementation](cli-performance.md). Use that plan's PR
+dependencies for new work.
 Each phase lands before the next one starts. Each phase's PR updates its
 status line below.
 
@@ -10,7 +12,7 @@ status line below.
 | 1 | Parallel range listing | Implemented in [#219](https://github.com/wangjohn/agent-archive/pull/219) |
 | 2 | `AGENT_ARCHIVE_TRACE` timings | Implemented in [#225](https://github.com/wangjohn/agent-archive/pull/225) |
 | 3 | Listing benchmark at 1k, 10k and 100k sessions | Planned |
-| 4 | Index read whose cost doesn't grow with the archive (spec first) | Planned after 1–3 and the session-finding picker work |
+| 4 | Index read whose cost doesn't grow with the archive | Specified in the CLI performance plan; implementation proposed |
 
 ## Problem
 

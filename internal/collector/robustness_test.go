@@ -320,7 +320,12 @@ func TestUnchangedCheckSaysYesOnlyWhenNothingIsOwed(t *testing.T) {
 		t.Parallel()
 		local := newTestStore(t)
 		reg := settledSession(t, local, codexTranscript)
-		if err := local.SavePending(reg.ArchiveSessionID, state.PendingPublication{SourceKey: "k", MetadataKey: "m", SourceSHA256: "s", SourceBytes: []byte{1}, MetadataBytes: []byte{1}}); err != nil {
+		source := []byte{1}
+		metadata, err := json.Marshal(archive.Metadata{SchemaVersion: archive.MetadataSchemaVersion})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := local.SavePending(reg.ArchiveSessionID, state.PendingPublication{SourceKey: "k", MetadataKey: "m", SourceSHA256: storage.SHA256Hex(source), SourceBytes: source, MetadataBytes: metadata, Bundle: archive.SourceBundle{SchemaVersion: archive.SourceSchemaVersion}}); err != nil {
 			t.Fatal(err)
 		}
 		if check(t, local, reg, opts) {
@@ -503,7 +508,7 @@ func TestUnchangedSessionsCostNoWritesAndStayFast(t *testing.T) {
 		t.Parallel()
 	}
 	home := t.TempDir()
-	local, err := state.Open(home)
+	local, err := openTestStore(home)
 	if err != nil {
 		t.Fatal(err)
 	}

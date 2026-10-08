@@ -18,6 +18,9 @@ import (
 func packedGenerationFixture(t *testing.T) (*Store, archive.SessionRegistration, time.Time) {
 	t.Helper()
 	s, key, marker := packedOwnerFixture(t)
+	if _, err := openTestStore(s.home); err != nil {
+		t.Fatal(err)
+	}
 	reg, _, err := s.LoadRegistration("packed-owner")
 	if err != nil {
 		t.Fatal(err)

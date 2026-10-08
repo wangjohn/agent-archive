@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -18,6 +19,9 @@ import (
 func TestStatusReportsDiscoveredTaskBeforeLocalCapture(t *testing.T) {
 	t.Parallel()
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
+	if err := os.Chmod(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	now := time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
 	cfg := pairTestConfig(now, []string{"codex"}, project)
 	config.SetDiscoveryChoice(&cfg, true)

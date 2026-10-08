@@ -10,12 +10,19 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/state"
 )
 
 func TestDeleteLocalDataRemovesScheduledRecoveryEvidence(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
+	if err := os.Chmod(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.Save(home, config.Config{MachineID: "synthetic"}); err != nil {
+		t.Fatal(err)
+	}
 	store, err := state.Open(home)
 	if err != nil {
 		t.Fatal(err)
@@ -100,6 +107,8 @@ var handListedLocalState = []string{
 	"config.json", "setup-draft.json", "setup-transaction.json",
 	"registrations", "requests", "request-locks", "published", "pending", "sessions", "sessions-v1", "sessions-packed-v1", "superseded", "pending-scans", "scan-signatures", "subagent-candidates", "forgotten", "refresh-skips", "listing-repairs", "imports",
 	"generation-heads", "generation-nodes", "generation-recovery",
+	// Shared durable storage owns this local quota lock namespace.
+	"temporary-quota",
 	machineRegistrationFile, "discovery-catalog.json", "discovery-health.json", "status.json", "session-index.json", "storage-clock.json", "storage-health.json", "capture-diagnostics.json", "diagnostics.lock", "admission-intents", "admission-intents.lock", "admission-replay-cursor.json", "application-versions.json",
 	"collector.lock", "collector-lock.json", "collector.log", "collector-error.log",
 	"cache", "handoffs", "purge-plans", "issued", "issued.lock", "revocations", "revocations.lock", ownKeyFile,

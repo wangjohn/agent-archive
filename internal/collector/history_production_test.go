@@ -73,7 +73,7 @@ func (s *historyCrashStore) Stat(ctx context.Context, key string) (storage.Objec
 
 func runHistoryRetry(t *testing.T, scan *sessionScan, remote storage.ObjectStore) Result {
 	t.Helper()
-	reopened, err := state.Open(scan.local.Home())
+	reopened, err := openTestStore(scan.local.Home())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -407,7 +407,7 @@ func TestRunHistoryRecoveryFrozenParserAndHookMaintenanceUseRetainedSet(t *testi
 		t.Fatal(err)
 	}
 	for range 5 {
-		scan.local, err = state.Open(scan.local.Home())
+		scan.local, err = openTestStore(scan.local.Home())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -680,7 +680,7 @@ func TestRunNativeHistoryPublicationSettlesAcrossResumeAndRestart(t *testing.T) 
 	if err != nil || !found || signature.SourceSchemaVersion != archive.HistorySourceSchemaVersion {
 		t.Fatalf("missing immediate settled history proof %#v %t %v", signature, found, err)
 	}
-	reopened, err := state.Open(scan.local.Home())
+	reopened, err := openTestStore(scan.local.Home())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -710,7 +710,7 @@ func TestRunHistoryPreservesIndependentProducerVersions(t *testing.T) {
 	}
 	published := false
 	for range 8 {
-		reopened, err := state.Open(scan.local.Home())
+		reopened, err := openTestStore(scan.local.Home())
 		if err != nil {
 			t.Fatal(err)
 		}

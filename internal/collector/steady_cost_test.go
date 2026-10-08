@@ -129,7 +129,7 @@ func TestMissingTranscriptsCostNothingPerPass(t *testing.T) {
 // pass). Not parallel: measurePass's count of loads is process-wide.
 func TestSettledSubagentsCostNothingPerPass(t *testing.T) {
 	home := t.TempDir()
-	local, err := state.Open(home)
+	local, err := openTestStore(home)
 	if err != nil {
 		t.Fatal(err)
 	}
