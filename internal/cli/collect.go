@@ -210,6 +210,7 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (result collector.Resu
 		},
 		SkipSessionIndexRecovery: true,
 		CodexRollouts:            rollouts,
+		PendingCodexRollouts:     pendingCodexRollouts(rollouts),
 		ConfiguredCodexHomes:     readHomes,
 		ResolveCodexReadHomes:    func(current config.Config) ([]string, error) { return trustedCodexReadHomes(current, env) },
 		Parsers:                  parsersFor(env),
@@ -564,4 +565,14 @@ func skillEvidenceRoots(env Env, name string, l agentapi.SkillLocations) []agent
 		return p.EvidenceRoots(l)
 	}
 	return nil
+}
+
+// pendingCodexRollouts requests the existing pass owner's metadata view lazily.
+func pendingCodexRollouts(lookup *discovery.CodexRolloutLookup) func() agentapi.CodexRolloutLookup {
+	return func() agentapi.CodexRolloutLookup {
+		if lookup == nil {
+			return nil
+		}
+		return lookup.MetadataInventory()
+	}
 }
