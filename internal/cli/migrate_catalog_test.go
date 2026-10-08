@@ -23,8 +23,58 @@ type qualifiedCLIStore struct{ *storagetest.MemoryStore }
 
 func (*qualifiedCLIStore) CatalogAtomicQualification() error { return nil }
 
+// Scoped legacy fixtures clone metadata identities. Catalog fixtures give every
+// reference its canonical owning-session key before comparing both readers.
+func normalizePrivateCatalogSources(t *testing.T, source *storagetest.MemoryStore) {
+	t.Helper()
+	objects, err := source.List(t.Context(), "sessions/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, object := range objects {
+		if !strings.HasSuffix(object.Key, "/metadata.json") {
+			continue
+		}
+		raw, err := source.Get(t.Context(), object.Key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var metadata archive.Metadata
+		if err = json.Unmarshal(raw, &metadata); err != nil {
+			t.Fatal(err)
+		}
+		refs := []*archive.SourceReference{&metadata.SourceBundle}
+		if metadata.History != nil {
+			for i := range metadata.History.Preserved {
+				refs = append(refs, &metadata.History.Preserved[i].Source)
+			}
+		}
+		for _, ref := range refs {
+			body, err := source.Get(t.Context(), ref.Key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if storage.SHA256Hex(body) != ref.SHA256 {
+				t.Fatal("fixture source hash mismatch")
+			}
+			ref.Key = fmt.Sprintf("sessions/%s/%s/source.%s.jsonl.gz", metadata.Harness.Name, metadata.SessionID, ref.SHA256)
+			if err = source.Put(t.Context(), ref.Key, body); err != nil {
+				t.Fatal(err)
+			}
+		}
+		raw, err = json.Marshal(metadata)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = source.Put(t.Context(), object.Key, raw); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func privateCatalogFromLegacy(t *testing.T, source *storagetest.MemoryStore) *catalog.Store {
 	t.Helper()
+	normalizePrivateCatalogSources(t, source)
 	raw := &qualifiedCLIStore{storagetest.NewMemoryStore()}
 	objects, err := source.List(t.Context(), "sessions/")
 	if err != nil {
