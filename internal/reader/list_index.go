@@ -7,7 +7,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"sync/atomic"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/listingindex"
@@ -115,14 +114,14 @@ type selectedRead struct {
 
 // readSelected stops assigning work on failure and joins every started read.
 // In-flight reads retain the caller context: an internal cancellation must not
-// hide an earlier selected revision's real error. Observers run serially after
-// the join, in selection order, and need no synchronization from callers.
+// hide an earlier selected revision's real error. Progress runs serially on
+// the caller as reads finish; BodyRead runs in selection order after the join.
 func readSelected(ctx context.Context, getter storage.VersionedGetter, revisions []listingindex.Revision, opts ListOptions) []selectedRead {
 	reads := make([]selectedRead, len(revisions))
 	observed := make([]bool, len(revisions))
 	var mu sync.Mutex
 	var wg sync.WaitGroup
-	var finished atomic.Int64
+	completed := make(chan struct{}, len(revisions))
 	next, failed := 0, false
 	for range min(listConcurrency, len(revisions)) {
 		wg.Go(func() {
@@ -136,9 +135,7 @@ func readSelected(ctx context.Context, getter storage.VersionedGetter, revisions
 				next++
 				mu.Unlock()
 				reads[i], observed[i] = readSelectedRevision(ctx, getter, revisions[i], opts.Cache)
-				if opts.Progress != nil {
-					opts.Progress(int(finished.Add(1)), len(revisions))
-				}
+				completed <- struct{}{}
 				if reads[i].Err != nil {
 					mu.Lock()
 					failed = true
@@ -148,7 +145,17 @@ func readSelected(ctx context.Context, getter storage.VersionedGetter, revisions
 			}
 		})
 	}
-	wg.Wait()
+	go func() {
+		wg.Wait()
+		close(completed)
+	}()
+	finished := 0
+	for range completed {
+		finished++
+		if opts.Progress != nil {
+			opts.Progress(finished, len(revisions))
+		}
+	}
 	for i := range next {
 		if observed[i] && opts.BodyRead != nil {
 			opts.BodyRead(revisions[i].MetadataKey, reads[i].Cached)

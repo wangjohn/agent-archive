@@ -163,6 +163,7 @@ type ListOptions struct {
 	// (served from the cache or downloaded), with how many are done of how
 	// many the listing has. It is called from several goroutines at once, so
 	// it must be safe for that, and it must not block.
+	// Indexed selection invokes it serially on the caller as reads finish.
 	Progress func(done, total int)
 }
 
