@@ -91,10 +91,12 @@ The 32 MiB metadata-body bound does not remove index-key constraints: canonical
 session keys remain at most1024 bytes and encoded index keys at most4096 bytes.
 Oversized project/parent/identity fields fail before head publication; no index
 field is silently truncated or hashed into a different layout. Large linked-session
-arrays are supported through overflow. A no-cache title/PR search still uses the
-complete summary fallback and may read an oversized body again for the selected
-full session. This O(N) fallback is complete and is not advertised as bounded or
-as universally requiring only one body read.
+arrays are supported through overflow. Existing `list --no-cache` title/PR
+searches use the complete summary fallback. Verified request-bound overflow
+resolution can supply the selected full body without another GET; ordinary
+projections still require selected full-body reads. This O(N) fallback is complete
+and is not advertised as bounded or as universally requiring one body read.
+`show` retains its existing flags and verifies selected full metadata and sources.
 
 ## Interrupted collector publication
 
