@@ -901,6 +901,9 @@ func readSessionView(ctx context.Context, store storage.ObjectStore, harness, se
 // interactive show and handoff. It reads every match, newest activity first,
 // for the caller to scope and limit.
 func loadSessionsForBrowse(ctx context.Context, env metadataCacheDependencies, store storage.ObjectStore, opts listOptions, stderr io.Writer, command string) ([]archive.Metadata, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	// Handoff needs complete bodies for its source/replay policy; the session
 	// browser hydrates the chosen body when details open.
 	switch catalogBrowseCommand(command) {
