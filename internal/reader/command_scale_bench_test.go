@@ -26,6 +26,7 @@ func BenchmarkReaderLatency(b *testing.B) {
 }
 
 func benchmarkReaderCase(b *testing.B, c storagetest.BenchCase) {
+	b.Helper()
 	b.StopTimer()
 	ctx := context.Background()
 	mem := storagetest.NewMemoryStore()

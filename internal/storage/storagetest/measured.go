@@ -12,7 +12,11 @@ import (
 // bodies; ListBytes estimates header payload as key/ETag bytes plus 16 bytes for
 // size/time. It is not an estimate of provider XML, HTTP, or TLS overhead.
 type ReadMetrics struct {
-	Lists, Gets, Bytes, ListBytes, PeakReads int64
+	Lists     int64
+	Gets      int64
+	Bytes     int64
+	ListBytes int64
+	PeakReads int64
 }
 
 // MeasuredStore preserves MemoryStore's reader extensions while measuring each

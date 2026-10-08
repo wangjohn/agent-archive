@@ -13,9 +13,10 @@ import (
 
 // BenchCase specifies synthetic archive size, selection and cache preparation.
 type BenchCase struct {
-	Sessions, Limit int
-	CacheState      string
-	Delay           time.Duration
+	Sessions   int
+	Limit      int
+	CacheState string
+	Delay      time.Duration
 }
 
 // Name is a stable, content-free benchmark label.
@@ -81,6 +82,7 @@ func SeedArchive(tb testing.TB, store *MemoryStore, count int, generation int) {
 
 // ReportReadMetrics reports per-operation requests and bytes and observed peak.
 func ReportReadMetrics(b *testing.B, m ReadMetrics) {
+	b.Helper()
 	n := float64(b.N)
 	b.ReportMetric(float64(m.Lists)/n, "LIST/op")
 	b.ReportMetric(float64(m.Gets)/n, "GET/op")
