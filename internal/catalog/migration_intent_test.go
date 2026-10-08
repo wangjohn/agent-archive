@@ -123,7 +123,7 @@ func TestMigrationInitializationIntentRejectsForeignAndMixedNamespace(t *testing
 			if err != nil {
 				t.Fatal(err)
 			}
-			if kind != "mixed" {
+			if kind != migrationMixed {
 				raw, err = json.Marshal(state)
 				if err != nil {
 					t.Fatal(err)
