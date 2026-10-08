@@ -31,7 +31,7 @@ func TestSubagentSourceFailuresPreserveRetryAndCause(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			home := t.TempDir()
-			store, err := state.Open(home)
+			store, err := openTestStore(home)
 			if err != nil {
 				t.Fatal(err)
 			}

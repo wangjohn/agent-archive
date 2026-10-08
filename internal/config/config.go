@@ -98,6 +98,8 @@ type Config struct {
 	// MCPServerNames supplies display labels for server IDs in stats.
 	MCPServerNames map[string]string `json:"mcp_server_names,omitempty"`
 
+	// DurableStorageProtection permanently protects rooted publication obligations.
+	DurableStorageProtection bool `json:"durable_storage_protection,omitempty"`
 	// CodexHistoryProtection permanently fences writers without revision lifecycle support.
 	CodexHistoryProtection bool `json:"codex_history_protection,omitempty"`
 	// GenerationProtection permanently fences writers that cannot freeze archive generations.
@@ -247,7 +249,12 @@ func loadConfig(home string) (Config, bool, bool, error) {
 
 func loadConfigWithCatalog(home string, c agentmeta.Catalog) (cfg Config, found, fenced bool, err error) {
 	defer trace.Start("load config").End()
-	data, err := os.ReadFile(path(home))
+	data, readErr := os.ReadFile(path(home))
+	return decodeLoadedConfig(data, readErr, path(home), c)
+}
+
+func decodeLoadedConfig(data []byte, readErr error, name string, c agentmeta.Catalog) (cfg Config, found, fenced bool, err error) {
+	err = readErr
 	if err == nil {
 		fenced, err = decodeConfig(data, &cfg)
 	}
@@ -257,16 +264,16 @@ func loadConfigWithCatalog(home string, c agentmeta.Catalog) (cfg Config, found,
 	var syntaxErr *json.SyntaxError
 	var typeErr *json.UnmarshalTypeError
 	if errors.As(err, &syntaxErr) || errors.As(err, &typeErr) {
-		return Config{}, false, false, fmt.Errorf("%w: %s (%w). Restore it from a backup, or fix the JSON by hand; moving it aside (keep the copy: it records this machine's ID) and running agent-archive setup configures this machine again", ErrUnreadable, path(home), err)
+		return Config{}, false, false, fmt.Errorf("%w: %s (%w). Restore it from a backup, or fix the JSON by hand; moving it aside (keep the copy: it records this machine's ID) and running agent-archive setup configures this machine again", ErrUnreadable, name, err)
 	}
 	if err != nil {
-		return Config{}, false, false, fmt.Errorf("read %s: %w", path(home), err)
+		return Config{}, false, false, fmt.Errorf("read %s: %w", name, err)
 	}
 	if err := validateDiscoveryConfig(cfg); err != nil {
 		return Config{}, false, false, err
 	}
 	if !ValidSkillEvidence(cfg.EffectiveSkillEvidence()) {
-		return Config{}, false, false, fmt.Errorf("read %s: unsupported skill_evidence %q; choose none, metadata, or body", path(home), cfg.SkillEvidence)
+		return Config{}, false, false, fmt.Errorf("read %s: unsupported skill_evidence %q; choose none, metadata, or body", name, cfg.SkillEvidence)
 	}
 	if err := cfg.ValidateCodexNameLookup(); err != nil {
 		return Config{}, false, false, err
@@ -281,7 +288,7 @@ func loadConfigWithCatalog(home string, c agentmeta.Catalog) (cfg Config, found,
 		return Config{}, false, false, err
 	}
 	if err := normalizeHandoff(&cfg.Handoff, c); err != nil {
-		return Config{}, false, false, fmt.Errorf("read %s: %w", path(home), err)
+		return Config{}, false, false, fmt.Errorf("read %s: %w", name, err)
 	}
 	return cfg, true, fenced, nil
 }

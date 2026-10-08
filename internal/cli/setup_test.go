@@ -75,6 +75,16 @@ func testExecutable(t *testing.T) string {
 
 func setupTestEnv(t *testing.T, home, userHome string, keychain *fakeKeychain, now time.Time) Env {
 	t.Helper()
+	// Positive setup fixtures begin with a private existing archive root. Leave
+	// absent paths, final links, user homes, and all descendants to their owners.
+	info, err := os.Lstat(home)
+	if err == nil && info.IsDir() {
+		if err := os.Chmod(home, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		t.Fatal(err)
+	}
 	env := testEnv(t, home, now)
 	env.AWSProfiles = func() ([]AWSProfile, error) { return nil, nil }
 	env.WorkingDir = func() (string, error) { return "", errors.New("no current project") }

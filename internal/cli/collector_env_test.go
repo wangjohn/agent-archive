@@ -68,6 +68,7 @@ func collectorPlistEnvironment(t *testing.T, env Env, home, userHome string) (ma
 func TestSetupGivesTheCollectorTheAWSSettingsItVerified(t *testing.T) {
 	t.Parallel()
 	home, userHome := t.TempDir(), t.TempDir()
+	must(t, os.Chmod(home, 0700))
 	configFile, credentialsFile, binDir := awsFixture(t)
 	caBundle := filepath.Join(filepath.Dir(configFile), "corporate-ca.pem")
 	if err := os.WriteFile(caBundle, nil, 0o600); err != nil {
@@ -250,6 +251,7 @@ func TestStatusReportsWhenTheCollectorCannotLoadTheProfile(t *testing.T) {
 func TestStatusReportsAWSFilesThatDifferFromTheCollectors(t *testing.T) {
 	t.Parallel()
 	home, userHome := t.TempDir(), t.TempDir()
+	must(t, os.Chmod(home, 0700))
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
 	setupRun(t, env, s3SetupInput("test-bucket", "us-east-1", "profile", true, false, false, t.TempDir()), 0)
 	view, err := readStatus(env)

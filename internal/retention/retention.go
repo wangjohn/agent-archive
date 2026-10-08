@@ -222,6 +222,9 @@ func (s *sweeper) orphans(keep map[string]bool) {
 var knownHarnesses = agentmeta.Names(agentmeta.Builtins())
 
 func (s *sweeper) orphan(id string) error {
+	if err := s.local.CheckDurableSessionRead(id); err != nil {
+		return err
+	}
 	ageFrom := s.local.OrphanChangedAt(id)
 	summary, found, err := s.local.LoadPublishedSummary(id)
 	if err != nil {
@@ -238,6 +241,9 @@ func (s *sweeper) orphan(id string) error {
 		harnesses = knownHarnesses
 	}
 	for _, harness := range harnesses {
+		if err := s.local.CheckDurableSessionRead(id); err != nil {
+			return err
+		}
 		if err := DeleteWholeSession(s.ctx, s.store, harness, id); err != nil {
 			return fmt.Errorf("delete unregistered session: %w", err)
 		}
@@ -268,6 +274,9 @@ type sweeper struct {
 // session sweeps one registered session.
 func (s *sweeper) session(reg archive.SessionRegistration) error {
 	id := reg.ArchiveSessionID
+	if err := s.local.CheckDurableSessionRead(id); err != nil {
+		return err
+	}
 	summary, found, err := s.local.LoadPublishedSummary(id)
 	if err != nil {
 		return fmt.Errorf("load published cache: %w", err)
@@ -457,6 +466,9 @@ func (s *sweeper) remote(reg archive.SessionRegistration, summary state.Publishe
 		if !s.clockAllowsDeletion() {
 			return nil
 		}
+		if err := s.local.CheckDurableSessionRead(id); err != nil {
+			return err
+		}
 		if err := DeleteWholeSession(s.ctx, s.store, reg.Harness.Name, id); err != nil {
 			return fmt.Errorf("delete session: %w", err)
 		}
@@ -522,6 +534,9 @@ func (s *sweeper) currentMetadata(reg archive.SessionRegistration) (archive.Meta
 // deleteSuperseded deletes the ledger's snapshots past their grace period,
 // keeping the current source and the ordinary immediate predecessor.
 func (s *sweeper) deleteSuperseded(reg archive.SessionRegistration, superseded []state.SupersededSource, current archive.Metadata) error {
+	if err := s.local.CheckDurableSessionRead(reg.ArchiveSessionID); err != nil {
+		return err
+	}
 	refs, err := current.SourceReferences()
 	if err != nil {
 		return err
@@ -591,6 +606,9 @@ func (s *sweeper) deleteSuperseded(reg archive.SessionRegistration, superseded [
 		}
 		if !s.clockAllowsDeletion() {
 			return nil
+		}
+		if err := s.local.CheckDurableSessionRead(id); err != nil {
+			return err
 		}
 		if err := s.store.Delete(s.ctx, entry.Key); err != nil {
 			return fmt.Errorf("delete superseded source %q: %w", entry.Key, err)
