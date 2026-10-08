@@ -446,6 +446,9 @@ func TestScriptedPausedAllCodexSetupKeepsLocalFloorThroughResume(t *testing.T) {
 func TestCodexStatusShowsScheduledPackedRecoveryCompletion(t *testing.T) {
 	at := time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
 	home, userHome := t.TempDir(), t.TempDir()
+	if err := os.Chmod(home, 0700); err != nil {
+		t.Fatal(err)
+	}
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), at)
 	setupYes(t, env, "", 0, "--yes", "--provider", "s3", "--bucket", "synthetic", "--aws-profile", "profile", "--region", "us-east-1", "--apps", "codex", "--codex-discovery", "on", "--codex-capture-scope", "all-projects")
 	store, err := state.Open(home)

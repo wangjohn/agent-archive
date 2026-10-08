@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"os"
 	"testing"
 	"time"
 
@@ -101,6 +102,9 @@ func TestEveryPendingCountAgrees(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
+			if err := os.Chmod(home, 0o700); err != nil {
+				t.Fatal(err)
+			}
 			cfg := pairTestConfig(now, []string{"codex"}, project)
 			if err := config.Save(home, cfg); err != nil {
 				t.Fatal(err)

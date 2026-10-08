@@ -564,6 +564,7 @@ func readSessionStatus(view *statusView, cfg config.Config, home string, store *
 	// import counts below both come from it (state.Outstanding).
 	owed := map[string]state.Outstanding{}
 	pending := 0
+	counted := map[string]bool{}
 	for _, reg := range regs {
 		accepted := cfg.AcceptSession(reg)
 		if !accepted && !reg.Imported() {
@@ -576,7 +577,37 @@ func readSessionStatus(view *statusView, cfg config.Config, home string, store *
 		}
 		owed[reg.ArchiveSessionID] = o
 		if accepted && o.Pending() {
+			counted[reg.ArchiveSessionID] = true
 			pending++
+		}
+	}
+	obligations, obligationErr := store.DurableStorageObligations()
+	if obligationErr != nil {
+		view.Warnings = append(view.Warnings, "Durable publication evidence requires recovery; automatic cleanup and native substitution are unavailable.")
+	}
+	registered := map[string]bool{}
+	for _, reg := range regs {
+		registered[reg.ArchiveSessionID] = true
+	}
+	orphans := map[string]bool{}
+	for _, obligation := range obligations {
+		id := obligation.SessionID
+		if id == "" {
+			pending++
+			view.Warnings = append(view.Warnings, "A private durable storage root requires recovery.")
+			continue
+		}
+		if registered[id] && obligation.Namespace == state.GenerationRecoveryStorage {
+			if !counted[id] {
+				counted[id] = true
+				pending++
+			}
+			view.Warnings = append(view.Warnings, fmt.Sprintf("Session %q retains a generation recovery obligation; recover it before collecting or cleaning up.", id))
+		}
+		if !registered[id] && !orphans[id] {
+			orphans[id] = true
+			pending++
+			view.Warnings = append(view.Warnings, fmt.Sprintf("Session %q retains durable publication evidence without a readable registration; recover it before collecting or cleaning up.", id))
 		}
 	}
 	if pending > view.Collector.PendingCount {
