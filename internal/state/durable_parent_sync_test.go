@@ -75,14 +75,16 @@ func TestDurableParentFirstNestedWriteOrdersBarriersBeforePayload(t *testing.T) 
 	}); err != nil {
 		t.Fatal(err)
 	}
-	want := append(parents, "payload")
+	want := make([]string, len(parents)+1)
+	copy(want, parents)
+	want[len(parents)] = "payload"
 	if !reflect.DeepEqual(events, want) {
 		t.Fatalf("durable acknowledgement order: got %v want %v", events, want)
 	}
 }
 
 func TestDurableParentBarrierFailureStopsAndClosesTraversal(t *testing.T) {
-	for failAt := 0; failAt < 3; failAt++ {
+	for failAt := range 3 {
 		t.Run([]string{"home", "sessions", "session"}[failAt], func(t *testing.T) {
 			root := durableParentTestRoot(t)
 			before := durableParentFDCount(t)
@@ -134,7 +136,7 @@ func TestDurableParentRetryExistingChildStillRequiresBarrier(t *testing.T) {
 	}
 	path := filepath.Join("sessions", "session", "pending-sources")
 	fault := errors.New("injected final parent sync failure")
-	for attempt := 0; attempt < 3; attempt++ {
+	for attempt := range 3 {
 		if attempt > 0 {
 			if info, err := root.Lstat(path); err != nil || !info.IsDir() {
 				t.Fatalf("failed first barrier did not leave retry-existing child: %v", err)

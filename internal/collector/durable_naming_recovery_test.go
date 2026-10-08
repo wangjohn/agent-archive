@@ -44,9 +44,11 @@ func (h *recoveryNativeTransport) WriteLine(context.Context, []byte) error {
 	h.writes++
 	return agentapi.ErrLabelHostUnavailable
 }
+
 func (*recoveryNativeTransport) ReadLine(context.Context) ([]byte, error) {
 	return nil, agentapi.ErrLabelHostUnavailable
 }
+
 func (*recoveryNativeTransport) Close() error { return nil }
 
 func TestRegisteredRecoveryRefusesNativeNamingBeforeProvider(t *testing.T) {
@@ -113,6 +115,8 @@ func TestRegisteredRecoveryRefusesNativeNamingBeforeProvider(t *testing.T) {
 						owedPath = ""
 					case durableSessionModeCorruptPending:
 						owedPath = filepath.Join(s.Home(), "pending", reg.ArchiveSessionID+".json")
+					case durableSessionModeMissingPending, durableSessionModeMissingSource, durableSessionModeCanceled:
+						t.Fatalf("unexpected mode outside registered recovery fixture: %q", mode)
 					}
 					owed := []byte("{sole-original")
 					if mode == durableSessionModeSourceOnly {
