@@ -64,6 +64,7 @@ func (p *publishedState) UnmarshalJSON(data []byte) error {
 // protected catalog transaction could fall back to ordinary publication.
 func (p *CatalogPublication) UnmarshalJSON(data []byte) error {
 	var next struct {
+		Protocol         *uint64 `json:"protocol"`
 		ID               *string `json:"id"`
 		ExpectedRevision *string `json:"expected_revision"`
 	}
