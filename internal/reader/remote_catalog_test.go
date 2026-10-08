@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -152,7 +153,7 @@ func TestRemoteSummaryDeltaDeletesAndUnknownRootRebuilds(t *testing.T) {
 			t.Fatal("deleted summary resurrected")
 		}
 	}
-	if _, err = c.db.ExecContext(t.Context(), "UPDATE remote_root SET root=?", []byte(`{"Key":"catalog-v4/nodes/missing.json","SHA256":"missing"}`)); err != nil {
+	if _, err = c.db.ExecContext(t.Context(), "UPDATE remote_root SET root=?", []byte(`{"Key":"catalog-v4/nodes/missing.json","SHA256":"`+strings.Repeat("0", 64)+`"}`)); err != nil {
 		t.Fatal(err)
 	}
 	if err = c.RefreshRemote(t.Context()); err != nil {
