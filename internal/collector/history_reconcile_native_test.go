@@ -345,6 +345,10 @@ func TestNativeRevisionReconciliationPendingCandidateSurvivesMissingOutgoingFile
 		t.Fatal(err)
 	}
 	pending := state.PendingPublication{Bundle: outgoing, SourceKey: rendered.source.Key, SourceSHA256: rendered.source.SHA256, SourceBytes: rendered.sourceBytes, MetadataKey: rendered.metadataKey, MetadataBytes: rendered.metadata}
+	scan.revisions = &revisionPlan{Current: revisionB}
+	if err := scan.freezeRevisionPublication(&pending); err != nil {
+		t.Fatal(err)
+	}
 	if err := scan.local.SavePending(scan.id(), pending); err != nil {
 		t.Fatal(err)
 	}
