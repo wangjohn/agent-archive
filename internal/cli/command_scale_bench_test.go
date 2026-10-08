@@ -228,6 +228,7 @@ func seedBenchmarkParent(b *testing.B, mem *storagetest.MemoryStore, children in
 // seedBenchmarkStats spans 90 days: a one-day query includes about 1/90 of
 // sessions. Model and token fields exercise aggregation as well as selection.
 func seedBenchmarkStats(b *testing.B, mem *storagetest.MemoryStore, count int) {
+	b.Helper()
 	seedBenchmarkStatsDays(b, mem, count, 90)
 }
 
