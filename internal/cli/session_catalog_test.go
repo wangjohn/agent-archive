@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"database/sql"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
@@ -160,5 +161,37 @@ func TestCatalogParentSearchKeepsUnmatchedChildCount(t *testing.T) {
 		if code != 0 || stderr != "" || !strings.Contains(out, "Remembered parent title · 1 subagent") {
 			t.Fatalf("parent search: code=%d stderr=%s output=%s", code, stderr, out)
 		}
+	}
+}
+
+func TestCatalogDamagedSummaryFallsBackToCurrentArchive(t *testing.T) {
+	env, _, id := publishedFixture(t)
+	var before, after, stderr bytes.Buffer
+	args := []string{"list", id[:8], "--all-projects"}
+	if code := Run(args, nil, &before, &stderr, env); code != 0 {
+		t.Fatalf("build=%d stderr=%s", code, stderr.String())
+	}
+	home, err := env.Home()
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(home, "cache", "catalog", "sessions.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec("UPDATE sessions SET summary=?", []byte("damaged summary"))
+	closeErr := db.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if closeErr != nil {
+		t.Fatal(closeErr)
+	}
+	stderr.Reset()
+	if code := Run(args, nil, &after, &stderr, env); code != 0 {
+		t.Fatalf("fallback=%d stderr=%s", code, stderr.String())
+	}
+	if before.String() != after.String() {
+		t.Fatal("damaged catalog hid current sessions")
 	}
 }
