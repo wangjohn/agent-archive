@@ -191,8 +191,8 @@ func TestHealthyPendingNamingEligibilityReleasesScratch(t *testing.T) {
 		}
 	}()
 	ledger := opts.sourcePasses.env.ReadBudget
-	p := &pass{ctx: t.Context(), local: local, opts: opts, result: Result{Errors: map[string]error{}}, unreadable: map[string]bool{}}
-	p.labelLocal, p.closeLabelResources = local.WithReadBudget(t.Context(), ledger)
+	scoped, closeScope := local.WithReadBudget(t.Context(), ledger)
+	p := &pass{ctx: t.Context(), local: local, opts: opts, result: Result{Errors: map[string]error{}}, unreadable: map[string]bool{}, labelLocal: scoped, closeLabelResources: closeScope}
 	defer p.releaseLabelResources()
 	before := ledger.Available()
 	for range 3 {
