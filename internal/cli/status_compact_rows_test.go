@@ -130,6 +130,9 @@ func TestStatusWithoutAppsSaysSo(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
+	if err := os.Chmod(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	cfg := pairTestConfig(now, nil, project)
 	cfg.ImportedHarnesses = []string{"codex"}
 	if err := config.Save(home, cfg); err != nil {

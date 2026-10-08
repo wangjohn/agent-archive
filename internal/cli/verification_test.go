@@ -372,6 +372,9 @@ func TestStatusOmitsEmptyAuthenticationContext(t *testing.T) {
 func TestStatusRequiresRecordedReadbackAndInvalidatesConfiguration(t *testing.T) {
 	t.Parallel()
 	home, userHome := t.TempDir(), t.TempDir()
+	if err := os.Chmod(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	at := time.Now().UTC()
 	project := t.TempDir()
 	cfg := config.Config{MachineID: "machine", Storage: credentialsTestConfig(), Harnesses: []string{"codex"}, Archive: archive.Config{Enabled: true, Projects: []archive.ProjectActivation{{Root: project, Included: true, ActivatedAt: at.Add(-time.Hour)}}}}
@@ -466,9 +469,15 @@ func TestBackgroundChecksStorageWithoutSessionsAndStatusDoesNotProbe(t *testing.
 func TestVerificationReadsBackHookPublicationsBeforeImports(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
+	if err := os.Chmod(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	now := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
 	project := t.TempDir()
 	cfg := pairTestConfig(now, []string{"codex"}, project)
+	if err := config.Save(home, cfg); err != nil {
+		t.Fatal(err)
+	}
 	store, err := state.Open(home)
 	if err != nil {
 		t.Fatal(err)

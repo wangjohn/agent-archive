@@ -250,6 +250,9 @@ func TestFourthHistoricalQualifiedLocatorFlow(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
+	if err := os.Chmod(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	at := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	ports := &orbifold.Ports{Generation: 1}
 	registry := fourthRegistry(t, ports)

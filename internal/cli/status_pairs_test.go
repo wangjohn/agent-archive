@@ -136,6 +136,9 @@ func TestPairVerificationSurvivesUnrelatedChangesButNotReactivationOrDestination
 func TestStatusCountsLegacySessionsWithoutConfiguredProjects(t *testing.T) {
 	t.Parallel()
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
+	if err := os.Chmod(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	now := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
 	// Older programmatic configurations carry no projects; AcceptSession
 	// admits their sessions and the collector publishes them.
@@ -173,6 +176,9 @@ func TestStatusCountsLegacySessionsWithoutConfiguredProjects(t *testing.T) {
 func TestStatusIgnoresDuplicateProjectRoots(t *testing.T) {
 	t.Parallel()
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
+	if err := os.Chmod(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	now := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
 	cfg := pairTestConfig(now, []string{"codex"}, project, project)
 	if err := config.Save(home, cfg); err != nil {
@@ -193,6 +199,9 @@ func TestStatusIgnoresDuplicateProjectRoots(t *testing.T) {
 func TestStatusTextDoesNotCallPartialReadBackVerified(t *testing.T) {
 	t.Parallel()
 	home, userHome := t.TempDir(), t.TempDir()
+	if err := os.Chmod(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	now := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
 	projectA, projectB := t.TempDir(), t.TempDir()
 	cfg := pairTestConfig(now, []string{"codex"}, projectA, projectB)

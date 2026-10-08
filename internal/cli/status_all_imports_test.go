@@ -95,6 +95,9 @@ func TestAllCodexStatusImportsDoNotRequireFreshProjectCapture(t *testing.T) {
 func TestAllCodexStatusWithOnlyImportsWaitsForAnyEligibleTask(t *testing.T) {
 	t.Parallel()
 	home, userHome, b := t.TempDir(), t.TempDir(), t.TempDir()
+	if err := os.Chmod(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	now := time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
 	cfg := pairTestConfig(now, []string{"codex"}, b)
 	must(t, config.SetCodexCaptureScope(&cfg, config.CodexAllProjects))
