@@ -6,6 +6,9 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Preserve settled capture and source bytes when cached native naming reads are
+  unavailable and the same observation uses an equivalent timezone offset.
+
 - Keep listing revision path components within 255 bytes so capture and index
   rebuild work with filesystem-backed S3 stores such as MinIO. Existing v2/v3
   hints remain readable and are retired by repair or rebuild.

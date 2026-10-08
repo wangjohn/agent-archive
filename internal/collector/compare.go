@@ -14,7 +14,8 @@ import (
 // bundleEvidenceEqual reports whether two source bundles carry the same
 // retained evidence, ignoring their capture timestamp: a changed scan time
 // alone must never look like a change in evidence. Evidence is equal when
-// its JSON is. The native records and text, nearly all of a large bundle,
+// its JSON is, except equivalent session-label observation instants. The
+// native records and text, nearly all of a large bundle,
 // are compared in place (see jsonValuesEqual) rather than by encoding both
 // bundles, which cost two copies of a bundle tens of megabytes long every
 // pass; the rest is small and is compared as JSON.
@@ -36,6 +37,23 @@ func bundleEvidenceEqualWith(a, b archive.SourceBundle, equal func(any, any) (bo
 			return false, err
 		}
 	}
+	// Older retained rename publications can carry a local offset: the rename
+	// fast path used to bypass the bundle builder's UTC conversion. Compare the
+	// observation instant while retaining payload, provenance, position and all
+	// other evidence exactly. The item copies leave retained source bytes intact.
+	if len(a.SupplementalEvidence) != len(b.SupplementalEvidence) {
+		return false, nil
+	}
+	for i, left := range a.SupplementalEvidence {
+		right := b.SupplementalEvidence[i]
+		if left.Kind == archive.EvidenceKindSessionLabels && right.Kind == left.Kind && left.ObservedAt.Equal(right.ObservedAt) {
+			right.ObservedAt = left.ObservedAt
+		}
+		if same, err := equal(left, right); err != nil || !same {
+			return false, err
+		}
+	}
+	a.SupplementalEvidence, b.SupplementalEvidence = nil, nil
 	a.Capture.CapturedAt, b.Capture.CapturedAt = time.Time{}, time.Time{}
 	a.NativeRecords, b.NativeRecords = nil, nil
 	a.NativeText, b.NativeText = nil, nil
