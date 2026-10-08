@@ -233,7 +233,9 @@ func (s *sessionScan) applyLabels(evidence []archive.SupplementalEvidence) []arc
 	if !ok {
 		return evidence
 	}
-	return archive.MergeSupplementalEvidence(evidence, []archive.SupplementalEvidence{entry.Label.Evidence(entry.ObservedAt, s.reg.Harness.Name)})
+	// Retained-source renames bypass NewSourceBundle; use its canonical UTC
+	// observation encoding here too, without changing the cached instant.
+	return archive.MergeSupplementalEvidence(evidence, []archive.SupplementalEvidence{entry.Label.Evidence(entry.ObservedAt.UTC(), s.reg.Harness.Name)})
 }
 
 func withoutSessionLabels(evidence []archive.SupplementalEvidence) []archive.SupplementalEvidence {
