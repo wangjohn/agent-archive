@@ -144,11 +144,9 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	var listed reader.RecentResult
 	var catalogUsed bool
 	if !opts.jsonOut && (full || opts.filter.Model != "" || opts.filter.Skill != "" || opts.filter.SkillSHA256 != "" || opts.filter.RequireCompleteCoverage) {
-		words := q.words
-		if browsing {
-			words = nil
-		}
-		listed.Sessions, catalogUsed, err = catalogSessions(env, store, opts, stderr, "list", words)
+		// Child hints and scope tiers need the complete filtered summary
+		// universe even when a text query only selects a few parent rows.
+		listed.Sessions, catalogUsed, err = catalogSessions(env, store, opts, stderr, "list", nil)
 	}
 	if catalogUsed {
 		full = true
