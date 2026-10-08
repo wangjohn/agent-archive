@@ -54,11 +54,12 @@ type Candidate struct {
 type Outcome string
 
 const (
-	outcomeUsable         Outcome = "native_format"
-	outcomeIncomplete     Outcome = "incomplete_metadata"
-	outcomeRelatedHistory Outcome = Outcome(codexmeta.RelatedHistoryPending)
-	outcomeUnavailable    Outcome = "source_unavailable"
-	outcomeChanged        Outcome = "source_changed"
+	outcomeUsable          Outcome = "native_format"
+	outcomeOwnTaskRejected Outcome = "own_task_rejected"
+	outcomeIncomplete      Outcome = "incomplete_metadata"
+	outcomeRelatedHistory  Outcome = Outcome(codexmeta.RelatedHistoryPending)
+	outcomeUnavailable     Outcome = "source_unavailable"
+	outcomeChanged         Outcome = "source_changed"
 )
 
 // Observation is one bounded metadata probe and its typed outcome.
@@ -82,6 +83,8 @@ type Fingerprint struct {
 
 // SourceEntry is a source or child directory in a bounded enumeration batch.
 type SourceEntry struct {
+	unsafeMetadata  bool
+	unknownMetadata bool
 	// CoverageFingerprint includes every directory entry, even non-rollouts.
 	CoverageFingerprint string
 	Source              SourceDescriptor
@@ -124,7 +127,9 @@ func findAdapter(adapters []SourceAdapter, agent string) SourceAdapter {
 }
 
 type codexAdapter struct {
-	supported func(sourcefacts.CodexMeta) bool
+	metadataCounts  *metadataCounts
+	metadataReserve func(int64) bool
+	supported       func(sourcefacts.CodexMeta) bool
 }
 
 func (codexAdapter) Agent() string { return "codex" }
@@ -135,16 +140,25 @@ func (a codexAdapter) Enumerate(ctx context.Context, root, path string, cookie i
 	if err := ctx.Err(); err != nil {
 		return SourceBatch{}, err
 	}
+	if a.metadataCounts != nil {
+		a.metadataCounts.stats++
+	}
 	stampBefore := directoryCoverageStamp(root, path)
-	names, next, complete, err := readBatch(directory{Root: root, Path: path, Offset: cookie})
+	names, next, complete, err := readBatchMeasured(directory{Root: root, Path: path, Offset: cookie}, a.metadataCounts)
 	if err != nil {
 		return SourceBatch{}, err
+	}
+	if a.metadataCounts != nil {
+		a.metadataCounts.stats++
 	}
 	stampAfter := directoryCoverageStamp(root, path)
 	b := SourceBatch{Continuation: next, Complete: complete, coverage: &coverageBatch{Stamp: stampBefore, Unavailable: stampBefore == "" || stampBefore != stampAfter}}
 	for _, name := range names {
 		if err := ctx.Err(); err != nil {
 			return SourceBatch{}, err
+		}
+		if a.metadataReserve != nil && !a.metadataReserve(128+int64((len(root)+len(path)+len(name)+31)&^15)) {
+			return SourceBatch{}, metadataLimit()
 		}
 		entry := a.Describe(root, path, name)
 		b.Entries = append(b.Entries, entry)
@@ -156,7 +170,10 @@ func (a codexAdapter) Enumerate(ctx context.Context, root, path string, cookie i
 	return b, nil
 }
 
-func (codexAdapter) Describe(root, path, name string) SourceEntry {
+func (a codexAdapter) Describe(root, path, name string) SourceEntry {
+	if a.metadataCounts != nil {
+		a.metadataCounts.stats++
+	}
 	loc := filepath.Join(root, path, name)
 	info, err := os.Lstat(loc)
 	if err != nil {
@@ -166,7 +183,7 @@ func (codexAdapter) Describe(root, path, name string) SourceEntry {
 		return SourceEntry{Directory: filepath.Join(path, name), CoverageFingerprint: entryFingerprint(name, info)}
 	}
 	if !info.Mode().IsRegular() || !strings.HasPrefix(name, "rollout-") || sourcefacts.RolloutID(name) == "" {
-		return SourceEntry{CoverageFingerprint: entryFingerprint(name, info)}
+		return SourceEntry{CoverageFingerprint: entryFingerprint(name, info), unsafeMetadata: info.Mode()&os.ModeSymlink != 0, unknownMetadata: strings.HasSuffix(name, ".jsonl")}
 	}
 	priority := 0
 	if local.PathWithin(loc, filepath.Join(root, "archived_sessions")) {

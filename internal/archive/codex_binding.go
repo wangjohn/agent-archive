@@ -72,3 +72,9 @@ func bindingProducerFacts(binding *CodexSourceBinding) string {
 	}
 	return binding.ProducerSource
 }
+
+// RequiresOwnTask identifies independent child or fork ownership.
+// A physical revision of an ordinary thread does not establish a new owner.
+func (b *CodexSourceBinding) RequiresOwnTask() bool {
+	return b != nil && (b.Child || b.OwnStart != nil)
+}

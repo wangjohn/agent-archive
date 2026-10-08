@@ -47,6 +47,27 @@ type SourceAdmissionValidator interface {
 	ValidateAdmission(context.Context, SourceAdmission) error
 }
 
+// CodexValidationLimits bounds use after one completed validation sweep. Zero
+// values select 512 calls and 30 seconds; maxima are 512 calls and 60 seconds.
+type CodexValidationLimits struct {
+	Steps    int
+	Duration time.Duration
+}
+
+// CodexRolloutSliceProvider optionally shares validation within a caller-owned
+// operation slice. The caller closes all snapshots before renewing a slice.
+type CodexRolloutSliceProvider interface {
+	BeginValidationSlice(context.Context, CodexValidationLimits) (CodexRolloutSlice, error)
+}
+
+// CodexRolloutSlice expires without automatic renewal. It never supplies capture
+// permission; providers still validate selected files on the opened handle.
+type CodexRolloutSlice interface {
+	CodexRolloutLookup
+	Valid(context.Context) error
+	Close() error
+}
+
 // SourceAdmissionFacts exposes bounded facts from the actual opened snapshot.
 type SourceAdmissionFacts interface {
 	AdmissionFacts(context.Context) (archive.CodexSourceBinding, error)

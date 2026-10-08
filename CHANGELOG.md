@@ -41,6 +41,14 @@ follow [Semantic Versioning](https://semver.org/).
   captures with a persisted native child binding upgrade their retained ownership
   headers before linking a parent, including preserved revisions.
 
+- An explicitly requested Codex metadata inventory shares the existing discovery
+  owner, retains active and archived physical copies and validates bounded
+  slices with live native-current checks. Pending-history diagnostics preserve
+  the original refusal; ordinary capture keeps its requested lookup lane.
+  Conflicting logical or pagination identities for one physical rollout leave
+  the inventory incomplete, including UUID spelling variants. Lazy acquisition
+  also refuses aliases whose canonical roots changed since owner construction.
+
 - Pairing, handoff, standalone history import and undo, uninstall and purge
   use grouped questions and safe completion receipts. Secondary actions use
   bracketed shortcuts. Destructive defaults, exact purge digest confirmation,
@@ -83,6 +91,11 @@ follow [Semantic Versioning](https://semver.org/).
   coverage remains tracked for release testing.
 
 ### Fixed
+
+- Validate a Codex fork's first own task during import and ongoing capture,
+  and protect every qualified history import from older writers. Discovery
+  stops rereading decisively rejected tasks until their native source changes.
+  Undo retention warnings count independent native children with resolved parents.
 
 - Codex current-history validation uses the remaining bounded pass allowance
   for private SQLite queries, avoiding spurious retries after a scheduling delay

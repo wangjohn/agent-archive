@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
@@ -66,6 +67,26 @@ func legacyNativeChildEnvelope(t *testing.T, local *state.Store, cloud *storaget
 	must(t, cloud.Put(t.Context(), key, raw))
 	published, err := local.LoadPublishedState(reg.ArchiveSessionID)
 	must(t, err)
+	must(t, published.SavePublication(sources[metadata.History.CurrentRevision], metadata.CapturedAt, metadata.SourceBundle, raw))
+	// Ownership interpretation can upgrade before retained source headers do.
+	// Both the public reader and acknowledged-state port retain this supported
+	// legacy shape; exact identity, reference and parent checks still apply.
+	upgraded := metadata
+	upgraded.NativeChild = true
+	_, err = reader.LoadSource(t.Context(), cloud, upgraded, reader.Limits{})
+	must(t, err)
+	for _, revision := range upgraded.History.Preserved {
+		_, err = reader.LoadRevision(t.Context(), cloud, upgraded, revision.RevisionID, reader.Limits{})
+		must(t, err)
+	}
+	upgradedRaw, err := json.Marshal(upgraded)
+	must(t, err)
+	must(t, published.SavePublication(sources[metadata.History.CurrentRevision], metadata.CapturedAt, metadata.SourceBundle, upgradedRaw))
+	ack, found, err := published.LastPublishedMetadata()
+	must(t, err)
+	if !found || !ack.NativeChild {
+		t.Fatal("optional legacy source marker invalidated acknowledged metadata")
+	}
 	must(t, published.SavePublication(sources[metadata.History.CurrentRevision], metadata.CapturedAt, metadata.SourceBundle, raw))
 	_, err = local.UpdateRegistration(reg.ArchiveSessionID, func(current *archive.SessionRegistration) error {
 		current.NativeChild, current.NativeRootSessionID, current.ParentNativeSessionID, current.NativeSourceHome, current.NativeLinkVersion = false, "", "", "", 0

@@ -30,6 +30,59 @@ usage, titles and timestamps do not become own activity. Cumulative-only token
 counters with uncertain scope produce an explicit gap, without guessing whether
 a child reset its counters. Independent own per-call usage remains useful.
 
+## Shared native catalog
+
+`discovery.CodexRolloutLookup` owns the pass's requested coverage, native current
+projection and optional full metadata epoch. Ordinary collection and generation
+preview retain their requested lane. `MetadataInventory` explicitly requests a
+lazy view with separate bounds: 16 homes, 16384 physical entries, 2048 directories
+and 16MiB aggregate metadata facts/header work, charged to the shared native read
+budget. A late request starts a complete following round; neither observation
+cache membership nor requested coverage proves complete inventory.
+Physical candidates count before header validity; filesystem fingerprints include
+subdirectories and unrelated entries and retain a separate18432-entry traversal
+ceiling. Aliases of one canonical home share acquisition while every approved
+home spelling remains fenced.
+
+The full view binds lazy acquisition to the owner's constructor-approved
+canonical root set and fences every supplied alias spelling. A changed or
+collapsed root set leaves incomplete evidence before native acquisition.
+It enumerates approved active and archived stores with the same
+bounded directory adapter. Each header is acquired on one confined descriptor
+using one-byte ReadAt requests through the first newline, at most64KiB including
+that delimiter. A resumable step performs at most1024 reads and100ms of work,
+retaining one in-memory partial header. Cancellation or changed root/source
+clears the cursor. It reads no body, task event or duplicate prefix. Missing
+stores have absence evidence; unreadable stores, unknown/malformed headers,
+identity conflicts and exhausted bounds leave incomplete evidence. One physical
+rollout UUID has one stable logical identity and immutable pagination links;
+UUID spelling variants denote that same physical rollout. Different rollout
+UUIDs may carry different revision-local pagination. Every
+physical copy remains represented; complete enumeration does not establish
+content agreement or ancestor capture permission.
+
+Caller-owned validation slices share one filesystem sweep for up to512 lookup
+and check calls and30seconds after the sweep, with a60second maximum. A sweep
+rechecks captured directory membership stamps and every physical file
+observation; selected providers independently check opened headers/content.
+Thread and Check retain live targeted current-row queries and WAL refresh/replay
+despite filesystem proof reuse. Ordinary requested work retains its five-second allowance. An explicitly
+requested full epoch has one fixed thirty-second cumulative active-work
+allowance for acquisition, sweeps and current checks. Caller cancellation and
+earlier deadlines win; slice renewal and lifetime never replenish that allowance. Failed sweeps are retained only in their bounded slice; callers
+close snapshots before renewal. CloseReadOnly releases resources without a
+capture-catalog checkpoint. Filesystem observations use the practical
+size/mtime/identity contract; restored timestamps are not a filesystem lock.
+
+Only actual path-specific related-history refusal requests the same owner's
+view for a content-free diagnostic under a100ms caller deadline. It preserves
+the original error and says this operation remains pending. Upstream admitted
+and retained history paths retain their existing behavior. No second production
+catalog, new content authority or new history admission is introduced here.
+The PR-only legacy prefix-coalescing catalog and settled-VFS engine are retired;
+metadata completeness does not establish duplicate content agreement. Authorized
+both-copy prefix checks and cross-home ancestor content remain separately owned.
+
 ## Captured-prefix consistency and resources
 
 Each snapshot fixes a newline-complete prefix, validates its raw ordinals and
@@ -112,11 +165,15 @@ A validated source snapshot supplies original same-thread creation and the first
 OWN task. Its timestamp must be no earlier than original native creation, with
 the same one-second tolerance as bounded header admission. A rejected first
 task cannot be replaced by a later native-looking event. Discovery, historical
-import and ongoing capture apply that constraint. Earlier private native-child
+import and ongoing capture apply that constraint. Earlier private related-owner (fork or child)
 scan proofs are revalidated once; parser, adapter and privacy versions remain
 unchanged by this admission correction. The inherited prefix may
 exceed the bounded catalog header window;
-metadata-only identity/creation/format facts do not authorize capture.
+metadata-only identity/creation/format facts do not authorize capture. Seen-invalid
+first tasks remain rejected until their source observation changes; missing or
+partial tasks and unavailable, canceled or budget-limited reads remain retryable.
+All qualified history imports establish the permanent writer protection before
+registration, including forks whose public native-child flag is absent.
 
 Each native child carries its own origin, admission, destination and import batch.
 Missing parent links do not prevent independently admissible capture. Relationship

@@ -9,6 +9,8 @@ import (
 	"github.com/wangjohn/agent-archive/internal/transcriptio"
 )
 
+var errOwnTaskRejected = errors.New("first own task decisively rejects native admission")
+
 // One serial agent-owned pass per authorized source home shares handles and
 // immutable ancestor summaries. No parent-scoped enumeration occurs here.
 type nativeProofPasses struct {
@@ -75,6 +77,9 @@ func (p *nativeProofPasses) Prove(ctx context.Context, c Candidate) (out Candida
 	facts, task := evidence.Binding, evidence.Task
 
 	if !task.ValidNativeCreation(facts.NativeCreatedAt) {
+		if task.Seen {
+			return c, agentapi.Wrap(agentapi.Unavailable, errOwnTaskRejected)
+		}
 		return c, agentapi.Wrap(agentapi.Unavailable, errors.New("native own task unavailable"))
 	}
 	if facts.NativeThreadID != c.NativeSessionID {
@@ -93,6 +98,12 @@ func (p *nativeProofPasses) Prove(ctx context.Context, c Candidate) (out Candida
 }
 
 func nativeProofOutcome(err error) string {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return "own_task_unavailable"
+	}
+	if errors.Is(err, errOwnTaskRejected) && !agentapi.HasFailure(err, agentapi.Changed) && !agentapi.HasFailure(err, agentapi.Cleanup) && !agentapi.HasFailure(err, agentapi.Limit) && !agentapi.HasFailure(err, agentapi.Unsafe) && !agentapi.HasFailure(err, agentapi.FormatMismatch) {
+		return "own_task_rejected"
+	}
 	if agentapi.HasFailure(err, agentapi.Changed) {
 		return "source_changed"
 	}

@@ -373,7 +373,7 @@ func keptOutToRemove(env Environment, cfg config.Config, regs []archive.SessionR
 	return out
 }
 
-// retentionDeletes counts the sessions (not subagents) in cfg's destination,
+// retentionDeletes counts independent owners in cfg's destination,
 // other than those undo removes, that retention of r.From days deletes and
 // retention of r.To days does not: those restoring r.From costs. A session
 // ages as retention ages it: from its last capture, or its admission when it
@@ -391,7 +391,7 @@ func retentionDeletes(store *state.Store, cfg config.Config, regs []archive.Sess
 	from, to := time.Duration(r.From)*24*time.Hour, time.Duration(r.To)*24*time.Hour
 	n := 0
 	for _, reg := range regs {
-		if reg.ParentSessionID != "" || removed[reg.ArchiveSessionID] || !cfg.InCurrentDestination(reg) {
+		if !independentImportOwner(reg) || removed[reg.ArchiveSessionID] || !cfg.InCurrentDestination(reg) {
 			continue
 		}
 		ageFrom := reg.Admitted()

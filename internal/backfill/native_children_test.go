@@ -5,6 +5,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/state"
+	"github.com/wangjohn/agent-archive/internal/state/statetest"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -149,5 +150,71 @@ func TestUndoRefusesReusedBatchWithEarlierIndependentNativeChild(t *testing.T) {
 	var shared *SharedBatchIDError
 	if !errors.As(err, &shared) || shared.Sessions != 1 {
 		t.Fatalf("reused batch allowed deletion of earlier independent child: %v", err)
+	}
+}
+
+func TestUndoRetentionWarningsIncludeIndependentNativeChildren(t *testing.T) {
+	t.Parallel()
+	f := newUndoFixture(t)
+	root := "/synthetic/retention"
+	f.include(root)
+	f.cfg.RetentionDays = 365
+	batch := f.batch("2026-09-23-1", fixedNow.Add(-time.Hour))
+	batch.Retention = &RetentionChange{From: 30, To: 365}
+	day := 24 * time.Hour
+	for _, id := range []string{"resolved", "unresolved", "dependent"} {
+		at := fixedNow.Add(-100 * day)
+		parent, harness := "external-parent", "codex"
+		if id == "unresolved" {
+			parent = ""
+		}
+		if id == "dependent" {
+			harness = "claude"
+		}
+		reg := archive.SessionRegistration{ArchiveSessionID: id, NativeSessionID: id, Harness: archive.Harness{Name: harness}, ProjectID: archive.ProjectID(root), ProjectRoot: root, TranscriptPath: "/synthetic/" + id + ".jsonl", SessionStartedAt: at, RegisteredAt: at, AdmittedAt: at, NativeChild: id != "dependent", ParentSessionID: parent}
+		if err := f.store.SaveRegistration(reg); err != nil {
+			t.Fatal(err)
+		}
+	}
+	plan, err := PlanUndo(Environment{Home: f.home, Now: func() time.Time { return fixedNow }}, f.store, f.cfg, []Batch{batch}, batch, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.RetentionDeletes != 2 {
+		t.Fatal("shorter retention omitted independent resolved native child", plan.RetentionDeletes)
+	}
+	fewer := plan
+	fewer.RetentionDeletes = 1
+	if !plan.Grew(fewer) {
+		t.Fatal("new resolved-child retention loss bypassed confirmation recheck")
+	}
+	// Retention uses the independent child's capture clock, then excludes
+	// selected undo removals and other destinations from the warning.
+	bundle := archive.SourceBundle{SchemaVersion: archive.SourceSchemaVersion, ArchiveSessionID: "resolved", Capture: archive.SourceCapture{CapturedAt: fixedNow.Add(-7 * day)}}
+	if err := statetest.SavePublished(f.store, "resolved", bundle, fixedNow, state.CacheStatusPublished); err != nil {
+		t.Fatal(err)
+	}
+	regs, err := f.store.LoadRegistrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	count, err := retentionDeletes(f.store, f.cfg, regs, nil, *batch.Retention, fixedNow)
+	if err != nil || count != 1 {
+		t.Fatal("resolved child ignored its own recent capture", count, err)
+	}
+	for _, reg := range regs {
+		if reg.ArchiveSessionID == "unresolved" {
+			count, err = retentionDeletes(f.store, f.cfg, regs, []UndoSession{{Registration: reg}}, *batch.Retention, fixedNow)
+			if err != nil || count != 0 {
+				t.Fatal("selected native child counted twice as retention loss", count, err)
+			}
+		}
+	}
+	for i := range regs {
+		regs[i].DestinationID = "other-destination"
+	}
+	count, err = retentionDeletes(f.store, f.cfg, regs, nil, *batch.Retention, fixedNow)
+	if err != nil || count != 0 {
+		t.Fatal("retention warning crossed destinations", count, err)
 	}
 }

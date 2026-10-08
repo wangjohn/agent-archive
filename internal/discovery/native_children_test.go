@@ -8,6 +8,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -57,8 +58,49 @@ func TestNativeChildAdmissionUsesOwnTaskBeyondHeaderWindowWithoutParent(t *testi
 				t.Fatal(err)
 			}
 			if invalid {
-				if len(regs) != 0 || h.Outcomes["own_task_unavailable"] == 0 {
+				if len(regs) != 0 || h.Outcomes["own_task_rejected"] == 0 {
 					t.Fatalf("copied/later tasks licensed child: %+v %v", h, regs)
+				}
+				for range 3 {
+					warm, err := runWithCensus(t.Context(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(2 * time.Hour) }}, registeredAdapters())
+					if err != nil {
+						t.Fatal(err)
+					}
+					if warm.NativeValidationAttempts != 0 || warm.NativeValidationBytes != 0 {
+						t.Fatal("decisively rejected first task reread unchanged source", warm.NativeValidationAttempts, warm.NativeValidationBytes)
+					}
+				}
+				// A source rewrite must reopen the decision, while unrelated
+				// work remains admissible despite the terminal negative.
+				writeRollout(t, home, cfg.Archive.Projects[0].Root, at.Add(time.Minute), 902, "sessions")
+				fresh, err := runWithCensus(t.Context(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(4 * time.Minute) }}, registeredAdapters())
+				if err != nil || fresh.Registered != 1 {
+					t.Fatal("terminal negative pinned unrelated work", fresh, err)
+				}
+				changed := strings.Replace(builder.String(), `"turn_id":"external-import-turn"`, `"turn_id":"`+id+`"`, 1)
+				// Preserve size and modification time while replacing the inode:
+				// a terminal decision must bind the exact live source identity.
+				prior, err := os.Stat(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				changed = strings.Replace(changed, strings.Repeat("x", 512), strings.Repeat("x", 512-(len(changed)-builder.Len())), 1)
+				if len(changed) != builder.Len() {
+					t.Fatal("replacement fixture changed source size")
+				}
+				replacement := filepath.Join(filepath.Dir(path), "replacement.tmp")
+				if err := os.WriteFile(replacement, []byte(changed), 0600); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Chtimes(replacement, prior.ModTime(), prior.ModTime()); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Rename(replacement, path); err != nil {
+					t.Fatal(err)
+				}
+				repaired, err := runWithCensus(t.Context(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(5 * time.Minute) }}, registeredAdapters())
+				if err != nil || repaired.Registered != 1 {
+					t.Fatal("changed rejected source stayed terminal", repaired, err)
 				}
 				return
 			}
@@ -79,5 +121,45 @@ func TestNativeChildAdmissionUsesOwnTaskBeyondHeaderWindowWithoutParent(t *testi
 				t.Fatal("private native facts leaked in aggregate health")
 			}
 		})
+	}
+}
+
+func TestMissingOwnTaskRetriesUntilCompleteSourceArrives(t *testing.T) {
+	t.Parallel()
+	store, cfg, at, home := fixture(t)
+	parent := "00000000-0000-0000-0000-000000000900"
+	id, path := compatibilityRollout(t, home, cfg.Archive.Projects[0].Root, "codex-155-legacy.jsonl", "dev", 903, func(meta, task map[string]any) {
+		meta["parent_thread_id"] = parent
+		meta["session_id"] = parent
+		meta["subagent_history_start_ordinal"] = 65
+	})
+	original, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(string(original), "\n")
+	var prefix strings.Builder
+	prefix.WriteString(lines[0] + "\n")
+	for range 64 {
+		prefix.WriteString(`{"type":"turn_context","payload":{"model":"synthetic copied"}}` + "\n")
+	}
+	// A trailing incomplete task is outside the validated complete-record prefix.
+	partial := prefix.String() + `{"type":"event_msg","payload":{"type":"task_started"`
+	if err := os.WriteFile(path, []byte(partial), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		h, err := runWithCensus(t.Context(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(2 * time.Minute) }}, registeredAdapters())
+		if err != nil || h.Registered != 0 || h.Outcomes["own_task_rejected"] != 0 || !h.Pending {
+			t.Fatal("partial missing task became terminal", h, err)
+		}
+	}
+	complete := prefix.String() + strings.Join(lines[1:], "\n")
+	if err := os.WriteFile(path, []byte(complete), 0600); err != nil {
+		t.Fatal(err)
+	}
+	h, err := runWithCensus(t.Context(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(3 * time.Minute) }}, registeredAdapters())
+	if err != nil || h.Registered != 1 {
+		t.Fatal("complete own task did not retry", id, h, err)
 	}
 }

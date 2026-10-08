@@ -294,7 +294,7 @@ func (r Registration) step(cfg config.Config, w *parentWork, result *Registratio
 			result.Invalid++
 			return true, nil
 		}
-		if c.NativeChild && !cfg.CodexHistoryProtection {
+		if (c.NativeChild || c.CodexBinding != nil) && !cfg.CodexHistoryProtection {
 			cfg.CodexHistoryProtection = true
 			if err := config.Save(r.Home, cfg); err != nil {
 				return true, err

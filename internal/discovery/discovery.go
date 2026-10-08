@@ -76,11 +76,12 @@ type directory struct {
 }
 
 type cached struct {
-	Size        int64       `json:"size"`
-	Mtime       int64       `json:"mtime"`
-	Checked     time.Time   `json:"checked"`
-	Observation Observation `json:"observation"`
-	ActiveHint  bool        `json:"active_hint,omitempty"`
+	SourceFingerprint string      `json:"source_fingerprint,omitempty"`
+	Size              int64       `json:"size"`
+	Mtime             int64       `json:"mtime"`
+	Checked           time.Time   `json:"checked"`
+	Observation       Observation `json:"observation"`
+	ActiveHint        bool        `json:"active_hint,omitempty"`
 }
 
 type catalog struct {
@@ -270,7 +271,12 @@ func appendUnique(values []string, value string) []string {
 // Directory cookies continue bounded enumeration without rereading preceding
 // names. They are hints: every completed round restarts reconciliation, so
 // moves, directory replacement and invalidation cannot silently lose coverage.
-func readBatch(d directory) ([]string, int64, bool, error) {
+func readBatch(d directory) ([]string, int64, bool, error) { return readBatchMeasured(d, nil) }
+
+func readBatchMeasured(d directory, counts *metadataCounts) ([]string, int64, bool, error) {
+	if counts != nil {
+		counts.rootOpens++
+	}
 	root, err := os.OpenRoot(d.Root)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, 0, true, nil
@@ -279,12 +285,18 @@ func readBatch(d directory) ([]string, int64, bool, error) {
 		return nil, 0, false, err
 	}
 	defer func() { _ = root.Close() }()
+	if counts != nil {
+		counts.stats++
+	}
 	info, err := root.Lstat(d.Path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, 0, true, nil
 	}
 	if err != nil || !info.IsDir() {
 		return nil, 0, false, errors.New("not a directory")
+	}
+	if counts != nil {
+		counts.fileOpens++
 	}
 	f, err := root.Open(d.Path)
 	if err != nil {
@@ -572,11 +584,11 @@ func (s scan) visitEntry(d directory, source SourceEntry) (retry, stop bool) {
 	if entry.Observation.Outcome == outcomeIncomplete || entry.Observation.Outcome == outcomeUnavailable || entry.Observation.Outcome == outcomeChanged {
 		retryDelay = time.Minute
 	}
-	if hit && cachedObservationNeedsProbe(entry.Observation, source.Source) {
+	if hit && cachedEntryNeedsProbe(entry, source) {
 		delete(c.Cache, loc)
 		hit = false
 	}
-	if !hit || entry.Size != source.Fingerprint.Size || entry.Mtime != source.Fingerprint.Mtime || now.Sub(entry.Checked) >= retryDelay || now.Before(entry.Checked) {
+	if !hit || cachedEntryNeedsRefresh(entry, source, now, retryDelay) {
 		if !discoveryProbeAvailable(h, s.rollouts) {
 			return true, true
 		}
@@ -584,6 +596,7 @@ func (s scan) visitEntry(d directory, source SourceEntry) (retry, stop bool) {
 		if s.rollouts != nil && !s.rollouts.readBudget.Reserve(headerCharge) {
 			return true, true
 		}
+		memberChanged := !hit || entry.Size != source.Fingerprint.Size || entry.Mtime != source.Fingerprint.Mtime || entry.SourceFingerprint != source.CoverageFingerprint
 		observation := s.adapter.Inspect(s.ctx, source.Source)
 		h.Probes++
 		if s.rollouts != nil {
@@ -592,11 +605,21 @@ func (s scan) visitEntry(d directory, source SourceEntry) (retry, stop bool) {
 		h.Bytes += observation.Bytes
 		h.NativeReadBytes += observation.NativeReadBytes
 		h.NativeReadOperations += observation.NativeReadOperations
-		entry = cached{Size: source.Fingerprint.Size, Mtime: source.Fingerprint.Mtime, Checked: now, Observation: observation}
+		entry = cached{SourceFingerprint: source.CoverageFingerprint, Size: source.Fingerprint.Size, Mtime: source.Fingerprint.Mtime, Checked: now, Observation: observation}
 		if !s.retainProbedObservation(entry, headerCharge) {
 			return true, true
 		}
 		c.Cache[loc] = entry
+		// A new or changed same-thread physical member can change the first
+		// owned task or selected revision behind an earlier rejection.
+		if id := entry.Observation.Identity; memberChanged && id != nil {
+			for path, prior := range c.Cache {
+				if path != loc && prior.Observation.Outcome == outcomeOwnTaskRejected && prior.Observation.Candidate.NativeSessionID == id.ThreadID {
+					delete(c.Cache, path)
+					s.retainRetry(prior.Observation.Candidate.Source)
+				}
+			}
+		}
 	}
 	if s.priority && !entry.ActiveHint {
 		entry.ActiveHint = true
@@ -843,8 +866,22 @@ func (s scan) finishCandidate(candidate Candidate, loc, root, generation, ownedR
 	if !candidate.SnapshotProven {
 		proven, err := s.proofs.Prove(s.ctx, candidate)
 		if err != nil {
-			h.Outcomes[nativeProofOutcome(err)]++
-			s.retainRetry(candidate.Source)
+			outcome := nativeProofOutcome(err)
+			h.Outcomes[outcome]++
+			if outcome == string(outcomeOwnTaskRejected) && s.ctx.Err() == nil {
+				entry := c.Cache[loc]
+				entry.Observation.Outcome = outcomeOwnTaskRejected
+				c.Cache[loc] = entry
+				kept := c.Retries[:0]
+				for _, pending := range c.Retries {
+					if pending.Locator != loc {
+						kept = append(kept, pending)
+					}
+				}
+				c.Retries = kept
+			} else {
+				s.retainRetry(candidate.Source)
+			}
 			return false, false
 		}
 		if !validCandidate(proven, proven.Source, s.adapter.Agent(), now) {
@@ -1057,10 +1094,19 @@ func (s scan) recoveryEvidenceOutcome(candidate Candidate, loc string) string {
 	return ""
 }
 
-// Persisted hints schedule ordinary continuation, but cannot recreate the
-// identity behind recovered ownership. Live cached facts keep their baseline.
+// Rejected-task fingerprints schedule revalidation; they never grant admission.
+func cachedEntryNeedsProbe(entry cached, source SourceEntry) bool {
+	return cachedObservationNeedsProbe(entry.Observation, source.Source) || entry.Observation.Outcome == outcomeOwnTaskRejected && (entry.SourceFingerprint == "" || entry.SourceFingerprint != source.CoverageFingerprint)
+}
+
+func cachedEntryNeedsRefresh(entry cached, source SourceEntry, now time.Time, retryDelay time.Duration) bool {
+	return entry.Size != source.Fingerprint.Size || entry.Mtime != source.Fingerprint.Mtime || entry.Observation.Outcome != outcomeOwnTaskRejected && (now.Sub(entry.Checked) >= retryDelay || now.Before(entry.Checked))
+}
+
+// Persisted hints cannot recreate the identity behind recovered ownership.
+// Live cached facts keep their baseline.
 func cachedObservationNeedsProbe(observed Observation, source SourceDescriptor) bool {
-	if observed.Outcome != outcomeUsable || source.Kind != archive.SourceKindFile {
+	if (observed.Outcome != outcomeUsable && observed.Outcome != outcomeOwnTaskRejected) || source.Kind != archive.SourceKindFile {
 		return false
 	}
 	if observed.SourceInfo == nil {

@@ -245,7 +245,7 @@ func (p *relatedSourcePass) selectSource(ctx context.Context, ref agentapi.Sourc
 	selected := sourceSelection{leaf: seed, thread: seed.identity.ThreadID, headers: []*rolloutFile{seed}}
 	if p.env.CodexRollouts == nil {
 		if seed.identity.RolloutID != seed.identity.ThreadID || seed.identity.HistoryBase != nil {
-			return selected, sourceFailure(agentapi.Unavailable, "current rollout evidence unavailable")
+			return selected, errors.Join(sourceFailure(agentapi.Unavailable, "current rollout evidence unavailable"), archive.ErrRelatedHistory)
 		}
 		return selected, nil
 	}
@@ -393,7 +393,7 @@ func (p *relatedSourcePass) graph(ctx context.Context, leaf *rolloutFile) ([]phy
 			break
 		}
 		if p.env.CodexRollouts == nil {
-			return nil, sourceFailure(agentapi.Unavailable, "history dependency unavailable")
+			return nil, errors.Join(sourceFailure(agentapi.Unavailable, "history dependency unavailable"), archive.ErrRelatedHistory)
 		}
 		refs, err := p.env.CodexRollouts.Rollout(ctx, id.HistoryBase.RolloutID)
 		if err != nil {
