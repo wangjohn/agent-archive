@@ -138,7 +138,7 @@ func TestSubagentInheritsAdmissionAndOnlyHookChildrenGetLifecycleEvidence(t *tes
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			home := t.TempDir()
-			local, err := state.Open(home)
+			local, err := openTestStore(home)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -231,7 +231,7 @@ func TestSubagentInheritsAdmissionAndOnlyHookChildrenGetLifecycleEvidence(t *tes
 func TestRemovalRecordRoundTripWithoutNativeID(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
-	local, err := state.Open(home)
+	local, err := openTestStore(home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -282,7 +282,7 @@ func TestRemovalRecordRoundTripWithoutNativeID(t *testing.T) {
 // hook) leaves a record backfill finds under "claude".
 func TestRemovalRecordCanonicalApp(t *testing.T) {
 	t.Parallel()
-	local, err := state.Open(t.TempDir())
+	local, err := openTestStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -319,7 +319,7 @@ func TestForgetIdleSessionRecordsRemovalOnlyWhenItForgets(t *testing.T) {
 	}
 
 	home := t.TempDir()
-	failing, err := state.Open(home)
+	failing, err := openTestStore(home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -373,7 +373,7 @@ func TestEmptyImportedSubagentIsRejectedAndHookOneWaits(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			home := t.TempDir()
-			local, err := state.Open(home)
+			local, err := openTestStore(home)
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -43,7 +43,8 @@ func (c *putCountingStore) takePuts() int {
 // every pass because recording the superseded source failed after the upload
 // and before the publication was saved. Each is now moved aside once,
 // reported once, and the session carries on: a lost published state or
-// pending publication as never published, a lost ledger as empty.
+// legacy pending publication as never published, a lost ledger as empty.
+// Storage-protected pending bytes instead remain owed and cannot be substituted.
 func TestCorruptCollectorOwnedStateIsMovedAsideAndTheSessionRecovers(t *testing.T) {
 	t.Parallel()
 	for _, dir := range []string{"published", "pending", "superseded"} {
@@ -62,6 +63,26 @@ func TestCorruptCollectorOwnedStateIsMovedAsideAndTheSessionRecovers(t *testing.
 			}
 			if err := os.WriteFile(corrupt, []byte(`{"bundle":{"sche`), 0o600); err != nil {
 				t.Fatal(err)
+			}
+			if dir == "pending" {
+				remote.takePuts()
+				for range 2 {
+					r := runAt(t, local, remote, at.Add(time.Minute))
+					if !errors.Is(r.Errors["session-1"], state.ErrDurableStorageRecovery) || len(r.Published) != 0 {
+						t.Fatalf("protected corruption: %+v", r)
+					}
+				}
+				raw, err := os.ReadFile(corrupt)
+				if err != nil || string(raw) != `{"bundle":{"sche` {
+					t.Fatal("protected pending changed", err)
+				}
+				if pending, err := local.HasPending("session-1"); !pending || err != nil {
+					t.Fatalf("protected pending visibility: %v %v", pending, err)
+				}
+				if len(local.QuarantinedFiles()) != 0 || remote.takePuts() != 0 {
+					t.Fatal("protected pending quarantined or substituted")
+				}
+				return
 			}
 			var failures int
 			content := claudePromptLine + "\n"

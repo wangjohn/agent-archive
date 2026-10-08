@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"os"
 	"testing"
 	"time"
 
@@ -27,6 +28,9 @@ func TestStatusUsesHookObservationIndependentlyOfAdmissionOrigin(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			home, project := t.TempDir(), t.TempDir()
+			if err := os.Chmod(home, 0o700); err != nil {
+				t.Fatal(err)
+			}
 			now := time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
 			cfg := pairTestConfig(now, []string{"codex"}, project)
 			if err := config.Save(home, cfg); err != nil {

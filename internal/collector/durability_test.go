@@ -389,9 +389,13 @@ func TestExpiredPassContextLeavesSessionsPending(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	result, err := Run(ctx, local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return now }})
+	labels := &mutableLabels{}
+	result, err := Run(ctx, local, store, Options{Sources: refuseNativeSources{t}, Parsers: testParsers, Labels: mutableLabelLookup{labels}, MachineID: "m", Now: func() time.Time { return now }})
 	if err != nil || len(result.Errors) != 0 || len(result.Published) != 0 {
 		t.Fatalf("%#v %v", result, err)
+	}
+	if labels.calls != 0 {
+		t.Fatal("canceled collector started label transport")
 	}
 	if status, err := local.LoadStatus(); err != nil || status.PendingCount != 1 {
 		t.Fatalf("status = %#v %v", status, err)

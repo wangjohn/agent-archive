@@ -270,7 +270,7 @@ func TestPendingUploadKeepsAnEmptyTranscriptSessionPastRetention(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := local.SavePending(reg.ArchiveSessionID, state.PendingPublication{
-		SourceKey: "k", MetadataKey: "m", SourceSHA256: "s", SourceBytes: []byte{1}, MetadataBytes: []byte{1},
+		SourceKey: "k", MetadataKey: "m", SourceSHA256: "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a", SourceBytes: []byte{1}, MetadataBytes: []byte(`{}`),
 	}); err != nil {
 		t.Fatal(err)
 	}

@@ -17,7 +17,7 @@ import (
 
 func packedLifecycleFixture(t *testing.T) (*Store, string) {
 	t.Helper()
-	s, err := Open(t.TempDir())
+	s, err := openTestStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}

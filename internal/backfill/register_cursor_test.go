@@ -2,6 +2,7 @@ package backfill
 
 import (
 	"context"
+	"os"
 	"testing"
 	"time"
 
@@ -19,6 +20,9 @@ import (
 
 func TestRegistrationOfCursorDatabaseChats(t *testing.T) {
 	home, project, userHome := t.TempDir(), t.TempDir(), t.TempDir()
+	if err := os.Chmod(home, 0700); err != nil {
+		t.Fatal(err)
+	}
 	admitted := fixedNow.UTC()
 	bucket := credentials.Config{Provider: "s3", Bucket: "a"}
 	cfg := config.Config{Storage: bucket, Archive: archive.Config{Enabled: true, Projects: []archive.ProjectActivation{
