@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 )
 
 type durableRootStamp struct{ info os.FileInfo }
@@ -266,7 +267,7 @@ func acknowledgedLegacyQuarantine(name string) bool {
 // CheckDurableSessionRead refuses unknown session obligations before preview
 // opens a provider. It shares the root/config cache and bounded local probes.
 func (s *Store) CheckDurableSessionRead(id string) (err error) {
-	if !safeFileComponent(id) {
+	if !safeFileComponent(id) || len(id) > 250 || strings.IndexFunc(id, unicode.IsControl) >= 0 {
 		return ErrDurableStorageRecovery
 	}
 	home, err := local.OpenRootedHome(s.home)

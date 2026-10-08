@@ -10,12 +10,19 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/state"
 )
 
 func TestDeleteLocalDataRemovesScheduledRecoveryEvidence(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
+	if err := os.Chmod(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.Save(home, config.Config{MachineID: "synthetic"}); err != nil {
+		t.Fatal(err)
+	}
 	store, err := state.Open(home)
 	if err != nil {
 		t.Fatal(err)

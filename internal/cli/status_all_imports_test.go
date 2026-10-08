@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -19,6 +20,9 @@ func TestAllCodexStatusImportsDoNotRequireFreshProjectCapture(t *testing.T) {
 		t.Run(map[bool]string{false: "included", true: "all"}[all], func(t *testing.T) {
 			t.Parallel()
 			home, userHome, a, b := t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir()
+			if err := os.Chmod(home, 0o700); err != nil {
+				t.Fatal(err)
+			}
 			a, err := filepath.EvalSymlinks(a)
 			must(t, err)
 			b, err = filepath.EvalSymlinks(b)

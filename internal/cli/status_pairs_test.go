@@ -52,6 +52,9 @@ func TestStatusRequiresEveryApplicationProjectPair(t *testing.T) {
 func TestPairVerificationSurvivesUnrelatedChangesButNotReactivationOrDestinationChange(t *testing.T) {
 	t.Parallel()
 	home, userHome := t.TempDir(), t.TempDir()
+	if err := os.Chmod(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	now := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
 	projectA, projectB := t.TempDir(), t.TempDir()
 	cfg := pairTestConfig(now, []string{"codex"}, projectA, projectB)
