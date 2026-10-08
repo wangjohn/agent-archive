@@ -320,3 +320,13 @@ func (c *Coordinator) releaseHeld(ctx context.Context, owner, hold string) error
 		return nil
 	})
 }
+
+// CatalogBarrier seals the durable destination admission authority. Hold must
+// observe every registered lifecycle drained; crashed owners never age out.
+func (s *Store) CatalogBarrier(ctx context.Context) (Barrier, error) {
+	owner, err := s.Writer.Coordinator().Seal(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return s.Writer.Coordinator().HeldBarrier(owner), nil
+}

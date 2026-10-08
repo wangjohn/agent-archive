@@ -2,7 +2,6 @@ package catalog
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
@@ -25,7 +24,7 @@ func (s *Snapshot) Delta(ctx context.Context, prior ObjectRef) (Delta, error) {
 	if err := s.check(ctx); err != nil {
 		return d, err
 	}
-	if prior == d.Next {
+	if prior == d.Next && prior.Key != "" {
 		return d, nil
 	}
 	old := map[string]CatalogEntry{}
@@ -45,9 +44,9 @@ func (s *Snapshot) Delta(ctx context.Context, prior ObjectRef) (Delta, error) {
 			}
 		}
 		for _, leaf := range n.Leaves {
-			var r record
-			if err = json.Unmarshal(leaf.Value, &r); err != nil {
-				return err
+			r, e := decodeIdentityRecord(leaf.Value, leaf.Key)
+			if e != nil {
+				return e
 			}
 			if r.Entry != nil {
 				if leafSessionKey(r.Entry) != leaf.Key || r.Entry.Revision == "" {
@@ -115,7 +114,7 @@ func (s *Snapshot) Delta(ctx context.Context, prior ObjectRef) (Delta, error) {
 		}
 	}
 	for key, entry := range next {
-		if previous, ok := old[key]; !ok || previous.Revision != entry.Revision || previous.Metadata != entry.Metadata {
+		if previous, ok := old[key]; !ok || previous.Revision != entry.Revision || previous.Metadata != entry.Metadata || previous.OrdinaryChildren != entry.OrdinaryChildren || previous.ReplayChildren != entry.ReplayChildren {
 			d.Changed = append(d.Changed, Row{key, entry})
 		}
 	}
@@ -124,5 +123,5 @@ func (s *Snapshot) Delta(ctx context.Context, prior ObjectRef) (Delta, error) {
 			d.Removed = append(d.Removed, key)
 		}
 	}
-	return d, ctx.Err()
+	return d, s.check(ctx)
 }

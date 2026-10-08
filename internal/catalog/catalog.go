@@ -105,9 +105,11 @@ type HeadWitness struct {
 //
 //revive:disable-next-line:exported -- Keep the accepted protocol API name.
 type CatalogEntry struct {
-	Revision string           `json:"Revision"`
-	Metadata ObjectRef        `json:"Metadata"`
-	Summary  archive.Metadata `json:"Summary"`
+	OrdinaryChildren uint64           `json:"OrdinaryChildren"`
+	ReplayChildren   uint64           `json:"ReplayChildren"`
+	Revision         string           `json:"Revision"`
+	Metadata         ObjectRef        `json:"Metadata"`
+	Summary          archive.Metadata `json:"Summary"`
 }
 
 // CatalogMutation replaces or deletes one expected session revision.
@@ -472,6 +474,9 @@ func (w *Writer) prepareCommit(ctx context.Context, h CatalogHead, m CatalogMuta
 	}
 	h.Identity, err = w.update(ctx, h.Identity, m.SessionKey, record{revision, next})
 	if err != nil {
+		return h, err
+	}
+	if err = w.updateChildCounters(ctx, &h, m.SessionKey, old.Entry, next); err != nil {
 		return h, err
 	}
 	metadataHash := ""

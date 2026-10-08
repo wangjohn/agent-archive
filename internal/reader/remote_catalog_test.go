@@ -129,7 +129,7 @@ func TestRemoteSummaryDeltaDeletesAndUnknownRootRebuilds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	if err = c.RefreshRemote(t.Context()); err != nil {
 		t.Fatal(err)
 	}

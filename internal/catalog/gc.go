@@ -32,7 +32,10 @@ func (w *Writer) Collect(ctx context.Context, barrier Barrier) error {
 	if release == nil {
 		return errors.New("writer barrier did not provide held ownership")
 	}
-	defer release()
+	owned, ownBarrier := barrier.(heldCoordinator)
+	if !ownBarrier {
+		defer release()
+	}
 	clock, err := w.clock.CatalogServerClock(ctx)
 	if err != nil {
 		return err
@@ -43,15 +46,24 @@ func (w *Writer) Collect(ctx context.Context, barrier Barrier) error {
 	// Even a caller-supplied history inventory cannot replace protocol9's real
 	// destination-wide admission fence. All source/commit owners must drain.
 	coordinator := w.Coordinator()
-	seal, err := coordinator.Seal(ctx)
-	if err != nil {
-		return err
+	var ownRelease func()
+	if ownBarrier {
+		if owned.coordinator.writer.store != w.store {
+			return errors.New("catalog barrier belongs to another destination")
+		}
+		ownRelease = release
+	} else {
+		seal, e := coordinator.Seal(ctx)
+		if e != nil {
+			return e
+		}
+		ownProtected, heldRelease, e := coordinator.HeldBarrier(seal).Hold(ctx)
+		if e != nil {
+			return e
+		}
+		protected = append(protected, ownProtected...)
+		ownRelease = heldRelease
 	}
-	ownProtected, ownRelease, err := coordinator.HeldBarrier(seal).Hold(ctx)
-	if err != nil {
-		return err
-	}
-	protected = append(protected, ownProtected...)
 	// On failure, retain the durable seal/hold alongside the GC head lease.
 	// Recovery requires the exact observed GC owner and fresh global barrier.
 	h, etag, err := w.gcHead(ctx)

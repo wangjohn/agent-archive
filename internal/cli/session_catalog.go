@@ -21,7 +21,7 @@ func catalogSessionsInContext(ctx context.Context, env metadataCacheDependencies
 		if cache != nil {
 			c, err := reader.OpenSessionCatalog(ctx, cache, store, reader.ListOptions{Cache: cache})
 			if err == nil {
-				defer c.Close()
+				defer func() { _ = c.Close() }()
 				if err = c.RefreshRemote(ctx); err != nil {
 					return nil, true, err
 				}

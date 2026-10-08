@@ -47,14 +47,15 @@ func (s *Store) GetLimited(ctx context.Context, key string, limit int64) ([]byte
 	if !metadataKey(key) {
 		return s.Writer.bounded.GetLimited(ctx, key, limit)
 	}
-	entry, _, err := s.Writer.Find(ctx, key)
+	entry, _, err := s.findForRead(ctx, key)
 	if err != nil {
 		return nil, err
 	}
 	if entry == nil {
 		return nil, storage.ErrNotFound
 	}
-	return s.Writer.readRef(ctx, entry.Metadata, limit)
+	raw, err := s.Writer.readRef(ctx, entry.Metadata, limit)
+	return raw, s.checkReadView(ctx, err)
 }
 
 // GetVersioned uses a unique catalog revision as metadata validator.
@@ -68,7 +69,7 @@ func (s *Store) GetLimitedVersioned(ctx context.Context, key string, limit int64
 		raw, v, err := s.Writer.versioned.GetCatalogVersion(ctx, key, limit)
 		return raw, v.ETag, err
 	}
-	entry, revision, err := s.Writer.Find(ctx, key)
+	entry, revision, err := s.findForRead(ctx, key)
 	if err != nil {
 		return nil, "", err
 	}
@@ -76,7 +77,7 @@ func (s *Store) GetLimitedVersioned(ctx context.Context, key string, limit int64
 		return nil, "", storage.ErrNotFound
 	}
 	raw, err := s.Writer.readRef(ctx, entry.Metadata, limit)
-	return raw, revision, err
+	return raw, revision, s.checkReadView(ctx, err)
 }
 
 // Stat describes current catalog metadata or delegates source checksums.

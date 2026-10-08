@@ -2,7 +2,10 @@ package catalog
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"sync"
@@ -64,6 +67,7 @@ type Snapshot struct {
 	etag      string
 	started   time.Time
 	nonce     string
+	secret    string
 	cache     *NodeCache
 	requestMu sync.Mutex
 	requests  uint64
@@ -72,6 +76,9 @@ type Snapshot struct {
 // OpenSnapshot reads one fresh qualified versioned head. Time spent opening is
 // part of the monotonic lifetime, so a stalled request cannot extend retention.
 func OpenSnapshot(ctx context.Context, store storage.ObjectStore, cache *NodeCache) (*Snapshot, error) {
+	if view, ok := ctx.Value(readViewKey{}).(*readView); ok {
+		return view.capture(ctx, store, cache)
+	}
 	return openSnapshot(ctx, store, cache, true)
 }
 
@@ -109,7 +116,11 @@ func openSnapshotStarted(ctx context.Context, store storage.ObjectStore, cache *
 	if cache == nil {
 		cache = &NodeCache{}
 	}
-	return &Snapshot{writer: w, head: h, etag: etag, started: started, nonce: nonce, cache: cache}, nil
+	secret, err := NewMutationID()
+	if err != nil {
+		return nil, err
+	}
+	return &Snapshot{writer: w, head: h, etag: etag, started: started, nonce: nonce, secret: secret, cache: cache}, nil
 }
 
 // Root identifies the complete identity universe, independently from GC lease
@@ -211,6 +222,7 @@ type snapshotCursor struct {
 	Query Query
 	After string
 	Limit int
+	Seal  string
 }
 
 // Query traverses only paths intersecting the selected range. With the three
@@ -236,7 +248,7 @@ func (s *Snapshot) Query(ctx context.Context, q Query, cursor string, limit int)
 	if cursor != "" {
 		raw, e := base64.RawURLEncoding.DecodeString(cursor)
 		var prior snapshotCursor
-		if e != nil || len(raw) > 8192 || json.Unmarshal(raw, &prior) != nil || prior.Nonce != token.Nonce || prior.Root != root || prior.Query != q || prior.Limit != limit || prior.After == "" {
+		if e != nil || len(raw) > 8192 || json.Unmarshal(raw, &prior) != nil || prior.Nonce != token.Nonce || prior.Root != root || prior.Query != q || prior.Limit != limit || prior.After == "" || !s.validCursor(prior) {
 			return Page{}, ErrStaleCursor
 		}
 		token.After = prior.After
@@ -249,6 +261,7 @@ func (s *Snapshot) Query(ctx context.Context, q Query, cursor string, limit int)
 	if len(page.Rows) > limit {
 		page.Rows = page.Rows[:limit]
 		token.After = last
+		token.Seal = s.cursorSeal(token)
 		raw, e := json.Marshal(token)
 		if e != nil {
 			return Page{}, e
@@ -269,6 +282,13 @@ func (s *Snapshot) Find(ctx context.Context, key string) (*CatalogEntry, error) 
 	if err := s.freshRequest(ctx); err != nil {
 		return nil, err
 	}
+	return s.findPinned(ctx, key)
+}
+
+func (s *Snapshot) findPinned(ctx context.Context, key string) (*CatalogEntry, error) {
+	if err := s.check(ctx); err != nil {
+		return nil, err
+	}
 	ref := s.head.Identity
 	for range maxDepth {
 		n, err := s.readNode(ctx, ref)
@@ -280,12 +300,9 @@ func (s *Snapshot) Find(ctx context.Context, key string) (*CatalogEntry, error) 
 				if leaf.Key != key {
 					continue
 				}
-				var r record
-				if err = json.Unmarshal(leaf.Value, &r); err != nil {
+				r, err := decodeIdentityRecord(leaf.Value, key)
+				if err != nil {
 					return nil, err
-				}
-				if r.Entry != nil && (leafSessionKey(r.Entry) != key || r.Entry.Revision == "") {
-					return nil, errors.New("catalog identity mismatch")
 				}
 				return r.Entry, nil
 			}
@@ -479,8 +496,8 @@ func (s *Snapshot) visitRange(ctx context.Context, q Query, token snapshotCursor
 func decodeRow(leaf item, index Index) (*Row, error) {
 	var entry *CatalogEntry
 	if index == IdentityIndex {
-		var r record
-		if err := json.Unmarshal(leaf.Value, &r); err != nil {
+		r, err := decodeIdentityRecord(leaf.Value, leaf.Key)
+		if err != nil {
 			return nil, err
 		}
 		entry = r.Entry
@@ -518,4 +535,43 @@ func decodeRow(leaf item, index Index) (*Row, error) {
 		}
 	}
 	return &Row{Key: key, Entry: *entry}, nil
+}
+
+func (s *Snapshot) cursorSeal(token snapshotCursor) string {
+	token.Seal = ""
+	raw, _ := json.Marshal(token)
+	mac := hmac.New(sha256.New, []byte(s.secret))
+	_, _ = mac.Write(raw)
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+func (s *Snapshot) validCursor(token snapshotCursor) bool {
+	actual, err := hex.DecodeString(token.Seal)
+	if err != nil {
+		return false
+	}
+	expected, err := hex.DecodeString(s.cursorSeal(token))
+	if err != nil {
+		return false
+	}
+	return hmac.Equal(actual, expected)
+}
+
+func decodeIdentityRecord(raw json.RawMessage, key string) (record, error) {
+	var r record
+	if err := json.Unmarshal(raw, &r); err != nil {
+		return r, err
+	}
+	if r.Revision == "" {
+		return r, errors.New("invalid catalog identity revision")
+	}
+	if r.Entry != nil {
+		if r.Entry.Revision != r.Revision || leafSessionKey(r.Entry) != key || r.Entry.Metadata.Key == "" {
+			return r, errors.New("catalog identity mismatch")
+		}
+		if err := r.Entry.Metadata.validate(); err != nil {
+			return r, err
+		}
+	}
+	return r, nil
 }

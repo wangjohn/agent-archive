@@ -1,6 +1,7 @@
 package catalog
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -61,9 +62,25 @@ func TestSnapshotBoundedRangeCountsCursorsAndBodyAuthority(t *testing.T) {
 		t.Fatalf("continuation %+v %v", next, err)
 	}
 	changed := q
-	changed.Lower = "other"
+	changed.Reverse = !changed.Reverse
 	if _, err = s.Query(t.Context(), changed, p.Next, 50); !errors.Is(err, ErrStaleCursor) {
 		t.Fatal("query cursor accepted", err)
+	}
+	rawCursor, err := base64.RawURLEncoding.DecodeString(p.Next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var forged snapshotCursor
+	if err = json.Unmarshal(rawCursor, &forged); err != nil {
+		t.Fatal(err)
+	}
+	forged.After = "forged offset"
+	rawCursor, err = json.Marshal(forged)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.Query(t.Context(), q, base64.RawURLEncoding.EncodeToString(rawCursor), 50); !errors.Is(err, ErrStaleCursor) {
+		t.Fatal("modified cursor accepted", err)
 	}
 	reopened, err := OpenSnapshot(t.Context(), measured, cache)
 	if err != nil {

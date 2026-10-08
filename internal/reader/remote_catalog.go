@@ -105,84 +105,10 @@ func selectCatalogMetadata(ctx context.Context, store storage.ObjectStore, prefi
 		return RecentResult{}, err
 	}
 	f := q.Filter
-	// Root-only ordinary/replay ranges and unfiltered all-session capture ranges
-	// are bounded. Combined predicates, scope and activity with capture-date
-	// bounds retain complete summary filtering, never a falsely bounded scan.
-	bounded := strings.Trim(prefix, "/") == "sessions" && opts.ScopeMatch == nil && f.Harness == "" && f.Model == "" && f.Skill == "" && f.SkillSHA256 == "" && !f.RequireCompleteCoverage && (q.TopLevelOnly && f.Replays != ReplaysIncluded || !q.TopLevelOnly && f.Replays == ReplaysIncluded) && (q.Order == CaptureOrder || f.From.IsZero() && f.To.IsZero())
-	if bounded {
-		idx := catalog.CaptureIndex
-		if q.Order == ActivityOrder {
-			idx = catalog.ActivityIndex
-		}
-		prefix := ""
-		if q.TopLevelOnly {
-			prefix = catalog.OrderPrefix(f.Replays == ReplaysOnly)
-		}
-		lower, upper := prefix+"0", prefix+":"
-		if !f.From.IsZero() {
-			lower = prefix + catalogTime(f.From)
-		}
-		if !f.To.IsZero() {
-			upper = prefix + catalogTime(f.To) + "0"
-		}
-		query := catalog.Query{Index: idx, Lower: lower, Upper: upper, Reverse: true}
-		total, err := snapshot.Count(ctx, query)
-		if err != nil {
-			return RecentResult{}, err
-		}
-		result := RecentResult{Complete: true, TotalMatched: int(total), Children: map[string]int{}}
-		var rows []catalog.Row
-		cursor := ""
-		for len(rows) < q.Limit || q.Limit <= 0 {
-			limit := 1000
-			if q.Limit > 0 {
-				limit = min(limit, q.Limit-len(rows))
-			}
-			page, e := snapshot.Query(ctx, query, cursor, limit)
-			if e != nil {
-				return RecentResult{}, e
-			}
-			rows = append(rows, page.Rows...)
-			if page.Next == "" {
-				break
-			}
-			cursor = page.Next
-		}
-		if q.TopLevelOnly {
-			// Count children globally from the dedicated child discriminator range.
-			// Parent count ranges are date ordered, and include exact harness+parent.
-			// Global child count uses all order entries minus both root ranges when
-			// replay filtering is absent; replay-filtered hidden counts use a summary
-			// discriminator aggregate introduced in the capture/activity tree.
-			hiddenQuery := query
-			hiddenQuery.Lower = strings.Replace(lower, "!root/", "!children/", 1)
-			hiddenQuery.Upper = strings.Replace(upper, "!root/", "!children/", 1)
-			hidden, e := snapshot.Count(ctx, hiddenQuery)
-			if e != nil {
-				return RecentResult{}, e
-			}
-			result.Hidden = int(hidden)
-			for _, row := range rows {
-				m := row.Entry.Summary
-				p := catalog.ChildPrefix(m.Harness.Name, m.SessionID, f.Replays == ReplaysOnly)
-				lo, hi := p+"0", p+":"
-				if !f.From.IsZero() {
-					lo = p + catalogTime(f.From)
-				}
-				if !f.To.IsZero() {
-					hi = p + catalogTime(f.To) + "0"
-				}
-				count, e := snapshot.Count(ctx, catalog.Query{Index: catalog.ProjectIndex, Lower: lo, Upper: hi})
-				if e != nil {
-					return RecentResult{}, e
-				}
-				if count > 0 {
-					result.Children[m.Harness.Name+"/"+m.SessionID] = int(count)
-				}
-			}
-		}
-		result.Sessions, err = hydrateCatalogRows(ctx, snapshot, rows, opts)
-		return result, err
+	// A single indexed predicate is bounded. Complex/scope filters retain the
+	// complete summary universe and existing final matcher.
+	if boundedCatalogSelection(prefix, q, opts) {
+		return selectBoundedCatalog(ctx, snapshot, q, opts)
 	}
 	if opts.CompatibilityScan != nil {
 		opts.CompatibilityScan("query requires complete catalog summaries")
@@ -264,7 +190,7 @@ func (c *SQLiteSessionCatalog) RefreshRemote(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if _, err = tx.ExecContext(ctx, "UPDATE catalog_state SET generation=generation WHERE id=1"); err != nil {
 		return err
 	}
@@ -339,4 +265,87 @@ func canonicalCatalogPrefix(prefix string) string {
 		prefix = "sessions"
 	}
 	return prefix + "/"
+}
+
+func boundedCatalogSelection(prefix string, q MetadataQuery, opts ListOptions) bool {
+	f := q.Filter
+	if canonicalCatalogPrefix(prefix) != "sessions/" || opts.ScopeMatch != nil || f.Harness != "" || f.Model != "" || f.Skill != "" || f.SkillSHA256 != "" || f.RequireCompleteCoverage {
+		return false
+	}
+	replayRange := q.TopLevelOnly && (f.Replays == ReplaysHidden || f.Replays == ReplaysOnly) || !q.TopLevelOnly && f.Replays == ReplaysIncluded
+	return replayRange && (!q.TopLevelOnly || f.From.IsZero() && f.To.IsZero()) && (q.Order == CaptureOrder || f.From.IsZero() && f.To.IsZero())
+}
+
+func catalogCaptureBounds(prefix string, f Filter) (string, string) {
+	lower, upper := prefix+"0", prefix+":"
+	if !f.From.IsZero() {
+		lower = prefix + catalogTime(f.From)
+	}
+	if !f.To.IsZero() {
+		upper = prefix + catalogTime(f.To) + "0"
+	}
+	return lower, upper
+}
+
+func selectBoundedCatalog(ctx context.Context, snapshot *catalog.Snapshot, q MetadataQuery, opts ListOptions) (RecentResult, error) {
+	f := q.Filter
+	idx := catalog.CaptureIndex
+	if q.Order == ActivityOrder {
+		idx = catalog.ActivityIndex
+	}
+	prefix := ""
+	if q.TopLevelOnly {
+		prefix = catalog.OrderPrefix(f.Replays == ReplaysOnly)
+	}
+	lower, upper := catalogCaptureBounds(prefix, f)
+	query := catalog.Query{Index: idx, Lower: lower, Upper: upper, Reverse: true}
+	total, err := snapshot.Count(ctx, query)
+	if err != nil {
+		return RecentResult{}, err
+	}
+	result := RecentResult{Complete: true, TotalMatched: int(total), Children: map[string]int{}}
+	var rows []catalog.Row
+	cursor := ""
+	for len(rows) < q.Limit || q.Limit <= 0 {
+		limit := 1000
+		if q.Limit > 0 {
+			limit = min(limit, q.Limit-len(rows))
+		}
+		page, e := snapshot.Query(ctx, query, cursor, limit)
+		if e != nil {
+			return RecentResult{}, e
+		}
+		rows = append(rows, page.Rows...)
+		if page.Next == "" {
+			break
+		}
+		cursor = page.Next
+	}
+	if q.TopLevelOnly {
+		// Count children globally from the dedicated child discriminator range.
+		// Parent count ranges are date ordered, and include exact harness+parent.
+		// Global child count uses all order entries minus both root ranges when
+		// replay filtering is absent; replay-filtered hidden counts use a summary
+		// discriminator aggregate introduced in the capture/activity tree.
+		hiddenQuery := query
+		hiddenQuery.Lower = strings.Replace(lower, "!root/", "!children/", 1)
+		hiddenQuery.Upper = strings.Replace(upper, "!root/", "!children/", 1)
+		hidden, e := snapshot.Count(ctx, hiddenQuery)
+		if e != nil {
+			return RecentResult{}, e
+		}
+		result.Hidden = int(hidden)
+		for _, row := range rows {
+			m := row.Entry.Summary
+			count := row.Entry.OrdinaryChildren
+			if f.Replays == ReplaysOnly {
+				count = row.Entry.ReplayChildren
+			}
+			if count > 0 {
+				result.Children[m.Harness.Name+"/"+m.SessionID] = int(count)
+			}
+		}
+	}
+	result.Sessions, err = hydrateCatalogRows(ctx, snapshot, rows, opts)
+	return result, err
 }
