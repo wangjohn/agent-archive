@@ -97,7 +97,7 @@ func TestMigrationInitializationIntentResumesEveryFirstWriteBoundary(t *testing.
 }
 
 func TestMigrationInitializationIntentRejectsForeignAndMixedNamespace(t *testing.T) {
-	for _, kind := range []migrationInitializationFault{"mixed", "foreign-proof", "bare-coordinator"} {
+	for _, kind := range []migrationInitializationFault{migrationMixed, migrationForeignProof, migrationBareCoordinator} {
 		t.Run(string(kind), func(t *testing.T) {
 			source, target, src, dst, authority := migrationFixture(t, 0)
 			fault := &migrationIntentFault{qualifiedStore: target, stage: "initialize-seal"}
@@ -113,11 +113,11 @@ func TestMigrationInitializationIntentRejectsForeignAndMixedNamespace(t *testing
 				t.Fatal(err)
 			}
 			switch kind {
-			case "mixed":
+			case migrationMixed:
 				err = target.Put(t.Context(), "sessions/foreign/metadata.json", []byte(`{}`))
-			case "foreign-proof":
+			case migrationForeignProof:
 				state.Intent.State.Proof = "foreign"
-			case "bare-coordinator":
+			case migrationBareCoordinator:
 				state.Intent = nil
 			}
 			if err != nil {
@@ -305,3 +305,9 @@ func TestMigrationIntentRefusesAlteredCheckpointDescriptor(t *testing.T) {
 }
 
 type migrationInitializationFault string
+
+const (
+	migrationMixed           migrationInitializationFault = "mixed"
+	migrationForeignProof    migrationInitializationFault = "foreign-proof"
+	migrationBareCoordinator migrationInitializationFault = "bare-coordinator"
+)

@@ -189,7 +189,7 @@ func TestJournalAdmissionWrongBindingAndIncompleteFinalRefuse(t *testing.T) {
 }
 
 func TestJournalAdmissionVerifiesPersistedAuthorityBeforeCoordinatorWrite(t *testing.T) {
-	for _, kind := range []journalAdmissionFault{"missing", "changed", "raw-mismatch", "copied"} {
+	for _, kind := range []journalAdmissionFault{journalMissing, journalChanged, journalRawMismatch, journalCopied} {
 		t.Run(string(kind), func(t *testing.T) {
 			_, raw, localStore, pending, guard, cfg := journalFixture(t)
 			counted := &namespaceWriteStore{qualifiedStore: raw}
@@ -200,12 +200,12 @@ func TestJournalAdmissionVerifiesPersistedAuthorityBeforeCoordinatorWrite(t *tes
 			j := *pending.Catalog.Recovery
 			body := pending.MetadataBytes
 			switch kind {
-			case "missing":
+			case journalMissing:
 				// Explicit private corruption fixture; public removal must refuse.
 				if err = os.Remove(filepath.Join(localStore.Home(), "pending", j.SessionID+".json")); err != nil {
 					t.Fatal(err)
 				}
-			case "changed":
+			case journalChanged:
 				pending.MetadataBytes = append(append([]byte(nil), pending.MetadataBytes...), ' ')
 				encoded, encodeErr := json.Marshal(pending)
 				if encodeErr != nil {
@@ -215,9 +215,9 @@ func TestJournalAdmissionVerifiesPersistedAuthorityBeforeCoordinatorWrite(t *tes
 				if err = os.WriteFile(filepath.Join(localStore.Home(), "pending", j.SessionID+".json"), encoded, 0600); err != nil {
 					t.Fatal(err)
 				}
-			case "raw-mismatch":
+			case journalRawMismatch:
 				body = append(append([]byte(nil), body...), ' ')
-			case "copied":
+			case journalCopied:
 				home := t.TempDir()
 				if err = os.Chmod(home, 0700); err != nil {
 					t.Fatal(err)
@@ -256,6 +256,13 @@ func TestJournalAdmissionVerifiesPersistedAuthorityBeforeCoordinatorWrite(t *tes
 }
 
 type journalAdmissionFault string
+
+const (
+	journalMissing     journalAdmissionFault = "missing"
+	journalChanged     journalAdmissionFault = "changed"
+	journalRawMismatch journalAdmissionFault = "raw-mismatch"
+	journalCopied      journalAdmissionFault = "copied"
+)
 
 func TestCanceledGuardedCatalogSavePreservesExactJournal(t *testing.T) {
 	_, _, localStore, pending, _, _ := journalFixture(t)
