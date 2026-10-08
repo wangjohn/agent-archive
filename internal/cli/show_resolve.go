@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"io"
 	"slices"
 	"strings"
@@ -35,8 +36,15 @@ type showLookup struct {
 func resolveShowQuery(ctx context.Context, store storage.ObjectStore, env showQueryDependencies, stdin io.Reader, stdout, stderr io.Writer, harness, query string, cfgProjects map[string]string, noPager, pickOne bool) (showLookup, int) {
 	// Full archive IDs use the direct-read path. With --harness, a short ID
 	// or title would otherwise be mistaken for a literal object key.
-	if len(query) >= 32 {
+	_, componentErr := archive.MetadataObjectKey("probe", query)
+	if len(query) >= 32 && componentErr == nil {
 		key, err := locateMetadataKey(ctx, store, harness, query)
+		// An explicit harness constructs the key without proving existence.
+		// Longer safe words can be titles, so verify them before choosing the
+		// exact-ID path. Keep the established 32-byte ID path unchanged.
+		if err == nil && harness != "" && len(query) > 32 {
+			_, err = reader.ReadMetadata(ctx, store, key)
+		}
 		if err == nil {
 			parts := strings.Split(strings.TrimPrefix(key, archiveSessionsPrefix+"/"), "/")
 			if len(parts) >= 2 {
@@ -46,8 +54,9 @@ func resolveShowQuery(ctx context.Context, store storage.ObjectStore, env showQu
 		}
 		// Exact-id misses fall through to short-id / title search. Keep
 		// ambiguous harnesses and storage failures as errors.
-		miss := strings.Contains(err.Error(), "no archived session") ||
-			strings.Contains(err.Error(), "invalid archive session ID")
+		miss := !errors.Is(err, reader.ErrInvalidMetadata) && (errors.Is(err, storage.ErrNotFound) ||
+			strings.Contains(err.Error(), "no archived session") ||
+			strings.Contains(err.Error(), "invalid archive session ID"))
 		if !miss {
 			terminal.Printf(stderr, "agent-archive: show: %v\n", err)
 			return showLookup{}, 1
