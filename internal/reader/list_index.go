@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/listingindex"
@@ -65,37 +66,93 @@ func ListRecent(ctx context.Context, store storage.ObjectStore, prefix string, f
 	if err != nil {
 		return fallback(err.Error())
 	}
-	for _, r := range selected {
-		data, cached := opts.Cache.get(r.MetadataKey, r.ETag)
-		if cached && storage.SHA256Hex(data) != r.Hash {
-			cached = false
+	reads := readSelected(ctx, getter, selected, opts)
+	for _, read := range reads {
+		if read.Err != nil {
+			return RecentResult{}, read.Err
 		}
-		if !cached {
-			var validator string
-			data, validator, err = getter.GetVersioned(ctx, r.MetadataKey)
-			if err != nil {
-				return RecentResult{}, fmt.Errorf("incomplete listing: selected metadata %q changed or cannot be read; retry or use --limit 0: %w", r.MetadataKey, err)
-			}
-			if validator != r.ETag || storage.SHA256Hex(data) != r.Hash {
-				return RecentResult{}, fmt.Errorf("incomplete listing: metadata %q changed during query; retry or use --limit 0", r.MetadataKey)
-			}
-		}
-		if opts.BodyRead != nil {
-			opts.BodyRead(r.MetadataKey, cached)
-		}
-		metadata, err := decodeMetadata(r.MetadataKey, data)
-		if err != nil {
-			return RecentResult{}, err
-		}
-		if err := r.ValidateMetadata(data); err != nil {
-			return RecentResult{}, fmt.Errorf("incomplete listing: invalid revision summary for %q", r.MetadataKey)
-		}
-		if !cached {
-			opts.Cache.putVerified(r.MetadataKey, r.ETag, data)
-		}
-		result.Sessions = append(result.Sessions, metadata)
+		result.Sessions = append(result.Sessions, read.Metadata)
+	}
+	if err := ctx.Err(); err != nil {
+		return RecentResult{}, err
 	}
 	return result, nil
+}
+
+// selectedRead occupies the same slot as its revision in selection order.
+type selectedRead struct {
+	Metadata archive.Metadata
+	Cached   bool
+	Err      error
+}
+
+// readSelected stops assigning work on failure and joins every started read.
+// In-flight reads retain the caller context: an internal cancellation must not
+// hide an earlier selected revision's real error. Observers run serially after
+// the join, in selection order, and need no synchronization from callers.
+func readSelected(ctx context.Context, getter storage.VersionedGetter, revisions []listingindex.Revision, opts ListOptions) []selectedRead {
+	reads := make([]selectedRead, len(revisions))
+	observed := make([]bool, len(revisions))
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	next, failed := 0, false
+	for range min(listConcurrency, len(revisions)) {
+		wg.Go(func() {
+			for {
+				mu.Lock()
+				if failed || ctx.Err() != nil || next == len(revisions) {
+					mu.Unlock()
+					return
+				}
+				i := next
+				next++
+				mu.Unlock()
+				reads[i], observed[i] = readSelectedRevision(ctx, getter, revisions[i], opts.Cache)
+				if reads[i].Err != nil {
+					mu.Lock()
+					failed = true
+					mu.Unlock()
+					return
+				}
+			}
+		})
+	}
+	wg.Wait()
+	for i := range next {
+		if observed[i] && opts.BodyRead != nil {
+			opts.BodyRead(revisions[i].MetadataKey, reads[i].Cached)
+		}
+	}
+	return reads[:next]
+}
+
+func readSelectedRevision(ctx context.Context, getter storage.VersionedGetter, r listingindex.Revision, cache *MetadataCache) (selectedRead, bool) {
+	data, cached := cache.get(r.MetadataKey, r.ETag)
+	if cached && storage.SHA256Hex(data) != r.Hash {
+		cached = false
+	}
+	if !cached {
+		var validator string
+		var err error
+		data, validator, err = getter.GetVersioned(ctx, r.MetadataKey)
+		if err != nil {
+			return selectedRead{Err: fmt.Errorf("incomplete listing: selected metadata %q changed or cannot be read; retry or use --limit 0: %w", r.MetadataKey, err)}, false
+		}
+		if validator != r.ETag || storage.SHA256Hex(data) != r.Hash {
+			return selectedRead{Err: fmt.Errorf("incomplete listing: metadata %q changed during query; retry or use --limit 0", r.MetadataKey)}, false
+		}
+	}
+	metadata, err := decodeMetadata(r.MetadataKey, data)
+	if err != nil {
+		return selectedRead{Cached: cached, Err: err}, true
+	}
+	if err := r.ValidateMetadata(data); err != nil {
+		return selectedRead{Cached: cached, Err: fmt.Errorf("incomplete listing: invalid revision summary for %q", r.MetadataKey)}, true
+	}
+	if !cached {
+		cache.putVerified(r.MetadataKey, r.ETag, data)
+	}
+	return selectedRead{Metadata: metadata, Cached: cached}, true
 }
 
 func listRecentFull(ctx context.Context, store storage.ObjectStore, prefix string, filter Filter, limit int, opts ListOptions) (RecentResult, error) {

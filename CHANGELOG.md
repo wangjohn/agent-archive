@@ -6,6 +6,9 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Read up to eight selected metadata sidecars concurrently for faster cold and
+  changed-cache listings, preserving selection order and revision validation.
+
 - Preserve settled capture and source bytes when cached native naming reads are
   unavailable and the same observation uses an equivalent timezone offset.
 

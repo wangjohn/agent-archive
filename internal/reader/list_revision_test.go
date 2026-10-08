@@ -82,13 +82,13 @@ func TestListRevisionBodyBudgetColdWarmAndExhaustiveOracle(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			physicalCacheReads := 0
+			var physicalCacheReads atomic.Int64
 			cache.readFile = func(path string) ([]byte, error) {
-				physicalCacheReads++
+				physicalCacheReads.Add(1)
 				return os.ReadFile(path)
 			}
 			for _, warm := range []bool{false, true} {
-				physicalCacheReads = 0
+				physicalCacheReads.Store(0)
 				store.reset()
 				bodies, cached := 0, 0
 				result, err := ListRecent(ctx, store, "sessions", Filter{}, 50, ListOptions{Cache: cache, BodyRead: func(_ string, hit bool) {
@@ -110,8 +110,8 @@ func TestListRevisionBodyBudgetColdWarmAndExhaustiveOracle(t *testing.T) {
 					wantGets = 0
 					wantCached = 50
 				}
-				if bodies != 50 || cached != wantCached || len(gets) != wantGets || physicalCacheReads+len(gets) != 50 {
-					t.Fatalf("warm=%v bodies=%d cached=%d physical cache reads=%d GETs=%d", warm, bodies, cached, physicalCacheReads, len(gets))
+				if bodies != 50 || cached != wantCached || len(gets) != wantGets || int(physicalCacheReads.Load())+len(gets) != 50 {
+					t.Fatalf("warm=%v bodies=%d cached=%d physical cache reads=%d GETs=%d", warm, bodies, cached, physicalCacheReads.Load(), len(gets))
 				}
 				for _, key := range gets {
 					if !isMetadataKey(key) {

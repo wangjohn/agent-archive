@@ -48,6 +48,7 @@ import (
 type MetadataCache struct {
 	dir string
 	// readFile, when set by tests, observes physical cache-body reads.
+	// Tests set it before reading and synchronize concurrent invocations.
 	readFile func(string) ([]byte, error)
 }
 
