@@ -1169,3 +1169,71 @@ func TestMetadataThreadExpiryReturnsNoCompleteSelection(t *testing.T) {
 		t.Fatal("failed query cleanup retained shared charge", used)
 	}
 }
+
+// Close releases acquired representations even when a caller retains the view.
+func TestMetadataInventoryCloseClearsAcquiredRepresentations(t *testing.T) {
+	for _, readOnly := range []bool{false, true} {
+		t.Run(strconv.FormatBool(readOnly), func(t *testing.T) {
+			lookup, ids, root := metadataFixture(t, 1)
+			path := filepath.Join(root, "sessions", "nested", "rollout-2026-10-01T12-00-00-"+ids[0]+".jsonl")
+			before, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			view := lookup.MetadataInventory().(*metadataInventory)
+			slice, err := view.BeginValidationSlice(t.Context(), agentapi.CodexValidationLimits{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := slice.Valid(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			set, err := slice.Thread(t.Context(), ids[0])
+			if err != nil || !set.Complete || len(set.Candidates) != 1 {
+				t.Fatal(set, err)
+			}
+			if len(view.directoryIndex) == 0 || len(view.roots) == 0 || view.next.Root == "" {
+				t.Fatal("fixture lacks acquired representations")
+			}
+			counts, failure, headerWork := view.counts, view.failure, view.headerBytes
+			closeOwner := lookup.Close
+			if readOnly {
+				closeOwner = lookup.CloseReadOnly
+			}
+			// The live result lease and slice deliberately outlive the owner's close.
+			for range 2 {
+				if err := closeOwner(); err != nil {
+					t.Fatal(err)
+				}
+				if view.facts != nil || view.batch != nil || view.queue != nil || view.threads != nil || view.interned != nil || view.rollouts != nil || view.directories != nil || view.directoryIndex != nil || view.roots != nil || view.next != (directory{}) || view.cursor != nil || view.batchCharge != 0 || view.charge != 0 {
+					t.Fatal("closed inventory retains acquired representations")
+				}
+				if view.owner != lookup || view.counts != counts || !errors.Is(view.failure, failure) || view.headerBytes != headerWork {
+					t.Fatal("close discarded borrowed owner or diagnostic evidence")
+				}
+				if used, _ := lookup.readBudget.Charged(); used != 0 {
+					t.Fatal("closed inventory retained charge", used)
+				}
+			}
+			if _, err := view.Thread(t.Context(), ids[0]); !errors.Is(err, agentapi.ErrClosed) {
+				t.Fatal("closed view accepted query", err)
+			}
+			if _, err := slice.Thread(t.Context(), ids[0]); !errors.Is(err, agentapi.ErrClosed) {
+				t.Fatal("closed owner accepted slice query", err)
+			}
+			if err := slice.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if used, _ := lookup.readBudget.Charged(); used != 0 {
+				t.Fatal("late slice close changed charge", used)
+			}
+			after, err := os.ReadFile(path)
+			if err != nil || string(after) != string(before) {
+				t.Fatal("close changed native source", err)
+			}
+			if _, err := os.Stat(filepath.Join(lookup.store.Home(), "discovery-catalog.json")); !errors.Is(err, os.ErrNotExist) {
+				t.Fatal("metadata close checkpointed capture catalog", err)
+			}
+		})
+	}
+}

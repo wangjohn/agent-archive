@@ -284,6 +284,10 @@ func (m *metadataInventory) close() error {
 	m.interned = nil
 	m.rollouts = nil
 	m.directories = nil
+	m.directoryIndex = nil
+	m.roots = nil
+	m.next = directory{}
+	m.batchCharge = 0
 	return err
 }
 
