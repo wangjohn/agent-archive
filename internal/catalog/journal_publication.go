@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/state"
 )
 
 // BeginJournalPublication transfers only the exact origin-bound frozen owner.
@@ -27,6 +28,24 @@ func (s *Store) BeginJournalPublication(ctx context.Context, id string, raw []by
 			release()
 		}
 	}()
+	s.pendingMu.Lock()
+	defer s.pendingMu.Unlock()
+	if s.destinationID == "" || s.destinationID != journal.Destination || s.running[id] {
+		return nil, false, ErrAdmissionClosed
+	}
+	if err = ctx.Err(); err != nil {
+		return nil, false, err
+	}
+	home, err := guard.Home()
+	if err != nil {
+		return nil, false, err
+	}
+	if err = state.OpenReadOnly(home).VerifyPersistedCatalogJournal(journal, raw, guard, s.destinationID); err != nil {
+		return nil, false, err
+	}
+	if err = ctx.Err(); err != nil {
+		return nil, false, err
+	}
 	refs, digest, err := publicationAdmission(raw)
 	if err != nil {
 		return nil, false, err
@@ -34,11 +53,6 @@ func (s *Store) BeginJournalPublication(ctx context.Context, id string, raw []by
 	invocation, err := NewMutationID()
 	if err != nil {
 		return nil, false, err
-	}
-	s.pendingMu.Lock()
-	defer s.pendingMu.Unlock()
-	if s.destinationID == "" || s.destinationID != journal.Destination || s.running[id] {
-		return nil, false, ErrAdmissionClosed
 	}
 	owner := "pending/" + id + "/" + invocation
 	completed := false

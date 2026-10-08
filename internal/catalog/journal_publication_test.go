@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/wangjohn/agent-archive/internal/config"
@@ -183,5 +184,66 @@ func TestJournalAdmissionWrongBindingAndIncompleteFinalRefuse(t *testing.T) {
 	}
 	if err = store.Writer.Coordinator().Complete(context.Background(), store.owners[j.MutationID], store.pending[j.MutationID]); !errors.Is(err, ErrAdmissionClosed) {
 		t.Fatal("generic completion bypassed journal receipt", err)
+	}
+}
+
+func TestJournalAdmissionVerifiesPersistedAuthorityBeforeCoordinatorWrite(t *testing.T) {
+	for _, kind := range []string{"missing", "changed", "raw-mismatch", "copied"} {
+		t.Run(kind, func(t *testing.T) {
+			_, raw, localStore, pending, guard, cfg := journalFixture(t)
+			counted := &namespaceWriteStore{qualifiedStore: raw}
+			remote, err := WrapConfigured(counted, cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			j := *pending.Catalog.Recovery
+			body := pending.MetadataBytes
+			switch kind {
+			case "missing":
+				if err = localStore.RemovePending(j.SessionID); err != nil {
+					t.Fatal(err)
+				}
+			case "changed":
+				pending.MetadataBytes = append(append([]byte(nil), pending.MetadataBytes...), ' ')
+				if err = localStore.SavePending(j.SessionID, pending); err != nil {
+					t.Fatal(err)
+				}
+			case "raw-mismatch":
+				body = append(append([]byte(nil), body...), ' ')
+			case "copied":
+				home := t.TempDir()
+				if err = os.Chmod(home, 0700); err != nil {
+					t.Fatal(err)
+				}
+				copied, openErr := state.Open(home)
+				if openErr != nil {
+					t.Fatal(openErr)
+				}
+				if err = config.Save(home, config.Config{MachineID: "private"}); err != nil {
+					t.Fatal(err)
+				}
+				principal, readErr := os.ReadFile(filepath.Join(localStore.Home(), "collector-principal.json"))
+				if readErr != nil {
+					t.Fatal(readErr)
+				}
+				if err = local.WriteBytes(filepath.Join(home, "collector-principal.json"), principal); err != nil {
+					t.Fatal(err)
+				}
+				if err = copied.SavePending(j.SessionID, pending); err != nil {
+					t.Fatal(err)
+				}
+				guard, err = local.LockCollectorGuard(home)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer guard.Release()
+			}
+			if _, _, err = remote.BeginJournalPublication(t.Context(), j.MutationID, body, j, guard); err == nil {
+				t.Fatal("unverified persisted authority admitted")
+			}
+			if counted.writes != 0 {
+				t.Fatal("invalid journal reached coordinator CAS", counted.writes)
+			}
+		})
 	}
 }
