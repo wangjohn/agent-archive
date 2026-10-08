@@ -799,3 +799,99 @@ func TestChecksumlessSourceStillRequiresExactDeclaredSize(t *testing.T) {
 		})
 	}
 }
+
+type sourceAuthorityStore struct {
+	*qualifiedStore
+	stats       int
+	sourceReads int
+	writes      int
+}
+
+type sourceReferenceCase string
+
+const (
+	sourceOtherSession    sourceReferenceCase = "other-session"
+	sourceTitle           sourceReferenceCase = "title"
+	sourceArbitrary       sourceReferenceCase = "arbitrary"
+	sourceUppercaseDigest sourceReferenceCase = "uppercase-digest"
+	sourceInvalidDigest   sourceReferenceCase = "invalid-digest"
+	sourceValid           sourceReferenceCase = "valid"
+)
+
+func (s *sourceAuthorityStore) Stat(ctx context.Context, key string) (storage.ObjectInfo, error) {
+	s.stats++
+	return s.qualifiedStore.Stat(ctx, key)
+}
+
+func (s *sourceAuthorityStore) GetLimited(ctx context.Context, key string, limit int64) ([]byte, error) {
+	if !strings.HasPrefix(key, "catalog-v4/") {
+		s.sourceReads++
+	}
+	return s.qualifiedStore.GetLimited(ctx, key, limit)
+}
+
+func (s *sourceAuthorityStore) PutConditional(ctx context.Context, key string, raw []byte, condition storage.PutCondition) (string, error) {
+	s.writes++
+	return s.qualifiedStore.PutConditional(ctx, key, raw, condition)
+}
+
+// Ordinary metadata's legacy reference validation does not establish source
+// ownership. Catalog authority must reject foreign or unsafe references before
+// consulting those sources or writing a new catalog revision.
+func TestCatalogSourceReferencesRequireCanonicalSessionOwnership(t *testing.T) {
+	t.Parallel()
+	for _, kind := range []sourceReferenceCase{sourceOtherSession, sourceTitle, sourceArbitrary, sourceUppercaseDigest, sourceInvalidDigest, sourceValid} {
+		t.Run(string(kind), func(t *testing.T) {
+			t.Parallel()
+			s := &sourceAuthorityStore{qualifiedStore: &qualifiedStore{storagetest.NewMemoryStore()}}
+			w, err := New(s)
+			if err != nil {
+				t.Fatal(err)
+			}
+			m := mutation(t, w, "source-owner")
+			ref := &m.Next.Summary.SourceBundle
+			body, err := s.Get(t.Context(), ref.Key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			switch kind {
+			case sourceOtherSession:
+				ref.Key = strings.Replace(ref.Key, "/source-owner/", "/another-session/", 1)
+			case sourceTitle:
+				ref.Key = "sessions/claude/source-owner/private-session-title.jsonl.gz"
+			case sourceArbitrary:
+				ref.Key = "unrelated/private-source.jsonl.gz"
+			case sourceUppercaseDigest:
+				ref.SHA256 = strings.ToUpper(ref.SHA256)
+				ref.Key = "sessions/claude/source-owner/source." + ref.SHA256 + ".jsonl.gz"
+			case sourceInvalidDigest:
+				ref.SHA256 = strings.Repeat("z", 64)
+				ref.Key = "sessions/claude/source-owner/source." + ref.SHA256 + ".jsonl.gz"
+			case sourceValid:
+				// The ordinary generated source reference remains accepted.
+			}
+			if err = s.Put(t.Context(), ref.Key, body); err != nil {
+				t.Fatal(err)
+			}
+			raw, err := json.Marshal(m.Next.Summary)
+			if err != nil {
+				t.Fatal(err)
+			}
+			m.Next.Metadata, err = w.PutImmutable(t.Context(), KindMetadata, raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			s.stats, s.sourceReads, s.writes = 0, 0, 0
+			_, err = w.Commit(t.Context(), m)
+			if kind == sourceValid {
+				if err != nil || s.stats == 0 || s.writes == 0 {
+					t.Fatal("canonical reference refused", err)
+				}
+				return
+			}
+			if err == nil || s.stats != 0 || s.sourceReads != 0 || s.writes != 0 {
+				t.Fatalf("invalid source gained authority: error=%v stats=%d sourceReads=%d writes=%d", err, s.stats, s.sourceReads, s.writes)
+			}
+		})
+	}
+}

@@ -53,8 +53,11 @@ the forward writer fence `catalog-v4-v8`. Legacy config/state remains readable.
 `catalog.Store` resolves canonical metadata reads to the current identity entry,
 including bounded history reads and validators. It never writes canonical
 metadata. Source keys already include content hashes; adapter uploads are
-create-only and reject different bytes at an existing key. `Publication` binds
-one frozen mutation to the source-first metadata write. `DeleteSession` commits
+create-only and reject different bytes at an existing key. Catalog entry
+verification requires every source key to use the metadata's exact session
+namespace and a lowercase SHA256 filename before consulting its bytes.
+`Publication` binds one frozen mutation to the source-first metadata write.
+`DeleteSession` commits
 a tombstone and retains source objects until fenced GC. Direct source cleanup
 returns `ErrGCRequired`, preserving upstream local cleanup obligations.
 

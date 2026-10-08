@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -450,6 +451,16 @@ func (w *Writer) verifyEntry(ctx context.Context, key string, entry *CatalogEntr
 	refs, err := metadata.SourceReferences()
 	if err != nil {
 		return err
+	}
+	// Legacy ordinary sidecars validate reference presence, but catalog
+	// authority also requires each source to belong to this exact session and
+	// use its immutable, opaque checksum key. Validate the whole set before
+	// consulting any source object.
+	for _, ref := range refs {
+		digest, e := hex.DecodeString(ref.SHA256)
+		if e != nil || len(digest) != 32 || ref.SHA256 != hex.EncodeToString(digest) || ref.Key != strings.TrimSuffix(canonical, "metadata.json")+"source."+ref.SHA256+".jsonl.gz" {
+			return errors.New("catalog source reference does not belong to canonical session")
+		}
 	}
 	for _, ref := range refs {
 		if statter, ok := w.store.(storage.ObjectStatter); ok {
