@@ -18,6 +18,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/codexmeta"
+	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/transcriptio"
 )
 
@@ -373,7 +374,7 @@ func (m *metadataInventory) open(source SourceDescriptor) (*os.File, error) {
 		return nil, metadataChanged()
 	}
 	relative, err := filepath.Rel(source.Root, source.Locator)
-	if err != nil || relative == "." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+	if err != nil || relative == "." || !local.PathWithin(source.Locator, source.Root) {
 		return nil, metadataChanged()
 	}
 	m.counts.rootOpens++
@@ -509,6 +510,9 @@ func (m *metadataInventory) step(ctx context.Context) error {
 			m.batchCharge += n
 			return true
 		}}).Enumerate(ctx, d.Root, d.Path, d.Offset)
+		if err != nil && agentapi.Failure(err) == agentapi.Limit {
+			return err
+		}
 		if err != nil || batch.coverage == nil || batch.coverage.Unavailable {
 			return metadataUnavailable()
 		}

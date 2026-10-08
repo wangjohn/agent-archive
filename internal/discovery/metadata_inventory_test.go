@@ -968,3 +968,54 @@ func TestMetadataInventoryDeclinesParserBeforeDecodeAndReleasesCursor(t *testing
 		t.Fatal("refusal leaked", used)
 	}
 }
+
+func TestMetadataEnumerationPressurePreservesLimitAndCleanup(t *testing.T) {
+	for _, shared := range []bool{false, true} {
+		t.Run(strconv.FormatBool(shared), func(t *testing.T) {
+			lookup, _, _ := metadataFixture(t, 1)
+			view := lookup.MetadataInventory().(*metadataInventory)
+			if err := view.start(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			var external int64
+			if shared {
+				external = lookup.readBudget.Available()
+				if !lookup.readBudget.Reserve(external) {
+					t.Fatal("shared pressure reserve failed")
+				}
+			} else if !view.reserve(metadataBytes - view.charge - view.headerBytes) {
+				t.Fatal("metadata pressure reserve failed")
+			}
+			err := view.ensure(t.Context())
+			if agentapi.Failure(err) != agentapi.Limit || agentapi.Failure(view.failure) != agentapi.Limit {
+				t.Fatalf("reservation lost typed Limit: %v", err)
+			}
+			if view.complete || view.cursor != nil || len(view.facts) != 0 || view.counts.requested != 0 || view.counts.physical != 0 {
+				t.Fatal("reservation refusal retained partial authority", view.counts)
+			}
+			before := view.counts
+			slice, err := view.BeginValidationSlice(t.Context(), agentapi.CodexValidationLimits{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for range 20 {
+				if _, err := slice.Thread(t.Context(), "00000000-0000-4000-8000-000000000001"); agentapi.Failure(err) != agentapi.Limit {
+					t.Fatal("cached refusal changed", err)
+				}
+			}
+			if view.counts != before {
+				t.Fatal("failure repeated enumeration", before, view.counts)
+			}
+			if err := slice.Close(); err != nil {
+				t.Fatal(err)
+			}
+			lookup.readBudget.Release(external)
+			if err := lookup.CloseReadOnly(); err != nil {
+				t.Fatal(err)
+			}
+			if used, _ := lookup.readBudget.Charged(); used != 0 {
+				t.Fatal("reservation refusal leaked charge", used)
+			}
+		})
+	}
+}
