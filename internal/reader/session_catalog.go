@@ -146,6 +146,9 @@ func openSessionCatalog(ctx context.Context, cache *MetadataCache, store storage
 	if opts.Cache == nil {
 		opts.Cache = cache
 	}
+	if CatalogAuthority(store) && opts.Cache.dir != cache.dir {
+		return nil, errors.New("remote session catalog requires its bound metadata cache")
+	}
 	dir := filepath.Join(filepath.Dir(cache.dir), "catalog")
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, err

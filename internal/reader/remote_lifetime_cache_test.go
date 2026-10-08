@@ -140,3 +140,30 @@ func TestRemoteSQLCursorBindsRefreshedRequestAndCancellation(t *testing.T) {
 		t.Fatal("same-handle refresh accepted old request", err)
 	}
 }
+
+func TestRemoteCatalogRefusesUnrelatedBodyCacheBeforeWork(t *testing.T) {
+	remote, _ := remoteReaderFixture(t, 8)
+	bound, err := OpenMetadataCache(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := OpenMetadataCache(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c, err := OpenSessionCatalog(t.Context(), bound, remote, ListOptions{Cache: other}); err == nil {
+		_ = c.Close()
+		t.Fatal("unrelated cache accepted")
+	}
+	entries, err := os.ReadDir(other.dir)
+	if err != nil || len(entries) != 0 {
+		t.Fatal("other cache changed", entries, err)
+	}
+	// Legacy callers retain their independent cache arrangement.
+	_, legacy := remoteReaderFixture(t, 1)
+	c, err := OpenSessionCatalog(t.Context(), bound, legacy, ListOptions{Cache: other})
+	if err != nil {
+		t.Fatal("legacy cache arrangement changed", err)
+	}
+	_ = c.Close()
+}

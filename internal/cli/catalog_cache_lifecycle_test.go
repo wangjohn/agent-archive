@@ -89,6 +89,9 @@ func TestRealCLITextAndBrowserMaintainBoundedCacheAndEvictDeletion(t *testing.T)
 			t.Fatal("other-prefix directory removed", err)
 		}
 	}
+	if code := run([]string{"list", "--all-projects", "--limit", "50"}, strings.NewReader(""), false); code != 0 {
+		t.Fatal("selected list body hydration", code)
+	}
 	key := "sessions/codex/" + id + "/metadata.json"
 	bodyDir := filepath.Join(base, hex.EncodeToString([]byte(key)))
 	if _, err = os.Stat(bodyDir); err != nil {
