@@ -142,3 +142,9 @@ Opt-in Codex native naming adds a fixed API evidence source/contract with filter
 18, adapter 0.18.0 and Codex parser 0.25.0. Existing file observations remain
 readable. The optional codex_name_lookup setting needs no writer fence: loss by
 an older writer safely returns to files. Source/metadata schemas stay compatible.
+
+Listing v3 evolves only its auxiliary object-key encoding: canonical base64url
+summaries are split at 255-byte path-component boundaries. Readers retain old
+single-component v2/v3 hints, and older readers use compatibility scanning when
+they reject segmented hints. Canonical source and metadata schemas, derived
+metadata, privacy filtering, adapter and parser versions are unchanged.
