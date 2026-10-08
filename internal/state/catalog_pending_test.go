@@ -50,8 +50,13 @@ func TestCatalogPendingCommitRoundTripAndMalformedRecovery(t *testing.T) {
 		t.Fatal("unreadable expected revision persisted")
 	}
 	var descriptor PendingPublication
-	if err = json.Unmarshal([]byte(`{"commit":{"id":"frozen","expected_revision":""}}`), &descriptor); err != nil || descriptor.Catalog == nil {
+	if err = json.Unmarshal([]byte(`{"commit":{"protocol":9,"id":"frozen","expected_revision":""}}`), &descriptor); err != nil || descriptor.Catalog == nil {
 		t.Fatal("explicit creation revision refused", err)
+	}
+	for _, protocol := range []string{"", `"protocol":8,`} {
+		if err = json.Unmarshal([]byte(`{"commit":{`+protocol+`"id":"frozen","expected_revision":""}}`), &descriptor); !errors.Is(err, ErrDurableStorageRecovery) {
+			t.Fatal("older publication admission accepted", err)
+		}
 	}
 	if err = json.Unmarshal([]byte(`{}`), &descriptor); err != nil || descriptor.Catalog != nil {
 		t.Fatal("legacy omitted commit retained catalog authority", err)
