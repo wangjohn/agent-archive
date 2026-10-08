@@ -150,3 +150,15 @@ func (s *catalogBenchmarkFrame) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 func (*catalogBenchmarkFrame) colorTerminal() bool { return false }
+
+func TestCatalogParentSearchKeepsUnmatchedChildCount(t *testing.T) {
+	a := newScopedArchive(t)
+	a.add(t, "parent01", "Remembered parent title", a.label)
+	a.add(t, "child001", "Unrelated child task", a.label, subagentOf("parent01"))
+	for range 2 {
+		out, stderr, code := a.runList(t, "Remembered")
+		if code != 0 || stderr != "" || !strings.Contains(out, "Remembered parent title · 1 subagent") {
+			t.Fatalf("parent search: code=%d stderr=%s output=%s", code, stderr, out)
+		}
+	}
+}
