@@ -226,24 +226,25 @@ func TestPendingInvocationExclusiveAndRestartClosed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = store.BeginPublication(t.Context(), "frozen", data); err != nil {
+	if _, err = store.BeginPublication(t.Context(), "frozen", data); err != nil {
 		t.Fatal(err)
 	}
-	if err = store.BeginPublication(t.Context(), "frozen", data); !errors.Is(err, ErrAdmissionClosed) {
+	if _, err = store.BeginPublication(t.Context(), "frozen", data); !errors.Is(err, ErrAdmissionClosed) {
 		t.Fatal("parallel duplicate admitted", err)
 	}
 	store.EndPublicationAttempt("frozen")
-	if err = store.BeginPublication(t.Context(), "frozen", data); err != nil {
+	admitted, err := store.BeginPublication(t.Context(), "frozen", data)
+	if err != nil {
 		t.Fatal("owned sequential retry refused", err)
 	}
 	restarted, err := Wrap(raw)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = restarted.BeginPublication(t.Context(), "frozen", data); !errors.Is(err, ErrAdmissionClosed) {
+	if _, err = restarted.BeginPublication(t.Context(), "frozen", data); !errors.Is(err, ErrAdmissionClosed) {
 		t.Fatal("unresolved restart ownership accepted", err)
 	}
-	if err = store.CompletePublication(t.Context(), "frozen", data); err != nil {
+	if err = store.CompletePublication(admitted, "frozen", data); err != nil {
 		t.Fatal(err)
 	}
 	store.EndPublicationAttempt("frozen")
@@ -327,4 +328,217 @@ func TestIndexCountsDeletionSplitsAndRootReplayDiscriminators(t *testing.T) {
 			}
 		}
 	}
+}
+
+func replaceFixtureBody(t *testing.T, w *Writer, m CatalogMutation) CatalogMutation {
+	t.Helper()
+	raw, err := json.Marshal(m.Next.Summary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.Next.Metadata, err = w.PutImmutable(t.Context(), KindMetadata, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m
+}
+
+func TestReadViewPinsBodiesDestinationAndRequestStart(t *testing.T) {
+	w, raw := fixture(t)
+	m := mutation(t, w, "view")
+	revision, err := w.Commit(t.Context(), m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	activateFixture(t, w)
+	store, err := Wrap(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := WithReadView(t.Context())
+	initial, gotRevision, err := store.GetVersioned(ctx, m.SessionKey)
+	if err != nil || gotRevision != revision {
+		t.Fatal(gotRevision, err)
+	}
+	updated := mutation(t, w, "view")
+	updated.ID = "update-view"
+	updated.ExpectedRevision = revision
+	updated.Next.Summary.ProjectID = "changed"
+	updated = replaceFixtureBody(t, w, updated)
+	if _, err = w.Commit(t.Context(), updated); err != nil {
+		t.Fatal(err)
+	}
+	pinned, pinnedRevision, err := store.GetVersioned(ctx, m.SessionKey)
+	if err != nil || pinnedRevision != revision || string(pinned) != string(initial) {
+		t.Fatal("body switched roots", pinnedRevision, err)
+	}
+	fresh, _, err := store.GetVersioned(WithReadView(t.Context()), m.SessionKey)
+	if err != nil || string(fresh) == string(initial) {
+		t.Fatal("fresh view failed", err)
+	}
+	_, other := fixture(t)
+	if _, err = OpenSnapshot(ctx, other, nil); err == nil {
+		t.Fatal("view crossed destinations")
+	}
+	view := ctx.Value(readViewKey{}).(*readView)
+	view.mu.Lock()
+	view.started = time.Now().Add(-SnapshotLifetime)
+	view.mu.Unlock()
+	if _, err = store.Get(WithReadView(ctx), m.SessionKey); !errors.Is(err, ErrStaleCursor) {
+		t.Fatal("rewrapping extended view", err)
+	}
+	unopened := WithReadView(t.Context())
+	unopened.Value(readViewKey{}).(*readView).started = time.Now().Add(-SnapshotLifetime)
+	if _, err = OpenSnapshot(unopened, raw, nil); !errors.Is(err, ErrStaleCursor) {
+		t.Fatal("lazy capture extended lifetime", err)
+	}
+}
+
+func TestDerivedChildCountersSurviveMovesDeletionAndParentAfterChildren(t *testing.T) {
+	w, raw := fixture(t)
+	var children []CatalogMutation
+	var revisions []string
+	for i := range 70 {
+		m := mutation(t, w, fmt.Sprintf("child-%03d", i))
+		m.Next.Summary.ParentSessionID = "parent"
+		m = replaceFixtureBody(t, w, m)
+		revision, err := w.Commit(t.Context(), m)
+		if err != nil {
+			t.Fatal(err)
+		}
+		children = append(children, m)
+		revisions = append(revisions, revision)
+	}
+	parent := mutation(t, w, "parent")
+	parentRevision, err := w.Commit(t.Context(), parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	activateFixture(t, w)
+	before, err := OpenSnapshot(t.Context(), raw, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, _, err := w.Find(t.Context(), parent.SessionKey)
+	if err != nil || entry.OrdinaryChildren != 70 || entry.ReplayChildren != 0 {
+		t.Fatal("parent after children", entry, err)
+	}
+	other := mutation(t, w, "other")
+	if _, err = w.Commit(t.Context(), other); err != nil {
+		t.Fatal(err)
+	}
+	move := children[0]
+	move.ID = "move-child"
+	move.ExpectedRevision = revisions[0]
+	move.Next.Summary.ParentSessionID = "other"
+	move = replaceFixtureBody(t, w, move)
+	if _, err = w.Commit(t.Context(), move); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = w.Commit(t.Context(), CatalogMutation{ID: "delete-child", SessionKey: children[1].SessionKey, ExpectedRevision: revisions[1]}); err != nil {
+		t.Fatal(err)
+	}
+	replay := children[2]
+	replay.ID = "replay-child"
+	replay.ExpectedRevision = revisions[2]
+	replay.Next.Summary.Replay = &archive.Replay{RunID: "private-test"}
+	replay = replaceFixtureBody(t, w, replay)
+	if _, err = w.Commit(t.Context(), replay); err != nil {
+		t.Fatal(err)
+	}
+	entry, revision, err := w.Find(t.Context(), parent.SessionKey)
+	if err != nil || entry.OrdinaryChildren != 67 || entry.ReplayChildren != 1 || revision != parentRevision || entry.Metadata != parent.Next.Metadata {
+		t.Fatal("derived counts changed body authority", entry, revision, err)
+	}
+	otherEntry, _, err := w.Find(t.Context(), other.SessionKey)
+	if err != nil || otherEntry.OrdinaryChildren != 1 {
+		t.Fatal("new parent count", otherEntry, err)
+	}
+	after, err := OpenSnapshot(t.Context(), raw, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	delta, err := after.Delta(t.Context(), before.Root())
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, row := range delta.Changed {
+		if row.Key == parent.SessionKey {
+			found = row.Entry.OrdinaryChildren == 67 && row.Entry.ReplayChildren == 1
+		}
+	}
+	if !found {
+		t.Fatal("count-only delta omitted parent")
+	}
+	prefix := ChildPrefix("claude", "parent", false)
+	count, err := after.Count(t.Context(), Query{Index: ProjectIndex, Lower: prefix + "0", Upper: prefix + ":"})
+	if err != nil || count != entry.OrdinaryChildren {
+		t.Fatal("counter differs from tree oracle", count, err)
+	}
+}
+
+func TestPendingClaimDrainsFrozenSourceAndHistoryAfterSeal(t *testing.T) {
+	w, raw := fixture(t)
+	store, err := Wrap(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	active, preserved := []byte("private active"), []byte("private preserved")
+	id := "00000000-0000-0000-0000-000000000001"
+	makeRef := func(body []byte) archive.SourceReference {
+		return archive.SourceReference{Key: "sessions/codex/" + id + "/source." + storage.SHA256Hex(body) + ".jsonl.gz", SHA256: storage.SHA256Hex(body), CompressedBytes: len(body)}
+	}
+	metadata := archive.Metadata{SchemaVersion: archive.HistoryMetadataSchemaVersion, SessionID: id, NativeSessionID: id, Harness: archive.Harness{Name: "codex"}, CapturedAt: time.Now().UTC(), SourceBundle: makeRef(active), History: &archive.RevisionHistory{CurrentRevision: id, Preserved: []archive.RevisionReference{{RevisionID: "00000000-0000-0000-0000-000000000002", CapturedAt: time.Now().UTC(), Source: makeRef(preserved)}}}}
+	data, err := json.Marshal(metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, err := store.BeginPublication(t.Context(), "frozen-drain", data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seal, err := w.Coordinator().Seal(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = w.Coordinator().HeldBarrier(seal).Hold(t.Context()); !errors.Is(err, ErrAdmissionClosed) {
+		t.Fatal("active lifecycle frozen by refs alone", err)
+	}
+	if err = store.Put(ctx, metadata.SourceBundle.Key, active); err != nil {
+		t.Fatal("active source could not drain", err)
+	}
+	if err = store.Put(ctx, metadata.History.Preserved[0].Source.Key, preserved); err != nil {
+		t.Fatal("history source could not drain", err)
+	}
+	if err = store.Put(ctx, "sessions/codex/unprotected/source.jsonl.gz", []byte("unprotected")); err == nil {
+		t.Fatal("unprotected source admitted")
+	}
+	_, other := fixture(t)
+	otherStore, err := Wrap(other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = otherStore.Put(ctx, metadata.SourceBundle.Key, active); !errors.Is(err, ErrAdmissionClosed) {
+		t.Fatal("claim crossed destination", err)
+	}
+	key, err := archive.MetadataObjectKey("codex", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = store.Publication("frozen-drain", key, "").Put(ctx, key, data); err != nil {
+		t.Fatal("publication could not drain", err)
+	}
+	if err = store.CompletePublication(ctx, "frozen-drain", data); err != nil {
+		t.Fatal(err)
+	}
+	store.EndPublicationAttempt("frozen-drain")
+	if err = store.Put(ctx, metadata.SourceBundle.Key, active); !errors.Is(err, ErrAdmissionClosed) {
+		t.Fatal("retired context accepted", err)
+	}
+	_, release, err := w.Coordinator().HeldBarrier(seal).Hold(t.Context())
+	if err != nil {
+		t.Fatal("drained lifecycle refused", err)
+	}
+	release()
 }

@@ -240,11 +240,11 @@ func (s *MeasuredStore) DeleteSession(ctx context.Context, key string) error {
 }
 
 // BeginPublication forwards the global durable pending lifecycle admission.
-func (s *MeasuredStore) BeginPublication(ctx context.Context, id string, raw []byte) error {
+func (s *MeasuredStore) BeginPublication(ctx context.Context, id string, raw []byte) (context.Context, error) {
 	if lifecycle, ok := s.base().(storage.CatalogLifecycle); ok {
 		return lifecycle.BeginPublication(ctx, id, raw)
 	}
-	return nil
+	return ctx, nil
 }
 
 // CompletePublication forwards acknowledged history and pending settlement.

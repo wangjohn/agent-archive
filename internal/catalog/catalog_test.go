@@ -414,17 +414,37 @@ func TestGCRacesDelayedCASAndStagedSource(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { _, err := w.Commit(t.Context(), m); done <- err }()
 	<-s.reached
-	// Exercise the durable CAS fence even for a delayed operation submitted
-	// before a coordinator obtained its complete destination barrier.
+	// A delayed CAS is still an admitted active owner. Collection must seal
+	// new admissions but cannot obtain a held inventory or delete its source.
+	if err = w.Collect(t.Context(), heldBarrier{}); !errors.Is(err, ErrAdmissionClosed) {
+		t.Fatal("collection crossed active writer admission", err)
+	}
+	if _, err = s.Get(t.Context(), m.Next.Summary.SourceBundle.Key); err != nil {
+		t.Fatal("active writer source collected", err)
+	}
+	late := mutation(t, w, "late")
+	if _, err = w.Commit(t.Context(), late); !errors.Is(err, ErrAdmissionClosed) {
+		t.Fatal("post-seal writer admitted", err)
+	}
+	close(s.resume)
+	if err = <-done; err != nil {
+		t.Fatal("pre-admitted writer could not drain", err)
+	}
+	if e, _, err := w.Find(t.Context(), m.SessionKey); err != nil || e == nil {
+		t.Fatal("settled publication missing", err)
+	}
+	state, _, err := w.Coordinator().read(t.Context())
+	if err != nil || len(state.Owners) != 0 || state.Hold != "" || state.Seal == "" {
+		t.Fatal("drain proof", state, err)
+	}
+	if err = w.Coordinator().Release(t.Context(), state.Seal); err != nil {
+		t.Fatal(err)
+	}
 	if err = w.Collect(t.Context(), heldBarrier{}); err != nil {
 		t.Fatal(err)
 	}
-	close(s.resume)
-	if err = <-done; !errors.Is(err, storage.ErrNotFound) {
-		t.Fatal("delayed publication crossed GC", err)
-	}
-	if e, _, err := w.Find(t.Context(), m.SessionKey); err != nil || e != nil {
-		t.Fatal("dangling publication visible", err)
+	if _, err = s.Get(t.Context(), m.Next.Summary.SourceBundle.Key); err != nil {
+		t.Fatal("settled source collected", err)
 	}
 }
 

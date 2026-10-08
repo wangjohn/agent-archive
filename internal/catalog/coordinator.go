@@ -191,38 +191,66 @@ func (c *Coordinator) Release(ctx context.Context, owner string) error {
 
 // BeginPublication holds global pending/history admission through durable local
 // acknowledgement. Frozen metadata describes all active and preserved sources.
-func (s *Store) BeginPublication(ctx context.Context, id string, metadata []byte) error {
+func (s *Store) BeginPublication(ctx context.Context, id string, metadata []byte) (context.Context, error) {
 	refs, digest, err := publicationAdmission(metadata)
 	if err != nil {
-		return err
+		return ctx, err
+	}
+	invocation, err := NewMutationID()
+	if err != nil {
+		return ctx, err
 	}
 	s.pendingMu.Lock()
 	defer s.pendingMu.Unlock()
 	if s.running[id] {
-		return ErrAdmissionClosed
+		return ctx, ErrAdmissionClosed
 	}
+	owner := "pending/" + id + "/" + invocation
 	if prior, ok := s.pending[id]; ok {
 		if prior != digest {
-			return ErrMutationReuse
+			return ctx, ErrMutationReuse
 		}
-		s.running[id] = true
-		return nil
+		oldOwner := s.owners[id]
+		err = s.Writer.Coordinator().change(ctx, func(state *admissions) error {
+			previous, ok := state.Owners[oldOwner]
+			if !ok || previous.Digest != digest || state.Seal != "" || state.Hold != "" {
+				return ErrAdmissionClosed
+			}
+			delete(state.Owners, oldOwner)
+			state.Owners[owner] = admission{Digest: digest, Refs: refs}
+			return nil
+		})
+	} else {
+		err = s.Writer.Coordinator().change(ctx, func(state *admissions) error {
+			if state.Seal != "" || state.Hold != "" || len(state.Owners) >= 256 {
+				return ErrAdmissionClosed
+			}
+			for active := range state.Owners {
+				if strings.HasPrefix(active, "pending/"+id+"/") {
+					return ErrAdmissionClosed
+				}
+			}
+			state.Owners[owner] = admission{Digest: digest, Refs: refs}
+			return nil
+		})
 	}
-	if err = s.Writer.Coordinator().Admit(ctx, "pending/"+id, digest, refs); err != nil {
-		return err
+	if err != nil {
+		return ctx, err
 	}
 	if s.pending == nil {
 		s.pending = map[string]string{}
-	}
-	s.pending[id] = digest
-	if s.running == nil {
 		s.running = map[string]bool{}
+		s.claims = map[string]*publicationClaim{}
+		s.owners = map[string]string{}
 	}
-	s.running[id] = true
-	return nil
+	claim := &publicationClaim{store: s, id: id, owner: owner, digest: digest, refs: refs}
+	s.pending[id], s.running[id], s.claims[id], s.owners[id] = digest, true, claim, owner
+	return context.WithValue(ctx, publicationClaimKey{}, claim), nil
 }
 
-// CompletePublication settles the exact acknowledged pending lifecycle.
+// CompletePublication settles the exact admitted invocation after its durable
+// publication and local/history acknowledgement. It cannot acknowledge another
+// concurrent attempt or a context retained after EndPublicationAttempt.
 func (s *Store) CompletePublication(ctx context.Context, id string, metadata []byte) error {
 	_, digest, err := publicationAdmission(metadata)
 	if err != nil {
@@ -230,14 +258,27 @@ func (s *Store) CompletePublication(ctx context.Context, id string, metadata []b
 	}
 	s.pendingMu.Lock()
 	defer s.pendingMu.Unlock()
-	if prior, ok := s.pending[id]; !ok || prior != digest || !s.running[id] {
+	claim, err := s.publicationClaim(ctx)
+	if err != nil || claim.id != id || claim.digest != digest {
 		return ErrAdmissionClosed
 	}
-	if err = s.Writer.Coordinator().Complete(ctx, "pending/"+id, digest); err != nil {
+	if err = s.Writer.Coordinator().Complete(ctx, claim.owner, digest); err != nil {
 		return err
 	}
 	delete(s.pending, id)
+	delete(s.claims, id)
+	delete(s.owners, id)
+	delete(s.running, id)
 	return nil
+}
+
+// EndPublicationAttempt releases only local execution ownership. Its durable
+// unresolved admission survives cancellation, process restart and failure.
+func (s *Store) EndPublicationAttempt(id string) {
+	s.pendingMu.Lock()
+	defer s.pendingMu.Unlock()
+	delete(s.running, id)
+	delete(s.claims, id)
 }
 
 func publicationAdmission(raw []byte) ([]ObjectRef, string, error) {

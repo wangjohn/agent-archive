@@ -89,10 +89,13 @@ func (s *sessionScan) publishPending(pending state.PendingPublication) (sessionO
 	}
 
 	if remote, ok := s.remote.(storage.CatalogLifecycle); ok && pending.Catalog != nil {
-		if err := remote.BeginPublication(s.ctx, pending.Catalog.ID, pending.MetadataBytes); err != nil {
+		admittedCtx, err := remote.BeginPublication(s.ctx, pending.Catalog.ID, pending.MetadataBytes)
+		if err != nil {
 			return outcomeSkipped, err
 		}
-		defer remote.EndPublicationAttempt(pending.Catalog.ID)
+		originalCtx := s.ctx
+		s.ctx = admittedCtx
+		defer func() { remote.EndPublicationAttempt(pending.Catalog.ID); s.ctx = originalCtx }()
 	}
 
 	if err := s.checkHistoryPublication(pending); err != nil {

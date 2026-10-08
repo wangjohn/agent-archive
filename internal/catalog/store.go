@@ -22,6 +22,8 @@ type Store struct {
 	pendingMu sync.Mutex
 	pending   map[string]string
 	running   map[string]bool
+	claims    map[string]*publicationClaim
+	owners    map[string]string
 }
 
 // Wrap installs catalog metadata authority over a qualified object store.
@@ -124,6 +126,9 @@ func (s *Store) Put(ctx context.Context, key string, raw []byte) error {
 		return errors.New("catalog metadata requires a frozen mutation")
 	}
 	if strings.HasPrefix(key, "sessions/") {
+		if _, ok := ctx.Value(publicationClaimKey{}).(*publicationClaim); ok {
+			return s.putClaimedSource(ctx, key, raw)
+		}
 		digest := storage.SHA256Hex(raw)
 		invocation, e := NewMutationID()
 		if e != nil {
@@ -187,6 +192,9 @@ func (s publicationStore) Put(ctx context.Context, key string, raw []byte) error
 	}
 	if _, err = metadata.SourceReferences(); err != nil {
 		return err
+	}
+	if _, ok := ctx.Value(publicationClaimKey{}).(*publicationClaim); ok {
+		return s.putClaimedMetadata(ctx, key, raw, &CatalogEntry{Summary: metadata})
 	}
 	ref, err := s.Writer.PutImmutable(ctx, KindMetadata, raw)
 	if err != nil {

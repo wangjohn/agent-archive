@@ -13,6 +13,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/catalog"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -72,13 +73,14 @@ func (b *sessionBrowser) run(ctx context.Context, choices *scopeChoices) error {
 			return err
 		}
 		stop := startActivity(b.stdout, "Loading session…")
-		view, err := readSessionView(ctx, b.store, row.HarnessKey, row.SessionID)
+		viewCtx := catalog.WithReadView(ctx)
+		view, err := readSessionView(viewCtx, b.store, row.HarnessKey, row.SessionID)
 		stop()
 		if err != nil {
 			return err
 		}
 		b.last = &view
-		action, err := b.details(ctx, view, row)
+		action, err := b.details(viewCtx, view, row)
 		if err != nil || action == browseQuit {
 			return err
 		}
