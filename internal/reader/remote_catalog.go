@@ -212,7 +212,7 @@ func (c *SQLiteSessionCatalog) RefreshRemote(ctx context.Context) error {
 	}
 	// Validate the complete persisted tuple before reusing unchanged leaves.
 	// Missing local rows require a complete verified summary rebuild as well.
-	rows, err := tx.QueryContext(ctx, "SELECT key,etag,hash,capture,activity,summary,search,lower_id,unlabeled,summary_hash FROM sessions")
+	rows, err := tx.QueryContext(ctx, "SELECT key,etag,hash,capture,activity,summary,search,lowerid,unlabeled,summary_hash FROM sessions")
 	if err != nil {
 		return err
 	}
