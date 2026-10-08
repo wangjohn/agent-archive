@@ -30,7 +30,7 @@ func labelScope(reg archive.SessionRegistration, env agentapi.LabelEnvironment, 
 }
 
 func (p *pass) observeLabels(ctx context.Context) {
-	if p.opts.Labels == nil {
+	if p.opts.Labels == nil || ctx.Err() != nil {
 		return
 	}
 	if p.labelLocal == nil {
@@ -131,7 +131,26 @@ func (p *pass) labelEligible(reg archive.SessionRegistration) bool {
 	if reg.CaptureFrozen || reg.Imported() || p.unreadable[reg.ArchiveSessionID] || (p.opts.AcceptSession != nil && !p.opts.AcceptSession(reg)) {
 		return false
 	}
-	return p.local.GenerationCaptureAllowed(reg) == nil
+	if p.local.GenerationCaptureAllowed(reg) != nil {
+		return false
+	}
+	// A valid prior publication cannot authorize naming while protected
+	// session work is unknown. Check before provider acquisition and before
+	// either a cold context or a warm observation can enter this pass.
+	if p.opts.sourcePasses == nil || p.opts.sourcePasses.env.ReadBudget == nil {
+		addError(p.result.Errors, reg.ArchiveSessionID, errRetainedBudget)
+		p.unreadable[reg.ArchiveSessionID] = true
+		return false
+	}
+	scratch, closeScratch := p.local.WithReadBudget(p.ctx, (&sessionScan{opts: p.opts}).readBudget())
+	err := scratch.CheckDurableSessionRead(reg.ArchiveSessionID)
+	closeScratch()
+	if err != nil {
+		addError(p.result.Errors, reg.ArchiveSessionID, err)
+		p.unreadable[reg.ArchiveSessionID] = true
+		return false
+	}
+	return true
 }
 
 func (p *pass) prepareLabelRequests(ctx context.Context, providers map[string]agentapi.LabelProvider, cache *state.LabelCache, ids []string, eligible map[string]archive.SessionRegistration) []agentapi.LabelRequest {

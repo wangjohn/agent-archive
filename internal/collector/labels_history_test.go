@@ -27,7 +27,13 @@ func TestExternalLabelsExcludeOrdinaryActiveHistoryAuthority(t *testing.T) {
 			if result, err := Run(t.Context(), local, remote, opts); err != nil || len(result.Errors) != 0 {
 				t.Fatal(result, err)
 			}
-			p := &pass{local: local, opts: opts, registrations: []archive.SessionRegistration{reg}, now: now.Add(time.Hour), result: Result{Errors: map[string]error{}}}
+			p := &pass{ctx: t.Context(), unreadable: map[string]bool{}, local: local, opts: opts, registrations: []archive.SessionRegistration{reg}, now: now.Add(time.Hour), result: Result{Errors: map[string]error{}}}
+			closeSources := openCursorPass(p.registrations, &p.opts)
+			defer func() {
+				if err := closeSources(); err != nil {
+					t.Error(err)
+				}
+			}()
 			defer p.releaseLabelResources()
 			if warm {
 				p.observeLabels(t.Context())
