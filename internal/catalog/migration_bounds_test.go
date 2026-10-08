@@ -207,8 +207,9 @@ func TestEmptyMigrationAndGCBootstrapRequireExactAuthority(t *testing.T) {
 	if raw.writes[HeadKey] != 0 {
 		t.Fatal("changed authority created head")
 	}
-	if err = c.Release(t.Context(), owner); err != nil {
-		t.Fatal(err)
+	state, _, err := c.read(t.Context())
+	if err != nil || state.Seal != "" || state.Hold != "" {
+		t.Fatal("owned release did not clear exact durable hold/seal", state, err)
 	}
 	if err = w.Collect(t.Context(), heldBarrier{}); err != nil {
 		t.Fatal("empty GC", err)
