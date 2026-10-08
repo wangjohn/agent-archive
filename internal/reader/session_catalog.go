@@ -142,11 +142,15 @@ func openSessionCatalog(ctx context.Context, cache *MetadataCache, store storage
 		defer unlock()
 	}
 	path := filepath.Join(dir, "sessions.sqlite")
-	for _, candidate := range []string{path, path + "-wal", path + "-shm"} {
+	for _, candidate := range []string{path, path + "-wal", path + "-shm", filepath.Join(dir, "open.lock")} {
 		if info, e := os.Lstat(candidate); e == nil && !info.Mode().IsRegular() {
 			return nil, errors.New("catalog requires regular files")
 		} else if e != nil && !os.IsNotExist(e) {
 			return nil, e
+		} else if e == nil {
+			if err := os.Chmod(candidate, 0600); err != nil {
+				return nil, err
+			}
 		}
 	}
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
