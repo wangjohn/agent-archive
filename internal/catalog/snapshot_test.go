@@ -773,6 +773,9 @@ func TestNodeCountRejectsOverflowBeforeAggregateReuse(t *testing.T) {
 
 func TestSnapshotValidateReadExpiryCancellationDoesNotReadProvider(t *testing.T) {
 	w, raw := fixture(t)
+	if _, err := w.Commit(t.Context(), mutation(t, w, "validated-read")); err != nil {
+		t.Fatal(err)
+	}
 	activateFixture(t, w)
 	measured := storagetest.NewMeasuredStore(raw, 0)
 	snapshot, err := OpenSnapshot(t.Context(), measured, nil)
