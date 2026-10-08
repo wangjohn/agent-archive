@@ -216,10 +216,11 @@ func TestRetentionRechecksProtectedRecoveryAfterMetadataRead(t *testing.T) {
 			remote.deleted = nil
 			remote.beforeRead = func() error { return os.WriteFile(pendingPath, pending, 0600) }
 			now := t0.Add(retentionWindow + time.Hour)
-			opts := Options{Now: func() time.Time { return now }}
+			var maxAge time.Duration
 			if lane == protectedDeleteWhole {
-				opts.SessionMaxAge = retentionWindow
+				maxAge = retentionWindow
 			}
+			opts := Options{Now: func() time.Time { return now }, SessionMaxAge: maxAge}
 			result, err := Sweep(t.Context(), local, remote, agreeing(opts))
 			if err != nil || !errors.Is(result.Errors["protected"], state.ErrDurableStorageRecovery) || len(remote.deleted) != 0 {
 				t.Errorf("entry observation authorized late delete: result=%+v deletes=%v err=%v", result, remote.deleted, err)

@@ -115,6 +115,8 @@ func TestRegisteredRecoveryRefusesNativeNamingBeforeProvider(t *testing.T) {
 						owedPath = filepath.Join(s.Home(), "publication-evidence", reg.ArchiveSessionID, "opaque")
 					case durableSessionModeSourceOnly:
 						owedPath = ""
+					case durableSessionModeMissingPending, durableSessionModeMissingSource, durableSessionModeCanceled:
+						t.Fatalf("unsupported registered naming fixture: %s", mode)
 					case durableSessionModeCorruptPending, durableSessionModeEmptyPending, durableSessionModeNullPending, durableSessionModeIncompletePending, durableSessionModeChecksumPending, durableSessionModeMetadataPending:
 						owedPath = filepath.Join(s.Home(), "pending", reg.ArchiveSessionID+".json")
 					}
@@ -232,9 +234,10 @@ func incompletePendingBytes(mode durableSessionMode) []byte {
 			panic(err)
 		}
 		return data
-	default:
+	case durableSessionModeSourceOnly, durableSessionModeOpaque, durableSessionModeMissingPending, durableSessionModeMissingSource, durableSessionModeCorruptPending, durableSessionModeCanceled:
 		return nil
 	}
+	panic("unknown durable session fixture")
 }
 
 func TestIncompleteProtectedPendingRefusesLocalPreview(t *testing.T) {

@@ -251,6 +251,8 @@ func TestLocalBundleSessionObligationsRefuseBeforeNative(t *testing.T) {
 		t.Run(string(mode), func(t *testing.T) {
 			s := newTestStore(t)
 			switch mode {
+			case durableSessionModeEmptyPending, durableSessionModeNullPending, durableSessionModeIncompletePending, durableSessionModeChecksumPending, durableSessionModeMetadataPending:
+				t.Fatalf("incomplete fixture belongs to the protected preview regression: %s", mode)
 			case durableSessionModeCanceled: // This mode needs no additional fixture mutation.
 			case durableSessionModeSourceOnly, durableSessionModeMissingSource:
 				data := []byte("original")
