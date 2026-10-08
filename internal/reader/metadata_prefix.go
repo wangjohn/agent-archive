@@ -14,6 +14,7 @@ import (
 // matches: because headers contain no titles, those require reading all bodies.
 // Matchers run after validation, serially, and never suppress prefix matches.
 func FindMetadataPrefix(ctx context.Context, store storage.ObjectStore, prefix, idPrefix string, filter Filter, opts ListOptions, matchers ...func(archive.Metadata) bool) ([]archive.Metadata, error) {
+	opts.Cache.maintain(ctx, 64)
 	idPrefix = strings.ToLower(idPrefix)
 	canonicalPrefix := listPrefixFor(prefix, filter.Harness)
 	known := opts.Cache.keys(canonicalPrefix)
