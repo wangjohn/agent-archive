@@ -8,7 +8,6 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/jsonwire"
-	"github.com/wangjohn/agent-archive/internal/reader"
 	"reflect"
 	"slices"
 )
@@ -48,7 +47,7 @@ func coveredPrivacySHA(r CoveredPrivacySource) string {
 }
 
 func filterPrivacySource(ctx context.Context, registration archive.SessionRegistration, adapter agentapi.TranscriptFilter, selected archive.Metadata, input PreparationInput, original []byte, oldPolicy, nextPolicy PublicationPolicy, ceiling config.SkillEvidence, budget *agentapi.NativeReadBudget) (archive.SourceBundle, func(), error) {
-	bundle, closeOriginal, err := reader.DecodeRevisionSourceLeased(ctx, selected, input.Selection.RevisionID, original, reader.Limits{}, budget)
+	bundle, closeOriginal, err := agentapi.DecodeRevisionSourceLeased(ctx, selected, input.Selection.RevisionID, original, agentapi.SourceReadLimits{}, budget)
 	if err != nil {
 		return bundle, nil, err
 	}
