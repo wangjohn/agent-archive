@@ -292,7 +292,9 @@ func (s *sessionScan) upload(pending state.PendingPublication) error {
 		return nil
 	}
 	err := storage.PutMetadataForSourceIndexed(s.ctx, s.publicationRemote(pending), pending.SourceKey, pending.SourceSHA256, pending.SourceSize, pending.MetadataKey, pending.MetadataBytes, s.opts.Retry, nil)
-	if errors.Is(err, storage.ErrNotFound) || errors.Is(err, storage.ErrChecksumMismatch) {
+	if pending.Catalog == nil && (errors.Is(err, storage.ErrNotFound) || errors.Is(err, storage.ErrChecksumMismatch)) {
+		// Catalog journal owners retain their exact recovery proof on source
+		// failure. Only legacy pending work can be dropped here.
 		// The recorded source is not in storage as recorded, and without its
 		// bytes this publication can never succeed. Dropping it keeps it from
 		// holding back normal capture; the metadata still points at whatever
