@@ -125,6 +125,37 @@ func TestSelectedReadsReportProgressBeforeJoinAndFromCache(t *testing.T) {
 	}
 }
 
+func TestSelectedProgressAndBodyObserversAreSerial(t *testing.T) {
+	store, revisions := selectedFixture(t, 20)
+	synctest.Test(t, func(t *testing.T) {
+		var progress []int
+		var bodies []string
+		reads := readSelected(t.Context(), store, revisions, ListOptions{
+			Progress: func(done, total int) {
+				if total != len(revisions) {
+					t.Errorf("progress total=%d want=%d", total, len(revisions))
+				}
+				// Let another callback start if observers wrongly run on workers.
+				if done == 1 {
+					time.Sleep(time.Millisecond)
+				}
+				progress = append(progress, done)
+			},
+			BodyRead: func(key string, _ bool) {
+				if len(progress) != len(revisions) {
+					t.Error("body observer ran before progress callbacks finished")
+				}
+				bodies = append(bodies, key)
+			},
+		})
+		for i, read := range reads {
+			if read.Err != nil || progress[i] != i+1 || bodies[i] != revisions[i].MetadataKey {
+				t.Fatalf("observer order at %d: progress=%v bodies=%v read=%+v", i, progress, bodies, read)
+			}
+		}
+	})
+}
+
 func TestSelectedFailureStopsDispatchAndJoinsEarlierErrors(t *testing.T) {
 	_, revisions := selectedFixture(t, 50)
 	synctest.Test(t, func(t *testing.T) {
