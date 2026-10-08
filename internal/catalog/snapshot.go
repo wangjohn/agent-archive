@@ -243,89 +243,7 @@ func (s *Snapshot) Query(ctx context.Context, q Query, cursor string, limit int)
 	}
 	page := Page{}
 	last := ""
-	var visit func(ObjectRef, int) error
-	visit = func(ref ObjectRef, depth int) error {
-		if depth >= maxDepth {
-			return errors.New("catalog tree depth exceeded")
-		}
-		n, e := s.readNode(ctx, ref)
-		if e != nil {
-			return e
-		}
-		for j := range len(n.Children) {
-			i := j
-			if q.Reverse {
-				i = len(n.Children) - 1 - j
-			}
-			c := n.Children[i]
-			lower := ""
-			if i > 0 {
-				lower = n.Children[i-1].Max
-			}
-			if c.Max < q.Lower || q.Upper != "" && lower >= q.Upper || token.After != "" && ((!q.Reverse && c.Max <= token.After) || (q.Reverse && lower >= token.After)) {
-				continue
-			}
-			if e = visit(c.Ref, depth+1); e != nil {
-				return e
-			}
-			if len(page.Rows) > limit {
-				return nil
-			}
-		}
-		for j := range len(n.Leaves) {
-			i := j
-			if q.Reverse {
-				i = len(n.Leaves) - 1 - j
-			}
-			leaf := n.Leaves[i]
-			if leaf.Key < q.Lower || q.Upper != "" && leaf.Key >= q.Upper || token.After != "" && ((!q.Reverse && leaf.Key <= token.After) || (q.Reverse && leaf.Key >= token.After)) {
-				continue
-			}
-			var entry *CatalogEntry
-			if q.Index == IdentityIndex {
-				var r record
-				if e = json.Unmarshal(leaf.Value, &r); e != nil {
-					return e
-				}
-				entry = r.Entry
-			} else {
-				entry = &CatalogEntry{}
-				if e = json.Unmarshal(leaf.Value, entry); e != nil {
-					return e
-				}
-			}
-			if entry == nil {
-				continue
-			}
-			key := leafSessionKey(entry)
-			if key == "" || entry.Revision == "" || entry.Metadata.Key == "" || entry.Metadata.SHA256 == "" {
-				return errors.New("invalid catalog entry")
-			}
-			if q.Index == IdentityIndex && key != leaf.Key {
-				return errors.New("catalog identity mismatch")
-			}
-			if q.Index != IdentityIndex {
-				keys := allOrderKeys(key, entry)
-				idx := map[Index]int{CaptureIndex: 0, ActivityIndex: 1, ProjectIndex: 2}[q.Index]
-				valid := false
-				for _, key := range keys[idx] {
-					if key == leaf.Key {
-						valid = true
-					}
-				}
-				if !valid {
-					return errors.New("catalog order key mismatch")
-				}
-			}
-			page.Rows = append(page.Rows, Row{Key: key, Entry: *entry})
-			if len(page.Rows) > limit {
-				return nil
-			}
-			last = leaf.Key
-		}
-		return nil
-	}
-	if err = visit(root, 0); err != nil {
+	if err = s.visitRange(ctx, q, token, root, 0, limit, &page, &last); err != nil {
 		return Page{}, err
 	}
 	if len(page.Rows) > limit {
@@ -477,4 +395,127 @@ func defaultRange(q Query) Query {
 		}
 	}
 	return q
+}
+
+func rangeContains(key string, q Query, after string) bool {
+	if key < q.Lower || q.Upper != "" && key >= q.Upper {
+		return false
+	}
+	if after == "" {
+		return true
+	}
+	if q.Reverse {
+		return key < after
+	}
+	return key > after
+}
+
+func rangeIntersects(lower, upper string, q Query, after string) bool {
+	if upper < q.Lower || q.Upper != "" && lower >= q.Upper {
+		return false
+	}
+	if after == "" {
+		return true
+	}
+	if q.Reverse {
+		return lower < after
+	}
+	return upper > after
+}
+
+func (s *Snapshot) visitRange(ctx context.Context, q Query, token snapshotCursor, ref ObjectRef, depth, limit int, page *Page, last *string) error {
+	if depth >= maxDepth {
+		return errors.New("catalog tree depth exceeded")
+	}
+	n, err := s.readNode(ctx, ref)
+	if err != nil {
+		return err
+	}
+	for j := range len(n.Children) {
+		i := j
+		if q.Reverse {
+			i = len(n.Children) - 1 - j
+		}
+		c := n.Children[i]
+		lower := ""
+		if i > 0 {
+			lower = n.Children[i-1].Max
+		}
+		if !rangeIntersects(lower, c.Max, q, token.After) {
+			continue
+		}
+		if err = s.visitRange(ctx, q, token, c.Ref, depth+1, limit, page, last); err != nil {
+			return err
+		}
+		if len(page.Rows) > limit {
+			return nil
+		}
+	}
+	for j := range len(n.Leaves) {
+		i := j
+		if q.Reverse {
+			i = len(n.Leaves) - 1 - j
+		}
+		leaf := n.Leaves[i]
+		if !rangeContains(leaf.Key, q, token.After) {
+			continue
+		}
+		row, err := decodeRow(leaf, q.Index)
+		if err != nil {
+			return err
+		}
+		if row == nil {
+			continue
+		}
+		page.Rows = append(page.Rows, *row)
+		if len(page.Rows) > limit {
+			return nil
+		}
+		*last = leaf.Key
+	}
+	return nil
+}
+
+func decodeRow(leaf item, index Index) (*Row, error) {
+	var entry *CatalogEntry
+	if index == IdentityIndex {
+		var r record
+		if err := json.Unmarshal(leaf.Value, &r); err != nil {
+			return nil, err
+		}
+		entry = r.Entry
+	} else {
+		entry = &CatalogEntry{}
+		if err := json.Unmarshal(leaf.Value, entry); err != nil {
+			return nil, err
+		}
+	}
+	if entry == nil {
+		return nil, nil
+	}
+	key := leafSessionKey(entry)
+	if key == "" || entry.Revision == "" || entry.Metadata.Key == "" {
+		return nil, errors.New("invalid catalog entry")
+	}
+	if err := entry.Metadata.validate(); err != nil {
+		return nil, err
+	}
+	if index == IdentityIndex {
+		if key != leaf.Key {
+			return nil, errors.New("catalog identity mismatch")
+		}
+	} else {
+		keys := allOrderKeys(key, entry)
+		idx := map[Index]int{CaptureIndex: 0, ActivityIndex: 1, ProjectIndex: 2}[index]
+		valid := false
+		for _, key := range keys[idx] {
+			if key == leaf.Key {
+				valid = true
+			}
+		}
+		if !valid {
+			return nil, errors.New("catalog order key mismatch")
+		}
+	}
+	return &Row{Key: key, Entry: *entry}, nil
 }
