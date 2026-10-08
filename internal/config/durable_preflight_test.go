@@ -14,11 +14,24 @@ import (
 )
 
 func TestRootedConfigReadObservationClassification(t *testing.T) {
-	for _, kind := range []string{"supported", "future", "corrupt", "missing", "directory", "read-error", "unsafe-home", "replaced-home"} {
+	for _, kind := range []string{"supported", "legacy-five-to-seven", "future", "corrupt", "future-read", "corrupt-read", "missing", "directory", "read-error", "unsafe-home", "replaced-home"} {
 		t.Run(kind, func(t *testing.T) {
 			home := durableTestHome(t)
-			if err := Save(home, Config{MachineID: "synthetic"}); err != nil {
+			initial := Config{MachineID: "synthetic"}
+			if kind == "legacy-five-to-seven" {
+				initial.GenerationProtection, initial.CodexHistoryProtection = true, true
+			}
+			if err := Save(home, initial); err != nil {
 				t.Fatal(err)
+			}
+			if kind == "future-read" || kind == "corrupt-read" {
+				raw := []byte(`{"schema_version":{"version":8,"writer":"publication-composition-v8"},"publication_composition_protection":true}`)
+				if kind == "corrupt-read" {
+					raw = []byte("{")
+				}
+				if err := os.WriteFile(filepath.Join(home, "config.json"), raw, 0600); err != nil {
+					t.Fatal(err)
+				}
 			}
 			held, err := local.OpenRootedHome(home)
 			if err != nil {
@@ -29,13 +42,17 @@ func TestRootedConfigReadObservationClassification(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := held.Root.ReadFile("config.json"); err != nil {
+			raw, err := held.Root.ReadFile("config.json")
+			if err != nil {
 				t.Fatal(err)
 			}
 			var readErr error
 			switch kind {
-			case "supported":
+			case "supported", "future-read", "corrupt-read":
 				err = local.RootedWrite(held.Root, "config.json", Config{MachineID: "replacement"})
+			case "legacy-five-to-seven":
+				initial.DurableStorageProtection = true
+				err = local.RootedWrite(held.Root, "config.json", initial)
 			case "future", "corrupt":
 				raw := []byte(`{"schema_version":{"version":8,"writer":"publication-composition-v8"},"publication_composition_protection":true}`)
 				if kind == "corrupt" {
@@ -69,16 +86,19 @@ func TestRootedConfigReadObservationClassification(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			observation := rootedConfigReadUnchanged(held, before, readErr)
-			changed := kind == "supported" || kind == "future" || kind == "corrupt"
+			observation := rootedConfigReadUnchanged(held, before, raw, readErr)
+			changed := kind == "supported" || kind == "legacy-five-to-seven" || kind == "future" || kind == "corrupt"
 			if observation == nil || errors.Is(observation, errRootedConfigObservationChanged) != changed {
 				t.Fatalf("observation classification: %v", observation)
 			}
 			if changed {
-				_, present, err := loadDurableStoragePreflight(held, time.Now().Add(time.Second))
-				if kind == "supported" {
+				cfg, present, err := loadDurableStoragePreflight(held, time.Now().Add(time.Second))
+				if kind == "supported" || kind == "legacy-five-to-seven" {
 					if err != nil || !present {
 						t.Fatalf("supported replacement: %v", err)
+					}
+					if kind == "legacy-five-to-seven" && (cfg.SchemaVersion != 7 || !cfg.DurableStorageProtection || !cfg.GenerationProtection || !cfg.CodexHistoryProtection) {
+						t.Fatal("replacement lost actual protected floor")
 					}
 				} else if err == nil || errors.Is(err, errRootedConfigObservationChanged) {
 					t.Fatalf("unknown replacement was not refused by complete decoder: %v", err)

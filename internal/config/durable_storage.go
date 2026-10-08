@@ -171,14 +171,14 @@ func LoadRooted(home *local.RootedHome) (cfg Config, found bool, err error) {
 		return Config{}, false, errors.Join(errors.New("rooted configuration must be a regular file"), err)
 	}
 	raw, readErr := home.Root.ReadFile("config.json")
-	if err := rootedConfigReadUnchanged(home, before, readErr); err != nil {
+	if err := rootedConfigReadUnchanged(home, before, raw, readErr); err != nil {
 		return Config{}, false, err
 	}
 	cfg, found, _, err = decodeLoadedConfig(raw, readErr, filepath.Join(home.Root.Name(), "config.json"), agentmeta.Builtins())
 	return cfg, found, errors.Join(err, home.Check())
 }
 
-func rootedConfigReadUnchanged(home *local.RootedHome, before os.FileInfo, readErr error) error {
+func rootedConfigReadUnchanged(home *local.RootedHome, before os.FileInfo, raw []byte, readErr error) error {
 	if err := home.Check(); err != nil {
 		return errors.Join(err, readErr)
 	}
@@ -189,6 +189,14 @@ func rootedConfigReadUnchanged(home *local.RootedHome, before os.FileInfo, readE
 	if !os.SameFile(before, after) || before.Size() != after.Size() || !before.ModTime().Equal(after.ModTime()) {
 		if readErr != nil {
 			return errors.Join(errors.New("rooted configuration read failed during change"), readErr)
+		}
+		// A changed observation never excuses an unsupported body we did read.
+		// Reuse the complete decoder before making this race retryable.
+		if _, _, _, err := decodeLoadedConfig(raw, nil, filepath.Join(home.Root.Name(), "config.json"), agentmeta.Builtins()); err != nil {
+			return errors.Join(err, home.Check())
+		}
+		if err := home.Check(); err != nil {
+			return err
 		}
 		return errRootedConfigObservationChanged
 	}
