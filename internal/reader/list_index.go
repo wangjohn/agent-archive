@@ -69,7 +69,7 @@ func SelectMetadata(ctx context.Context, store storage.ObjectStore, prefix strin
 	filter, limit := query.Filter, query.Limit
 	opts.ActivityOrder, opts.TopLevelOnly = query.Order == ActivityOrder, query.TopLevelOnly
 	var snapshot *HeaderSnapshot
-	opts.Cache.maintain(ctx, 64)
+	opts.Cache.maintain(ctx)
 	fallback := func(reason string) (RecentResult, error) {
 		if opts.CompatibilityScan != nil {
 			opts.CompatibilityScan(reason)

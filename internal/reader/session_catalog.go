@@ -216,7 +216,7 @@ func (c *SQLiteSessionCatalog) Close() error { return c.db.Close() }
 // DiscoverCatalogHeaders always discovers the full canonical scope so a
 // narrowed query cannot evict other projects or harnesses from the local index.
 func DiscoverCatalogHeaders(ctx context.Context, store storage.ObjectStore, opts ListOptions) (HeaderSnapshot, error) {
-	opts.Cache.maintain(ctx, 64)
+	opts.Cache.maintain(ctx)
 	known := opts.Cache.keys("sessions/")
 	objects, err := listObjects(ctx, store, "sessions/", known)
 	if err != nil {

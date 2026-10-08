@@ -18,6 +18,7 @@ type CacheMaintenance struct {
 }
 
 const maintenanceFile = ".maintenance"
+const cacheMaintenanceDirectoryBudget = 64
 
 func (c *MetadataCache) directoryEntries(dir string) ([]os.DirEntry, error) {
 	if c.readDir != nil {
@@ -30,14 +31,14 @@ func (c *MetadataCache) directoryEntries(dir string) ([]os.DirEntry, error) {
 // Root-name inventory is still O(N); it does not stat or open live child
 // directories. Concurrent processes can repeat work, but atomic checkpoints
 // never leave partial state, and cleanup failures only cause later misses.
-func (c *MetadataCache) maintain(ctx context.Context, maxDirs int) {
-	if c == nil || maxDirs <= 0 {
+func (c *MetadataCache) maintain(ctx context.Context) {
+	if c == nil {
 		return
 	}
-	c.maintenanceOnce.Do(func() { c.sweep(ctx, min(maxDirs, 64)) })
+	c.maintenanceOnce.Do(func() { c.sweep(ctx) })
 }
 
-func (c *MetadataCache) sweep(ctx context.Context, maxDirs int) {
+func (c *MetadataCache) sweep(ctx context.Context) {
 	if ctx.Err() != nil {
 		return
 	}
@@ -61,7 +62,7 @@ func (c *MetadataCache) sweep(ctx context.Context, maxDirs int) {
 	if start == len(names) {
 		start = 0
 	}
-	end := min(start+maxDirs, len(names))
+	end := min(start+cacheMaintenanceDirectoryBudget, len(names))
 	for _, name := range names[start:end] {
 		if ctx.Err() != nil {
 			break

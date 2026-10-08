@@ -38,7 +38,7 @@ func TestCacheMaintenanceRemovesStaleTemporaryFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cache.maintain(context.Background(), 64)
+	cache.maintain(context.Background())
 	if _, err := os.Stat(stale); !os.IsNotExist(err) {
 		t.Fatalf("stale temporary file left behind: %v", err)
 	}
