@@ -143,6 +143,15 @@ func TestSessionCatalogCancellationConcurrentAndPrivacy(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer c.Close()
+	// Reopening an adopted index also repairs permissive database/WAL modes.
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		path := filepath.Join(home, "cache", "catalog", "sessions.sqlite"+suffix)
+		if _, e := os.Stat(path); e == nil {
+			if e = os.Chmod(path, 0644); e != nil {
+				t.Fatal(e)
+			}
+		}
+	}
 	other, err := OpenSessionCatalog(ctx, cache, store, ListOptions{})
 	if err != nil {
 		t.Fatal(err)
