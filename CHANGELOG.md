@@ -6,6 +6,9 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Overlap canonical and listing-index header discovery, narrow v3 headers by
+  harness, and reuse canonical headers when a listing needs a full metadata scan.
+
 - Read up to eight selected metadata sidecars concurrently for faster cold and
   changed-cache listings, preserving selection order and revision validation.
 
