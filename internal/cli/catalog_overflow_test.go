@@ -80,8 +80,13 @@ func TestRealCLIOverflowUncachedListMatchesFullAuthority(t *testing.T) {
 		if code := Run(args, nil, &got, &errs, env); code != 0 {
 			t.Fatal("uncached list", code, errs.String())
 		}
-		if code := Run(args, nil, &want, &wantErr, oracle); code != 0 || got.String() != want.String() || errs.String() != wantErr.String() {
+		code := Run(args, nil, &want, &wantErr, oracle)
+		t.Logf("uncached full JSON equal=%t actual SHA=%s oracle SHA=%s", got.String() == want.String(), storage.SHA256Hex(got.Bytes()), storage.SHA256Hex(want.Bytes()))
+		if code != 0 || got.String() != want.String() {
 			t.Fatal("uncached overflow list authority differs", code, wantErr.String())
+		}
+		if errs.Len() != 0 || wantErr.String() != "agent-archive: list: query requires an exhaustive metadata scan.\n" {
+			t.Fatal("unexpected compatibility warning", errs.String(), wantErr.String())
 		}
 		t.Logf("uncached full-summary list body GET=%d canonical LIST=%d", counts.paths["body"], counts.Metrics().Lists)
 		if counts.paths["body"] != 1 || counts.Metrics().Lists != 0 {
