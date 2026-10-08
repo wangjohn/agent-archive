@@ -64,17 +64,17 @@ const (
 // MetadataQuery selects metadata from fresh headers before downloading bodies.
 // A nonpositive Limit selects every matching session.
 type MetadataQuery struct {
-	Filter       Filter
-	Limit        int
-	Order        QueryOrder
-	TopLevelOnly bool
+	Filter       Filter     `json:"Filter"`
+	Limit        int        `json:"Limit"`
+	Order        QueryOrder `json:"Order"`
+	TopLevelOnly bool       `json:"TopLevelOnly"`
 }
 
 // SelectMetadata proves discovery coverage and supports unlimited date queries.
 // Unsupported predicates and incomplete summaries use the exhaustive reader.
 func SelectMetadata(ctx context.Context, store storage.ObjectStore, prefix string, query MetadataQuery, opts ListOptions) (RecentResult, error) {
 	if CatalogAuthority(store) {
-		opts.Cache.maintain(ctx, 64)
+		opts.Cache.maintain(ctx)
 		opts.ActivityOrder = query.Order == ActivityOrder
 		opts.TopLevelOnly = query.TopLevelOnly
 		return selectCatalogMetadata(ctx, store, prefix, query, opts)
@@ -82,7 +82,7 @@ func SelectMetadata(ctx context.Context, store storage.ObjectStore, prefix strin
 	filter, limit := query.Filter, query.Limit
 	opts.ActivityOrder, opts.TopLevelOnly = query.Order == ActivityOrder, query.TopLevelOnly
 	var snapshot *HeaderSnapshot
-	opts.Cache.maintain(ctx, 64)
+	opts.Cache.maintain(ctx)
 	fallback := func(reason string) (RecentResult, error) {
 		if opts.CompatibilityScan != nil {
 			opts.CompatibilityScan(reason)

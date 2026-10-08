@@ -15,7 +15,7 @@ import (
 // matches: because headers contain no titles, those require reading all bodies.
 // Matchers run after validation, serially, and never suppress prefix matches.
 func FindMetadataPrefix(ctx context.Context, store storage.ObjectStore, prefix, idPrefix string, filter Filter, opts ListOptions, matchers ...func(archive.Metadata) bool) ([]archive.Metadata, error) {
-	opts.Cache.maintain(ctx, 64)
+	opts.Cache.maintain(ctx)
 	if CatalogAuthority(store) {
 		return catalogPrefix(ctx, store, idPrefix, filter, opts, matchers...)
 	}

@@ -160,6 +160,7 @@ func (s *catalogBenchmarkFrame) Write(p []byte) (int, error) {
 	}
 	return len(p), nil
 }
+
 func (*catalogBenchmarkFrame) colorTerminal() bool { return false }
 
 func TestCatalogParentSearchKeepsUnmatchedChildCount(t *testing.T) {
@@ -175,34 +176,38 @@ func TestCatalogParentSearchKeepsUnmatchedChildCount(t *testing.T) {
 }
 
 func TestCatalogDamagedSummaryFallsBackToCurrentArchive(t *testing.T) {
-	env, _, id := publishedFixture(t)
-	var before, after, stderr bytes.Buffer
-	args := []string{"list", id[:8], "--all-projects"}
-	if code := Run(args, nil, &before, &stderr, env); code != 0 {
-		t.Fatalf("build=%d stderr=%s", code, stderr.String())
-	}
-	home, err := env.Home()
-	if err != nil {
-		t.Fatal(err)
-	}
-	db, err := sql.Open("sqlite", filepath.Join(home, "cache", "catalog", "sessions.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = db.Exec("UPDATE sessions SET summary=?", []byte("damaged summary"))
-	closeErr := db.Close()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if closeErr != nil {
-		t.Fatal(closeErr)
-	}
-	stderr.Reset()
-	if code := Run(args, nil, &after, &stderr, env); code != 0 {
-		t.Fatalf("fallback=%d stderr=%s", code, stderr.String())
-	}
-	if before.String() != after.String() {
-		t.Fatal("damaged catalog hid current sessions")
+	for _, damaged := range []string{"damaged summary", `{"SessionID":"other","Title":"different search title"}`} {
+		t.Run(damaged, func(t *testing.T) {
+			env, _, id := publishedFixture(t)
+			var before, after, stderr bytes.Buffer
+			args := []string{"list", id[:8], "--all-projects"}
+			if code := Run(args, nil, &before, &stderr, env); code != 0 {
+				t.Fatalf("build=%d stderr=%s", code, stderr.String())
+			}
+			home, err := env.Home()
+			if err != nil {
+				t.Fatal(err)
+			}
+			db, err := sql.Open("sqlite", filepath.Join(home, "cache", "catalog", "sessions.sqlite"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = db.ExecContext(t.Context(), "UPDATE sessions SET summary=?", []byte(damaged))
+			closeErr := db.Close()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if closeErr != nil {
+				t.Fatal(closeErr)
+			}
+			stderr.Reset()
+			if code := Run(args, nil, &after, &stderr, env); code != 0 {
+				t.Fatalf("fallback=%d stderr=%s", code, stderr.String())
+			}
+			if before.String() != after.String() {
+				t.Fatal("damaged catalog hid current sessions")
+			}
+		})
 	}
 }
 
@@ -267,6 +272,55 @@ func TestCatalogWarmShowQueryReadsOnlySelectedBodyAndMatchesFallback(t *testing.
 			}
 			if fallbackCode != code || fallbackOut != out || fallbackErr != stderr {
 				t.Fatalf("fallback differs: code=%d out=%s stderr=%s", fallbackCode, fallbackOut, fallbackErr)
+			}
+		})
+	}
+}
+
+func TestCatalogWordCandidatesContainFinalMatcherMatches(t *testing.T) {
+	a := newScopedArchive(t)
+	a.add(t, "abcd1234", "needle 000000 0000021", "published", linked(21))
+	a.add(t, "000021ff", "other", "published", linked(212))
+	home, err := a.env.Home()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache, err := reader.OpenMetadataCache(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := reader.OpenSessionCatalog(t.Context(), cache, a.mem, reader.ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = catalog.Close() }()
+	headers, err := reader.DiscoverCatalogHeaders(t.Context(), a.mem, reader.ListOptions{Cache: cache})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = catalog.Refresh(t.Context(), headers); err != nil {
+		t.Fatal(err)
+	}
+	all, err := reader.ListMetadataWithOptions(t.Context(), a.mem, "sessions/", reader.Filter{}, reader.ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, words := range []string{"#0021", "000021", "#000021", "#000000", "000000", "0000021", "#0000021", "#0021 needle", "000021 other", "abcd1234"} {
+		t.Run(words, func(t *testing.T) {
+			q := parseSessionQuery(words)
+			page, err := catalog.Query(t.Context(), reader.CatalogQuery{Words: q.words})
+			if err != nil {
+				t.Fatal(err)
+			}
+			candidates := map[string]bool{}
+			for _, row := range page.Rows {
+				candidates[row.Summary.SessionID] = true
+			}
+			for _, m := range all {
+				fields := fieldsOf(m, sessionProjectName(m, nil))
+				if (q.matches(fields) || len(exactIDWins([]archive.Metadata{m}, q, func(m archive.Metadata) sessionFields { return fieldsOf(m, sessionProjectName(m, nil)) })) > 0) && !candidates[m.SessionID] {
+					t.Fatalf("SQL omitted final matcher candidate %s for PR interpretation %v", m.SessionID, q.prs)
+				}
 			}
 		})
 	}

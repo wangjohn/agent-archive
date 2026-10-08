@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -27,21 +28,30 @@ import (
 // SearchSummary is a private projection of published metadata. It deliberately
 // excludes source references, counts, payloads, history and transcripts.
 type SearchSummary struct {
-	SessionID, NativeSessionID, MachineID, ProjectID, ProjectName, RepoKey string
-	Name, Title, Branch, ParentSessionID                                   string
-	StartedAt, CapturedAt                                                  time.Time
-	EndedAt                                                                *time.Time
-	Harness                                                                archive.Harness
-	Parser                                                                 archive.ParserInfo
-	Origin                                                                 archive.SessionOrigin
-	Replay                                                                 *archive.Replay
-	Models                                                                 []archive.ModelSummary
-	SkillsAvailable                                                        []archive.SkillSnapshot
-	SkillsUsed                                                             []archive.SkillUse
-	SkillDetection                                                         archive.SkillDetection
-	CaptureGaps                                                            []archive.CaptureGap
-	PullRequests                                                           []archive.PullRequestLink
-	GitActivity                                                            []archive.GitEvent
+	SessionID       string                    `json:"SessionID"`
+	NativeSessionID string                    `json:"NativeSessionID"`
+	MachineID       string                    `json:"MachineID"`
+	ProjectID       string                    `json:"ProjectID"`
+	ProjectName     string                    `json:"ProjectName"`
+	RepoKey         string                    `json:"RepoKey"`
+	Name            string                    `json:"Name"`
+	Title           string                    `json:"Title"`
+	Branch          string                    `json:"Branch"`
+	ParentSessionID string                    `json:"ParentSessionID"`
+	StartedAt       time.Time                 `json:"StartedAt"`
+	CapturedAt      time.Time                 `json:"CapturedAt"`
+	EndedAt         *time.Time                `json:"EndedAt"`
+	Harness         archive.Harness           `json:"Harness"`
+	Parser          archive.ParserInfo        `json:"Parser"`
+	Origin          archive.SessionOrigin     `json:"Origin"`
+	Replay          *archive.Replay           `json:"Replay"`
+	Models          []archive.ModelSummary    `json:"Models"`
+	SkillsAvailable []archive.SkillSnapshot   `json:"SkillsAvailable"`
+	SkillsUsed      []archive.SkillUse        `json:"SkillsUsed"`
+	SkillDetection  archive.SkillDetection    `json:"SkillDetection"`
+	CaptureGaps     []archive.CaptureGap      `json:"CaptureGaps"`
+	PullRequests    []archive.PullRequestLink `json:"PullRequests"`
+	GitActivity     []archive.GitEvent        `json:"GitActivity"`
 }
 
 // Metadata returns the search/display projection, never a complete body.
@@ -90,8 +100,10 @@ type CatalogQuery struct {
 
 // CatalogRow identifies one exact canonical metadata revision.
 type CatalogRow struct {
-	Key, ETag, Hash string
-	Summary         SearchSummary
+	Key     string
+	ETag    string
+	Hash    string
+	Summary SearchSummary
 }
 
 // CatalogPage reports candidate rows and an exact candidate total. Complete
@@ -161,7 +173,9 @@ func openSessionCatalog(ctx context.Context, cache *MetadataCache, store storage
 	if err != nil {
 		return nil, err
 	}
-	f.Close()
+	if err = f.Close(); err != nil {
+		return nil, err
+	}
 	info, err = os.Lstat(path)
 	if err != nil || !info.Mode().IsRegular() {
 		return nil, errors.New("catalog requires a regular file")
@@ -174,12 +188,12 @@ func openSessionCatalog(ctx context.Context, cache *MetadataCache, store storage
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	_, err = db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS catalog_state (id INTEGER PRIMARY KEY CHECK(id=1), generation INTEGER NOT NULL, epoch TEXT NOT NULL, complete INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS sessions (key TEXT PRIMARY KEY, etag TEXT NOT NULL, hash TEXT NOT NULL, capture TEXT NOT NULL, activity TEXT NOT NULL, summary BLOB NOT NULL, search TEXT NOT NULL, lowerid TEXT NOT NULL, unlabeled INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS sessions_capture ON sessions(capture DESC,key); CREATE INDEX IF NOT EXISTS sessions_activity ON sessions(activity DESC,capture DESC,key)`)
+	_, err = db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS catalog_state (id INTEGER PRIMARY KEY CHECK(id=1), generation INTEGER NOT NULL, epoch TEXT NOT NULL, complete INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS sessions (key TEXT PRIMARY KEY, etag TEXT NOT NULL, hash TEXT NOT NULL, capture TEXT NOT NULL, activity TEXT NOT NULL, summary BLOB NOT NULL, search TEXT NOT NULL, lowerid TEXT NOT NULL, unlabeled INTEGER NOT NULL, summary_hash TEXT NOT NULL); CREATE INDEX IF NOT EXISTS sessions_capture ON sessions(capture DESC,key); CREATE INDEX IF NOT EXISTS sessions_activity ON sessions(activity DESC,capture DESC,key)`)
 	if err == nil {
-		_, err = db.ExecContext(ctx, "INSERT OR IGNORE INTO catalog_state VALUES(1,0,?,0)", rand.Text())
+		err = initializeCatalogState(ctx, db)
 	}
 	if err != nil {
-		db.Close()
+		_ = db.Close()
 		var damaged *sqlite.Error
 		if !repair && errors.As(err, &damaged) && (damaged.Code() == 11 || damaged.Code() == 26) {
 			// SQLite rejected this disposable file before any transaction. Retire
@@ -197,13 +211,51 @@ func openSessionCatalog(ctx context.Context, cache *MetadataCache, store storage
 	return &SQLiteSessionCatalog{db: db, store: store, opts: opts}, nil
 }
 
+func initializeCatalogState(ctx context.Context, db *sql.DB) error {
+	if err := migrateCatalogSummaryHash(ctx, db); err != nil {
+		return err
+	}
+	_, err := db.ExecContext(ctx, "INSERT OR IGNORE INTO catalog_state VALUES(1,0,?,0)", rand.Text())
+	return err
+}
+
+// migrateCatalogSummaryHash leaves legacy rows untrusted until a proven complete
+// refresh reloads them. The checksum covers the complete persisted row tuple,
+// separately from the full metadata revision hash.
+func migrateCatalogSummaryHash(ctx context.Context, db *sql.DB) error {
+	rows, err := db.QueryContext(ctx, "PRAGMA table_info(sessions)")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+	found := false
+	for rows.Next() {
+		var cid, notnull, pk int
+		var name, typ string
+		var defaultValue any
+		if err = rows.Scan(&cid, &name, &typ, &notnull, &defaultValue, &pk); err != nil {
+			return err
+		}
+		found = found || name == "summary_hash"
+	}
+	err = rows.Err()
+	if closeErr := rows.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil || found {
+		return err
+	}
+	_, err = db.ExecContext(ctx, "ALTER TABLE sessions ADD COLUMN summary_hash TEXT NOT NULL DEFAULT ''")
+	return err
+}
+
 // Close releases the catalog database handle.
 func (c *SQLiteSessionCatalog) Close() error { return c.db.Close() }
 
 // DiscoverCatalogHeaders always discovers the full canonical scope so a
 // narrowed query cannot evict other projects or harnesses from the local index.
 func DiscoverCatalogHeaders(ctx context.Context, store storage.ObjectStore, opts ListOptions) (HeaderSnapshot, error) {
-	opts.Cache.maintain(ctx, 64)
+	opts.Cache.maintain(ctx)
 	known := opts.Cache.keys("sessions/")
 	objects, err := listObjects(ctx, store, "sessions/", known)
 	if err != nil {
@@ -239,21 +291,25 @@ func (c *SQLiteSessionCatalog) Refresh(ctx context.Context, snapshot HeaderSnaps
 	if _, err = tx.ExecContext(ctx, "UPDATE catalog_state SET generation=generation WHERE id=1"); err != nil {
 		return err
 	}
-	rows, err := tx.QueryContext(ctx, "SELECT key,etag FROM sessions")
+	rows, err := tx.QueryContext(ctx, "SELECT key,etag,hash,capture,activity,summary,search,lowerid,unlabeled,summary_hash FROM sessions")
 	if err != nil {
 		return err
 	}
+	defer func() { _ = rows.Close() }()
 	prior := map[string]string{}
+	validSummary := map[string]bool{}
 	for rows.Next() {
-		var k, e string
-		if err = rows.Scan(&k, &e); err != nil {
-			rows.Close()
+		var record catalogRecord
+		if err = record.scan(rows); err != nil {
 			return err
 		}
-		prior[k] = e
+		prior[record.key] = record.etag
+		validSummary[record.key] = record.valid()
 	}
 	err = rows.Err()
-	rows.Close()
+	if closeErr := rows.Close(); err == nil {
+		err = closeErr
+	}
 	if err != nil {
 		return err
 	}
@@ -267,7 +323,7 @@ func (c *SQLiteSessionCatalog) Refresh(ctx context.Context, snapshot HeaderSnaps
 			continue
 		}
 		seen[obj.Key] = true
-		if obj.ETag == "" || prior[obj.Key] != obj.ETag {
+		if obj.ETag == "" || prior[obj.Key] != obj.ETag || !validSummary[obj.Key] {
 			pending = append(pending, obj)
 		}
 	}
@@ -282,7 +338,8 @@ func (c *SQLiteSessionCatalog) Refresh(ctx context.Context, snapshot HeaderSnaps
 			return e
 		}
 		m := row.Summary.Metadata()
-		if _, err = tx.ExecContext(ctx, "INSERT OR REPLACE INTO sessions VALUES(?,?,?,?,?,?,?,?,?)", row.Key, row.ETag, row.Hash, catalogTime(m.CapturedAt), catalogTime(listingindex.ActivityTime(m)), data, catalogSearch(row.Summary), strings.ToLower(m.SessionID), m.ProjectName == ""); err != nil {
+		record := catalogRecord{key: row.Key, etag: row.ETag, hash: row.Hash, capture: catalogTime(m.CapturedAt), activity: catalogTime(listingindex.ActivityTime(m)), summary: data, search: catalogSearch(row.Summary), lowerID: strings.ToLower(m.SessionID), unlabeled: m.ProjectName == ""}
+		if _, err = tx.ExecContext(ctx, "INSERT OR REPLACE INTO sessions VALUES(?,?,?,?,?,?,?,?,?,?)", record.key, record.etag, record.hash, record.capture, record.activity, record.summary, record.search, record.lowerID, record.unlabeled, catalogRecordChecksum(record)); err != nil {
 			return err
 		}
 	}
@@ -462,15 +519,20 @@ func (c *SQLiteSessionCatalog) Query(ctx context.Context, q CatalogQuery) (Catal
 	// SQL predicates are exact for these typed fields. Text stays a candidate
 	// superset; Go's Unicode matcher and query-time labels decide final matches.
 	where, args := catalogWhere(q.Metadata)
+	var clauses strings.Builder
+	clauses.WriteString(where)
 	for _, word := range q.Words {
 		word = strings.ToLower(word)
-		where += " AND (instr(search,?) > 0 OR instr(lowerid,?) = 1 OR unlabeled = 1)"
-		args = append(args, word, word)
+		clauses.WriteString(" AND (instr(search,?) > 0 OR instr(lowerid,?) = 1 OR instr(search,?) > 0 OR unlabeled = 1)")
+		// Leading zeros still denote the same PR in the CLI matcher. Keep
+		// original text/ID candidates and OR a canonical numeric candidate.
+		args = append(args, word, word, catalogPRCandidate(word))
 	}
-	complex := catalogRequiresSummaryFilter(q.Metadata.Filter)
+	where = clauses.String()
+	needsSummaryFilter := catalogRequiresSummaryFilter(q.Metadata.Filter)
 	page := CatalogPage{Complete: complete}
-	statement := "SELECT key,etag,hash,summary FROM sessions" + where + " ORDER BY " + order //nolint:gosec // SQL fragments are fixed predicates/orders; every input is bound.
-	if !complex {
+	statement := "SELECT key,etag,hash,capture,activity,summary,search,lowerid,unlabeled,summary_hash FROM sessions" + where + " ORDER BY " + order //nolint:gosec // SQL fragments are fixed predicates/orders; every input is bound.
+	if !needsSummaryFilter {
 		if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM sessions"+where, args...).Scan(&page.Total); err != nil {
 			return CatalogPage{}, err
 		}
@@ -488,25 +550,28 @@ func (c *SQLiteSessionCatalog) Query(ctx context.Context, q CatalogQuery) (Catal
 	if err != nil {
 		return CatalogPage{}, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	limit := q.Metadata.Limit
 	for rows.Next() {
-		var row CatalogRow
-		var data []byte
-		if err = rows.Scan(&row.Key, &row.ETag, &row.Hash, &data); err != nil {
+		var record catalogRecord
+		if err = record.scan(rows); err != nil {
 			return CatalogPage{}, err
 		}
-		if err = json.Unmarshal(data, &row.Summary); err != nil {
+		if !record.valid() {
+			return CatalogPage{}, errors.New("invalid session catalog summary checksum")
+		}
+		row := CatalogRow{Key: record.key, ETag: record.etag, Hash: record.hash}
+		if err = json.Unmarshal(record.summary, &row.Summary); err != nil {
 			return CatalogPage{}, fmt.Errorf("invalid session catalog: %w", err)
 		}
 		m := row.Summary.Metadata()
 		if !matches(m, q.Metadata.Filter) || q.Metadata.TopLevelOnly && m.ParentSessionID != "" {
 			continue
 		}
-		if complex {
+		if needsSummaryFilter {
 			page.Total++
 		}
-		if !complex || page.Total > offset && (limit <= 0 || len(page.Rows) < limit) {
+		if !needsSummaryFilter || page.Total > offset && (limit <= 0 || len(page.Rows) < limit) {
 			page.Rows = append(page.Rows, row)
 		}
 	}
@@ -527,8 +592,8 @@ func (c *SQLiteSessionCatalog) Query(ctx context.Context, q CatalogQuery) (Catal
 
 func catalogCursor(q CatalogQuery, epoch string, generation int64) (int, string, error) {
 	binding, err := json.Marshal(struct {
-		Metadata MetadataQuery
-		Words    []string
+		Metadata MetadataQuery `json:"metadata"`
+		Words    []string      `json:"words"`
 	}{q.Metadata, q.Words})
 	if err != nil {
 		return 0, "", err
@@ -595,4 +660,64 @@ func catalogSearch(s SearchSummary) string {
 // every candidate before counting and paging the final typed result.
 func catalogRequiresSummaryFilter(f Filter) bool {
 	return f.Model != "" || f.Skill != "" || f.SkillSHA256 != "" || f.RequireCompleteCoverage
+}
+
+// catalogPRCandidate mirrors the CLI's positive, at-most-six-digit PR shape.
+// Non-PR words reuse the original text; the final matcher removes false hits.
+func catalogPRCandidate(word string) string {
+	digits := strings.TrimPrefix(word, "#")
+	if digits == "" || len(digits) > 6 {
+		return word
+	}
+	for _, r := range digits {
+		if r < '0' || r > '9' {
+			return word
+		}
+	}
+	number, err := strconv.Atoi(digits)
+	if err != nil || number <= 0 {
+		return word
+	}
+	return strconv.Itoa(number)
+}
+
+// catalogRecord is the fixed private SQLite row layout. Every field affecting
+// identity, selection and ordering participates in the integrity checksum.
+type catalogRecord struct {
+	key       string
+	etag      string
+	hash      string
+	capture   string
+	activity  string
+	summary   []byte
+	search    string
+	lowerID   string
+	unlabeled bool
+	checksum  string
+}
+
+func (r *catalogRecord) valid() bool {
+	return r.checksum != "" && catalogRecordChecksum(*r) == r.checksum
+}
+
+func (r *catalogRecord) scan(row interface{ Scan(...any) error }) error {
+	return row.Scan(&r.key, &r.etag, &r.hash, &r.capture, &r.activity, &r.summary, &r.search, &r.lowerID, &r.unlabeled, &r.checksum)
+}
+
+// catalogRecordChecksum uses length-prefix framing to keep tuple boundaries
+// unambiguous. It hashes raw summary bytes without decoding every warm row.
+func catalogRecordChecksum(r catalogRecord) string {
+	buffer := make([]byte, 0, len(r.key)+len(r.etag)+len(r.hash)+len(r.capture)+len(r.activity)+len(r.summary)+len(r.search)+len(r.lowerID)+81)
+	for _, field := range []string{r.key, r.etag, r.hash, r.capture, r.activity, r.search, r.lowerID} {
+		buffer = binary.AppendUvarint(buffer, uint64(len(field)))
+		buffer = append(buffer, field...)
+	}
+	buffer = binary.AppendUvarint(buffer, uint64(len(r.summary)))
+	buffer = append(buffer, r.summary...)
+	if r.unlabeled {
+		buffer = append(buffer, 1)
+	} else {
+		buffer = append(buffer, 0)
+	}
+	return storage.SHA256Hex(buffer)
 }

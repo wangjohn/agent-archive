@@ -210,6 +210,55 @@ func (c *SQLiteSessionCatalog) RefreshRemote(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// Validate the complete persisted tuple before reusing unchanged leaves.
+	// Missing local rows require a complete verified summary rebuild as well.
+	rows, err := tx.QueryContext(ctx, "SELECT key,etag,hash,capture,activity,summary,search,lower_id,unlabeled,summary_hash FROM sessions")
+	if err != nil {
+		return err
+	}
+	var invalid []string
+	var cachedCount uint64
+	for rows.Next() {
+		var record catalogRecord
+		if err = record.scan(rows); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		cachedCount++
+		if !record.valid() {
+			invalid = append(invalid, record.key)
+		}
+	}
+	err = rows.Err()
+	if closeErr := rows.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return err
+	}
+	expected, err := snapshot.Count(ctx, catalog.Query{Index: catalog.CaptureIndex})
+	if err != nil {
+		return err
+	}
+	if !delta.Rebuild && cachedCount != expected {
+		delta, err = snapshot.Delta(ctx, catalog.ObjectRef{})
+		if err != nil {
+			return err
+		}
+	}
+	if !delta.Rebuild {
+		for _, key := range invalid {
+			entry, e := snapshot.Find(ctx, key)
+			if e != nil {
+				return e
+			}
+			if entry == nil {
+				delta.Removed = append(delta.Removed, key)
+			} else {
+				delta.Changed = append(delta.Changed, catalog.Row{Key: key, Entry: *entry})
+			}
+		}
+	}
 	if delta.Rebuild {
 		if _, err = tx.ExecContext(ctx, "DELETE FROM sessions"); err != nil {
 			return err
@@ -227,7 +276,8 @@ func (c *SQLiteSessionCatalog) RefreshRemote(ctx context.Context) error {
 			return e
 		}
 		m := summary.Metadata()
-		if _, err = tx.ExecContext(ctx, "INSERT OR REPLACE INTO sessions VALUES(?,?,?,?,?,?,?,?,?)", row.Key, row.Entry.Revision, row.Entry.Metadata.SHA256, catalogTime(m.CapturedAt), catalogTime(listingindex.ActivityTime(m)), data, catalogSearch(summary), strings.ToLower(m.SessionID), m.ProjectName == ""); err != nil {
+		record := catalogRecord{key: row.Key, etag: row.Entry.Revision, hash: row.Entry.Metadata.SHA256, capture: catalogTime(m.CapturedAt), activity: catalogTime(listingindex.ActivityTime(m)), summary: data, search: catalogSearch(summary), lowerID: strings.ToLower(m.SessionID), unlabeled: m.ProjectName == ""}
+		if _, err = tx.ExecContext(ctx, "INSERT OR REPLACE INTO sessions VALUES(?,?,?,?,?,?,?,?,?,?)", record.key, record.etag, record.hash, record.capture, record.activity, record.summary, record.search, record.lowerID, record.unlabeled, catalogRecordChecksum(record)); err != nil {
 			return err
 		}
 	}
@@ -238,7 +288,7 @@ func (c *SQLiteSessionCatalog) RefreshRemote(ctx context.Context) error {
 	if _, err = tx.ExecContext(ctx, "INSERT OR REPLACE INTO remote_root VALUES(1,?)", raw); err != nil {
 		return err
 	}
-	changed := delta.Rebuild || delta.Prior != delta.Next
+	changed := delta.Rebuild || delta.Prior != delta.Next || len(invalid) > 0
 	if changed {
 		_, err = tx.ExecContext(ctx, "UPDATE catalog_state SET generation=generation+1,complete=1 WHERE id=1")
 	} else {

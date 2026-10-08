@@ -151,8 +151,8 @@ func TestCacheMaintenanceBoundsVisitsAndEventuallyCompletes(t *testing.T) {
 			}
 			return os.ReadDir(path)
 		}
-		cache.maintain(context.Background(), 1000)
-		cache.maintain(context.Background(), 1000)
+		cache.maintain(context.Background())
+		cache.maintain(context.Background())
 		want := 64
 		if pass == 3 {
 			want = 8
@@ -192,7 +192,7 @@ func TestCacheMaintenanceResumesAfterCancellationAndMissingCursor(t *testing.T) 
 		}
 		return os.ReadDir(path)
 	}
-	cache.maintain(ctx, 64)
+	cache.maintain(ctx)
 	if count != 5 || cache.maintenanceState().Cursor != filepath.Base(dirs[4]) {
 		t.Fatalf("interrupted cursor count=%d state=%+v", count, cache.maintenanceState())
 	}
@@ -203,7 +203,7 @@ func TestCacheMaintenanceResumesAfterCancellationAndMissingCursor(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	cache.maintain(context.Background(), 64)
+	cache.maintain(context.Background())
 	if cache.maintenanceState().Cursor != filepath.Base(dirs[68]) {
 		t.Fatalf("missing cursor restarted sweep: %+v", cache.maintenanceState())
 	}
@@ -246,7 +246,7 @@ func TestConcurrentCacheMaintenanceLeavesValidPrivateState(t *testing.T) {
 				t.Error(err)
 				return
 			}
-			cache.maintain(context.Background(), 64)
+			cache.maintain(context.Background())
 		})
 	}
 	wg.Wait()
@@ -291,7 +291,7 @@ func TestCacheMaintenanceRefusesUnsafeDirectoriesAndState(t *testing.T) {
 	if err := os.Symlink(marker, filepath.Join(cache.dir, maintenanceFile)); err != nil {
 		t.Fatal(err)
 	}
-	cache.maintain(context.Background(), 64)
+	cache.maintain(context.Background())
 	for _, path := range []string{marker, filepath.Join(dirs[1], ".pending-stale")} {
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("unsafe path cleaned: %v", err)
@@ -333,7 +333,7 @@ func TestCacheMaintenanceTreatsCorruptCheckpointAsMiss(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(cache.dir, maintenanceFile), []byte(data), 0600); err != nil {
 				t.Fatal(err)
 			}
-			cache.maintain(context.Background(), 64)
+			cache.maintain(context.Background())
 			if _, err := os.Stat(filepath.Join(dirs[0], ".pending-stale")); !os.IsNotExist(err) {
 				t.Fatal("corrupt checkpoint blocked cleanup")
 			}
@@ -352,7 +352,7 @@ func TestCancelledCacheMaintenanceDoesNoWork(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	cache.maintain(ctx, 64)
+	cache.maintain(ctx)
 	if _, err := os.Stat(filepath.Join(cache.dir, maintenanceFile)); !os.IsNotExist(err) {
 		t.Fatal("cancelled maintenance wrote checkpoint")
 	}
@@ -394,7 +394,7 @@ func TestCacheMaintenancePrunesUnselectedValidators(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cache.maintain(context.Background(), 64)
+	cache.maintain(context.Background())
 	if _, err := os.Stat(filepath.Join(dirs[0], "old.json")); !os.IsNotExist(err) {
 		t.Fatal("old validator retained")
 	}
