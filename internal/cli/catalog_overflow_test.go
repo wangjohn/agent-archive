@@ -13,7 +13,8 @@ import (
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
-func TestRealCLIOverflowShowKeepsFullBodyAndSourceAuthority(t *testing.T) {
+func overflowCLIArchive(t *testing.T) (Env, Env, string, *catalogListReads) {
+	t.Helper()
 	env, mem, id := publishedFixture(t)
 	key := "sessions/codex/" + id + "/metadata.json"
 	raw, err := mem.Get(t.Context(), key)
@@ -45,6 +46,11 @@ func TestRealCLIOverflowShowKeepsFullBodyAndSourceAuthority(t *testing.T) {
 	oracle := env
 	oracle.OpenStore = func(config.Config) (storage.ObjectStore, error) { return mem, nil }
 	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return measured, nil }
+	return env, oracle, id, counts
+}
+
+func TestRealCLIOverflowShowKeepsFullBodyAndSourceAuthority(t *testing.T) {
+	env, oracle, id, counts := overflowCLIArchive(t)
 	for _, flags := range [][]string{{"--json"}, {"--transcript", "--no-pager"}} {
 		var want, wantErr bytes.Buffer
 		if code := Run(append([]string{"show", id}, flags...), nil, &want, &wantErr, oracle); code != 0 {
@@ -62,17 +68,24 @@ func TestRealCLIOverflowShowKeepsFullBodyAndSourceAuthority(t *testing.T) {
 			}
 		}
 	}
-	counts.Reset()
-	counts.paths = map[string]int{}
-	var got, errs bytes.Buffer
-	if code := Run([]string{"show", "overflow", "--json", "--no-cache"}, nil, &got, &errs, env); code != 0 {
-		t.Fatal(code, errs.String())
-	}
-	var want, wantErr bytes.Buffer
-	if code := Run([]string{"show", id, "--json"}, nil, &want, &wantErr, oracle); code != 0 || got.String() != want.String() {
-		t.Fatal("uncached overflow authority differs", code, wantErr.String())
-	}
-	if counts.paths["body"] != 2 || counts.Metrics().Lists != 0 {
-		t.Fatal("uncached complete-summary cost changed", counts.paths, counts.Metrics())
+}
+
+func TestRealCLIOverflowUncachedListMatchesFullAuthority(t *testing.T) {
+	env, oracle, _, counts := overflowCLIArchive(t)
+	for _, query := range []string{"overflow", "#88123"} {
+		counts.Reset()
+		counts.paths = map[string]int{}
+		args := []string{"list", "--all-projects", "--json", "--no-cache", query}
+		var got, errs, want, wantErr bytes.Buffer
+		if code := Run(args, nil, &got, &errs, env); code != 0 {
+			t.Fatal("uncached list", code, errs.String())
+		}
+		if code := Run(args, nil, &want, &wantErr, oracle); code != 0 || got.String() != want.String() || errs.String() != wantErr.String() {
+			t.Fatal("uncached overflow list authority differs", code, wantErr.String())
+		}
+		t.Logf("uncached full-summary list body GET=%d canonical LIST=%d", counts.paths["body"], counts.Metrics().Lists)
+		if counts.paths["body"] != 1 || counts.Metrics().Lists != 0 {
+			t.Fatal("uncached full-summary list cost", counts.paths, counts.Metrics())
+		}
 	}
 }
