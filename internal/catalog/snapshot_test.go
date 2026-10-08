@@ -756,3 +756,14 @@ func TestConcurrentChildCommitsRebaseParentCounters(t *testing.T) {
 		t.Fatal("counter differs from complete indexed child oracle", count, err)
 	}
 }
+
+func TestNodeCountRejectsOverflowBeforeAggregateReuse(t *testing.T) {
+	ref := ObjectRef{Key: "catalog-v4/nodes/test", SHA256: strings.Repeat("a", 64)}
+	raw, err := json.Marshal(node{Count: 0, Children: []branch{{Max: "a", Ref: ref, Count: ^uint64(0)}, {Max: "b", Ref: ref, Count: 1}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = decodeNode(raw); err == nil {
+		t.Fatal("wrapped aggregate accepted")
+	}
+}

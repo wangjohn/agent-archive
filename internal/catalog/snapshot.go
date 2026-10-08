@@ -374,9 +374,15 @@ func (s *Snapshot) Count(ctx context.Context, q Query) (uint64, error) {
 			if i > 0 {
 				lo = n.Children[i-1].Max
 			}
-			count, e := visit(c.Ref, lo, c.Max, depth+1)
-			if e != nil {
-				return 0, e
+			// The hash-validated parent already authenticates this subtree's
+			// aggregate. Only range boundaries require opening child nodes.
+			count := c.Count
+			if lo < q.Lower || q.Upper != "" && c.Max >= q.Upper {
+				var e error
+				count, e = visit(c.Ref, lo, c.Max, depth+1)
+				if e != nil {
+					return 0, e
+				}
 			}
 			if count > ^uint64(0)-total {
 				return 0, errors.New("catalog count overflow")

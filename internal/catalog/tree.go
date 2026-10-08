@@ -60,10 +60,15 @@ func decodeNode(raw []byte) (node, error) {
 			return n, errors.New("invalid leaf order")
 		}
 	}
+	var total uint64
 	for i, v := range n.Children {
 		if v.Ref.Key == "" || i > 0 && n.Children[i-1].Max >= v.Max {
 			return n, errors.New("invalid branch order")
 		}
+		if v.Count > ^uint64(0)-total {
+			return n, errors.New("catalog count overflow")
+		}
+		total += v.Count
 	}
 	if n.Count != nodeCount(n) {
 		return n, errors.New("invalid node count")

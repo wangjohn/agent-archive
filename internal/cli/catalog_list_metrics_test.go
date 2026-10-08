@@ -116,7 +116,11 @@ func TestRealCLICatalogDefaultList50Bounded(t *testing.T) {
 				}
 				metrics := counts.Metrics()
 				t.Logf("%s sessions=%d GET=%d bytes=%d LIST=%d paths=%v", phase, size, metrics.Gets, metrics.Bytes, metrics.Lists, counts.paths)
-				if metrics.Lists != 0 || metrics.Gets > 90 {
+				bodyReads := 50
+				if phase == "warm" {
+					bodyReads = 0
+				}
+				if metrics.Lists != 0 || counts.paths["tree"] > 16 || counts.paths["body"] != bodyReads || counts.paths["head"] != 1 || counts.paths["coordinator"] != 1 || counts.paths["other"] != 0 {
 					t.Fatalf("unbounded list-50: %+v paths=%v", metrics, counts.paths)
 				}
 			}
