@@ -161,9 +161,11 @@ The first of these that has a match answers:
 2. top-level sessions in every project;
 3. subagent sessions, in the scope and then everywhere.
 
-A session ID, full or the 8-character short one, names that session first. When
-the scope answers, the footer says how many more match elsewhere (`1 match in
-agent-archive (3 more in other projects: --all-projects or a project name finds
+For `list` and `handoff`, a session ID, full or the 8-character short one,
+names that session first. `show` gives a full ID that precedence; a short ID
+combines prefix matches with title and pull request matches, then applies the
+scope tiers above. When the scope answers, the footer says how many more match
+elsewhere (`1 match in agent-archive (3 more in other projects: --all-projects or a project name finds
 them)`). `--harness`, `--since`, and the other filters apply before this, and
 `--limit` last. A query nothing matches prints `No archived sessions match
 "<words>".` and exits 0, as an empty list does. `list "<words>" --json` prints
