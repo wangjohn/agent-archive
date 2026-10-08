@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/listingindex"
@@ -120,6 +121,7 @@ func readSelected(ctx context.Context, getter storage.VersionedGetter, revisions
 	observed := make([]bool, len(revisions))
 	var mu sync.Mutex
 	var wg sync.WaitGroup
+	var finished atomic.Int64
 	next, failed := 0, false
 	for range min(listConcurrency, len(revisions)) {
 		wg.Go(func() {
@@ -133,6 +135,9 @@ func readSelected(ctx context.Context, getter storage.VersionedGetter, revisions
 				next++
 				mu.Unlock()
 				reads[i], observed[i] = readSelectedRevision(ctx, getter, revisions[i], opts.Cache)
+				if opts.Progress != nil {
+					opts.Progress(int(finished.Add(1)), len(revisions))
+				}
 				if reads[i].Err != nil {
 					mu.Lock()
 					failed = true
