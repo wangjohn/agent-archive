@@ -217,14 +217,14 @@ func (c *SQLiteSessionCatalog) RefreshRemote(ctx context.Context) error {
 		return err
 	}
 	var invalid []string
-	var cachedCount uint64
+	cachedKeys := map[string]bool{}
 	for rows.Next() {
 		var record catalogRecord
 		if err = record.scan(rows); err != nil {
 			_ = rows.Close()
 			return err
 		}
-		cachedCount++
+		cachedKeys[record.key] = true
 		if !record.valid() {
 			invalid = append(invalid, record.key)
 		}
@@ -240,12 +240,6 @@ func (c *SQLiteSessionCatalog) RefreshRemote(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if !delta.Rebuild && cachedCount != expected {
-		delta, err = snapshot.Delta(ctx, catalog.ObjectRef{})
-		if err != nil {
-			return err
-		}
-	}
 	if !delta.Rebuild {
 		for _, key := range invalid {
 			entry, e := snapshot.Find(ctx, key)
@@ -256,6 +250,20 @@ func (c *SQLiteSessionCatalog) RefreshRemote(ctx context.Context) error {
 				delta.Removed = append(delta.Removed, key)
 			} else {
 				delta.Changed = append(delta.Changed, catalog.Row{Key: key, Entry: *entry})
+			}
+		}
+	}
+	if !delta.Rebuild {
+		for _, key := range delta.Removed {
+			delete(cachedKeys, key)
+		}
+		for _, row := range delta.Changed {
+			cachedKeys[row.Key] = true
+		}
+		if uint64(len(cachedKeys)) != expected {
+			delta, err = snapshot.Delta(ctx, catalog.ObjectRef{})
+			if err != nil {
+				return err
 			}
 		}
 	}

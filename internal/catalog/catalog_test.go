@@ -488,7 +488,7 @@ func TestPreservedHistoryFenceSurvivesOldCaptureDates(t *testing.T) {
 
 func TestCatalogMutationReadsOnlyChangedPaths(t *testing.T) {
 	raw := &qualifiedStore{storagetest.NewMemoryStore()}
-	measured := storagetest.NewMeasuredStore(raw, 0)
+	measured := &writerReadBreakdown{MeasuredStore: storagetest.NewMeasuredStore(raw, 0)}
 	w, err := New(measured)
 	if err != nil {
 		t.Fatal("measured qualification lost", err)
@@ -501,11 +501,13 @@ func TestCatalogMutationReadsOnlyChangedPaths(t *testing.T) {
 	}
 	next := mutation(t, w, "bounded-new")
 	measured.Reset()
+	measured.coordinatorGets = 0
+	measured.immutablePuts = 0
 	if _, err = w.Commit(t.Context(), next); err != nil {
 		t.Fatal(err)
 	}
-	if got := measured.Metrics(); got.Lists != 0 || got.Gets > 40 {
-		t.Fatal("mutation rebuilt archive instead of path-copying", got)
+	if got := measured.Metrics(); got.Lists != 0 || got.Gets-measured.coordinatorGets > 40 || measured.coordinatorGets != measured.immutablePuts+4 {
+		t.Fatal("mutation tree/protocol request breakdown", got, "coordinator", measured.coordinatorGets, "immutable writes", measured.immutablePuts)
 	}
 }
 
@@ -820,4 +822,23 @@ func TestChecksumlessSourceStillRequiresExactDeclaredSize(t *testing.T) {
 			}
 		})
 	}
+}
+
+type writerReadBreakdown struct {
+	*storagetest.MeasuredStore
+	coordinatorGets int64
+	immutablePuts   int64
+}
+
+func (s *writerReadBreakdown) GetCatalogVersion(ctx context.Context, key string, limit int64) ([]byte, storage.CatalogObjectVersion, error) {
+	if key == CoordinatorKey {
+		s.coordinatorGets++
+	}
+	return s.MeasuredStore.GetCatalogVersion(ctx, key, limit)
+}
+func (s *writerReadBreakdown) PutConditional(ctx context.Context, key string, raw []byte, condition storage.PutCondition) (string, error) {
+	if strings.HasPrefix(key, "catalog-v4/nodes/") || strings.HasPrefix(key, "catalog-v4/heads/") || strings.HasPrefix(key, "catalog-v4/metadata/") {
+		s.immutablePuts++
+	}
+	return s.MeasuredStore.PutConditional(ctx, key, raw, condition)
 }

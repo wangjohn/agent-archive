@@ -495,7 +495,7 @@ func TestPendingClaimDrainsFrozenSourceAndHistoryAfterSeal(t *testing.T) {
 	makeRef := func(body []byte) archive.SourceReference {
 		return archive.SourceReference{Key: "sessions/codex/" + id + "/source." + storage.SHA256Hex(body) + ".jsonl.gz", SHA256: storage.SHA256Hex(body), CompressedBytes: len(body)}
 	}
-	metadata := archive.Metadata{SchemaVersion: archive.HistoryMetadataSchemaVersion, SessionID: id, NativeSessionID: id, Harness: archive.Harness{Name: "codex"}, CapturedAt: time.Now().UTC(), SourceBundle: makeRef(active), History: &archive.RevisionHistory{CurrentRevision: id, Preserved: []archive.RevisionReference{{RevisionID: "00000000-0000-0000-0000-000000000002", CapturedAt: time.Now().UTC(), Source: makeRef(preserved)}}}}
+	metadata := archive.Metadata{SchemaVersion: archive.HistoryMetadataSchemaVersion, SessionID: id, NativeSessionID: id, ProjectID: "project", Harness: archive.Harness{Name: "codex"}, CapturedAt: time.Now().UTC(), SourceBundle: makeRef(active), History: &archive.RevisionHistory{CurrentRevision: id, Preserved: []archive.RevisionReference{{RevisionID: "00000000-0000-0000-0000-000000000002", CapturedAt: time.Now().UTC(), Source: makeRef(preserved)}}}}
 	data, err := json.Marshal(metadata)
 	if err != nil {
 		t.Fatal(err)

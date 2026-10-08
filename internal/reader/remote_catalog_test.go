@@ -164,3 +164,41 @@ func TestRemoteSummaryDeltaDeletesAndUnknownRootRebuilds(t *testing.T) {
 		t.Fatal(after.Total, err)
 	}
 }
+
+func TestRemoteRefreshRepairsTupleDamageAndMissingRows(t *testing.T) {
+	remote, _ := remoteReaderFixture(t, 40)
+	cache, err := OpenMetadataCache(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := OpenSessionCatalog(t.Context(), cache, remote, ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	if err = c.RefreshRemote(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		"UPDATE sessions SET search='damaged' WHERE key=(SELECT min(key) FROM sessions)",
+		"UPDATE sessions SET summary_hash='' WHERE key=(SELECT min(key) FROM sessions)",
+		"UPDATE sessions SET key='sessions/claude/missing/metadata.json' WHERE key=(SELECT min(key) FROM sessions)",
+		"DELETE FROM sessions WHERE key=(SELECT min(key) FROM sessions)",
+	} {
+		if _, err = c.db.ExecContext(t.Context(), statement); err != nil {
+			t.Fatal(err)
+		}
+		if err = c.RefreshRemote(t.Context()); err != nil {
+			t.Fatal("repair", statement, err)
+		}
+		page, err := c.Query(t.Context(), CatalogQuery{})
+		if err != nil || page.Total != 40 {
+			t.Fatal("repaired universe", statement, page.Total, err)
+		}
+		for _, row := range page.Rows {
+			if row.Key == "sessions/claude/missing/metadata.json" {
+				t.Fatal("unverified row survived")
+			}
+		}
+	}
+}
