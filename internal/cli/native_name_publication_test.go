@@ -57,12 +57,13 @@ func TestSettledCodexNamePublicationAndArchiveOnlyRead(t *testing.T) {
 	}
 	must(t, os.Mkdir(filepath.Join(nativeHome, "sessions"), 0700))
 	ids := []string{"01900000-0000-7000-8000-000000000001", "01900000-0000-7000-8000-000000000002"}
+	prompts := []string{"Invented first prompt", "Invented second prompt"}
 	paths := make([]string, len(ids))
 	for i, id := range ids {
 		paths[i] = filepath.Join(nativeHome, "sessions", id+".jsonl")
 		raw := fmt.Sprintf(`{"type":"session_meta","timestamp":"2026-10-06T23:00:00Z","payload":{"id":%q,"cli_version":"0.159.2","history_mode":"paginated","cwd":%q,"source":"cli"}}
-{"type":"response_item","timestamp":"2026-10-07T00:01:00Z","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Invented prompt"}]}}
-`, id, project)
+{"type":"response_item","timestamp":"2026-10-07T00:01:00Z","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":%q}]}}
+`, id, project, prompts[i])
 		must(t, os.WriteFile(paths[i], []byte(raw), 0600))
 		must(t, handleTestHookEvent(home, "codex", map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": id, "cwd": project, "transcript_path": paths[i]}, now.Add(time.Duration(i)*time.Minute)))
 	}
@@ -80,7 +81,7 @@ func TestSettledCodexNamePublicationAndArchiveOnlyRead(t *testing.T) {
 			if i == 0 {
 				name = first
 			}
-			_, execErr = db.ExecContext(t.Context(), "INSERT OR REPLACE INTO threads VALUES(?,?,?,?,?,?,?,?,?)", id, "paginated", name, "Invented prompt", "Invented prompt", "Invented prompt", `"cli"`, "0.159.2", paths[i])
+			_, execErr = db.ExecContext(t.Context(), "INSERT OR REPLACE INTO threads VALUES(?,?,?,?,?,?,?,?,?)", id, "paginated", name, prompts[i], prompts[i], prompts[i], `"cli"`, "0.159.2", paths[i])
 			must(t, execErr)
 		}
 	}
@@ -118,6 +119,65 @@ func TestSettledCodexNamePublicationAndArchiveOnlyRead(t *testing.T) {
 	if target.ArchiveSessionID == "" {
 		t.Fatal("missing UUID-matched registration")
 	}
+	// Exercise bounded indexed and uncapped CLI reads while both names are
+	// still equal. A fresh reader home cannot hide a coalesced index.
+	readerHome := t.TempDir()
+	must(t, config.Save(readerHome, cfg))
+	env.Home = func() (string, error) { return readerHome, nil }
+	var commandStderr string
+	run := func(args ...string) string {
+		t.Helper()
+		var out, stderr bytes.Buffer
+		if code := Run(args, nil, &out, &stderr, env); code != 0 {
+			t.Fatalf("%v exit %d: %s", args, code, &stderr)
+		}
+		commandStderr = stderr.String()
+		return out.String()
+	}
+	for _, limit := range []string{"2", "0"} {
+		indexedBodies := 0
+		env.observeListBody = func(string, bool) { indexedBodies++ }
+		var baseline listDocument
+		must(t, json.Unmarshal([]byte(run("list", "--harness", "codex", "--all-projects", "--json", "--limit", limit)), &baseline))
+		env.observeListBody = nil
+		if limit == "2" && (commandStderr != "" || indexedBodies != len(ids)) {
+			t.Fatalf("same-name indexed list did not verify both bodies: bodies=%d stderr=%s", indexedBodies, commandStderr)
+		}
+		if len(baseline.Sessions) != len(ids) || baseline.Returned != len(ids) || !baseline.TotalMatchedKnown || baseline.TotalMatched == nil || *baseline.TotalMatched != len(ids) || baseline.Truncated {
+			t.Fatalf("same-name list lost a session: %+v", baseline)
+		}
+		seen := make(map[string]bool)
+		for _, row := range baseline.Sessions {
+			matched := false
+			for i, id := range ids {
+				for _, reg := range regs {
+					if reg.NativeSessionID == id && row.SessionID == reg.ArchiveSessionID {
+						matched = row.NativeSessionID == id && row.Name == "Shared synthetic name" && row.Title == prompts[i]
+					}
+				}
+			}
+			if !matched || seen[row.SessionID] {
+				t.Fatalf("same-name list mismatched or repeated identity: %+v", row)
+			}
+			seen[row.SessionID] = true
+		}
+	}
+	for i, id := range ids {
+		for _, reg := range regs {
+			if reg.NativeSessionID != id {
+				continue
+			}
+			var shown archive.Metadata
+			must(t, json.Unmarshal([]byte(run("show", reg.ArchiveSessionID, "--harness", "codex", "--json")), &shown))
+			if shown.SessionID != reg.ArchiveSessionID || shown.NativeSessionID != id || shown.Name != "Shared synthetic name" || shown.Title != prompts[i] {
+				t.Fatalf("same-name show mismatched identity: %+v", shown)
+			}
+			out := run("show", reg.ArchiveSessionID, "--harness", "codex", "--no-pager")
+			if !strings.Contains(out, "Shared synthetic name") || !strings.Contains(out, prompts[i]) || strings.Contains(out, prompts[1-i]) {
+				t.Fatalf("same-name text show mismatched prompt: %s", out)
+			}
+		}
+	}
 	key, err := archive.MetadataObjectKey("codex", target.ArchiveSessionID)
 	must(t, err)
 	read := func() (archive.Metadata, archive.SourceBundle) {
@@ -127,7 +187,7 @@ func TestSettledCodexNamePublicationAndArchiveOnlyRead(t *testing.T) {
 		return m, b
 	}
 	before, beforeBundle := read()
-	if before.Name != "Shared synthetic name" || before.Title != "Invented prompt" || before.NativeSessionID != ids[0] {
+	if before.Name != "Shared synthetic name" || before.Title != prompts[0] || before.NativeSessionID != ids[0] {
 		t.Fatalf("baseline: %+v", before)
 	}
 	transcript, err := os.ReadFile(paths[0])
@@ -170,17 +230,9 @@ func TestSettledCodexNamePublicationAndArchiveOnlyRead(t *testing.T) {
 		t.Fatal("unavailable files cleared prior name")
 	}
 	must(t, os.RemoveAll(nativeHome)) // Reader has no native home at all.
-	readerHome := t.TempDir()
-	must(t, config.Save(readerHome, cfg))
-	env.Home = func() (string, error) { return readerHome, nil }
-	run := func(args ...string) string {
-		t.Helper()
-		var out, stderr bytes.Buffer
-		if code := Run(args, nil, &out, &stderr, env); code != 0 {
-			t.Fatalf("%v exit %d: %s", args, code, &stderr)
-		}
-		return out.String()
-	}
+	archiveReaderHome := t.TempDir()
+	must(t, config.Save(archiveReaderHome, cfg))
+	env.Home = func() (string, error) { return archiveReaderHome, nil }
 	for _, limit := range []string{"1", "0"} {
 		out := run("list", "--harness", "codex", "--all-projects", "--json", "--limit", limit)
 		var listing listDocument
