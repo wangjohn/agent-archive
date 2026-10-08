@@ -454,3 +454,20 @@ func TestSessionCatalogRejectsPartialCanonicalSnapshots(t *testing.T) {
 		t.Fatalf("partial snapshot altered catalog=%+v err=%v", p, err)
 	}
 }
+
+func TestSessionCatalogProjectionStoresOnlySearchFields(t *testing.T) {
+	m := archive.Metadata{Name: "published native name", Title: "filtered prompt preview", SourceBundle: archive.SourceReference{Key: "private-source-pointer"}, Replay: &archive.Replay{RunID: "private-replay-run"}, CaptureGaps: []archive.CaptureGap{{Code: "gap", Detail: "private-gap-detail"}}, PullRequests: []archive.PullRequestLink{{Number: 21, URL: "private-pr-url", Repository: "private-repository"}}, GitActivity: []archive.GitEvent{{Kind: archive.GitEventCommit, SHA: "private-commit"}, {Kind: archive.GitEventPRCreated, PRNumber: 22, URL: "private-git-url"}}}
+	summary := summarize(m)
+	data, err := json.Marshal(summary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{"private-source-pointer", "private-replay-run", "private-gap-detail", "private-pr-url", "private-repository", "private-commit", "private-git-url", "source_bundle", "counts", "history"} {
+		if strings.Contains(string(data), secret) {
+			t.Fatalf("projection retained %q", secret)
+		}
+	}
+	if !strings.Contains(string(data), m.Name) || !strings.Contains(string(data), m.Title) || summary.PullRequests[0].Number != 21 || summary.GitActivity[0].PRNumber != 22 {
+		t.Fatal("lost published search fields")
+	}
+}

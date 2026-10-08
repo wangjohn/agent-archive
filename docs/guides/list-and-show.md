@@ -189,7 +189,6 @@ scope. Repeated searches reuse private local summaries, while each command
 checks the archive for changed and deleted sessions. `--no-cache` bypasses
 local cached data.
 
-
 When stdin and stdout are both terminals, `list` and bare `show` open a
 session browser on the terminal's alternate screen, so the list and a
 session's summary replace each other instead of piling up:
