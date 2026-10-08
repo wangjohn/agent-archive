@@ -1,0 +1,357 @@
+package reader
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/listingindex"
+	"os"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+)
+
+func TestSessionCatalogRefreshPagesAndWarmBodies(t *testing.T) {
+	ctx := context.Background()
+	store := newCountingStore()
+	cache, err := OpenMetadataCache(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range 31 {
+		putSession(t, store, "codex", fmt.Sprintf("%032x", i+1), baseTime.Add(time.Duration(i)*time.Minute))
+	}
+	reads := 0
+	c, err := OpenSessionCatalog(ctx, cache, store, ListOptions{BodyRead: func(string, bool) { reads++ }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	h, err := DiscoverCatalogHeaders(ctx, store, ListOptions{Cache: cache})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = c.Refresh(ctx, h); err != nil {
+		t.Fatal(err)
+	}
+	if reads != 31 {
+		t.Fatalf("cold bodies=%d", reads)
+	}
+	reads = 0
+	store.reset()
+	if err = c.Refresh(ctx, h); err != nil {
+		t.Fatal(err)
+	}
+	if reads != 0 {
+		t.Fatalf("warm decoded %d bodies", reads)
+	}
+	q := CatalogQuery{Metadata: MetadataQuery{Limit: 7, Order: ActivityOrder}}
+	first, err := c.Query(ctx, q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Total != 31 || len(first.Rows) != 7 || !first.Complete {
+		t.Fatalf("page=%+v", first)
+	}
+	all := append([]CatalogRow(nil), first.Rows...)
+	q.Cursor = first.Next
+	for q.Cursor != "" {
+		p, e := c.Query(ctx, q)
+		if e != nil {
+			t.Fatal(e)
+		}
+		all = append(all, p.Rows...)
+		q.Cursor = p.Next
+	}
+	oracle, err := ListMetadataWithOptions(ctx, store, "sessions/", Filter{}, ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != len(oracle) {
+		t.Fatal("lost rows")
+	}
+	for i, row := range all {
+		if row.Summary.SessionID != oracle[i].SessionID {
+			t.Fatalf("order[%d]=%s != %s", i, row.Summary.SessionID, oracle[i].SessionID)
+		}
+		if len(row.Hash) != 64 {
+			t.Fatal("missing body hash")
+		}
+	}
+	q.Cursor = first.Next
+	q.Words = []string{"changed project label binding"}
+	if _, err = c.Query(ctx, q); !errors.Is(err, ErrStaleCatalogCursor) {
+		t.Fatalf("query cursor=%v", err)
+	}
+	if err = store.Delete(ctx, all[0].Key); err != nil {
+		t.Fatal(err)
+	}
+	h, err = DiscoverCatalogHeaders(ctx, store, ListOptions{Cache: cache})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = c.Refresh(ctx, h); err != nil {
+		t.Fatal(err)
+	}
+	q.Words = nil
+	if _, err = c.Query(ctx, q); !errors.Is(err, ErrStaleCatalogCursor) {
+		t.Fatalf("generation cursor=%v", err)
+	}
+	q.Cursor = ""
+	p, err := c.Query(ctx, q)
+	if err != nil || p.Total != 30 {
+		t.Fatalf("deleted total=%d err=%v", p.Total, err)
+	}
+}
+
+func TestSessionCatalogCancellationConcurrentAndPrivacy(t *testing.T) {
+	ctx := context.Background()
+	store := newCountingStore()
+	home := t.TempDir()
+	cache, err := OpenMetadataCache(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	putSession(t, store, "codex", fmt.Sprintf("%032x", 1), baseTime)
+	c, err := OpenSessionCatalog(ctx, cache, store, ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	other, err := OpenSessionCatalog(ctx, cache, store, ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.Close()
+	h, err := DiscoverCatalogHeaders(ctx, store, ListOptions{Cache: cache})
+	if err != nil {
+		t.Fatal(err)
+	}
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	if err = c.Refresh(canceled, h); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancel=%v", err)
+	}
+	page, err := c.Query(ctx, CatalogQuery{})
+	if err != nil || page.Total != 0 {
+		t.Fatal("canceled rebuild committed")
+	}
+	var wg sync.WaitGroup
+	errs := make(chan error, 2)
+	for _, db := range []*SQLiteSessionCatalog{c, other} {
+		wg.Add(1)
+		go func() { defer wg.Done(); errs <- db.Refresh(ctx, h) }()
+	}
+	wg.Wait()
+	close(errs)
+	for e := range errs {
+		if e != nil {
+			t.Fatal(e)
+		}
+	}
+	if err = filepath.WalkDir(filepath.Join(home, "cache", "catalog"), func(path string, d os.DirEntry, e error) error {
+		if e != nil {
+			return e
+		}
+		i, e := d.Info()
+		if e != nil {
+			return e
+		}
+		want := os.FileMode(0600)
+		if d.IsDir() {
+			want = 0700
+		}
+		if i.Mode().Perm() != want {
+			return fmt.Errorf("%s mode=%o", path, i.Mode().Perm())
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSessionCatalogCorruptionRebuild(t *testing.T) {
+	home := t.TempDir()
+	cache, err := OpenMetadataCache(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(home, "cache", "catalog")
+	if err = os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(filepath.Join(dir, "sessions.sqlite"), []byte("damaged index"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := OpenSessionCatalog(context.Background(), cache, newCountingStore(), ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	p, err := c.Query(context.Background(), CatalogQuery{})
+	if err != nil || p.Total != 0 {
+		t.Fatalf("rebuilt=%+v err=%v", p, err)
+	}
+}
+
+func TestSessionCatalogTypedFiltersEqualExhaustiveOracle(t *testing.T) {
+	ctx := context.Background()
+	cache, err := OpenMetadataCache(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := OpenSessionCatalog(ctx, cache, newCountingStore(), ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	summaries := []SearchSummary{
+		{SessionID: "one", Harness: archive.Harness{Name: "codex"}, CapturedAt: baseTime, ParentSessionID: "parent", Replay: &archive.Replay{}, Models: []archive.ModelSummary{{Attributes: map[string]string{"gen_ai.request.model": "gpt-test"}}}, SkillsUsed: []archive.SkillUse{{Name: "used", SHA256: "abc"}}},
+		{SessionID: "two", Harness: archive.Harness{Name: "claude"}, CapturedAt: baseTime.Add(time.Nanosecond), Parser: archive.ParserInfo{Status: archive.ParserStatusComplete}, SkillsAvailable: []archive.SkillSnapshot{{Name: "available", SHA256: "def"}}},
+		{SessionID: "three", Harness: archive.Harness{Name: "codex"}, CapturedAt: baseTime.Add(time.Hour), Parser: archive.ParserInfo{Status: archive.ParserStatusComplete}, CaptureGaps: []archive.CaptureGap{{Code: "gap"}}},
+	}
+	for _, s := range summaries {
+		data, e := json.Marshal(s)
+		if e != nil {
+			t.Fatal(e)
+		}
+		if _, e = c.db.ExecContext(ctx, "INSERT INTO sessions VALUES(?,?,?,?,?,?)", s.SessionID, "etag", "hash", catalogTime(s.CapturedAt), catalogTime(s.CapturedAt), data); e != nil {
+			t.Fatal(e)
+		}
+	}
+	filters := []Filter{{}, {Harness: "codex"}, {Harness: "missing"}, {From: baseTime.Add(time.Nanosecond), To: baseTime.Add(time.Nanosecond)}, {From: baseTime.Add(24 * time.Hour)}, {Replays: ReplaysOnly}, {Replays: ReplaysHidden}, {Model: "gpt-test"}, {Model: "unknown"}, {Skill: "used"}, {Skill: "available", SkillUsage: SkillUsageAvailable}, {SkillSHA256: "missing"}, {RequireCompleteCoverage: true}}
+	for _, f := range filters {
+		for _, top := range []bool{false, true} {
+			var want []string
+			for i := len(summaries) - 1; i >= 0; i-- {
+				m := summaries[i].Metadata()
+				if matches(m, f) && (!top || m.ParentSessionID == "") {
+					want = append(want, m.SessionID)
+				}
+			}
+			q := CatalogQuery{Metadata: MetadataQuery{Filter: f, TopLevelOnly: top, Limit: 1}}
+			var got []string
+			for {
+				page, e := c.Query(ctx, q)
+				if e != nil {
+					t.Fatal(e)
+				}
+				if page.Total != len(want) || !page.Complete {
+					t.Fatalf("filter=%+v total=%d want=%d", f, page.Total, len(want))
+				}
+				for _, r := range page.Rows {
+					got = append(got, r.Summary.SessionID)
+				}
+				if page.Next == "" {
+					break
+				}
+				q.Cursor = page.Next
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("filter=%+v top=%t got=%v want=%v", f, top, got, want)
+			}
+		}
+	}
+}
+
+type interruptedCatalogStore struct {
+	*countingStore
+	started chan struct{}
+}
+
+func (s *interruptedCatalogStore) GetVersioned(ctx context.Context, key string) ([]byte, string, error) {
+	select {
+	case s.started <- struct{}{}:
+	default:
+	}
+	<-ctx.Done()
+	return nil, "", ctx.Err()
+}
+
+func TestSessionCatalogCancelColdReadsJoinsWorkers(t *testing.T) {
+	store := &interruptedCatalogStore{countingStore: newCountingStore(), started: make(chan struct{}, 1)}
+	for i := range 20 {
+		putSession(t, store, "codex", fmt.Sprintf("%032x", i+1), baseTime)
+	}
+	cache, err := OpenMetadataCache(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := OpenSessionCatalog(context.Background(), cache, store, ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	h, err := DiscoverCatalogHeaders(context.Background(), store, ListOptions{Cache: cache})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- c.Refresh(ctx, h) }()
+	select {
+	case <-store.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("cold reads did not start")
+	}
+	cancel()
+	select {
+	case e := <-done:
+		if !errors.Is(e, context.Canceled) {
+			t.Fatalf("cancel=%v", e)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("workers did not join")
+	}
+	p, err := c.Query(context.Background(), CatalogQuery{})
+	if err != nil || p.Total != 0 {
+		t.Fatalf("partial rebuild visible=%+v err=%v", p, err)
+	}
+}
+
+func TestSessionCatalogRejectsRevisionRaceAndBadHash(t *testing.T) {
+	ctx := context.Background()
+	store := newCountingStore()
+	key := putSession(t, store, "codex", fmt.Sprintf("%032x", 1), baseTime)
+	cache, err := OpenMetadataCache(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := OpenSessionCatalog(ctx, cache, store, ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	h, err := DiscoverCatalogHeaders(ctx, store, ListOptions{Cache: cache})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, etag, err := store.GetVersioned(ctx, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	revision, err := listingindex.NewRevision(key, body, etag)
+	if err != nil {
+		t.Fatal(err)
+	}
+	revision.Hash = strings.Repeat("0", 64)
+	h.Revisions = map[RevisionID]listingindex.Revision{{Key: key, ETag: etag}: revision}
+	if err = c.Refresh(ctx, h); !errors.Is(err, ErrRefreshRequired) {
+		t.Fatalf("bad hash=%v", err)
+	}
+	h.Revisions = nil
+	putSession(t, store, "codex", fmt.Sprintf("%032x", 1), baseTime.Add(time.Hour))
+	if err = c.Refresh(ctx, h); !errors.Is(err, ErrRefreshRequired) {
+		t.Fatalf("race=%v", err)
+	}
+	p, err := c.Query(ctx, CatalogQuery{})
+	if err != nil || p.Total != 0 {
+		t.Fatalf("race committed=%+v err=%v", p, err)
+	}
+}

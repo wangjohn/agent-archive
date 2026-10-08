@@ -141,7 +141,18 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	if full {
 		listLimit = 0
 	}
-	listed, err := reader.ListRecent(context.Background(), store, archiveSessionsPrefix, opts.filter, listLimit, listOpts)
+	var listed reader.RecentResult
+	var catalogUsed bool
+	if !opts.jsonOut && full {
+		listed.Sessions, catalogUsed, err = catalogSessions(env, store, opts, stderr, "list")
+	}
+	if catalogUsed {
+		full = true
+		listed.Complete = true
+		listed.TotalMatched = len(listed.Sessions)
+	} else {
+		listed, err = reader.ListRecent(context.Background(), store, archiveSessionsPrefix, opts.filter, listLimit, listOpts)
+	}
 	stopList()
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: list: %v\n", err)
@@ -192,7 +203,7 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 // elsewhere), and for a table, the sessions the search finds.
 func listChoices(scope sessionScope, format listFormatOptions, browsing bool, sessions []archive.Metadata, limit int, view func(sessionScope) listView, words string) *scopeChoices {
 	if browsing {
-		return newScopeChoices(scope, format, false, browseSearchRows(archiveRows(sessions, limit, format), view, words))
+		return pagedArchiveChoices(scope, format, sessions, limit, view, words)
 	}
 	return newScopeChoices(scope, format, true, func(s sessionScope) scopeView {
 		v := view(s)

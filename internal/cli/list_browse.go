@@ -899,6 +899,13 @@ func readSessionView(ctx context.Context, store storage.ObjectStore, harness, se
 // interactive show and handoff. It reads every match, newest activity first,
 // for the caller to scope and limit.
 func loadSessionsForBrowse(env metadataCacheDependencies, store storage.ObjectStore, opts listOptions, stderr io.Writer, command string) ([]archive.Metadata, error) {
+	// Handoff needs complete bodies for its source/replay policy; the session
+	// browser hydrates the chosen body when details open.
+	if command == "show" || command == "list" {
+		if sessions, used, err := catalogSessions(env, store, opts, stderr, command); used {
+			return sessions, err
+		}
+	}
 	sessions, err := reader.ListMetadataWithOptions(context.Background(), store, archiveSessionsPrefix, opts.filter, reader.ListOptions{Cache: listCache(env, opts.noCache), Skipped: warnSkippedSidecar(stderr, command)})
 	if err != nil {
 		return nil, err
@@ -952,7 +959,7 @@ func findBrowseSessions(env sessionSelectionDependencies, store storage.ObjectSt
 		return nil, false, 1
 	}
 	format := listFormatOptions{Now: env.now(), Projects: projectLabels(cfg), Style: styleFor(stdout), GroupByProject: true, Numbered: true}
-	choices = newScopeChoices(scope, format, false, archiveRows(sessions, defaultListLimit, format))
+	choices = pagedArchiveChoices(scope, format, sessions, defaultListLimit, nil, "")
 	if len(choices.shown().rows) == 0 {
 		terminal.Println(stdout, "No archived sessions match.")
 		return nil, false, 0
@@ -991,4 +998,26 @@ func saveTerminalState(in io.Reader) (restore func()) {
 		return func() {}
 	}
 	return func() { _ = term.Restore(int(file.Fd()), state) }
+}
+
+// pagedArchiveChoices extends the visible table in bounded batches. Global
+// search keeps the full summary universe, including children and older rows.
+func pagedArchiveChoices(scope sessionScope, format listFormatOptions, sessions []archive.Metadata, limit int, found func(sessionScope) listView, words string) *scopeChoices {
+	currentLimit := limit
+	rowsFor := func(s sessionScope) scopeView {
+		rows := archiveRows(sessions, currentLimit, format)
+		if found != nil {
+			rows = browseSearchRows(rows, found, words)
+		}
+		return rows(s)
+	}
+	choices := newScopeChoices(scope, format, false, rowsFor)
+	if limit > 0 && len(topLevelSessions(sessions)) > limit {
+		choices.loadOlder = &browserLoadAction{Label: "Older sessions", Load: func() (bool, error) {
+			currentLimit += limit
+			choices.built = [2]*scopeChoice{}
+			return currentLimit < len(topLevelSessions(sessions)), nil
+		}}
+	}
+	return choices
 }

@@ -6,6 +6,10 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Reuse a private summary catalog for repeated list searches and session browsing.
+  Search includes older sessions and published native names; `o` loads another
+  batch in the list and bare-show browsers.
+
 - Select supported stats capture windows from fresh listing headers before
   downloading metadata, including comparison periods and month highlights.
 - Resolve short show IDs with one canonical discovery. Prefix matches and title
