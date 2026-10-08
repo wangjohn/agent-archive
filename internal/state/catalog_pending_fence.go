@@ -93,7 +93,7 @@ func (s *Store) verifyCatalogJournalRemoval(id string, pending PendingPublicatio
 func (s *Store) checkCatalogPendingRemoval(id string) error {
 	pending, found, err := s.catalogPendingForFence(id)
 	if err != nil {
-		return err
+		return errors.Join(ErrDurableStorageRecovery, err)
 	}
 	if found && recoveredCatalogJournal(pending) {
 		return ErrCatalogJournalFrozen
