@@ -12,7 +12,7 @@ import (
 
 // publishedProtocol classifies existing physical state under the held root.
 // Classification only accounts bytes; it supplies no source or deletion authority.
-func (q *durableQuota) publishedProtocol(path string, expected os.FileInfo) (int, error) {
+func (q *durableQuota) publishedProtocol(path string, expected os.FileInfo) (mode int, err error) {
 	if err := q.store.durableContext().Err(); err != nil {
 		return 0, err
 	}
@@ -33,7 +33,12 @@ func (q *durableQuota) publishedProtocol(path string, expected os.FileInfo) (int
 	if err != nil {
 		return 0, err
 	}
-	defer f.Close()
+	defer func() {
+		if closeErr := q.store.closePublicationFile(f); closeErr != nil {
+			mode = 0
+			err = errors.Join(err, closeErr)
+		}
+	}()
 	opened, err := f.Stat()
 	if err != nil || !sameDurableStamp(expected, opened) {
 		return 0, errors.Join(ErrDurableStorageRecovery, err)
@@ -61,7 +66,7 @@ func (q *durableQuota) publishedProtocol(path string, expected os.FileInfo) (int
 	}
 	// Current ordinary blocked controls can precede the first readable bundle.
 	// Their closed status/reason is legacy accounting, never source authority.
-	if p.PublicationVersion == 0 && p.Status == CacheStatusBlocked && p.Bundle.ArchiveSessionID == "" && p.Bundle.NativeSessionID == "" && p.Commit == nil && len(p.Sources) == 0 && len(p.MetadataBytes) == 0 && p.LastPublished == nil && p.PublishedAt.IsZero() {
+	if legacyBlockedPublicationControl(p) {
 		switch p.BlockedReason {
 		case BlockedReasonTranscriptRewritten, BlockedReasonTranscriptTooLarge, BlockedReasonRecordTooLarge, BlockedReasonTranscriptMissing:
 			return 1, nil
@@ -152,4 +157,8 @@ func (q *durableQuota) publishedAdditional(path string, old os.FileInfo, n int64
 	}
 	// n <= Q/2 and o <= Q: these expressions cannot overflow int64.
 	return max(int64(0), o+n-c, 2*n-c), nil
+}
+
+func legacyBlockedPublicationControl(p publishedState) bool {
+	return p.PublicationVersion == 0 && p.Status == CacheStatusBlocked && p.Bundle.ArchiveSessionID == "" && p.Bundle.NativeSessionID == "" && p.Commit == nil && len(p.Sources) == 0 && len(p.MetadataBytes) == 0 && p.LastPublished == nil && p.PublishedAt.IsZero()
 }

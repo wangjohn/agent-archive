@@ -335,6 +335,7 @@ func TestPublicationLostPublishedCacheCannotGuessPredecessor(t *testing.T) {
 }
 
 func testPublicationLostPublishedCache(t *testing.T, atomic bool) {
+	t.Helper()
 	local := newTestStore(t)
 	reg := registration(t, writeTranscript(t, t.TempDir(), "synthetic.jsonl", codexTranscript))
 	if err := local.SaveRegistration(reg); err != nil {
@@ -382,7 +383,7 @@ func testPublicationLostPublishedCache(t *testing.T, atomic bool) {
 		} else if err != nil || !errors.Is(result.Errors[reg.ArchiveSessionID], state.ErrQuarantined) || len(result.Published) != 0 {
 			t.Fatal("in-place corruption was not refused at session decode", result, err)
 		}
-		retainedPath := path
+		var retainedPath string
 		{
 			quarantined := local.QuarantinedFiles()
 			if len(quarantined) != 1 {
@@ -519,7 +520,7 @@ func (s *winnerAfterUploadStore) GetLimited(ctx context.Context, key string, lim
 	if key == s.metadataKey && s.readsAfterPut > 0 {
 		s.readsAfterPut++
 		if s.readsAfterPut == 3 {
-			body, err := s.MemoryStore.GetLimited(ctx, key, limit)
+			body, err := s.GetLimited(ctx, key, limit)
 			if err != nil {
 				return nil, err
 			}
@@ -538,7 +539,7 @@ func (s *winnerAfterUploadStore) GetLimited(ctx context.Context, key string, lim
 			}
 		}
 	}
-	return s.MemoryStore.GetLimited(ctx, key, limit)
+	return s.GetLimited(ctx, key, limit)
 }
 
 func TestPublicationChangedWinnerIsNotIndexedWithoutSourceVerification(t *testing.T) {
@@ -734,7 +735,7 @@ func (s *winnerAfterUploadStore) GetVersionedLimited(ctx context.Context, key st
 	if key == s.metadataKey && s.readsAfterPut > 0 {
 		s.readsAfterPut++
 		if s.readsAfterPut == 3 {
-			body, err := s.MemoryStore.GetLimited(ctx, key, limit)
+			body, err := s.GetLimited(ctx, key, limit)
 			if err != nil {
 				return nil, "", err
 			}
@@ -761,8 +762,8 @@ func (s *winnerAfterUploadStore) GetVersionedLimited(ctx context.Context, key st
 }
 
 func TestPublicationClosingProofRefusesChangedFrameBeforeLocalSave(t *testing.T) {
-	for _, change := range []string{"single-use", "different-selection", "destination", "policy", "cancel", "new-attempt"} {
-		t.Run(change, func(t *testing.T) {
+	for _, change := range []publicationClosingChange{publicationClosingChangeSingleUse, publicationClosingChangeDifferentSelection, publicationClosingChangeDestination, publicationClosingChangePolicy, publicationClosingChangeCancel, publicationClosingChangeNewAttempt} {
+		t.Run(string(change), func(t *testing.T) {
 			scan, pending := privacyJournal(t)
 			defer scan.releaseRetained()
 			endAttempt, attemptErr := scan.beginPublicationAttempt()
@@ -797,23 +798,23 @@ func TestPublicationClosingProofRefusesChangedFrameBeforeLocalSave(t *testing.T)
 				t.Fatal(err)
 			}
 			switch change {
-			case "single-use":
+			case publicationClosingChangeSingleUse:
 				if err = proof.consume(scan, pending); err != nil {
 					t.Fatal(err)
 				}
-			case "different-selection":
+			case publicationClosingChangeDifferentSelection:
 				commit := *pending.Commit
 				commit.MetadataSHA256 = storage.SHA256Hex([]byte("different selection in same session"))
 				pending.Commit = &commit
-			case "destination":
+			case publicationClosingChangeDestination:
 				scan.reg.DestinationID = "foreign-destination-after-D"
-			case "policy":
+			case publicationClosingChangePolicy:
 				scan.opts.SkillEvidence = config.SkillEvidenceNone
-			case "cancel":
+			case publicationClosingChangeCancel:
 				ctx, cancel := context.WithCancel(scan.ctx)
 				cancel()
 				scan.ctx = ctx
-			case "new-attempt":
+			case publicationClosingChangeNewAttempt:
 				endAttempt()
 				scan.remote = storagetest.NewMemoryStore()
 				endNew, attemptErr := scan.beginPublicationAttempt()
@@ -847,7 +848,7 @@ func (s *winnerDuringListingStore) Put(ctx context.Context, key string, body []b
 		return nil
 	}
 	s.changed = true
-	raw, err := s.MemoryStore.GetLimited(ctx, s.metadataKey, 32<<20)
+	raw, err := s.GetLimited(ctx, s.metadataKey, 32<<20)
 	if err != nil {
 		return err
 	}
@@ -936,3 +937,14 @@ type nonComparablePublicationStore struct {
 	*storagetest.MemoryStore
 	opaque map[string]string
 }
+
+type publicationClosingChange string
+
+const (
+	publicationClosingChangeSingleUse          publicationClosingChange = "single-use"
+	publicationClosingChangeDifferentSelection publicationClosingChange = "different-selection"
+	publicationClosingChangeDestination        publicationClosingChange = "destination"
+	publicationClosingChangePolicy             publicationClosingChange = "policy"
+	publicationClosingChangeCancel             publicationClosingChange = "cancel"
+	publicationClosingChangeNewAttempt         publicationClosingChange = "new-attempt"
+)

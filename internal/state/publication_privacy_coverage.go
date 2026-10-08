@@ -19,11 +19,12 @@ type PublicationPrivacySourceReader interface {
 	NativeReadBudget() *agentapi.NativeReadBudget
 }
 
+// PublicationPrivacyAlternative borrows an exact owning manifest and selected retained input.
 type PublicationPrivacyAlternative struct {
-	Metadata     archive.Metadata
-	MetadataBody []byte
-	Input        PreparationInput
-	Policy       PublicationPolicy
+	Metadata     archive.Metadata  `json:"Metadata"`
+	MetadataBody []byte            `json:"MetadataBody"`
+	Input        PreparationInput  `json:"Input"`
+	Policy       PublicationPolicy `json:"Policy"`
 }
 
 // CoveredPrivacySource records an alternative actually compared by the factory.
@@ -114,7 +115,7 @@ func validatePrivacyAlternative(alternative PublicationPrivacyAlternative, origi
 	if err := json.Unmarshal(alternative.MetadataBody, &metadata); err != nil {
 		return "", err
 	}
-	if !reflect.DeepEqual(metadata, alternative.Metadata) || metadata.SessionID != origin.SessionID || metadata.NativeSessionID != origin.NativeSessionID || metadata.ProjectID != origin.ProjectID || metadata.MachineID != origin.MachineID || metadata.Harness != origin.Harness || metadata.Origin != origin.Origin || !sameOptionalTime(metadata.ImportedAt, origin.ImportedAt) || metadata.StartedAtSource != origin.StartedAtSource || metadata.PreviousGenerationID != origin.PreviousGenerationID || !metadata.StartedAt.Equal(origin.StartedAt) || publicationOwner(metadata, context.DestinationID, context.AdmissionContext) != publicationOwner(origin, context.DestinationID, context.AdmissionContext) {
+	if privacyAlternativeOwnerChanged(metadata, origin, alternative, context) {
 		return "", ErrDurableStorageRecovery
 	}
 	digest, refs, err := archive.PublicationIdentity(alternative.MetadataBody, context.DestinationID, context.AdmissionContext, alternative.Policy.Context(), string(PublicationPrivacyRewrite))
@@ -126,14 +127,15 @@ func validatePrivacyAlternative(alternative PublicationPrivacyAlternative, origi
 		if ref != alternative.Input.Reference {
 			continue
 		}
-		selection := PublicationSelection{Role: "current", RevisionID: metadata.NativeSessionID, CapturedAt: metadata.CapturedAt.UTC(), SourceSchemaVersion: alternative.Input.Selection.SourceSchemaVersion}
-		filter := metadata.FilterVersion
+		revision := metadata.NativeSessionID
 		if metadata.History != nil {
-			selection.RevisionID = metadata.History.CurrentRevision
+			revision = metadata.History.CurrentRevision
 		}
+		selection := PublicationSelection{Role: PublicationCurrent, RevisionID: revision, CapturedAt: metadata.CapturedAt.UTC(), SourceSchemaVersion: alternative.Input.Selection.SourceSchemaVersion}
+		filter := metadata.FilterVersion
 		if i > 0 {
 			r := metadata.History.Preserved[i-1]
-			selection = PublicationSelection{Role: "preserved", RevisionID: r.RevisionID, CapturedAt: r.CapturedAt.UTC(), SourceSchemaVersion: r.SourceSchemaVersion}
+			selection = PublicationSelection{Role: PublicationPreserved, RevisionID: r.RevisionID, CapturedAt: r.CapturedAt.UTC(), SourceSchemaVersion: r.SourceSchemaVersion}
 			filter = r.FilterVersion
 		}
 		if selection != alternative.Input.Selection || alternative.Input.FilterVersion != filter || alternative.Policy.FilterVersion != filter || alternative.Policy.AdapterVersion != alternative.Input.AdapterVersion || string(alternative.Policy.SkillEvidence) != alternative.Input.SkillPolicy {
@@ -178,8 +180,10 @@ func coverPrivacyAlternative(ctx context.Context, registration archive.SessionRe
 	}
 	// Reserve the two auxiliary envelopes before any merge slice allocation.
 	envelope := struct {
-		A, B []archive.SupplementalEvidence
-		C, D []archive.CaptureGap
+		A []archive.SupplementalEvidence `json:"A"`
+		B []archive.SupplementalEvidence `json:"B"`
+		C []archive.CaptureGap           `json:"C"`
+		D []archive.CaptureGap           `json:"D"`
 	}{chosen.SupplementalEvidence, candidate.SupplementalEvidence, chosen.Capture.Gaps, candidate.Capture.Gaps}
 	n, err := jsonwire.Bound(ctx, envelope, budget.Available())
 	if err != nil {
@@ -213,7 +217,7 @@ func validateCoveredPrivacyFacts(r PrivacySource) error {
 		if fact.Version != 1 || fact.SHA256 != coveredPrivacySHA(fact) || fact.Direction != "alternative-covered-by-original" || fact.Next != r.Next || !validPublicationDigest(fact.MetadataSHA256) || !validPublicationDigest(fact.SourceSetSHA256) || !validSourceReference(fact.Reference) || fact.Reference.CompressedBytes <= 0 || fact.Reference.CompressedBytes > 128<<20 || fact.Selection.Role != r.Selection.Role || fact.Selection.RevisionID != r.Selection.RevisionID || fact.Selection.CapturedAt.IsZero() || fact.Policy.validate() != nil {
 			return ErrDurableStorageRecovery
 		}
-		for j := 0; j < i; j++ {
+		for j := range i {
 			other := r.Covered[j]
 			if fact.MetadataSHA256 == other.MetadataSHA256 && fact.Reference == other.Reference {
 				return ErrDurableStorageRecovery
@@ -221,4 +225,8 @@ func validateCoveredPrivacyFacts(r PrivacySource) error {
 		}
 	}
 	return nil
+}
+
+func privacyAlternativeOwnerChanged(metadata, origin archive.Metadata, alternative PublicationPrivacyAlternative, context PublicationContext) bool {
+	return !reflect.DeepEqual(metadata, alternative.Metadata) || metadata.SessionID != origin.SessionID || metadata.NativeSessionID != origin.NativeSessionID || metadata.ProjectID != origin.ProjectID || metadata.MachineID != origin.MachineID || metadata.Harness != origin.Harness || metadata.Origin != origin.Origin || !sameOptionalTime(metadata.ImportedAt, origin.ImportedAt) || metadata.StartedAtSource != origin.StartedAtSource || metadata.PreviousGenerationID != origin.PreviousGenerationID || !metadata.StartedAt.Equal(origin.StartedAt) || publicationOwner(metadata, context.DestinationID, context.AdmissionContext) != publicationOwner(origin, context.DestinationID, context.AdmissionContext)
 }

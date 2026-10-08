@@ -81,6 +81,10 @@ type Store struct {
 	onIndexStep func(string) error
 	// onIndexSync tests index staging without changing registration sync seams.
 	onIndexSync func()
+	// publicationFileClose injects a checked actual descriptor close in private fixtures.
+	publicationFileClose func(*os.File) error
+	// publicationRootClose is confined to final owned migration-directory close.
+	publicationRootClose func(*os.Root) error
 }
 
 // OpenReadOnly returns a handle to an existing local store under
@@ -748,7 +752,7 @@ type PendingPublication struct {
 	migration        *ValidatedOrdinaryMigration
 	privacyOutputs   map[int]PrivacySource
 	JournalVersion   int                   `json:"journal_version,omitempty"`
-	Phase            string                `json:"phase,omitempty"`
+	Phase            PublicationPhase      `json:"phase,omitempty"`
 	Preparation      *PreparationAuthority `json:"preparation,omitempty"`
 	Progress         *PreparationProgress  `json:"progress,omitempty"`
 	Cleanup          *CleanupProgress      `json:"cleanup,omitempty"`
@@ -777,7 +781,8 @@ type PendingPublication struct {
 
 // SourceReference is the reference the publication's metadata carries for
 // its source object.
-func (p PendingPublication) SourceReference() archive.SourceReference {
+func (owned *PendingPublication) SourceReference() archive.SourceReference {
+	p := *owned
 	size := len(p.SourceBytes)
 	if p.JournalVersion == 2 {
 		size = p.SourceSize
@@ -793,7 +798,8 @@ func (p PendingPublication) SourceReference() archive.SourceReference {
 
 // CarriesNoSource reports a metadata-only publication that points at an
 // existing source without carrying its bytes (see SourceSize).
-func (p PendingPublication) CarriesNoSource() bool {
+func (owned *PendingPublication) CarriesNoSource() bool {
+	p := *owned
 	return p.MetadataOnly && len(p.SourceBytes) == 0
 }
 
@@ -803,7 +809,8 @@ func (s *Store) pendingPath(id string) string {
 
 // validateComplete is the supported transaction structure shared by writes
 // and protected reads. History validation keeps its separate budget ownership.
-func (pending PendingPublication) validateComplete() error {
+func (owned *PendingPublication) validateComplete() error {
+	pending := *owned
 	if pending.JournalVersion == 2 {
 		return pending.validatePublicationEnvelope()
 	}

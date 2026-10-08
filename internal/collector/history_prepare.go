@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -192,50 +193,7 @@ func (s *sessionScan) prepareHistoryInput(p *state.PendingPublication, metadata 
 		bundle.SupplementalEvidence = observations
 	}
 	if privacyChanged && p.Preparation != nil {
-		oldPolicy := state.PublicationPolicy{FilterVersion: bundle.Capture.FilterVersion, AdapterVersion: bundle.Capture.AdapterVersion, SkillEvidence: pendingSkillMode(p.SkillEvidence)}
-		s.releaseRetainedAfter(inputScope)
-		original, err := s.readRetainedInputBytes(input.Reference)
-		if err != nil {
-			return err
-		}
-		index := -1
-		for i, frozen := range p.Preparation.Inputs {
-			if frozen.Reference == input.Reference && frozen.Selection.RevisionID == input.RevisionID {
-				index = i
-				break
-			}
-		}
-		if index < 0 {
-			return errors.New("privacy input is absent from frozen authority")
-		}
-		frozen := p.Preparation.Inputs[index]
-		var origin archive.Metadata
-		if err = s.unmarshalRetained(p.Preparation.OriginMetadata, &origin); err != nil {
-			return err
-		}
-		filtered, compressed, next, proof, release, err := state.RefilterPublicationInput(s.ctx, s.reg, adapter, origin, p.Preparation.OriginMetadata, frozen, index, original, state.PublicationContext{DestinationID: s.reg.DestinationID, AdmissionContext: s.publicationAdmission()}, oldPolicy, state.PublicationPolicy{FilterVersion: archive.FilterVersion, AdapterVersion: adapter.Version(), SkillEvidence: s.opts.skillEvidence()}, pendingSkillMode(p.SkillEvidence), s.readBudget())
-		if err != nil {
-			return err
-		}
-		s.retainedReleases = append(s.retainedReleases, release)
-		stage, err := s.local.StagePublicationSource(s.id(), next, compressed.Bytes)
-		if err != nil {
-			return err
-		}
-		receiptRelease, recordErr := p.RecordPrivacyOutput(proof)
-		if recordErr != nil {
-			err = recordErr
-			return err
-		}
-		s.retainedReleases = append(s.retainedReleases, receiptRelease)
-		if err = replacePreparedReference(p, metadata, input, filtered, next, compressed.Bytes); err != nil {
-			return err
-		}
-		if next != input.Reference {
-			p.History.Sources = append(p.History.Sources, stage)
-			p.History.Retired = append(p.History.Retired, state.RetiredSource{Reference: input.Reference, PrivacySensitive: true})
-		}
-		return nil
+		return s.prepareFrozenPrivacyInput(p, metadata, input, adapter, bundle, inputScope)
 	}
 	if observationsChanged || bundle.Capture.FilterVersion != archive.FilterVersion || bundle.Capture.AdapterVersion != adapter.Version() || !sourceEvidenceWithinPolicy(bundle.SupplementalEvidence, s.opts.skillEvidence()) {
 		bundle.SupplementalEvidence = limitSkillEvidence(bundle.SupplementalEvidence, s.opts.skillEvidence())
@@ -268,4 +226,52 @@ func (s *sessionScan) prepareHistoryInput(p *state.PendingPublication, metadata 
 		}
 	}
 	return nil
+}
+
+func (s *sessionScan) prepareFrozenPrivacyInput(p *state.PendingPublication, metadata *archive.Metadata, input state.HistoryInput, adapter agentapi.TranscriptFilter, bundle archive.SourceBundle, inputScope int) error {
+	oldPolicy := state.PublicationPolicy{FilterVersion: bundle.Capture.FilterVersion, AdapterVersion: bundle.Capture.AdapterVersion, SkillEvidence: pendingSkillMode(p.SkillEvidence)}
+	s.releaseRetainedAfter(inputScope)
+	original, err := s.readRetainedInputBytes(input.Reference)
+	if err != nil {
+		return err
+	}
+	index := -1
+	for i, frozen := range p.Preparation.Inputs {
+		if frozen.Reference == input.Reference && frozen.Selection.RevisionID == input.RevisionID {
+			index = i
+			break
+		}
+	}
+	if index < 0 {
+		return errors.New("privacy input is absent from frozen authority")
+	}
+	frozen := p.Preparation.Inputs[index]
+	var origin archive.Metadata
+	if err = s.unmarshalRetained(p.Preparation.OriginMetadata, &origin); err != nil {
+		return err
+	}
+	filtered, compressed, next, proof, release, err := state.RefilterPublicationInput(s.ctx, s.reg, adapter, origin, p.Preparation.OriginMetadata, frozen, index, original, state.PublicationContext{DestinationID: s.reg.DestinationID, AdmissionContext: s.publicationAdmission()}, oldPolicy, state.PublicationPolicy{FilterVersion: archive.FilterVersion, AdapterVersion: adapter.Version(), SkillEvidence: s.opts.skillEvidence()}, pendingSkillMode(p.SkillEvidence), s.readBudget())
+	if err != nil {
+		return err
+	}
+	s.retainedReleases = append(s.retainedReleases, release)
+	stage, err := s.local.StagePublicationSource(s.id(), next, compressed.Bytes)
+	if err != nil {
+		return err
+	}
+	receiptRelease, recordErr := p.RecordPrivacyOutput(proof)
+	if recordErr != nil {
+		err = recordErr
+		return err
+	}
+	s.retainedReleases = append(s.retainedReleases, receiptRelease)
+	if err = replacePreparedReference(p, metadata, input, filtered, next, compressed.Bytes); err != nil {
+		return err
+	}
+	if next != input.Reference {
+		p.History.Sources = append(p.History.Sources, stage)
+		p.History.Retired = append(p.History.Retired, state.RetiredSource{Reference: input.Reference, PrivacySensitive: true})
+	}
+	return nil
+
 }

@@ -38,7 +38,7 @@ func (p *PendingPublication) UnmarshalJSON(data []byte) error {
 		if fields["source_bytes"] {
 			return ErrDurableStorageRecovery
 		}
-		if len(p.Sources) > 0 && p.Sources[0].Payload.Kind == "inline" {
+		if len(p.Sources) > 0 && p.Sources[0].Payload.Kind == PublicationInline {
 			p.SourceBytes = p.Sources[0].Payload.Inline
 		}
 		if err := p.validatePublicationEnvelope(); err != nil {
@@ -151,9 +151,8 @@ func (p publishedState) validateSelectingPublished() error {
 	current := p.Payloads[0].Reference
 	commit := *p.Commit
 	commit.SettledPrivacySHA256 = ""
-	pending := PendingPublication{JournalVersion: 2, Commit: &commit, Sources: p.Payloads, Bundle: bundle, SourceKey: current.Key, SourceSHA256: current.SHA256, SourceSize: current.CompressedBytes, MetadataOnly: true, MetadataBytes: p.MetadataBytes}
+
 	// Published validation uses private Commit2+payload witnesses without a mutable preparation cursor.
-	pending.SourceBytes = p.Payloads[0].Payload.Inline
 	var metadata struct {
 		SessionID string `json:"session_id"`
 		Harness   struct {
@@ -167,7 +166,7 @@ func (p publishedState) validateSelectingPublished() error {
 	if err != nil {
 		return err
 	}
-	pending.MetadataKey = key
+	pending := PendingPublication{MetadataKey: key, JournalVersion: 2, Commit: &commit, Sources: p.Payloads, Bundle: bundle, SourceKey: current.Key, SourceSHA256: current.SHA256, SourceSize: current.CompressedBytes, MetadataOnly: true, MetadataBytes: p.MetadataBytes, SourceBytes: p.Payloads[0].Payload.Inline}
 	if err := pending.validateReadyPublication(); err != nil {
 		return errors.Join(ErrDurableStorageRecovery, err)
 	}
@@ -202,27 +201,7 @@ func uniquePublicationJSON(d *json.Decoder, depth int, destination reflect.Type,
 			var child reflect.Type
 			// Go's typed JSON decoder accepts case aliases for struct fields.
 			// Canonicalize only those fields; arbitrary native map keys remain exact.
-			if destination != nil && destination.Kind() == reflect.Struct {
-				for i := 0; i < destination.NumField(); i++ {
-					field := destination.Field(i)
-					if field.PkgPath != "" {
-						continue
-					}
-					tag := strings.Split(field.Tag.Get("json"), ",")[0]
-					if tag == "-" {
-						continue
-					}
-					if tag == "" {
-						tag = field.Name
-					}
-					if strings.EqualFold(name, tag) {
-						name, child = tag, field.Type
-						break
-					}
-				}
-			} else if destination != nil && destination.Kind() == reflect.Map {
-				child = destination.Elem()
-			}
+			name, child = publicationJSONField(destination, name)
 			if depth == 0 && len(topFields) > 0 {
 				name = strings.ToLower(name)
 			}
@@ -252,4 +231,29 @@ func uniquePublicationJSON(d *json.Decoder, depth int, destination reflect.Type,
 	}
 	_, err = d.Token()
 	return err
+}
+
+func publicationJSONField(destination reflect.Type, name string) (string, reflect.Type) {
+	var child reflect.Type
+	if destination != nil && destination.Kind() == reflect.Struct {
+		for i := range destination.NumField() {
+			field := destination.Field(i)
+			if field.PkgPath != "" {
+				continue
+			}
+			tag := strings.Split(field.Tag.Get("json"), ",")[0]
+			if tag == "-" {
+				continue
+			}
+			if tag == "" {
+				tag = field.Name
+			}
+			if strings.EqualFold(name, tag) {
+				return tag, field.Type
+			}
+		}
+	} else if destination != nil && destination.Kind() == reflect.Map {
+		child = destination.Elem()
+	}
+	return name, child
 }

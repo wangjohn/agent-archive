@@ -70,7 +70,11 @@ func TestPublicationV2SinglePayloadAndSettledCharge(t *testing.T) {
 		if e != nil {
 			return e
 		}
-		defer q.Close()
+		defer func() {
+			if err := q.Close(); err != nil {
+				t.Error(err)
+			}
+		}()
 		u, e := q.usage()
 		if e == nil && u.charged != 2*int64(len(raw)) {
 			t.Fatalf("settled file not exactly charged: %d vs %d", u.charged, 2*len(raw))
@@ -150,7 +154,7 @@ func TestPublicationLegacyMigrationHasOwnedReplayAndOpaqueGenericRefusal(t *test
 	if err = closedPublicationDecode(evidenceRaw, &e); err != nil {
 		t.Fatal(err)
 	}
-	if e.MigrationOrigin == nil || string(e.MigrationOrigin.Raw) != string(old) || e.Link.Target.Phase != "ready" {
+	if e.MigrationOrigin == nil || string(e.MigrationOrigin.Raw) != string(old) || e.Link.Target.Phase != PublicationReady {
 		t.Fatal("original changed")
 	}
 	// The evidence-before-pending interruption admits only the exact old file.
@@ -289,20 +293,20 @@ func TestPublicationClosedNestedAuthorityRejectsCaseAlias(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, variant := range []string{"commit-equal", "commit-conflicting", "payload", "preparation"} {
-		t.Run(variant, func(t *testing.T) {
+	for _, variant := range []publicationAliasVariant{publicationAliasVariantCommitEqual, publicationAliasVariantCommitConflicting, publicationAliasVariantPayload, publicationAliasVariantPreparation} {
+		t.Run(string(variant), func(t *testing.T) {
 			var shape map[string]any
 			if err := json.Unmarshal(raw, &shape); err != nil {
 				t.Fatal(err)
 			}
 			switch variant {
-			case "commit-equal":
+			case publicationAliasVariantCommitEqual:
 				shape["commit"].(map[string]any)["VERSION"] = float64(2)
-			case "commit-conflicting":
+			case publicationAliasVariantCommitConflicting:
 				shape["commit"].(map[string]any)["VERSION"] = float64(9)
-			case "preparation":
+			case publicationAliasVariantPreparation:
 				shape["preparation"].(map[string]any)["VERSION"] = shape["preparation"].(map[string]any)["version"]
-			case "payload":
+			case publicationAliasVariantPayload:
 				payload := shape["sources"].([]any)[0].(map[string]any)["payload"].(map[string]any)
 				payload["KIND"] = payload["kind"]
 			}
@@ -324,3 +328,12 @@ func TestPublicationClosedNestedAuthorityRejectsCaseAlias(t *testing.T) {
 		t.Fatal("case-distinct native payload changed", err)
 	}
 }
+
+type publicationAliasVariant string
+
+const (
+	publicationAliasVariantCommitEqual       publicationAliasVariant = "commit-equal"
+	publicationAliasVariantCommitConflicting publicationAliasVariant = "commit-conflicting"
+	publicationAliasVariantPayload           publicationAliasVariant = "payload"
+	publicationAliasVariantPreparation       publicationAliasVariant = "preparation"
+)

@@ -59,6 +59,7 @@ type ValidatedPublicationReadback struct {
 	consumed bool
 }
 
+// Consume transfers the exact response once for its bound metadata key and body.
 func (r *ValidatedPublicationReadback) Consume(key string, metadata []byte) ([]byte, string, error) {
 	if r == nil || r.consumed || r.key != key || r.sha != SHA256Hex(metadata) || len(r.body) != len(metadata) || SHA256Hex(r.body) != r.sha {
 		return nil, "", ErrPublicationConflict
@@ -67,6 +68,7 @@ func (r *ValidatedPublicationReadback) Consume(key string, metadata []byte) ([]b
 	return r.body, r.etag, nil
 }
 
+// PutResolvedSourceSetThenMetadataReadback verifies predecessor positioning and selected sources before returning the exact metadata response.
 func PutResolvedSourceSetThenMetadataReadback(ctx context.Context, store ObjectStore, sources []SourcePublication, key string, metadata []byte, prior MetadataPredecessor, retry RetryPolicy, resolve SourceResolver, verify SourceVerifier) (*ValidatedPublicationReadback, error) {
 	if len(sources) == 0 || len(sources) > 65 || key == "" || len(metadata) == 0 || len(metadata) > 32<<20 {
 		return nil, errors.New("publication source set or metadata exceeds bounds")
@@ -216,11 +218,11 @@ func verifyResolvedSourceSet(ctx context.Context, store ObjectStore, sources []S
 		}
 		var release func()
 		if resolve != nil {
-			data, close, err := resolve(ctx, i)
+			data, releaseBytes, err := resolve(ctx, i)
 			if err != nil {
 				return err
 			}
-			source.Bytes, release = data, close
+			source.Bytes, release = data, releaseBytes
 		}
 		operation := func() error {
 			if verify == nil {
@@ -250,6 +252,7 @@ func verifyResolvedSourceSet(ctx context.Context, store ObjectStore, sources []S
 // versioned fallback or a fabricated validator from a later HEAD.
 var ErrVersionedReadUnavailable = errors.New("bounded response metadata validator unavailable")
 
+// ReadPublicationMetadataRevision returns bounded bytes and the validator from that same response.
 func ReadPublicationMetadataRevision(ctx context.Context, store ObjectStore, key string, limit int64) ([]byte, string, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, "", err

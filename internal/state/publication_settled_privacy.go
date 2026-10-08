@@ -12,7 +12,7 @@ import (
 type SettledPrivacyPreparation struct {
 	Version                   int                     `json:"version"`
 	OriginalPreparationSHA256 string                  `json:"original_preparation_sha256"`
-	Kind                      string                  `json:"kind"`
+	Kind                      PreparationKind         `json:"kind"`
 	SessionID                 string                  `json:"session_id"`
 	NativeSessionID           string                  `json:"native_session_id"`
 	ProjectID                 string                  `json:"project_id"`
@@ -41,6 +41,7 @@ type SettledPrivacyPreparation struct {
 	SHA256                    string                  `json:"sha256"`
 }
 
+// SettledPrivacyInput keeps original selection and payload facts without sensitive raw bodies.
 type SettledPrivacyInput struct {
 	Hook           *PublicationHookFacts   `json:"hook,omitempty"`
 	Reference      archive.SourceReference `json:"reference"`
@@ -48,7 +49,7 @@ type SettledPrivacyInput struct {
 	FilterVersion  string                  `json:"filter_version"`
 	AdapterVersion string                  `json:"adapter_version"`
 	SkillPolicy    string                  `json:"skill_policy"`
-	PayloadKind    string                  `json:"payload_kind"`
+	PayloadKind    PublicationPayloadKind  `json:"payload_kind"`
 	InlineSHA256   string                  `json:"inline_sha256,omitempty"`
 	InlineSize     int                     `json:"inline_size,omitempty"`
 	Stage          *ImmutableStageHandle   `json:"stage,omitempty"`
@@ -102,14 +103,14 @@ func (s *Store) mintSettledPrivacy(p publishedState) (publishedState, error) {
 			s.resourceBudget.Release(factCharge)
 		}
 	}()
-	projection := &SettledPrivacyPreparation{Version: 1, OriginalPreparationSHA256: a.SHA256, Kind: a.Kind, SessionID: origin.SessionID, NativeSessionID: origin.NativeSessionID, ProjectID: origin.ProjectID, MachineID: origin.MachineID, Harness: origin.Harness, Origin: origin.Origin, ImportedAt: origin.ImportedAt, StartedAtSource: origin.StartedAtSource, PreviousGenerationID: origin.PreviousGenerationID, StartedAt: origin.StartedAt.UTC(), OwnerSHA256: a.OwnerSHA256, DestinationID: a.DestinationID, AdmissionContext: a.AdmissionContext, PolicyContext: a.PolicyContext, Purpose: a.Purpose, Predecessor: a.Predecessor, PredecessorSHA256: a.PredecessorSHA256, PreviousSetSHA256: previousSet, OriginMetadataSHA256: a.OriginMetadataSHA256, OriginSetSHA256: a.OriginSetSHA256, MetadataSHA256: p.Commit.MetadataSHA256, SourceSetSHA256: p.Commit.SourceSetSHA256, PayloadSetSHA256: p.Commit.PayloadSetSHA256, PrivacySHA256: p.Commit.PrivacySHA256}
-	projection.Inputs = make([]SettledPrivacyInput, 0, len(a.Inputs))
+	projection := &SettledPrivacyPreparation{Inputs: make([]SettledPrivacyInput, 0, len(a.Inputs)), Version: 1, OriginalPreparationSHA256: a.SHA256, Kind: a.Kind, SessionID: origin.SessionID, NativeSessionID: origin.NativeSessionID, ProjectID: origin.ProjectID, MachineID: origin.MachineID, Harness: origin.Harness, Origin: origin.Origin, ImportedAt: origin.ImportedAt, StartedAtSource: origin.StartedAtSource, PreviousGenerationID: origin.PreviousGenerationID, StartedAt: origin.StartedAt.UTC(), OwnerSHA256: a.OwnerSHA256, DestinationID: a.DestinationID, AdmissionContext: a.AdmissionContext, PolicyContext: a.PolicyContext, Purpose: a.Purpose, Predecessor: a.Predecessor, PredecessorSHA256: a.PredecessorSHA256, PreviousSetSHA256: previousSet, OriginMetadataSHA256: a.OriginMetadataSHA256, OriginSetSHA256: a.OriginSetSHA256, MetadataSHA256: p.Commit.MetadataSHA256, SourceSetSHA256: p.Commit.SourceSetSHA256, PayloadSetSHA256: p.Commit.PayloadSetSHA256, PrivacySHA256: p.Commit.PrivacySHA256}
 	for _, input := range a.Inputs {
-		fact := SettledPrivacyInput{Hook: publicationHookFacts(input.HookObservations), Reference: input.Reference, Selection: input.Selection, FilterVersion: input.FilterVersion, AdapterVersion: input.AdapterVersion, SkillPolicy: input.SkillPolicy, PayloadKind: input.Payload.Kind, Stage: input.Payload.Stage, PayloadSHA256: payloadSetSHA([]PublicationSource{{Reference: input.Reference, Selection: input.Selection, Payload: input.Payload}})}
-		if input.Payload.Kind == "inline" {
-			fact.InlineSHA256 = publicationSHA256(input.Payload.Inline)
-			fact.InlineSize = len(input.Payload.Inline)
+		inlineSHA, inlineSize := "", 0
+		if input.Payload.Kind == PublicationInline {
+			inlineSHA = publicationSHA256(input.Payload.Inline)
+			inlineSize = len(input.Payload.Inline)
 		}
+		fact := SettledPrivacyInput{InlineSHA256: inlineSHA, InlineSize: inlineSize, Hook: publicationHookFacts(input.HookObservations), Reference: input.Reference, Selection: input.Selection, FilterVersion: input.FilterVersion, AdapterVersion: input.AdapterVersion, SkillPolicy: input.SkillPolicy, PayloadKind: input.Payload.Kind, Stage: input.Payload.Stage, PayloadSHA256: payloadSetSHA([]PublicationSource{{Reference: input.Reference, Selection: input.Selection, Payload: input.Payload}})}
 		projection.Inputs = append(projection.Inputs, fact)
 	}
 	projection.SHA256 = settledPrivacySHA(*projection)
@@ -130,10 +131,10 @@ func (s *Store) mintSettledPrivacy(p publishedState) (publishedState, error) {
 
 func (p SettledPrivacyPreparation) validate(published publishedState) error {
 	c := published.Commit
-	if c == nil || p.Version != 1 || p.SHA256 != settledPrivacySHA(p) || c.SettledPrivacySHA256 != p.SHA256 || c.PreparationSHA256 != p.OriginalPreparationSHA256 || p.Purpose != PublicationPrivacyRewrite || c.Purpose != p.Purpose || p.Kind != "privacy-committed" && p.Kind != "privacy-pending" && p.Kind != "privacy-pending-absent" || c.Predecessor != p.Predecessor || c.PredecessorSHA256 != p.PredecessorSHA256 || !validPublicationDigest(p.OriginMetadataSHA256) || !validPublicationDigest(p.OriginSetSHA256) || !validPublicationDigest(p.OriginalPreparationSHA256) || c.MetadataSHA256 != p.MetadataSHA256 || c.SourceSetSHA256 != p.SourceSetSHA256 || c.PayloadSetSHA256 != p.PayloadSetSHA256 || c.PrivacySHA256 != p.PrivacySHA256 || c.DestinationID != p.DestinationID || c.AdmissionContext != p.AdmissionContext || c.PolicyContext != p.PolicyContext || len(p.Inputs) == 0 || len(p.Inputs) > 65 || len(p.Inputs) != len(published.Payloads) {
+	if settledPrivacyCommitInvalid(p, c, published) {
 		return ErrDurableStorageRecovery
 	}
-	if p.Kind == "privacy-pending-absent" {
+	if p.Kind == PreparationPrivacyPendingAbsent {
 		if p.Predecessor != PredecessorAbsent || p.PredecessorSHA256 != "" || p.PreviousSetSHA256 != "" {
 			return ErrDurableStorageRecovery
 		}
@@ -144,7 +145,7 @@ func (p SettledPrivacyPreparation) validate(published publishedState) error {
 	if err := json.Unmarshal(published.MetadataBytes, &next); err != nil {
 		return err
 	}
-	if next.SessionID != p.SessionID || next.NativeSessionID != p.NativeSessionID || next.ProjectID != p.ProjectID || next.MachineID != p.MachineID || next.Harness != p.Harness || next.Origin != p.Origin || !sameOptionalTime(next.ImportedAt, p.ImportedAt) || next.StartedAtSource != p.StartedAtSource || next.PreviousGenerationID != p.PreviousGenerationID || !next.StartedAt.Equal(p.StartedAt) || publicationOwner(next, p.DestinationID, p.AdmissionContext) != p.OwnerSHA256 {
+	if settledPrivacyOwnerChanged(p, next) {
 		return ErrDurableStorageRecovery
 	}
 	receipts := make(map[int]PrivacySource, len(published.PrivacyReceipts))
@@ -156,52 +157,9 @@ func (p SettledPrivacyPreparation) validate(published publishedState) error {
 		receipts[receipt.InputIndex] = receipt
 		previous = receipt.InputIndex
 	}
-	for i, input := range p.Inputs {
-		output := published.Payloads[i]
-		if input.Reference.CompressedBytes <= 0 || !validSourceReference(input.Reference) || input.Selection != output.Selection || input.Selection.CapturedAt.IsZero() {
-			return ErrDurableStorageRecovery
-		}
-		binding := payloadBinding{Reference: input.Reference, Selection: input.Selection, Kind: input.PayloadKind, InlineSHA256: input.InlineSHA256, InlineSize: input.InlineSize, Stage: input.Stage}
-		switch input.PayloadKind {
-		case "inline":
-			if input.Stage != nil || input.InlineSize != input.Reference.CompressedBytes || input.InlineSHA256 != input.Reference.SHA256 {
-				return ErrDurableStorageRecovery
-			}
-		case "remote":
-			if input.Stage != nil || input.InlineSize != 0 || input.InlineSHA256 != "" {
-				return ErrDurableStorageRecovery
-			}
-		case "history-stage":
-			fake := PublicationSource{Reference: input.Reference, Selection: input.Selection, Payload: PublicationPayload{Kind: input.PayloadKind, Stage: input.Stage}}
-			if input.InlineSize != 0 || input.InlineSHA256 != "" || validatePublicationPayload(fake, next, p.DestinationID, p.AdmissionContext) != nil {
-				return ErrDurableStorageRecovery
-			}
-		default:
-			return ErrDurableStorageRecovery
-		}
-		raw, _ := json.Marshal([]payloadBinding{binding})
-		if input.PayloadSHA256 != publicationSHA256(append([]byte("payload-map/v1\x00"), raw...)) {
-			return ErrDurableStorageRecovery
-		}
-		if validatePublicationHookFacts(input.Hook, PreparationInput{Selection: input.Selection}, p.OwnerSHA256, p.DestinationID, p.AdmissionContext, p.PolicyContext) != nil {
-			return ErrDurableStorageRecovery
-		}
-		receipt, found := receipts[i]
-		if input.Hook != nil && (!found || !reflect.DeepEqual(receipt.Hook, input.Hook)) {
-			return ErrDurableStorageRecovery
-		}
-		if input.Reference != output.Reference && !found {
-			return ErrDurableStorageRecovery
-		}
-		if found && validateCoveredPrivacyFacts(receipt) != nil {
-			return ErrDurableStorageRecovery
-		}
-		if found && (receipt.Version != 1 || receipt.SHA256 != privacySourceSHA(receipt) || receipt.Previous != input.Reference || receipt.Next != output.Reference || receipt.Selection != input.Selection || receipt.SessionID != p.SessionID || receipt.NativeSessionID != p.NativeSessionID || receipt.ProjectID != p.ProjectID || receipt.MachineID != p.MachineID || receipt.Harness != p.Harness || receipt.Origin != p.Origin || !sameOptionalTime(receipt.ImportedAt, p.ImportedAt) || receipt.StartedAtSource != p.StartedAtSource || receipt.PreviousGenerationID != p.PreviousGenerationID || !receipt.StartedAt.Equal(p.StartedAt) || receipt.OwnerSHA256 != p.OwnerSHA256 || receipt.DestinationID != p.DestinationID || receipt.AdmissionContext != p.AdmissionContext || receipt.OriginMetadataSHA256 != p.OriginMetadataSHA256 || receipt.PreviousPolicy.FilterVersion != input.FilterVersion || receipt.PreviousPolicy.AdapterVersion != input.AdapterVersion || string(receipt.PreviousPolicy.SkillEvidence) != input.SkillPolicy || receipt.NextPolicy.Context() != p.PolicyContext || receipt.PreviousPolicy.validate() != nil || receipt.NextPolicy.validate() != nil) {
-			return ErrDurableStorageRecovery
-		}
-	}
-	return nil
+	return p.validateInputs(published, next, receipts)
 }
+
 func sameOptionalTime(a, b *time.Time) bool {
 	return a == nil && b == nil || a != nil && b != nil && a.Equal(*b)
 }
@@ -265,4 +223,66 @@ func (s *Store) validateSelectingPublishedBudgeted(p publishedState) error {
 	}
 	defer release()
 	return p.validateSelectingPublished()
+}
+
+func settledPrivacyOwnerChanged(p SettledPrivacyPreparation, next archive.Metadata) bool {
+	return next.SessionID != p.SessionID || next.NativeSessionID != p.NativeSessionID || next.ProjectID != p.ProjectID || next.MachineID != p.MachineID || next.Harness != p.Harness || next.Origin != p.Origin || !sameOptionalTime(next.ImportedAt, p.ImportedAt) || next.StartedAtSource != p.StartedAtSource || next.PreviousGenerationID != p.PreviousGenerationID || !next.StartedAt.Equal(p.StartedAt) || publicationOwner(next, p.DestinationID, p.AdmissionContext) != p.OwnerSHA256
+}
+
+func settledPrivacyReceiptChanged(receipt PrivacySource, input SettledPrivacyInput, output PublicationSource, p SettledPrivacyPreparation) bool {
+	return (receipt.Version != 1 || receipt.SHA256 != privacySourceSHA(receipt) || receipt.Previous != input.Reference || receipt.Next != output.Reference || receipt.Selection != input.Selection || receipt.SessionID != p.SessionID || receipt.NativeSessionID != p.NativeSessionID || receipt.ProjectID != p.ProjectID || receipt.MachineID != p.MachineID || receipt.Harness != p.Harness || receipt.Origin != p.Origin || !sameOptionalTime(receipt.ImportedAt, p.ImportedAt) || receipt.StartedAtSource != p.StartedAtSource || receipt.PreviousGenerationID != p.PreviousGenerationID || !receipt.StartedAt.Equal(p.StartedAt) || receipt.OwnerSHA256 != p.OwnerSHA256 || receipt.DestinationID != p.DestinationID || receipt.AdmissionContext != p.AdmissionContext || receipt.OriginMetadataSHA256 != p.OriginMetadataSHA256 || receipt.PreviousPolicy.FilterVersion != input.FilterVersion || receipt.PreviousPolicy.AdapterVersion != input.AdapterVersion || string(receipt.PreviousPolicy.SkillEvidence) != input.SkillPolicy || receipt.NextPolicy.Context() != p.PolicyContext || receipt.PreviousPolicy.validate() != nil || receipt.NextPolicy.validate() != nil)
+}
+
+func (p SettledPrivacyPreparation) validateInputs(published publishedState, next archive.Metadata, receipts map[int]PrivacySource) error {
+	for i, input := range p.Inputs {
+		output := published.Payloads[i]
+		if input.Reference.CompressedBytes <= 0 || !validSourceReference(input.Reference) || input.Selection != output.Selection || input.Selection.CapturedAt.IsZero() {
+			return ErrDurableStorageRecovery
+		}
+		binding := payloadBinding{Reference: input.Reference, Selection: input.Selection, Kind: input.PayloadKind, InlineSHA256: input.InlineSHA256, InlineSize: input.InlineSize, Stage: input.Stage}
+		switch input.PayloadKind {
+		case PublicationInline:
+			if input.Stage != nil || input.InlineSize != input.Reference.CompressedBytes || input.InlineSHA256 != input.Reference.SHA256 {
+				return ErrDurableStorageRecovery
+			}
+		case PublicationRemote:
+			if input.Stage != nil || input.InlineSize != 0 || input.InlineSHA256 != "" {
+				return ErrDurableStorageRecovery
+			}
+		case PublicationAdmissionStage:
+			return ErrDurableStorageRecovery
+		case PublicationHistoryStage:
+			fake := PublicationSource{Reference: input.Reference, Selection: input.Selection, Payload: PublicationPayload{Kind: input.PayloadKind, Stage: input.Stage}}
+			if input.InlineSize != 0 || input.InlineSHA256 != "" || validatePublicationPayload(fake, next, p.DestinationID, p.AdmissionContext) != nil {
+				return ErrDurableStorageRecovery
+			}
+		default:
+			return ErrDurableStorageRecovery
+		}
+		raw, _ := json.Marshal([]payloadBinding{binding})
+		if input.PayloadSHA256 != publicationSHA256(append([]byte("payload-map/v1\x00"), raw...)) {
+			return ErrDurableStorageRecovery
+		}
+		if validatePublicationHookFacts(input.Hook, PreparationInput{Selection: input.Selection}, p.OwnerSHA256, p.DestinationID, p.AdmissionContext, p.PolicyContext) != nil {
+			return ErrDurableStorageRecovery
+		}
+		receipt, found := receipts[i]
+		if input.Hook != nil && (!found || !reflect.DeepEqual(receipt.Hook, input.Hook)) {
+			return ErrDurableStorageRecovery
+		}
+		if input.Reference != output.Reference && !found {
+			return ErrDurableStorageRecovery
+		}
+		if found && validateCoveredPrivacyFacts(receipt) != nil {
+			return ErrDurableStorageRecovery
+		}
+		if found && settledPrivacyReceiptChanged(receipt, input, output, p) {
+			return ErrDurableStorageRecovery
+		}
+	}
+	return nil
+}
+
+func settledPrivacyCommitInvalid(p SettledPrivacyPreparation, c *PublicationCommit, published publishedState) bool {
+	return c == nil || p.Version != 1 || p.SHA256 != settledPrivacySHA(p) || c.SettledPrivacySHA256 != p.SHA256 || c.PreparationSHA256 != p.OriginalPreparationSHA256 || p.Purpose != PublicationPrivacyRewrite || c.Purpose != p.Purpose || p.Kind != PreparationPrivacyCommitted && p.Kind != PreparationPrivacyPending && p.Kind != PreparationPrivacyPendingAbsent || c.Predecessor != p.Predecessor || c.PredecessorSHA256 != p.PredecessorSHA256 || !validPublicationDigest(p.OriginMetadataSHA256) || !validPublicationDigest(p.OriginSetSHA256) || !validPublicationDigest(p.OriginalPreparationSHA256) || c.MetadataSHA256 != p.MetadataSHA256 || c.SourceSetSHA256 != p.SourceSetSHA256 || c.PayloadSetSHA256 != p.PayloadSetSHA256 || c.PrivacySHA256 != p.PrivacySHA256 || c.DestinationID != p.DestinationID || c.AdmissionContext != p.AdmissionContext || c.PolicyContext != p.PolicyContext || len(p.Inputs) == 0 || len(p.Inputs) > 65 || len(p.Inputs) != len(published.Payloads)
 }

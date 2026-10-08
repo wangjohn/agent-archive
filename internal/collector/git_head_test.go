@@ -158,7 +158,7 @@ func assertUnknownStopCommitRetained(t *testing.T, local *state.Store, remote *p
 		t.Fatal(err)
 	}
 	remote.puts = nil
-	for pass := 0; pass < 2; pass++ {
+	for pass := range 2 {
 		local, err = state.Open(local.Home())
 		if err != nil {
 			t.Fatal(err)

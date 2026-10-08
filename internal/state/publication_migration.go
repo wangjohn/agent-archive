@@ -33,7 +33,7 @@ type OrdinaryHistoryMigration struct {
 	PreviousRevisionID       string                     `json:"previous_revision_id"`
 	NextRevisionID           string                     `json:"next_revision_id"`
 	PreviousCapturedAt       time.Time                  `json:"previous_captured_at"`
-	Mode                     string                     `json:"mode"`
+	Mode                     OrdinaryMigrationMode      `json:"mode"`
 	CoveringSourceSHA256     string                     `json:"covering_source_sha256"`
 	RetainedPrior            *archive.RevisionReference `json:"retained_prior,omitempty"`
 	FilterVersion            string                     `json:"filter_version"`
@@ -61,10 +61,12 @@ func migrationSHA(r OrdinaryHistoryMigration) string {
 	raw, _ := json.Marshal(r)
 	return publicationSHA256(append([]byte("ordinary-history-migration/v1\x00"), raw...))
 }
+
 func bindingSHA(b *archive.CodexSourceBinding) string {
 	raw, _ := json.Marshal(b)
 	return publicationSHA256(append([]byte("physical-binding/v1\x00"), raw...))
 }
+
 func meaningfulSHA(ctx context.Context, b archive.SourceBundle, budget *agentapi.NativeReadBudget) (string, error) {
 	limit := int64(128 << 20)
 	if budget != nil {
@@ -113,7 +115,7 @@ func ValidateOrdinaryHistoryMigration(ctx context.Context, previousBody, nextBod
 	if err := json.Unmarshal(nextBody, &next); err != nil {
 		return invalid, err
 	}
-	if old.History != nil || next.History == nil || previous.History != nil || previous.SchemaVersion != archive.SourceSchemaVersion || candidate.History == nil || old.SessionID != registration.ArchiveSessionID || next.SessionID != old.SessionID || old.NativeSessionID != registration.NativeSessionID || next.NativeSessionID != old.NativeSessionID || old.ProjectID != registration.ProjectID || next.ProjectID != old.ProjectID || old.MachineID != next.MachineID || old.Harness != next.Harness || previousBinding.NativeThreadID != old.NativeSessionID || nextBinding.NativeThreadID != old.NativeSessionID || nextBinding.PhysicalRolloutID != next.History.CurrentRevision || previous.NativeSessionID != old.NativeSessionID || previous.ArchiveSessionID != old.SessionID || candidate.NativeSessionID != next.NativeSessionID || candidate.ArchiveSessionID != next.SessionID {
+	if ordinaryMigrationOwnershipChanged(old, next, previous, candidate, registration, previousBinding, nextBinding) {
 		return invalid, errors.New("ordinary history conversion changes frozen ownership")
 	}
 	oldSet, _, err := archive.PublicationIdentity(previousBody, registration.DestinationID, admission, policy, string(PublicationCapture))
@@ -133,23 +135,26 @@ func ValidateOrdinaryHistoryMigration(ctx context.Context, previousBody, nextBod
 	if err != nil {
 		return invalid, err
 	}
-	r := OrdinaryHistoryMigration{PreviousMetadata: previousBody, Version: 1, PreviousMetadataSHA256: publicationSHA256(previousBody), NextMetadataSHA256: publicationSHA256(nextBody), PreviousSetSHA256: oldSet, NextSetSHA256: newSet, PreviousSourceSHA256: old.SourceBundle.SHA256, NextSourceSHA256: next.SourceBundle.SHA256, OwnerSHA256: publicationOwner(next, registration.DestinationID, admission), DestinationID: registration.DestinationID, AdmissionContext: admission, PolicyContext: policy, PreviousBindingSHA256: bindingSHA(previousBinding), NextBindingSHA256: bindingSHA(nextBinding), PreviousRevisionID: previousBinding.PhysicalRolloutID, NextRevisionID: nextBinding.PhysicalRolloutID, PreviousCapturedAt: old.CapturedAt.UTC(), FilterVersion: previous.Capture.FilterVersion, AdapterName: previous.Capture.AdapterName, AdapterVersion: previous.Capture.AdapterVersion, SourceFormat: previous.Capture.SourceFormat, PreviousMeaningfulCount: len(left.NativeRecords), PreviousMeaningfulSHA256: leftSHA, CoveringMeaningfulSHA256: rightSHA}
+	var mode OrdinaryMigrationMode
+	var coveringSHA string
+	var retainedPrior *archive.RevisionReference
 	if previousBinding.PhysicalRolloutID == nextBinding.PhysicalRolloutID && previous.Capture.FilterVersion == candidate.Capture.FilterVersion && previous.Capture.AdapterVersion == candidate.Capture.AdapterVersion && previous.Capture.SourceFormat == candidate.Capture.SourceFormat && adapter.EvidenceExtends(left, right) {
-		r.Mode = "same-physical-covered"
-		r.CoveringSourceSHA256 = next.SourceBundle.SHA256
+		mode = MigrationSamePhysicalCovered
+		coveringSHA = next.SourceBundle.SHA256
 	} else {
-		r.Mode = "exact-prior-retained"
+		mode = MigrationExactPriorRetained
 		for _, ref := range next.History.Preserved {
 			if ref.RevisionID == previousBinding.PhysicalRolloutID && ref.Source == old.SourceBundle && ref.CapturedAt.Equal(old.CapturedAt) {
-				copy := ref
-				r.RetainedPrior = &copy
+				factCopy := ref
+				retainedPrior = &factCopy
 				break
 			}
 		}
-		if r.RetainedPrior == nil {
+		if retainedPrior == nil {
 			return invalid, errors.New("source2 conversion must preserve exact prior source and original age")
 		}
 	}
+	r := OrdinaryHistoryMigration{Mode: mode, CoveringSourceSHA256: coveringSHA, RetainedPrior: retainedPrior, PreviousMetadata: previousBody, Version: 1, PreviousMetadataSHA256: publicationSHA256(previousBody), NextMetadataSHA256: publicationSHA256(nextBody), PreviousSetSHA256: oldSet, NextSetSHA256: newSet, PreviousSourceSHA256: old.SourceBundle.SHA256, NextSourceSHA256: next.SourceBundle.SHA256, OwnerSHA256: publicationOwner(next, registration.DestinationID, admission), DestinationID: registration.DestinationID, AdmissionContext: admission, PolicyContext: policy, PreviousBindingSHA256: bindingSHA(previousBinding), NextBindingSHA256: bindingSHA(nextBinding), PreviousRevisionID: previousBinding.PhysicalRolloutID, NextRevisionID: nextBinding.PhysicalRolloutID, PreviousCapturedAt: old.CapturedAt.UTC(), FilterVersion: previous.Capture.FilterVersion, AdapterName: previous.Capture.AdapterName, AdapterVersion: previous.Capture.AdapterVersion, SourceFormat: previous.Capture.SourceFormat, PreviousMeaningfulCount: len(left.NativeRecords), PreviousMeaningfulSHA256: leftSHA, CoveringMeaningfulSHA256: rightSHA}
 	r.SHA256 = migrationSHA(r)
 	return ValidatedOrdinaryMigration{receipt: r}, nil
 }
@@ -158,10 +163,10 @@ func (r OrdinaryHistoryMigration) validate(old, next archive.Metadata, previousB
 	if len(r.PreviousMetadata) == 0 || len(r.PreviousMetadata) > 32<<20 || publicationSHA256(r.PreviousMetadata) != r.PreviousMetadataSHA256 {
 		return ErrDurableStorageRecovery
 	}
-	if r.Version != 1 || r.SHA256 != migrationSHA(r) || old.History != nil || next.History == nil || r.PreviousMetadataSHA256 != publicationSHA256(previousBody) || r.NextMetadataSHA256 != publicationSHA256(nextBody) || r.PreviousSourceSHA256 != old.SourceBundle.SHA256 || r.NextSourceSHA256 != next.SourceBundle.SHA256 || r.OwnerSHA256 != publicationOwner(next, destination, admission) || r.DestinationID != destination || r.AdmissionContext != admission || r.PolicyContext != policy || !r.PreviousCapturedAt.Equal(old.CapturedAt) || !validPublicationDigest(r.PreviousBindingSHA256) || !validPublicationDigest(r.NextBindingSHA256) {
+	if ordinaryMigrationBindingsChanged(r, old, next, previousBody, nextBody, destination, admission, policy) {
 		return ErrDurableStorageRecovery
 	}
-	if old.SessionID != next.SessionID || old.NativeSessionID != next.NativeSessionID || old.ProjectID != next.ProjectID || old.MachineID != next.MachineID || old.Harness != next.Harness || old.PreviousGenerationID != next.PreviousGenerationID || !old.StartedAt.Equal(next.StartedAt) || r.NextRevisionID != next.History.CurrentRevision || r.PreviousRevisionID == "" || r.PreviousMeaningfulCount < 0 || r.PreviousMeaningfulCount > archive.MaxHistoryRecords || !validPublicationDigest(r.PreviousMeaningfulSHA256) || !validPublicationDigest(r.CoveringMeaningfulSHA256) {
+	if ordinaryMigrationIdentityChanged(r, old, next) {
 		return ErrDurableStorageRecovery
 	}
 	oldSet, _, err := archive.PublicationIdentity(previousBody, destination, admission, policy, string(PublicationCapture))
@@ -173,11 +178,11 @@ func (r OrdinaryHistoryMigration) validate(old, next archive.Metadata, previousB
 		return errors.Join(ErrDurableStorageRecovery, err)
 	}
 	switch r.Mode {
-	case "same-physical-covered":
+	case MigrationSamePhysicalCovered:
 		if r.PreviousRevisionID != r.NextRevisionID || r.RetainedPrior != nil || r.CoveringSourceSHA256 != next.SourceBundle.SHA256 {
 			return ErrDurableStorageRecovery
 		}
-	case "exact-prior-retained":
+	case MigrationExactPriorRetained:
 		if r.RetainedPrior == nil || r.RetainedPrior.RevisionID != r.PreviousRevisionID || r.RetainedPrior.Source != old.SourceBundle || !r.RetainedPrior.CapturedAt.Equal(old.CapturedAt) {
 			return ErrDurableStorageRecovery
 		}
@@ -197,10 +202,23 @@ func (r OrdinaryHistoryMigration) validate(old, next archive.Metadata, previousB
 }
 
 // WithOrdinaryMigration carries only a factory-minted proof until it is frozen.
-func (p PendingPublication) WithOrdinaryMigration(proof ValidatedOrdinaryMigration) (PendingPublication, error) {
+func (owned *PendingPublication) WithOrdinaryMigration(proof ValidatedOrdinaryMigration) (PendingPublication, error) {
+	p := *owned
 	if proof.receipt.Version != 1 || proof.receipt.SHA256 != migrationSHA(proof.receipt) {
 		return p, ErrDurableStorageRecovery
 	}
 	p.migration = &proof
 	return p, nil
+}
+
+func ordinaryMigrationOwnershipChanged(old, next archive.Metadata, previous, candidate archive.SourceBundle, registration archive.SessionRegistration, previousBinding, nextBinding *archive.CodexSourceBinding) bool {
+	return old.History != nil || next.History == nil || previous.History != nil || previous.SchemaVersion != archive.SourceSchemaVersion || candidate.History == nil || old.SessionID != registration.ArchiveSessionID || next.SessionID != old.SessionID || old.NativeSessionID != registration.NativeSessionID || next.NativeSessionID != old.NativeSessionID || old.ProjectID != registration.ProjectID || next.ProjectID != old.ProjectID || old.MachineID != next.MachineID || old.Harness != next.Harness || previousBinding.NativeThreadID != old.NativeSessionID || nextBinding.NativeThreadID != old.NativeSessionID || nextBinding.PhysicalRolloutID != next.History.CurrentRevision || previous.NativeSessionID != old.NativeSessionID || previous.ArchiveSessionID != old.SessionID || candidate.NativeSessionID != next.NativeSessionID || candidate.ArchiveSessionID != next.SessionID
+}
+
+func ordinaryMigrationBindingsChanged(r OrdinaryHistoryMigration, old, next archive.Metadata, previousBody, nextBody []byte, destination, admission, policy string) bool {
+	return r.Version != 1 || r.SHA256 != migrationSHA(r) || old.History != nil || next.History == nil || r.PreviousMetadataSHA256 != publicationSHA256(previousBody) || r.NextMetadataSHA256 != publicationSHA256(nextBody) || r.PreviousSourceSHA256 != old.SourceBundle.SHA256 || r.NextSourceSHA256 != next.SourceBundle.SHA256 || r.OwnerSHA256 != publicationOwner(next, destination, admission) || r.DestinationID != destination || r.AdmissionContext != admission || r.PolicyContext != policy || !r.PreviousCapturedAt.Equal(old.CapturedAt) || !validPublicationDigest(r.PreviousBindingSHA256) || !validPublicationDigest(r.NextBindingSHA256)
+}
+
+func ordinaryMigrationIdentityChanged(r OrdinaryHistoryMigration, old, next archive.Metadata) bool {
+	return old.SessionID != next.SessionID || old.NativeSessionID != next.NativeSessionID || old.ProjectID != next.ProjectID || old.MachineID != next.MachineID || old.Harness != next.Harness || old.PreviousGenerationID != next.PreviousGenerationID || !old.StartedAt.Equal(next.StartedAt) || r.NextRevisionID != next.History.CurrentRevision || r.PreviousRevisionID == "" || r.PreviousMeaningfulCount < 0 || r.PreviousMeaningfulCount > archive.MaxHistoryRecords || !validPublicationDigest(r.PreviousMeaningfulSHA256) || !validPublicationDigest(r.CoveringMeaningfulSHA256)
 }

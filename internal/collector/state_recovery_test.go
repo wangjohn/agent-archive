@@ -179,6 +179,7 @@ func (s *sourceReadCounter) GetLimited(ctx context.Context, key string, limit in
 	}
 	return s.MemoryStore.GetLimited(ctx, key, limit)
 }
+
 func (s *sourceReadCounter) GetVersionedLimited(ctx context.Context, key string, limit int64) ([]byte, string, error) {
 	if key == s.key {
 		s.reads++

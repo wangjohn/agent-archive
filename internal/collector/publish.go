@@ -197,37 +197,8 @@ func (s *sessionScan) acknowledgePublicationReadback(pending state.PendingPublic
 	// reached storage, and failing it here, before it is saved, would upload
 	// it again on every pass (a ledger that no longer decodes did exactly
 	// that). A failure is reported once the publication is recorded.
-	var next archive.Metadata
-	if err := s.unmarshalRetained(pending.MetadataBytes, &next); err != nil {
+	if err := s.recordPublicationRetirement(pending); err != nil {
 		return outcomeSkipped, err
-	}
-	refs, err := next.SourceReferences()
-	if err != nil {
-		return outcomeSkipped, err
-	}
-	protected := map[string]bool{}
-	for _, ref := range refs {
-		protected[ref.Key] = true
-	}
-	if pending.History != nil {
-		for _, retired := range pending.History.Retired {
-			if err := s.local.RecordSupersededWithPrivacy(s.id(), retired.Reference.Key, retired.RetiredAt, retired.PrivacySensitive); err != nil {
-				return outcomeSkipped, fmt.Errorf("record retired revision cleanup: %w", err)
-			}
-		}
-	}
-	if previous, hadPrevious := s.published.LastPublishedSource(); hadPrevious && !protected[previous.Key] {
-		priorBundle, _, havePrior := s.published.LastPublished()
-		privacySensitive := havePrior && priorBundle.Capture.FilterVersion != pending.Bundle.Capture.FilterVersion
-		if err := s.local.RecordSupersededWithPrivacy(s.id(), previous.Key, s.now, privacySensitive); err != nil {
-			if privacySensitive {
-				// Keep the pending publication for another attempt. Saving the
-				// new published state here would lose the only retry path for
-				// this old-filter source, leaving it until session expiry.
-				return outcomeSkipped, fmt.Errorf("record privacy-sensitive predecessor: %w", err)
-			}
-			s.warn(fmt.Errorf("record superseded source for cleanup: %w", err))
-		}
 	}
 	closing, err := s.closePublicationReadback(pending)
 	if err != nil {
@@ -320,11 +291,13 @@ func (s *sessionScan) upload(pending state.PendingPublication) (*storage.Validat
 		var data []byte
 		var err error
 		switch source.Payload.Kind {
-		case "inline":
+		case state.PublicationInline:
 			data = source.Payload.Inline
-		case "remote":
+		case state.PublicationRemote:
 			data, err = s.historyGet(source.Reference.Key, int64(source.Reference.CompressedBytes))
-		case "history-stage":
+		case state.PublicationAdmissionStage:
+			return nil, nil, state.ErrDurableStorageRecovery
+		case state.PublicationHistoryStage:
 			stage := state.PendingSource{Reference: source.Reference, Name: source.Reference.SHA256 + ".gz"}
 			data, err = s.historyStage(stage)
 			if errors.Is(err, os.ErrNotExist) {
@@ -354,7 +327,7 @@ func (s *sessionScan) upload(pending state.PendingPublication) (*storage.Validat
 			return nil, nil, err
 		}
 		frame.resolved[index] = true
-		if source.Payload.Kind == "remote" {
+		if source.Payload.Kind == state.PublicationRemote {
 			data = nil
 		} // Exact read proof never supplies rewrite bytes.
 		return data, release, nil
@@ -513,5 +486,41 @@ func (s *sessionScan) bindPublicationContinuity(prior *state.PublicationPredeces
 		return errors.New("native retained comparator refused same revision continuation")
 	}
 	prior.SameRevisionContinuity = &state.PublicationContinuity{PreviousSourceSHA256: previous.SourceBundle.SHA256, NextSourceSHA256: pending.SourceSHA256}
+	return nil
+}
+
+func (s *sessionScan) recordPublicationRetirement(pending state.PendingPublication) error {
+	var next archive.Metadata
+	if err := s.unmarshalRetained(pending.MetadataBytes, &next); err != nil {
+		return err
+	}
+	refs, err := next.SourceReferences()
+	if err != nil {
+		return err
+	}
+	protected := map[string]bool{}
+	for _, ref := range refs {
+		protected[ref.Key] = true
+	}
+	if pending.History != nil {
+		for _, retired := range pending.History.Retired {
+			if err := s.local.RecordSupersededWithPrivacy(s.id(), retired.Reference.Key, retired.RetiredAt, retired.PrivacySensitive); err != nil {
+				return fmt.Errorf("record retired revision cleanup: %w", err)
+			}
+		}
+	}
+	if previous, hadPrevious := s.published.LastPublishedSource(); hadPrevious && !protected[previous.Key] {
+		priorBundle, _, havePrior := s.published.LastPublished()
+		privacySensitive := havePrior && priorBundle.Capture.FilterVersion != pending.Bundle.Capture.FilterVersion
+		if err := s.local.RecordSupersededWithPrivacy(s.id(), previous.Key, s.now, privacySensitive); err != nil {
+			if privacySensitive {
+				// Keep the pending publication for another attempt. Saving the
+				// new published state here would lose the only retry path for
+				// this old-filter source, leaving it until session expiry.
+				return fmt.Errorf("record privacy-sensitive predecessor: %w", err)
+			}
+			s.warn(fmt.Errorf("record superseded source for cleanup: %w", err))
+		}
+	}
 	return nil
 }

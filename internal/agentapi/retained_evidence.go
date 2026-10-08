@@ -45,13 +45,20 @@ func retainedRevisionID(b archive.SourceBundle) string {
 	}
 	return b.NativeSessionID
 }
+
 func retainedRevisionOrdinal(b archive.SourceBundle, i int) uint64 {
 	if b.History != nil {
 		return b.Ordinals[i]
 	}
+	// Both callers supply a slice index. Refuse negative input explicitly so
+	// conversion cannot wrap; every nonnegative int fits in uint64.
+	if i < 0 {
+		return 0
+	}
 	return uint64(i)
 }
 
+// OwnedRevisionProjection selects meaningful owned records for native continuity comparison.
 func OwnedRevisionProjection(evidence RevisionEvidence, bundle archive.SourceBundle) archive.SourceBundle {
 	records := make([]map[string]any, 0, len(bundle.NativeRecords))
 	for i, record := range bundle.NativeRecords {

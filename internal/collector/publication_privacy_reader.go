@@ -13,6 +13,7 @@ type publicationPrivacyReader struct{ scan *sessionScan }
 func (r publicationPrivacyReader) NativeReadBudget() *agentapi.NativeReadBudget {
 	return r.scan.readBudget()
 }
+
 func (r publicationPrivacyReader) ReadPublicationPrivacySource(ctx context.Context, input state.PreparationInput) ([]byte, func(), error) {
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err

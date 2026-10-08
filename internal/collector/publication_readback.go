@@ -63,6 +63,7 @@ func (s publicationTransactionStore) GetLimited(ctx context.Context, key string,
 	}
 	return s.scan.historyGet(key, limit)
 }
+
 func (s publicationTransactionStore) GetVersionedLimited(ctx context.Context, key string, limit int64) ([]byte, string, error) {
 	return s.scan.historyGetRevision(ctx, key, limit)
 }
@@ -113,7 +114,7 @@ type publicationClosingReadback struct {
 }
 
 func (s *sessionScan) closePublicationReadback(p state.PendingPublication) (*publicationClosingReadback, error) {
-	if s.publicationAttempt == nil || p.Commit == nil || s.publicationAttempt.verifiedCommit == nil || *s.publicationAttempt.verifiedCommit != *p.Commit || s.publicationAttempt.verifiedKey != p.MetadataKey || p.Phase != "ready" || p.ValidatePublication() != nil {
+	if s.publicationAttempt == nil || p.Commit == nil || s.publicationAttempt.verifiedCommit == nil || *s.publicationAttempt.verifiedCommit != *p.Commit || s.publicationAttempt.verifiedKey != p.MetadataKey || p.Phase != state.PublicationReady || p.ValidatePublication() != nil {
 		return nil, state.ErrDurableStorageRecovery
 	}
 	if err := s.ctx.Err(); err != nil {
@@ -131,12 +132,15 @@ func (s *sessionScan) closePublicationReadback(p state.PendingPublication) (*pub
 	}
 	return &publicationClosingReadback{scan: s, frame: s.publicationAttempt, key: p.MetadataKey, commit: *p.Commit}, nil
 }
+
 func (r *publicationClosingReadback) consume(s *sessionScan, p state.PendingPublication) error {
 	return r.consumeSelection(s, p, false)
 }
+
 func (r *publicationClosingReadback) consumeBaselineOwed(s *sessionScan, p state.PendingPublication) error {
 	return r.consumeSelection(s, p, true)
 }
+
 func (r *publicationClosingReadback) consumeSelection(s *sessionScan, p state.PendingPublication, baseline bool) error {
 	if r == nil || r.consumed || r.scan != s || r.frame == nil || r.frame != s.publicationAttempt || p.Commit == nil || r.key != p.MetadataKey || r.commit != *p.Commit {
 		return storage.ErrPublicationConflict
@@ -178,8 +182,10 @@ func (r *publicationClosingReadback) consumeSelection(s *sessionScan, p state.Pe
 	return nil
 }
 
-var _ storage.LimitedGetter = publicationTransactionStore{}
-var _ storage.LimitedVersionedGetter = publicationTransactionStore{}
+var (
+	_ storage.LimitedGetter          = publicationTransactionStore{}
+	_ storage.LimitedVersionedGetter = publicationTransactionStore{}
+)
 
 func (s publicationTransactionStore) ValidatePublicationPosition(ctx context.Context, key string, raw []byte) error {
 	if err := ctx.Err(); err != nil {

@@ -67,40 +67,12 @@ func (s *sessionScan) freezeRevisionPublication(p *state.PendingPublication) err
 		history.Sources = append(history.Sources, stage)
 	}
 	history.Inputs = append(history.Inputs, state.HistoryInput{Reference: p.SourceReference(), RevisionID: s.revisions.Current, CapturedAt: p.Bundle.Capture.CapturedAt, FilterVersion: p.Bundle.Capture.FilterVersion, SourceSchemaVersion: p.Bundle.SchemaVersion})
-	inputs := s.revisions.historyInputs()
-	for i := range final.History.Preserved {
-		revision := &final.History.Preserved[i]
-		if revision.FilterVersion == "" || revision.SourceSchemaVersion == 0 {
-			raw, err := s.historyGet(revision.Source.Key, int64(revision.Source.CompressedBytes))
-			if err != nil {
-				return err
-			}
-			bundle, err := s.decodeRevision(final, revision.RevisionID, raw)
-			if err != nil {
-				return err
-			}
-			revision.FilterVersion, revision.SourceSchemaVersion = bundle.Capture.FilterVersion, bundle.SchemaVersion
-		}
-		inputs[i].FilterVersion, inputs[i].SourceSchemaVersion = revision.FilterVersion, revision.SourceSchemaVersion
-		history.Inputs = append(history.Inputs, inputs[i])
+	if err := s.freezePreservedHistoryInputs(&final, history); err != nil {
+		return err
 	}
 	if found {
-		refs, err := previous.SourceReferences()
-		if err != nil {
+		if err := freezeRetiredHistorySources(previous, final, history); err != nil {
 			return err
-		}
-		finalRefs, err := final.SourceReferences()
-		if err != nil {
-			return err
-		}
-		protected := map[archive.SourceReference]bool{}
-		for _, ref := range finalRefs {
-			protected[ref] = true
-		}
-		for _, ref := range refs {
-			if !protected[ref] {
-				history.Retired = append(history.Retired, state.RetiredSource{Reference: ref})
-			}
 		}
 	}
 	p.MetadataBytes, err = s.marshalRetained(final)
@@ -258,4 +230,46 @@ func (s *sessionScan) reactivatedRevision(candidate archive.SourceBundle) (archi
 		}
 	}
 	return archive.SourceBundle{}, false, nil
+}
+
+func (s *sessionScan) freezePreservedHistoryInputs(final *archive.Metadata, history *state.PendingHistory) error {
+	inputs := s.revisions.historyInputs()
+	for i := range final.History.Preserved {
+		revision := &final.History.Preserved[i]
+		if revision.FilterVersion == "" || revision.SourceSchemaVersion == 0 {
+			raw, err := s.historyGet(revision.Source.Key, int64(revision.Source.CompressedBytes))
+			if err != nil {
+				return err
+			}
+			bundle, err := s.decodeRevision(*final, revision.RevisionID, raw)
+			if err != nil {
+				return err
+			}
+			revision.FilterVersion, revision.SourceSchemaVersion = bundle.Capture.FilterVersion, bundle.SchemaVersion
+		}
+		inputs[i].FilterVersion, inputs[i].SourceSchemaVersion = revision.FilterVersion, revision.SourceSchemaVersion
+		history.Inputs = append(history.Inputs, inputs[i])
+	}
+	return nil
+}
+
+func freezeRetiredHistorySources(previous, final archive.Metadata, history *state.PendingHistory) error {
+	refs, err := previous.SourceReferences()
+	if err != nil {
+		return err
+	}
+	finalRefs, err := final.SourceReferences()
+	if err != nil {
+		return err
+	}
+	protected := map[archive.SourceReference]bool{}
+	for _, ref := range finalRefs {
+		protected[ref] = true
+	}
+	for _, ref := range refs {
+		if !protected[ref] {
+			history.Retired = append(history.Retired, state.RetiredSource{Reference: ref})
+		}
+	}
+	return nil
 }

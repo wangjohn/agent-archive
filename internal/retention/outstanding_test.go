@@ -153,7 +153,7 @@ func TestExpiryDeferralMatchesTheRuleBeforeOutstanding(t *testing.T) {
 					if err := local.SaveRegistration(reg); err != nil {
 						t.Fatal(err)
 					}
-					bundle := archive.SourceBundle{Capture: archive.SourceCapture{Harness: reg.Harness, CapturedAt: t0}}
+					var bundle archive.SourceBundle
 					switch capture {
 					case "":
 					case state.CacheStatusPublished, state.CacheStatusRateLimited:

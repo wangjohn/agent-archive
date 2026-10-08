@@ -127,7 +127,7 @@ func TestRunHistoryPreparationCheckpointFailureKeepsPriorDescriptor(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	pending = state.PendingPublication{Bundle: pending.Bundle, SourceKey: metadata.SourceBundle.Key, SourceSHA256: metadata.SourceBundle.SHA256, SourceBytes: currentBytes, MetadataKey: pending.MetadataKey, MetadataBytes: pending.MetadataBytes, ReadyAt: pending.ReadyAt, SkillEvidence: pending.SkillEvidence, History: &state.PendingHistory{Version: 1, Preparing: true, Inputs: pending.History.Inputs, Sources: pending.History.Sources, FilterVersion: archive.FilterVersion, AdapterVersion: pending.Bundle.Capture.AdapterVersion}}
+	pending = state.PendingPublication{Bundle: pending.Bundle, SourceKey: metadata.SourceBundle.Key, SourceSHA256: metadata.SourceBundle.SHA256, SourceBytes: currentBytes, MetadataKey: pending.MetadataKey, MetadataBytes: pending.MetadataBytes, ReadyAt: pending.ReadyAt, SkillEvidence: pending.SkillEvidence, History: &state.PendingHistory{Version: 1, Preparing: true, Inputs: pending.History.Inputs, FilterVersion: archive.FilterVersion, AdapterVersion: pending.Bundle.Capture.AdapterVersion}}
 	// A fresh disposable root represents the legacy producer's original
 	// descriptor. The prior fixture's protocol2 crash links are not its proof.
 	originalLocal := scan.local
@@ -142,7 +142,6 @@ func TestRunHistoryPreparationCheckpointFailureKeepsPriorDescriptor(t *testing.T
 	if err := fresh.SaveRegistration(scan.reg); err != nil {
 		t.Fatal(err)
 	}
-	pending.History.Sources = nil
 	for _, originalInput := range pending.History.Inputs {
 		raw, err := originalLocal.ReadPendingSource(scan.id(), state.PendingSource{Reference: originalInput.Reference, Name: originalInput.Reference.SHA256 + ".gz"})
 		if err != nil {

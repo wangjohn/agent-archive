@@ -22,6 +22,8 @@ type PublicationHookFacts struct {
 	BodySHA256       string    `json:"body_sha256"`
 	BodySize         int       `json:"body_size"`
 }
+
+// PublicationHookObservations owns one frozen current-revision hook body and its closed target facts.
 type PublicationHookObservations struct {
 	Facts PublicationHookFacts `json:"facts"`
 	Body  []byte               `json:"body"`
@@ -65,15 +67,17 @@ func FreezePublicationHookObservations(ctx context.Context, p *PendingPublicatio
 	p.hookObservations = &PublicationHookObservations{Facts: PublicationHookFacts{Version: 1, OwnerSHA256: publicationOwner(metadata, destination, admission), RevisionID: revision, CapturedAt: metadata.CapturedAt.UTC(), DestinationID: destination, AdmissionContext: admission, PolicyContext: policy, BodySHA256: publicationSHA256(body), BodySize: len(body)}, Body: body}
 	return nil
 }
+
 func validatePublicationHookFacts(h *PublicationHookFacts, input PreparationInput, owner, destination, admission, policy string) error {
 	if h == nil {
 		return nil
 	}
-	if h.Version != 1 || input.Selection.Role != "current" || h.OwnerSHA256 != owner || h.RevisionID != input.Selection.RevisionID || !h.CapturedAt.Equal(input.Selection.CapturedAt) || h.DestinationID != destination || h.AdmissionContext != admission || h.PolicyContext != policy || h.BodySize <= 0 || h.BodySize > 32<<20 || !validPublicationDigest(h.BodySHA256) {
+	if h.Version != 1 || input.Selection.Role != PublicationCurrent || h.OwnerSHA256 != owner || h.RevisionID != input.Selection.RevisionID || !h.CapturedAt.Equal(input.Selection.CapturedAt) || h.DestinationID != destination || h.AdmissionContext != admission || h.PolicyContext != policy || h.BodySize <= 0 || h.BodySize > 32<<20 || !validPublicationDigest(h.BodySHA256) {
 		return ErrDurableStorageRecovery
 	}
 	return nil
 }
+
 func publicationHookFacts(h *PublicationHookObservations) *PublicationHookFacts {
 	if h == nil {
 		return nil

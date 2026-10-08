@@ -274,8 +274,9 @@ func (s *Store) CheckDurableSessionRead(id string) error {
 }
 
 type publicationReadOwner struct {
-	registration       archive.SessionRegistration
-	machine, admission string
+	registration archive.SessionRegistration
+	machine      string
+	admission    string
 }
 
 // CheckPublicationSessionRead validates owned publication replay only. Generic
@@ -285,7 +286,7 @@ func (s *Store) CheckPublicationSessionRead(reg archive.SessionRegistration, mac
 }
 
 func (s *Store) checkDurableSessionRead(id string, owner *publicationReadOwner) (err error) {
-	if !safeFileComponent(id) || len(id) > 250 || strings.IndexFunc(id, unicode.IsControl) >= 0 {
+	if unsafeDurableSessionID(id) {
 		return ErrDurableStorageRecovery
 	}
 	home, err := local.OpenRootedHome(s.home)
@@ -305,17 +306,8 @@ func (s *Store) checkDurableSessionRead(id string, owner *publicationReadOwner) 
 	if err != nil {
 		return err
 	}
-	info, receiptErr := home.Root.Lstat(filepath.Join(generationRecoveryDir, id+".json"))
-	if receiptErr == nil {
-		if !found || !info.Mode().IsRegular() {
-			return ErrDurableStorageRecovery
-		}
-		complete, err := s.completedGenerationReceipt(home, id)
-		if err != nil || !complete {
-			return errors.Join(ErrDurableStorageRecovery, err)
-		}
-	} else if !errors.Is(receiptErr, os.ErrNotExist) {
-		return errors.Join(ErrDurableStorageRecovery, receiptErr)
+	if err := s.validateDurableReadReceipt(home, id, found); err != nil {
+		return err
 	}
 	evidence, err := rootHasEntries(home.Root, filepath.Join("publication-evidence", id))
 	if err != nil || evidence && owner == nil {
@@ -340,33 +332,8 @@ func (s *Store) checkDurableSessionRead(id string, owner *publicationReadOwner) 
 	}
 
 	if history || present || evidence {
-		// This guard discards the validated transaction; its decoded inputs
-		// must not accumulate on the caller's existing ledger.
-		scratch, closeScratch := s.WithReadBudget(s.durableContext(), s.resourceBudget)
-		var pending PendingPublication
-		var readable bool
-		var readErr error
-		if owner != nil {
-			pending, readable, readErr = scratch.LoadPublicationPending(id)
-			if readErr == nil && readable && pending.JournalVersion == 2 {
-				var metadata archive.Metadata
-				readErr = scratch.unmarshalOwned(pending.MetadataBytes, &metadata)
-				reg := owner.registration
-				origin := reg.Origin
-				if origin == archive.SessionOriginHook {
-					origin = ""
-				}
-				if readErr == nil && (metadata.SessionID != reg.ArchiveSessionID || metadata.NativeSessionID != reg.NativeSessionID || metadata.ProjectID != reg.ProjectID || metadata.Harness.Name != reg.Harness.Name || metadata.PreviousGenerationID != reg.PreviousGenerationID || !metadata.StartedAt.Equal(reg.SessionStartedAt) || metadata.Origin != origin || owner.machine != "" && metadata.MachineID != owner.machine || pending.Preparation == nil || pending.Preparation.DestinationID != reg.DestinationID || pending.Preparation.AdmissionContext != owner.admission) {
-					readErr = ErrDurableStorageRecovery
-				}
-			}
-		} else {
-			pending, readable, readErr = scratch.LoadPending(id)
-		}
-		missingHistory := history && pending.History == nil
-		closeScratch()
-		if readErr != nil || !readable || missingHistory {
-			return errors.Join(ErrDurableStorageRecovery, readErr)
+		if err := s.validateDurableReadPending(id, history, owner); err != nil {
+			return err
 		}
 	}
 	return s.durableContext().Err()
@@ -375,3 +342,59 @@ func (s *Store) checkDurableSessionRead(id string, owner *publicationReadOwner) 
 // CheckDurableReadRoots refuses anonymous recovery work before native content is read.
 // It reuses bounded observations, never ownership or cleanup authority.
 func (s *Store) CheckDurableReadRoots() error { _, err := s.inspectDurableReadRoots(); return err }
+
+func publicationReadOwnerChanged(metadata archive.Metadata, reg archive.SessionRegistration, origin archive.SessionOrigin, owner *publicationReadOwner, pending PendingPublication) bool {
+	return (metadata.SessionID != reg.ArchiveSessionID || metadata.NativeSessionID != reg.NativeSessionID || metadata.ProjectID != reg.ProjectID || metadata.Harness.Name != reg.Harness.Name || metadata.PreviousGenerationID != reg.PreviousGenerationID || !metadata.StartedAt.Equal(reg.SessionStartedAt) || metadata.Origin != origin || owner.machine != "" && metadata.MachineID != owner.machine || pending.Preparation == nil || pending.Preparation.DestinationID != reg.DestinationID || pending.Preparation.AdmissionContext != owner.admission)
+}
+
+func (s *Store) validateDurableReadPending(id string, history bool, owner *publicationReadOwner) error {
+	// This guard discards the validated transaction; its decoded inputs
+	// must not accumulate on the caller's existing ledger.
+	scratch, closeScratch := s.WithReadBudget(s.durableContext(), s.resourceBudget)
+	var pending PendingPublication
+	var readable bool
+	var readErr error
+	if owner != nil {
+		pending, readable, readErr = scratch.LoadPublicationPending(id)
+		if readErr == nil && readable && pending.JournalVersion == 2 {
+			var metadata archive.Metadata
+			readErr = scratch.unmarshalOwned(pending.MetadataBytes, &metadata)
+			reg := owner.registration
+			origin := reg.Origin
+			if origin == archive.SessionOriginHook {
+				origin = ""
+			}
+			if readErr == nil && publicationReadOwnerChanged(metadata, reg, origin, owner, pending) {
+				readErr = ErrDurableStorageRecovery
+			}
+		}
+	} else {
+		pending, readable, readErr = scratch.LoadPending(id)
+	}
+	missingHistory := history && pending.History == nil
+	closeScratch()
+	if readErr != nil || !readable || missingHistory {
+		return errors.Join(ErrDurableStorageRecovery, readErr)
+	}
+	return nil
+}
+
+func unsafeDurableSessionID(id string) bool {
+	return !safeFileComponent(id) || len(id) > 250 || strings.IndexFunc(id, unicode.IsControl) >= 0
+}
+
+func (s *Store) validateDurableReadReceipt(home *local.RootedHome, id string, found bool) error {
+	info, receiptErr := home.Root.Lstat(filepath.Join(generationRecoveryDir, id+".json"))
+	if receiptErr == nil {
+		if !found || !info.Mode().IsRegular() {
+			return ErrDurableStorageRecovery
+		}
+		complete, err := s.completedGenerationReceipt(home, id)
+		if err != nil || !complete {
+			return errors.Join(ErrDurableStorageRecovery, err)
+		}
+	} else if !errors.Is(receiptErr, os.ErrNotExist) {
+		return errors.Join(ErrDurableStorageRecovery, receiptErr)
+	}
+	return nil
+}

@@ -11,35 +11,43 @@ import (
 
 // PublicationSelection binds the payload to its exact metadata role and age.
 type PublicationSelection struct {
-	Role                string    `json:"role"`
-	RevisionID          string    `json:"revision_id,omitempty"`
-	CapturedAt          time.Time `json:"captured_at"`
-	SourceSchemaVersion int       `json:"source_schema_version"`
+	Role                PublicationRole `json:"role"`
+	RevisionID          string          `json:"revision_id,omitempty"`
+	CapturedAt          time.Time       `json:"captured_at"`
+	SourceSchemaVersion int             `json:"source_schema_version"`
 }
 
 // ImmutableStageHandle has no caller-selected filesystem path.
 type ImmutableStageHandle struct {
-	Version          int                  `json:"version"`
-	Kind             string               `json:"kind"`
-	Namespace        string               `json:"namespace"`
-	SessionID        string               `json:"session_id"`
-	OwnerSHA256      string               `json:"owner_sha256"`
-	DestinationID    string               `json:"destination_id"`
-	AdmissionContext string               `json:"admission_context"`
-	SourceSHA256     string               `json:"source_sha256"`
-	CompressedBytes  int                  `json:"compressed_bytes"`
-	Selection        PublicationSelection `json:"selection"`
+	Version          int                    `json:"version"`
+	Kind             PublicationPayloadKind `json:"kind"`
+	Namespace        string                 `json:"namespace"`
+	SessionID        string                 `json:"session_id"`
+	OwnerSHA256      string                 `json:"owner_sha256"`
+	DestinationID    string                 `json:"destination_id"`
+	AdmissionContext string                 `json:"admission_context"`
+	SourceSHA256     string                 `json:"source_sha256"`
+	CompressedBytes  int                    `json:"compressed_bytes"`
+	Selection        PublicationSelection   `json:"selection"`
 }
 
 // PublicationPayload is the closed single source-byte authority.
 type PublicationPayload struct {
-	Kind   string                `json:"kind"`
-	Inline []byte                `json:"inline,omitempty"`
-	Stage  *ImmutableStageHandle `json:"stage,omitempty"`
+	Kind   PublicationPayloadKind `json:"kind"`
+	Inline []byte                 `json:"inline,omitempty"`
+	Stage  *ImmutableStageHandle  `json:"stage,omitempty"`
 }
 
 func publicationOwner(m archive.Metadata, destination, admission string) string {
-	b, _ := json.Marshal(struct{ Session, Native, Project, Machine, Harness, Destination, Admission string }{m.SessionID, m.NativeSessionID, m.ProjectID, m.MachineID, m.Harness.Name, destination, admission})
+	b, _ := json.Marshal(struct {
+		Session     string `json:"Session"`
+		Native      string `json:"Native"`
+		Project     string `json:"Project"`
+		Machine     string `json:"Machine"`
+		Harness     string `json:"Harness"`
+		Destination string `json:"Destination"`
+		Admission   string `json:"Admission"`
+	}{m.SessionID, m.NativeSessionID, m.ProjectID, m.MachineID, m.Harness.Name, destination, admission})
 	return publicationSHA256(append([]byte("publication-owner/v1\x00"), b...))
 }
 
@@ -61,54 +69,48 @@ func selectedPublicationSources(p PendingPublication, destination, admission str
 	}
 	out := make([]PublicationSource, 0, len(refs))
 	for i, ref := range refs {
-		selection := PublicationSelection{Role: "current", CapturedAt: m.CapturedAt.UTC(), SourceSchemaVersion: p.Bundle.SchemaVersion}
+		revision := ""
 		if m.History != nil {
-			selection.RevisionID = m.History.CurrentRevision
+			revision = m.History.CurrentRevision
 		}
+		selection := PublicationSelection{Role: PublicationCurrent, RevisionID: revision, CapturedAt: m.CapturedAt.UTC(), SourceSchemaVersion: p.Bundle.SchemaVersion}
 		if i > 0 {
 			r := m.History.Preserved[i-1]
-			selection = PublicationSelection{Role: "preserved", RevisionID: r.RevisionID, CapturedAt: r.CapturedAt.UTC(), SourceSchemaVersion: r.SourceSchemaVersion}
+			selection = PublicationSelection{Role: PublicationPreserved, RevisionID: r.RevisionID, CapturedAt: r.CapturedAt.UTC(), SourceSchemaVersion: r.SourceSchemaVersion}
 		}
 		// Legacy metadata may omit a preserved source's producer schema. The
 		// owning preparation has already decoded each exact input; bind that
 		// provenance before constructing its handle, never change only one copy.
-		if p.History != nil {
-			for _, input := range p.History.Inputs {
-				if input.Reference != ref {
-					continue
-				}
-				if input.RevisionID != selection.RevisionID || !input.CapturedAt.Equal(selection.CapturedAt) || selection.SourceSchemaVersion != 0 && input.SourceSchemaVersion != selection.SourceSchemaVersion {
-					return nil, errors.New("frozen history input disagrees with selected provenance")
-				}
-				selection.SourceSchemaVersion = input.SourceSchemaVersion
-			}
+		selection, err = selectedHistoryProvenance(p.History, ref, selection)
+		if err != nil {
+			return nil, err
 		}
-		source := PublicationSource{Reference: ref, Selection: selection, Payload: PublicationPayload{Kind: "remote"}}
+		payload := PublicationPayload{Kind: PublicationRemote}
 		if previous, ok := prior[ref.Key]; ok {
 			if previous.Reference != ref {
 				return nil, errors.New("payload reference changed")
 			}
-			source.Payload = previous.Payload
-			if source.Payload.Kind == "" && len(previous.Bytes) > 0 {
-				source.Payload = PublicationPayload{Kind: "inline", Inline: previous.Bytes}
+			payload = previous.Payload
+			if payload.Kind == "" && len(previous.Bytes) > 0 {
+				payload = PublicationPayload{Kind: PublicationInline, Inline: previous.Bytes}
 			}
 			delete(prior, ref.Key)
 		}
 		if i == 0 && len(p.SourceBytes) > 0 {
-			source.Payload = PublicationPayload{Kind: "inline", Inline: p.SourceBytes}
+			payload = PublicationPayload{Kind: PublicationInline, Inline: p.SourceBytes}
 		}
-		if p.History != nil && !(i == 0 && len(p.SourceBytes) > 0) {
+		if p.History != nil && (i != 0 || len(p.SourceBytes) == 0) {
 			for _, stage := range p.History.Sources {
 				if stage.Reference == ref {
-					source.Payload = PublicationPayload{Kind: "history-stage", Stage: &ImmutableStageHandle{Version: 1, Kind: "history-stage", Namespace: "session-pending-sources", SessionID: m.SessionID, OwnerSHA256: publicationOwner(m, destination, admission), DestinationID: destination, AdmissionContext: admission, SourceSHA256: ref.SHA256, CompressedBytes: ref.CompressedBytes, Selection: selection}}
+					payload = PublicationPayload{Kind: PublicationHistoryStage, Stage: &ImmutableStageHandle{Version: 1, Kind: PublicationHistoryStage, Namespace: "session-pending-sources", SessionID: m.SessionID, OwnerSHA256: publicationOwner(m, destination, admission), DestinationID: destination, AdmissionContext: admission, SourceSHA256: ref.SHA256, CompressedBytes: ref.CompressedBytes, Selection: selection}}
 					break
 				}
 			}
 		}
-		if source.Payload.Kind == "" {
-			source.Payload.Kind = "remote"
+		if payload.Kind == "" {
+			payload.Kind = PublicationRemote
 		}
-		out = append(out, source)
+		out = append(out, PublicationSource{Reference: ref, Selection: selection, Payload: payload})
 	}
 	for _, unselected := range prior {
 		known, retired := false, false
@@ -131,20 +133,20 @@ func selectedPublicationSources(p PendingPublication, destination, admission str
 func validatePublicationPayload(source PublicationSource, m archive.Metadata, destination, admission string) error {
 	p := source.Payload
 	switch p.Kind {
-	case "inline":
+	case PublicationInline:
 		if p.Stage != nil || len(p.Inline) != source.Reference.CompressedBytes || publicationSHA256(p.Inline) != source.Reference.SHA256 {
 			return errors.New("inline publication checksum or union mismatch")
 		}
-	case "remote":
+	case PublicationRemote:
 		if p.Stage != nil || len(p.Inline) != 0 {
 			return errors.New("remote publication union mismatch")
 		}
-	case "history-stage":
+	case PublicationHistoryStage:
 		h := p.Stage
 		if len(p.Inline) != 0 || h == nil || h.Version != 1 || h.Kind != p.Kind || h.Namespace != "session-pending-sources" || h.SessionID != m.SessionID || h.OwnerSHA256 != publicationOwner(m, destination, admission) || h.DestinationID != destination || h.AdmissionContext != admission || h.SourceSHA256 != source.Reference.SHA256 || h.CompressedBytes != source.Reference.CompressedBytes || h.Selection != source.Selection {
 			return errors.New("history stage authority mismatch")
 		}
-	case "admission-stage":
+	case PublicationAdmissionStage:
 		return errors.New("admission stage publication authority is unavailable")
 	default:
 		return fmt.Errorf("unsupported publication payload kind %q", p.Kind)
@@ -153,24 +155,39 @@ func validatePublicationPayload(source PublicationSource, m archive.Metadata, de
 }
 
 type payloadBinding struct {
-	Reference    archive.SourceReference
-	Selection    PublicationSelection
-	Kind         string
-	InlineSHA256 string
-	InlineSize   int
-	Stage        *ImmutableStageHandle
+	Reference    archive.SourceReference `json:"Reference"`
+	Selection    PublicationSelection    `json:"Selection"`
+	Kind         PublicationPayloadKind  `json:"Kind"`
+	InlineSHA256 string                  `json:"InlineSHA256"`
+	InlineSize   int                     `json:"InlineSize"`
+	Stage        *ImmutableStageHandle   `json:"Stage"`
 }
 
 func payloadSetSHA(sources []PublicationSource) string {
 	bindings := make([]payloadBinding, len(sources))
 	for i, s := range sources {
-		b := payloadBinding{Reference: s.Reference, Selection: s.Selection, Kind: s.Payload.Kind, Stage: s.Payload.Stage}
-		if s.Payload.Kind == "inline" {
-			b.InlineSHA256 = publicationSHA256(s.Payload.Inline)
-			b.InlineSize = len(s.Payload.Inline)
+		inlineSHA, inlineSize := "", 0
+		if s.Payload.Kind == PublicationInline {
+			inlineSHA = publicationSHA256(s.Payload.Inline)
+			inlineSize = len(s.Payload.Inline)
 		}
-		bindings[i] = b
+		bindings[i] = payloadBinding{Reference: s.Reference, Selection: s.Selection, Kind: s.Payload.Kind, Stage: s.Payload.Stage, InlineSHA256: inlineSHA, InlineSize: inlineSize}
 	}
 	raw, _ := json.Marshal(bindings)
 	return publicationSHA256(append([]byte("payload-map/v1\x00"), raw...))
+}
+
+func selectedHistoryProvenance(history *PendingHistory, ref archive.SourceReference, selection PublicationSelection) (PublicationSelection, error) {
+	if history != nil {
+		for _, input := range history.Inputs {
+			if input.Reference != ref {
+				continue
+			}
+			if input.RevisionID != selection.RevisionID || !input.CapturedAt.Equal(selection.CapturedAt) || selection.SourceSchemaVersion != 0 && input.SourceSchemaVersion != selection.SourceSchemaVersion {
+				return selection, errors.New("frozen history input disagrees with selected provenance")
+			}
+			selection.SourceSchemaVersion = input.SourceSchemaVersion
+		}
+	}
+	return selection, nil
 }

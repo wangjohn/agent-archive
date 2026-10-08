@@ -114,28 +114,9 @@ func withPublicationStorage(home string, composition bool, write func(DurableSto
 	if err = rootedConfigUnchanged(held, configBefore); err != nil {
 		return err
 	}
-	if !cfg.DurableStorageProtection || (composition && !cfg.PublicationCompositionProtection) {
-		if composition {
-			cfg.PublicationCompositionProtection = true
-		}
-		cfg.DurableStorageProtection = true
-		if err = prepareDiscoveryConfig(&cfg); err != nil {
-			return err
-		}
-		if err = held.Check(); err != nil {
-			return err
-		}
-		if err = local.RootedWrite(held.Root, "config.json", cfg); err != nil {
-			return err
-		}
-		configBefore, err = held.Root.Lstat("config.json")
-		if err != nil {
-			return err
-		}
-		verified, present, e := LoadRooted(held)
-		if e != nil || !present || !verified.DurableStorageProtection || (verified.SchemaVersion != 7 && verified.SchemaVersion != 8) || (composition && !verified.PublicationCompositionProtection) {
-			return errors.Join(errors.New("durable storage protection was not persisted"), e)
-		}
+	configBefore, err = ensurePublicationStorageProtection(held, cfg, composition, configBefore)
+	if err != nil {
+		return err
 	}
 	if err = held.Check(); err != nil {
 		return err
@@ -233,4 +214,32 @@ func rootedConfigUnchanged(home *local.RootedHome, before os.FileInfo) error {
 		return errors.Join(errors.New("durable storage configuration changed before write guard"), err)
 	}
 	return home.Check()
+}
+
+func ensurePublicationStorageProtection(held *local.RootedHome, cfg Config, composition bool, configBefore os.FileInfo) (os.FileInfo, error) {
+	if !cfg.DurableStorageProtection || (composition && !cfg.PublicationCompositionProtection) {
+		if composition {
+			cfg.PublicationCompositionProtection = true
+		}
+		cfg.DurableStorageProtection = true
+		if err := prepareDiscoveryConfig(&cfg); err != nil {
+			return nil, err
+		}
+		if err := held.Check(); err != nil {
+			return nil, err
+		}
+		if err := local.RootedWrite(held.Root, "config.json", cfg); err != nil {
+			return nil, err
+		}
+		var err error
+		configBefore, err = held.Root.Lstat("config.json")
+		if err != nil {
+			return nil, err
+		}
+		verified, present, e := LoadRooted(held)
+		if e != nil || !present || !verified.DurableStorageProtection || (verified.SchemaVersion != 7 && verified.SchemaVersion != 8) || (composition && !verified.PublicationCompositionProtection) {
+			return nil, errors.Join(errors.New("durable storage protection was not persisted"), e)
+		}
+	}
+	return configBefore, nil
 }

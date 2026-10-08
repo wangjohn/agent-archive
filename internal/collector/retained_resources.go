@@ -271,14 +271,6 @@ func (s *sessionScan) detachRetainedEnvelope(bundle archive.SourceBundle) (archi
 	return detached, err
 }
 
-// keepRetainedFrom releases input/scratch owners while promoting only returned
-// independently owned output. Markers remain stable until the scope completes.
-func (s *sessionScan) keepRetainedFrom(mark, keep int) {
-	for i := mark; i < keep; i++ {
-		s.releaseRetainedIndex(i)
-	}
-}
-
 // nativeFilterLease identifies the one output owner installed by a successful
 // injected leased native filter. Unleased adapters install no owner here.
 func (s *sessionScan) nativeFilterLease(mark int) *int {

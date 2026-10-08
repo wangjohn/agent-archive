@@ -236,7 +236,7 @@ func TestSourceSetFreshPositionAfterSourceEffectsPreservesWinner(t *testing.T) {
 	if !errors.Is(err, storage.ErrPublicationConflict) || !remote.changed || remote.metadataPuts != 0 {
 		t.Fatal("B reused stale A across source effects", err, remote.changed, remote.metadataPuts)
 	}
-	actual, err := remote.MemoryStore.GetLimited(t.Context(), key, 32<<20)
+	actual, err := remote.GetLimited(t.Context(), key, 32<<20)
 	if err != nil || string(actual) != string(remote.winner) {
 		t.Fatal("winner overwritten", err)
 	}

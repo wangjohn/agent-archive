@@ -16,24 +16,24 @@ const publicationEvidenceLimit int64 = 512 << 20
 
 // PublicationOriginalRole retains exact original bytes, never selecting authority.
 type PublicationOriginalRole struct {
-	Version             int    `json:"version"`
-	Kind                string `json:"kind"`
-	FrozenContextSHA256 string `json:"frozen_context_sha256"`
-	MetadataSHA256      string `json:"metadata_sha256"`
-	InputMapSHA256      string `json:"input_map_sha256"`
-	ProtectionMapSHA256 string `json:"protection_map_sha256"`
-	Raw                 []byte `json:"raw"`
-	SHA256              string `json:"sha256"`
-	Size                int64  `json:"size"`
+	Version             int              `json:"version"`
+	Kind                OriginalRoleKind `json:"kind"`
+	FrozenContextSHA256 string           `json:"frozen_context_sha256"`
+	MetadataSHA256      string           `json:"metadata_sha256"`
+	InputMapSHA256      string           `json:"input_map_sha256"`
+	ProtectionMapSHA256 string           `json:"protection_map_sha256"`
+	Raw                 []byte           `json:"raw"`
+	SHA256              string           `json:"sha256"`
+	Size                int64            `json:"size"`
 }
 
 // EvidenceTarget binds immutable preparation or exact ready selection.
 type EvidenceTarget struct {
-	Phase             string `json:"phase"`
-	PreparationSHA256 string `json:"preparation_sha256,omitempty"`
-	MetadataSHA256    string `json:"metadata_sha256,omitempty"`
-	SourceSetSHA256   string `json:"source_set_sha256,omitempty"`
-	LegacyFileSHA256  string `json:"legacy_file_sha256,omitempty"`
+	Phase             PublicationPhase `json:"phase"`
+	PreparationSHA256 string           `json:"preparation_sha256,omitempty"`
+	MetadataSHA256    string           `json:"metadata_sha256,omitempty"`
+	SourceSetSHA256   string           `json:"source_set_sha256,omitempty"`
+	LegacyFileSHA256  string           `json:"legacy_file_sha256,omitempty"`
 }
 
 // EvidenceReplacement retains only the current and immediate crash predecessor.
@@ -47,7 +47,7 @@ type EvidenceReplacement struct {
 // PublicationOriginalEvidence is one nonselecting original-evidence journal.
 type PublicationOriginalEvidence struct {
 	Version          int                      `json:"version"`
-	Kind             string                   `json:"kind"`
+	Kind             OriginalEvidenceKind     `json:"kind"`
 	SessionID        string                   `json:"session_id"`
 	OwnerSHA256      string                   `json:"owner_sha256"`
 	DestinationID    string                   `json:"destination_id"`
@@ -60,9 +60,14 @@ type PublicationOriginalEvidence struct {
 
 func originalEvidenceSHA(e PublicationOriginalEvidence) string {
 	type roleBinding struct {
-		Version                                                                                int
-		Kind, FrozenContextSHA256, MetadataSHA256, InputMapSHA256, ProtectionMapSHA256, SHA256 string
-		Size                                                                                   int64
+		Version             int              `json:"Version"`
+		Kind                OriginalRoleKind `json:"Kind"`
+		FrozenContextSHA256 string           `json:"FrozenContextSHA256"`
+		MetadataSHA256      string           `json:"MetadataSHA256"`
+		InputMapSHA256      string           `json:"InputMapSHA256"`
+		ProtectionMapSHA256 string           `json:"ProtectionMapSHA256"`
+		SHA256              string           `json:"SHA256"`
+		Size                int64            `json:"Size"`
 	}
 	binding := func(r *PublicationOriginalRole) *roleBinding {
 		if r == nil {
@@ -71,32 +76,37 @@ func originalEvidenceSHA(e PublicationOriginalEvidence) string {
 		return &roleBinding{r.Version, r.Kind, r.FrozenContextSHA256, r.MetadataSHA256, r.InputMapSHA256, r.ProtectionMapSHA256, r.SHA256, r.Size}
 	}
 	raw, _ := json.Marshal(struct {
-		Version                                                       int
-		Kind, SessionID, OwnerSHA256, DestinationID, AdmissionContext string
-		MigrationOrigin, PrivacyOrigin                                *roleBinding
-		Link                                                          EvidenceReplacement
+		Version          int                  `json:"Version"`
+		Kind             OriginalEvidenceKind `json:"Kind"`
+		SessionID        string               `json:"SessionID"`
+		OwnerSHA256      string               `json:"OwnerSHA256"`
+		DestinationID    string               `json:"DestinationID"`
+		AdmissionContext string               `json:"AdmissionContext"`
+		MigrationOrigin  *roleBinding         `json:"MigrationOrigin"`
+		PrivacyOrigin    *roleBinding         `json:"PrivacyOrigin"`
+		Link             EvidenceReplacement  `json:"Link"`
 	}{e.Version, e.Kind, e.SessionID, e.OwnerSHA256, e.DestinationID, e.AdmissionContext, binding(e.MigrationOrigin), binding(e.PrivacyOrigin), e.Link})
 	return publicationSHA256(append([]byte("publication-original-evidence/v2\x00"), raw...))
 }
 
 func evidenceTarget(p PendingPublication, raw []byte) EvidenceTarget {
 	if p.JournalVersion == 0 {
-		phase := "ready"
+		phase := PublicationReady
 		if p.History != nil && p.History.Preparing {
-			phase = "preparing"
+			phase = PublicationPreparing
 		}
 		return EvidenceTarget{Phase: phase, LegacyFileSHA256: publicationSHA256(raw)}
 	}
-	target := EvidenceTarget{Phase: p.Phase, PreparationSHA256: p.Preparation.SHA256}
-	if p.Phase == "ready" && p.Commit != nil {
-		target.MetadataSHA256 = p.Commit.MetadataSHA256
-		target.SourceSetSHA256 = p.Commit.SourceSetSHA256
+	metadataSHA, setSHA := "", ""
+	if p.Phase == PublicationReady && p.Commit != nil {
+		metadataSHA = p.Commit.MetadataSHA256
+		setSHA = p.Commit.SourceSetSHA256
 	}
-	return target
+	return EvidenceTarget{Phase: p.Phase, PreparationSHA256: p.Preparation.SHA256, MetadataSHA256: metadataSHA, SourceSetSHA256: setSHA}
 }
 
 func validEvidenceTarget(t EvidenceTarget) bool {
-	if t.Phase != "preparing" && t.Phase != "ready" {
+	if t.Phase != PublicationPreparing && t.Phase != PublicationReady {
 		return false
 	}
 	if t.LegacyFileSHA256 != "" {
@@ -105,7 +115,7 @@ func validEvidenceTarget(t EvidenceTarget) bool {
 	if !validPublicationDigest(t.PreparationSHA256) {
 		return false
 	}
-	if t.Phase == "preparing" {
+	if t.Phase == PublicationPreparing {
 		return t.MetadataSHA256 == "" && t.SourceSetSHA256 == ""
 	}
 	return validPublicationDigest(t.MetadataSHA256) && validPublicationDigest(t.SourceSetSHA256)
@@ -121,18 +131,19 @@ func originalRole(p PendingPublication, raw []byte, destination, admission strin
 		return nil, err
 	}
 	inputRaw, _ := json.Marshal(struct {
-		Inputs                        []HistoryInput
-		SkillEvidence                 string
-		FilterVersion, AdapterVersion string
+		Inputs         []HistoryInput `json:"Inputs"`
+		SkillEvidence  string         `json:"SkillEvidence"`
+		FilterVersion  string         `json:"FilterVersion"`
+		AdapterVersion string         `json:"AdapterVersion"`
 	}{func() []HistoryInput {
 		if p.History == nil {
 			return nil
 		}
 		return p.History.Inputs
 	}(), p.SkillEvidence, p.Bundle.Capture.FilterVersion, p.Bundle.Capture.AdapterVersion})
-	kind := "sealed-pending-v1"
+	kind := OriginalSealedPending
 	if p.History != nil && p.History.Preparing {
-		kind = "history-preparing-v1"
+		kind = OriginalHistoryPreparing
 	}
 	return &PublicationOriginalRole{Version: 1, Kind: kind, FrozenContextSHA256: publicationOwner(metadata, destination, admission), MetadataSHA256: publicationSHA256(p.MetadataBytes), InputMapSHA256: publicationSHA256(append([]byte("original-input-map/v1\x00"), inputRaw...)), ProtectionMapSHA256: payloadSetSHA(sources), Raw: raw, SHA256: publicationSHA256(raw), Size: int64(len(raw))}, nil
 }
@@ -155,8 +166,9 @@ func (s *Store) validateOriginalEvidence(e PublicationOriginalEvidence, id strin
 	}
 	return e.validate(id)
 }
+
 func (e PublicationOriginalEvidence) validate(id string) error {
-	if e.Version != 2 || e.Kind != "publication-original-evidence" || e.SessionID != id || e.Link.Version != 1 || !validEvidenceTarget(e.Link.Target) || !validEvidenceTarget(e.Link.PreviousTarget) || e.Link.PreviousEvidenceSHA256 != "" && !validPublicationDigest(e.Link.PreviousEvidenceSHA256) || e.SHA256 != originalEvidenceSHA(e) || e.MigrationOrigin == nil && e.PrivacyOrigin == nil {
+	if originalEvidenceEnvelopeInvalid(e, id) {
 		return ErrDurableStorageRecovery
 	}
 	total := int64(0)
@@ -164,38 +176,21 @@ func (e PublicationOriginalEvidence) validate(id string) error {
 		if role == nil {
 			continue
 		}
-		if role.Version != 1 || (role.Kind != "sealed-pending-v1" && role.Kind != "history-preparing-v1") {
+		if role.Version != 1 || (role.Kind != OriginalSealedPending && role.Kind != OriginalHistoryPreparing) {
 			return ErrDurableStorageRecovery
 		}
 		if role.Size != int64(len(role.Raw)) || role.Size <= 0 || role.SHA256 != publicationSHA256(role.Raw) || role.Size > publicationEvidenceLimit-total {
 			return ErrDurableStorageRecovery
 		}
 		total += role.Size
-		var pending PendingPublication
-		if err := json.Unmarshal(role.Raw, &pending); err != nil {
+		if err := e.validateRole(id, i, role); err != nil {
 			return err
-		}
-		if pending.Bundle.ArchiveSessionID != id {
-			return ErrDurableStorageRecovery
-		}
-		rebuilt, err := originalRole(pending, role.Raw, e.DestinationID, e.AdmissionContext)
-		if err != nil {
-			return err
-		}
-		if rebuilt.Kind != role.Kind || rebuilt.FrozenContextSHA256 != role.FrozenContextSHA256 || rebuilt.MetadataSHA256 != role.MetadataSHA256 || rebuilt.InputMapSHA256 != role.InputMapSHA256 || rebuilt.ProtectionMapSHA256 != role.ProtectionMapSHA256 || rebuilt.FrozenContextSHA256 != e.OwnerSHA256 {
-			return ErrDurableStorageRecovery
-		}
-		if i == 0 && pending.JournalVersion != 0 {
-			return ErrDurableStorageRecovery
-		}
-		if i == 1 && (pending.Commit == nil || pending.ValidatePublication() != nil) {
-			return ErrDurableStorageRecovery
 		}
 	}
 	return nil
 }
 
-func (s *Store) rootedPublicationBytes(g config.DurableStorageGuard, path string, limit int64) ([]byte, func(), error) {
+func (s *Store) rootedPublicationBytes(g config.DurableStorageGuard, path string) (raw []byte, closeBytes func(), err error) {
 	home, err := g.RootedHome(s.home)
 	if err != nil {
 		return nil, nil, err
@@ -205,7 +200,7 @@ func (s *Store) rootedPublicationBytes(g config.DurableStorageGuard, path string
 		return nil, nil, err
 	}
 	n := before.Size()
-	if !before.Mode().IsRegular() || n < 0 || n > limit {
+	if !before.Mode().IsRegular() || n < 0 || n > publicationEvidenceLimit {
 		return nil, nil, ErrDurableStorageRecovery
 	}
 	release := func() {}
@@ -220,12 +215,21 @@ func (s *Store) rootedPublicationBytes(g config.DurableStorageGuard, path string
 	if err != nil {
 		return fail(err)
 	}
-	defer f.Close()
+	defer func() {
+		if closeErr := s.closePublicationFile(f); closeErr != nil {
+			if err == nil {
+				release()
+				raw = nil
+				closeBytes = nil
+			}
+			err = errors.Join(err, closeErr)
+		}
+	}()
 	opened, err := f.Stat()
 	if err != nil || !sameDurableStamp(before, opened) {
 		return fail(errors.Join(ErrDurableStorageRecovery, err))
 	}
-	raw, err := io.ReadAll(io.LimitReader(f, n+1))
+	raw, err = io.ReadAll(io.LimitReader(f, n+1))
 	if err != nil || int64(len(raw)) != n {
 		return fail(errors.Join(ErrDurableStorageRecovery, err))
 	}
@@ -250,7 +254,7 @@ func evidencePath(id string) string {
 // first protocol2 replacement, and validates every later crash-link advancement.
 func (s *Store) savePublicationPendingGuard(g config.DurableStorageGuard, id string, p PendingPublication) error {
 	path := filepath.Join("pending", id+".json")
-	old, release, err := s.rootedPublicationBytes(g, path, publicationEvidenceLimit)
+	old, release, err := s.rootedPublicationBytes(g, path)
 	if errors.Is(err, os.ErrNotExist) {
 		return s.savePendingGuard(s.durableContext(), g, id, p)
 	}
@@ -263,7 +267,7 @@ func (s *Store) savePublicationPendingGuard(g config.DurableStorageGuard, id str
 		return errors.Join(ErrDurableStorageRecovery, err)
 	}
 	target := evidenceTarget(p, nil)
-	raw, closeEvidence, readErr := s.rootedPublicationBytes(g, evidencePath(id), publicationEvidenceLimit)
+	raw, closeEvidence, readErr := s.rootedPublicationBytes(g, evidencePath(id))
 	var evidence PublicationOriginalEvidence
 	if readErr == nil {
 		defer closeEvidence()
@@ -294,7 +298,7 @@ func (s *Store) savePublicationPendingGuard(g config.DurableStorageGuard, id str
 		if e != nil {
 			return e
 		}
-		evidence = PublicationOriginalEvidence{Version: 2, Kind: "publication-original-evidence", SessionID: id, OwnerSHA256: role.FrozenContextSHA256, DestinationID: p.Preparation.DestinationID, AdmissionContext: p.Preparation.AdmissionContext, MigrationOrigin: role, Link: EvidenceReplacement{Version: 1, Target: target, PreviousTarget: evidenceTarget(previous, old)}}
+		evidence = PublicationOriginalEvidence{Version: 2, Kind: OriginalEvidence, SessionID: id, OwnerSHA256: role.FrozenContextSHA256, DestinationID: p.Preparation.DestinationID, AdmissionContext: p.Preparation.AdmissionContext, MigrationOrigin: role, Link: EvidenceReplacement{Version: 1, Target: target, PreviousTarget: evidenceTarget(previous, old)}}
 	} else {
 		return s.savePendingGuard(s.durableContext(), g, id, p)
 	}
@@ -326,7 +330,7 @@ func (s *Store) LoadPublicationPending(id string) (pending PendingPublication, f
 	if !safeFileComponent(id) {
 		return PendingPublication{}, true, ErrDurableStorageRecovery
 	}
-	err = config.WithDurableStorage(s.home, func(g config.DurableStorageGuard) error {
+	err = config.WithDurableStorage(s.home, func(g config.DurableStorageGuard) (err error) {
 		home, e := g.RootedHome(s.home)
 		if e != nil {
 			return e
@@ -334,7 +338,7 @@ func (s *Store) LoadPublicationPending(id string) (pending PendingPublication, f
 		if e = s.validatePublicationEvidenceDirectory(home.Root, id); e != nil {
 			return e
 		}
-		raw, release, e := s.rootedPublicationBytes(g, evidencePath(id), publicationEvidenceLimit)
+		raw, release, e := s.rootedPublicationBytes(g, evidencePath(id))
 		if e != nil {
 			return e
 		}
@@ -346,7 +350,7 @@ func (s *Store) LoadPublicationPending(id string) (pending PendingPublication, f
 		if e = s.validateOriginalEvidence(evidence, id); e != nil {
 			return e
 		}
-		body, closeBody, e := s.rootedPublicationBytes(g, filepath.Join("pending", id+".json"), publicationEvidenceLimit)
+		body, closeBody, e := s.rootedPublicationBytes(g, filepath.Join("pending", id+".json"))
 		if e != nil {
 			return e
 		}
@@ -390,12 +394,12 @@ func (s *Store) SettlePublicationMigration(id string, p PendingPublication) erro
 	if err != nil || !owed {
 		return err
 	}
-	return config.WithPublicationComposition(s.home, func(composition config.PublicationCompositionGuard) error {
+	return config.WithPublicationComposition(s.home, func(composition config.PublicationCompositionGuard) (err error) {
 		g, err := composition.Storage(s.home)
 		if err != nil {
 			return err
 		}
-		raw, release, err := s.rootedPublicationBytes(g, evidencePath(id), publicationEvidenceLimit)
+		raw, release, err := s.rootedPublicationBytes(g, evidencePath(id))
 		if err != nil {
 			return err
 		}
@@ -407,7 +411,7 @@ func (s *Store) SettlePublicationMigration(id string, p PendingPublication) erro
 		if err = s.validateOriginalEvidence(evidence, id); err != nil {
 			return err
 		}
-		publishedRaw, closePublished, err := s.rootedPublicationBytes(g, filepath.Join("published", id+".json"), publicationEvidenceLimit)
+		publishedRaw, closePublished, err := s.rootedPublicationBytes(g, filepath.Join("published", id+".json"))
 		if err != nil {
 			return err
 		}
@@ -416,10 +420,10 @@ func (s *Store) SettlePublicationMigration(id string, p PendingPublication) erro
 		if err = json.Unmarshal(publishedRaw, &published); err != nil {
 			return err
 		}
-		if published.Commit == nil || p.Commit == nil || published.Commit.MetadataSHA256 != p.Commit.MetadataSHA256 || published.Commit.SourceSetSHA256 != p.Commit.SourceSetSHA256 || published.Commit.PayloadSetSHA256 != p.Commit.PayloadSetSHA256 || evidence.DestinationID != p.Commit.DestinationID || evidence.AdmissionContext != p.Commit.AdmissionContext {
+		if migrationSelectingStateChanged(published, p, evidence) {
 			return ErrDurableStorageRecovery
 		}
-		if p.JournalVersion != 2 || p.Phase != "ready" || p.ValidatePublication() != nil || evidence.Link.Target != evidenceTarget(p, nil) {
+		if p.JournalVersion != 2 || p.Phase != PublicationReady || p.ValidatePublication() != nil || evidence.Link.Target != evidenceTarget(p, nil) {
 			return ErrDurableStorageRecovery
 		}
 		evidence.MigrationOrigin = nil
@@ -435,14 +439,16 @@ func (s *Store) SettlePublicationMigration(id string, p PendingPublication) erro
 		if err != nil {
 			return err
 		}
-		defer dir.Close()
+		defer func() { err = errors.Join(err, s.closePublicationRoot(dir)) }()
 		file, err := dir.Open(".")
 		if err != nil {
 			return err
 		}
 		entries, e := file.ReadDir(2)
-		_ = file.Close()
-		if e != nil && !errors.Is(e, io.EOF) {
+		if errors.Is(e, io.EOF) {
+			e = nil
+		}
+		if e = errors.Join(e, s.closePublicationFile(file)); e != nil {
 			return e
 		}
 		if len(entries) != 1 || entries[0].Name() != "original.json" {
@@ -458,14 +464,13 @@ func (s *Store) SettlePublicationMigration(id string, p PendingPublication) erro
 		if err != nil {
 			return err
 		}
-		defer syncDir.Close()
-		return syncDir.Sync()
+		return errors.Join(syncDir.Sync(), s.closePublicationFile(syncDir))
 	})
 }
 
 // Evidence is exactly one original control file. Anonymous siblings cannot be
 // interpreted or ignored by an owning replay or a native eligibility guard.
-func (s *Store) validatePublicationEvidenceDirectory(root *os.Root, id string) error {
+func (s *Store) validatePublicationEvidenceDirectory(root *os.Root, id string) (err error) {
 	const charge = 64 << 10
 	if s.resourceBudget != nil && !s.resourceBudget.Reserve(charge) {
 		return errStateBudget
@@ -477,18 +482,67 @@ func (s *Store) validatePublicationEvidenceDirectory(root *os.Root, id string) e
 	if err != nil {
 		return err
 	}
-	defer dir.Close()
+	defer func() { err = errors.Join(err, dir.Close()) }()
 	file, err := dir.Open(".")
 	if err != nil {
 		return err
 	}
 	entries, readErr := file.ReadDir(2)
-	err = errors.Join(readErr, file.Close())
-	if err != nil && !errors.Is(err, io.EOF) {
+	if errors.Is(readErr, io.EOF) {
+		readErr = nil
+	}
+	err = errors.Join(readErr, s.closePublicationFile(file))
+	if err != nil {
 		return err
 	}
 	if len(entries) != 1 || entries[0].Name() != "original.json" {
 		return ErrDurableStorageRecovery
 	}
 	return nil
+}
+
+func (s *Store) closePublicationFile(file *os.File) error {
+	if s.publicationFileClose != nil {
+		return s.publicationFileClose(file)
+	}
+	return file.Close()
+}
+
+func originalEvidenceEnvelopeInvalid(e PublicationOriginalEvidence, id string) bool {
+	return e.Version != 2 || e.Kind != OriginalEvidence || e.SessionID != id || e.Link.Version != 1 || !validEvidenceTarget(e.Link.Target) || !validEvidenceTarget(e.Link.PreviousTarget) || e.Link.PreviousEvidenceSHA256 != "" && !validPublicationDigest(e.Link.PreviousEvidenceSHA256) || e.SHA256 != originalEvidenceSHA(e) || e.MigrationOrigin == nil && e.PrivacyOrigin == nil
+}
+
+func (e PublicationOriginalEvidence) validateRole(id string, i int, role *PublicationOriginalRole) error {
+	var pending PendingPublication
+	if err := json.Unmarshal(role.Raw, &pending); err != nil {
+		return err
+	}
+	if pending.Bundle.ArchiveSessionID != id {
+		return ErrDurableStorageRecovery
+	}
+	rebuilt, err := originalRole(pending, role.Raw, e.DestinationID, e.AdmissionContext)
+	if err != nil {
+		return err
+	}
+	if rebuilt.Kind != role.Kind || rebuilt.FrozenContextSHA256 != role.FrozenContextSHA256 || rebuilt.MetadataSHA256 != role.MetadataSHA256 || rebuilt.InputMapSHA256 != role.InputMapSHA256 || rebuilt.ProtectionMapSHA256 != role.ProtectionMapSHA256 || rebuilt.FrozenContextSHA256 != e.OwnerSHA256 {
+		return ErrDurableStorageRecovery
+	}
+	if i == 0 && pending.JournalVersion != 0 {
+		return ErrDurableStorageRecovery
+	}
+	if i == 1 && (pending.Commit == nil || pending.ValidatePublication() != nil) {
+		return ErrDurableStorageRecovery
+	}
+	return nil
+}
+
+func migrationSelectingStateChanged(published publishedState, p PendingPublication, evidence PublicationOriginalEvidence) bool {
+	return published.Commit == nil || p.Commit == nil || published.Commit.MetadataSHA256 != p.Commit.MetadataSHA256 || published.Commit.SourceSetSHA256 != p.Commit.SourceSetSHA256 || published.Commit.PayloadSetSHA256 != p.Commit.PayloadSetSHA256 || evidence.DestinationID != p.Commit.DestinationID || evidence.AdmissionContext != p.Commit.AdmissionContext
+}
+
+func (s *Store) closePublicationRoot(root *os.Root) error {
+	if s.publicationRootClose != nil {
+		return s.publicationRootClose(root)
+	}
+	return root.Close()
 }

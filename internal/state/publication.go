@@ -22,7 +22,8 @@ const (
 	// PublicationCapture publishes a validated selected source snapshot.
 	PublicationCapture PublicationPurpose = "capture"
 	// PublicationMetadata refreshes metadata over unchanged retained sources.
-	PublicationMetadata       PublicationPurpose = "metadata"
+	PublicationMetadata PublicationPurpose = "metadata"
+	// PublicationPrivacyRewrite binds a complete typed privacy transformation.
 	PublicationPrivacyRewrite PublicationPurpose = "privacy-rewrite"
 )
 
@@ -132,7 +133,8 @@ func PreparePublication(p PendingPublication, prior PublicationPredecessor, dest
 	return p, p.ValidatePublication()
 }
 
-func (p PendingPublication) validatePublicationPredecessor(prior PublicationPredecessor, destination, admission, policy string, purpose PublicationPurpose) error {
+func (owned *PendingPublication) validatePublicationPredecessor(prior PublicationPredecessor, destination, admission, policy string, purpose PublicationPurpose) error {
+	p := *owned
 	switch prior.State {
 	case PredecessorPresent:
 		if len(prior.Body) == 0 {
@@ -183,14 +185,16 @@ func (p PendingPublication) validatePublicationPredecessor(prior PublicationPred
 }
 
 // ValidatePublication checks every local replay payload and exact metadata binding.
-func (p PendingPublication) ValidatePublication() error {
+func (owned *PendingPublication) ValidatePublication() error {
+	p := *owned
 	if p.JournalVersion == 2 {
 		return p.validatePublicationEnvelope()
 	}
 	return p.validateReadyPublication()
 }
 
-func (p PendingPublication) validateReadyPublication() error {
+func (owned *PendingPublication) validateReadyPublication() error {
+	p := *owned
 	c := p.Commit
 	if c == nil || (c.Version != 1 && c.Version != 2) || (c.Purpose != PublicationCapture && c.Purpose != PublicationMetadata && c.Purpose != PublicationPrivacyRewrite) {
 		return errors.New("pending source-set journal is incomplete")
@@ -241,7 +245,8 @@ func (p PendingPublication) validateReadyPublication() error {
 	return p.validatePublicationPayloads(refs)
 }
 
-func (p PendingPublication) validatePublicationOwnership(active archive.SourceReference) error {
+func (owned *PendingPublication) validatePublicationOwnership(active archive.SourceReference) error {
+	p := *owned
 	var m archive.Metadata
 	if err := json.Unmarshal(p.MetadataBytes, &m); err != nil {
 		return err
@@ -267,7 +272,8 @@ func (p PendingPublication) validatePublicationOwnership(active archive.SourceRe
 	return nil
 }
 
-func (p PendingPublication) validatePublicationPayloads(refs []archive.SourceReference) error {
+func (owned *PendingPublication) validatePublicationPayloads(refs []archive.SourceReference) error {
+	p := *owned
 	total := len(p.SourceBytes)
 	for i, source := range p.Sources {
 		if source.Reference != refs[i] || source.Reference.CompressedBytes > 128<<20 {

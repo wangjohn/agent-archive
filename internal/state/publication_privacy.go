@@ -22,9 +22,11 @@ type PublicationPolicy struct {
 	SkillEvidence  config.SkillEvidence `json:"skill_evidence"`
 }
 
+// Context returns the canonical publication policy binding.
 func (p PublicationPolicy) Context() string {
 	return publicationSHA256([]byte(p.FilterVersion + "\x00" + p.AdapterVersion + "\x00" + string(p.SkillEvidence)))
 }
+
 func (p PublicationPolicy) validate() error {
 	if p.FilterVersion == "" || p.AdapterVersion == "" || len(p.FilterVersion) > 4096 || len(p.AdapterVersion) > 4096 || p.SkillEvidence != config.SkillEvidenceNone && p.SkillEvidence != config.SkillEvidenceMetadata && p.SkillEvidence != config.SkillEvidenceBody {
 		return ErrDurableStorageRecovery
@@ -66,15 +68,17 @@ func privacySourceSHA(r PrivacySource) string {
 	return publicationSHA256(append([]byte("privacy-source/v1\x00"), raw...))
 }
 
+// ValidatedPrivacySource is minted only by the leased filter and compression factory.
 type ValidatedPrivacySource struct {
 	receipt PrivacySource
 	budget  *agentapi.NativeReadBudget
 	ctx     context.Context
 }
 
+// PublicationContext identifies the frozen destination and admission scope.
 type PublicationContext struct {
-	DestinationID    string
-	AdmissionContext string
+	DestinationID    string `json:"DestinationID"`
+	AdmissionContext string `json:"AdmissionContext"`
 }
 
 // LimitPublicationSkillEvidence is the one retained policy limiter used before
@@ -110,7 +114,7 @@ func refilterPublicationInput(ctx context.Context, registration archive.SessionR
 	if err = ctx.Err(); err != nil {
 		return bundle, packed, ref, proof, nil, err
 	}
-	if adapter == nil || oldPolicy.validate() != nil || nextPolicy.validate() != nil || nextPolicy.FilterVersion != archive.FilterVersion || nextPolicy.AdapterVersion != adapter.Version() || index < 0 || index >= 65 || len(original) != input.Reference.CompressedBytes || publicationSHA256(original) != input.Reference.SHA256 || input.Selection.Role != "current" && input.Selection.Role != "preserved" || input.Selection.CapturedAt.IsZero() || origin.SessionID != registration.ArchiveSessionID || origin.NativeSessionID != registration.NativeSessionID || origin.ProjectID != registration.ProjectID || origin.Harness.Name != registration.Harness.Name || origin.PreviousGenerationID != registration.PreviousGenerationID || !origin.StartedAt.Equal(registration.SessionStartedAt) {
+	if privacyFactoryInputInvalid(adapter, oldPolicy, nextPolicy, index, original, input, origin, registration) {
 		return bundle, packed, ref, proof, nil, ErrDurableStorageRecovery
 	}
 	if ceiling != config.SkillEvidenceBody && ceiling != config.SkillEvidenceMetadata && ceiling != config.SkillEvidenceNone {
@@ -118,25 +122,8 @@ func refilterPublicationInput(ctx context.Context, registration archive.SessionR
 	}
 	// Bind the supplied borrowed metadata view to its exact raw authority,
 	// including full ordered manifest membership, before decoding source bytes.
-	metadataCharge := int64(len(originBody)) + 64<<10
-	if !budget.Reserve(metadataCharge) {
-		return bundle, packed, ref, proof, nil, agentapi.ErrReadBudget
-	}
-	var decodedOrigin archive.Metadata
-	decodeErr := json.Unmarshal(originBody, &decodedOrigin)
-	if decodeErr == nil && !reflect.DeepEqual(decodedOrigin, origin) {
-		decodeErr = ErrDurableStorageRecovery
-	}
-	refs, refsErr := decodedOrigin.SourceReferences()
-	if decodeErr == nil && refsErr != nil {
-		decodeErr = refsErr
-	}
-	if decodeErr == nil && (index >= len(refs) || refs[index] != input.Reference) {
-		decodeErr = ErrDurableStorageRecovery
-	}
-	budget.Release(metadataCharge)
-	if decodeErr != nil {
-		return bundle, packed, ref, proof, nil, errors.Join(ErrDurableStorageRecovery, decodeErr)
+	if err = validatePrivacyFactoryOrigin(origin, originBody, input, index, budget); err != nil {
+		return bundle, packed, ref, proof, nil, err
 	}
 	if h := input.HookObservations; h != nil && validatePublicationHookFacts(&h.Facts, input, publicationOwner(origin, registration.DestinationID, frozenContext.AdmissionContext), registration.DestinationID, frozenContext.AdmissionContext, nextPolicy.Context()) != nil {
 		return bundle, packed, ref, proof, nil, ErrDurableStorageRecovery
@@ -167,44 +154,10 @@ func refilterPublicationInput(ctx context.Context, registration archive.SessionR
 		return bundle, packed, ref, proof, nil, err
 	}
 	leases = append(leases, closeFiltered)
-	var covered []CoveredPrivacySource
-	if len(alternatives) > 2 || len(alternatives) > 0 && (sourceReader == nil || sourceReader.NativeReadBudget() != budget) {
-		return bundle, packed, ref, proof, nil, ErrDurableStorageRecovery
-	}
-	for _, alternative := range alternatives {
-		if alternative.Input.Reference == input.Reference {
-			if alternative.Input.Selection != input.Selection || alternative.Policy != oldPolicy {
-				return bundle, packed, ref, proof, nil, ErrDurableStorageRecovery
-			}
-			if _, e := validatePrivacyAlternative(alternative, origin, input, frozenContext, budget); e != nil {
-				return bundle, packed, ref, proof, nil, e
-			}
-			continue
-		}
-		duplicate := false
-		for _, receipt := range covered {
-			if receipt.Reference == alternative.Input.Reference && receipt.Selection == alternative.Input.Selection && receipt.Policy == alternative.Policy && receipt.MetadataSHA256 == publicationSHA256(alternative.MetadataBody) {
-				duplicate = true
-			}
-		}
-		if duplicate {
-			continue
-		}
-		setSHA, e := validatePrivacyAlternative(alternative, origin, input, frozenContext, budget)
-		if e != nil {
-			return bundle, packed, ref, proof, nil, e
-		}
-		if !budget.Reserve(16 << 10) {
-			return bundle, packed, ref, proof, nil, agentapi.ErrReadBudget
-		}
-		leases = append(leases, func() { budget.Release(16 << 10) })
-		var receipt CoveredPrivacySource
-		bundle, receipt, closeFiltered, e = coverPrivacyAlternative(ctx, registration, adapter, bundle, alternative, setSHA, nextPolicy, sourceReader, budget)
-		if e != nil {
-			return bundle, packed, ref, proof, nil, e
-		}
-		leases = append(leases, closeFiltered)
-		covered = append(covered, receipt)
+	bundle, covered, alternativeLeases, err := filterPrivacyAlternatives(ctx, registration, adapter, origin, input, frozenContext, oldPolicy, nextPolicy, budget, sourceReader, alternatives, bundle)
+	leases = append(leases, alternativeLeases...)
+	if err != nil {
+		return bundle, packed, ref, proof, nil, err
 	}
 	if len(covered) > 0 {
 		bundle, closeFiltered, err = agentapi.RefilterRetainedSource(ctx, registration, adapter, bundle, budget)
@@ -263,7 +216,7 @@ func (r PrivacySource) validate(a PreparationAuthority, index int, input Prepara
 	if err := json.Unmarshal(a.OriginMetadata, &origin); err != nil {
 		return err
 	}
-	if r.Version != 1 || r.SHA256 != privacySourceSHA(r) || r.InputIndex != index || r.Previous != input.Reference || r.Next != output.Reference || r.Selection != input.Selection || output.Selection.Role != input.Selection.Role || output.Selection.RevisionID != input.Selection.RevisionID || !output.Selection.CapturedAt.Equal(input.Selection.CapturedAt) || output.Selection.SourceSchemaVersion != input.Selection.SourceSchemaVersion || r.SessionID != origin.SessionID || r.NativeSessionID != origin.NativeSessionID || r.ProjectID != origin.ProjectID || r.MachineID != origin.MachineID || r.Harness != origin.Harness || r.Origin != origin.Origin || !reflect.DeepEqual(r.ImportedAt, origin.ImportedAt) || r.StartedAtSource != origin.StartedAtSource || r.PreviousGenerationID != origin.PreviousGenerationID || !r.StartedAt.Equal(origin.StartedAt) || r.OwnerSHA256 != a.OwnerSHA256 || r.DestinationID != a.DestinationID || r.AdmissionContext != a.AdmissionContext || r.OriginMetadataSHA256 != a.OriginMetadataSHA256 || r.PreviousPolicy.FilterVersion != input.FilterVersion || r.PreviousPolicy.AdapterVersion != input.AdapterVersion || r.PreviousPolicy.SkillEvidence != config.SkillEvidence(input.SkillPolicy) || r.NextPolicy.Context() != a.PolicyContext || r.PreviousPolicy.validate() != nil || r.NextPolicy.validate() != nil {
+	if privacyReceiptBindingsChanged(r, a, index, input, output, origin) {
 		return ErrDurableStorageRecovery
 	}
 	if !reflect.DeepEqual(r.Hook, publicationHookFacts(input.HookObservations)) {
@@ -272,6 +225,7 @@ func (r PrivacySource) validate(a PreparationAuthority, index int, input Prepara
 	return validateCoveredPrivacyFacts(r)
 }
 
+// RecordPrivacyOutput retains an independently charged factory receipt until its returned release.
 func (p *PendingPublication) RecordPrivacyOutput(proof ValidatedPrivacySource) (func(), error) {
 	r := proof.receipt
 	if proof.budget == nil || r.Version != 1 || !validPublicationDigest(r.SHA256) {
@@ -314,7 +268,8 @@ func (p *PendingPublication) RecordPrivacyOutput(proof ValidatedPrivacySource) (
 	return func() { once.Do(func() { proof.budget.Release(n) }) }, nil
 }
 
-func (p PendingPublication) privacyReceipts() []PrivacySource {
+func (owned *PendingPublication) privacyReceipts() []PrivacySource {
+	p := *owned
 	var receipts []PrivacySource
 	if p.Progress != nil {
 		for _, output := range p.Progress.Outputs {
@@ -325,6 +280,7 @@ func (p PendingPublication) privacyReceipts() []PrivacySource {
 	}
 	return receipts
 }
+
 func privacyReceiptsSHA(receipts []PrivacySource) string {
 	if len(receipts) == 0 {
 		return ""
@@ -332,21 +288,23 @@ func privacyReceiptsSHA(receipts []PrivacySource) string {
 	raw, _ := json.Marshal(receipts)
 	return publicationSHA256(append([]byte("publication-privacy-correspondence/v1\x00"), raw...))
 }
+
 func privacyPreviousBody(a PreparationAuthority) []byte {
-	if a.Kind == "privacy-committed" {
+	if a.Kind == PreparationPrivacyCommitted {
 		return a.OriginMetadata
 	}
 	return a.PrivacyPreviousMetadata
 }
+
 func validatePrivacyCorrespondence(a PreparationAuthority, sources []PublicationSource, receipts []PrivacySource, nextBody, previousBody []byte) error {
-	if a.Purpose != PublicationPrivacyRewrite || a.Kind != "privacy-committed" && a.Kind != "privacy-pending" && a.Kind != "privacy-pending-absent" || a.Migration != nil {
+	if privacyPreparationPurposeInvalid(a) {
 		return ErrDurableStorageRecovery
 	}
 	var old, next, origin archive.Metadata
 	if json.Unmarshal(nextBody, &next) != nil || json.Unmarshal(a.OriginMetadata, &origin) != nil {
 		return ErrDurableStorageRecovery
 	}
-	if a.Kind == "privacy-pending-absent" {
+	if a.Kind == PreparationPrivacyPendingAbsent {
 		if a.Predecessor != PredecessorAbsent || a.PredecessorSHA256 != "" || len(previousBody) != 0 || len(a.PrivacyPreviousMetadata) != 0 {
 			return ErrDurableStorageRecovery
 		}
@@ -357,7 +315,7 @@ func validatePrivacyCorrespondence(a PreparationAuthority, sources []Publication
 		}
 	}
 
-	if old.SessionID != next.SessionID || old.NativeSessionID != next.NativeSessionID || old.ProjectID != next.ProjectID || old.MachineID != next.MachineID || old.Harness != next.Harness || old.Origin != next.Origin || !reflect.DeepEqual(old.ImportedAt, next.ImportedAt) || old.StartedAtSource != next.StartedAtSource || old.PreviousGenerationID != next.PreviousGenerationID || !old.StartedAt.Equal(next.StartedAt) || publicationOwner(old, a.DestinationID, a.AdmissionContext) != a.OwnerSHA256 || publicationOwner(next, a.DestinationID, a.AdmissionContext) != a.OwnerSHA256 {
+	if privacyMetadataIdentityChanged(old, next, a) {
 		return ErrDurableStorageRecovery
 	}
 	oldRefs, err := old.SourceReferences()
@@ -380,6 +338,62 @@ func validatePrivacyCorrespondence(a PreparationAuthority, sources []Publication
 		byIndex[receipt.InputIndex] = receipt
 		previousIndex = receipt.InputIndex
 	}
+	if err := validatePrivacySourceCorrespondence(a, sources, old, oldRefs, nextRefs, byIndex, previousBody); err != nil {
+		return err
+	}
+	if old.History == nil || next.History == nil || old.History.CurrentRevision != next.History.CurrentRevision {
+		return ErrDurableStorageRecovery
+	}
+	return nil
+}
+
+// RefilterCoveredPublicationInput runs the same factory with at most two exact
+// retained alternatives, borrowing and releasing each before reading the next.
+func RefilterCoveredPublicationInput(ctx context.Context, registration archive.SessionRegistration, adapter agentapi.TranscriptFilter, origin archive.Metadata, originBody []byte, input PreparationInput, index int, original []byte, frozenContext PublicationContext, oldPolicy, nextPolicy PublicationPolicy, ceiling config.SkillEvidence, budget *agentapi.NativeReadBudget, sourceReader PublicationPrivacySourceReader, alternatives []PublicationPrivacyAlternative) (archive.SourceBundle, archive.CompressedSource, archive.SourceReference, ValidatedPrivacySource, func(), error) {
+	return refilterPublicationInput(ctx, registration, adapter, origin, originBody, input, index, original, frozenContext, oldPolicy, nextPolicy, ceiling, budget, sourceReader, alternatives)
+}
+
+func privacyFactoryInputInvalid(adapter agentapi.TranscriptFilter, oldPolicy, nextPolicy PublicationPolicy, index int, original []byte, input PreparationInput, origin archive.Metadata, registration archive.SessionRegistration) bool {
+	return adapter == nil || oldPolicy.validate() != nil || nextPolicy.validate() != nil || nextPolicy.FilterVersion != archive.FilterVersion || nextPolicy.AdapterVersion != adapter.Version() || index < 0 || index >= 65 || len(original) != input.Reference.CompressedBytes || publicationSHA256(original) != input.Reference.SHA256 || input.Selection.Role != PublicationCurrent && input.Selection.Role != PublicationPreserved || input.Selection.CapturedAt.IsZero() || origin.SessionID != registration.ArchiveSessionID || origin.NativeSessionID != registration.NativeSessionID || origin.ProjectID != registration.ProjectID || origin.Harness.Name != registration.Harness.Name || origin.PreviousGenerationID != registration.PreviousGenerationID || !origin.StartedAt.Equal(registration.SessionStartedAt)
+}
+
+func privacyReceiptBindingsChanged(r PrivacySource, a PreparationAuthority, index int, input PreparationInput, output PublicationSource, origin archive.Metadata) bool {
+	return r.Version != 1 || r.SHA256 != privacySourceSHA(r) || r.InputIndex != index || r.Previous != input.Reference || r.Next != output.Reference || r.Selection != input.Selection || output.Selection.Role != input.Selection.Role || output.Selection.RevisionID != input.Selection.RevisionID || !output.Selection.CapturedAt.Equal(input.Selection.CapturedAt) || output.Selection.SourceSchemaVersion != input.Selection.SourceSchemaVersion || privacyReceiptOwnerChanged(r, a, input, origin)
+}
+
+func privacyMetadataIdentityChanged(old, next archive.Metadata, a PreparationAuthority) bool {
+	return old.SessionID != next.SessionID || old.NativeSessionID != next.NativeSessionID || old.ProjectID != next.ProjectID || old.MachineID != next.MachineID || old.Harness != next.Harness || old.Origin != next.Origin || !reflect.DeepEqual(old.ImportedAt, next.ImportedAt) || old.StartedAtSource != next.StartedAtSource || old.PreviousGenerationID != next.PreviousGenerationID || !old.StartedAt.Equal(next.StartedAt) || publicationOwner(old, a.DestinationID, a.AdmissionContext) != a.OwnerSHA256 || publicationOwner(next, a.DestinationID, a.AdmissionContext) != a.OwnerSHA256
+}
+
+func privacyReceiptOwnerChanged(r PrivacySource, a PreparationAuthority, input PreparationInput, origin archive.Metadata) bool {
+	return r.SessionID != origin.SessionID || r.NativeSessionID != origin.NativeSessionID || r.ProjectID != origin.ProjectID || r.MachineID != origin.MachineID || r.Harness != origin.Harness || r.Origin != origin.Origin || !reflect.DeepEqual(r.ImportedAt, origin.ImportedAt) || r.StartedAtSource != origin.StartedAtSource || r.PreviousGenerationID != origin.PreviousGenerationID || !r.StartedAt.Equal(origin.StartedAt) || r.OwnerSHA256 != a.OwnerSHA256 || r.DestinationID != a.DestinationID || r.AdmissionContext != a.AdmissionContext || r.OriginMetadataSHA256 != a.OriginMetadataSHA256 || r.PreviousPolicy.FilterVersion != input.FilterVersion || r.PreviousPolicy.AdapterVersion != input.AdapterVersion || r.PreviousPolicy.SkillEvidence != config.SkillEvidence(input.SkillPolicy) || r.NextPolicy.Context() != a.PolicyContext || r.PreviousPolicy.validate() != nil || r.NextPolicy.validate() != nil
+}
+
+func validatePrivacyFactoryOrigin(origin archive.Metadata, originBody []byte, input PreparationInput, index int, budget *agentapi.NativeReadBudget) error {
+	metadataCharge := int64(len(originBody)) + 64<<10
+	if !budget.Reserve(metadataCharge) {
+		return agentapi.ErrReadBudget
+	}
+	var decodedOrigin archive.Metadata
+	decodeErr := json.Unmarshal(originBody, &decodedOrigin)
+	if decodeErr == nil && !reflect.DeepEqual(decodedOrigin, origin) {
+		decodeErr = ErrDurableStorageRecovery
+	}
+	refs, refsErr := decodedOrigin.SourceReferences()
+	if decodeErr == nil && refsErr != nil {
+		decodeErr = refsErr
+	}
+	if decodeErr == nil && (index >= len(refs) || refs[index] != input.Reference) {
+		decodeErr = ErrDurableStorageRecovery
+	}
+	budget.Release(metadataCharge)
+	if decodeErr != nil {
+		return errors.Join(ErrDurableStorageRecovery, decodeErr)
+	}
+	return nil
+}
+
+func validatePrivacySourceCorrespondence(a PreparationAuthority, sources []PublicationSource, old archive.Metadata, oldRefs, nextRefs []archive.SourceReference, byIndex map[int]PrivacySource, previousBody []byte) error {
 	for i, input := range a.Inputs {
 		// A distinct pending original cannot stand in for acknowledged authority.
 		// A different acknowledged source requires its own actual transform mapping.
@@ -413,12 +427,12 @@ func validatePrivacyCorrespondence(a PreparationAuthority, sources []Publication
 		if covered != nil {
 			selection = covered.Selection
 		}
-		expectedRole, expectedRevision, expectedAt := "current", old.NativeSessionID, old.CapturedAt
+		expectedRole, expectedRevision, expectedAt := PublicationCurrent, old.NativeSessionID, old.CapturedAt
 		if old.History != nil {
 			expectedRevision = old.History.CurrentRevision
 		}
 		if i > 0 {
-			expectedRole = "preserved"
+			expectedRole = PublicationPreserved
 			expectedRevision = old.History.Preserved[i-1].RevisionID
 			expectedAt = old.History.Preserved[i-1].CapturedAt
 		}
@@ -429,19 +443,59 @@ func validatePrivacyCorrespondence(a PreparationAuthority, sources []Publication
 			return ErrDurableStorageRecovery
 		}
 		if found {
-			if err = receipt.validate(a, i, input, sources[i]); err != nil {
+			if err := receipt.validate(a, i, input, sources[i]); err != nil {
 				return err
 			}
 		}
 	}
-	if old.History == nil || next.History == nil || old.History.CurrentRevision != next.History.CurrentRevision {
-		return ErrDurableStorageRecovery
-	}
 	return nil
 }
 
-// RefilterCoveredPublicationInput runs the same factory with at most two exact
-// retained alternatives, borrowing and releasing each before reading the next.
-func RefilterCoveredPublicationInput(ctx context.Context, registration archive.SessionRegistration, adapter agentapi.TranscriptFilter, origin archive.Metadata, originBody []byte, input PreparationInput, index int, original []byte, frozenContext PublicationContext, oldPolicy, nextPolicy PublicationPolicy, ceiling config.SkillEvidence, budget *agentapi.NativeReadBudget, sourceReader PublicationPrivacySourceReader, alternatives []PublicationPrivacyAlternative) (archive.SourceBundle, archive.CompressedSource, archive.SourceReference, ValidatedPrivacySource, func(), error) {
-	return refilterPublicationInput(ctx, registration, adapter, origin, originBody, input, index, original, frozenContext, oldPolicy, nextPolicy, ceiling, budget, sourceReader, alternatives)
+func privacyPreparationPurposeInvalid(a PreparationAuthority) bool {
+	return a.Purpose != PublicationPrivacyRewrite || a.Kind != PreparationPrivacyCommitted && a.Kind != PreparationPrivacyPending && a.Kind != PreparationPrivacyPendingAbsent || a.Migration != nil
+}
+
+func filterPrivacyAlternatives(ctx context.Context, registration archive.SessionRegistration, adapter agentapi.TranscriptFilter, origin archive.Metadata, input PreparationInput, frozenContext PublicationContext, oldPolicy, nextPolicy PublicationPolicy, budget *agentapi.NativeReadBudget, sourceReader PublicationPrivacySourceReader, alternatives []PublicationPrivacyAlternative, bundle archive.SourceBundle) (archive.SourceBundle, []CoveredPrivacySource, []func(), error) {
+	var leases []func()
+	var closeFiltered func()
+	var covered []CoveredPrivacySource
+	if len(alternatives) > 2 || len(alternatives) > 0 && (sourceReader == nil || sourceReader.NativeReadBudget() != budget) {
+		return bundle, covered, leases, ErrDurableStorageRecovery
+	}
+	for _, alternative := range alternatives {
+		if alternative.Input.Reference == input.Reference {
+			if alternative.Input.Selection != input.Selection || alternative.Policy != oldPolicy {
+				return bundle, covered, leases, ErrDurableStorageRecovery
+			}
+			if _, e := validatePrivacyAlternative(alternative, origin, input, frozenContext, budget); e != nil {
+				return bundle, covered, leases, e
+			}
+			continue
+		}
+		duplicate := false
+		for _, receipt := range covered {
+			if receipt.Reference == alternative.Input.Reference && receipt.Selection == alternative.Input.Selection && receipt.Policy == alternative.Policy && receipt.MetadataSHA256 == publicationSHA256(alternative.MetadataBody) {
+				duplicate = true
+			}
+		}
+		if duplicate {
+			continue
+		}
+		setSHA, e := validatePrivacyAlternative(alternative, origin, input, frozenContext, budget)
+		if e != nil {
+			return bundle, covered, leases, e
+		}
+		if !budget.Reserve(16 << 10) {
+			return bundle, covered, leases, agentapi.ErrReadBudget
+		}
+		leases = append(leases, func() { budget.Release(16 << 10) })
+		var receipt CoveredPrivacySource
+		bundle, receipt, closeFiltered, e = coverPrivacyAlternative(ctx, registration, adapter, bundle, alternative, setSHA, nextPolicy, sourceReader, budget)
+		if e != nil {
+			return bundle, covered, leases, e
+		}
+		leases = append(leases, closeFiltered)
+		covered = append(covered, receipt)
+	}
+	return bundle, covered, leases, nil
 }

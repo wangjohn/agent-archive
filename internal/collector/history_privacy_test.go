@@ -353,6 +353,7 @@ func TestRunAcknowledgedAllRefPrivacyPublishesTogetherWithoutNativeReads(t *test
 }
 
 func runAcknowledgedPrivacyHook(t *testing.T, covered bool) {
+	t.Helper()
 	scan, p := privacyJournal(t)
 	var m archive.Metadata
 	if err := json.Unmarshal(p.MetadataBytes, &m); err != nil {
@@ -547,7 +548,7 @@ func runAcknowledgedPrivacyHook(t *testing.T, covered bool) {
 			for _, input := range frozen.Preparation.Inputs {
 				if input.HookObservations != nil {
 					hooks++
-					if input.Selection.Role != "current" || !bytes.Contains(input.HookObservations.Body, []byte("combined frozen observation")) {
+					if input.Selection.Role != state.PublicationCurrent || !bytes.Contains(input.HookObservations.Body, []byte("combined frozen observation")) {
 						t.Fatal("wrong frozen hook owner")
 					}
 				}
@@ -824,7 +825,7 @@ func TestPublicationPrivacyFactoryOwnsExactTransformAndLease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	input := state.PreparationInput{Reference: ref, Selection: state.PublicationSelection{Role: "current", RevisionID: origin.History.CurrentRevision, CapturedAt: original.Capture.CapturedAt, SourceSchemaVersion: original.SchemaVersion}, FilterVersion: "14", AdapterVersion: original.Capture.AdapterVersion, SkillPolicy: "body"}
+
 	adapter, err := sourceAdapter(scan.opts.Sources, scan.reg.Harness.Name)
 	if err != nil {
 		t.Fatal(err)
@@ -853,7 +854,7 @@ func TestPublicationPrivacyFactoryOwnsExactTransformAndLease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	input.HookObservations = candidate.Preparation.Inputs[0].HookObservations
+	input := state.PreparationInput{HookObservations: candidate.Preparation.Inputs[0].HookObservations, Reference: ref, Selection: state.PublicationSelection{Role: state.PublicationCurrent, RevisionID: origin.History.CurrentRevision, CapturedAt: original.Capture.CapturedAt, SourceSchemaVersion: original.SchemaVersion}, FilterVersion: "14", AdapterVersion: original.Capture.AdapterVersion, SkillPolicy: "body"}
 	before := budget.Available()
 	out, encoded, next, proof, release, err := state.RefilterPublicationInput(t.Context(), scan.reg, adapter, origin, body, input, 0, packed.Bytes, frozen, oldPolicy, nextPolicy, config.SkillEvidenceBody, budget)
 	if err != nil {
@@ -1061,10 +1062,8 @@ func assertPrivateTreeHasNoSecret(t *testing.T, home, secret string, verifiedOwe
 		if entry.IsDir() {
 			return nil
 		}
-		for _, exact := range verifiedOwedRequest {
-			if path == exact {
-				return nil
-			}
+		if slices.Contains(verifiedOwedRequest, path) {
+			return nil
 		}
 		info, err := entry.Info()
 		if err != nil {

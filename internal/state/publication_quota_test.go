@@ -37,7 +37,11 @@ func TestPublicationQuotaLegacyReplacementHasNoCredit(t *testing.T) {
 		if e != nil {
 			return e
 		}
-		defer q.Close()
+		defer func() {
+			if err := q.Close(); err != nil {
+				t.Error(err)
+			}
+		}()
 		info, e := q.home.Root.Lstat(path)
 		if e != nil {
 			return e
@@ -87,7 +91,11 @@ func TestPublicationFirstEvidenceControlRefusesBeforeDirectoryCreation(t *testin
 		if e != nil {
 			return e
 		}
-		defer q.Close()
+		defer func() {
+			if err := q.Close(); err != nil {
+				t.Error(err)
+			}
+		}()
 		e = q.write("publication-evidence/synthetic/original.json", 3, func(w io.Writer) error { _, err := w.Write([]byte("{}\n")); return err })
 		if !errors.Is(e, ErrDurableStorageCapacity) {
 			t.Fatal("first control charge not enforced", e)

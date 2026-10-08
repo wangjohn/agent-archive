@@ -190,7 +190,7 @@ func validateGenerationPublication(reg archive.SessionRegistration, pending Pend
 		if err := pending.ValidatePublication(); err != nil {
 			return err
 		}
-		if len(pending.Sources) == 0 || pending.Sources[0].Payload.Kind != "inline" {
+		if len(pending.Sources) == 0 || pending.Sources[0].Payload.Kind != PublicationInline {
 			return ErrDurableStorageRecovery
 		}
 		pending.SourceBytes = pending.Sources[0].Payload.Inline

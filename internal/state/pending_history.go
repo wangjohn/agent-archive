@@ -72,7 +72,8 @@ type RetiredSource struct {
 
 // ValidateHistoryBudgeted reserves the independent ephemeral metadata view used
 // by journal validation. The input bytes retain their original caller ownership.
-func (p PendingPublication) ValidateHistoryBudgeted(id string, budget *agentapi.NativeReadBudget) error {
+func (owned *PendingPublication) ValidateHistoryBudgeted(id string, budget *agentapi.NativeReadBudget) error {
+	p := *owned
 	if p.History == nil {
 		return nil
 	}
@@ -95,11 +96,12 @@ func (p PendingPublication) ValidateHistoryBudgeted(id string, budget *agentapi.
 }
 
 // ValidateHistory refuses future journals and references outside this session.
-func (p PendingPublication) ValidateHistory(id string) error {
+func (owned *PendingPublication) ValidateHistory(id string) error {
+	p := *owned
 	if p.History == nil {
 		return nil
 	}
-	if p.History.Version != pendingHistoryVersion && !(p.JournalVersion == 2 && p.History.Version == 2) {
+	if p.History.Version != pendingHistoryVersion && (p.JournalVersion != 2 || p.History.Version != 2) {
 		return errors.Join(ErrDurableStorageRecovery, errors.New("pending history requires a newer writer"))
 	}
 	if err := validatePredecessorSHA(p.History.ExpectedMetadataSHA256); err != nil {
@@ -271,7 +273,8 @@ func validatePredecessorSHA(value string) error {
 	return nil
 }
 
-func (p PendingPublication) validateHistoryInputs(m archive.Metadata) error {
+func (owned *PendingPublication) validateHistoryInputs(m archive.Metadata) error {
+	p := *owned
 	if p.History.PrivacyCursor < 0 || p.History.PrivacyCursor > len(p.History.Inputs) || len(p.History.Inputs) > archive.MaxHistorySpans+1 || p.History.Preparing && p.Attempted {
 		return errors.New("invalid history preparation progress")
 	}

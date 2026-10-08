@@ -202,16 +202,6 @@ func ownedEvidenceCovered(adapter agentapi.TranscriptFilter, previous, candidate
 	return agentapi.OwnedEvidenceCovered(adapter, previous, candidate)
 }
 
-func revisionOrdinal(bundle archive.SourceBundle, index int) uint64 {
-	if bundle.History != nil {
-		return bundle.Ordinals[index]
-	}
-	if index < 0 {
-		return 0
-	}
-	return uint64(index)
-}
-
 // historyInputs supplies the existing frozen preparation engine's input shape.
 func (p *revisionPlan) historyInputs() []state.HistoryInput {
 	inputs := make([]state.HistoryInput, 0, len(p.Preserved))
@@ -331,12 +321,6 @@ func (p *revisionPlanner) checkStageEvidence(ctx context.Context, bundle archive
 		size += int(n)
 	}
 	return size, nil
-}
-
-// Legacy source2 has no raw ordinal proof. Its ordered native evidence can only
-// verify an extension of that same physical ordinary source, never another tip.
-func ownedRevisionProjection(evidence agentapi.RevisionEvidence, bundle archive.SourceBundle) archive.SourceBundle {
-	return state.OwnedRevisionProjection(evidence, bundle)
 }
 
 func (p *revisionPlanner) dropCoveredLegacyStage(bundle archive.SourceBundle) {
