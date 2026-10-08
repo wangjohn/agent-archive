@@ -2,6 +2,9 @@ package cli
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"io"
 	"slices"
 	"strings"
@@ -15,6 +18,7 @@ import (
 type showLookup struct {
 	SessionID string
 	Harness   string
+	Metadata  reader.MetadataLookup
 	// Cancelled is set when the user quit the browser opened on several
 	// matches without choosing a session, or browsed them (it showed the
 	// session itself): the caller has nothing left to read, and exits 0.
@@ -35,18 +39,18 @@ func resolveShowQuery(ctx context.Context, store storage.ObjectStore, env showQu
 	// Full archive IDs use the direct-read path. With --harness, a short ID
 	// or title would otherwise be mistaken for a literal object key.
 	if len(query) >= 32 {
-		key, err := locateMetadataKey(ctx, store, harness, query)
+		lookup, err := locateShowMetadata(ctx, store, harness, query)
 		if err == nil {
-			parts := strings.Split(strings.TrimPrefix(key, archiveSessionsPrefix+"/"), "/")
+			parts := strings.Split(strings.TrimPrefix(lookup.Key, archiveSessionsPrefix+"/"), "/")
 			if len(parts) >= 2 {
-				return showLookup{SessionID: parts[1], Harness: parts[0]}, 0
+				return showLookup{SessionID: parts[1], Harness: parts[0], Metadata: lookup}, 0
 			}
-			return showLookup{SessionID: query, Harness: harness}, 0
+			return showLookup{SessionID: query, Harness: harness, Metadata: lookup}, 0
 		}
 		// Exact-id misses fall through to short-id / title search. Keep
 		// ambiguous harnesses and storage failures as errors.
-		miss := strings.Contains(err.Error(), "no archived session") ||
-			strings.Contains(err.Error(), "invalid archive session ID")
+		miss := !errors.Is(err, reader.ErrInvalidMetadata) && (strings.Contains(err.Error(), "no archived session") ||
+			strings.Contains(err.Error(), "invalid archive session ID"))
 		if !miss {
 			terminal.Printf(stderr, "agent-archive: show: %v\n", err)
 			return showLookup{}, 1
@@ -60,7 +64,7 @@ func resolveShowQuery(ctx context.Context, store storage.ObjectStore, env showQu
 	}
 	// Keep complete summaries for child counts, scope tiers and ambiguity.
 	stopSearch := startActivity(stdout, "Finding sessions…")
-	sessions, err := readShowCandidates(ctx, store, env, harness, query, stderr)
+	sessions, fullBodies, err := readShowCandidates(ctx, store, env, harness, query, stderr)
 	stopSearch()
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: show: %v\n", err)
@@ -88,7 +92,7 @@ func resolveShowQuery(ctx context.Context, store storage.ObjectStore, env showQu
 		terminal.Printf(stderr, "agent-archive: show: no archived session %q (see `agent-archive list`)\n", archive.DisplayLine(query))
 		return showLookup{}, 1
 	case 1:
-		return showLookup{SessionID: matches[0].SessionID, Harness: matches[0].Harness.Name}, 0
+		return showCandidateLookup(matches[0], fullBodies), 0
 	}
 	format := listFormatOptions{Now: env.now(), Projects: cfgProjects, Children: childCounts(sessions)}
 	if !browseInteractive(env, stdin, stdout) {
@@ -120,6 +124,11 @@ func resolveShowQuery(ctx context.Context, store storage.ObjectStore, env showQu
 	if !picked {
 		return showLookup{Cancelled: true}, 0
 	}
+	for _, metadata := range matches {
+		if metadata.SessionID == row.SessionID && metadata.Harness.Name == row.HarnessKey {
+			return showCandidateLookup(metadata, fullBodies), 0
+		}
+	}
 	return showLookup{SessionID: row.SessionID, Harness: row.HarnessKey}, 0
 }
 
@@ -127,4 +136,45 @@ func resolveShowQuery(ctx context.Context, store storage.ObjectStore, env showQu
 // character boundary.
 func shortSessionID(id string) string {
 	return archive.TruncateUTF8(id, minShortSessionID)
+}
+
+// showCandidateLookup retains metadata only when discovery verified the full body.
+func showCandidateLookup(metadata archive.Metadata, fullBody bool) showLookup {
+	if fullBody {
+		return showMetadataLookup(metadata)
+	}
+	return showLookup{SessionID: metadata.SessionID, Harness: metadata.Harness.Name}
+}
+
+func showMetadataLookup(metadata archive.Metadata) showLookup {
+	key, _ := archive.MetadataObjectKey(metadata.Harness.Name, metadata.SessionID)
+	return showLookup{SessionID: metadata.SessionID, Harness: metadata.Harness.Name, Metadata: reader.MetadataLookup{Key: key, Metadata: metadata}}
+}
+
+var showMetadataFinder = reader.NewMetadataFinder(agentmeta.Builtins())
+
+func locateShowMetadata(ctx context.Context, store storage.ObjectStore, harness, sessionID string) (reader.MetadataLookup, error) {
+	if harness != "" {
+		key, err := archive.MetadataObjectKey(harness, sessionID)
+		if err != nil {
+			return reader.MetadataLookup{}, err
+		}
+		metadata, err := reader.ReadMetadata(ctx, store, key)
+		return reader.MetadataLookup{Key: key, Metadata: metadata}, err
+	}
+	lookups, err := showMetadataFinder.FindMetadata(ctx, store, archiveSessionsPrefix, sessionID)
+	if len(lookups) > 1 {
+		harnesses := make([]string, 0, len(lookups))
+		for _, lookup := range lookups {
+			harnesses = append(harnesses, strings.Split(strings.TrimPrefix(lookup.Key, archiveSessionsPrefix+"/"), "/")[0])
+		}
+		return reader.MetadataLookup{}, fmt.Errorf("session %q exists under more than one harness (%s); pass --harness", sessionID, strings.Join(harnesses, ", "))
+	}
+	if err != nil {
+		return reader.MetadataLookup{}, err
+	}
+	if len(lookups) == 0 {
+		return reader.MetadataLookup{}, fmt.Errorf("no archived session %q (see `agent-archive list`)", sessionID)
+	}
+	return lookups[0], nil
 }

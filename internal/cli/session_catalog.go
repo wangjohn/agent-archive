@@ -95,16 +95,17 @@ func readListCandidates(env metadataCacheDependencies, store storage.ObjectStore
 	return listed, full, err
 }
 
-// readShowCandidates returns search projections only. The resolver returns an
-// identity, and its caller reads the selected full metadata before rendering.
-func readShowCandidates(ctx context.Context, store storage.ObjectStore, env metadataCacheDependencies, harness, query string, stderr io.Writer) ([]archive.Metadata, error) {
+// readShowCandidates distinguishes search projections from verified full bodies.
+// The resolver may reuse only the latter as selected metadata authority.
+func readShowCandidates(ctx context.Context, store storage.ObjectStore, env metadataCacheDependencies, harness, query string, stderr io.Writer) ([]archive.Metadata, bool, error) {
 	opts := listOptions{filter: reader.Filter{Harness: harness}}
 	sessions, used, err := catalogSessionsInContext(ctx, env, store, opts, stderr, "show", nil)
 	if used {
-		return sessions, err
+		return sessions, false, err
 	}
 	readOpts := reader.ListOptions{Cache: listCache(env, false), Skipped: warnSkippedSidecar(stderr, "show"), BodyRead: catalogBodyObserver(env)}
-	return reader.FindMetadataPrefix(ctx, store, archiveSessionsPrefix, query, opts.filter, readOpts, func(archive.Metadata) bool { return true })
+	sessions, err = reader.FindMetadataPrefix(ctx, store, archiveSessionsPrefix, query, opts.filter, readOpts, func(archive.Metadata) bool { return true })
+	return sessions, true, err
 }
 
 func catalogBodyObserver(env metadataCacheDependencies) func(string, bool) {

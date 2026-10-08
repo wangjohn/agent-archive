@@ -634,21 +634,18 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	sessionID, *harness = lookup.SessionID, lookup.Harness
 
 	stopShow := startActivity(stdout, "Loading session…")
-	key, err := locateMetadataKey(ctx, store, *harness, sessionID)
-	if err != nil {
-		stopShow()
-		terminal.Printf(stderr, "agent-archive: show: %v\n", err)
-		return 1
-	}
-
-	if !*transcript {
-		metadata, err := reader.ReadMetadata(ctx, store, key)
+	selected := lookup.Metadata
+	if selected.Key == "" {
+		selected, err = locateShowMetadata(ctx, store, *harness, sessionID)
 		if err != nil {
 			stopShow()
 			terminal.Printf(stderr, "agent-archive: show: %v\n", err)
 			return 1
 		}
-		view := metadataWithLinks(ctx, store, metadata)
+	}
+
+	if !*transcript {
+		view := metadataWithLinks(ctx, store, selected.Metadata)
 		stopShow()
 		if *jsonOut {
 			return printJSON(stdout, stderr, view)
@@ -663,7 +660,7 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		return 0
 	}
 
-	return printSessionTranscript(ctx, store, env, stdout, stderr, key, sessionID, stopShow, sessionTranscriptOptions{
+	return printSessionTranscript(ctx, store, env, stdout, stderr, selected, sessionID, stopShow, sessionTranscriptOptions{
 		summary: summary, full: *full, json: *jsonOut, normalized: *normalized, noPager: *noPager, maxBytes: *maxBytes,
 	})
 }
@@ -718,8 +715,8 @@ type sessionTranscriptOptions struct {
 // printSessionTranscript downloads and verifies the session's source bundle
 // and prints its transcript: readable and paged, or with --json the sidecar
 // and the normalized view. stopShow ends the loading activity line.
-func printSessionTranscript(ctx context.Context, store storage.ObjectStore, env showCommandDependencies, stdout, stderr io.Writer, key, sessionID string, stopShow func(), opts sessionTranscriptOptions) int {
-	view, bundle, err := loadVerifiedSession(ctx, store, key)
+func printSessionTranscript(ctx context.Context, store storage.ObjectStore, env showCommandDependencies, stdout, stderr io.Writer, selected reader.MetadataLookup, sessionID string, stopShow func(), opts sessionTranscriptOptions) int {
+	view, bundle, err := loadVerifiedMetadata(ctx, store, selected)
 	if err != nil {
 		stopShow()
 		flag := "--transcript"
