@@ -467,7 +467,7 @@ func (c *SQLiteSessionCatalog) Query(ctx context.Context, q CatalogQuery) (Catal
 		where += " AND (instr(search,?) > 0 OR instr(lowerid,?) = 1 OR unlabeled = 1)"
 		args = append(args, word, word)
 	}
-	complex := q.Metadata.Filter.Model != "" || q.Metadata.Filter.Skill != "" || q.Metadata.Filter.SkillSHA256 != "" || q.Metadata.Filter.RequireCompleteCoverage
+	complex := catalogRequiresSummaryFilter(q.Metadata.Filter)
 	page := CatalogPage{Complete: complete}
 	statement := "SELECT key,etag,hash,summary FROM sessions" + where + " ORDER BY " + order //nolint:gosec // SQL fragments are fixed predicates/orders; every input is bound.
 	if !complex {
@@ -589,4 +589,10 @@ func catalogSearch(s SearchSummary) string {
 		}
 	}
 	return strings.ToLower(strings.Join(texts, "\x00"))
+}
+
+// catalogRequiresSummaryFilter identifies predicates that must be checked on
+// every candidate before counting and paging the final typed result.
+func catalogRequiresSummaryFilter(f Filter) bool {
+	return f.Model != "" || f.Skill != "" || f.SkillSHA256 != "" || f.RequireCompleteCoverage
 }
