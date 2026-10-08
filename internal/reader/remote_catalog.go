@@ -343,11 +343,11 @@ func selectBoundedCatalog(ctx context.Context, snapshot *catalog.Snapshot, q Met
 	hiddenTotal := 0
 	var rows []catalog.Row
 	cursor := ""
+	limit := 1000
+	if q.Limit > 0 {
+		limit = min(limit, q.Limit)
+	}
 	for len(rows) < q.Limit || q.Limit <= 0 {
-		limit := 1000
-		if q.Limit > 0 {
-			limit = min(limit, q.Limit-len(rows))
-		}
 		page, e := snapshot.Query(ctx, query, cursor, limit)
 		if e != nil {
 			return RecentResult{}, e
@@ -357,6 +357,9 @@ func selectBoundedCatalog(ctx context.Context, snapshot *catalog.Snapshot, q Met
 			break
 		}
 		cursor = page.Next
+	}
+	if q.Limit > 0 && len(rows) > q.Limit {
+		rows = rows[:q.Limit]
 	}
 	if q.TopLevelOnly {
 		// Count children globally from the dedicated child discriminator range.
