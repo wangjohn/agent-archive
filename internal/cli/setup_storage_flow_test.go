@@ -18,13 +18,13 @@ func TestStorageActionsAcceptOnlyUnambiguousChoices(t *testing.T) {
 		want  string
 	}{{"\n", "create"}, {"c\n", "customize"}, {"customize\n", "customize"}, {"e\n", "existing"}, {"b\n", "back"}, {"x\ne\n", "existing"}} {
 		var out bytes.Buffer
-		got, err := newPrompter(strings.NewReader(tc.input), &out).actions("Storage", "create", nil, []actionOption{{"create", "", "Create"}, {"customize", "c", "Customize"}, {"existing", "e", "Existing"}, {"back", "b", "Back"}})
+		got, err := newPrompter(strings.NewReader(tc.input), &out).setupActions("Storage", "create", nil, []actionOption{{"create", "", "Create"}, {"customize", "c", "Customize"}, {"existing", "e", "Existing"}, {"back", "b", "Back"}})
 		if err != nil || got != tc.want {
 			t.Fatalf("input %q: %q %v", tc.input, got, err)
 		}
 	}
 	var out bytes.Buffer
-	_, err := newPrompter(strings.NewReader(""), &out).actions("Storage", "create", nil, []actionOption{{"create", "", "Create"}})
+	_, err := newPrompter(strings.NewReader(""), &out).setupActions("Storage", "create", nil, []actionOption{{"create", "", "Create"}})
 	if err == nil {
 		t.Fatal("EOF must not accept the default")
 	}
@@ -33,7 +33,7 @@ func TestStorageActionsAcceptOnlyUnambiguousChoices(t *testing.T) {
 	if err != nil || secret != "e" {
 		t.Fatalf("secret intercepted: %q %v", secret, err)
 	}
-	name, err := p.required("Name", "")
+	name, err := p.setupStorageRequired("Name", "")
 	if err != nil || name != "b" {
 		t.Fatalf("name intercepted: %q %v", name, err)
 	}
@@ -46,7 +46,7 @@ func TestStorageProviderNumbersAndModeAliases(t *testing.T) {
 		want  string
 	}{{"\n", "r2"}, {"2\n", "s3"}, {"r2-existing\n", "r2-existing"}, {"r2-\ns3\n", "s3"}} {
 		var out bytes.Buffer
-		got, err := newPrompter(strings.NewReader(tc.input), &out).actions("Provider", "r2", storageMenuOptions(), nil, option{"r2-existing", ""}, option{"r2-create", ""})
+		got, err := newPrompter(strings.NewReader(tc.input), &out).guidedChoice(promptModel{Question: "Provider", Default: "r2", Primary: storageMenuOptions(), Aliases: []option{{"r2-existing", ""}, {"r2-create", ""}}})
 		if err != nil || got != tc.want {
 			t.Fatalf("%q: %q %v", tc.input, got, err)
 		}
@@ -68,7 +68,7 @@ func TestStorageR2CreationAvailableWithoutFlags(t *testing.T) {
 func TestGuidedR2DefaultProviderFlowSkipsCustomization(t *testing.T) {
 	t.Parallel()
 	g := newGuidedR2Fixture(t)
-	out := g.run(t, strings.Join([]string{"", "1", "", bootstrapCanary, "", ""}, "\n")+"\n", 0)
+	out := g.run(t, strings.Join([]string{"", "", "1", "", bootstrapCanary, "", ""}, "\n")+"\n", 0)
 	if strings.Contains(out, "Bucket name [") || strings.Contains(out, "Customize storage location?") || strings.Count(out, "Your archive storage") != 1 {
 		t.Fatalf("default path asks for settings:\n%s", out)
 	}
@@ -273,5 +273,43 @@ func TestCreateS3MissingCredentialsDefaultsToChoosingAProfile(t *testing.T) {
 	out, err := runCreate(t, env, &cfg, "bare\n\nready\ne\nsaved\n")
 	if err != nil || cfg.AWSProfile != "ready" || cfg.Region != "us-west-2" || len(creator.calls) != 0 || strings.Contains(out, "Review settings and retry") || strings.Count(out, "Profile bare has no credentials") != 1 {
 		t.Fatalf("cfg=%+v err=%v calls=%v\n%s", cfg, err, creator.calls, out)
+	}
+}
+
+func TestStorageCredentialReceiptsHideValuesAndPreserveNavigation(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		input string
+		want  string
+		back  bool
+	}{
+		{"\nSYNTHETIC-PRIVATE-ID\nnext\n", "SYNTHETIC-PRIVATE-ID", false},
+		{"back\nnext\n", "back", false},
+		{":back\nnext\n", "", true},
+	} {
+		var out bytes.Buffer
+		p := newPrompter(strings.NewReader(tc.input), &out)
+		got, err := p.setupStorageField("Access key ID (hidden)", "", true)
+		if got != tc.want || errors.Is(err, errChooseStorageAgain) != tc.back || (!tc.back && err != nil) {
+			t.Fatalf("credential %q: %q %v", tc.input, got, err)
+		}
+		next, err := p.in.ReadString('\n')
+		p.close()
+		if err != nil || next != "next\n" {
+			t.Fatalf("buffered follow-up %q %v", next, err)
+		}
+		if strings.Contains(out.String(), "SYNTHETIC-PRIVATE-ID") || setupReceiptIndex(out.String(), "Access key ID (hidden) back") >= 0 {
+			t.Fatalf("credential value in receipt:\n%s", &out)
+		}
+		if strings.HasPrefix(tc.input, "\n") && (!strings.Contains(out.String(), "Credential was not accepted. Try again.") || strings.Count(out.String(), "? Access key ID (hidden)") != 2) {
+			t.Fatalf("missing required retry:\n%s", &out)
+		}
+	}
+	var out bytes.Buffer
+	p := newPrompter(strings.NewReader(""), &out)
+	_, err := p.setupStorageField("Access key ID (hidden)", "", true)
+	p.close()
+	if err == nil {
+		t.Fatal("EOF accepted a credential")
 	}
 }

@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bufio"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -208,9 +207,15 @@ func runPurgeApply(args []string, stdin io.Reader, stdout, stderr io.Writer, env
 // confirmPurge asks for the first twelve characters of the plan's digest.
 // When it is not confirmed, code is the exit status to return.
 func confirmPurge(plan purge.Plan, stdin io.Reader, stdout, stderr io.Writer) (code int, confirmed bool) {
-	terminal.Printf(stdout, "Delete %d unreferenced sources from %s/%s? Type %s to continue: ", len(plan.Candidates), plan.Bucket, plan.Prefix, plan.Digest[:12])
-	answer, err := bufio.NewReader(stdin).ReadString('\n')
-	if err != nil && !errors.Is(err, io.EOF) {
+	p := newPrompter(stdin, stdout)
+	defer p.close()
+	answer, err := p.guidedText(promptModel{Question: fmt.Sprintf("Delete %d unreferenced sources from %s/%s?", len(plan.Candidates), plan.Bucket, plan.Prefix), Helpers: []string{"Type " + plan.Digest[:12] + " to continue. Any other answer cancels."}, Label: "Digest", ResolveReceipt: func(value string) string {
+		if value == plan.Digest[:12] {
+			return "Purge confirmed"
+		}
+		return "Purge cancelled"
+	}})
+	if err != nil {
 		return purgeError(stderr, err), false
 	}
 	if strings.TrimSpace(answer) != plan.Digest[:12] {

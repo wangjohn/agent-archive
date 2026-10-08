@@ -3,7 +3,9 @@ Checking installed applications...
   \e[32m✓\e[0m Codex hooks: ~/.codex/hooks.json
   \e[31m✗\e[0m Claude Code hooks: ~/.claude/settings.json:2:3
     This is a comment (JSONC); comments are not JSON, so remove it.
-    Setup edits only plain JSON. Fix the file, then run agent-archive setup again. To set up without Claude Code, run agent-archive setup --yes with --apps naming the apps you want.
+    Setup edits only plain JSON. Fix the file, then run agent-archive setup
+    again. To set up without Claude Code, run agent-archive setup --yes with
+    --apps naming the apps you want.
   \e[32m✓\e[0m Background job: launchctl responds
 Setup incomplete. Nothing was changed, and any unfinished setup is kept. Fix what is marked ✗ above, then run agent-archive setup again.
 [exit 1]

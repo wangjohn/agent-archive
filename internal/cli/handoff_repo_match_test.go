@@ -143,7 +143,8 @@ func TestHandoffLatestFindsAnotherMachinesSessionByRepository(t *testing.T) {
 		"(another machine)",
 		"handoff: matched by repository (remote origin), not by path",
 		"another machine · project " + filepath.Base(f.project) + " · started 2026-01-02 01:00 UTC · first prompt: Fix the flaky widget test.",
-		"Hand off this session? [y/N]",
+		"? Hand off this session?",
+		"2) No (default)",
 		"handoff: session was on `fix/widget-test`; you are on `main`",
 	} {
 		if !strings.Contains(errOut, want) {

@@ -214,7 +214,7 @@ func TestRecoveryLeavesAnotherInstallationsJobAlone(t *testing.T) {
 		{"the collector's label", "resetup-earlier-labels", func(j journalFile) string { return plistLabel(j.Plist) },
 			1, []string{"belongs to another installation", "Uninstall that installation first, or set AGENT_ARCHIVE_HOME"}},
 		{"an earlier collector's label", "resetup-earlier-labels", func(journalFile) string { return earlierLabel("/old/spelling/a") },
-			0, []string{"Configuration saved."}},
+			0, []string{"Setup complete"}},
 		{"the prototype's label", "first-setup-prototype", func(journalFile) string { return prototypeLabel },
 			1, []string{"legacy upload job was loaded from a plist other than", "preserve it and resolve it before setup"}},
 	} {

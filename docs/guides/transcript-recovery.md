@@ -1,5 +1,8 @@
 # Recover a blocked transcript
 
+The preview groups the blocked transcript and recovery consequences before the command that confirms them. Read the complete consequences, including the permanent requirement for a generation-aware writer, before running with `--confirm`.
+
+
 A `transcript_rewritten` capture gap means the current native transcript no
 longer proves that it includes everything already archived. This can happen
 when an app compacts its transcript, or when a filter upgrade changes how an

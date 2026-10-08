@@ -68,6 +68,7 @@ func runMachinesRevoke(args []string, stdin io.Reader, out, errOut io.Writer, en
 		return 0
 	}
 	p := newPrompter(stdin, out)
+	defer p.close()
 	interactive := !opts.Yes && !opts.JSON && env.interactive(stdin)
 	token := ""
 	tokenErr := errors.New("AWS profile is not a unique principal")
@@ -164,7 +165,7 @@ func confirmRevocation(p *prompter, yes, interactive bool) error {
 	if !interactive {
 		return errors.New("use an interactive terminal or deliberate --yes after reviewing verified ownership")
 	}
-	consent, err := p.yesNo("Delete this exact verified key set? Sessions remain; other recipients may lose access", false)
+	consent, err := p.guidedYesNo("Delete this exact verified key set? Sessions remain; other recipients may lose access")
 	if err != nil || !consent {
 		return errors.New("revocation cancelled; no keys deleted")
 	}

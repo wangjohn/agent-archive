@@ -2,18 +2,22 @@ $ agent-archive status --verbose
 \e[1mAgent Archive\e[0m  \e[32m● Ready\e[0m
 
 \e[1mCapture\e[0m
-  \e[32m✓\e[0m Codex   discovery: no supported task observed in last scan; included projects   \e[2m1 session · 1 archived (1 verified)\e[0m
-    \e[2m·\e[0m Last discovery attempt just now; 1 registered → 0 queued → 1 published → 1 read-back verified
+  \e[32m✓\e[0m Codex   discovery: no supported task observed in last scan; included projects
+    \e[2m1 session · 1 archived (1 verified)\e[0m
+    \e[2m·\e[0m Last discovery attempt just now; 1 registered → 0 queued → 1 published → 1
+      read-back verified
     \e[2m·\e[0m 1 session archived, verified just now
   \e[2m·\e[0m Identity recovery: complete
   \e[2m·\e[0m Projects: ~/src/web-app
   \e[2m·\e[0m Skill evidence: metadata
 
 \e[1mStorage\e[0m
-  \e[32m✓\e[0m s3://team-archive/agent-archive/   \e[2mreachable, checked by setup just now · uploaded just now\e[0m
+  \e[32m✓\e[0m s3://team-archive/agent-archive/
+    \e[2mreachable, checked by setup just now · uploaded just now\e[0m
   \e[32m✓\e[0m Background collector on            \e[2mlast scan just now\e[0m
   \e[33m!\e[0m Bucket privacy not verified        \e[2mthis storage can't be inspected\e[0m
-    Check public access: \e[36mhttps://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html\e[0m
+    Check public access:
+    \e[36mhttps://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html\e[0m
   \e[2m·\e[0m Last upload: just now · 0 pending
 
 \e[1mDetails\e[0m

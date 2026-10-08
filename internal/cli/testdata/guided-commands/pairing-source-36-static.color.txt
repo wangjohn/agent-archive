@@ -1,0 +1,57 @@
+
+? Name for the new machine
+
+> Choose: laptop
+\e[2mOK Name for the new machine laptop\e[0m
+
+? Create separate access for this
+  machine?
+
+  Separate access lets you revoke
+  this machine later without
+  affecting other machines.
+
+  1) Create a Cloudflare key
+     (recommended) (default)
+  2) Share existing access (revoking
+     it affects all machines using
+     it)
+
+  [q] Cancel
+
+> Choose [1]: create
+\e[2mOK Create a Cloudflare key
+   (recommended)\e[0m
+
+? Press Enter when the pairing file
+  or text has arrived on the other
+  machine
+
+> Choose:
+\e[2mOK Press Enter when the pairing file
+   or text has arrived on the other
+   machine\e[0m
+
+\e[?1049h\e[2J\e[H2. Enter the pairing code on the other machine
+
+aardvark abandoned abbreviate abdomen abhorrence abiding
+
+Keep this screen open while entering the code there.
+The first three characters of each word work (yo- for yo-yo).
+Deliver the code separately from the pairing file. Avoid recording or screen sharing.
+Press Enter to hide.
+
+\e[2J\e[H\e[?1049lFinish setup on laptop before closing this pairing.
+
+? Pairing
+
+  1) Show code again
+
+  [Enter] I'm finished
+  [q] Cancel pairing
+
+> Choose: done
+\e[2mOK I'm finished\e[0m
+
+Transfer finished. The other machine confirms when setup succeeds.
+Delete any saved pairing files when no longer needed.

@@ -94,23 +94,21 @@ func checkActiveSource(env worktreeDependencies, opts handoffOptions, target han
 		return false, nil
 	}
 	p := newPrompter(answers, stderr)
-	question := fmt.Sprintf("The source session was active %s; continue in the same checkout?", age)
-	for {
-		answer, err := p.ask(question, true, []string{"y", "N", "w"}, 1, " ")
-		if err != nil {
-			return false, fmt.Errorf("%w (%w)", errHandoffCanceled, err)
-		}
-		switch strings.ToLower(answer) {
-		case "y", "yes":
-			return false, nil
-		case "", "n", "no":
-			return false, errHandoffCanceled
-		case "w":
-			return true, nil
-		default:
-			terminal.Println(stderr, "Enter y to continue here, n to cancel, or w to continue in a new git worktree.")
-		}
+	p.source = stdin
+	defer p.close()
+	question := fmt.Sprintf("The source session was active %s; where should the new agent continue?", age)
+	answer, err := p.guidedChoice(promptModel{Question: question, Helpers: []string{"In the same checkout, both agents can edit its files until one stops."}, Default: "no",
+		Primary: []option{{"yes", "Continue in the same checkout"}, {"no", "Cancel"}, {"w", "Continue in a new git worktree"}}})
+	if err != nil {
+		return false, fmt.Errorf("%w (%w)", errHandoffCanceled, err)
 	}
+	if answer == "yes" {
+		return false, nil
+	}
+	if answer == "w" {
+		return true, nil
+	}
+	return false, errHandoffCanceled
 }
 
 // sourceRegistration loads a session's registration on this machine. ok is

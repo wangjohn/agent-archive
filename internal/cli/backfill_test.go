@@ -240,7 +240,34 @@ func (f *backfillFixture) run(t *testing.T, args ...string) (string, string, int
 // diff.
 func checkGolden(t *testing.T, name string, got []byte) {
 	t.Helper()
-	golden.Check(t, filepath.Join("testdata", "backfill", name), got)
+	golden.Check(t, filepath.Join("testdata", "backfill", name), []byte(normalizeBackfillPromptGlyphs(string(got))))
+}
+
+// normalizeBackfillPromptGlyphs keeps redirected prompt fixtures independent
+// of the inherited TERM. Only line-leading cursor/receipt glyphs vary; choices,
+// defaults, receipt text, blank boundaries and every control byte stay intact.
+func normalizeBackfillPromptGlyphs(text string) string {
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		if rest, ok := strings.CutPrefix(line, "› "); ok {
+			lines[i] = "> " + rest
+		} else if rest, ok := strings.CutPrefix(line, "✓ "); ok {
+			lines[i] = "OK " + rest
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func TestBackfillPromptGlyphNormalizationPreservesStructure(t *testing.T) {
+	t.Parallel()
+	plain := "? Import sessions?\n\n  1) Import\n  2) Skip (default)\n\n> Choose [2]: \nOK Skip\n\nPath contains › and ✓.\n\x1b[2Kwarning\n"
+	unicode := strings.ReplaceAll(strings.ReplaceAll(plain, "> Choose", "› Choose"), "OK Skip", "✓ Skip")
+	if got := normalizeBackfillPromptGlyphs(unicode); got != plain {
+		t.Fatalf("normalization changed prompt structure: %q", got)
+	}
+	if got := normalizeBackfillPromptGlyphs(plain); got != plain {
+		t.Fatalf("normalization changed ASCII output: %q", got)
+	}
 }
 
 //lint:ignore tparallel the test is parallel, but its subtests share one fixture, in order

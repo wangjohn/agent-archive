@@ -1,5 +1,8 @@
 # Import existing sessions (backfill)
 
+Interactive import separates the plan from the current question. Enter skips a standalone import; choose the numbered import action or answer `yes` to proceed. `[e] Edit retention` returns to the same plan after changing the retention period. Undo also defaults to No. Completed answers use short receipts where the terminal can safely redraw them. Explicit noninteractive flags remain the supported route for automation.
+
+
 `agent-archive backfill` imports the Claude Code, Codex, and Cursor sessions
 already on this machine. Run it after [setup](../getting-started/setup.md), which
 itself offers to import the past sessions of the projects you chose (an

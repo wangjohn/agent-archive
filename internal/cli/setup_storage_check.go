@@ -137,7 +137,11 @@ func printStorageFailure(p *prompter, cfg credentials.Config, err error, verbose
 	} else if verbose {
 		terminal.Println(p.out, s.dim(s.hang("    Details: ", err.Error())))
 	} else {
-		terminal.Println(p.out, "    "+s.dim("Details:")+" "+s.cmd(details))
+		if details == "" {
+			terminal.Println(p.out, "    [d] Diagnostic details")
+		} else {
+			terminal.Println(p.out, "    "+s.dim("Details:")+" "+s.cmd(details))
+		}
 	}
 	terminal.Println(p.out, "")
 	return d

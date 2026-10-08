@@ -55,6 +55,11 @@ type colorOutput interface{ colorTerminal() bool }
 // styleFor returns the style for writing to out: plain unless out is a
 // terminal, and without color when NO_COLOR is set or TERM is dumb.
 func styleFor(out io.Writer) textStyle {
+	out = underlyingWriter(out)
+	if c, ok := out.(promptOutput); ok {
+		capabilities := c.promptCapabilities()
+		return textStyle{color: capabilities.Color, live: capabilities.Redraw, width: capabilities.Width}
+	}
 	if c, ok := out.(colorOutput); ok {
 		return textStyle{color: c.colorTerminal()}
 	}
@@ -104,11 +109,30 @@ func displayLines(text string, width int) int {
 
 // lineRows is how many terminal rows one line takes, as displayLines.
 func lineRows(line string, width int) int {
-	w := visibleWidth(line)
-	if width <= 0 || w <= width {
-		return 1
+	rows, _ := lineMetrics(line, width)
+	return rows
+}
+
+// lineMetrics keeps the actual ending column as well as the wrapped row count.
+func lineMetrics(line string, width int) (int, int) {
+	if width <= 0 {
+		return 1, visibleWidth(line)
 	}
-	return (w + width - 1) / width
+	rows, column := 1, 0
+	line = ansiEscape.ReplaceAllString(line, "")
+	for line != "" {
+		r, size := utf8.DecodeRuneInString(line)
+		w := runeWidthBefore(r, line[size:])
+		// A wide glyph wraps before the last cell, leaving that cell unused.
+		// Total visible width alone therefore undercounts some wrapped lines.
+		if w > 0 && column > 0 && column+w > width {
+			rows++
+			column = 0
+		}
+		column += w
+		line = line[size:]
+	}
+	return rows, column
 }
 
 // terminalStyle is the style for a terminal width columns wide, given the

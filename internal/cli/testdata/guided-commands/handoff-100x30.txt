@@ -1,0 +1,19 @@
+
+? Continue in
+
+  1) Codex (default)
+  2) Claude Code
+
+  [p] print
+  [c] copy to the clipboard
+  [w] write to a file
+  [q] quit
+
+› Choose [1]: w
+\e[11A\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[11A✓ Handoff write to a file
+
+? Write to
+
+› Choose [/Users/alex/src/项目-long-directory/handoff-6e340b9c.md]: q
+\e[3A\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[3A✓ Handoff file cancelled
+

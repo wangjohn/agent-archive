@@ -71,7 +71,9 @@ func TestMachineRemoteFakeAcceptance(t *testing.T) {
 					return source.LookupEnv(k)
 				}
 				output := run(receiver, bundle, "setup", "--pair-file", "-", "--yes", "--codex-discovery", "off", "--codex-capture-scope", "included-projects", "--project", project)
-				if strings.Index(output, "Paired with") > strings.Index(output, "Configuration saved") {
+				paired := strings.Index(output, "Paired with")
+				completed := strings.Index(output, "Setup complete")
+				if paired < 0 || completed < 0 || paired > completed {
 					t.Fatal("pair success appears after housekeeping")
 				}
 			}
@@ -329,7 +331,7 @@ func TestPairingClipboardUnavailableDeliberateFallback(t *testing.T) {
 				input = "file\n" + filepath.Join(t.TempDir(), "missing", "pairing.txt") + "\n"
 			}
 			p := newPrompter(strings.NewReader(input), &output)
-			code := deliverPairingBundle(home, "aa-pair1:SYNTHETIC", &ledger, &issuance.Slot{}, env, &output, &output, pairingAddOptions{prompt: p})
+			code := deliverPairingBundle(home, "aa-pair1:SYNTHETIC", &ledger, &issuance.Slot{}, env, &output, &output, pairingAddOptions{prompt: p, userHome: t.TempDir()})
 			if choice == cancelFallback {
 				if code != 1 || ledger.State != pairingDeliveryIntent {
 					t.Fatal("uncertain delivery released")
@@ -405,7 +407,7 @@ func TestCommittedPairingHousekeepingFailureRemainsSuccess(t *testing.T) {
 	cfg := config.Config{MachineID: strings.Repeat("a", 32)}
 	must(t, config.Save(home, cfg))
 	var output bytes.Buffer
-	if err := finishSetup(newPrompter(strings.NewReader(""), &output), &output, home, cfg, false, nil, env.now(), setupFinish{env: env, userHome: userHome}); err != nil || !strings.Contains(output.String(), "committed") || !strings.Contains(output.String(), "Configuration saved") {
+	if err := finishSetup(newPrompter(strings.NewReader(""), &output), &output, home, cfg, false, nil, env.now(), setupFinish{env: env, userHome: userHome}); err != nil || !strings.Contains(output.String(), "committed") || !strings.Contains(output.String(), "Setup complete") {
 		t.Fatalf("postcommit cleanup misreported %v %s", err, &output)
 	}
 }

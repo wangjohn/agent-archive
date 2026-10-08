@@ -4,41 +4,83 @@ Checking installed applications...
 Choose Cloudflare R2 or Amazon S3 for private archive storage. Setup will guide you through connecting your account.
 
 \e[1mStep 1 of 3 · Choose what to capture\e[0m
-
 No apps found automatically.
 Choose which apps to include:
-\e[1mInclude Codex?\e[0m [y/\e[1mN\e[0m] › y
 
-\e[1mInclude Claude Code?\e[0m [y/\e[1mN\e[0m] › n
+? Include Codex?
 
-\e[1mInclude Cursor?\e[0m [y/\e[1mN\e[0m] › n
+  1) Yes
+  2) No (default)
 
-\e[1mCodex capture scope\e[0m
-  1) Included projects only (Codex)
+› Choose [2]: y
+\e[2m✓ Include Codex Yes\e[0m
+
+? Include Claude Code?
+
+  1) Yes
+  2) No (default)
+
+› Choose [2]: n
+\e[2m✓ Include Claude Code No\e[0m
+
+? Include Cursor?
+
+  1) Yes
+  2) No (default)
+
+› Choose [2]: n
+\e[2m✓ Include Cursor No\e[0m
+
+? Codex capture scope
+
+  1) Included projects only (Codex) (default)
   2) All current and future projects (Codex only)
-Enter 1-2 [\e[1m1\e[0m] › included-projects
 
-Projects to archive (✓ included):
-  1) \e[32m✓\e[0m ~/src/web-app  \e[2mthis folder\e[0m
-a includes all listed projects. Or enter 1 to include or leave it out, or a path to add a project.
-Enter a blank line when finished.
-\e[1mProjects\e[0m › 
+› Choose [1]: included-projects
+\e[2m✓ Included projects only (Codex)\e[0m
 
+? Which projects?
+
+  Found 1 projects:
+  1) ~/src/web-app · this folder
+
+  1) All 1 found projects (default)
+  2) Choose specific projects
+
+  [p] Add a project path
+  [r] Retry search
+
+› Choose [1]:
+\e[2m✓ Projects All 1 found projects\e[0m
 
 \e[1mStep 2 of 3 · Connect storage\e[0m
 
-\e[1mWhere should your archive live?\e[0m
-  1) Cloudflare R2
+? Where should your archive live?
+
+  1) Cloudflare R2 (default)
   2) Amazon S3
-[h] Setup instructions
-Choose [\e[1m1\e[0m] › s3-existing
 
-\e[1mAWS profile\e[0m › work
+  [h] Setup instructions
 
-\e[1mWhich bucket should sessions be stored in?\e[0m
+› Choose [1]: s3-existing
+\e[2m✓ Provider Amazon S3\e[0m
+
+? AWS profile
+
+  [:back] Back to storage options
+
+› Answer: work
+\e[2m✓ AWS profile work\e[0m
+
+? Which bucket should sessions be stored in?
+
   1) photos
   2) team-archive
-Enter 1-2, or another bucket name › 2
+  Enter a number or bucket name.
+  [:back] Back to storage options
+
+› Choose: 2
+\e[2m✓ team-archive\e[0m
 
 Bucket team-archive is in us-east-1; using that region.
 
@@ -47,15 +89,21 @@ Checking your storage connection…
   \e[31m✗\e[0m The storage check failed.
     agent-archive couldn't use the storage settings.
 
-    Fix: Check the storage provider, bucket, region and endpoint, then try again.
-    \e[2mDetails:\e[0m \e[36magent-archive setup --verbose\e[0m
+    Fix: Check the storage provider, bucket, region and endpoint, then try
+         again.
+    [d] Diagnostic details
 
-\e[1mWhat next?\e[0m
-  1) Change storage settings
+? What next?
+
+  1) Change storage settings (default)
   2) Retry the check
   3) Change other settings
-  4) Stop for now (your answers are kept)
-Enter 1-4 [\e[1m1\e[0m] › 4
+
+  [d] Diagnostic details
+  [q] Stop; keep your draft
+
+› Choose [1]: q
+\e[2m✓ Stop; keep your draft\e[0m
 
 Setup incomplete: the storage check failed; your answers are kept
 Run agent-archive setup to continue.

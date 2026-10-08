@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os/exec"
 	"strings"
@@ -10,7 +11,6 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/cloudflare"
 	"github.com/wangjohn/agent-archive/internal/config"
-	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
 const maxManagementTokenBytes = 4096
@@ -88,7 +88,7 @@ func readManagementToken(ctx context.Context, p *prompter, env Env, command []st
 		if !interactive {
 			return "", false, false, errors.New("cloudflare_token_command requires an explicit interactive invocation; set CLOUDFLARE_API_TOKEN for --yes")
 		}
-		value, e := env.runManagementTokenCommand(ctx, command)
+		value, e := runPromptManagementTokenCommand(ctx, p, env, command)
 		value = strings.TrimSpace(value)
 		if e == nil && validateManagementToken(value) == nil {
 			return value, false, false, nil
@@ -96,13 +96,15 @@ func readManagementToken(ctx context.Context, p *prompter, env Env, command []st
 		if p == nil {
 			return "", false, false, errors.New("management token command failed")
 		}
-		terminal.Println(p.out, "Password manager did not supply a usable token. Unlock it and retry, or enter a token for this invocation.")
-		choice, choiceErr := p.menu("Management token", "cancel", option{"retry", "Retry password manager"}, option{"paste", "Enter token with hidden input"}, option{"cancel", "Cancel"})
-		if choiceErr != nil || choice == "cancel" {
+		choice, choiceErr := p.guidedChoice(promptModel{Question: "Management token", Helpers: []string{"Password manager did not supply a usable token. Unlock it and retry, or enter a token for this invocation."}, Default: "cancel", Primary: []option{{"retry", "Retry password manager"}, {"paste", "Enter token with hidden input"}, {"cancel", "Cancel"}}})
+		if choiceErr != nil {
+			return "", false, false, choiceErr
+		}
+		if choice == "cancel" {
 			return "", false, false, errChooseStorageAgain
 		}
 		if choice == "retry" {
-			value, e = env.runManagementTokenCommand(ctx, command)
+			value, e = runPromptManagementTokenCommand(ctx, p, env, command)
 			value = strings.TrimSpace(value)
 			if e != nil {
 				return "", false, false, errors.New("management token command failed after retry")
@@ -113,11 +115,18 @@ func readManagementToken(ctx context.Context, p *prompter, env Env, command []st
 	if !interactive || p == nil {
 		return "", false, false, errors.New("set CLOUDFLARE_API_TOKEN for this explicit provider operation")
 	}
-	terminal.Println(p.out, "Create an account-owned Cloudflare API token. Creation/revocation needs Account API Tokens Write; verification needs Read or Write. Guided setup also needs Workers R2 Storage Write. Do not enter an R2 access key. The token stays in memory.")
-	terminal.Println(p.out, cloudflare.TokenDashboardURL)
-	value, e := p.secret("Cloudflare API token (hidden; Enter to choose another option): ")
+	helpers := p.tokenHelpers
+	if len(helpers) == 0 {
+		helpers = []string{"Create an account-owned Cloudflare API token. Creation/revocation needs Account API Tokens Write; verification needs Read or Write. Guided setup also needs Workers R2 Storage Write. Do not enter an R2 access key. The token stays in memory.", cloudflare.TokenDashboardURL}
+	}
+	value, e := p.guidedText(promptModel{Question: "Cloudflare API token (hidden; Enter to choose another option)", Helpers: helpers, Label: "Credential", Secret: true, Validate: func(value string) error {
+		if value == "" {
+			return nil
+		}
+		return validateManagementToken(strings.TrimSpace(value))
+	}})
 	if e != nil {
-		return "", false, false, errors.New("could not read management token")
+		return "", false, false, fmt.Errorf("could not read management token: %w", e)
 	}
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -131,4 +140,13 @@ func validateManagementToken(value string) error {
 		return errors.New("management token is empty or malformed")
 	}
 	return nil
+}
+
+func runPromptManagementTokenCommand(ctx context.Context, p *prompter, env Env, command []string) (string, error) {
+	release := func() {}
+	if p != nil {
+		release = p.suspendPrompts()
+	}
+	defer release()
+	return env.runManagementTokenCommand(ctx, command)
 }
