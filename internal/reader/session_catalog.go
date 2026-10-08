@@ -139,15 +139,24 @@ func OpenSessionCatalog(ctx context.Context, cache *MetadataCache, store storage
 	return openSessionCatalog(ctx, cache, store, opts, false)
 }
 
-func openSessionCatalog(ctx context.Context, cache *MetadataCache, store storage.ObjectStore, opts ListOptions, repair bool) (*SQLiteSessionCatalog, error) {
+func boundCatalogCache(cache *MetadataCache, store storage.ObjectStore, opts ListOptions) (ListOptions, error) {
 	if cache == nil {
-		return nil, errors.New("session catalog requires a metadata cache")
+		return opts, errors.New("session catalog requires a metadata cache")
 	}
 	if opts.Cache == nil {
 		opts.Cache = cache
 	}
 	if CatalogAuthority(store) && opts.Cache.dir != cache.dir {
-		return nil, errors.New("remote session catalog requires its bound metadata cache")
+		return opts, errors.New("remote session catalog requires its bound metadata cache")
+	}
+	return opts, nil
+}
+
+func openSessionCatalog(ctx context.Context, cache *MetadataCache, store storage.ObjectStore, opts ListOptions, repair bool) (*SQLiteSessionCatalog, error) {
+	var err error
+	opts, err = boundCatalogCache(cache, store, opts)
+	if err != nil {
+		return nil, err
 	}
 	dir := filepath.Join(filepath.Dir(cache.dir), "catalog")
 	if err := os.MkdirAll(dir, 0700); err != nil {
@@ -586,23 +595,7 @@ func (c *SQLiteSessionCatalog) Query(ctx context.Context, q CatalogQuery) (Catal
 	if err != nil {
 		return CatalogPage{}, err
 	}
-	order := "capture DESC,key"
-	if q.Metadata.Order == ActivityOrder {
-		order = "activity DESC,capture DESC,key"
-	}
-	// SQL predicates are exact for these typed fields. Text stays a candidate
-	// superset; Go's Unicode matcher and query-time labels decide final matches.
-	where, args := catalogWhere(q.Metadata)
-	var clauses strings.Builder
-	clauses.WriteString(where)
-	for _, word := range q.Words {
-		word = strings.ToLower(word)
-		clauses.WriteString(" AND (instr(search,?) > 0 OR instr(lowerid,?) = 1 OR instr(search,?) > 0 OR unlabeled = 1)")
-		// Leading zeros still denote the same PR in the CLI matcher. Keep
-		// original text/ID candidates and OR a canonical numeric candidate.
-		args = append(args, word, word, catalogPRCandidate(word))
-	}
-	where = clauses.String()
+	order, where, args := catalogQueryPredicates(q)
 	needsSummaryFilter := catalogRequiresSummaryFilter(q.Metadata.Filter)
 	page := CatalogPage{Complete: complete}
 	statement := "SELECT key,etag,hash,capture,activity,summary,search,lowerid,unlabeled,summary_hash FROM sessions" + where + " ORDER BY " + order //nolint:gosec // SQL fragments are fixed predicates/orders; every input is bound.
@@ -669,6 +662,27 @@ func (c *SQLiteSessionCatalog) Query(ctx context.Context, q CatalogQuery) (Catal
 	}
 	span.Count("summaries", len(page.Rows))
 	return page, nil
+}
+
+func catalogQueryPredicates(q CatalogQuery) (string, string, []any) {
+	order := "capture DESC,key"
+	if q.Metadata.Order == ActivityOrder {
+		order = "activity DESC,capture DESC,key"
+	}
+	// SQL predicates are exact for these typed fields. Text stays a candidate
+	// superset; Go's Unicode matcher and query-time labels decide final matches.
+	where, args := catalogWhere(q.Metadata)
+	var clauses strings.Builder
+	clauses.WriteString(where)
+	for _, word := range q.Words {
+		word = strings.ToLower(word)
+		clauses.WriteString(" AND (instr(search,?) > 0 OR instr(lowerid,?) = 1 OR instr(search,?) > 0 OR unlabeled = 1)")
+		// Leading zeros still denote the same PR in the CLI matcher. Keep
+		// original text/ID candidates and OR a canonical numeric candidate.
+		args = append(args, word, word, catalogPRCandidate(word))
+	}
+	where = clauses.String()
+	return order, where, args
 }
 
 func (c *SQLiteSessionCatalog) validateRemoteQuery(ctx context.Context, continuation bool) error {

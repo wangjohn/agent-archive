@@ -287,6 +287,19 @@ func (c *SQLiteSessionCatalog) RefreshRemote(ctx context.Context) error {
 	if err = tx.Commit(); err != nil {
 		return err
 	}
+	reused = remoteReusedRows(delta, invalid, cachedKeys)
+	if err = snapshot.ValidateRead(ctx); err != nil {
+		return err
+	}
+	c.evictRemoteBodies(knownBodies, delta, cachedKeys)
+	c.remoteBinding = binding
+	c.remoteSnapshot = snapshot
+	c.viewEpoch, c.viewGeneration, c.viewReady = epoch, generation, true
+	return nil
+}
+
+func remoteReusedRows(delta catalog.Delta, invalid []string, cachedKeys map[string]bool) int {
+	reused := 0
 	if !delta.Rebuild {
 		refreshed := map[string]bool{}
 		for _, key := range invalid {
@@ -304,14 +317,7 @@ func (c *SQLiteSessionCatalog) RefreshRemote(ctx context.Context) error {
 			}
 		}
 	}
-	if err = snapshot.ValidateRead(ctx); err != nil {
-		return err
-	}
-	c.evictRemoteBodies(knownBodies, delta, cachedKeys)
-	c.remoteBinding = binding
-	c.remoteSnapshot = snapshot
-	c.viewEpoch, c.viewGeneration, c.viewReady = epoch, generation, true
-	return nil
+	return reused
 }
 
 // evictRemoteBodies consumes the complete committed reconciliation universe.
