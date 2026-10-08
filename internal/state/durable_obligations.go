@@ -157,7 +157,7 @@ func (s *Store) DurableStorageObligations() (out []DurableStorageObligation, err
 				if base == "sessions" && info.Mode().IsRegular() {
 					continue
 				}
-				if !safeFileComponent(entry.Name()) || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+				if !namedDurableDirectory(entry.Name(), info) {
 					out = append(out, DurableStorageObligation{Namespace: UnavailableStorage})
 					err = errors.Join(err, ErrDurableStorageRecovery)
 					continue
@@ -198,6 +198,10 @@ func (s *Store) DurableStorageObligations() (out []DurableStorageObligation, err
 		err = errors.Join(ErrDurableStorageRecovery, err)
 	}
 	return out, errors.Join(err, home.Check(), s.durableContext().Err())
+}
+
+func namedDurableDirectory(name string, info os.FileInfo) bool {
+	return safeFileComponent(name) && info.IsDir() && info.Mode()&os.ModeSymlink == 0
 }
 
 func (s *Store) classifyGenerationObligations(home *local.RootedHome, pending []DurableStorageObligation, found bool) (out []DurableStorageObligation, err error) {
