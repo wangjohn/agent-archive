@@ -42,6 +42,9 @@ type Options struct {
 	PrepareCodexCoverage func(context.Context, []archive.SessionRegistration) error
 	// CodexRollouts is one caller-owned bounded locator view shared by the pass.
 	CodexRollouts agentapi.CodexRolloutLookup
+	// PendingCodexRollouts observes locator evidence only after a history fence.
+	// The caller shares one lazy catalog; it must not grant publication authority.
+	PendingCodexRollouts func() agentapi.CodexRolloutLookup
 	// ConfiguredCodexHomes supplies confined migration roots from configuration,
 	// independently of current-locator hints. Native evidence still validates identity.
 	ConfiguredCodexHomes []string

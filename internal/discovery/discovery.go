@@ -243,7 +243,12 @@ func appendUnique(values []string, value string) []string {
 // Directory cookies continue bounded enumeration without rereading preceding
 // names. They are hints: every completed round restarts reconciliation, so
 // moves, directory replacement and invalidation cannot silently lose coverage.
-func readBatch(d directory) ([]string, int64, bool, error) {
+func readBatch(d directory) ([]string, int64, bool, error) { return readBatchMeasured(d, nil) }
+
+func readBatchMeasured(d directory, counts *metadataCounts) ([]string, int64, bool, error) {
+	if counts != nil {
+		counts.rootOpens++
+	}
 	root, err := os.OpenRoot(d.Root)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, 0, true, nil
@@ -252,12 +257,18 @@ func readBatch(d directory) ([]string, int64, bool, error) {
 		return nil, 0, false, err
 	}
 	defer func() { _ = root.Close() }()
+	if counts != nil {
+		counts.stats++
+	}
 	info, err := root.Lstat(d.Path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, 0, true, nil
 	}
 	if err != nil || !info.IsDir() {
 		return nil, 0, false, errors.New("not a directory")
+	}
+	if counts != nil {
+		counts.fileOpens++
 	}
 	f, err := root.Open(d.Path)
 	if err != nil {
