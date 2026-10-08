@@ -396,7 +396,7 @@ func TestLinuxSnapshotRootIsMadeUnderTheCacheDirectoryWithATag(t *testing.T) {
 // edited) alone.
 func TestCacheDirectoryTagIsWrittenOnceAndLeftAlone(t *testing.T) {
 	t.Parallel()
-	dir := filepath.Join(t.TempDir(), "agent-archive")
+	dir := filepath.Join(privateCacheHome(t), "agent-archive")
 	root := filepath.Join(dir, "cursor-snapshots")
 	tagPath := filepath.Join(dir, "CACHEDIR.TAG")
 	if _, err := preparedSnapshotRoot(root, dir); err != nil {
@@ -418,7 +418,7 @@ func TestCacheDirectoryTagIsWrittenOnceAndLeftAlone(t *testing.T) {
 // soon as it is used, so a leftover backed up is an inconvenience.
 func TestSnapshotRootWorksWhenTheTagCannotBeWritten(t *testing.T) {
 	t.Parallel()
-	dir := filepath.Join(t.TempDir(), "agent-archive")
+	dir := filepath.Join(privateCacheHome(t), "agent-archive")
 	if err := os.Mkdir(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -437,7 +437,7 @@ func TestSnapshotRootWorksWhenTheTagCannotBeWritten(t *testing.T) {
 func TestCacheDirectoryMustBePrivate(t *testing.T) {
 	t.Parallel()
 	for _, mode := range []fs.FileMode{0o770, 0o707, 0o777, 0o720} {
-		dir := filepath.Join(t.TempDir(), "agent-archive")
+		dir := filepath.Join(privateCacheHome(t), "agent-archive")
 		if err := os.Mkdir(dir, 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -454,7 +454,7 @@ func TestCacheDirectoryMustBePrivate(t *testing.T) {
 	}
 	// A mode that others can read but not write is fine: nothing private is
 	// in this directory, only the private root under it.
-	dir := filepath.Join(t.TempDir(), "agent-archive")
+	dir := filepath.Join(privateCacheHome(t), "agent-archive")
 	if err := os.Mkdir(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -470,7 +470,7 @@ func TestCacheDirectoryMustBePrivate(t *testing.T) {
 // at.
 func TestCacheDirectoryIsNotFollowedThroughALink(t *testing.T) {
 	t.Parallel()
-	base := t.TempDir()
+	base := privateCacheHome(t)
 	elsewhere := filepath.Join(base, "elsewhere")
 	if err := os.Mkdir(elsewhere, 0o700); err != nil {
 		t.Fatal(err)
@@ -497,7 +497,7 @@ func TestCacheDirectoryAndRootOwnedByAnotherAccountAreRefused(t *testing.T) {
 		t.Skip("giving a directory to another account needs root")
 	}
 	const nobody = 65534
-	dir := filepath.Join(t.TempDir(), "agent-archive")
+	dir := filepath.Join(privateCacheHome(t), "agent-archive")
 	if err := os.Mkdir(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -507,7 +507,7 @@ func TestCacheDirectoryAndRootOwnedByAnotherAccountAreRefused(t *testing.T) {
 	if _, err := preparedSnapshotRoot(filepath.Join(dir, "cursor-snapshots"), dir); !errors.Is(err, errCacheDirNotPrivate) {
 		t.Errorf("agent-archive's folder owned by another account: err %v, want errCacheDirNotPrivate", err)
 	}
-	dir = filepath.Join(t.TempDir(), "agent-archive")
+	dir = filepath.Join(privateCacheHome(t), "agent-archive")
 	root := filepath.Join(dir, "cursor-snapshots")
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		t.Fatal(err)
@@ -518,6 +518,18 @@ func TestCacheDirectoryAndRootOwnedByAnotherAccountAreRefused(t *testing.T) {
 	if _, err := preparedSnapshotRoot(root, dir); !errors.Is(err, errSnapshotRootNotPrivate) {
 		t.Errorf("snapshot root owned by another account: err %v, want errSnapshotRootNotPrivate", err)
 	}
+}
+
+// TempDir's numbered child follows the process umask. These fixtures need a
+// private cache home so the parent guard does not mask the child mode, tag,
+// link or ownership condition each test is exercising.
+func privateCacheHome(t *testing.T) string {
+	t.Helper()
+	cache := t.TempDir()
+	if err := os.Chmod(cache, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return cache
 }
 
 // A cache home that was already there keeps its mode, but group or other

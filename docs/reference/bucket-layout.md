@@ -16,10 +16,11 @@ here as `<prefix>/`; with no prefix, keys start at `sessions/`).
   .setup-test/<random>.json          a connection test object, deleted within seconds
   .setup-test/clock-<random>.json    a clock check before retention deletes anything, deleted at once
   listing/
-    v1-ready                       written after a complete index rebuild
-    v1-needs-rebuild               older bucket detected by an uploading machine
-    v1/<reverse-time>/<app>/<id>/<hash>.json  immutable listing hint
-    by-session/<app>/<id>/<hash>    cleanup pointer for a listing hint
+    v3/<app>/<id>/<reverse-time>/<summary-chunks>  current immutable revision hint
+    v2/<reverse-time>/<app>/<id>/<summary>        earlier revision hint
+    by-session-v2/<app>/<id>/<key-hash>           earlier cleanup pointer
+    v1/<reverse-time>/<app>/<id>/<hash>.json      legacy listing hint
+    by-session/<app>/<id>/<hash>                 legacy cleanup pointer
 ```
 
 - **Archive session ID.** 32 lowercase hex characters, assigned on the machine
@@ -31,22 +32,20 @@ here as `<prefix>/`; with no prefix, keys start at `sessions/`).
   git origin, when there is one), app and version, capture time,
   counts, models, skills, capture gaps, parser and filter versions, and the
   key, SHA-256, and size of the current source. `list` reads only these.
-- **`listing/`** holds time-ordered hints. A limited `list` pages through
-  these keys and verifies each candidate against its current `metadata.json`
-  before showing it. Index entries never contain conversation content and
-  can be stale after republish or deletion. `list --rebuild-index` scans an
-  older bucket's sidecars and writes the `v1-ready` marker last. Until then,
-  limited listing uses the full sidecar scan. Retention and undo remove a
-  session's hints using the `by-session` pointers. Every uploading machine must
-  run an index-aware collector before rebuilding, and continue to do so afterward.
-  v0.1.1 collectors and external writers that publish metadata without a hint
-  are not supported alongside an enabled index: their new sessions may be absent
-  from bounded JSON listings. The ready marker does not detect those writers.
-  For a development bucket written by those tools, use `list --limit 0` until
-  they have stopped, then rebuild. Current collectors publish each hint before
-  its metadata, so a new session is discoverable as soon as it is published.
-  If a hint is damaged, listing falls back to a full sidecar scan; rerun
-  `list --rebuild-index` to repair the index.
+- **`listing/`** holds immutable revision hints. Current session-addressed v3
+  summaries use path components of at most 255 bytes for filesystem-backed S3
+  compatibility, within the 1,024-byte object-key limit. Earlier single-component
+  v2/v3 summaries remain readable. A limited `list` checks coverage against
+  current canonical metadata headers, then verifies each selected sidecar's
+  validator, digest and summary before showing it. Entries contain discovery
+  metadata only and can be stale after republish or deletion. A missing, stale
+  or damaged index produces a full compatibility scan. `list --rebuild-index`
+  validates live sidecars and repairs auxiliary hints, including older encodings;
+  it leaves canonical metadata and sources unchanged. Retention and undo remove
+  session-addressed v3 hints and reclaim earlier hints and pointers. Older
+  readers that do not understand segmented v3 summaries use their complete
+  compatibility scan. See the [revision protocol](../../dev/maintainers/list-performance.md#revision-protocol)
+  for validation, migration and bounded cleanup details.
 - **`source.<sha256>.jsonl.gz`** is gzip of newline-delimited JSON (source
   schema 2; [`schemas/source-bundle.schema.json`](../../schemas/source-bundle.schema.json)):
   a header line, one line per retained native record, then text transcripts

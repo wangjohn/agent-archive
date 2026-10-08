@@ -36,7 +36,16 @@ Canonical metadata is authoritative. Keys are
 `listing/v3/<harness>/<id>/<19-digit reverse Unix nanoseconds>/<summary>`.
 Legacy v2 keys put the reverse timestamp before harness/id. Both forms
 encode the same validated summaries; v3 needs no separate cleanup pointer.
-The summary is canonical JSON encoded as unpadded base64url, containing the
+The summary is canonical JSON encoded as unpadded base64url. New v3 writers
+split it into consecutive 255-byte path components (only the last may be
+shorter), preserving one empty immutable object and the session cleanup prefix.
+Separators count toward S3's 1,024-byte key bound. Identity components must
+also fit 255 bytes. Readers retain earlier single-component v2/v3 summaries;
+rebuild and ordinary v3 repair publish the bounded encoding before retiring
+old hints. Segmented summaries with empty or noncanonical boundaries are
+refused. Earlier v3 readers reject these segmented hints and use their
+existing complete compatibility scan; they cannot provide indexed listing
+for newly segmented entries. The summary contains the
 fresh publication nonce (`n`), opaque provider ETag (`v`), SHA-256 of canonical bytes (`h`), activity timestamp
 (`a`), optional parent ID (`p`), replay marker (`r`), ProjectID (`j`) and RepoKey (`k`). No source or skill
 content is included. Unsupported/noncanonical summaries and keys exceeding
