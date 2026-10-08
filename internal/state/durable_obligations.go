@@ -134,6 +134,10 @@ func (s *Store) DurableStorageObligations() (out []DurableStorageObligation, err
 			return out, e
 		}
 		for {
+			if e := s.durableContext().Err(); e != nil {
+				err = errors.Join(err, e)
+				break
+			}
 			entries, e := d.ReadDir(128)
 			if e != nil && !errors.Is(e, io.EOF) {
 				err = errors.Join(err, e)
@@ -184,13 +188,16 @@ func (s *Store) DurableStorageObligations() (out []DurableStorageObligation, err
 			return out, errors.Join(err, ErrDurableStorageRecovery)
 		}
 	}
+	if e := s.durableContext().Err(); e != nil {
+		return out, errors.Join(ErrDurableStorageRecovery, err, e)
+	}
 	unavailable, e := unavailableStorageObligations(home.Root, &remaining)
 	out = append(out, unavailable...)
 	err = errors.Join(err, e)
 	if err != nil {
 		err = errors.Join(ErrDurableStorageRecovery, err)
 	}
-	return out, errors.Join(err, home.Check())
+	return out, errors.Join(err, home.Check(), s.durableContext().Err())
 }
 
 func (s *Store) classifyGenerationObligations(home *local.RootedHome, pending []DurableStorageObligation, found bool) (out []DurableStorageObligation, err error) {

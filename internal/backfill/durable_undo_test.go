@@ -19,11 +19,13 @@ import (
 type durableUndoMode string
 
 const (
-	durableUndoCorrupt    durableUndoMode = "corrupt"
-	durableUndoFuture     durableUndoMode = "future"
-	durableUndoSourceOnly durableUndoMode = "source-only"
-	durableUndoOpaque     durableUndoMode = "opaque"
-	durableUndoHealthy    durableUndoMode = "healthy-pending"
+	durableUndoCorrupt          durableUndoMode = "corrupt"
+	durableUndoFuture           durableUndoMode = "future"
+	durableUndoSourceOnly       durableUndoMode = "source-only"
+	durableUndoOpaque           durableUndoMode = "opaque"
+	durableUndoHealthy          durableUndoMode = "healthy-pending"
+	durableUndoReceiptExtra     durableUndoMode = "receipt-extra"
+	durableUndoReceiptUncleared durableUndoMode = "receipt-uncleared"
 )
 
 type durableUndoRemote struct {
@@ -37,7 +39,7 @@ func (s *durableUndoRemote) Delete(ctx context.Context, key string) error {
 }
 
 func TestUndoRefusesProtectedRecoveryBeforeRemoteDeletion(t *testing.T) {
-	for _, mode := range []durableUndoMode{durableUndoCorrupt, durableUndoFuture, durableUndoSourceOnly, durableUndoOpaque, durableUndoHealthy} {
+	for _, mode := range []durableUndoMode{durableUndoCorrupt, durableUndoFuture, durableUndoSourceOnly, durableUndoOpaque, durableUndoHealthy, durableUndoReceiptExtra, durableUndoReceiptUncleared} {
 		t.Run(string(mode), func(t *testing.T) {
 			f := newUndoFixture(t)
 			if err := config.Save(f.home, config.Config{MachineID: "synthetic"}); err != nil {
@@ -67,6 +69,13 @@ func TestUndoRefusesProtectedRecoveryBeforeRemoteDeletion(t *testing.T) {
 				if err := f.store.SavePending(reg.ArchiveSessionID, state.PendingPublication{SourceKey: ref.Key, SourceSHA256: ref.SHA256, SourceBytes: raw, MetadataKey: "metadata", MetadataBytes: []byte(`{}`), Attempted: true}); err != nil {
 					t.Fatal(err)
 				}
+			case durableUndoReceiptExtra, durableUndoReceiptUncleared:
+				path = filepath.Join(f.home, "generation-recovery", reg.ArchiveSessionID+".json")
+				suffix := `,"future":null}`
+				if mode == durableUndoReceiptUncleared {
+					suffix = `,"request":{}}`
+				}
+				raw = []byte(`{"version":1,"key":{"Agent":"claude","NativeID":"native"},"previous":"` + reg.ArchiveSessionID + `","next":"next","complete":true` + suffix)
 			case durableUndoCorrupt:
 			}
 			if mode != durableUndoSourceOnly && mode != durableUndoHealthy {

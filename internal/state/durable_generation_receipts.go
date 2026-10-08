@@ -23,8 +23,8 @@ func (*clearedGenerationPayload) UnmarshalJSON(raw []byte) error {
 
 type generationReceiptJSON generationRecovery
 
-// Completed receipts are classified only for a global census. Directory
-// observation caching never proves the contents of an in-place rewritten file.
+// The census, replay and read eligibility share this bounded receipt proof.
+// Directory observation caching never proves in-place rewritten contents.
 func (s *Store) completedGenerationReceipt(home *local.RootedHome, id string) (complete bool, err error) {
 	if err := s.durableContext().Err(); err != nil {
 		return false, err
@@ -81,4 +81,24 @@ func (s *Store) completedGenerationReceipt(home *local.RootedHome, id string) (c
 		return false, err
 	}
 	return decodeErr == nil && receipt.Version == 1 && receipt.Previous == id && safeFileComponent(receipt.Next) && receipt.Key.Validate() == nil && receipt.Complete && receipt.Registration == nil && receipt.Pending == nil && receipt.Request == nil, nil
+}
+
+// Replay consumes only the cleared receipt proof, not unrelated pending content.
+// ResumeGenerationRecoveries has already checked the current rooted config.
+func (s *Store) checkCompletedGenerationRecoveryFile(id string) (err error) {
+	home, err := local.OpenRootedHome(s.home)
+	if err != nil {
+		return errors.Join(ErrDurableStorageRecovery, err)
+	}
+	defer func() {
+		err = errors.Join(err, home.Check(), home.Close())
+		if err != nil {
+			err = errors.Join(ErrDurableStorageRecovery, err)
+		}
+	}()
+	complete, err := s.completedGenerationReceipt(home, id)
+	if err != nil || !complete {
+		return errors.Join(ErrDurableStorageRecovery, err)
+	}
+	return nil
 }

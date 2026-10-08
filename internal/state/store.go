@@ -812,7 +812,13 @@ func (s *Store) validateReadablePending(pending PendingPublication) error {
 	scratch, closeScratch := s.WithReadBudget(s.durableContext(), s.resourceBudget)
 	defer closeScratch()
 	var metadata archive.Metadata
-	return scratch.unmarshalOwned(pending.MetadataBytes, &metadata)
+	if err := scratch.unmarshalOwned(pending.MetadataBytes, &metadata); err != nil {
+		return err
+	}
+	if pending.History == nil {
+		return archive.CheckHistoryMutation(pending.Bundle, metadata)
+	}
+	return nil
 }
 
 // SavePending durably records a session's publication transaction before its

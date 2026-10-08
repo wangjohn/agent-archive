@@ -287,6 +287,18 @@ func (s *Store) CheckDurableSessionRead(id string) (err error) {
 	if err != nil {
 		return err
 	}
+	info, receiptErr := home.Root.Lstat(filepath.Join(generationRecoveryDir, id+".json"))
+	if receiptErr == nil {
+		if !found || !info.Mode().IsRegular() {
+			return ErrDurableStorageRecovery
+		}
+		complete, err := s.completedGenerationReceipt(home, id)
+		if err != nil || !complete {
+			return errors.Join(ErrDurableStorageRecovery, err)
+		}
+	} else if !errors.Is(receiptErr, os.ErrNotExist) {
+		return errors.Join(ErrDurableStorageRecovery, receiptErr)
+	}
 	evidence, err := rootHasEntries(home.Root, filepath.Join("publication-evidence", id))
 	if err != nil || evidence {
 		return errors.Join(ErrDurableStorageRecovery, err)

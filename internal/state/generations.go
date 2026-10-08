@@ -296,7 +296,7 @@ func (s *Store) ResumeGenerationRecoveries(ctx context.Context) error {
 		}
 		id := file.Name()[:len(file.Name())-5]
 		if err := s.resumeGenerationRecoveryFile(ctx, id, budget); err != nil {
-			if !errors.Is(err, agentapi.ErrReadBudget) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			if (!errors.Is(err, agentapi.ErrReadBudget) && !errors.Is(err, ErrDurableStorageRecovery)) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return err
 			}
 			pressure = append(pressure, fmt.Errorf("generation recovery %q remains pending: %w", id, err))
@@ -321,7 +321,7 @@ func (s *Store) resumeGenerationRecoveryFile(ctx context.Context, id string, bud
 		return ErrSessionIndexRecoveryRequired
 	}
 	if r.Complete {
-		return nil
+		return scoped.checkCompletedGenerationRecoveryFile(id)
 	}
 	// Only routing status was consumed. End this independent full view before
 	// rereading the locked journal that authorizes the actual replay.
@@ -348,6 +348,14 @@ func (s *Store) resumeGenerationRecovery(g config.DurableStorageGuard, ctx conte
 		return ErrSessionIndexRecoveryRequired
 	}
 	if r.Complete {
+		home, err := g.RootedHome(s.home)
+		if err != nil {
+			return err
+		}
+		complete, err := s.completedGenerationReceipt(home, id)
+		if err != nil || !complete {
+			return errors.Join(ErrDurableStorageRecovery, err)
+		}
 		return nil
 	}
 	if r.Registration == nil || r.Pending == nil || r.Request == nil || r.Registration.ArchiveSessionID != r.Next || r.Registration.PreviousGenerationID != id || r.Pending.Bundle.ArchiveSessionID != r.Next || r.Request.ArchiveSessionID != r.Next || r.Request.Token != r.Pending.RequestToken {
