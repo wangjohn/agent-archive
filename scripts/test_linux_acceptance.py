@@ -108,6 +108,35 @@ class AcceptanceScriptsTest(unittest.TestCase):
         self.assertRegex((DIR / "Dockerfile").read_text(), rf"(?m)^RUN .*>{re.escape(marker)}$")
         self.assertNotIn(marker, HOST.read_text(), "host.sh must not make the marker: only the image has it")
 
+    def test_guest_cache_home_is_private_even_with_a_permissive_umask(self):
+        guest = GUEST.read_text()
+        command = 'install -d -o ada -g ada -m 0700 "$XDG_CACHE"'
+        self.assertIn(command, guest)
+        self.assertLess(guest.index(command), guest.index("aa_xdg setup"))
+        # Exercise the actual fixture command, substituting this test's own
+        # account and temporary path so no host account or cache is touched.
+        command = command.replace("-o ada -g ada", f"-o {os.getuid()} -g {os.getgid()}")
+        for mask in ("0000", "0002", "0022"):
+            for exists in (False, True):
+                with self.subTest(umask=mask, exists=exists), tempfile.TemporaryDirectory() as root:
+                    cache = Path(root) / "cache"
+                    if exists:
+                        cache.mkdir()
+                        cache.chmod(0o777)
+                    subprocess.run(
+                        ["bash", "-ec", f'umask "$1"; XDG_CACHE=$2; {command}', "fixture", mask, str(cache)],
+                        check=True,
+                    )
+                    info = cache.stat()
+                    self.assertEqual(stat.S_IMODE(info.st_mode), 0o700)
+                    self.assertEqual((info.st_uid, info.st_gid), (os.getuid(), os.getgid()))
+
+    def test_status_checks_keep_session_and_import_counts_with_current_hook_wording(self):
+        guest = GUEST.read_text()
+        self.assertIn("'Claude Code.* hooks installed +1 session' aa_xdg status", guest)
+        self.assertIn("'Cursor +hooks installed +no sessions yet .* 1 imported' aa_xdg status", guest)
+        self.assertNotIn("hooks on", guest)
+
     def test_scripts_never_name_anyone_elses_container(self):
         for script in (HOST, GUEST, DIR / "Dockerfile", DIR / "README.md"):
             text = script.read_text()
