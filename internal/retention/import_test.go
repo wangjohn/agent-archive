@@ -162,11 +162,8 @@ func TestRetentionExpiryLeavesRemovalRecords(t *testing.T) {
 // reports the failure; the next sweep records and forgets it.
 func TestRetentionRetriesExpiryWhenTheRemovalRecordFails(t *testing.T) {
 	t.Parallel()
-	home := t.TempDir()
-	local, err := state.Open(home)
-	if err != nil {
-		t.Fatal(err)
-	}
+	local := newTestStore(t)
+	home := local.Home()
 	if err := local.SaveRegistration(registration("s1", filepath.Join(home, "missing.jsonl"))); err != nil {
 		t.Fatal(err)
 	}

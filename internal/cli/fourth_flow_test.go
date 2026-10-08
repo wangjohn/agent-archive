@@ -65,6 +65,9 @@ func fourthNormalRegistryFlow(t *testing.T, failPublication bool) {
 	t.Parallel()
 	ctx := context.Background()
 	home, project := t.TempDir(), t.TempDir()
+	if err := os.Chmod(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	now := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	nativeID := " collision/λ\x00 "
 	ports := &orbifold.Ports{Mutation: agentapi.ReplaceableSnapshot, Generation: 1}
@@ -247,6 +250,9 @@ func TestFourthHistoricalQualifiedLocatorFlow(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
+	if err := os.Chmod(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	at := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	ports := &orbifold.Ports{Generation: 1}
 	registry := fourthRegistry(t, ports)

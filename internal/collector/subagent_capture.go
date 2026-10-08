@@ -174,6 +174,9 @@ func materializeSubagentCandidate(ctx context.Context, local *state.Store, candi
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if err := checkDurableSessionRead(ctx, local, candidate.ArchiveSessionID, opts); err != nil {
+		return err
+	}
 	parent, err := admittedSubagentParent(local, candidate, opts)
 	if err != nil {
 		return err

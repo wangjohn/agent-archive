@@ -48,6 +48,12 @@ func verifyPublications(home string, cfg config.Config, env Env, store *state.St
 
 func setUpTestConfig(t *testing.T, home, projectRoot string, activatedAt time.Time) {
 	t.Helper()
+	if err := os.MkdirAll(home, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(home, 0700); err != nil {
+		t.Fatal(err)
+	}
 	cfg := config.Config{
 		MachineID: "machine-1",
 		Storage:   credentialsTestConfig(),

@@ -49,6 +49,9 @@ func newBackfillFixture(t *testing.T) *backfillFixture {
 			t.Fatal(err)
 		}
 	}
+	if err := os.Chmod(f.data, 0700); err != nil {
+		t.Fatal(err)
+	}
 	repo := func(name string) string {
 		dir := filepath.Join(f.userHome, name)
 		if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {

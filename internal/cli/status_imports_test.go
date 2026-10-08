@@ -41,6 +41,9 @@ func saveImportedSession(t *testing.T, store *state.Store, now time.Time, id, pr
 func TestStatusDoesNotPromoteAnAppOnImports(t *testing.T) {
 	t.Parallel()
 	home, userHome := t.TempDir(), t.TempDir()
+	if err := os.Chmod(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	now := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
 	project := t.TempDir()
 	cfg := pairTestConfig(now, []string{"codex"}, project)
@@ -106,6 +109,9 @@ func TestStatusDoesNotPromoteAnAppOnImports(t *testing.T) {
 func TestStatusReportsImportsWithGapsOrFailedScans(t *testing.T) {
 	t.Parallel()
 	home, userHome := t.TempDir(), t.TempDir()
+	if err := os.Chmod(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	now := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
 	project := t.TempDir()
 	cfg := pairTestConfig(now, []string{"codex"}, project)
@@ -164,6 +170,9 @@ func TestStatusReportsImportsWithGapsOrFailedScans(t *testing.T) {
 func TestStatusWithoutImportsHasNoImportedLine(t *testing.T) {
 	t.Parallel()
 	home, userHome := t.TempDir(), t.TempDir()
+	if err := os.Chmod(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	now := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
 	project := t.TempDir()
 	cfg := pairTestConfig(now, []string{"codex"}, project)
@@ -181,6 +190,7 @@ func TestStatusWithoutImportsHasNoImportedLine(t *testing.T) {
 func TestStatusObservesLaterHookOnImportWithoutPromotingCapture(t *testing.T) {
 	t.Parallel()
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
+	must(t, os.Chmod(home, 0700))
 	now := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
 	cfg := pairTestConfig(now, []string{"codex"}, project)
 	if err := config.Save(home, cfg); err != nil {
