@@ -40,7 +40,11 @@ func catalogSessions(env metadataCacheDependencies, store storage.ObjectStore, o
 	for {
 		page, e := catalog.Query(ctx, query)
 		if e != nil {
-			return nil, true, e
+			// A damaged disposable index must not hide current archive sessions.
+			// Reuse this command's fresh headers for the verified legacy fallback.
+			sessions, fallbackErr := reader.ListMetadataFromSnapshot(ctx, store, headers, opts.filter, readOpts)
+			sortByActivity(sessions)
+			return filterListOrigin(sessions, opts.imported, opts.hookCaptured), true, fallbackErr
 		}
 		for _, row := range page.Rows {
 			sessions = append(sessions, row.Summary.Metadata())
