@@ -97,8 +97,8 @@ func TestMigrationInitializationIntentResumesEveryFirstWriteBoundary(t *testing.
 }
 
 func TestMigrationInitializationIntentRejectsForeignAndMixedNamespace(t *testing.T) {
-	for _, kind := range []string{"mixed", "foreign-proof", "bare-coordinator"} {
-		t.Run(kind, func(t *testing.T) {
+	for _, kind := range []migrationInitializationFault{"mixed", "foreign-proof", "bare-coordinator"} {
+		t.Run(string(kind), func(t *testing.T) {
 			source, target, src, dst, authority := migrationFixture(t, 0)
 			fault := &migrationIntentFault{qualifiedStore: target, stage: "initialize-seal"}
 			if _, err := OpenMigration(t.Context(), source, fault, src, dst, authority); err == nil {
@@ -237,10 +237,11 @@ func TestMigrationIntentRefusesAlteredCheckpointDescriptor(t *testing.T) {
 		for _, field := range []string{"owner", "source-profile"} {
 			t.Run(phase+"/"+field, func(t *testing.T) {
 				source, target, src, dst, authority := migrationFixture(t, 0)
-				fault := &migrationIntentFault{qualifiedStore: target}
+				stage := ""
 				if phase == "initialize" {
-					fault.stage = "clear-intent"
+					stage = "clear-intent"
 				}
+				fault := &migrationIntentFault{qualifiedStore: target, stage: stage}
 				migration, err := OpenMigration(t.Context(), source, fault, src, dst, authority)
 				if phase == "initialize" {
 					if err == nil {
@@ -302,3 +303,5 @@ func TestMigrationIntentRefusesAlteredCheckpointDescriptor(t *testing.T) {
 		}
 	}
 }
+
+type migrationInitializationFault string

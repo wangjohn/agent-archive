@@ -680,7 +680,7 @@ func runBareShow(ctx context.Context, env showCommandDependencies, store storage
 		}
 		return printJSON(stdout, stderr, view)
 	}
-	choices, ok, code := findBrowseSessions(env, store, cfg, stdout, stderr, harness, "show")
+	choices, ok, code := findBrowseSessions(ctx, env, store, cfg, stdout, stderr, harness, "show")
 	if !ok {
 		return code
 	}

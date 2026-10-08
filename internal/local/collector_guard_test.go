@@ -28,7 +28,7 @@ func TestCollectorGuardProcessCrashRetainsExactOrigin(t *testing.T) {
 		os.Exit(0) // Kernel closes the flock; no application release runs.
 	}
 	home := t.TempDir()
-	command := exec.Command(os.Args[0], "-test.run=^TestCollectorGuardProcessCrashRetainsExactOrigin$")
+	command := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestCollectorGuardProcessCrashRetainsExactOrigin$")
 	command.Env = append(os.Environ(), "AGENT_ARCHIVE_GUARD_TEST_HOME="+home)
 	input, err := command.StdinPipe()
 	if err != nil {
@@ -192,7 +192,7 @@ func TestCollectorGuardRemovalInventoryBoundsAndCrashTemporaries(t *testing.T) {
 	if err != nil || len(records) != 1 || records[0] != journal {
 		t.Fatal("temporary granted authority or hid exact record", err)
 	}
-	for n := 0; n < 255; n++ {
+	for n := range 255 {
 		if err = os.WriteFile(filepath.Join(path, fmt.Sprintf("%s%d", tempPrefix, n)), nil, 0600); err != nil {
 			t.Fatal(err)
 		}

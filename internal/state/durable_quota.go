@@ -341,7 +341,7 @@ func (s *Store) savePendingGuard(ctx context.Context, g config.DurableStorageGua
 	if err := g.CheckHome(s.home); err != nil {
 		return err
 	}
-	if err := s.checkCatalogPendingSave(id, p); err != nil {
+	if err := s.checkCatalogPendingSave(ctx, id, p); err != nil {
 		return err
 	}
 	if len(p.SourceBytes) > maxPendingHistoryBytes {

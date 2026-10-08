@@ -1,6 +1,7 @@
 package state
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -26,7 +27,7 @@ func recoveredCatalogJournal(p PendingPublication) bool {
 	return p.Catalog != nil && p.Catalog.Recovery != nil
 }
 
-func (s *Store) checkCatalogPendingSave(id string, next PendingPublication) error {
+func (s *Store) checkCatalogPendingSave(ctx context.Context, id string, next PendingPublication) error {
 	old, found, err := s.catalogPendingForFence(id)
 	if err != nil {
 		return errors.Join(ErrCatalogJournalFrozen, err)
@@ -34,7 +35,7 @@ func (s *Store) checkCatalogPendingSave(id string, next PendingPublication) erro
 	if !found || !recoveredCatalogJournal(old) {
 		if recoveredCatalogJournal(next) {
 			j := next.Catalog.Recovery
-			digest, err := s.CatalogJournalDigest(id, next)
+			digest, err := s.catalogJournalDigest(ctx, id, next)
 			if j.Validate() != nil || j.SessionID != id || j.MutationID != next.Catalog.ID || j.ExpectedRevision != next.Catalog.ExpectedRevision || err != nil || digest != j.SHA256 {
 				return errors.Join(ErrCatalogJournalFrozen, err)
 			}
@@ -44,11 +45,11 @@ func (s *Store) checkCatalogPendingSave(id string, next PendingPublication) erro
 	if !recoveredCatalogJournal(next) || *old.Catalog.Recovery != *next.Catalog.Recovery {
 		return ErrCatalogJournalFrozen
 	}
-	before, err := s.CatalogJournalDigest(id, old)
+	before, err := s.catalogJournalDigest(ctx, id, old)
 	if err != nil || before != old.Catalog.Recovery.SHA256 {
 		return errors.Join(ErrCatalogJournalFrozen, err)
 	}
-	after, err := s.CatalogJournalDigest(id, next)
+	after, err := s.catalogJournalDigest(ctx, id, next)
 	if err != nil || after != before {
 		return errors.Join(ErrCatalogJournalFrozen, err)
 	}

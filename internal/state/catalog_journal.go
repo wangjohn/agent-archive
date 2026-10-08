@@ -2,6 +2,7 @@ package state
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -15,10 +16,17 @@ import (
 // whole immutable journal. Source bytes use their verified hash and size so
 // recovery adds no second source payload or persisted proof copy.
 func (s *Store) CatalogJournalDigest(id string, pending PendingPublication) (string, error) {
+	return s.catalogJournalDigest(s.durableContext(), id, pending)
+}
+
+func (s *Store) catalogJournalDigest(ctx context.Context, id string, pending PendingPublication) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	if pending.Catalog == nil || pending.Catalog.Protocol != 10 {
 		return "", ErrDurableStorageRecovery
 	}
-	if err := s.validateReadablePending(pending); err != nil {
+	if err := s.validateReadablePendingContext(ctx, pending); err != nil {
 		return "", err
 	}
 	if err := pending.ValidateHistoryBudgeted(id, s.resourceBudget); err != nil {

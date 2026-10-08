@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -18,14 +19,15 @@ const overflowMetadata = "metadata-v10"
 const inlineLeafBytes = 64 << 10
 
 func indexProjection(m archive.Metadata) archive.Metadata {
-	p := archive.Metadata{SchemaVersion: m.SchemaVersion, SessionID: m.SessionID, Harness: archive.Harness{Name: m.Harness.Name}, ProjectID: m.ProjectID, CapturedAt: m.CapturedAt, EndedAt: m.EndedAt, ParentSessionID: m.ParentSessionID}
+	origin, started := archive.SessionOrigin(""), time.Time{}
 	if m.Origin == archive.SessionOriginImport {
-		p.Origin = m.Origin
-		p.StartedAt = m.StartedAt
+		origin, started = m.Origin, m.StartedAt
 	}
+	var replay *archive.Replay
 	if m.Replay != nil {
-		p.Replay = &archive.Replay{}
+		replay = &archive.Replay{}
 	}
+	p := archive.Metadata{Replay: replay, Origin: origin, StartedAt: started, SchemaVersion: m.SchemaVersion, SessionID: m.SessionID, Harness: archive.Harness{Name: m.Harness.Name}, ProjectID: m.ProjectID, CapturedAt: m.CapturedAt, EndedAt: m.EndedAt, ParentSessionID: m.ParentSessionID}
 	return p
 }
 

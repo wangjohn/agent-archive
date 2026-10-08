@@ -88,10 +88,10 @@ func TestCatalogMetadataOnlySourceFailureRetainsExactJournalForFreshRetry(t *tes
 			}
 			wantErr := storage.ErrNotFound
 			if damage == "missing" {
-				err = raw.MemoryStore.Delete(t.Context(), pending.SourceKey)
+				err = raw.Delete(t.Context(), pending.SourceKey)
 			} else {
 				wantErr = storage.ErrChecksumMismatch
-				err = raw.MemoryStore.Put(t.Context(), pending.SourceKey, []byte("different"))
+				err = raw.Put(t.Context(), pending.SourceKey, []byte("different"))
 			}
 			if err != nil {
 				t.Fatal(err)
@@ -118,7 +118,7 @@ func TestCatalogMetadataOnlySourceFailureRetainsExactJournalForFreshRetry(t *tes
 				t.Fatal("unfinished exact owner lost protection", err)
 			}
 			// Restore verified bytes only in the isolated provider fixture.
-			if err = raw.MemoryStore.Put(t.Context(), pending.SourceKey, source); err != nil {
+			if err = raw.Put(t.Context(), pending.SourceKey, source); err != nil {
 				t.Fatal(err)
 			}
 			guard.Release()

@@ -155,6 +155,7 @@ func (s *cacheMismatchWriteStore) Put(ctx context.Context, key string, raw []byt
 	s.writes++
 	return s.Store.Put(ctx, key, raw)
 }
+
 func (s *cacheMismatchWriteStore) PutConditional(ctx context.Context, key string, raw []byte, c storage.PutCondition) (string, error) {
 	s.writes++
 	return s.Store.PutConditional(ctx, key, raw, c)

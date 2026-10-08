@@ -22,6 +22,7 @@ type migrationIntent struct {
 }
 
 type migrationIntentKey struct{}
+
 type migrationIntentAuthority struct {
 	writer *Writer
 	digest string
@@ -203,7 +204,7 @@ func (m *Migration) resumeInitialization(ctx context.Context) error {
 		return err
 	}
 	for _, object := range objects {
-		if object.Key != CoordinatorKey && object.Key != MigrationKey {
+		if !initializationObject(object.Key) {
 			return errors.New("migration initialization contains unrelated objects")
 		}
 	}
@@ -267,4 +268,15 @@ func sameMigration(a, b CatalogMigration) bool {
 	x, err := json.Marshal(a)
 	y, nextErr := json.Marshal(b)
 	return err == nil && nextErr == nil && string(x) == string(y)
+}
+
+type initializationObjectKey string
+
+func initializationObject(key string) bool {
+	switch initializationObjectKey(key) {
+	case initializationObjectKey(CoordinatorKey), initializationObjectKey(MigrationKey):
+		return true
+	default:
+		return false
+	}
 }

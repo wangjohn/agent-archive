@@ -92,11 +92,13 @@ func (s *sessionScan) publishPending(ctx context.Context, pending state.PendingP
 	if remote, ok := s.remote.(storage.CatalogLifecycle); ok && pending.Catalog != nil {
 		var settled bool
 		var err error
-		pending, ctx, settled, err = s.beginCatalogJournal(ctx, pending, remote)
+		admittedCtx := ctx
+		pending, admittedCtx, settled, err = s.beginCatalogJournal(ctx, pending, remote)
 		if err != nil {
 			return outcomeSkipped, err
 		}
 		originalCtx := s.ctx
+		ctx = admittedCtx
 		s.ctx = ctx
 		defer func() { remote.EndPublicationAttempt(pending.Catalog.ID); s.ctx = originalCtx }()
 		if settled {

@@ -20,8 +20,8 @@ type resolvedRow struct {
 
 func rowDigest(row Row) (string, error) {
 	raw, err := json.Marshal(struct {
-		Key   string
-		Entry CatalogEntry
+		Key   string       `json:"Key"`
+		Entry CatalogEntry `json:"Entry"`
 	}{row.Key, row.Entry})
 	if err != nil {
 		return "", err

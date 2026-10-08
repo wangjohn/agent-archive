@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -110,5 +111,23 @@ func TestRealCLITextAndBrowserMaintainBoundedCacheAndEvictDeletion(t *testing.T)
 	t.Logf("text maintained=%d browser maintained=%d canonical LIST=%d", first, second, measured.Metrics().Lists)
 	if measured.Metrics().Lists != 0 {
 		t.Fatal("remote deletion used canonical listing", measured.Metrics())
+	}
+}
+
+func TestBrowseDiscoveryPreservesCanceledRequest(t *testing.T) {
+	env, legacy, _ := publishedFixture(t)
+	remote := privateCatalogFromLegacy(t, legacy)
+	for _, store := range []storage.ObjectStore{legacy, remote} {
+		measured := storagetest.NewMeasuredStore(store, 0)
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		var stderr bytes.Buffer
+		_, err := loadSessionsForBrowse(ctx, env, measured, listOptions{noCache: true}, &stderr, "show")
+		if !errors.Is(err, context.Canceled) {
+			t.Fatal("browse lost request cancellation", err)
+		}
+		if counts := measured.Metrics(); counts.Gets != 0 || counts.Lists != 0 {
+			t.Fatal("canceled browse performed provider reads", counts)
+		}
 	}
 }

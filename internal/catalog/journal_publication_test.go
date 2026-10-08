@@ -189,8 +189,8 @@ func TestJournalAdmissionWrongBindingAndIncompleteFinalRefuse(t *testing.T) {
 }
 
 func TestJournalAdmissionVerifiesPersistedAuthorityBeforeCoordinatorWrite(t *testing.T) {
-	for _, kind := range []string{"missing", "changed", "raw-mismatch", "copied"} {
-		t.Run(kind, func(t *testing.T) {
+	for _, kind := range []journalAdmissionFault{"missing", "changed", "raw-mismatch", "copied"} {
+		t.Run(string(kind), func(t *testing.T) {
 			_, raw, localStore, pending, guard, cfg := journalFixture(t)
 			counted := &namespaceWriteStore{qualifiedStore: raw}
 			remote, err := WrapConfigured(counted, cfg)
@@ -252,5 +252,28 @@ func TestJournalAdmissionVerifiesPersistedAuthorityBeforeCoordinatorWrite(t *tes
 				t.Fatal("invalid journal reached coordinator CAS", counted.writes)
 			}
 		})
+	}
+}
+
+type journalAdmissionFault string
+
+func TestCanceledGuardedCatalogSavePreservesExactJournal(t *testing.T) {
+	_, _, localStore, pending, _, _ := journalFixture(t)
+	path := filepath.Join(localStore.Home(), "pending", "journal.json")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	scoped, closeScoped := localStore.WithReadBudget(ctx, nil)
+	defer closeScoped()
+	pending.Attempted = true
+	if err = scoped.SavePending("journal", pending); !errors.Is(err, context.Canceled) {
+		t.Fatal("canceled save accepted exact journal bookkeeping", err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil || string(after) != string(before) {
+		t.Fatal("canceled save changed exact recovery bytes", err)
 	}
 }

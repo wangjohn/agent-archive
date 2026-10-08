@@ -812,6 +812,13 @@ func (pending PendingPublication) validateComplete() error {
 // validateReadablePending applies the existing publication checksum and JSON
 // preconditions without deriving new ownership or remote-source authority.
 func (s *Store) validateReadablePending(pending PendingPublication) error {
+	return s.validateReadablePendingContext(s.durableContext(), pending)
+}
+
+func (s *Store) validateReadablePendingContext(ctx context.Context, pending PendingPublication) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := pending.validateComplete(); err != nil {
 		return err
 	}
@@ -821,7 +828,7 @@ func (s *Store) validateReadablePending(pending PendingPublication) error {
 			return errors.New("pending source checksum does not match its persisted bytes")
 		}
 	}
-	scratch, closeScratch := s.WithReadBudget(s.durableContext(), s.resourceBudget)
+	scratch, closeScratch := s.WithReadBudget(ctx, s.resourceBudget)
 	defer closeScratch()
 	var metadata archive.Metadata
 	if err := scratch.unmarshalOwned(pending.MetadataBytes, &metadata); err != nil {

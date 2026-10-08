@@ -78,13 +78,12 @@ func TestBareShowJSONPinsParentAndLinkedChildAcrossMutation(t *testing.T) {
 	if err != nil || len(want.LinkedAvailability) != 1 || want.LinkedAvailability[0].State != reader.LinkedStateMetadataAvailable {
 		t.Fatal("private child oracle", err)
 	}
-	hook := &bareSelectionStore{MeasuredStore: storagetest.NewMeasuredStore(remote.ObjectStore, 0), parentKey: entry.Metadata.Key}
 	childKey, err := archive.MetadataObjectKey("codex", "private-child")
 	if err != nil {
 		t.Fatal(err)
 	}
 	var mutationErr error
-	hook.mutate = func() { mutationErr = remote.DeleteSession(t.Context(), childKey) }
+	hook := &bareSelectionStore{MeasuredStore: storagetest.NewMeasuredStore(remote.ObjectStore, 0), parentKey: entry.Metadata.Key, mutate: func() { mutationErr = remote.DeleteSession(t.Context(), childKey) }}
 	wrapped, err := catalog.Wrap(hook)
 	if err != nil {
 		t.Fatal(err)
