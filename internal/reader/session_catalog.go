@@ -27,21 +27,30 @@ import (
 // SearchSummary is a private projection of published metadata. It deliberately
 // excludes source references, counts, payloads, history and transcripts.
 type SearchSummary struct {
-	SessionID, NativeSessionID, MachineID, ProjectID, ProjectName, RepoKey string
-	Name, Title, Branch, ParentSessionID                                   string
-	StartedAt, CapturedAt                                                  time.Time
-	EndedAt                                                                *time.Time
-	Harness                                                                archive.Harness
-	Parser                                                                 archive.ParserInfo
-	Origin                                                                 archive.SessionOrigin
-	Replay                                                                 *archive.Replay
-	Models                                                                 []archive.ModelSummary
-	SkillsAvailable                                                        []archive.SkillSnapshot
-	SkillsUsed                                                             []archive.SkillUse
-	SkillDetection                                                         archive.SkillDetection
-	CaptureGaps                                                            []archive.CaptureGap
-	PullRequests                                                           []archive.PullRequestLink
-	GitActivity                                                            []archive.GitEvent
+	SessionID       string                    `json:"SessionID"`
+	NativeSessionID string                    `json:"NativeSessionID"`
+	MachineID       string                    `json:"MachineID"`
+	ProjectID       string                    `json:"ProjectID"`
+	ProjectName     string                    `json:"ProjectName"`
+	RepoKey         string                    `json:"RepoKey"`
+	Name            string                    `json:"Name"`
+	Title           string                    `json:"Title"`
+	Branch          string                    `json:"Branch"`
+	ParentSessionID string                    `json:"ParentSessionID"`
+	StartedAt       time.Time                 `json:"StartedAt"`
+	CapturedAt      time.Time                 `json:"CapturedAt"`
+	EndedAt         *time.Time                `json:"EndedAt"`
+	Harness         archive.Harness           `json:"Harness"`
+	Parser          archive.ParserInfo        `json:"Parser"`
+	Origin          archive.SessionOrigin     `json:"Origin"`
+	Replay          *archive.Replay           `json:"Replay"`
+	Models          []archive.ModelSummary    `json:"Models"`
+	SkillsAvailable []archive.SkillSnapshot   `json:"SkillsAvailable"`
+	SkillsUsed      []archive.SkillUse        `json:"SkillsUsed"`
+	SkillDetection  archive.SkillDetection    `json:"SkillDetection"`
+	CaptureGaps     []archive.CaptureGap      `json:"CaptureGaps"`
+	PullRequests    []archive.PullRequestLink `json:"PullRequests"`
+	GitActivity     []archive.GitEvent        `json:"GitActivity"`
 }
 
 // Metadata returns the search/display projection, never a complete body.
@@ -90,8 +99,10 @@ type CatalogQuery struct {
 
 // CatalogRow identifies one exact canonical metadata revision.
 type CatalogRow struct {
-	Key, ETag, Hash string
-	Summary         SearchSummary
+	Key     string
+	ETag    string
+	Hash    string
+	Summary SearchSummary
 }
 
 // CatalogPage reports candidate rows and an exact candidate total. Complete
@@ -161,7 +172,9 @@ func openSessionCatalog(ctx context.Context, cache *MetadataCache, store storage
 	if err != nil {
 		return nil, err
 	}
-	f.Close()
+	if err = f.Close(); err != nil {
+		return nil, err
+	}
 	info, err = os.Lstat(path)
 	if err != nil || !info.Mode().IsRegular() {
 		return nil, errors.New("catalog requires a regular file")
@@ -179,7 +192,7 @@ func openSessionCatalog(ctx context.Context, cache *MetadataCache, store storage
 		_, err = db.ExecContext(ctx, "INSERT OR IGNORE INTO catalog_state VALUES(1,0,?,0)", rand.Text())
 	}
 	if err != nil {
-		db.Close()
+		_ = db.Close()
 		var damaged *sqlite.Error
 		if !repair && errors.As(err, &damaged) && (damaged.Code() == 11 || damaged.Code() == 26) {
 			// SQLite rejected this disposable file before any transaction. Retire
@@ -243,17 +256,19 @@ func (c *SQLiteSessionCatalog) Refresh(ctx context.Context, snapshot HeaderSnaps
 	if err != nil {
 		return err
 	}
+	defer func() { _ = rows.Close() }()
 	prior := map[string]string{}
 	for rows.Next() {
 		var k, e string
 		if err = rows.Scan(&k, &e); err != nil {
-			rows.Close()
 			return err
 		}
 		prior[k] = e
 	}
 	err = rows.Err()
-	rows.Close()
+	if closeErr := rows.Close(); err == nil {
+		err = closeErr
+	}
 	if err != nil {
 		return err
 	}
@@ -462,15 +477,18 @@ func (c *SQLiteSessionCatalog) Query(ctx context.Context, q CatalogQuery) (Catal
 	// SQL predicates are exact for these typed fields. Text stays a candidate
 	// superset; Go's Unicode matcher and query-time labels decide final matches.
 	where, args := catalogWhere(q.Metadata)
+	var clauses strings.Builder
+	clauses.WriteString(where)
 	for _, word := range q.Words {
 		word = strings.ToLower(word)
-		where += " AND (instr(search,?) > 0 OR instr(lowerid,?) = 1 OR unlabeled = 1)"
+		clauses.WriteString(" AND (instr(search,?) > 0 OR instr(lowerid,?) = 1 OR unlabeled = 1)")
 		args = append(args, word, word)
 	}
-	complex := catalogRequiresSummaryFilter(q.Metadata.Filter)
+	where = clauses.String()
+	needsSummaryFilter := catalogRequiresSummaryFilter(q.Metadata.Filter)
 	page := CatalogPage{Complete: complete}
 	statement := "SELECT key,etag,hash,summary FROM sessions" + where + " ORDER BY " + order //nolint:gosec // SQL fragments are fixed predicates/orders; every input is bound.
-	if !complex {
+	if !needsSummaryFilter {
 		if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM sessions"+where, args...).Scan(&page.Total); err != nil {
 			return CatalogPage{}, err
 		}
@@ -488,7 +506,7 @@ func (c *SQLiteSessionCatalog) Query(ctx context.Context, q CatalogQuery) (Catal
 	if err != nil {
 		return CatalogPage{}, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	limit := q.Metadata.Limit
 	for rows.Next() {
 		var row CatalogRow
@@ -503,10 +521,10 @@ func (c *SQLiteSessionCatalog) Query(ctx context.Context, q CatalogQuery) (Catal
 		if !matches(m, q.Metadata.Filter) || q.Metadata.TopLevelOnly && m.ParentSessionID != "" {
 			continue
 		}
-		if complex {
+		if needsSummaryFilter {
 			page.Total++
 		}
-		if !complex || page.Total > offset && (limit <= 0 || len(page.Rows) < limit) {
+		if !needsSummaryFilter || page.Total > offset && (limit <= 0 || len(page.Rows) < limit) {
 			page.Rows = append(page.Rows, row)
 		}
 	}
@@ -527,8 +545,8 @@ func (c *SQLiteSessionCatalog) Query(ctx context.Context, q CatalogQuery) (Catal
 
 func catalogCursor(q CatalogQuery, epoch string, generation int64) (int, string, error) {
 	binding, err := json.Marshal(struct {
-		Metadata MetadataQuery
-		Words    []string
+		Metadata MetadataQuery `json:"metadata"`
+		Words    []string      `json:"words"`
 	}{q.Metadata, q.Words})
 	if err != nil {
 		return 0, "", err

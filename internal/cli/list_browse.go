@@ -901,7 +901,8 @@ func readSessionView(ctx context.Context, store storage.ObjectStore, harness, se
 func loadSessionsForBrowse(env metadataCacheDependencies, store storage.ObjectStore, opts listOptions, stderr io.Writer, command string) ([]archive.Metadata, error) {
 	// Handoff needs complete bodies for its source/replay policy; the session
 	// browser hydrates the chosen body when details open.
-	if command == "show" || command == "list" {
+	switch catalogBrowseCommand(command) {
+	case catalogBrowseShow, catalogBrowseList:
 		if sessions, used, err := catalogSessions(env, store, opts, stderr, command, nil); used {
 			return sessions, err
 		}

@@ -31,7 +31,7 @@ func TestSessionCatalogRefreshPagesAndWarmBodies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	h, err := DiscoverCatalogHeaders(ctx, store, ListOptions{Cache: cache})
 	if err != nil {
 		t.Fatal(err)
@@ -142,7 +142,7 @@ func TestSessionCatalogCancellationConcurrentAndPrivacy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	// Reopening an adopted index also repairs permissive database/WAL modes.
 	for _, suffix := range []string{"", "-wal", "-shm"} {
 		path := filepath.Join(home, "cache", "catalog", "sessions.sqlite"+suffix)
@@ -156,7 +156,7 @@ func TestSessionCatalogCancellationConcurrentAndPrivacy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer other.Close()
+	defer func() { _ = other.Close() }()
 	h, err := DiscoverCatalogHeaders(ctx, store, ListOptions{Cache: cache})
 	if err != nil {
 		t.Fatal(err)
@@ -221,7 +221,7 @@ func TestSessionCatalogCorruptionRebuild(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	p, err := c.Query(context.Background(), CatalogQuery{})
 	if err != nil || p.Total != 0 {
 		t.Fatalf("rebuilt=%+v err=%v", p, err)
@@ -238,7 +238,7 @@ func TestSessionCatalogTypedFiltersEqualExhaustiveOracle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	if err = c.Refresh(ctx, HeaderSnapshot{CanonicalComplete: true}); err != nil {
 		t.Fatal(err)
 	}
@@ -318,7 +318,7 @@ func TestSessionCatalogCancelColdReadsJoinsWorkers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	h, err := DiscoverCatalogHeaders(context.Background(), store, ListOptions{Cache: cache})
 	if err != nil {
 		t.Fatal(err)
@@ -359,7 +359,7 @@ func TestSessionCatalogRejectsRevisionRaceAndBadHash(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	h, err := DiscoverCatalogHeaders(ctx, store, ListOptions{Cache: cache})
 	if err != nil {
 		t.Fatal(err)
@@ -398,7 +398,7 @@ func TestSessionCatalogWordsAreUnicodeAndLabelSafeCandidates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	if err = c.Refresh(ctx, HeaderSnapshot{CanonicalComplete: true}); err != nil {
 		t.Fatal(err)
 	}
@@ -442,7 +442,7 @@ func TestSessionCatalogRejectsPartialCanonicalSnapshots(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	h, err := DiscoverCatalogHeaders(ctx, store, ListOptions{Cache: cache})
 	if err != nil {
 		t.Fatal(err)
@@ -494,12 +494,12 @@ func TestSessionCatalogFirstQueryBindsRefreshedGeneration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer first.Close()
+	defer func() { _ = first.Close() }()
 	other, err := OpenSessionCatalog(ctx, cache, store, ListOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer other.Close()
+	defer func() { _ = other.Close() }()
 	h, err := DiscoverCatalogHeaders(ctx, store, ListOptions{Cache: cache})
 	if err != nil {
 		t.Fatal(err)

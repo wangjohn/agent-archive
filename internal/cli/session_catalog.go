@@ -20,15 +20,12 @@ func catalogSessionsInContext(ctx context.Context, env metadataCacheDependencies
 	if cache == nil {
 		return nil, false, nil
 	}
-	readOpts := reader.ListOptions{Cache: cache, Skipped: warnSkippedSidecar(stderr, command)}
-	if observer, ok := env.(interface{ listBodyObserver() func(string, bool) }); ok {
-		readOpts.BodyRead = observer.listBodyObserver()
-	}
+	readOpts := reader.ListOptions{Cache: cache, Skipped: warnSkippedSidecar(stderr, command), BodyRead: catalogBodyObserver(env)}
 	catalog, err := reader.OpenSessionCatalog(ctx, cache, store, readOpts)
 	if err != nil {
 		return nil, false, nil
 	}
-	defer catalog.Close()
+	defer func() { _ = catalog.Close() }()
 	headers, err := reader.DiscoverCatalogHeaders(ctx, store, readOpts)
 	if err != nil {
 		return nil, true, err
@@ -63,8 +60,8 @@ func catalogSessionsInContext(ctx context.Context, env metadataCacheDependencies
 // readListCandidates retains selected reads for simple bounded listings and
 // uses the summary catalog where exhaustive metadata used to be necessary.
 func readListCandidates(env metadataCacheDependencies, store storage.ObjectStore, opts listOptions, limit int, readOpts reader.ListOptions, full bool, stderr io.Writer) (reader.RecentResult, bool, error) {
-	complex := opts.filter.Model != "" || opts.filter.Skill != "" || opts.filter.SkillSHA256 != "" || opts.filter.RequireCompleteCoverage
-	if !opts.jsonOut && (full || complex) {
+	needsCatalog := opts.filter.Model != "" || opts.filter.Skill != "" || opts.filter.SkillSHA256 != "" || opts.filter.RequireCompleteCoverage
+	if !opts.jsonOut && (full || needsCatalog) {
 		// Complete summaries preserve child hints, scope tiers and ambiguity.
 		sessions, used, err := catalogSessions(env, store, opts, stderr, "list", nil)
 		if used {
@@ -83,9 +80,20 @@ func readShowCandidates(ctx context.Context, store storage.ObjectStore, env meta
 	if used {
 		return sessions, err
 	}
-	readOpts := reader.ListOptions{Cache: listCache(env, false), Skipped: warnSkippedSidecar(stderr, "show")}
-	if observer, ok := env.(interface{ listBodyObserver() func(string, bool) }); ok {
-		readOpts.BodyRead = observer.listBodyObserver()
-	}
+	readOpts := reader.ListOptions{Cache: listCache(env, false), Skipped: warnSkippedSidecar(stderr, "show"), BodyRead: catalogBodyObserver(env)}
 	return reader.FindMetadataPrefix(ctx, store, archiveSessionsPrefix, query, opts.filter, readOpts, func(archive.Metadata) bool { return true })
 }
+
+func catalogBodyObserver(env metadataCacheDependencies) func(string, bool) {
+	if observer, ok := env.(interface{ listBodyObserver() func(string, bool) }); ok {
+		return observer.listBodyObserver()
+	}
+	return nil
+}
+
+type catalogBrowseCommand string
+
+const (
+	catalogBrowseShow catalogBrowseCommand = "show"
+	catalogBrowseList catalogBrowseCommand = "list"
+)

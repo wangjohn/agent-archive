@@ -160,6 +160,7 @@ func (s *catalogBenchmarkFrame) Write(p []byte) (int, error) {
 	}
 	return len(p), nil
 }
+
 func (*catalogBenchmarkFrame) colorTerminal() bool { return false }
 
 func TestCatalogParentSearchKeepsUnmatchedChildCount(t *testing.T) {
@@ -189,7 +190,7 @@ func TestCatalogDamagedSummaryFallsBackToCurrentArchive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = db.Exec("UPDATE sessions SET summary=?", []byte("damaged summary"))
+	_, err = db.ExecContext(t.Context(), "UPDATE sessions SET summary=?", []byte("damaged summary"))
 	closeErr := db.Close()
 	if err != nil {
 		t.Fatal(err)
