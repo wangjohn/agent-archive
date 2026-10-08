@@ -30,15 +30,17 @@ type HeaderSnapshot struct {
 func discoverHeaders(ctx context.Context, store storage.ObjectStore, prefix string, filter Filter, cache *MetadataCache) (HeaderSnapshot, error) {
 	canonicalPrefix := listPrefixFor(prefix, filter.Harness)
 	known := cache.keys(canonicalPrefix)
-	groups, err := listHeaderGroups(ctx, store, canonicalPrefix, known, true, listPrefixFor(listingindex.V3Prefix, filter.Harness))
+	groups, canonicalComplete, err := listHeaderGroups(ctx, store, canonicalPrefix, known, true, listPrefixFor(listingindex.V3Prefix, filter.Harness))
+	// Complete canonical headers prove absence independently of auxiliary
+	// discovery. Evict deleted cache entries even if an index listing failed.
+	if canonicalComplete && cache != nil {
+		cache.evictUnlisted(known, groups[0])
+	}
 	if err != nil {
 		return HeaderSnapshot{}, err
 	}
 	snapshot := headerSnapshotFromGroups(groups)
 	snapshot.knownCanonical = known
-	if cache != nil {
-		cache.evictUnlisted(known, snapshot.Canonical)
-	}
 	return snapshot, nil
 }
 
@@ -68,11 +70,14 @@ hints:
 // listHeaderGroups joins all started listings before returning. The first
 // provider error cancels siblings and remains the returned error even when
 // those siblings subsequently report cancellation.
-func listHeaderGroups(ctx context.Context, store storage.ObjectStore, canonicalPrefix string, known []string, includeCanonical bool, v3Prefix string) ([3][]storage.Object, error) {
+// canonicalComplete distinguishes a successful empty listing from a partial
+// or failed canonical discovery, including when an auxiliary listing fails.
+func listHeaderGroups(ctx context.Context, store storage.ObjectStore, canonicalPrefix string, known []string, includeCanonical bool, v3Prefix string) ([3][]storage.Object, bool, error) {
 	caller := ctx
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	var groups [3][]storage.Object
+	var canonicalComplete bool
 	var wg sync.WaitGroup
 	var failed sync.Once
 	var failure error
@@ -96,11 +101,14 @@ func listHeaderGroups(ctx context.Context, store storage.ObjectStore, canonicalP
 				return
 			}
 			groups[i] = objects
+			if i == 0 {
+				canonicalComplete = true
+			}
 		})
 	}
 	wg.Wait()
 	if failure != nil {
-		return groups, failure
+		return groups, canonicalComplete, failure
 	}
-	return groups, caller.Err()
+	return groups, canonicalComplete, caller.Err()
 }

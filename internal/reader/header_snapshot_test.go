@@ -179,3 +179,92 @@ func TestHeaderDiscoveryUsesCompleteCachePlannedRanges(t *testing.T) {
 		t.Fatalf("canonical=%d oracle=%d lists=%d ranges=%d", len(headers.Canonical), len(oracle), store.lists, len(store.ranges))
 	}
 }
+
+type failingAuxiliaryHeaderStore struct {
+	*storagetest.MemoryStore
+	canonicalDone chan struct{}
+	canonicalErr  error
+	cancelCaller  context.CancelFunc
+	failure       error
+}
+
+func (s *failingAuxiliaryHeaderStore) List(ctx context.Context, prefix string) ([]storage.Object, error) {
+	if prefix == "sessions" {
+		objects, err := s.MemoryStore.List(ctx, prefix)
+		close(s.canonicalDone)
+		if err != nil {
+			return nil, err
+		}
+		return objects, s.canonicalErr
+	}
+	<-s.canonicalDone
+	if prefix == listingindex.V2Prefix && s.canonicalErr == nil {
+		if s.cancelCaller == nil {
+			return nil, s.failure
+		}
+		s.cancelCaller()
+	}
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+type headerFailureMode string
+
+const (
+	headerAuxiliaryFailure      headerFailureMode = "auxiliary-failure"
+	headerEmptyAuxiliaryFailure headerFailureMode = "empty-auxiliary-failure"
+	headerCallerCancellation    headerFailureMode = "caller-cancellation"
+	headerCanonicalPartial      headerFailureMode = "canonical-partial"
+)
+
+// Complete canonical discovery proves deletion even if unrelated auxiliary
+// discovery fails. A partial canonical response cannot prove absence.
+func TestHeaderDiscoveryEvictsProvenDeletionDespiteAuxiliaryFailure(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []headerFailureMode{headerAuxiliaryFailure, headerEmptyAuxiliaryFailure, headerCallerCancellation, headerCanonicalPartial} {
+		t.Run(string(mode), func(t *testing.T) {
+			t.Parallel()
+			mem := storagetest.NewMemoryStore()
+			deleted := putSession(t, mem, "codex", "deleted", baseTime)
+			present := putSession(t, mem, "codex", "present", baseTime)
+			cache, err := OpenMetadataCache(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := ListMetadataWithOptions(t.Context(), mem, "sessions", Filter{}, ListOptions{Cache: cache}); err != nil {
+				t.Fatal(err)
+			}
+			if err := mem.Delete(t.Context(), deleted); err != nil {
+				t.Fatal(err)
+			}
+			if mode == headerEmptyAuxiliaryFailure {
+				if err := mem.Delete(t.Context(), present); err != nil {
+					t.Fatal(err)
+				}
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			failure := errors.New("header provider unavailable")
+			store := &failingAuxiliaryHeaderStore{MemoryStore: mem, canonicalDone: make(chan struct{}), failure: failure}
+			want := error(failure)
+			switch mode {
+			case headerAuxiliaryFailure, headerEmptyAuxiliaryFailure:
+				// Complete canonical discovery precedes the provider failure.
+			case headerCallerCancellation:
+				store.cancelCaller, want = cancel, context.Canceled
+			case headerCanonicalPartial:
+				store.canonicalErr = failure
+			}
+			if _, err := discoverHeaders(ctx, store, "sessions", Filter{}, cache); !errors.Is(err, want) {
+				t.Fatalf("error=%v, want %v", err, want)
+			}
+			retained := false
+			for _, key := range cache.keys("sessions") {
+				retained = retained || key == deleted
+			}
+			if retained != (mode == headerCanonicalPartial) {
+				t.Fatalf("deleted cache entry retained=%v in %s", retained, mode)
+			}
+		})
+	}
+}
