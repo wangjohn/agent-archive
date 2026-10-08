@@ -14,7 +14,7 @@ import (
 // while provider qualification still prevents production activation.
 func TestLoadedCatalogRequiresItsForwardWriterFence(t *testing.T) {
 	t.Parallel()
-	for _, version := range []string{`1`, `7`, `8`, `null`, `{"version":7,"writer":"durable-storage-v7"}`, `{"version":8,"writer":"durable-storage-v7"}`, `{"version":8}`, `{"version":8,"writer":"catalog-v4-v8"}`} {
+	for _, version := range []string{`1`, `7`, `8`, `9`, `null`, `{"version":7,"writer":"durable-storage-v7"}`, `{"version":8,"writer":"durable-storage-v7"}`, `{"version":8}`, `{"version":8,"writer":"catalog-v4-v8"}`, `{"version":9}`, `{"version":9,"writer":"catalog-v4-v8"}`, `{"version":9,"writer":"catalog-v4-v9"}`} {
 		t.Run(version, func(t *testing.T) {
 			t.Parallel()
 			home := t.TempDir()
@@ -23,7 +23,7 @@ func TestLoadedCatalogRequiresItsForwardWriterFence(t *testing.T) {
 				t.Fatal(err)
 			}
 			_, found, fenced, err := loadConfig(home)
-			if version == `{"version":8,"writer":"catalog-v4-v8"}` {
+			if version == `{"version":9,"writer":"catalog-v4-v9"}` {
 				if err != nil || !found || !fenced {
 					t.Fatal("valid catalog fence refused", err)
 				}

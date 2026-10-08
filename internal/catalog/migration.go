@@ -1,10 +1,12 @@
 package catalog
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -37,10 +39,16 @@ type CutoverAuthority interface {
 //
 //revive:disable-next-line:exported -- Keep accepted protocol API name.
 type CatalogMigration struct {
-	Source, Destination                           destination.Config
-	Phase, Cursor, ExpectedHead, Owner, ID, Proof string
-	VerifiedRoot                                  ObjectRef
-	Copied                                        uint64
+	Source       destination.Config `json:"source"`
+	Destination  destination.Config `json:"destination"`
+	Phase        string             `json:"phase"`
+	Cursor       string             `json:"cursor"`
+	ExpectedHead string             `json:"expected_head"`
+	Owner        string             `json:"owner"`
+	ID           string             `json:"id"`
+	Proof        string             `json:"proof"`
+	VerifiedRoot ObjectRef          `json:"verified_root"`
+	Copied       uint64             `json:"copied"`
 }
 
 // Migration uses an isolated candidate destination and credential authority.
@@ -112,8 +120,8 @@ func OpenMigration(ctx context.Context, source, target storage.ObjectStore, sour
 	if _, ok := source.(storage.PageLister); !ok {
 		return nil, errors.New("migration requires bounded source page listing")
 	}
-	if _, ok := source.(storage.VersionedGetter); !ok {
-		return nil, errors.New("migration requires exact source metadata revisions")
+	if _, ok := source.(storage.LimitedVersionedGetter); !ok {
+		return nil, errors.New("migration requires bounded exact source metadata revisions")
 	}
 	if _, ok := source.(storage.LimitedGetter); !ok {
 		return nil, errors.New("migration requires bounded source reads")
@@ -125,8 +133,8 @@ func OpenMigration(ctx context.Context, source, target storage.ObjectStore, sour
 	}
 	raw, checkpointVersion, err := w.versioned.GetCatalogVersion(ctx, MigrationKey, 64<<10)
 	if err == nil {
-		var state CatalogMigration
-		if json.Unmarshal(raw, &state) != nil || state.ID == "" || state.Owner == "" || destinationIdentity(state.Source) != destinationIdentity(sourceConfig) || destinationIdentity(state.Destination) != destinationIdentity(targetConfig) || state.Proof != proof.ID {
+		state, decodeErr := decodeMigration(raw)
+		if decodeErr != nil || destinationIdentity(state.Source) != destinationIdentity(sourceConfig) || destinationIdentity(state.Destination) != destinationIdentity(targetConfig) || state.Proof != proof.ID {
 			return nil, errors.New("migration checkpoint differs from cutover authority")
 		}
 		m.State = state
@@ -163,6 +171,13 @@ func OpenMigration(ctx context.Context, source, target storage.ObjectStore, sour
 }
 
 func (m *Migration) save(ctx context.Context) error {
+	if err := m.State.validate(); err != nil {
+		return err
+	}
+	ctx = m.authorityContext(ctx)
+	if err := m.writer.checkWriteAuthority(ctx); err != nil {
+		return err
+	}
 	raw, err := json.Marshal(m.State)
 	if err != nil {
 		return err
@@ -198,7 +213,8 @@ func (m *Migration) held(ctx context.Context) error {
 }
 
 func (m *Migration) copyMetadata(ctx context.Context, obj storage.Object) error {
-	raw, etag, err := m.Source.(storage.VersionedGetter).GetVersioned(ctx, obj.Key)
+	ctx = m.authorityContext(ctx)
+	raw, etag, err := m.Source.(storage.LimitedVersionedGetter).GetLimitedVersioned(ctx, obj.Key, 32<<20)
 	if err != nil {
 		return err
 	}
@@ -227,6 +243,9 @@ func (m *Migration) copyMetadata(ctx context.Context, obj storage.Object) error 
 		}
 		if len(bytes) != ref.CompressedBytes || !storage.VerifySHA256(bytes, ref.SHA256) {
 			return storage.ErrChecksumMismatch
+		}
+		if err = m.writer.checkWriteAuthority(ctx); err != nil {
+			return err
 		}
 		_, err = m.writer.conditional.PutConditional(ctx, ref.Key, bytes, storage.PutCondition{CreateOnly: true})
 		if err != nil {
@@ -269,6 +288,13 @@ func (m *Migration) Step(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	prior := m.State
+	checkpointed := false
+	defer func() {
+		if !checkpointed {
+			m.State = prior
+		}
+	}()
 	for _, obj := range page.Objects {
 		if !metadataKey(obj.Key) {
 			continue
@@ -278,7 +304,12 @@ func (m *Migration) Step(ctx context.Context) (bool, error) {
 		}
 		m.State.Copied++
 	}
-	_, etag, err := m.writer.gcHead(ctx)
+	_, etag, err := m.writer.gcHead(m.authorityContext(ctx), func(ctx context.Context, writer *Writer) error {
+		if writer != m.writer {
+			return ErrAdmissionClosed
+		}
+		return writer.checkWriteAuthority(ctx)
+	})
 	if err != nil {
 		return false, err
 	}
@@ -290,6 +321,7 @@ func (m *Migration) Step(ctx context.Context) (bool, error) {
 	if err = m.save(ctx); err != nil {
 		return false, err
 	}
+	checkpointed = true
 	if page.Next == "" {
 		err := m.Verify(ctx)
 		return err == nil, err
@@ -333,7 +365,7 @@ func (m *Migration) Verify(ctx context.Context) error {
 			if !ok {
 				return fmt.Errorf("source session missing from catalog: %s", obj.Key)
 			}
-			raw, etag, err := m.Source.(storage.VersionedGetter).GetVersioned(ctx, obj.Key)
+			raw, etag, err := m.Source.(storage.LimitedVersionedGetter).GetLimitedVersioned(ctx, obj.Key, 32<<20)
 			if err != nil {
 				return err
 			}
@@ -496,9 +528,42 @@ func MigrationCheckpoint(ctx context.Context, target storage.ObjectStore) (Catal
 	if err != nil {
 		return CatalogMigration{}, err
 	}
+	return decodeMigration(raw)
+}
+
+func (m *Migration) authorityContext(ctx context.Context) context.Context {
+	return context.WithValue(ctx, writeAuthorityKey{}, writeAuthority{writer: m.writer, seal: m.State.Owner})
+}
+
+func decodeMigration(raw []byte) (CatalogMigration, error) {
 	var state CatalogMigration
-	if json.Unmarshal(raw, &state) != nil || state.ID == "" || state.Owner == "" {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if len(raw) > 64<<10 || decoder.Decode(&state) != nil || decoder.Decode(new(any)) != io.EOF {
 		return state, errors.New("invalid migration checkpoint")
 	}
-	return state, nil
+	return state, state.validate()
+}
+
+func (state CatalogMigration) validate() error {
+	invalid := errors.New("invalid migration checkpoint descriptor")
+	if !exactHex(state.ID, 24) || !exactHex(state.Owner, 24) || state.Proof == "" || len(state.Proof) > 4096 || len(state.Cursor) > 4096 || len(state.ExpectedHead) > 4096 || !isolated(state.Source, state.Destination) || state.Source.EffectiveArchiveFormat() != destination.FormatLegacy || state.Destination.EffectiveArchiveFormat() != destination.FormatCatalogV4 {
+		return invalid
+	}
+	switch state.Phase {
+	case "copying":
+	case "verifying", "verified", "active", "rollback":
+		if state.Cursor != "" || state.ExpectedHead == "" {
+			return invalid
+		}
+	default:
+		return invalid
+	}
+	if state.VerifiedRoot != (ObjectRef{}) && state.VerifiedRoot.validate() != nil {
+		return invalid
+	}
+	if (state.Phase == "verified" || state.Phase == "active" || state.Phase == "rollback") && state.Copied > 0 && state.VerifiedRoot == (ObjectRef{}) {
+		return invalid
+	}
+	return nil
 }

@@ -73,6 +73,9 @@ func (c *Coordinator) change(ctx context.Context, fn func(*admissions) error) er
 			return err
 		}
 		state.Generation++
+		if err = state.validate(); err != nil {
+			return err
+		}
 		raw, err := json.Marshal(state)
 		if err != nil {
 			return err
@@ -201,6 +204,9 @@ func (c *Coordinator) Release(ctx context.Context, owner string) error {
 // BeginPublication holds global pending/history admission through durable local
 // acknowledgement. Frozen metadata describes all active and preserved sources.
 func (s *Store) BeginPublication(ctx context.Context, id string, metadata []byte) (context.Context, error) {
+	if id == "" || len(id) > 455 {
+		return ctx, errors.New("invalid publication identifier")
+	}
 	refs, digest, err := publicationAdmission(metadata)
 	if err != nil {
 		return ctx, err
@@ -291,6 +297,9 @@ func (s *Store) EndPublicationAttempt(id string) {
 }
 
 func publicationAdmission(raw []byte) ([]ObjectRef, string, error) {
+	if len(raw) == 0 || len(raw) > 32<<20 {
+		return nil, "", storage.ErrObjectTooLarge
+	}
 	var entry CatalogEntry
 	if err := json.Unmarshal(raw, &entry.Summary); err != nil {
 		return nil, "", err
@@ -299,8 +308,14 @@ func publicationAdmission(raw []byte) ([]ObjectRef, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
+	if len(sources) > 256 {
+		return nil, "", errors.New("publication source capacity exceeded")
+	}
 	refs := make([]ObjectRef, 0, len(sources))
 	for _, source := range sources {
+		if len(source.Key) > 4096 {
+			return nil, "", errors.New("publication source key too large")
+		}
 		refs = append(refs, ObjectRef{source.Key, source.SHA256})
 	}
 	return refs, storage.SHA256Hex(raw), nil

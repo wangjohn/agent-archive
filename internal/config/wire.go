@@ -108,7 +108,7 @@ func decodeConfig(data []byte, c *Config) (bool, error) {
 			return false, err
 		}
 	}
-	if plain.Storage.EffectiveArchiveFormat() == destination.FormatCatalogV4 && (!fenced || plain.SchemaVersion != 8) {
+	if plain.Storage.EffectiveArchiveFormat() == destination.FormatCatalogV4 && (!fenced || plain.SchemaVersion != 9) {
 		return false, errors.New("catalog format requires its supported forward writer fence")
 	}
 	*c = Config(plain)

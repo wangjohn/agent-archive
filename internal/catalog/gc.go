@@ -72,7 +72,11 @@ func (w *Writer) Collect(ctx context.Context, barrier Barrier) error {
 	}
 	// On failure, retain the durable seal/hold alongside the GC head lease.
 	// Recovery requires the exact observed GC owner and fresh global barrier.
-	h, etag, err := w.gcHead(ctx)
+	authorizeBootstrap, err := coordinator.bootstrapAuthority(ctx)
+	if err != nil {
+		return err
+	}
+	h, etag, err := w.gcHead(ctx, authorizeBootstrap)
 	if err != nil {
 		return err
 	}
@@ -338,7 +342,7 @@ func (w *Writer) RecoverGC(ctx context.Context, barrier Barrier, owner string) e
 	return w.recoverLinkedGC(ctx, owner)
 }
 
-func (w *Writer) gcHead(ctx context.Context) (CatalogHead, string, error) {
+func (w *Writer) gcHead(ctx context.Context, authorize func(context.Context, *Writer) error) (CatalogHead, string, error) {
 	if w.readOnly {
 		return CatalogHead{}, "", ErrReadOnly
 	}
@@ -353,6 +357,12 @@ func (w *Writer) gcHead(ctx context.Context) (CatalogHead, string, error) {
 	h = CatalogHead{Schema: 4, Protocol: 9, Generation: 1, Epoch: id, PublicationEpoch: id}
 	raw, err := json.Marshal(h)
 	if err != nil {
+		return h, "", err
+	}
+	if authorize == nil {
+		return h, "", ErrAdmissionClosed
+	}
+	if err = authorize(ctx, w); err != nil {
 		return h, "", err
 	}
 	if _, err = w.conditional.PutConditional(ctx, HeadKey, raw, storage.PutCondition{CreateOnly: true}); err != nil {
@@ -384,4 +394,27 @@ func (w *Writer) preflightClock(ctx context.Context) (storage.CatalogTime, error
 		return clock, errors.New("catalog provider clock regressed before publication witness")
 	}
 	return clock, nil
+}
+
+func (c *Coordinator) bootstrapAuthority(ctx context.Context) (func(context.Context, *Writer) error, error) {
+	held, heldETag, err := c.read(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if held.Seal == "" || held.Hold == "" || len(held.Owners) != 0 || held.GCLink != nil {
+		return nil, ErrAdmissionClosed
+	}
+	return func(ctx context.Context, writer *Writer) error {
+		if writer != c.writer {
+			return ErrAdmissionClosed
+		}
+		state, etag, err := c.read(ctx)
+		if err != nil {
+			return err
+		}
+		if etag != heldETag || state.Generation != held.Generation || state.Seal != held.Seal || state.Hold != held.Hold || len(state.Owners) != 0 || state.GCLink != nil {
+			return ErrAdmissionClosed
+		}
+		return nil
+	}, nil
 }
