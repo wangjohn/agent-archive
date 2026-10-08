@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agents/codex"
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
@@ -52,7 +54,7 @@ func (*recoveryNativeTransport) ReadLine(context.Context) ([]byte, error) {
 func (*recoveryNativeTransport) Close() error { return nil }
 
 func TestRegisteredRecoveryRefusesNativeNamingBeforeProvider(t *testing.T) {
-	for _, mode := range []durableSessionMode{durableSessionModeOpaque, durableSessionModeSourceOnly, durableSessionModeCorruptPending} {
+	for _, mode := range []durableSessionMode{durableSessionModeOpaque, durableSessionModeSourceOnly, durableSessionModeCorruptPending, durableSessionModeEmptyPending, durableSessionModeNullPending, durableSessionModeIncompletePending, durableSessionModeChecksumPending, durableSessionModeMetadataPending} {
 		t.Run(string(mode), func(t *testing.T) {
 			for _, warm := range []bool{false, true} {
 				name := "cold"
@@ -113,12 +115,15 @@ func TestRegisteredRecoveryRefusesNativeNamingBeforeProvider(t *testing.T) {
 						owedPath = filepath.Join(s.Home(), "publication-evidence", reg.ArchiveSessionID, "opaque")
 					case durableSessionModeSourceOnly:
 						owedPath = ""
-					case durableSessionModeCorruptPending:
-						owedPath = filepath.Join(s.Home(), "pending", reg.ArchiveSessionID+".json")
 					case durableSessionModeMissingPending, durableSessionModeMissingSource, durableSessionModeCanceled:
-						t.Fatalf("unexpected mode outside registered recovery fixture: %q", mode)
+						t.Fatalf("unsupported registered naming fixture: %s", mode)
+					case durableSessionModeCorruptPending, durableSessionModeEmptyPending, durableSessionModeNullPending, durableSessionModeIncompletePending, durableSessionModeChecksumPending, durableSessionModeMetadataPending:
+						owedPath = filepath.Join(s.Home(), "pending", reg.ArchiveSessionID+".json")
 					}
 					owed := []byte("{sole-original")
+					if incomplete := incompletePendingBytes(mode); incomplete != nil {
+						owed = incomplete
+					}
 					if mode == durableSessionModeSourceOnly {
 						sum := sha256.Sum256(owed)
 						stage, err := s.StagePendingSource(reg.ArchiveSessionID, archive.SourceReference{SHA256: hex.EncodeToString(sum[:]), Key: "synthetic", CompressedBytes: len(owed)}, owed)
@@ -140,7 +145,7 @@ func TestRegisteredRecoveryRefusesNativeNamingBeforeProvider(t *testing.T) {
 					filter.calls = 0
 					result, err := Run(t.Context(), s, remote, opts)
 					if !errors.Is(err, state.ErrDurableStorageRecovery) && !errors.Is(result.Errors[reg.ArchiveSessionID], state.ErrDurableStorageRecovery) {
-						t.Fatalf("missing recovery: %+v %v", result, err)
+						t.Errorf("missing recovery: %+v %v", result, err)
 					}
 					if provider.calls != 0 || lookup.acquisitions != 0 || filter.calls != 0 || len(result.Published) != 0 {
 						t.Errorf("recovery reached naming: native=%d acquisition=%d filter=%d published=%v", provider.calls, lookup.acquisitions, filter.calls, result.Published)
@@ -155,7 +160,7 @@ func TestRegisteredRecoveryRefusesNativeNamingBeforeProvider(t *testing.T) {
 					starts, host.writes, native.acquisitions = 0, 0, 0
 					nativeResult, nativeErr := Run(t.Context(), s, remote, nativeOpts)
 					if !errors.Is(nativeErr, state.ErrDurableStorageRecovery) && !errors.Is(nativeResult.Errors[reg.ArchiveSessionID], state.ErrDurableStorageRecovery) {
-						t.Fatal("native recovery absent", nativeResult, nativeErr)
+						t.Error("native recovery absent", nativeResult, nativeErr)
 					}
 					if starts != 0 || host.writes != 0 || native.acquisitions != 0 || filter.calls != 0 {
 						t.Errorf("recovery reached native host: starts=%d writes=%d acquisition=%d filter=%d", starts, host.writes, native.acquisitions, filter.calls)
@@ -209,5 +214,61 @@ func TestHealthyPendingNamingEligibilityReleasesScratch(t *testing.T) {
 		if ledger.Available() != before {
 			t.Errorf("discarded eligibility input retained: before=%d after=%d", before, ledger.Available())
 		}
+	}
+}
+
+func incompletePendingBytes(mode durableSessionMode) []byte {
+	switch mode {
+	case durableSessionModeEmptyPending:
+		return []byte(`{}`)
+	case durableSessionModeNullPending:
+		return []byte(`null`)
+	case durableSessionModeIncompletePending:
+		return []byte(`{"source_key":"source","metadata_key":"metadata","source_sha256":"synthetic","metadata_bytes":"e30="}`)
+	case durableSessionModeChecksumPending:
+		return []byte(`{"source_key":"source","metadata_key":"metadata","source_sha256":"synthetic","source_bytes":"eA==","metadata_bytes":"e30="}`)
+	case durableSessionModeMetadataPending:
+		sum := sha256.Sum256([]byte("x"))
+		data, err := json.Marshal(state.PendingPublication{SourceKey: "source", MetadataKey: "metadata", SourceSHA256: hex.EncodeToString(sum[:]), SourceBytes: []byte("x"), MetadataBytes: []byte("{")})
+		if err != nil {
+			panic(err)
+		}
+		return data
+	case durableSessionModeSourceOnly, durableSessionModeOpaque, durableSessionModeMissingPending, durableSessionModeMissingSource, durableSessionModeCorruptPending, durableSessionModeCanceled:
+		return nil
+	}
+	panic("unknown durable session fixture")
+}
+
+func TestIncompleteProtectedPendingRefusesLocalPreview(t *testing.T) {
+	for _, mode := range []durableSessionMode{durableSessionModeEmptyPending, durableSessionModeNullPending, durableSessionModeIncompletePending, durableSessionModeChecksumPending, durableSessionModeMetadataPending} {
+		t.Run(string(mode), func(t *testing.T) {
+			s := newTestStore(t)
+			if err := config.WithDurableStorage(s.Home(), func(config.DurableStorageGuard) error { return nil }); err != nil {
+				t.Fatal(err)
+			}
+			reg := registration(t, writeTranscript(t, t.TempDir(), "session.jsonl", codexTranscript))
+			if err := s.SaveRegistration(reg); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(s.Home(), "pending", reg.ArchiveSessionID+".json")
+			raw := incompletePendingBytes(mode)
+			if err := os.WriteFile(path, raw, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if _, found, err := s.ForCollectorPass().LoadPending(reg.ArchiveSessionID); !found || !errors.Is(err, state.ErrDurableStorageRecovery) {
+				t.Errorf("incomplete pending granted readable state: found=%t error=%v", found, err)
+			}
+			filter := &operationFilter{}
+			bindings := &operationBindings{parser: &operationParser{version: "0.1.0"}, filter: filter}
+			bundle, err := ReadLocalBundle(t.Context(), s.Home(), reg, time.Now(), "", bindings)
+			if !errors.Is(err, state.ErrDurableStorageRecovery) || bundle.ArchiveSessionID != "" || filter.calls != 0 {
+				t.Errorf("incomplete preview reached native: filter=%d emitted=%s err=%v", filter.calls, bundle.ArchiveSessionID, err)
+			}
+			after, err := os.ReadFile(path)
+			if err != nil || !bytes.Equal(after, raw) {
+				t.Fatal("original pending changed", err)
+			}
+		})
 	}
 }

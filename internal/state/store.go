@@ -24,6 +24,8 @@ package state
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -783,6 +785,36 @@ func (s *Store) pendingPath(id string) string {
 	return filepath.Join(s.home, "pending", id+".json")
 }
 
+// validateComplete is the supported transaction structure shared by writes
+// and protected reads. History validation keeps its separate budget ownership.
+func (pending PendingPublication) validateComplete() error {
+	if len(pending.SourceBytes) > maxPendingHistoryBytes {
+		return ErrDurableStorageCapacity
+	}
+	if pending.SourceKey == "" || pending.MetadataKey == "" || pending.SourceSHA256 == "" || len(pending.MetadataBytes) == 0 || (len(pending.SourceBytes) == 0 && (!pending.MetadataOnly || pending.SourceSize <= 0)) {
+		return errors.New("pending publication is incomplete")
+	}
+	return nil
+}
+
+// validateReadablePending applies the existing publication checksum and JSON
+// preconditions without deriving new ownership or remote-source authority.
+func (s *Store) validateReadablePending(pending PendingPublication) error {
+	if err := pending.validateComplete(); err != nil {
+		return err
+	}
+	if !pending.CarriesNoSource() {
+		sum := sha256.Sum256(pending.SourceBytes)
+		if !strings.EqualFold(hex.EncodeToString(sum[:]), strings.TrimSpace(pending.SourceSHA256)) {
+			return errors.New("pending source checksum does not match its persisted bytes")
+		}
+	}
+	scratch, closeScratch := s.WithReadBudget(s.durableContext(), s.resourceBudget)
+	defer closeScratch()
+	var metadata archive.Metadata
+	return scratch.unmarshalOwned(pending.MetadataBytes, &metadata)
+}
+
 // SavePending durably records a session's publication transaction before its
 // first remote write. It refuses an incomplete one: every retry must upload
 // exactly the same bytes under exactly the same keys.
@@ -790,11 +822,8 @@ func (s *Store) SavePending(id string, pending PendingPublication) error {
 	if !safeFileComponent(id) {
 		return errors.New("archive session ID is not a safe file name component")
 	}
-	if len(pending.SourceBytes) > maxPendingHistoryBytes {
-		return ErrDurableStorageCapacity
-	}
-	if pending.SourceKey == "" || pending.MetadataKey == "" || pending.SourceSHA256 == "" || len(pending.MetadataBytes) == 0 || (len(pending.SourceBytes) == 0 && (!pending.MetadataOnly || pending.SourceSize <= 0)) {
-		return errors.New("pending publication is incomplete")
+	if err := pending.validateComplete(); err != nil {
+		return err
 	}
 	if err := pending.ValidateHistoryBudgeted(id, s.resourceBudget); err != nil {
 		return err
@@ -808,9 +837,8 @@ func (s *Store) SavePending(id string, pending PendingPublication) error {
 // any. Decoding it reads the whole compressed source; HasPending answers
 // whether one exists without that cost.
 //
-// In a collector pass, a pending publication that no longer decodes is moved
-// aside (the error wraps ErrQuarantined, once) and the session carries on as
-// if it had none; see quarantineInPass.
+// A supported legacy collector pass may quarantine damaged ordinary state.
+// Protected state stays present and returns ErrDurableStorageRecovery instead.
 func (s *Store) LoadPending(id string) (PendingPublication, bool, error) {
 	if !safeFileComponent(id) {
 		return PendingPublication{}, false, errors.New("archive session ID is not a safe file name component")
@@ -850,7 +878,15 @@ func (s *Store) LoadPending(id string) (PendingPublication, bool, error) {
 		return PendingPublication{}, protected || cfg.DurableStorageProtection || errors.Is(err, ErrDurableStorageRecovery), fmt.Errorf("read pending publication %q: %w", id, errors.Join(ErrDurableStorageRecovery, err))
 	}
 	if found {
+		if protected {
+			if err := s.validateReadablePending(pending); err != nil {
+				return PendingPublication{}, true, errors.Join(ErrDurableStorageRecovery, err)
+			}
+		}
 		if err := pending.ValidateHistoryBudgeted(id, s.resourceBudget); err != nil {
+			if protected {
+				err = errors.Join(ErrDurableStorageRecovery, err)
+			}
 			return PendingPublication{}, true, err
 		}
 	}

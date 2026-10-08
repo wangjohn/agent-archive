@@ -42,12 +42,17 @@ const (
 type durableSessionMode string
 
 const (
-	durableSessionModeSourceOnly     durableSessionMode = "source-only"
-	durableSessionModeOpaque         durableSessionMode = "opaque"
-	durableSessionModeMissingPending durableSessionMode = "missing-pending"
-	durableSessionModeMissingSource  durableSessionMode = "missing-source"
-	durableSessionModeCorruptPending durableSessionMode = "corrupt-pending"
-	durableSessionModeCanceled       durableSessionMode = "canceled"
+	durableSessionModeSourceOnly        durableSessionMode = "source-only"
+	durableSessionModeOpaque            durableSessionMode = "opaque"
+	durableSessionModeMissingPending    durableSessionMode = "missing-pending"
+	durableSessionModeMissingSource     durableSessionMode = "missing-source"
+	durableSessionModeCorruptPending    durableSessionMode = "corrupt-pending"
+	durableSessionModeCanceled          durableSessionMode = "canceled"
+	durableSessionModeEmptyPending      durableSessionMode = "empty-pending"
+	durableSessionModeNullPending       durableSessionMode = "null-pending"
+	durableSessionModeIncompletePending durableSessionMode = "incomplete-pending"
+	durableSessionModeChecksumPending   durableSessionMode = "checksum-pending"
+	durableSessionModeMetadataPending   durableSessionMode = "metadata-pending"
 )
 
 func (s refuseNativeSources) LookupSources(string) (agentapi.SourceProvider, agentapi.TranscriptFilter, bool) {
@@ -246,6 +251,8 @@ func TestLocalBundleSessionObligationsRefuseBeforeNative(t *testing.T) {
 		t.Run(string(mode), func(t *testing.T) {
 			s := newTestStore(t)
 			switch mode {
+			case durableSessionModeEmptyPending, durableSessionModeNullPending, durableSessionModeIncompletePending, durableSessionModeChecksumPending, durableSessionModeMetadataPending:
+				t.Fatalf("incomplete fixture belongs to the protected preview regression: %s", mode)
 			case durableSessionModeCanceled: // This mode needs no additional fixture mutation.
 			case durableSessionModeSourceOnly, durableSessionModeMissingSource:
 				data := []byte("original")
