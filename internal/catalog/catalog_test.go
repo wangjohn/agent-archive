@@ -701,3 +701,100 @@ func TestFastCaptureClockCannotAgeCatalogSnapshot(t *testing.T) {
 		t.Fatal("machine capture time expired a fresh catalog snapshot", err)
 	}
 }
+
+func TestProtectedCurrentRootsStillTraverseLiveSources(t *testing.T) {
+	w, s := fixture(t)
+	m := mutation(t, w, "protected-roots")
+	if _, err := w.Commit(t.Context(), m); err != nil {
+		t.Fatal(err)
+	}
+	h, _, err := w.Head(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	refs := []ObjectRef{h.Identity, h.Capture, h.Activity, h.Project, h.Receipts}
+	if err = w.Collect(t.Context(), heldBarrier{refs: refs}); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{m.Next.Metadata.Key, m.Next.Summary.SourceBundle.Key} {
+		if _, err = s.Get(t.Context(), key); err != nil {
+			t.Fatalf("protected root suppressed current reachability for %s: %v", key, err)
+		}
+	}
+}
+
+func TestIncompleteHeadReferenceFailsClosed(t *testing.T) {
+	for _, missingKey := range []bool{false, true} {
+		t.Run(strconv.FormatBool(missingKey), func(t *testing.T) {
+			w, s := fixture(t)
+			m := mutation(t, w, "incomplete-root")
+			if _, err := w.Commit(t.Context(), m); err != nil {
+				t.Fatal(err)
+			}
+			h, _, err := w.Head(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if missingKey {
+				h.Identity.Key = ""
+			} else {
+				h.Identity.SHA256 = ""
+			}
+			// Model a malformed provider head, rather than a stale carried witness.
+			h.PublicationWitness = HeadWitness{}
+			raw, err := json.Marshal(h)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = s.Put(t.Context(), HeadKey, raw); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err = w.Head(t.Context()); err == nil {
+				t.Fatal("incomplete root became valid authority")
+			}
+			if _, _, err = w.Find(t.Context(), m.SessionKey); err == nil {
+				t.Fatal("incomplete root became absence authority")
+			}
+			if err = w.Collect(t.Context(), heldBarrier{}); err == nil {
+				t.Fatal("incomplete root permitted collection")
+			}
+		})
+	}
+}
+
+type checksumlessStore struct {
+	*qualifiedStore
+	sizeDelta int64
+}
+
+func (s *checksumlessStore) Stat(ctx context.Context, key string) (storage.ObjectInfo, error) {
+	info, err := s.qualifiedStore.Stat(ctx, key)
+	info.SHA256 = ""
+	info.Size += s.sizeDelta
+	return info, err
+}
+
+func TestChecksumlessSourceStillRequiresExactDeclaredSize(t *testing.T) {
+	for _, delta := range []int64{0, 1} {
+		t.Run(strconv.FormatInt(delta, 10), func(t *testing.T) {
+			s := &checksumlessStore{qualifiedStore: &qualifiedStore{storagetest.NewMemoryStore()}, sizeDelta: delta}
+			w, err := New(s)
+			if err != nil {
+				t.Fatal(err)
+			}
+			m := mutation(t, w, "wrong-source-size")
+			m.Next.Summary.SourceBundle.CompressedBytes++
+			raw, err := json.Marshal(m.Next.Summary)
+			if err != nil {
+				t.Fatal(err)
+			}
+			m.Next.Metadata, err = w.PutImmutable(t.Context(), KindMetadata, raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = w.Commit(t.Context(), m); !errors.Is(err, storage.ErrChecksumMismatch) {
+				t.Fatal("incorrect source length committed", err)
+			}
+		})
+	}
+}

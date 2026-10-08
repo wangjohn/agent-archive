@@ -35,8 +35,20 @@ func (p *PendingPublication) UnmarshalJSON(data []byte) error {
 	wire := struct {
 		*pendingJSON
 		unsupportedPendingFields
+		Commit json.RawMessage `json:"commit"`
 	}{pendingJSON: (*pendingJSON)(p)}
-	return json.Unmarshal(data, &wire)
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	p.Catalog = nil
+	if len(wire.Commit) != 0 {
+		var commit CatalogPublication
+		if err := json.Unmarshal(wire.Commit, &commit); err != nil {
+			return err
+		}
+		p.Catalog = &commit
+	}
+	return nil
 }
 
 func (p *publishedState) UnmarshalJSON(data []byte) error {
@@ -51,16 +63,18 @@ func (p *publishedState) UnmarshalJSON(data []byte) error {
 // UnmarshalJSON refuses foreign or incomplete commit descriptors before a
 // protected catalog transaction could fall back to ordinary publication.
 func (p *CatalogPublication) UnmarshalJSON(data []byte) error {
-	type wire CatalogPublication
-	var next wire
+	var next struct {
+		ID               *string `json:"id"`
+		ExpectedRevision *string `json:"expected_revision"`
+	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&next); err != nil {
 		return ErrDurableStorageRecovery
 	}
-	if next.Protocol != 9 || next.ID == "" || len(next.ID) > 128 || len(next.ExpectedRevision) > 128 {
+	if next.Protocol == nil || *next.Protocol != 9 || next.ID == nil || next.ExpectedRevision == nil || *next.ID == "" || len(*next.ID) > 128 || len(*next.ExpectedRevision) > 128 {
 		return ErrDurableStorageRecovery
 	}
-	*p = CatalogPublication(next)
+	*p = CatalogPublication{Protocol: *next.Protocol, ID: *next.ID, ExpectedRevision: *next.ExpectedRevision}
 	return nil
 }

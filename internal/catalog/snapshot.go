@@ -165,6 +165,9 @@ func (s *Snapshot) root(q Query) (ObjectRef, error) {
 }
 
 func (s *Snapshot) readNode(ctx context.Context, ref ObjectRef) (node, error) {
+	if err := ref.validate(); err != nil {
+		return node{}, err
+	}
 	if err := ctx.Err(); err != nil {
 		return node{}, err
 	}

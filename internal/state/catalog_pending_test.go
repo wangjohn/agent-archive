@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -30,15 +31,29 @@ func TestCatalogPendingCommitRoundTripAndMalformedRecovery(t *testing.T) {
 	if wire["commit"] == nil || wire["catalog"] != nil {
 		t.Fatal("old writer compatibility fence missing")
 	}
-	for _, foreign := range []string{`{}`, `{"id":"frozen","phase":"future"}`, `{"id":1}`} {
-		wire["commit"] = json.RawMessage(foreign)
-		bad, err := json.Marshal(wire)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var decoded PendingPublication
-		if err = json.Unmarshal(bad, &decoded); !errors.Is(err, ErrDurableStorageRecovery) {
-			t.Fatal("foreign commit accepted", foreign, err)
-		}
+	for _, foreign := range []string{`{}`, `null`, `{"id":"frozen"}`, `{"id":"frozen","expected_revision":null}`, `{"id":"frozen","phase":"future"}`, `{"id":1}`} {
+		t.Run(foreign, func(t *testing.T) {
+			wire["commit"] = json.RawMessage(foreign)
+			bad, err := json.Marshal(wire)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var decoded PendingPublication
+			if err = json.Unmarshal(bad, &decoded); !errors.Is(err, ErrDurableStorageRecovery) {
+				t.Fatal("foreign commit accepted", foreign, err)
+			}
+		})
+	}
+	tooLong := pending
+	tooLong.Catalog = &CatalogPublication{ID: "frozen", ExpectedRevision: strings.Repeat("x", 129)}
+	if err = local.SavePending("catalog", tooLong); err == nil {
+		t.Fatal("unreadable expected revision persisted")
+	}
+	var descriptor PendingPublication
+	if err = json.Unmarshal([]byte(`{"commit":{"id":"frozen","expected_revision":""}}`), &descriptor); err != nil || descriptor.Catalog == nil {
+		t.Fatal("explicit creation revision refused", err)
+	}
+	if err = json.Unmarshal([]byte(`{}`), &descriptor); err != nil || descriptor.Catalog != nil {
+		t.Fatal("legacy omitted commit retained catalog authority", err)
 	}
 }

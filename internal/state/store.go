@@ -796,7 +796,7 @@ func (s *Store) pendingPath(id string) string {
 // validateComplete is the supported transaction structure shared by writes
 // and protected reads. History validation keeps its separate budget ownership.
 func (pending PendingPublication) validateComplete() error {
-	if pending.Catalog != nil && (pending.Catalog.ID == "" || len(pending.Catalog.ID) > 128) {
+	if pending.Catalog != nil && (pending.Catalog.ID == "" || len(pending.Catalog.ID) > 128 || len(pending.Catalog.ExpectedRevision) > 128) {
 		return errors.New("invalid catalog publication")
 	}
 	if len(pending.SourceBytes) > maxPendingHistoryBytes {
