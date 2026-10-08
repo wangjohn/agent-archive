@@ -108,6 +108,7 @@ func TestSupportedDiscoveryPublishesWithoutHooksAndAcceptsRecentCopy(t *testing.
 		return path
 	}
 	home, userHome, project, source := physicalTemp(), physicalTemp(), physicalTemp(), physicalTemp()
+	must(t, os.Chmod(home, 0700))
 	cfg := config.Config{MachineID: "synthetic-machine", Storage: credentialsTestConfig(), Harnesses: []string{"codex"}, Archive: archive.Config{Enabled: true, Projects: []archive.ProjectActivation{{Root: project, ProjectID: archive.ProjectID(project), Included: true, ActivatedAt: at}}}, Discovery: &config.DiscoveryConfig{Enabled: true, CodexHomes: []string{source}}}
 	must(t, config.ReconcileDiscovery(&cfg, config.Config{}, at))
 	must(t, config.Save(home, cfg))
