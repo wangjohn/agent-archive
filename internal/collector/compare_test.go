@@ -115,3 +115,51 @@ func TestBundleEvidenceEqualMatchesEncoding(t *testing.T) {
 func jsonValuesEqual(a, b any) (bool, error) {
 	return jsonValuesEqualWith(a, b, jsonEncodingsEqual)
 }
+
+func TestBundleEvidenceEqualUsesSessionLabelObservationInstant(t *testing.T) {
+	at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	label := archive.SessionLabel{NativeID: "native-1", State: archive.SessionLabelPresent, Name: "Chosen name", Source: archive.SessionLabelDatabase, Contract: "label-contract"}
+	base := archive.SourceBundle{SupplementalEvidence: []archive.SupplementalEvidence{label.Evidence(at.In(time.FixedZone("offset", -7*60*60)), "codex")}}
+	for _, tc := range []struct {
+		name   string
+		change func(*archive.SupplementalEvidence)
+		want   bool
+	}{
+		{"equivalent offset", func(*archive.SupplementalEvidence) {}, true},
+		{"new observation instant", func(e *archive.SupplementalEvidence) { e.ObservedAt = at.Add(time.Nanosecond) }, false},
+		{"name", func(e *archive.SupplementalEvidence) { e.Payload["name"] = "Another name" }, false},
+		{"native identity", func(e *archive.SupplementalEvidence) { e.Payload["native_session_id"] = "native-2" }, false},
+		{"source", func(e *archive.SupplementalEvidence) { e.Payload["source"] = "api" }, false},
+		{"contract", func(e *archive.SupplementalEvidence) { e.Payload["contract"] = "other-contract" }, false},
+		{"provenance", func(e *archive.SupplementalEvidence) { e.Provenance = "native:claude:session_labels" }, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			candidate := archive.SourceBundle{SupplementalEvidence: []archive.SupplementalEvidence{label.Evidence(at, "codex")}}
+			tc.change(&candidate.SupplementalEvidence[0])
+			priorBytes, err := json.Marshal(base)
+			if err != nil {
+				t.Fatal(err)
+			}
+			candidateBytes, err := json.Marshal(candidate)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := bundleEvidenceEqual(base, candidate)
+			if err != nil || got != tc.want {
+				t.Fatalf("equal=%t want=%t err=%v", got, tc.want, err)
+			}
+			if after, err := json.Marshal(base); err != nil || !bytes.Equal(after, priorBytes) {
+				t.Fatal("comparison mutated retained evidence")
+			}
+			if after, err := json.Marshal(candidate); err != nil || !bytes.Equal(after, candidateBytes) {
+				t.Fatal("comparison mutated candidate evidence")
+			}
+		})
+	}
+	event := archive.SupplementalEvidence{Kind: archive.EvidenceKindFinalResponse, ObservedAt: at, Provenance: "hook", Payload: map[string]any{"text": "Done"}}
+	a := archive.SourceBundle{SupplementalEvidence: []archive.SupplementalEvidence{base.SupplementalEvidence[0], event}}
+	b := archive.SourceBundle{SupplementalEvidence: []archive.SupplementalEvidence{event, label.Evidence(at, "codex")}}
+	if same, err := bundleEvidenceEqual(a, b); err != nil || same {
+		t.Fatal("evidence order ignored", err)
+	}
+}
