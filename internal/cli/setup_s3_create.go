@@ -151,7 +151,7 @@ type newS3Bucket struct {
 func chooseArchiveProfile(p *prompter, cfg *credentials.Config, env Env, bucket newS3Bucket) error {
 	terminal.Println(p.out, "Setup created bucket "+bucket.name+" in "+bucket.region+"; it is empty and will stay in your account if you stop now.")
 	terminal.Println(p.out, p.style.hang("", "Setup saves the profile you used to create the bucket unless you choose another now. To use a narrower one, attach the policy above to it first."))
-	choice, err := p.actions("Profile for archiving", "keep", nil, []actionOption{{"keep", "", "Use the selected profile"}, {"profile", "p", "Choose another archive profile"}})
+	choice, err := p.setupActions("Profile for archiving", "keep", nil, []actionOption{{"keep", "", "Use the selected profile"}, {"profile", "p", "Choose another archive profile"}})
 	if err != nil {
 		return err
 	}
@@ -238,7 +238,7 @@ func createS3Bucket(p *prompter, cfg *credentials.Config, env Env, profileRegion
 		if noCredentials {
 			def, options = string(s3RecoveryProfile), options[1:]
 		}
-		choice, e := p.actions("What next?", def, options, []actionOption{{"existing", "e", "Use an existing bucket"}, {"back", "b", "Back"}, {"stop", "q", "Stop setup"}})
+		choice, e := p.setupActions("What next?", def, options, []actionOption{{"existing", "e", "Use an existing bucket"}, {"back", "b", "Back"}, {"stop", "q", "Stop setup"}})
 		if e != nil {
 			return newS3Bucket{}, false, e
 		}
@@ -276,7 +276,9 @@ func openS3CreationClient(p *prompter, cfg *credentials.Config, env Env, region,
 		terminal.Printf(p.out, "The bucket %s may have been created by an earlier request. Check the S3 console; customize the name before trying another creation.\n", name)
 		return nil
 	}
+	release := p.suspendPrompts()
 	creator, err := env.awsBucketCreator(cfg.AWSProfile, region)
+	release()
 	if err != nil {
 		terminal.Printf(p.out, "Couldn't open profile %s (%s).\n", cfg.AWSProfile, discoveryReason(err))
 	}
@@ -330,7 +332,7 @@ func (s *s3CreationSettings) confirm(p *prompter, cfg *credentials.Config, env E
 			terminal.Println(p.out, "Setup can only create buckets in the standard AWS regions. Customize the region or use an existing bucket.")
 		}
 		terminal.Printf(p.out, "Profile: %s\nBucket: %s\nRegion: %s\nSetup will enable and check all four Block Public Access settings.\n", cfg.AWSProfile, s.name, s.region)
-		choice, err := p.actions("Your archive storage", "create", nil, []actionOption{{"create", "", "Create"}, {"customize", "c", "Customize name, region or profile"}, {"existing", "e", "Use an existing bucket"}, {"back", "b", "Back"}})
+		choice, err := p.setupActions("Your archive storage", "create", nil, []actionOption{{"create", "", "Create"}, {"customize", "c", "Customize name, region or profile"}, {"existing", "e", "Use an existing bucket"}, {"back", "b", "Back"}})
 		if err != nil {
 			return false, err
 		}
@@ -355,7 +357,7 @@ func (s *s3CreationSettings) confirm(p *prompter, cfg *credentials.Config, env E
 }
 
 func (s *s3CreationSettings) customize(p *prompter, cfg *credentials.Config, env Env) error {
-	edit, err := p.actions("Customize storage", "name", []option{{"name", "Bucket name"}, {"region", "Region"}, {"profile", "Creation profile"}}, []actionOption{{"back", "b", "Back to summary"}})
+	edit, err := p.setupActions("Customize storage", "name", []option{{"name", "Bucket name"}, {"region", "Region"}, {"profile", "Creation profile"}}, []actionOption{{"back", "b", "Back to summary"}})
 	if err != nil {
 		return err
 	}
@@ -387,7 +389,7 @@ func offerCreatedBucket(p *prompter, profile string) (bucket newS3Bucket, used b
 			continue
 		}
 		terminal.Printf(p.out, "Setup already created bucket %s in %s in this run; it is empty.\n", b.name, b.region)
-		use, err := p.yesNo("Use it instead of creating another bucket?", true)
+		use, err := p.setupYesNo("Use it instead of creating another bucket?", true)
 		if err != nil {
 			return newS3Bucket{}, false, err
 		}
@@ -474,17 +476,12 @@ func standardAWSRegion(region string) bool { return standardRegion.MatchString(r
 
 // promptNewBucketName asks for a bucket name until it is one S3 accepts.
 func promptNewBucketName(p *prompter, def string) (string, error) {
-	for {
-		name, err := p.required("Name for the new bucket", def)
-		if err != nil {
-			return "", err
+	return p.guidedText(promptModel{Question: "Name for the new bucket", Label: "Name", Default: def, Receipt: "Bucket", Validate: func(name string) error {
+		if problem := bucketNameProblem(name); problem != "" {
+			return fmt.Errorf("%q can't be a bucket name: %s", name, problem)
 		}
-		problem := bucketNameProblem(name)
-		if problem == "" {
-			return name, nil
-		}
-		terminal.Printf(p.out, "%q can't be a bucket name: %s.\n", name, problem)
-	}
+		return nil
+	}})
 }
 
 // noteCreateFailure says in plain words why the bucket called name could not
@@ -568,7 +565,7 @@ func secureNewBucket(p *prompter, creator BucketCreator, bucket, profile string)
 // bucket's name to confirm, and S3 refuses to delete one that has objects.
 func askSecureChoice(p *prompter, creator BucketCreator, bucket, profile string) (secureChoice, error) {
 	for {
-		answer, err := p.menu("What now?", string(secureRetry),
+		answer, err := p.setupMenu("What now?", string(secureRetry),
 			option{string(secureRetry), "Try again"},
 			option{string(secureDelete), "Delete the empty bucket and pick an existing one"},
 			option{string(secureStop), "Stop setup and leave the bucket as it is"})
@@ -579,7 +576,12 @@ func askSecureChoice(p *prompter, creator BucketCreator, bucket, profile string)
 			return secureChoice(answer), nil
 		}
 		terminal.Println(p.out, "Only delete it if setup just created it: a bucket you already owned under this name isn't yours to delete here.")
-		typed, err := p.withDefault("Type the bucket name "+bucket+" to delete it, or press Enter to keep it", "")
+		typed, err := p.guidedText(promptModel{Question: "Type the bucket name " + bucket + " to delete it, or press Enter to keep it", Label: "Answer", ResolveReceipt: func(value string) string {
+			if value == bucket {
+				return "Deletion confirmed for bucket " + bucket
+			}
+			return "Deletion not confirmed; keeping bucket " + bucket
+		}})
 		if err != nil {
 			return secureStop, err
 		}

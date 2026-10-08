@@ -343,6 +343,9 @@ func reportBackfillPlan(env Env, stdout, stderr io.Writer, home string, cfg conf
 // importBackfillPlan checks storage and confirmation before entering the
 // existing import transaction. That transaction and its locks are unchanged.
 func importBackfillPlan(env Env, stdin io.Reader, stdout, stderr io.Writer, home string, cfg config.Config, plan backfill.Plan, opts backfillCommandOptions) int {
+	p := newPrompter(stdin, stdout)
+	defer p.close()
+	stdout = p.out
 	// Step 2: storage must work before anything is confirmed. The check
 	// writes one test object and deletes it again.
 	checkStyle := activityStyle(stdout)
@@ -381,7 +384,7 @@ func importBackfillPlan(env Env, stdin io.Reader, stdout, stderr io.Writer, home
 	// Step 3: confirm. edit raises the retention of the whole archive and
 	// shows the plan again with the new deletion date.
 	if !opts.yes {
-		confirmed, err := confirmImport(newPrompter(stdin, stdout), stdout, &plan, cfg.RetentionDays)
+		confirmed, err := confirmImport(p, stdout, &plan, cfg.RetentionDays)
 		if err != nil {
 			terminal.Printf(stderr, "agent-archive: backfill: %v. Nothing was changed.\n", err)
 			return 1
@@ -416,7 +419,9 @@ func offerSetupImport(p *prompter, errOut io.Writer, home, userHome string, env 
 		return
 	}
 	filters := backfill.Filters{Harnesses: cfg.Harnesses, Projects: roots}
-	later := "Import them later with " + p.style.cmd("agent-archive backfill") + "."
+	later := "Setup is complete. Import them later with " + p.style.cmd("agent-archive backfill") + "."
+	p.setupHeading("Optional · Import past sessions")
+	releasePrompts := p.suspendPrompts()
 	var stopLooking func()
 	if p.style.live {
 		terminal.Print(p.out, "\n")
@@ -430,6 +435,7 @@ func offerSetupImport(p *prompter, errOut io.Writer, home, userHome string, env 
 	interrupted := planCtx.Err() != nil
 	stopPlanning()
 	stopLooking()
+	releasePrompts()
 	switch {
 	case interrupted:
 		if p.style.live {
@@ -460,7 +466,13 @@ func offerSetupImport(p *prompter, errOut io.Writer, home, userHome string, env 
 	} else {
 		terminal.Printf(p.out, "%d found.\n", len(plan.Imported()))
 	}
-	yes, err := p.yesNo(fmt.Sprintf("Import the %s from these projects?", countNoun(len(plan.Imported()), "past session")), true)
+	choice, err := p.guidedChoice(promptModel{Question: "Import these sessions?", Helpers: []string{fmt.Sprintf("Found %d sessions in %d selected projects.", len(plan.Imported()), len(plan.Projects())), fmt.Sprintf("%d-day retention applies.", cfg.RetentionDays)}, Default: "import", Primary: []option{{"import", fmt.Sprintf("Import %d sessions", len(plan.Imported()))}, {"skip", "Skip for now"}}, Aliases: []option{{"yes", ""}, {"y", ""}, {"no", ""}, {"n", ""}}, ResolveReceipt: func(key string) string {
+		if key == "import" || setupAffirmed(key) {
+			return fmt.Sprintf("Import %d sessions", len(plan.Imported()))
+		}
+		return "Skip for now"
+	}})
+	yes := choice == "import" || setupAffirmed(choice)
 	if err != nil || !yes {
 		terminal.Println(p.out, "Not imported. "+later)
 		return
@@ -622,7 +634,7 @@ func checkStorage(env Env, cfg config.Config) error {
 // archived (backfill.ApplyToConfig refuses it too).
 func confirmImport(p *prompter, out io.Writer, plan *backfill.Plan, configured int) (bool, error) {
 	for {
-		answer, err := p.line(p.labelText(fmt.Sprintf("Import %s from %s? [y/N/edit] ", countNoun(len(plan.Imported()), "session"), countNoun(len(plan.Projects()), "project"))))
+		answer, err := p.guidedChoice(promptModel{Question: fmt.Sprintf("Import %s from %s?", countNoun(len(plan.Imported()), "session"), countNoun(len(plan.Projects()), "project")), Default: "no", Primary: []option{{"yes", "Import these sessions"}, {"no", "Skip for now"}}, Secondary: []actionOption{{"edit", "e", "Edit retention"}}})
 		if err != nil {
 			return false, err
 		}
@@ -636,8 +648,8 @@ func confirmImport(p *prompter, out io.Writer, plan *backfill.Plan, configured i
 				terminal.Println(out, "Retention is off, so no session is deleted; there is nothing to keep longer.")
 				continue
 			}
-			terminal.Printf(out, "Retention applies to every session in the archive, not only these.\nHere it can only be raised from %d days, and undo puts %d back.\nShorten it in setup.\n", configured, configured)
-			days, err := p.retentionDays(plan.RetentionDays)
+			guidedExplanation(out, "Edit retention", "Retention applies to every session in the archive, not only these.", fmt.Sprintf("Here it can only be raised from %d days, and undo puts %d back. Shorten it in setup.", configured, configured))
+			days, err := p.guidedRetention(plan.RetentionDays)
 			if err != nil {
 				return false, err
 			}
@@ -648,7 +660,6 @@ func confirmImport(p *prompter, out io.Writer, plan *backfill.Plan, configured i
 				continue
 			}
 			plan.RetentionDays = days
-			terminal.Println(out)
 			backfill.RenderText(out, *plan)
 			terminal.Println(out)
 		default:
@@ -694,8 +705,9 @@ func (e Env) backfillTempDirs() []string {
 // it holds.
 func (e Env) backfillEnvironment(userHome string, cfg config.Config) backfill.Environment {
 	dirs := e.nativeSessionDirectories(userHome, cfg)
+	observer := &gitremote.IdentityObserver{}
 	env := backfill.Environment{
-		RepositoryIdentity:        gitremote.ProjectIdentity,
+		RepositoryIdentity:        observer.Lookup,
 		RepositoryIdentityCurrent: gitremote.ProjectIdentityCurrent,
 		Home:                      userHome, NativeDirectories: dirs, Sources: e.agentRegistry(), Discovery: e.agentRegistry(), DatabaseCatalogs: e.agentRegistry(), NativePaths: e.agentRegistry(), Worktrees: e.agentRegistry(), Workspaces: e.agentRegistry(), Children: e.agentRegistry(), Imports: e.agentRegistry(),
 		TempDirs: e.backfillTempDirs(), Now: e.now, OS: e.OS,
@@ -703,6 +715,7 @@ func (e Env) backfillEnvironment(userHome string, cfg config.Config) backfill.En
 		Getenv: e.getenv,
 	}
 	env.CursorDatabase = backfill.CursorDatabaseReaderFor(env)
+	env.CursorRecoveryDatabase = backfill.CursorRecoveryDatabaseReaderFor(env)
 	return env
 }
 

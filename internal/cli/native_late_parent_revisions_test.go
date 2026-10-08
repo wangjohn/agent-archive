@@ -24,11 +24,11 @@ import (
 )
 
 func TestNativeLateParentPreservedReadback(t *testing.T) {
-	for _, name := range []string{"settled", "preparing", "stronger_policy_during_repair", "stronger_policy_legacy_repair", "legacy_marker_settled", "legacy_marker_midcursor", "legacy_marker_stronger_policy"} {
-		during := name == "preparing"
-		tighten := strings.Contains(name, "stronger_policy")
-		legacyMarker := strings.HasPrefix(name, "legacy_marker_")
-		t.Run(name, func(t *testing.T) {
+	for _, name := range []nativeParentTiming{nativeParentSettled, nativeParentPreparing, nativeParentStrongerPolicyDuringRepair, nativeParentStrongerPolicyLegacyRepair, nativeParentLegacyMarkerSettled, nativeParentLegacyMarkerMidcursor, nativeParentLegacyMarkerStrongerPolicy, nativeParentLegacyMarkerNamingCache} {
+		during := name == nativeParentPreparing
+		tighten := strings.Contains(string(name), "stronger_policy")
+		legacyMarker := strings.HasPrefix(string(name), "legacy_marker_")
+		t.Run(string(name), func(t *testing.T) {
 			origin := archive.SessionOriginHook
 			canonical := func() string { p, err := filepath.EvalSymlinks(t.TempDir()); must(t, err); return p }
 			home, userHome, project := canonical(), canonical(), canonical()
@@ -140,7 +140,11 @@ func TestNativeLateParentPreservedReadback(t *testing.T) {
 			}
 
 			if legacyMarker {
-				before = legacyNativeChildEnvelope(t, local, cloud, reg, before, originalSources)
+				legacyParser := "0.22.0"
+				if name == nativeParentLegacyMarkerNamingCache {
+					legacyParser = "0.25.0"
+				}
+				before = legacyNativeChildEnvelope(t, local, cloud, reg, before, originalSources, legacyParser)
 				interrupted := false
 				for range 8 {
 					result, err := runOnePass(env, true)
@@ -150,7 +154,7 @@ func TestNativeLateParentPreservedReadback(t *testing.T) {
 							t.Fatal("legacy ownership migration", issue)
 						}
 					}
-					if name != "legacy_marker_settled" {
+					if name != nativeParentLegacyMarkerSettled && name != nativeParentLegacyMarkerNamingCache {
 						pending, found, err := local.LoadPending(reg.ArchiveSessionID)
 						must(t, err)
 						if found && pending.History.Preparing && pending.History.PrivacyCursor > 0 {
@@ -166,8 +170,16 @@ func TestNativeLateParentPreservedReadback(t *testing.T) {
 						}
 					}
 				}
-				if name != "legacy_marker_settled" && !interrupted {
+				if name != nativeParentLegacyMarkerSettled && name != nativeParentLegacyMarkerNamingCache && !interrupted {
 					t.Fatal("legacy control never interrupted ownership preparation")
+				}
+			}
+
+			if name == nativeParentLegacyMarkerNamingCache {
+				owner, found, err := local.LoadRegistration(reg.ArchiveSessionID)
+				must(t, err)
+				if !found || !owner.NativeChild {
+					t.Fatal("naming-era cache skipped legacy child ownership migration")
 				}
 			}
 
@@ -228,7 +240,7 @@ func TestNativeLateParentPreservedReadback(t *testing.T) {
 					pending, found, err := local.LoadPending(reg.ArchiveSessionID)
 					must(t, err)
 					if found && pending.Bundle.ParentSessionID != "" && pending.History.Preparing && pending.History.PrivacyCursor > 0 {
-						if name == "stronger_policy_legacy_repair" {
+						if name == nativeParentStrongerPolicyLegacyRepair {
 							for i := range pending.History.Inputs {
 								pending.History.Inputs[i].ParentSessionID = nil
 							}
@@ -381,3 +393,16 @@ func (s *nativeRepairPutStore) Put(ctx context.Context, key string, data []byte)
 	s.puts = append(s.puts, key)
 	return s.MemoryStore.Put(ctx, key, data)
 }
+
+type nativeParentTiming string
+
+const (
+	nativeParentSettled                    nativeParentTiming = "settled"
+	nativeParentPreparing                  nativeParentTiming = "preparing"
+	nativeParentStrongerPolicyDuringRepair nativeParentTiming = "stronger_policy_during_repair"
+	nativeParentStrongerPolicyLegacyRepair nativeParentTiming = "stronger_policy_legacy_repair"
+	nativeParentLegacyMarkerSettled        nativeParentTiming = "legacy_marker_settled"
+	nativeParentLegacyMarkerMidcursor      nativeParentTiming = "legacy_marker_midcursor"
+	nativeParentLegacyMarkerStrongerPolicy nativeParentTiming = "legacy_marker_stronger_policy"
+	nativeParentLegacyMarkerNamingCache    nativeParentTiming = "legacy_marker_naming_cache"
+)

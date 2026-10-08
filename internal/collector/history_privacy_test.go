@@ -47,9 +47,10 @@ func TestRetainedSource3RefilterKeepsGraphOwnershipAndRawGaps(t *testing.T) {
 	message := func(text string) map[string]any {
 		return map[string]any{"type": "response_item", "payload": map[string]any{"type": "message", "role": "user", "content": []any{map[string]any{"type": "input_text", "text": text}}}}
 	}
+	quoted := " \n    <external_codex_apps_open_page>example</external_codex_apps_open_page>"
 	b.NativeRecords = []map[string]any{
 		{"type": "session_meta", "payload": map[string]any{"id": revisionB}}, message("inherited"),
-		{"type": "session_meta", "payload": map[string]any{"id": scan.reg.NativeSessionID}}, message("owned"),
+		{"type": "session_meta", "payload": map[string]any{"id": scan.reg.NativeSessionID}}, message("<system-reminder>Injected</system-reminder><external_codex_apps_open_page>Context</external_codex_apps_open_page>" + quoted),
 		{"type": "future_private_record", "secret": "synthetic-private-value"},
 	}
 	b.Ordinals = []uint64{0, 1, 2, 3, 4}
@@ -81,6 +82,19 @@ func TestRetainedSource3RefilterKeepsGraphOwnershipAndRawGaps(t *testing.T) {
 		if span.RolloutID != before.RolloutID || span.ThreadID != before.ThreadID || span.StartOrdinal != before.StartOrdinal || span.EndOrdinal != before.EndOrdinal {
 			t.Fatal("physical graph changed")
 		}
+	}
+	ownPayload := out.NativeRecords[3]["payload"].(map[string]any)
+	ownText := ownPayload["content"].([]any)[0].(map[string]any)["text"]
+	if ownText != quoted {
+		t.Fatalf("history refilter changed indented quote: %q want %q", ownText, quoted)
+	}
+	again, err := refilterBundle(t.Context(), scan.reg, codex.Filter{}, out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	same, err := bundleEvidenceEqual(out, again)
+	if err != nil || !same {
+		t.Fatal("history refilter not stable", err)
 	}
 	if out.OwnRecord(0) {
 		t.Fatal("inherited record became owned")

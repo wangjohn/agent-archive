@@ -6,6 +6,28 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Keep listing revision path components within 255 bytes so capture and index
+  rebuild work with filesystem-backed S3 stores such as MinIO. Existing v2/v3
+  hints remain readable and are retired by repair or rebuild.
+
+- Add explicit `codex_name_lookup: "native"` opt-in for bounded metadata-only
+  Codex naming requests, with guarded file fallback. Files remain the default.
+  Native startup can write Codex state; desktop coexistence is unverified.
+
+- Capture Claude Code native generated session names and prefer the latest
+  explicit rename. Validate title ownership, preserve partial preview coverage,
+  and keep naming bookkeeping out of activity and capture eligibility.
+- Remove injected Codex open-page context from prompt fallback while preserving
+  the human request outside it.
+- Refresh Codex names for already admitted ordinary sessions from verified
+  0.159.2 settled storage, including verified legacy database/index fallback. Changes publish filtered
+  source evidence without renewing activity or retention; unavailable live-WAL
+  storage preserves the last verified name. Deferred lookup targets rotate within
+  prioritized homes even after backoff expires. Names that cannot remain stable
+  through privacy filtering preserve the last verified name. The default files
+  mode starts no native process.
+
+
 ### Added
 
 - Capture native Codex children without a stop hook or archived parent. Children
@@ -15,6 +37,28 @@ follow [Semantic Versioning](https://semver.org/).
   previews remain read-only and report pending native evidence accurately. Earlier
   captures with a persisted native child binding upgrade their retained ownership
   headers before linking a parent, including preserved revisions.
+
+- Pairing, handoff, standalone history import and undo, uninstall and purge
+  use grouped questions and safe completion receipts. Secondary actions use
+  bracketed shortcuts. Destructive defaults, exact purge digest confirmation,
+  private pairing code display and structured output contracts are preserved.
+  Human machine listings align fields and switch to labeled rows at narrow
+  widths; recovery previews group their consequences.
+
+- Setup offers All found projects as the visible default in one shared selector,
+  including projects beyond the first page, with bounded discovery coverage,
+  observed session counts, Specific selection and preserved capture rules.
+  Storage prompts and diagnostics use grouped questions and receipts. A compact
+  review keeps essential changes visible with complete settings behind Details.
+  Setup completion, app next steps and optional history import are separate;
+  machine-transfer recipes are available on request.
+
+- Setup groups the storage provider question and R2 secret fields, replacing
+  answered prompts with short receipts when terminal rows can be safely owned.
+  `NO_COLOR` keeps live interaction; dumb and redirected terminals use static
+  prompts. Hidden fields share buffered input and restore terminal modes on
+  EOF, interrupts and suspend/resume. Answers entered while a prompt is being
+  written retain safe static history when their echoed rows cannot be proven.
 
 - Readers understand self-contained Codex fork, child and revised histories,
   preserve exact raw ordinal boundaries and count only the chat's own activity.
@@ -36,6 +80,29 @@ follow [Semantic Versioning](https://semver.org/).
   coverage remains tracked for release testing.
 
 ### Fixed
+
+- Codex current-history validation uses the remaining bounded pass allowance
+  for private SQLite queries, avoiding spurious retries after a scheduling delay
+  while retaining caller cancellation and native source identity checks.
+
+- First-time backfill can review live repository destinations and recover matching
+  deleted worktree sessions in the same import. Hidden clones and unknown or
+  excluded roots still prevent automatic attribution; proposed capture projects
+  are committed only after confirmation and current-evidence validation.
+  Destination witnesses must pass full native validation, including filtered or
+  already archived sources; unknown file ownership keeps recovery pending.
+  Collector waits retain their existing two-minute allowance before confirmation
+  validation starts.
+
+- Deleted-worktree project recovery supports Git installations without optional
+  configuration-path introspection, including Git 2.39.2. Bounded semantic
+  revalidation preserves clone ambiguity and exclusions, and larger Git config
+  inventories no longer consume the short remote-URL output limit.
+
+- Backfill explains deleted-worktree recovery failures with bounded diagnostic
+  counts and retry/review actions while preserving existing skip codes. Dry-run
+  JSON adds optional diagnostics and physical candidate inventory counts;
+  logical history accounting remains pending.
 
 - Pairing accepts relative filenames beginning with `aa-pair`, including existing
   files named `aa-pair1:backup.txt`, instead of mistaking them for pasted pairing text.

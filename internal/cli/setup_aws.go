@@ -232,14 +232,12 @@ func validRegion(region string) bool {
 // promptRegion asks for a bucket region until the answer is shaped like
 // one, so a path or a typo is never saved as the region.
 func promptRegion(p *prompter, label, def string) (string, error) {
-	for {
-		region, err := p.required(label, def)
-		if err != nil || validRegion(region) {
-			return region, err
+	return p.guidedText(promptModel{Question: label, Label: "Region", Default: def, Receipt: label, Validate: func(region string) error {
+		if !validRegion(region) {
+			return fmt.Errorf("%q isn't an AWS region. Enter one like us-east-1 or eu-west-2", region)
 		}
-		terminal.Printf(p.out, "%q isn't an AWS region. Enter one like us-east-1 or eu-west-2.\n", region)
-		def = ""
-	}
+		return nil
+	}})
 }
 
 // promptS3Location asks for the AWS profile, then the bucket, then settles
@@ -269,7 +267,7 @@ func chooseS3Profile(p *prompter, cfg *credentials.Config, env Env) (profileRegi
 	if len(profiles) > 0 {
 		profile, err = pickAWSProfile(p, profiles, def)
 	} else {
-		profile, err = p.required("AWS profile", def)
+		profile, err = p.setupStorageRequired("AWS profile", def)
 	}
 	if err != nil {
 		return "", false, err
@@ -304,7 +302,7 @@ func promptS3ExistingBucket(p *prompter, cfg *credentials.Config, env Env, faile
 	var finder BucketFinder
 	if noCredentials {
 		terminal.Printf(p.out, "Profile %s has no credentials configured, so type the bucket name.\n", profile)
-	} else if finder, err = env.awsBuckets(profile, firstNonEmpty(cfg.Region, profileRegion)); err != nil {
+	} else if finder, err = openSetupBuckets(p, env, profile, firstNonEmpty(cfg.Region, profileRegion)); err != nil {
 		finder = nil
 		noteListFailure(p, profile, err)
 	}
@@ -319,7 +317,9 @@ func promptS3ExistingBucket(p *prompter, cfg *credentials.Config, env Env, faile
 	}
 
 	if finder != nil {
+		release := p.suspendPrompts()
 		region, err := bucketRegion(finder, cfg.Bucket)
+		release()
 		if err == nil && region == failedRegion {
 			cfg.Region, err = askFailedRegion(p, region)
 			return err
@@ -352,20 +352,22 @@ func promptS3ExistingBucket(p *prompter, cfg *credentials.Config, env Env, faile
 // listErr is why the listing failed, if it did.
 func promptBucket(p *prompter, finder BucketFinder, profile, saved string) (bucket string, listErr, err error) {
 	if finder == nil {
-		bucket, err = p.required("Bucket name", saved)
+		bucket, err = p.setupStorageRequired("Bucket name", saved)
 		return bucket, nil, err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), bucketDiscoveryTimeout)
+	release := p.suspendPrompts()
 	names, listErr := finder.Buckets(ctx)
+	release()
 	cancel()
 	if listErr != nil {
 		noteListFailure(p, profile, listErr)
-		bucket, err = p.required("Bucket name", saved)
+		bucket, err = p.setupStorageRequired("Bucket name", saved)
 		return bucket, listErr, err
 	}
 	if len(names) == 0 {
 		terminal.Printf(p.out, "Profile %s can't see any buckets. Type the bucket name; to create one instead, choose Amazon S3 at the storage question and continue with creation.\n", profile)
-		bucket, err = p.required("Bucket name", saved)
+		bucket, err = p.setupStorageRequired("Bucket name", saved)
 		return bucket, nil, err
 	}
 	def := saved
@@ -457,37 +459,52 @@ const maxListedBuckets = 20
 // default is def's number when listed, else def itself. A positive limit
 // caps how many are listed; the rest can be typed.
 func pickByNumber(p *prompter, question string, names, notes []string, def, kind string, limit int) (string, error) {
-	p.heading(question)
 	listed := names
 	if limit > 0 && len(listed) > limit {
 		listed = listed[:limit]
 	}
-	defNum := def
+	helpers := []string{}
+	defaultAnswer := def
 	for i, name := range listed {
 		note := ""
 		if i < len(notes) && notes[i] != "" {
-			note = " " + notes[i]
+			note = " · " + notes[i]
 		}
-		terminal.Printf(p.out, "  %d) %s%s\n", i+1, name, note)
 		if name == def {
-			defNum = strconv.Itoa(i + 1)
+			note += " (default)"
+		}
+		helpers = append(helpers, fmt.Sprintf("%d) %s%s", i+1, name, note))
+		if name == def {
+			defaultAnswer = strconv.Itoa(i + 1)
 		}
 	}
 	if more := len(names) - len(listed); more > 0 {
-		terminal.Printf(p.out, "  (%d more not listed)\n", more)
+		helpers = append(helpers, fmt.Sprintf("%d more available by name", more))
 	}
-	label := fmt.Sprintf("Enter 1-%d, or another %s", len(listed), kind)
-	for {
-		answer, err := p.choose(label, defNum)
-		if err != nil {
-			return "", err
-		}
+	helpers = append(helpers, "Enter a number or "+kind+".", "[:back] Back to storage options")
+	resolve := func(answer string) string {
 		if n, e := strconv.Atoi(answer); e == nil && n >= 1 && n <= len(listed) {
-			return listed[n-1], nil
+			return listed[n-1]
 		}
-		if answer != "" {
-			return answer, nil
-		}
-		terminal.Println(p.out, "This value is required.")
+		return answer
 	}
+	answer, err := p.guidedText(promptModel{Question: question, Helpers: helpers, Default: defaultAnswer, Label: "Choose", ResolveReceipt: resolve, Validate: func(value string) error {
+		if value == "" {
+			return fmt.Errorf("this value is required")
+		}
+		return nil
+	}})
+	if err != nil {
+		return "", err
+	}
+	if answer == ":back" {
+		return "", errChooseStorageAgain
+	}
+	return resolve(answer), nil
+}
+
+func openSetupBuckets(p *prompter, env Env, profile, region string) (BucketFinder, error) {
+	release := p.suspendPrompts()
+	defer release()
+	return env.awsBuckets(profile, region)
 }

@@ -133,7 +133,7 @@ func runHandoffCommand(args []string, stdin io.Reader, stdout, stderr io.Writer,
 				return code
 			}
 		}
-		target, err = resolveHandoffTarget(opts, home, stderr, env, newRepoMatchGate(opts, interactive, answers, stderr))
+		target, err = resolveHandoffTarget(opts, home, stderr, env, newRepoMatchGate(opts, interactive, answers, stderr, stdin))
 		if err != nil {
 			if errors.Is(err, errRepoMatchNotUsed) {
 				// The gate said why, and how to use the session.
@@ -171,6 +171,8 @@ func runHandoffCommand(args []string, stdin io.Reader, stdout, stderr io.Writer,
 	dest := handoffDestination(opts.to)
 	if offersDestinations(opts, interactive) {
 		p := newPrompter(answers, stdout)
+		p.source = stdin
+		defer p.close()
 		var choice handoffChoice
 		var err error
 		if opts.config != nil {
@@ -192,6 +194,7 @@ func runHandoffCommand(args []string, stdin io.Reader, stdout, stderr io.Writer,
 			return 0
 		}
 		dest = choice.dest
+		p.close()
 	}
 	if dest != "" {
 		// Run from inside an agent (interaction is off there), without a

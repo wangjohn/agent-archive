@@ -251,7 +251,7 @@ const handoffPTYScript = ptyKeysHarness + `try:
     wait_for(b'to hand off')
     wait_until(keys_on, 'key mode not on at the picker')
     os.write(master, b'1\rc\r')
-    wait_for(b'Continue in:')
+    wait_for(b'? Continue in')
     wait_for(b'CLIPBOARD HAS ')
     finish(0)
     assert b'\x1b[?1049l' in output, 'alternate screen not left'

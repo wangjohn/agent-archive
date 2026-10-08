@@ -72,7 +72,7 @@ func TestSetupCarriesImportedHarnessesFromCommittedState(t *testing.T) {
 		t.Fatal(err)
 	}
 	next = old
-	if err := applySetup(home, userHome, exe, old, &next, nil, env); err == nil || !strings.Contains(err.Error(), "settings changed while setup was open") {
+	if err := applySetup(home, userHome, exe, old, &next, nil, env); err == nil || !setupContainsText(err.Error(), "settings changed while setup was open") {
 		t.Fatalf("err=%v", err)
 	}
 }
@@ -96,9 +96,9 @@ func TestSetupShowsImportedOnlyAppsAndCanStopPublishingThem(t *testing.T) {
 	// Keep the retention, then edit apps: leave Codex as the only app, stop
 	// publishing the Claude Code imports, keep the Cursor ones, and save.
 	out := setupRun(t, env, "retention\n\nedit\napps\nn\nn\ny\ny\n", 0)
-	first := strings.Index(out, "Imported   Claude Code, Cursor")
+	first := strings.Index(out, "Claude Code, Cursor (sessions imported")
 	stop := strings.Index(out, "Keep publishing Claude Code sessions imported by backfill?")
-	after := strings.LastIndex(out, "Imported   Cursor (")
+	after := strings.LastIndex(out, "Cursor (sessions imported")
 	if first < 0 || stop < first || after < stop {
 		t.Fatalf("review and prompts out of order:\n%s", out)
 	}
@@ -123,7 +123,7 @@ func TestSetupShowsImportedOnlyAppsAndCanStopPublishingThem(t *testing.T) {
 	if err := config.Save(home, saved); err != nil {
 		t.Fatal(err)
 	}
-	if out := setupRun(t, env, "retention\n\ny\n", 0); strings.Contains(out, "Imported   ") {
+	if out := setupRun(t, env, "retention\n\ny\n", 0); strings.Contains(out, "\n  Imported ") || strings.Contains(out, "\n* Imported ") {
 		t.Fatalf("empty imported list shown:\n%s", out)
 	}
 }
@@ -189,7 +189,7 @@ func TestSetupAfterImportWithMissingFolders(t *testing.T) {
 			next.Archive.Projects = append([]archive.ProjectActivation(nil), old.Archive.Projects...)
 			tc.edit(&next)
 			err := applySetup(f.data, f.userHome, executable, old, &next, nil, env)
-			if err == nil || !strings.Contains(err.Error(), "no longer a directory") {
+			if err == nil || !setupContainsText(err.Error(), "no longer a directory") {
 				t.Fatalf("got %v", err)
 			}
 		})
@@ -202,35 +202,33 @@ func TestSetupAfterImportWithMissingFolders(t *testing.T) {
 // Regression: backfill B3 review, 2026-09 (e589f65).
 func TestSetupGroupsBackfilledProjects(t *testing.T) {
 	t.Parallel()
-	existing := []archive.ProjectActivation{
-		{ProjectID: "p-mine", Root: "/work/mine", Included: true},
-		{ProjectID: "p-1", Root: "/work/imported-1", Included: true},
-		{ProjectID: "p-2", Root: "/work/imported-2", Included: true},
-		{ProjectID: "p-3", Root: "/work/imported-3", Included: true},
+	roots := selectorRoots(t, 4)
+	var existing []archive.ProjectActivation
+	backfilled := map[string]bool{}
+	for i, root := range roots {
+		rule := archive.ProjectActivation{ProjectID: archive.ProjectID(root.Root), Root: root.Root, Included: true}
+		existing = append(existing, rule)
+		if i > 0 {
+			backfilled[rule.ProjectID] = true
+		}
 	}
-	backfilled := map[string]bool{"p-1": true, "p-2": true, "p-3": true}
 	for _, tc := range []struct {
 		input string
 		want  int
-	}{{"y\ny\n\n", 4}, {"n\ny\n\n", 1}} {
+	}{{"all\n", 4}, {"specific\n2-4\n\n", 1}} {
 		var out bytes.Buffer
 		projects, err := promptProjects(newPrompter(strings.NewReader(tc.input), &out), existing, backfilled, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		// Declined imported projects stay, excluded, so the decision holds.
+		must(t, err)
 		if len(projects) != 4 || includedProjects(projects) != tc.want {
-			t.Fatalf("%q: %+v, want %d included", tc.input, projects, tc.want)
+			t.Fatalf("%q %+v", tc.input, projects)
 		}
 		for _, p := range projects {
 			if backfilled[p.ProjectID] && p.Included != (tc.want == 4) {
-				t.Errorf("%q: %+v", tc.input, p)
+				t.Fatalf("import consent lost %+v", p)
 			}
 		}
-		text := out.String()
-		if strings.Count(text, "Keep the 3 projects added by backfill? If not, their imported sessions stop uploading and later backfills skip them. [Y/n]") != 1 ||
-			strings.Count(text, "Keep project") != 1 || !strings.Contains(text, "Keep project /work/mine?") {
-			t.Fatalf("prompts:\n%s", text)
+		if !setupContainsText(out.String(), "Which projects?") {
+			t.Fatal(out.String())
 		}
 	}
 }
@@ -241,29 +239,21 @@ func TestSetupGroupsBackfilledProjects(t *testing.T) {
 // Regression: backfill B3 review, 2026-09 (e589f65).
 func TestSetupKeepsExclusions(t *testing.T) {
 	t.Parallel()
-	root, err := filepath.EvalSymlinks(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	existing := []archive.ProjectActivation{
-		{ProjectID: "p-kept", Root: "/work/kept", Included: true},
-		{ProjectID: "p-gone", Root: "/work/excluded", Included: false},
-		{ProjectID: archive.ProjectID(root), Root: root, Included: false},
+	roots := selectorRoots(t, 3)
+	var existing []archive.ProjectActivation
+	for i, root := range roots {
+		existing = append(existing, archive.ProjectActivation{ProjectID: archive.ProjectID(root.Root), Root: root.Root, Included: i == 0})
 	}
 	var out bytes.Buffer
-	projects, err := promptProjects(newPrompter(strings.NewReader("y\n\n"), &out), existing, nil, nil)
-	if err != nil {
-		t.Fatal(err)
+	projects, err := promptProjects(newPrompter(strings.NewReader("specific\n\n"), &out), existing, nil, nil)
+	must(t, err)
+	if len(projects) != 3 || includedProjects(projects) != 1 {
+		t.Fatalf("rules %+v", projects)
 	}
-	if len(projects) != 3 || includedProjects(projects) != 1 || strings.Contains(out.String(), "/work/excluded") {
-		t.Fatalf("%+v\n%s", projects, out.String())
-	}
-	projects, err = promptProjects(newPrompter(strings.NewReader("y\n"+root+"\n\n"), &out), existing, nil, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(projects) != 3 || includedProjects(projects) != 2 {
-		t.Fatalf("re-including: %+v", projects)
+	projects, err = promptProjects(newPrompter(strings.NewReader("specific\np\n"+roots[2].Root+"\n\n"), &out), existing, nil, nil)
+	must(t, err)
+	if len(projects) != 3 || includedProjects(projects) != 2 || projects[1].Included {
+		t.Fatalf("rules %+v", projects)
 	}
 }
 

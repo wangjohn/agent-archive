@@ -1,7 +1,11 @@
 package cli
 
 import (
+	"bufio"
 	"bytes"
+	"errors"
+	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,6 +13,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/credentials"
+	"github.com/wangjohn/agent-archive/internal/issuance"
 	"github.com/wangjohn/agent-archive/internal/pairing"
 )
 
@@ -253,5 +260,104 @@ func TestPairingFileCollisionCanRecoverToAnotherPath(t *testing.T) {
 	must(t, err)
 	if !strings.Contains(out.String(), "Saved to: "+replacement) || !strings.Contains(out.String(), "Downloads/replacement.txt") {
 		t.Fatal("receiver command did not follow the replacement path")
+	}
+}
+
+// Pairing text consumes exactly one bounded answer from the foundation buffer;
+// the later hidden prompt must still receive typed-ahead code and consent.
+func TestPairingTransferKeepsSharedPromptInput(t *testing.T) {
+	t.Parallel()
+	var out bytes.Buffer
+	bundle := pairing.Prefix + "SYNTHETIC"
+	p := newPrompter(strings.NewReader(bundle+"\nsynthetic-code\nno\n"), &out)
+	defer p.close()
+	got, err := readPairingBundle(p, setupOptions{}, p.in, Env{})
+	must(t, err)
+	code, err := p.guidedText(promptModel{Question: "Pairing code (hidden)", Secret: true, ReadAnswer: func(in *bufio.Reader) (string, error) { return boundedPairingAnswer(in, 512) }})
+	must(t, err)
+	consent, err := p.guidedYesNo("Replace destination?")
+	must(t, err)
+	if got != bundle || code != "synthetic-code" || consent || strings.Contains(out.String(), code) {
+		t.Fatal("pairing buffer lost input or exposed the private code")
+	}
+	if !strings.Contains(out.String(), "Credential received") {
+		t.Fatal("pairing code did not use a fixed secret receipt")
+	}
+}
+
+func TestPairingTransferConsentDefaultsToNoAndKeepsBufferedAnswer(t *testing.T) {
+	t.Parallel()
+	var out bytes.Buffer
+	bundle := pairing.Prefix + "SYNTHETIC"
+	p := newPrompter(strings.NewReader(bundle+"\nsynthetic-code\n\nnext-answer\n"), &out)
+	defer p.close()
+	got, err := readPairingBundle(p, setupOptions{}, p.in, Env{})
+	must(t, err)
+	code, err := p.guidedText(promptModel{Question: "Pairing code (hidden)", Secret: true, ReadAnswer: func(in *bufio.Reader) (string, error) { return boundedPairingAnswer(in, 512) }})
+	must(t, err)
+	consent, err := p.guidedYesNo("Replace destination?")
+	must(t, err)
+	next, err := p.in.ReadString('\n')
+	must(t, err)
+	if got != bundle || code != "synthetic-code" || consent || next != "next-answer\n" {
+		t.Fatal("pairing consent changed its default or consumed the following answer")
+	}
+	if strings.Contains(out.String(), code) || !strings.Contains(out.String(), "Credential received") || !strings.Contains(out.String(), "? Replace destination?") || !strings.Contains(out.String(), "No (default)") {
+		t.Fatal("pairing consent or private-code receipt changed")
+	}
+}
+
+func TestPairingCodeDisplayRelinquishesPromptRegion(t *testing.T) {
+	t.Parallel()
+	var out bytes.Buffer
+	p := newPrompter(strings.NewReader("\n"), &out)
+	defer p.close()
+	r := p.renderer()
+	region := r.begin(promptModel{Question: "Transfer"})
+	env := Env{IsTerminal: func(any) bool { return true }, Interrupts: noInterrupts}
+	must(t, showPairingCode(p, "aardvark-abandoned-abbreviate-abdomen-abhorrence-abiding", env))
+	if r.suspended != 0 || r.epoch.Load() == region.epoch {
+		t.Fatal("pairing screen retained the preceding prompt region or suspension")
+	}
+}
+
+func TestPairingStatusGlyphsRespectTerminalCapabilities(t *testing.T) {
+	t.Parallel()
+	for _, ascii := range []bool{false, true} {
+		out := &guidedCommandOutput{caps: promptCapabilities{ASCII: ascii, Width: 80}}
+		printPairingAccessReady(out, config.Config{}, issuance.Slot{})
+		printPairingAccessReady(out, config.Config{Storage: credentials.Config{Provider: credentials.ProviderR2}}, issuance.Slot{})
+		printPairingAccessReady(out, config.Config{}, issuance.Slot{SlotID: "synthetic"})
+		printPairingConnected(out, "laptop", pairing.Payload{IssuerName: "studio"}, false)
+		mark := "✓ "
+		if ascii {
+			mark = "OK "
+		}
+		for _, fact := range []string{"Archive settings ready.", "Shared access ready. Revoking it affects every machine using this key.", "Separate access ready. You can revoke this machine independently.", "laptop is connected. Paired with studio."} {
+			if !strings.Contains(out.String(), mark+fact) {
+				t.Fatalf("missing resolved status in ASCII=%t: %q", ascii, out.String())
+			}
+		}
+		if ascii && strings.Contains(out.String(), "✓") {
+			t.Fatalf("dumb status emitted Unicode: %q", out.String())
+		}
+	}
+}
+
+// The bounded guided adapter must retain EOF and raw line boundaries until
+// guidedRead distinguishes a submitted blank from exhausted private input.
+func TestPairingBundleWhitespaceEOFDoesNotCompleteSecretPrompt(t *testing.T) {
+	t.Parallel()
+	for _, input := range []string{"", " ", " \t"} {
+		t.Run(fmt.Sprintf("input-%q", input), func(t *testing.T) {
+			t.Parallel()
+			var out bytes.Buffer
+			p := newPrompter(strings.NewReader(input), &out)
+			defer p.close()
+			_, err := readPairingBundle(p, setupOptions{}, p.source, Env{})
+			if !errors.Is(err, io.EOF) || strings.Contains(out.String(), "Credential skipped") || strings.Contains(out.String(), "Credential received") {
+				t.Fatalf("exhausted private input completed a prompt: %v\n%s", err, &out)
+			}
+		})
 	}
 }

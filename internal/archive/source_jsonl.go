@@ -494,6 +494,9 @@ func ReadSourceBundle(compressed io.Reader, options DecodeOptions) (SourceBundle
 	if err != nil {
 		return SourceBundle{}, err
 	}
+	if err := ValidateSessionLabels(bundle); err != nil {
+		return SourceBundle{}, err
+	}
 	return bundle, nil
 }
 

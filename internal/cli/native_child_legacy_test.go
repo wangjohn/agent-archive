@@ -12,7 +12,7 @@ import (
 // This shape was verified against the main writer before native_child existed:
 // positive private Child binding, absent public markers and Codex parser0.22.
 // One preserved ordinary source also pins supported mixed source2/source3 sets.
-func legacyNativeChildEnvelope(t *testing.T, local *state.Store, cloud *storagetest.MemoryStore, reg archive.SessionRegistration, metadata archive.Metadata, sources map[string]archive.SourceBundle) archive.Metadata {
+func legacyNativeChildEnvelope(t *testing.T, local *state.Store, cloud *storagetest.MemoryStore, reg archive.SessionRegistration, metadata archive.Metadata, sources map[string]archive.SourceBundle, parser string) archive.Metadata {
 	t.Helper()
 	// The caller's first registration predates the provider's binding persistence.
 	admitted, found, err := local.LoadRegistration(reg.ArchiveSessionID)
@@ -57,7 +57,7 @@ func legacyNativeChildEnvelope(t *testing.T, local *state.Store, cloud *storaget
 			}
 		}
 	}
-	metadata.NativeChild, metadata.Parser.Version = false, "0.22.0"
+	metadata.NativeChild, metadata.Parser.Version = false, parser
 	metadata.CaptureGaps = withoutPending(metadata.CaptureGaps)
 	raw, err := json.Marshal(metadata)
 	must(t, err)
@@ -77,7 +77,7 @@ func legacyNativeChildEnvelope(t *testing.T, local *state.Store, cloud *storaget
 	if !found {
 		t.Fatal("legacy settled signature missing")
 	}
-	signature.SourceSetVersion, signature.ParserVersion = 2, "0.22.0"
+	signature.SourceSetVersion, signature.ParserVersion = 2, parser
 	must(t, local.SaveScanSignature(reg.ArchiveSessionID, signature))
 	return metadata
 }

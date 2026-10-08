@@ -35,8 +35,8 @@ const Timeout = 500 * time.Millisecond
 // far shorter.
 const maxOutput = 4096
 
-// ErrOutputLimit is ExecRunner's error when git printed more than maxOutput
-// bytes. The output it returns with it is the first maxOutput bytes.
+// ErrOutputLimit reports Git output beyond the executor's bounded allowance.
+// The returned output contains only the retained prefix.
 var ErrOutputLimit = errors.New("git printed more than expected")
 
 // Runner runs git with args in dir and returns its standard output. It must
@@ -179,7 +179,16 @@ func (r *Resolver) Key(root string) string {
 // would answer for another repository), git never prompts, and output past a
 // few kilobytes is ErrOutputLimit, returned with what was kept, not a
 // truncated URL.
-func ExecRunner(ctx context.Context, _ string, args ...string) ([]byte, error) {
+func ExecRunner(ctx context.Context, dir string, args ...string) ([]byte, error) {
+	return execOutput(ctx, dir, maxOutput, args...)
+}
+
+// ConfigRunner allows bounded origin/name inventories without enlarging URL limits.
+func ConfigRunner(ctx context.Context, dir string, args ...string) ([]byte, error) {
+	return execOutput(ctx, dir, 256*1024, args...)
+}
+
+func execOutput(ctx context.Context, _ string, limit int, args ...string) ([]byte, error) {
 	git, err := realLocator.find()
 	if err != nil {
 		return nil, err
@@ -189,7 +198,7 @@ func ExecRunner(ctx context.Context, _ string, args ...string) ([]byte, error) {
 	cmd.Stdin = nil
 	cmd.Stderr = io.Discard
 	cmd.WaitDelay = 100 * time.Millisecond
-	var out limitedBuffer
+	out := limitedBuffer{limit: limit}
 	cmd.Stdout = &out
 	if err := cmd.Run(); err != nil {
 		return nil, err
@@ -296,12 +305,17 @@ func environment(env []string) []string {
 // would promote bytes.Buffer's ReadFrom, which io.Copy prefers, and skip this
 // Write's cap.
 type limitedBuffer struct {
-	buf  bytes.Buffer
-	over bool
+	buf   bytes.Buffer
+	over  bool
+	limit int
 }
 
 func (b *limitedBuffer) Write(p []byte) (int, error) {
-	room := maxOutput - b.buf.Len()
+	limit := b.limit
+	if limit == 0 {
+		limit = maxOutput
+	}
+	room := limit - b.buf.Len()
 	if len(p) > room {
 		b.over = true
 	}

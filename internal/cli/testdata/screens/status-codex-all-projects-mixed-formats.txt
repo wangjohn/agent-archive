@@ -2,17 +2,23 @@ $ agent-archive status
 Agent Archive  ● Waiting for capture
 
   ! Waiting for the first Codex task
-    Start a supported new Codex task in any non-excluded project, then run agent-archive sync. Hook approval is optional for discovery.
+    Start a supported new Codex task in any non-excluded project, then run
+    agent-archive sync. Hook approval is optional for discovery.
 
 Capture
-  ! Codex 0.121.0   capture check pending; all current and future Codex projects   no sessions yet
-    ! Last scan skipped 2 observations; run agent-archive status --verbose for details.
-  ! Identity recovery: unknown; run agent-archive sync for current bounded local evidence.
+  ! Codex 0.121.0   capture check pending; all current and future Codex projects
+    no sessions yet
+    ! Last scan skipped 2 observations; run agent-archive status --verbose for
+      details.
+  ! Identity recovery: unknown; run agent-archive sync for current bounded local
+    evidence.
 
 Storage
   ✓ s3://team-archive/agent-archive/   reachable, checked by setup just now
   ✓ Background collector on            no scan yet
-  ! Bucket privacy not verified        this storage can't be inspected; see https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
+  ! Bucket privacy not verified
+    this storage can't be inspected; see
+    https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
 
 More: agent-archive status --verbose · agent-archive status codex
 [exit 0]

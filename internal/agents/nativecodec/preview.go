@@ -29,8 +29,10 @@ func Preview(ctx context.Context, adapter interface {
 		if isSidechainRecord(safe) {
 			continue
 		}
-		if firstString(safe, "type") == "custom-title" {
-			out.Name = archive.CollapseSessionTitle(firstString(safe, "customTitle"))
+		if isClaudeTitleRecord(safe) {
+			facts := claudeTitlePreview(safe)
+			out.Name, out.NameNativeID, out.NameSource = facts.Name, facts.NameNativeID, facts.NameSource
+			continue
 		}
 		if branch := archive.ValidBranch(firstStringDeep(safe, "gitBranch")); branch != "HEAD" {
 			out.Branch = branch
@@ -48,4 +50,14 @@ func Preview(ctx context.Context, adapter interface {
 		}
 	}
 	return out, nil
+}
+
+// Missing IDs on legacy title records are accepted only from the same source
+// bundle or verified preview handle. A present ID must match its owner.
+func claudeTitlePreview(record map[string]any) archive.RecordPreview {
+	key, source := "customTitle", archive.SessionNameCustom
+	if firstString(record, "type") == "ai-title" {
+		key, source = "aiTitle", archive.SessionNameGenerated
+	}
+	return archive.RecordPreview{Name: archive.CollapseSessionTitle(firstString(record, key)), NameNativeID: firstString(record, "sessionId"), NameSource: source}
 }

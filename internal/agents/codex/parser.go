@@ -10,9 +10,13 @@ import (
 type Parser struct{}
 
 // Version identifies the native derivation policy.
-func (Parser) Version() string { return "0.23.0" }
+func (Parser) Version() string { return "0.26.0" }
 
 // Parse derives facts once from retained safe evidence.
 func (Parser) Parse(ctx context.Context, bundle archive.SourceBundle) (archive.Analysis, error) {
-	return nativecodec.ParseCodex(ctx, bundle)
+	analysis, err := nativecodec.ParseCodex(ctx, bundle)
+	if label, _, ok := archive.CurrentSessionLabel(bundle); ok && supportedSessionLabel(label) {
+		analysis.Facts.Name = label.Name
+	}
+	return analysis, err
 }

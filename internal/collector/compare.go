@@ -188,3 +188,9 @@ func withoutNativeParentPendingGap(gaps []archive.CaptureGap) []archive.CaptureG
 	}
 	return out
 }
+
+// bundleChangeIsNamingOnly delegates native title semantics to the owning agent.
+func bundleChangeIsNamingOnly(comparator agentapi.RetainedComparator, a, b archive.SourceBundle) bool {
+	naming, ok := comparator.(agentapi.NamingChangeComparator)
+	return ok && naming.NamingOnlyChange(a, b)
+}

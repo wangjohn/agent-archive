@@ -2,54 +2,52 @@ $ agent-archive setup
 Checking installed applications...
   ✓ Codex hooks: ~/.codex/hooks.json
   ✓ Background job: launchctl responds
-Agent Archive is already set up. What would you like to change?
-  1) Apps and projects
+
+? Agent Archive is already set up. What would you like to change?
+
+  1) Apps and projects (default)
   2) Storage (bucket and credentials)
   3) How long sessions are kept
   4) All settings
   5) Nothing, exit
-Enter 1-5 [1]: 3
 
-Keep sessions for how many days? [90]: 30
+› Choose [1]: 3
+✓ How long sessions are kept
+
+? Keep sessions for how many days?
+
+› Days [90]: 30
+✓ Retention 30
 
 
 Checking your storage connection…
 ✓ Connected to your storage.
 
 Review your changes
+  Apps      Codex
+  Projects  ~/src/web-app
+  Codex     Included projects only
+  Skills    Metadata, including user folders
+  Storage   s3://team-archive/agent-archive/
+* Keep for  30 days
+    was 90 days
+  ✓ Storage connected
+  ! Bucket privacy unknown · public-access settings could not be read
+    Make sure public access is off:
+    https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
+  ! History import is separate.
+  ! Sensitive text may remain after filtering.
 
-  Apps       Codex (version not detected)
-  Projects   ~/src/web-app
-  Codex capture Automatic discovery plus hooks when approved
-  Codex scope Included projects only
-  Exceptions None configured  Nearest explicit project rule wins
-  Codex sources /Users/alex/.codex
-  Destination s3://team-archive/agent-archive/
-  Starts     After local consent, outside pause or exclusion
-  History    Old sessions require deliberate backfill
-  Copies     Qualifying recent native copies may be captured
-  Hooks      Optional for discovery; approval and observation are separate
-  Skills     metadata  User skill roots outside selected projects may be scanned; change with Edit a setting
-  Storage    s3://team-archive/agent-archive/  us-east-1 · profile work
-* Keep for   30 days
-             was 90 days
+? Save these changes?
 
-  * changed from your current settings
-
-  ✓ Storage connected       write, read, list, delete
-  ! Bucket privacy unknown  public-access settings could not be read
-    Make sure public access is off: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
-  ✓ Hook file is valid      ~/.codex/hooks.json
-  ✓ Codex discovery         supported new tasks do not require hook approval
-
-  Filtering is best effort; sensitive text may remain in archived sessions.
-  What leaves your machine: https://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md
-
-Save these changes?
-  1) Yes, save
+  1) Save changes (default)
   2) Edit a setting
-  3) Cancel (your setup draft is kept)
-Enter 1-3 [1]: 3
+
+  [d] Full settings and privacy
+  [q] Cancel; keep draft
+
+› Choose [1]: q
+✓ Cancel; keep draft
 
 Cancelled. Active settings are unchanged; your setup draft is saved.
 [exit 0]

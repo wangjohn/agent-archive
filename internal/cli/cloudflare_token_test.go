@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -112,5 +113,27 @@ func TestSetupReviewPreservesCommittedTokenSourceOverStaleDraft(t *testing.T) {
 	got := reviewedSetupConfig(existing, draft)
 	if !reflect.DeepEqual(got.CloudflareTokenCommand, existing.CloudflareTokenCommand) {
 		t.Fatal("stale draft replaced current token source")
+	}
+}
+
+func TestManagementTokenGuidedInputPreservesBufferedAnswers(t *testing.T) {
+	t.Parallel()
+	env := testEnv(t, t.TempDir(), time.Now())
+	env.LookupEnv = func(string) (string, bool) { return "", false }
+	var out bytes.Buffer
+	p := newPrompter(strings.NewReader("malformed token\nsynthetic-token\nnext-answer\n"), &out)
+	defer p.close()
+	token, fromEnv, _, err := readManagementToken(t.Context(), p, env, nil, true)
+	if err != nil || token != "synthetic-token" || fromEnv {
+		t.Fatalf("token source/error: %t %v", fromEnv, err)
+	}
+	next, err := p.in.ReadString('\n')
+	if err != nil || next != "next-answer\n" || strings.Contains(out.String(), "synthetic-token") || strings.Contains(out.String(), "malformed token") || !strings.Contains(out.String(), "Credential received") {
+		t.Fatalf("secret receipt/buffer contract: next=%q err=%v\n%s", next, err, &out)
+	}
+	question := strings.Index(out.String(), "? Cloudflare API token")
+	instructions := strings.Index(out.String(), "Create an account-owned")
+	if question < 0 || instructions < question {
+		t.Fatalf("instructions preceded question\n%s", &out)
 	}
 }

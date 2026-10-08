@@ -711,7 +711,11 @@ func openPrivateCurrent(path string) (*sql.DB, error) {
 }
 
 func currentLocator(ctx context.Context, db *sql.DB, id string) (string, bool, error) {
-	ctx, cancel := context.WithTimeout(ctx, indexHintTimeout)
+	// This query validates the selected locator in a private immutable view,
+	// rather than collecting optional native scheduling hints. Allow the pass's
+	// operation budget; its remaining allowance and caller cancellation still
+	// cap this timeout through the inherited context.
+	ctx, cancel := context.WithTimeout(ctx, Budget)
 	defer cancel()
 	conn, err := db.Conn(ctx)
 	if err != nil {
@@ -751,7 +755,7 @@ func currentLocator(ctx context.Context, db *sql.DB, id string) (string, bool, e
 	err = plan.Err()
 	_ = plan.Close()
 	if err != nil || !valid {
-		return "", false, errors.New("current primary key unavailable")
+		return "", false, errors.Join(errors.New("current primary key unavailable"), err)
 	}
 	rows, err := conn.QueryContext(ctx, query, id)
 	if err != nil {

@@ -78,12 +78,19 @@ func runPairingAdd(args []string, stdin io.Reader, out, errOut io.Writer, env En
 		return 1
 	}
 	p := newPrompter(stdin, out)
+	defer p.close()
+	out = p.out
 	if !*yes {
 		terminal.Println(out, "Add another machine")
 		terminal.Println(out)
 	}
 	if *name == "" {
-		value, err := p.ask("Name for the new machine", false, nil, -1, ": ")
+		value, err := p.guidedText(promptModel{Question: "Name for the new machine", Helpers: []string{"Use 1 to 40 lowercase letters, digits, or hyphens."}, Validate: func(value string) error {
+			if !pairing.ValidName(value) {
+				return errors.New("machine names use 1 to 40 lowercase letters, digits, or hyphens")
+			}
+			return nil
+		}})
 		if err != nil {
 			terminal.Println(errOut, "no name supplied")
 			return 1
@@ -136,11 +143,11 @@ func (o *pairingAddOptions) chooseDelivery(p *prompter) error {
 
 func printPairingAccessReady(out io.Writer, cfg config.Config, slot issuance.Slot) {
 	if slot.SlotID != "" {
-		terminal.Println(out, "✓ Separate access ready. You can revoke this machine independently.")
+		terminal.Println(out, guidedOK(out)+" Separate access ready. You can revoke this machine independently.")
 	} else if cfg.Storage.Provider == credentials.ProviderR2 {
-		terminal.Println(out, "✓ Shared access ready. Revoking it affects every machine using this key.")
+		terminal.Println(out, guidedOK(out)+" Shared access ready. Revoking it affects every machine using this key.")
 	} else {
-		terminal.Println(out, "✓ Archive settings ready.")
+		terminal.Println(out, guidedOK(out)+" Archive settings ready.")
 	}
 }
 
@@ -250,7 +257,7 @@ func pairingFilePath(path, userHome string) (string, error) {
 }
 
 func choosePairingDelivery(p *prompter, opts *pairingAddOptions) error {
-	choice, err := p.menu("How would you like to transfer the pairing file?", "file",
+	choice, err := p.guidedMenu("How would you like to transfer the pairing file?", "file",
 		option{"file", "Save a file (recommended)"}, option{"clipboard", "Copy to clipboard"}, option{"cancel", "Cancel"})
 	if err != nil {
 		return errors.New("no transfer method selected; rerun machines add")
@@ -265,7 +272,7 @@ func choosePairingDelivery(p *prompter, opts *pairingAddOptions) error {
 	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
 		dir = opts.userHome
 	}
-	path, err := p.withDefault("Save pairing file", filepath.Join(dir, "agent-archive-pairing-"+opts.name+".txt"))
+	path, err := p.guidedDefault("Save pairing file", filepath.Join(dir, "agent-archive-pairing-"+opts.name+".txt"))
 	if err != nil {
 		return errors.New("no pairing file selected; rerun machines add")
 	}
@@ -303,7 +310,8 @@ func finishPairingDelivery(p *prompter, code string, ledger pairingLedger, home 
 		prepareFuturePairingAccess(issuer, out, errOut)
 		return 0
 	}
-	if _, err := p.ask("Press Enter when the pairing file or text has arrived on the other machine", false, nil, -1, ": "); err != nil {
+	out = p.out
+	if _, err := p.guidedText(promptModel{Question: "Press Enter when the pairing file or text has arrived on the other machine"}); err != nil {
 		terminal.Println(errOut, "Transfer unfinished. The pairing remains valid until expiry; the code is discarded on exit.")
 		return 1
 	}
@@ -313,7 +321,7 @@ func finishPairingDelivery(p *prompter, code string, ledger pairingLedger, home 
 	}
 	terminal.Printf(out, "Finish setup on %s before closing this pairing.\n", ledger.Name)
 	for {
-		choice, err := p.menu("Pairing", "done", option{"show", "Show code again"}, option{"done", "I'm finished"}, option{"cancel", "Cancel pairing"})
+		choice, err := p.guidedMenu("Pairing", "done", option{"show", "Show code again"}, option{"done", "I'm finished"}, option{"cancel", "Cancel pairing"})
 		if err != nil {
 			terminal.Println(errOut, "pairing remains delivered; code discarded on exit")
 			return 1
@@ -429,9 +437,11 @@ func showPairingCode(p *prompter, code string, env Env) error {
 	if err != nil {
 		return err
 	}
-	if !env.interactive(p.out) {
+	if !env.interactive(underlyingWriter(p.out)) {
 		return errors.New("pairing code display needs terminal output")
 	}
+	release := p.suspendPrompts()
+	defer release()
 	// Use checked writes for secret-bearing output. Always restore the screen.
 	if _, err := io.WriteString(p.out, "\x1b[?1049h\x1b[2J\x1b[H"); err != nil {
 		return err
@@ -449,17 +459,50 @@ func showPairingCode(p *prompter, code string, env Env) error {
 		case <-screen.done:
 		}
 	}()
+	display := "2. Enter the pairing code on the other machine\n\n" + strings.Join(words, " ") + "\n\nKeep this screen open while entering the code there.\nThe first three characters of each word work (yo- for yo-yo).\nDeliver the code separately from the pairing file. Avoid recording or screen sharing.\nPress Enter to hide.\n"
+	resumeErrors := make(chan error, 1)
+	if p.lineGuard != nil {
+		restoreLifecycle := p.lineGuard.screenLifecycle(screen.hide, func() {
+			screen.mu.Lock()
+			defer screen.mu.Unlock()
+			if !screen.active {
+				return
+			}
+			// Never repaint a secret if returning to the alternate screen failed.
+			control := "\x1b[?1049h\x1b[2J\x1b[H"
+			n, err := io.WriteString(p.out, control)
+			if err == nil && n != len(control) {
+				err = io.ErrShortWrite
+			}
+			if err == nil {
+				_, err = io.WriteString(p.out, display)
+			}
+			if err != nil {
+				select {
+				case resumeErrors <- err:
+				default:
+				}
+			}
+		})
+		defer restoreLifecycle()
+	}
 	screen.mu.Lock()
 	if !screen.active {
 		screen.mu.Unlock()
 		return errors.New("pairing code display interrupted")
 	}
-	_, err = fmt.Fprintln(p.out, "2. Enter the pairing code on the other machine\n\n"+strings.Join(words, " ")+"\n\nKeep this screen open while entering the code there.\nThe first three characters of each word work (yo- for yo-yo).\nDeliver the code separately from the pairing file. Avoid recording or screen sharing.\nPress Enter to hide.")
+	_, err = io.WriteString(p.out, display)
 	screen.mu.Unlock()
 	if err != nil {
 		return err
 	}
 	_, err = boundedPairingLine(p.in, 512)
+	if err == nil {
+		select {
+		case err = <-resumeErrors:
+		default:
+		}
+	}
 	return err
 }
 
@@ -640,7 +683,7 @@ func deliverPairingBundle(home, bundle string, ledger *pairingLedger, slot *issu
 		err = writePairingFile(opts.file, bundle)
 		for err != nil && !opts.yes && opts.prompt != nil {
 			terminal.Printf(errOut, "Cannot save pairing file: %v. Choose a new path; existing files are never overwritten.\n", err)
-			path, e := opts.prompt.ask("New pairing file path (Enter to stop)", false, nil, -1, ": ")
+			path, e := opts.prompt.guidedText(promptModel{Question: "New pairing file path (Enter to stop)"})
 			if e != nil || path == "" {
 				break
 			}
@@ -663,7 +706,7 @@ func deliverPairingBundle(home, bundle string, ledger *pairingLedger, slot *issu
 				break
 			}
 			terminal.Println(errOut, "Clipboard unavailable. The key remains tracked; choose deliberate delivery or retry.")
-			choice, e := opts.prompt.menu("Bundle delivery", "cancel", option{"retry", "Retry clipboard"}, option{"file", "Write a new private file"}, option{"print", "Print encrypted bundle in this terminal"}, option{"cancel", "Stop; retain tracked key"})
+			choice, e := opts.prompt.guidedMenu("Bundle delivery", "cancel", option{"retry", "Retry clipboard"}, option{"file", "Write a new private file"}, option{"print", "Print encrypted bundle in this terminal"}, option{"cancel", "Stop; retain tracked key"})
 			if e != nil || choice == "cancel" {
 				break
 			}
@@ -676,7 +719,7 @@ func deliverPairingBundle(home, bundle string, ledger *pairingLedger, slot *issu
 				_, err = fmt.Fprintln(out, bundle)
 				break
 			}
-			path, e := opts.prompt.ask("New private bundle file", false, nil, -1, ": ")
+			path, e := opts.prompt.guidedDefault("New private bundle file", "")
 			if e != nil {
 				err = e
 				break
@@ -708,6 +751,9 @@ func deliverPairingBundle(home, bundle string, ledger *pairingLedger, slot *issu
 		return 1
 	}
 	if !opts.yes {
+		if opts.prompt != nil {
+			opts.prompt.renderer().block("")
+		}
 		printPairingTransfer(out, savedPath, printed, *ledger, env.now())
 	}
 
@@ -715,7 +761,6 @@ func deliverPairingBundle(home, bundle string, ledger *pairingLedger, slot *issu
 }
 
 func printPairingTransfer(out io.Writer, path string, printed bool, ledger pairingLedger, now time.Time) {
-	terminal.Println(out)
 	terminal.Println(out, "1. Transfer the pairing file")
 	if path != "" {
 		terminal.Printf(out, "Saved to: %s\n", path)

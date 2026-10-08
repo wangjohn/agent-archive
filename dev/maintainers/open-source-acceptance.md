@@ -120,3 +120,12 @@ test shows only the provider, policy, app versions, architecture, and account
 configuration recorded above; preserve the AWS/R2 caveat for any path not
 actually exercised. The primary maintainer records a final go/no-go with
 every unresolved failure and coverage gap named.
+
+## Deferred native name comparisons
+
+Real Codex sidebar and Claude CLI picker comparisons against archive list/show
+remain **PENDING**. Use the [manual comparison protocol](native-session-name-comparisons.md)
+and its [evidence template](acceptance/native-session-name-comparison-template.md);
+record UUID-matched observations separately for each producer, storage form and
+lookup mode. The follow-up package and disposable lookup timing probes do not
+establish real title parity or desktop coexistence.

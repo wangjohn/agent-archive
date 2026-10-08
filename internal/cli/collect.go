@@ -172,7 +172,8 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (result collector.Resu
 		return collector.Result{}, err
 	}
 	defer func() { resultErr = errors.Join(resultErr, rollouts.Close()) }()
-	_, discoveryErr := discovery.Run(ctx, localStore, cfg, discovery.Options{Sources: registryFor(env), Now: env.Now, Stop: stop, Rollouts: rollouts, RepositoryIdentity: gitremote.ProjectIdentity, RepositoryIdentityCurrent: gitremote.ProjectIdentityCurrent})
+	observer := &gitremote.IdentityObserver{}
+	_, discoveryErr := discovery.Run(ctx, localStore, cfg, discovery.Options{Sources: registryFor(env), Now: env.Now, Stop: stop, Rollouts: rollouts, RepositoryIdentity: observer.Lookup, RepositoryIdentityCurrent: gitremote.ProjectIdentityCurrent})
 	if discoveryErr != nil {
 		recordPreflightError(localStore, errors.Join(recoveryErr, discoveryErr))
 	}
@@ -190,7 +191,20 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (result collector.Resu
 	if previous, err := localStore.LoadStatus(); err == nil {
 		previousScanAt = previous.LastScanAt
 	}
+	labelHomes := []string{}
+	if cfg.Discovery != nil {
+		labelHomes = append(labelHomes, cfg.Discovery.CodexHomes...)
+	}
+	if len(labelHomes) == 0 {
+		if userHome, err := env.userHomeDir(); err == nil {
+			if file := env.hookFiles(userHome)["codex"]; file != "" {
+				labelHomes = append(labelHomes, filepath.Dir(file))
+			}
+		}
+	}
 	result, err = collector.Run(ctx, localStore, objectStore, collector.Options{
+		Labels:           env.labelProviders(cfg),
+		LabelEnvironment: env.labelEnvironment(cfg, labelHomes),
 		PrepareCodexCoverage: func(ctx context.Context, regs []archive.SessionRegistration) error {
 			return rollouts.PrepareRegistered(ctx, cfg, regs, discovery.Options{Now: env.Now, Stop: stop})
 		},
