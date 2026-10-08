@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -48,13 +49,14 @@ func benchmarkEnv(b *testing.B, home string, store storage.ObjectStore) Env {
 }
 
 func benchmarkListCase(b *testing.B, c storagetest.BenchCase) {
+	b.Helper()
 	b.StopTimer()
 	mem := storagetest.NewMemoryStore()
 	storagetest.SeedArchive(b, mem, c.Sessions, 0)
 	store := storagetest.NewMeasuredStore(mem, c.Delay)
 	home := b.TempDir()
 	env := benchmarkEnv(b, home, store)
-	args := []string{"list", "--all-projects", "--json", "--limit", fmt.Sprint(c.Limit)}
+	args := []string{"list", "--all-projects", "--json", "--limit", strconv.Itoa(c.Limit)}
 	warmEnv := env
 	warmEnv.OpenStore = func(config.Config) (storage.ObjectStore, error) { return mem, nil }
 	b.ReportAllocs()
@@ -133,6 +135,7 @@ func (s *benchmarkScreen) Write(p []byte) (int, error) {
 
 	return len(p), nil
 }
+
 func (*benchmarkScreen) colorTerminal() bool { return false }
 
 // BenchmarkCommandReads pins common read-only command paths beyond list. These

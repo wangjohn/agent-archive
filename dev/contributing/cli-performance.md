@@ -70,8 +70,16 @@ attempted GETs (including unavailable harness probes). The short-ID path used
 used 800 GETs. The full matrix was attempted, but repeated exhaustive cache
 cleanup became prohibitively slow in `unlinkat`; the partial 10k exhaustive
 warm sample still showed zero GETs and 50 ranged LISTs. Full 10k/50k cache
-coverage remains pending. Concurrent local validation caused material timing
-variance, so these wall-time samples are not accepted as controlled baselines.
+coverage remained pending after that initial run. Concurrent local validation
+caused material timing variance, so these wall-time samples are not accepted as
+controlled baselines.
 Use the commands above on an idle host before assessing speed improvements.
 `BenchmarkReaderExhaustiveNoCache` supplies a cheap additional cardinality/read
 check at 10k and 50k without claiming filesystem-cache coverage.
+
+A subsequent run at the same pinned head completed all 27 reader and 27 command
+scale cases, including 10k/50k exhaustive cold/warm/changed disk caches, plus
+latency, first-screen and command-read cases. This closes the matrix execution
+coverage gap. Unrelated CPU race tests and temporary cleanup overlapped that
+run, so its wall times still carry an external-contention limitation. They do
+not establish idle-host, live-provider or real-terminal acceptance.
