@@ -89,6 +89,8 @@ per-agent parser versions invalidates private lookup context. Earlier retained
 file-contract evidence remains readable offline; it does not authorize a new
 native lookup under the current contract.
 
+The [deferred native comparison protocol](../../dev/maintainers/native-session-name-comparisons.md) tracks sidebar/list/show parity, restart, coexistence and history coverage with an explicitly pending evidence template. Lookup probes alone do not complete that acceptance.
+
 ## Explicit native opt-in
 
 To enable native lookup, pause collection, back up the archive data directory's
