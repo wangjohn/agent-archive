@@ -16,8 +16,9 @@ const (
 )
 
 type migrationIntent struct {
-	Kind  migrationIntentKind `json:"kind"`
-	State CatalogMigration    `json:"state"`
+	Kind        migrationIntentKind `json:"kind"`
+	State       CatalogMigration    `json:"state"`
+	Predecessor *CatalogMigration   `json:"predecessor,omitempty"`
 }
 
 type migrationIntentKey struct{}
@@ -41,10 +42,18 @@ func (intent *migrationIntent) validate(state admissions) error {
 	}
 	switch intent.Kind {
 	case migrationInitialize:
-		if m.Phase != MigrationInitializing || m.Copied != 0 || m.Cursor != "" || m.ExpectedHead != "" || m.VerifiedRoot != (ObjectRef{}) || state.Mode != admissionCandidate || state.Proof != "" || len(state.Completed) != 0 {
+		if intent.Predecessor != nil || m.Phase != MigrationInitializing || m.Copied != 0 || m.Cursor != "" || m.ExpectedHead != "" || m.VerifiedRoot != (ObjectRef{}) || state.Mode != admissionCandidate || state.Proof != "" || len(state.Completed) != 0 {
 			return errCoordinatorDescriptor
 		}
 	case migrationRollbackIntent:
+		if intent.Predecessor == nil || intent.Predecessor.Phase != MigrationActive || intent.Predecessor.validate() != nil {
+			return errCoordinatorDescriptor
+		}
+		expected := *intent.Predecessor
+		expected.Owner, expected.Phase = m.Owner, MigrationRollbackPreparing
+		if !sameMigration(expected, m) {
+			return errCoordinatorDescriptor
+		}
 		if m.Phase != MigrationRollbackPreparing || (state.Mode != admissionActive && state.Mode != admissionRollback) || state.Proof != m.Proof {
 			return errCoordinatorDescriptor
 		}
@@ -85,11 +94,11 @@ func (c *Coordinator) changeIntent(ctx context.Context, intent *migrationIntent,
 	return errors.Join(err, readErr)
 }
 
-func (m *Migration) beginIntent(ctx context.Context, kind migrationIntentKind) error {
+func (m *Migration) beginIntent(ctx context.Context, kind migrationIntentKind, predecessor *CatalogMigration) error {
 	if _, err := m.writer.preflightClock(ctx); err != nil {
 		return err
 	}
-	intent := &migrationIntent{Kind: kind, State: m.State}
+	intent := &migrationIntent{Kind: kind, State: m.State, Predecessor: predecessor}
 	m.intent = intent
 	return m.writer.Coordinator().changeIntent(ctx, intent, func(state *admissions) error {
 		if state.Intent != nil {
@@ -145,7 +154,7 @@ func (m *Migration) checkIntentCheckpoint(ctx context.Context) error {
 	original := m.intent.State
 	candidate := m.State
 	candidate.Phase = original.Phase
-	if intentDigest(&migrationIntent{Kind: m.intent.Kind, State: candidate}) != intentDigest(m.intent) {
+	if !sameMigration(candidate, original) {
 		return ErrAdmissionClosed
 	}
 	return ctx.Err()
@@ -221,13 +230,41 @@ func (m *Migration) resumeIntent(ctx context.Context, proof CutoverProof) error 
 	if destinationIdentity(bound.Source) != destinationIdentity(m.State.Source) || destinationIdentity(bound.Destination) != destinationIdentity(m.State.Destination) || bound.Proof != proof.ID || (m.State.ID != "" && bound.ID != m.State.ID) {
 		return ErrAdmissionClosed
 	}
-	if intent.Kind == migrationRollbackIntent && (m.checkpointETag == "" || m.State.VerifiedRoot != bound.VerifiedRoot || m.State.ExpectedHead != bound.ExpectedHead || m.State.Copied != bound.Copied || (m.State.Phase != MigrationActive && m.State.Phase != MigrationRollbackPreparing && m.State.Phase != MigrationRollback)) {
-		return ErrAdmissionClosed
-	}
-	if intent.Kind == migrationInitialize && m.checkpointETag != "" && (m.State.Phase != MigrationCopying || m.State.Copied != 0 || m.State.Cursor != "") {
+	if m.checkpointETag != "" {
+		checkpoint := m.State
+		switch intent.Kind {
+		case migrationInitialize:
+			checkpoint.Phase = MigrationInitializing
+			if m.State.Phase != MigrationCopying || !sameMigration(checkpoint, bound) {
+				return ErrAdmissionClosed
+			}
+		case migrationRollbackIntent:
+			if m.State.Phase == MigrationActive {
+				if intent.Predecessor == nil || !sameMigration(checkpoint, *intent.Predecessor) {
+					return ErrAdmissionClosed
+				}
+			} else {
+				if m.State.Phase != MigrationRollbackPreparing && m.State.Phase != MigrationRollback {
+					return ErrAdmissionClosed
+				}
+				checkpoint.Phase = MigrationRollbackPreparing
+				if !sameMigration(checkpoint, bound) {
+					return ErrAdmissionClosed
+				}
+			}
+		default:
+			return ErrAdmissionClosed
+		}
+	} else if intent.Kind != migrationInitialize {
 		return ErrAdmissionClosed
 	}
 	m.intent = intent
 	m.State = bound
 	return nil
+}
+
+func sameMigration(a, b CatalogMigration) bool {
+	x, err := json.Marshal(a)
+	y, nextErr := json.Marshal(b)
+	return err == nil && nextErr == nil && string(x) == string(y)
 }

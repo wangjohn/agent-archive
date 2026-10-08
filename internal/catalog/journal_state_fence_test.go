@@ -54,7 +54,7 @@ func TestRecoveredJournalSaveAndRemovalRequireExactCompletion(t *testing.T) {
 	if err = store.Put(ctx, pending.SourceKey, pending.SourceBytes); err != nil {
 		t.Fatal(err)
 	}
-	if err = store.Put(ctx, pending.MetadataKey, pending.MetadataBytes); err != nil {
+	if err = store.Publication(j.MutationID, pending.MetadataKey, j.ExpectedRevision).Put(ctx, pending.MetadataKey, pending.MetadataBytes); err != nil {
 		t.Fatal(err)
 	}
 	if err = store.CompletePublication(ctx, j.MutationID, pending.MetadataBytes); err != nil {

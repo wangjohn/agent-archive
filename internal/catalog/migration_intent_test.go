@@ -231,3 +231,74 @@ func TestRollbackIntentRefusesLiveOwnerAndChangedHeadWithoutFencing(t *testing.T
 		t.Fatal("changed head was fenced", err)
 	}
 }
+
+func TestMigrationIntentRefusesAlteredCheckpointDescriptor(t *testing.T) {
+	for _, phase := range []string{"initialize", "rollback"} {
+		for _, field := range []string{"owner", "source-profile"} {
+			t.Run(phase+"/"+field, func(t *testing.T) {
+				source, target, src, dst, authority := migrationFixture(t, 0)
+				fault := &migrationIntentFault{qualifiedStore: target}
+				if phase == "initialize" {
+					fault.stage = "clear-intent"
+				}
+				migration, err := OpenMigration(t.Context(), source, fault, src, dst, authority)
+				if phase == "initialize" {
+					if err == nil {
+						t.Fatal("initial checkpoint fixture did not interrupt")
+					}
+				} else {
+					if err != nil {
+						t.Fatal(err)
+					}
+					if done, err := migration.Step(t.Context()); err != nil || !done {
+						t.Fatal(done, err)
+					}
+					if err = migration.Activate(t.Context()); err != nil {
+						t.Fatal(err)
+					}
+					if err = migration.FinishActivation(t.Context()); err != nil {
+						t.Fatal(err)
+					}
+					fault.stage = "rollback-seal"
+					if err = migration.Rollback(t.Context()); err == nil {
+						t.Fatal("rollback predecessor fixture did not interrupt")
+					}
+				}
+				raw, err := target.Get(t.Context(), MigrationKey)
+				if err != nil {
+					t.Fatal(err)
+				}
+				checkpoint, err := decodeMigration(raw)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if field == "owner" {
+					checkpoint.Owner, err = NewMutationID()
+					if err != nil {
+						t.Fatal(err)
+					}
+				} else {
+					identity := destinationIdentity(checkpoint.Source)
+					checkpoint.Source.AWSProfile = "foreign-profile"
+					if destinationIdentity(checkpoint.Source) != identity {
+						t.Fatal("fixture changed canonical identity rather than descriptor")
+					}
+				}
+				if err = checkpoint.validate(); err != nil {
+					t.Fatal("altered checkpoint must remain structurally valid", err)
+				}
+				raw, err = json.Marshal(checkpoint)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err = target.Put(t.Context(), MigrationKey, raw); err != nil {
+					t.Fatal(err)
+				}
+				before := fault.writes
+				if _, err = OpenMigration(t.Context(), source, fault, src, dst, authority); err == nil || fault.writes != before {
+					t.Fatal("unrelated complete checkpoint adopted", err)
+				}
+			})
+		}
+	}
+}

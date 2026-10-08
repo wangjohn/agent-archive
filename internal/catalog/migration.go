@@ -196,7 +196,7 @@ func OpenMigration(ctx context.Context, source, target storage.ObjectStore, sour
 		return nil, err
 	}
 	m.State.Owner, m.State.ID, m.State.Proof, m.State.Phase = owner, id, proof.ID, MigrationInitializing
-	if err = m.beginIntent(ctx, migrationInitialize); err != nil {
+	if err = m.beginIntent(ctx, migrationInitialize, nil); err != nil {
 		return nil, err
 	}
 	if err = m.resumeInitialization(ctx); err != nil {
@@ -546,12 +546,13 @@ func (m *Migration) Rollback(ctx context.Context) error {
 		return errors.New("only active migration can roll back")
 	}
 	if m.intent == nil {
+		predecessor := m.State
 		owner, err := NewMutationID()
 		if err != nil {
 			return err
 		}
 		m.State.Owner, m.State.Phase = owner, MigrationRollbackPreparing
-		if err = m.beginIntent(ctx, migrationRollbackIntent); err != nil {
+		if err = m.beginIntent(ctx, migrationRollbackIntent, &predecessor); err != nil {
 			return err
 		}
 	}

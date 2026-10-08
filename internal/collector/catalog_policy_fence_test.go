@@ -136,7 +136,7 @@ func TestCatalogStricterHistoryPreservesCommittedAndUncommittedJournal(t *testin
 				}
 			}
 			if committed {
-				if err = remote.Put(admitted, pending.MetadataKey, pending.MetadataBytes); err != nil {
+				if err = remote.Publication(id, pending.MetadataKey, revision).Put(admitted, pending.MetadataKey, pending.MetadataBytes); err != nil {
 					t.Fatal(err)
 				}
 				body, err := remote.Get(t.Context(), pending.MetadataKey)
