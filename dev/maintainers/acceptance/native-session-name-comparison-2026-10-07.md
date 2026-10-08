@@ -53,8 +53,9 @@ source control. No screenshot or transcript is published here.
 
 **PASS (synthetic pipeline only):**
 `TestSettledCodexNamePublicationAndArchiveOnlyRead` verifies two admitted sessions
-sharing one synthetic name, UUID-matched archived identity and distinct prompt
-preview; a database-only rename with byte-identical transcript, unchanged
+sharing one synthetic name: before either is renamed, a fresh reader home
+checks the indexed uncapped JSON list for two distinct archive/native UUID pairs
+and distinct prompt previews, then JSON/text show for each archive ID; a database-only rename with byte-identical transcript, unchanged
 start/end/capture/counts/native records, and a changed retained source revision;
 a reopened archive writer with zero remote writes on an unchanged pass; and
 live-sidecar refusal preserving the last published name. After deleting the
