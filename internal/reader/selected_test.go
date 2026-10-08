@@ -139,27 +139,37 @@ func TestSelectedCancellationStopsDispatchAndJoins(t *testing.T) {
 	})
 }
 
+type invalidRevisionEvidence string
+
+const (
+	missingRevisionEvidence   invalidRevisionEvidence = "missing"
+	validatorRevisionEvidence invalidRevisionEvidence = "validator"
+	hashRevisionEvidence      invalidRevisionEvidence = "hash"
+	summaryRevisionEvidence   invalidRevisionEvidence = "summary"
+	schemaRevisionEvidence    invalidRevisionEvidence = "schema"
+)
+
 func TestSelectedReadsRejectInvalidRevisionEvidence(t *testing.T) {
 	store, original := selectedFixture(t, 1)
 	data, etag, err := store.GetVersioned(context.Background(), original[0].MetadataKey)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, kind := range []string{"missing", "validator", "hash", "summary", "schema"} {
-		t.Run(kind, func(t *testing.T) {
+	for _, kind := range []invalidRevisionEvidence{missingRevisionEvidence, validatorRevisionEvidence, hashRevisionEvidence, summaryRevisionEvidence, schemaRevisionEvidence} {
+		t.Run(string(kind), func(t *testing.T) {
 			revisions := append([]listingindex.Revision(nil), original...)
 			response, validator := data, etag
 			var responseErr error
 			switch kind {
-			case "missing":
+			case missingRevisionEvidence:
 				responseErr = errors.New("missing selected body")
-			case "validator":
+			case validatorRevisionEvidence:
 				validator = "changed"
-			case "hash":
+			case hashRevisionEvidence:
 				response = []byte("corrupt")
-			case "summary":
+			case summaryRevisionEvidence:
 				revisions[0].ProjectID = "wrong-project"
-			case "schema":
+			case schemaRevisionEvidence:
 				response = []byte(`{"schema_version":999}`)
 				revisions[0].Hash = storage.SHA256Hex(response)
 			}
