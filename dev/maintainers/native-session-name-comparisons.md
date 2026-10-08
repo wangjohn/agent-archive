@@ -1,7 +1,10 @@
-# Deferred native session name comparisons
+# Native session name comparisons
 
-Status: **PENDING — execution deferred by the user**. This is a manual work
-package, not completed UI acceptance. It follows [#343](https://github.com/wangjohn/agent-archive/issues/343)
+Status: **PARTIAL — sandbox execution recorded; native UI acceptance BLOCKED**.
+The [2026-10-07 execution record](acceptance/native-session-name-comparison-2026-10-07.md)
+distinguishes synthetic coverage from actual read-only identity observations and
+the remaining environment blockers. This is a manual work package, not completed
+UI acceptance. It follows [#343](https://github.com/wangjohn/agent-archive/issues/343)
 and implementations [#346](https://github.com/wangjohn/agent-archive/pull/346),
 [#350](https://github.com/wangjohn/agent-archive/pull/350), and
 [#353](https://github.com/wangjohn/agent-archive/pull/353). The starting code
@@ -128,17 +131,17 @@ a title match. Re-run the commands with a new stage prefix after publication.
 
 | Case | Action in disposable environment | Required observation | Status |
 | --- | --- | --- | --- |
-| C1 / A1 identity and baseline | Open the existing Codex sidebar / Claude CLI picker entry; prove UUID and archived ownership. Include two sessions sharing a synthetic title. | Correct UUID-matched `name` and displayed heading in list/show; `title` remains the prompt preview. | PENDING |
-| C2 / A2 rename without prompt | Rename using that native app's supported UI (`/rename` for Claude); send no further prompt. Record transcript signature before/after. Publish and read back. | New name arrives without another conversation turn. Codex external-name refresh preserves transcript/activity; Claude may append a label record but activity/counts stay unchanged. | PENDING |
-| C3 / A3 delayed generated title | Observe a prepared session initially unnamed, then a native generated title arriving; record both times and records. No fabricated `ai-title` for UI acceptance. | Prompt fallback first, generated name after successful capture/publication, same UUID throughout. If paid work is necessary, defer until authorized. | PENDING |
-| A4 custom precedence after work | In an authorized synthetic Claude session, set custom name, do further work and observe a subsequent generated-title record. | Custom name still wins in picker/list/show. If producer emits no later generated record, precedence-after-generation remains PENDING; fixture coverage is separate. | PENDING |
-| C4 / A5 restart | Close and restart the disposable native app/CLI and archive reader; run a later collector pass. | UUID/selected name persists, no stale fallback; record both restarts and pass. | PENDING |
-| C5 / A6 unchanged pass | Make no native name/content change; run another collector pass and read archive. | No new name publication/source revision; activity, capture time, counts and order unchanged. Use publication evidence, not just equal displayed names. | PENDING |
-| C6 native desktop coexistence | Keep disposable desktop open while explicitly opted-in native lookup collects admitted ordinary sessions. | Archive-backed publication and UI remain responsive; no locks/migrations/auth surprises; process teardown verified. Record host effects and any refusal, not just RPC success. | PENDING |
-| C7 settled files / live WAL | Compare supported settled file case after normal app shutdown; separately observe refusal while WAL/SHM/journal is present. | Settled parity only for verified supported shape; unavailable case preserves prior name and history. No destructive DB manipulation. | PENDING |
-| C8 native pagination / archive limits | Observe an older native entry beyond initial visible rows; compare `list --limit 1`, default list, and `--limit 0`. | UUID maps after UI pagination; exact row appears in uncapped archive list/show; count/truncation behavior and top-level filtering remain correct. | PENDING |
-| C9 history compatibility | Use pre-existing synthetic legacy and paginated native cases, plus a separately captured archive history source set. | Ordinary supported names follow storage-specific rules; history source-set segments/revisions still read back unchanged, without external ordinary-name authority. Unknown producer/schema stays unavailable. | PENDING |
-| C10 / A7 archive-only read | Read published metadata on a disposable reader with no native agent/home present. | List/show use archived name; no native file reads or agent startup (observe with process/file tracing when available). | PENDING |
+| C1 / A1 identity and baseline | Open the existing Codex sidebar / Claude CLI picker entry; prove UUID and archived ownership. Include two sessions sharing a synthetic title. | Correct UUID-matched `name` and displayed heading in list/show; `title` remains the prompt preview. | BLOCKED; see execution record |
+| C2 / A2 rename without prompt | Rename using that native app's supported UI (`/rename` for Claude); send no further prompt. Record transcript signature before/after. Publish and read back. | New name arrives without another conversation turn. Codex external-name refresh preserves transcript/activity; Claude may append a label record but activity/counts stay unchanged. | BLOCKED; see execution record |
+| C3 / A3 delayed generated title | Observe a prepared session initially unnamed, then a native generated title arriving; record both times and records. No fabricated `ai-title` for UI acceptance. | Prompt fallback first, generated name after successful capture/publication, same UUID throughout. If paid work is necessary, defer until authorized. | BLOCKED; see execution record |
+| A4 custom precedence after work | In an authorized synthetic Claude session, set custom name, do further work and observe a subsequent generated-title record. | Custom name still wins in picker/list/show. If producer emits no later generated record, precedence-after-generation remains PENDING; fixture coverage is separate. | BLOCKED; see execution record |
+| C4 / A5 restart | Close and restart the disposable native app/CLI and archive reader; run a later collector pass. | UUID/selected name persists, no stale fallback; record both restarts and pass. | BLOCKED; see execution record |
+| C5 / A6 unchanged pass | Make no native name/content change; run another collector pass and read archive. | No new name publication/source revision; activity, capture time, counts and order unchanged. Use publication evidence, not just equal displayed names. | BLOCKED; see execution record |
+| C6 native desktop coexistence | Keep disposable desktop open while explicitly opted-in native lookup collects admitted ordinary sessions. | Archive-backed publication and UI remain responsive; no locks/migrations/auth surprises; process teardown verified. Record host effects and any refusal, not just RPC success. | BLOCKED; see execution record |
+| C7 settled files / live WAL | Compare supported settled file case after normal app shutdown; separately observe refusal while WAL/SHM/journal is present. | Settled parity only for verified supported shape; unavailable case preserves prior name and history. No destructive DB manipulation. | BLOCKED; see execution record |
+| C8 native pagination / archive limits | Observe an older native entry beyond initial visible rows; compare `list --limit 1`, default list, and `--limit 0`. | UUID maps after UI pagination; exact row appears in uncapped archive list/show; count/truncation behavior and top-level filtering remain correct. | BLOCKED; see execution record |
+| C9 history compatibility | Use pre-existing synthetic legacy and paginated native cases, plus a separately captured archive history source set. | Ordinary supported names follow storage-specific rules; history source-set segments/revisions still read back unchanged, without external ordinary-name authority. Unknown producer/schema stays unavailable. | BLOCKED; see execution record |
+| C10 / A7 archive-only read | Read published metadata on a disposable reader with no native agent/home present. | List/show use archived name; no native file reads or agent startup (observe with process/file tracing when available). | BLOCKED; see execution record |
 
 Use separate template copies for file and native cases; a native fallback to files
 must be recorded as fallback, not native success. Inspect only filtered retained
