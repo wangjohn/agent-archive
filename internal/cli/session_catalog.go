@@ -12,11 +12,14 @@ import (
 // Paging happens after the final matcher, so exact IDs, configured labels and
 // scope fallback cannot be lost to a reader-side candidate limit.
 func catalogSessions(env metadataCacheDependencies, store storage.ObjectStore, opts listOptions, stderr io.Writer, command string, words []string) ([]archive.Metadata, bool, error) {
+	return catalogSessionsInContext(context.Background(), env, store, opts, stderr, command, words)
+}
+
+func catalogSessionsInContext(ctx context.Context, env metadataCacheDependencies, store storage.ObjectStore, opts listOptions, stderr io.Writer, command string, words []string) ([]archive.Metadata, bool, error) {
 	cache := listCache(env, opts.noCache)
 	if cache == nil {
 		return nil, false, nil
 	}
-	ctx := context.Background()
 	readOpts := reader.ListOptions{Cache: cache, Skipped: warnSkippedSidecar(stderr, command)}
 	if observer, ok := env.(interface{ listBodyObserver() func(string, bool) }); ok {
 		readOpts.BodyRead = observer.listBodyObserver()
@@ -76,7 +79,7 @@ func readListCandidates(env metadataCacheDependencies, store storage.ObjectStore
 // identity, and its caller reads the selected full metadata before rendering.
 func readShowCandidates(ctx context.Context, store storage.ObjectStore, env metadataCacheDependencies, harness, query string, stderr io.Writer) ([]archive.Metadata, error) {
 	opts := listOptions{filter: reader.Filter{Harness: harness}}
-	sessions, used, err := catalogSessions(env, store, opts, stderr, "show", nil)
+	sessions, used, err := catalogSessionsInContext(ctx, env, store, opts, stderr, "show", nil)
 	if used {
 		return sessions, err
 	}
