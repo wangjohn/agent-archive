@@ -2,7 +2,10 @@ package collector
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
 	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
@@ -10,6 +13,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agents/codex"
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
@@ -318,5 +322,209 @@ func TestChangingNamingModeRefreshesLookupWithoutClearingRetainedAPIName(t *test
 	after := fetchMetadata(t, remote, "codex", reg.ArchiveSessionID)
 	if after.Name != before.Name || after.SourceBundle != before.SourceBundle || !after.CapturedAt.Equal(before.CapturedAt) {
 		t.Fatal("file fallback erased stronger native evidence")
+	}
+}
+
+// Reopening the cache keeps its local offset, whereas the normal bundle builder
+// filters supplemental timestamps to UTC. A read refusal must not turn that
+// representation difference into conversation activity on the next source scan.
+func TestCachedLabelRefusalAndRecoveryPreserveSettledPublication(t *testing.T) {
+	for _, legacyOffset := range []bool{false, true} {
+		t.Run(map[bool]string{false: "new publication", true: "older retained offset"}[legacyOffset], func(t *testing.T) {
+			testCachedLabelRefusalAndRecovery(t, legacyOffset)
+		})
+	}
+}
+
+type codexFileLabelLookup struct{}
+
+func (codexFileLabelLookup) LookupLabels(name string) (agentapi.LabelProvider, bool) {
+	return codex.LabelProvider{}, name == "codex"
+}
+
+func testCachedLabelRefusalAndRecovery(t *testing.T, legacyOffset bool) {
+	t.Helper()
+	local := newTestStore(t)
+	nativeHome := t.TempDir()
+	sessions := filepath.Join(nativeHome, "sessions")
+	if err := os.Mkdir(sessions, 0700); err != nil {
+		t.Fatal(err)
+	}
+	path := writeTranscript(t, sessions, "session.jsonl", `{"type":"session_meta","payload":{"id":"01900000-0000-7000-8000-000000000001","cli_version":"0.159.2","history_mode":"legacy"}}`+"\n"+codexTranscript)
+	reg := registration(t, path)
+	reg.NativeSessionID = "01900000-0000-7000-8000-000000000001"
+	reg.Harness.Version = "0.159.2"
+	if err := local.SaveRegistration(reg); err != nil {
+		t.Fatal(err)
+	}
+	remote := &countedPublications{MemoryStore: storagetest.NewMemoryStore()}
+	now := reg.RegisteredAt.Add(time.Hour).In(time.FixedZone("synthetic Pacific", -7*60*60))
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "machine", Now: func() time.Time { return now }, LabelEnvironment: agentapi.LabelEnvironment{Homes: []string{nativeHome}, VerifiedLegacyStorageHomes: []string{nativeHome}}}
+	db, err := sql.Open("sqlite", filepath.Join(nativeHome, "state_5.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := db.ExecContext(t.Context(), "CREATE TABLE threads(id TEXT PRIMARY KEY,history_mode TEXT,name TEXT,title TEXT,first_user_message TEXT,preview TEXT,source TEXT,cli_version TEXT,rollout_path TEXT)"); err != nil {
+		t.Fatal(err)
+	}
+	name := "Selected native name"
+	if _, err := db.ExecContext(t.Context(), "INSERT INTO threads VALUES(?,?,?,?,?,?,?,?,?)", reg.NativeSessionID, "legacy", "", name, "Invented prompt", "Invented prompt", "\"cli\"", "0.159.2", path); err != nil {
+		t.Fatal(err)
+	}
+	updateName := func(value string) {
+		t.Helper()
+		if _, err := db.ExecContext(t.Context(), "UPDATE threads SET title=? WHERE id=?", value, reg.NativeSessionID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	run := func(want int) {
+		t.Helper()
+		remote.keys = nil
+		result, err := Run(t.Context(), local, remote, opts)
+		if err != nil || len(result.Errors) != 0 || len(result.Published) != want || (want == 0 && len(remote.keys) != 0) {
+			t.Fatalf("published=%d want=%d writes=%v result=%+v err=%v", len(result.Published), want, remote.keys, result, err)
+		}
+	}
+	reopen := func() {
+		t.Helper()
+		var err error
+		local, err = state.Open(local.Home())
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	rescan := func() {
+		t.Helper()
+		// A harmless stat change exercises the normal source path without adding
+		// a hook or any new conversation evidence.
+		if err := os.Chtimes(path, now, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	run(1)
+	opts.Labels = codexFileLabelLookup{}
+	now = now.Add(time.Hour)
+	run(1)
+	before := fetchMetadata(t, remote, "codex", reg.ArchiveSessionID)
+	bundle := fetchBundle(t, remote, before)
+	if legacyOffset {
+		// Seed a self-consistent synthetic publication in the older fast-path
+		// format. Its committed bytes, reference and metadata all retain the local
+		// offset, so the regression exercises compatibility without corruption.
+		for i := range bundle.SupplementalEvidence {
+			if bundle.SupplementalEvidence[i].Kind == archive.EvidenceKindSessionLabels {
+				bundle.SupplementalEvidence[i].ObservedAt = now
+			}
+		}
+		compressed, err := archive.BuildCompressedSource(bundle)
+		if err != nil {
+			t.Fatal(err)
+		}
+		key, err := archive.SourceObjectKey(bundle, compressed.SHA256)
+		if err != nil {
+			t.Fatal(err)
+		}
+		before.SourceBundle = archive.SourceReference{Key: key, SHA256: compressed.SHA256, CompressedBytes: len(compressed.Bytes)}
+		metadata, err := json.Marshal(before)
+		if err != nil {
+			t.Fatal(err)
+		}
+		metadataKey, err := archive.MetadataObjectKey(reg.Harness.Name, reg.ArchiveSessionID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := remote.Put(t.Context(), key, compressed.Bytes); err != nil {
+			t.Fatal(err)
+		}
+		if err := remote.Put(t.Context(), metadataKey, metadata); err != nil {
+			t.Fatal(err)
+		}
+		published, err := local.LoadPublishedState(reg.ArchiveSessionID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := published.SavePublication(bundle, now, before.SourceBundle, metadata); err != nil {
+			t.Fatal(err)
+		}
+		bundle = fetchBundle(t, remote, before)
+	}
+	label, observed, ok := archive.CurrentSessionLabel(bundle)
+	if !ok || label.Name != name || !observed.Equal(now) {
+		t.Fatal("missing selected observation")
+	}
+	if _, offset := observed.Zone(); offset != map[bool]int{false: 0, true: -7 * 60 * 60}[legacyOffset] {
+		t.Fatal("publication did not use expected timestamp representation")
+	}
+	cache, err := local.LoadLabels()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, offset := cache.Entries[reg.ArchiveSessionID].ObservedAt.Zone(); offset != -7*60*60 {
+		t.Fatal("test did not retain offset in cached observation")
+	}
+	unchanged := func() {
+		t.Helper()
+		if after := fetchMetadata(t, remote, "codex", reg.ArchiveSessionID); !reflect.DeepEqual(after, before) {
+			t.Fatalf("unchanged observation changed metadata: before=%+v after=%+v", before, after)
+		}
+		if after := fetchBundle(t, remote, before); !reflect.DeepEqual(after, bundle) {
+			t.Fatal("unchanged observation changed retained source")
+		}
+		cache, err := local.LoadLabels()
+		if err != nil {
+			t.Fatal(err)
+		}
+		entry := cache.Entries[reg.ArchiveSessionID]
+		if entry.Label != label || !entry.ObservedAt.Equal(observed) {
+			t.Fatal("cache lost last good selected observation")
+		}
+	}
+	reopen()
+	now = now.Add(time.Hour)
+	run(0)
+	unchanged()
+	updateName("Unseen name during refusal")
+	wal := filepath.Join(nativeHome, "state_5.sqlite-wal")
+	if err := os.WriteFile(wal, []byte("synthetic live-WAL refusal"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(time.Hour)
+	rescan()
+	run(0)
+	unchanged()
+	cache, err = local.LoadLabels()
+	if err != nil || cache.Entries[reg.ArchiveSessionID].Failures != 1 {
+		t.Fatalf("refusal not recorded: %+v %v", cache, err)
+	}
+	reopen()
+	now = now.Add(time.Hour)
+	rescan()
+	run(0)
+	unchanged()
+	if err := os.Remove(wal); err != nil {
+		t.Fatal(err)
+	}
+	updateName(name)
+	now = now.Add(time.Hour)
+	rescan()
+	run(0)
+	unchanged()
+	cache, err = local.LoadLabels()
+	if err != nil || cache.Entries[reg.ArchiveSessionID].Failures != 0 {
+		t.Fatal("successful recovery did not reset failures", err)
+	}
+	name = "Genuine changed native name"
+	updateName(name)
+	now = now.Add(time.Hour)
+	run(1)
+	after := fetchMetadata(t, remote, "codex", reg.ArchiveSessionID)
+	afterBundle := fetchBundle(t, remote, after)
+	if after.Name != name || after.SourceBundle == before.SourceBundle || !after.CapturedAt.Equal(before.CapturedAt) || !after.StartedAt.Equal(before.StartedAt) || !reflect.DeepEqual(after.EndedAt, before.EndedAt) || !reflect.DeepEqual(after.Counts, before.Counts) || !reflect.DeepEqual(afterBundle.NativeRecords, bundle.NativeRecords) {
+		t.Fatalf("real rename lost or changed activity: before=%+v after=%+v", before, after)
+	}
+	_, renamedAt, ok := archive.CurrentSessionLabel(afterBundle)
+	if !ok || !renamedAt.Equal(now) {
+		t.Fatal("real rename did not record its new observation")
 	}
 }
