@@ -2,11 +2,46 @@ package config
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/wangjohn/agent-archive/internal/destination"
 )
+
+// Catalog configuration cannot borrow a legacy or missing writer fence, even
+// while provider qualification still prevents production activation.
+func TestLoadedCatalogRequiresItsForwardWriterFence(t *testing.T) {
+	t.Parallel()
+	for _, version := range []string{`1`, `7`, `8`, `null`, `{"version":7,"writer":"durable-storage-v7"}`, `{"version":8,"writer":"durable-storage-v7"}`, `{"version":8}`, `{"version":8,"writer":"catalog-v4-v8"}`} {
+		t.Run(version, func(t *testing.T) {
+			t.Parallel()
+			home := t.TempDir()
+			raw := []byte(`{"schema_version":` + version + `,"storage":{"ArchiveFormat":"catalog-v4"},"durable_storage_protection":true}`)
+			if err := os.WriteFile(filepath.Join(home, "config.json"), raw, 0600); err != nil {
+				t.Fatal(err)
+			}
+			_, found, fenced, err := loadConfig(home)
+			if version == `{"version":8,"writer":"catalog-v4-v8"}` {
+				if err != nil || !found || !fenced {
+					t.Fatal("valid catalog fence refused", err)
+				}
+			} else if err == nil || found {
+				t.Fatal("catalog borrowed unsupported writer authority", version)
+			}
+		})
+	}
+	for _, raw := range []string{`{"storage":{"ArchiveFormat":"catalog-v4"}}`, `{"schema_version":1,"storage":{"ArchiveFormat":"catalog-v4"}}`} {
+		home := t.TempDir()
+		if err := os.WriteFile(filepath.Join(home, "config.json"), []byte(raw), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, found, err := Load(home); err == nil || found {
+			t.Fatal("unfenced catalog configuration loaded")
+		}
+	}
+}
 
 func TestCatalogFormatDefaultsAndWriterFence(t *testing.T) {
 	legacy := Config{SchemaVersion: 1}
