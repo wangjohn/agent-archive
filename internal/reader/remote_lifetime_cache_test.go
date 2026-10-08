@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/wangjohn/agent-archive/internal/catalog"
+	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
 func TestRemoteSQLContinuationRejectsChangedHeadWithoutLocalRefresh(t *testing.T) {
@@ -143,6 +144,20 @@ func TestRemoteSQLCursorBindsRefreshedRequestAndCancellation(t *testing.T) {
 	}
 }
 
+type cacheMismatchWriteStore struct {
+	*catalog.Store
+	writes int
+}
+
+func (s *cacheMismatchWriteStore) Put(ctx context.Context, key string, raw []byte) error {
+	s.writes++
+	return s.Store.Put(ctx, key, raw)
+}
+func (s *cacheMismatchWriteStore) PutConditional(ctx context.Context, key string, raw []byte, c storage.PutCondition) (string, error) {
+	s.writes++
+	return s.Store.PutConditional(ctx, key, raw, c)
+}
+
 func TestRemoteCatalogRefusesUnrelatedBodyCacheBeforeWork(t *testing.T) {
 	remote, _ := remoteReaderFixture(t, 8)
 	bound, err := OpenMetadataCache(t.TempDir())
@@ -153,12 +168,13 @@ func TestRemoteCatalogRefusesUnrelatedBodyCacheBeforeWork(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	measured := storagetest.NewMeasuredStore(remote, 0)
+	attempts := &cacheMismatchWriteStore{Store: remote}
+	measured := storagetest.NewMeasuredStore(attempts, 0)
 	if c, err := OpenSessionCatalog(t.Context(), bound, measured, ListOptions{Cache: other}); err == nil {
 		_ = c.Close()
 		t.Fatal("unrelated cache accepted")
 	}
-	if counts := measured.Metrics(); counts.Gets != 0 || counts.Lists != 0 || counts.Puts != 0 {
+	if counts := measured.Metrics(); counts.Gets != 0 || counts.Lists != 0 || attempts.writes != 0 {
 		t.Fatal("cache mismatch touched provider", counts)
 	}
 	if _, err = os.Stat(filepath.Join(filepath.Dir(bound.dir), "catalog")); !errors.Is(err, os.ErrNotExist) {
