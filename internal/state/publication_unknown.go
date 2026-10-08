@@ -58,7 +58,7 @@ func (p *CatalogPublication) UnmarshalJSON(data []byte) error {
 	if err := decoder.Decode(&next); err != nil {
 		return ErrDurableStorageRecovery
 	}
-	if next.ID == "" || len(next.ID) > 128 || len(next.ExpectedRevision) > 128 {
+	if next.Protocol != 9 || next.ID == "" || len(next.ID) > 128 || len(next.ExpectedRevision) > 128 {
 		return ErrDurableStorageRecovery
 	}
 	*p = CatalogPublication(next)

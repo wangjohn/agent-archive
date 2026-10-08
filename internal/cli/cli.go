@@ -650,6 +650,8 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 		return runFeedbackCommand(args[1:], stdout, stderr, env)
 	case "handoff":
 		return runHandoffCommand(args[1:], stdin, stdout, stderr, env)
+	case "migrate":
+		return runMigrateCommand(args[1:], stdout, stderr, env)
 	case "backfill":
 		return runBackfillCommand(args[1:], stdin, stdout, stderr, env)
 	case "purge":

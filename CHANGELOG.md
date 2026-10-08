@@ -1501,3 +1501,14 @@ The first release.
 [0.2.0]: https://github.com/wangjohn/agent-archive/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/wangjohn/agent-archive/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/wangjohn/agent-archive/releases/tag/v0.1.0
+
+- Add the explicit `migrate --format catalog-v4 --prefix PREFIX` protocol with
+  isolated destinations, durable page checkpoints, exhaustive source/history
+  verification, owner-fenced activation and unchanged-catalog rollback. Original
+  retention dates and the read-only source are preserved. Production S3/R2 remain
+  unavailable until live atomic, provider clock and credential cutover evidence
+  are reviewed; there is no force bypass.
+- Add catalog snapshots with ten-minute request-start lifetimes, hash-validated
+  immutable tree caching, range paging and root/query-bound cursors. Root ordinary
+  and replay ranges support bounded global list selection; scoped/text/complex
+  searches retain complete summary filtering without canonical object listings.

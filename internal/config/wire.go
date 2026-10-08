@@ -23,7 +23,7 @@ const legacyCodexWriter configWriter = "codex-scope-v3"
 
 const codexWriter configWriter = "codex-scope-floor-v3"
 
-const catalogWriter configWriter = "catalog-v4-v8"
+const catalogWriter configWriter = "catalog-v4-v9"
 
 const durableStorageWriter configWriter = "durable-storage-v7"
 
@@ -65,7 +65,7 @@ func (c Config) MarshalJSON() ([]byte, error) {
 		version = writerVersion{Version: 7, Writer: durableStorageWriter}
 	}
 	if c.Storage.EffectiveArchiveFormat() == destination.FormatCatalogV4 {
-		version = writerVersion{Version: 8, Writer: catalogWriter}
+		version = writerVersion{Version: 9, Writer: catalogWriter}
 	}
 	return json.Marshal(struct {
 		SchemaVersion writerVersion `json:"schema_version"`
@@ -117,10 +117,10 @@ func codexMarkerMatches(mode SkillEvidence, writer configWriter) bool {
 }
 
 func validateWriterVersion(c Config, version writerVersion) error {
-	if (version.Version != 2 || (version.Writer != discoveryWriter && version.Writer != legacyDiscoveryWriter)) && (version.Version != 3 || (version.Writer != codexWriter && version.Writer != legacyCodexWriter)) && (version.Version != 4 || version.Writer != generationWriter) && (version.Version != 5 || version.Writer != codexHistoryWriter) && (version.Version != 7 || version.Writer != durableStorageWriter) && (version.Version != 8 || version.Writer != catalogWriter) {
+	if (version.Version != 2 || (version.Writer != discoveryWriter && version.Writer != legacyDiscoveryWriter)) && (version.Version != 3 || (version.Writer != codexWriter && version.Writer != legacyCodexWriter)) && (version.Version != 4 || version.Writer != generationWriter) && (version.Version != 5 || version.Writer != codexHistoryWriter) && (version.Version != 7 || version.Writer != durableStorageWriter) && (version.Version != 9 || version.Writer != catalogWriter) {
 		return errors.New("configuration requires a supported writer fence")
 	}
-	if version.Version == 8 {
+	if version.Version == 9 {
 		if c.Storage.EffectiveArchiveFormat() != destination.FormatCatalogV4 {
 			return errors.New("catalog writer fence requires catalog format")
 		}

@@ -79,13 +79,20 @@ func (s *sessionScan) publishPending(pending state.PendingPublication) (sessionO
 			if err != nil {
 				return outcomeSkipped, err
 			}
-			pending.Catalog = &state.CatalogPublication{ID: id, ExpectedRevision: revision}
+			pending.Catalog = &state.CatalogPublication{Protocol: 9, ID: id, ExpectedRevision: revision}
 			if err = s.local.SavePending(s.id(), pending); err != nil {
 				return outcomeSkipped, err
 			}
 		}
 	} else if pending.Catalog != nil {
 		return outcomeSkipped, errors.New("catalog pending publication requires catalog destination")
+	}
+
+	if remote, ok := s.remote.(storage.CatalogLifecycle); ok && pending.Catalog != nil {
+		if err := remote.BeginPublication(s.ctx, pending.Catalog.ID, pending.MetadataBytes); err != nil {
+			return outcomeSkipped, err
+		}
+		defer remote.EndPublicationAttempt(pending.Catalog.ID)
 	}
 
 	if err := s.checkHistoryPublication(pending); err != nil {
@@ -202,6 +209,13 @@ func (s *sessionScan) acknowledgePublication(pending state.PendingPublication, k
 	if pending.RequestToken != "" {
 		if _, err := s.local.CompleteRequest(s.id(), pending.RequestToken); err != nil {
 			return outcomeSkipped, fmt.Errorf("complete published request: %w", err)
+		}
+	}
+	if !keepPending && pending.Catalog != nil {
+		if remote, ok := s.remote.(storage.CatalogLifecycle); ok {
+			if err := remote.CompletePublication(s.ctx, pending.Catalog.ID, pending.MetadataBytes); err != nil {
+				return outcomeSkipped, err
+			}
 		}
 	}
 	if !keepPending {

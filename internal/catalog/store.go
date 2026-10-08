@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"sync"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -17,7 +18,10 @@ var ErrGCRequired = errors.New("catalog source deletion requires fenced garbage 
 // query activation belongs to migration; no canonical metadata is dual-written.
 type Store struct {
 	storage.ObjectStore
-	Writer *Writer
+	Writer    *Writer
+	pendingMu sync.Mutex
+	pending   map[string]string
+	running   map[string]bool
 }
 
 // Wrap installs catalog metadata authority over a qualified object store.
@@ -26,7 +30,7 @@ func Wrap(store storage.ObjectStore) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Store{store, w}, nil
+	return &Store{ObjectStore: store, Writer: w}, nil
 }
 
 func metadataKey(key string) bool {
@@ -119,6 +123,16 @@ func (s *Store) Put(ctx context.Context, key string, raw []byte) error {
 		return errors.New("catalog metadata requires a frozen mutation")
 	}
 	if strings.HasPrefix(key, "sessions/") {
+		digest := storage.SHA256Hex(raw)
+		invocation, e := NewMutationID()
+		if e != nil {
+			return e
+		}
+		owner := "source/" + invocation
+		c := s.Writer.Coordinator()
+		if err := c.Admit(ctx, owner, digest, []ObjectRef{{key, digest}}); err != nil {
+			return err
+		}
 		_, err := s.Writer.conditional.PutConditional(ctx, key, raw, storage.PutCondition{CreateOnly: true})
 		if err != nil {
 			existing, e := s.Writer.bounded.GetLimited(ctx, key, int64(len(raw)))
@@ -129,7 +143,7 @@ func (s *Store) Put(ctx context.Context, key string, raw []byte) error {
 				return storage.ErrChecksumMismatch
 			}
 		}
-		return nil
+		return c.Complete(ctx, owner, digest)
 	}
 	return s.ObjectStore.Put(ctx, key, raw)
 }
@@ -209,4 +223,28 @@ func (s *Store) FreezeCatalogMutation(ctx context.Context, key string) (string, 
 	}
 	id, err := NewMutationID()
 	return id, revision, err
+}
+
+// GetCatalogVersion preserves same-response head version authority for readers.
+func (s *Store) GetCatalogVersion(ctx context.Context, key string, limit int64) ([]byte, storage.CatalogObjectVersion, error) {
+	return s.Writer.versioned.GetCatalogVersion(ctx, key, limit)
+}
+
+// CatalogServerClock forwards the qualified provider clock.
+func (s *Store) CatalogServerClock(ctx context.Context) (storage.CatalogTime, error) {
+	return s.Writer.clock.CatalogServerClock(ctx)
+}
+
+// CatalogAtomicQualification forwards live provider qualification.
+func (s *Store) CatalogAtomicQualification() error {
+	return s.ObjectStore.(storage.AtomicCatalogProvider).CatalogAtomicQualification()
+}
+
+// PutConditional is restricted to internal catalog protocol objects. Ordinary
+// publication must use the admitted source and frozen commit APIs.
+func (s *Store) PutConditional(ctx context.Context, key string, raw []byte, condition storage.PutCondition) (string, error) {
+	if !strings.HasPrefix(key, "catalog-v4/") {
+		return "", errors.New("catalog conditional write outside protocol")
+	}
+	return s.Writer.conditional.PutConditional(ctx, key, raw, condition)
 }

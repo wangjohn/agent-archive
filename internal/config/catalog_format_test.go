@@ -18,14 +18,14 @@ func TestCatalogFormatDefaultsAndWriterFence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(raw), `"writer":"catalog-v4-v8"`) {
+	if !strings.Contains(string(raw), `"writer":"catalog-v4-v9"`) {
 		t.Fatal("missing catalog old-writer fence")
 	}
 	var decoded Config
 	if err = json.Unmarshal(raw, &decoded); err != nil {
 		t.Fatal(err)
 	}
-	if decoded.SchemaVersion != 8 || decoded.Storage.EffectiveArchiveFormat() != destination.FormatCatalogV4 {
+	if decoded.SchemaVersion != 9 || decoded.Storage.EffectiveArchiveFormat() != destination.FormatCatalogV4 {
 		t.Fatal("format roundtrip")
 	}
 	var old struct {

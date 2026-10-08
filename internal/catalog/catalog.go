@@ -51,6 +51,7 @@ type ObjectRef struct {
 //
 //revive:disable-next-line:exported -- Keep the accepted protocol API name.
 type CatalogHead struct {
+	Protocol   uint64    `json:"Protocol"`
 	Schema     uint64    `json:"Schema"`
 	Generation uint64    `json:"Generation"`
 	Epoch      string    `json:"Epoch"`
@@ -196,7 +197,7 @@ func (w *Writer) readHead(ctx context.Context) (CatalogHead, storage.CatalogObje
 	raw, version, err := w.versioned.GetCatalogVersion(ctx, HeadKey, 16<<10)
 	etag := version.ETag
 	if errors.Is(err, storage.ErrNotFound) {
-		return CatalogHead{Schema: 4}, storage.CatalogObjectVersion{}, nil
+		return CatalogHead{Schema: 4, Protocol: 9}, storage.CatalogObjectVersion{}, nil
 	}
 	if err != nil {
 		return CatalogHead{}, storage.CatalogObjectVersion{}, err
@@ -210,7 +211,7 @@ func (w *Writer) readHead(ctx context.Context) (CatalogHead, storage.CatalogObje
 	if err = decoder.Decode(&h); err != nil {
 		return h, storage.CatalogObjectVersion{}, err
 	}
-	if h.Schema != 4 || h.Generation == 0 || h.Epoch == "" || h.PublicationEpoch == "" || etag == "" {
+	if h.Schema != 4 || h.Protocol != 9 || h.Generation == 0 || h.Epoch == "" || h.PublicationEpoch == "" || etag == "" {
 		return h, storage.CatalogObjectVersion{}, errors.New("invalid catalog head")
 	}
 	if err = h.observeVersion(version); err != nil {
@@ -238,14 +239,102 @@ func (w *Writer) find(ctx context.Context, root ObjectRef, key string) (record, 
 	return r, err
 }
 
+// OrderPrefix names a precise auxiliary root range. All sessions keep the
+// unprefixed range; root prefixes distinguish ordinary and replay sessions.
+func OrderPrefix(replay bool) string {
+	if replay {
+		return "!root/replay/"
+	}
+	return "!root/ordinary/"
+}
+
+// ChildPrefix addresses one parent's children in the project tree.
+func ChildPrefix(harness, parent string, replay bool) string {
+	kind := "ordinary/"
+	if replay {
+		kind = "replay/"
+	}
+	return "!child/" + hex.EncodeToString([]byte(harness+"/"+parent)) + "/" + kind
+}
+
+// ProjectPrefix addresses an exact project without namespace collisions.
+func ProjectPrefix(project string) string {
+	return "project/" + hex.EncodeToString([]byte(project)) + "/"
+}
+
+func descendingIdentity(key string) string {
+	b := []byte(key)
+	for i := range b {
+		b[i] = ^b[i]
+	}
+	return hex.EncodeToString(b)
+}
+
 func orderKeys(key string, e *CatalogEntry) []string {
-	activity := listingindex.ActivityTime(e.Summary)
-	return []string{e.Summary.CapturedAt.UTC().Format("2006-01-02T15:04:05.000000000Z") + "/" + key, activity.UTC().Format("2006-01-02T15:04:05.000000000Z") + "/" + key, e.Summary.ProjectID + "/" + key}
+	capture := e.Summary.CapturedAt.UTC().Format("2006-01-02T15:04:05.000000000Z")
+	activity := listingindex.ActivityTime(e.Summary).UTC().Format("2006-01-02T15:04:05.000000000Z")
+	identity := descendingIdentity(key)
+	return []string{capture + "/" + identity, activity + "/" + capture + "/" + identity, "project/" + hex.EncodeToString([]byte(e.Summary.ProjectID)) + "/" + key}
+}
+
+func allOrderKeys(key string, e *CatalogEntry) [][]string {
+	keys := orderKeys(key, e)
+	result := [][]string{{keys[0]}, {keys[1]}, {keys[2]}}
+	if e.Summary.ParentSessionID == "" {
+		prefix := OrderPrefix(e.Summary.Replay != nil)
+		for i, k := range keys {
+			result[i] = append(result[i], prefix+k)
+		}
+	} else {
+		kind := "ordinary/"
+		if e.Summary.Replay != nil {
+			kind = "replay/"
+		}
+		for i, k := range keys {
+			result[i] = append(result[i], "!children/"+kind+k)
+		}
+		prefix := ChildPrefix(e.Summary.Harness.Name, e.Summary.ParentSessionID, e.Summary.Replay != nil)
+		result[2] = append(result[2], prefix+keys[0])
+	}
+	return result
 }
 
 // Commit rebases only across other sessions. Every acknowledged mutation has
 // a durable receipt; an ambiguous response never licenses a blind overwrite.
 func (w *Writer) Commit(ctx context.Context, m CatalogMutation) (string, error) {
+	frozen, digest, err := freezeMutation(m)
+	if err != nil {
+		return "", err
+	}
+	var refs []ObjectRef
+	if frozen.Next != nil {
+		refs = append(refs, frozen.Next.Metadata)
+		sources, e := frozen.Next.Summary.SourceReferences()
+		if e != nil {
+			return "", e
+		}
+		for _, source := range sources {
+			refs = append(refs, ObjectRef{source.Key, source.SHA256})
+		}
+	}
+	c := w.Coordinator()
+	invocation, e := NewMutationID()
+	if e != nil {
+		return "", e
+	}
+	owner := "commit/" + m.ID + "/" + invocation
+	if err = c.Admit(ctx, owner, digest, refs); err != nil {
+		return "", err
+	}
+	revision, err := w.commitAdmitted(ctx, frozen)
+	if errors.Is(err, ErrCommitUnknown) {
+		return revision, err
+	}
+	completeErr := c.Complete(context.WithoutCancel(ctx), owner, digest)
+	return revision, errors.Join(err, completeErr)
+}
+
+func (w *Writer) commitAdmitted(ctx context.Context, m CatalogMutation) (string, error) {
 	m, digest, err := freezeMutation(m)
 	if err != nil {
 		return "", err
@@ -393,12 +482,14 @@ func (w *Writer) updateOrders(ctx context.Context, h *CatalogHead, key string, o
 		if entry == next {
 			value = entry
 		}
-		for i, orderKey := range orderKeys(key, entry) {
-			ref, err := w.update(ctx, *roots[i], orderKey, value)
-			if err != nil {
-				return err
+		for i, keys := range allOrderKeys(key, entry) {
+			for _, orderKey := range keys {
+				ref, err := w.update(ctx, *roots[i], orderKey, value)
+				if err != nil {
+					return err
+				}
+				*roots[i] = ref
 			}
-			*roots[i] = ref
 		}
 	}
 	return nil

@@ -31,6 +31,13 @@ type RecentResult struct {
 // exhaustive cache reader for compatibility. SelectMetadata supports indexed
 // unlimited queries.
 func ListRecent(ctx context.Context, store storage.ObjectStore, prefix string, filter Filter, limit int, opts ListOptions) (RecentResult, error) {
+	if CatalogAuthority(store) {
+		order := CaptureOrder
+		if opts.ActivityOrder {
+			order = ActivityOrder
+		}
+		return SelectMetadata(ctx, store, prefix, MetadataQuery{Filter: filter, Limit: limit, Order: order, TopLevelOnly: opts.TopLevelOnly}, opts)
+	}
 	if limit <= 0 {
 		if opts.CompatibilityScan != nil {
 			opts.CompatibilityScan("query requires an exhaustive metadata scan")
@@ -66,6 +73,12 @@ type MetadataQuery struct {
 // SelectMetadata proves discovery coverage and supports unlimited date queries.
 // Unsupported predicates and incomplete summaries use the exhaustive reader.
 func SelectMetadata(ctx context.Context, store storage.ObjectStore, prefix string, query MetadataQuery, opts ListOptions) (RecentResult, error) {
+	if CatalogAuthority(store) {
+		opts.Cache.maintain(ctx, 64)
+		opts.ActivityOrder = query.Order == ActivityOrder
+		opts.TopLevelOnly = query.TopLevelOnly
+		return selectCatalogMetadata(ctx, store, prefix, query, opts)
+	}
 	filter, limit := query.Filter, query.Limit
 	opts.ActivityOrder, opts.TopLevelOnly = query.Order == ActivityOrder, query.TopLevelOnly
 	var snapshot *HeaderSnapshot

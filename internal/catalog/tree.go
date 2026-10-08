@@ -21,11 +21,13 @@ type item struct {
 }
 
 type branch struct {
-	Max string    `json:"Max"`
-	Ref ObjectRef `json:"Ref"`
+	Max   string    `json:"Max"`
+	Ref   ObjectRef `json:"Ref"`
+	Count uint64    `json:"Count"`
 }
 
 type node struct {
+	Count    uint64   `json:"Count"`
 	Leaves   []item   `json:"leaves,omitempty"`
 	Children []branch `json:"children,omitempty"`
 }
@@ -39,14 +41,19 @@ func (w *Writer) readNode(ctx context.Context, ref ObjectRef) (node, error) {
 	if err != nil {
 		return n, err
 	}
-	if err = json.Unmarshal(raw, &n); err != nil {
+	return decodeNode(raw)
+}
+
+func decodeNode(raw []byte) (node, error) {
+	var n node
+	if err := json.Unmarshal(raw, &n); err != nil {
 		return n, err
 	}
 	if len(n.Leaves)+len(n.Children) == 0 || len(n.Leaves) > fanout || len(n.Children) > fanout || len(n.Leaves) > 0 && len(n.Children) > 0 {
 		return n, errors.New("invalid catalog node")
 	}
 	for i, v := range n.Leaves {
-		if len(v.Key) > 2048 || i > 0 && n.Leaves[i-1].Key >= v.Key {
+		if len(v.Key) > 4096 || i > 0 && n.Leaves[i-1].Key >= v.Key {
 			return n, errors.New("invalid leaf order")
 		}
 	}
@@ -55,7 +62,21 @@ func (w *Writer) readNode(ctx context.Context, ref ObjectRef) (node, error) {
 			return n, errors.New("invalid branch order")
 		}
 	}
+	if n.Count != nodeCount(n) {
+		return n, errors.New("invalid node count")
+	}
 	return n, nil
+}
+
+func nodeCount(n node) uint64 {
+	if len(n.Children) == 0 {
+		return uint64(len(n.Leaves))
+	}
+	var total uint64
+	for _, c := range n.Children {
+		total += c.Count
+	}
+	return total
 }
 
 func (w *Writer) lookup(ctx context.Context, ref ObjectRef, key string) (json.RawMessage, error) {
@@ -124,6 +145,7 @@ func (w *Writer) change(ctx context.Context, ref ObjectRef, key string, value js
 	}
 	var out []branch
 	for _, p := range parts {
+		p.Count = nodeCount(p)
 		ref, e := w.putJSON(ctx, KindNodes, p, maxNodeBytes)
 		if e != nil {
 			return nil, e
@@ -134,13 +156,13 @@ func (w *Writer) change(ctx context.Context, ref ObjectRef, key string, value js
 		} else {
 			lastKey = p.Leaves[len(p.Leaves)-1].Key
 		}
-		out = append(out, branch{Max: lastKey, Ref: ref})
+		out = append(out, branch{Max: lastKey, Ref: ref, Count: p.Count})
 	}
 	return out, nil
 }
 
 func (w *Writer) update(ctx context.Context, ref ObjectRef, key string, value any) (ObjectRef, error) {
-	if len(key) > 2048 {
+	if len(key) > 4096 {
 		return ObjectRef{}, errors.New("catalog index key exceeds bound")
 	}
 	var raw json.RawMessage
@@ -161,7 +183,9 @@ func (w *Writer) update(ctx context.Context, ref ObjectRef, key string, value an
 	if len(parts) == 1 {
 		return parts[0].Ref, nil
 	}
-	return w.putJSON(ctx, KindNodes, node{Children: parts}, maxNodeBytes)
+	n := node{Children: parts}
+	n.Count = nodeCount(n)
+	return w.putJSON(ctx, KindNodes, n, maxNodeBytes)
 }
 
 func (w *Writer) readRef(ctx context.Context, ref ObjectRef, limit int64) ([]byte, error) {

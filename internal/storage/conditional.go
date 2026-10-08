@@ -147,3 +147,11 @@ func (s *S3Store) GetCatalogVersion(ctx context.Context, relative string, limit 
 func (s *S3Store) CatalogServerClock(context.Context) (CatalogTime, error) {
 	return CatalogTime{}, ErrAtomicCatalogUnqualified
 }
+
+// CatalogLifecycle holds the global admission through source, pending and
+// preserved-history acknowledgement, including recovery after process restart.
+type CatalogLifecycle interface {
+	BeginPublication(context.Context, string, []byte) error
+	CompletePublication(context.Context, string, []byte) error
+	EndPublicationAttempt(string)
+}

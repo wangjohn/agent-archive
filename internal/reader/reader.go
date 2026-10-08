@@ -184,6 +184,9 @@ type ListOptions struct {
 // of the first range to fail, which need not be the lowest in key order.
 func ListMetadataWithOptions(ctx context.Context, store storage.ObjectStore, prefix string, filter Filter, options ListOptions) ([]archive.Metadata, error) {
 	options.Cache.maintain(ctx, 64)
+	if CatalogAuthority(store) {
+		return catalogMetadata(ctx, store, prefix, filter, options)
+	}
 	span := trace.Start("list metadata")
 	defer span.End()
 	listPrefix := listPrefixFor(prefix, filter.Harness)
@@ -420,6 +423,23 @@ func (f *MetadataFinder) FindMetadataKeys(ctx context.Context, store storage.Obj
 		}
 	}
 	if len(keys) > 0 {
+		sort.Strings(keys)
+		return keys, nil
+	}
+	if CatalogAuthority(store) {
+		summaries, err := CatalogSummaries(ctx, store, Filter{})
+		if err != nil {
+			return nil, err
+		}
+		for _, summary := range summaries {
+			if summary.SessionID == archiveSessionID {
+				key, e := archive.MetadataObjectKey(summary.Harness.Name, summary.SessionID)
+				if e != nil {
+					return nil, e
+				}
+				keys = append(keys, key)
+			}
+		}
 		sort.Strings(keys)
 		return keys, nil
 	}

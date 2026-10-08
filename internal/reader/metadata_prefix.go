@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/catalog"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -15,6 +16,9 @@ import (
 // Matchers run after validation, serially, and never suppress prefix matches.
 func FindMetadataPrefix(ctx context.Context, store storage.ObjectStore, prefix, idPrefix string, filter Filter, opts ListOptions, matchers ...func(archive.Metadata) bool) ([]archive.Metadata, error) {
 	opts.Cache.maintain(ctx, 64)
+	if CatalogAuthority(store) {
+		return catalogPrefix(ctx, store, idPrefix, filter, opts, matchers...)
+	}
 	idPrefix = strings.ToLower(idPrefix)
 	canonicalPrefix := listPrefixFor(prefix, filter.Harness)
 	known := opts.Cache.keys(canonicalPrefix)
@@ -70,4 +74,39 @@ func FindMetadataPrefix(ctx context.Context, store storage.ObjectStore, prefix, 
 		return a.SessionID < b.SessionID
 	})
 	return result, nil
+}
+
+func catalogPrefix(ctx context.Context, store storage.ObjectStore, idPrefix string, filter Filter, opts ListOptions, matchers ...func(archive.Metadata) bool) ([]archive.Metadata, error) {
+	snapshot, err := catalog.OpenSnapshot(ctx, store, nil)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := catalogRows(ctx, snapshot)
+	if err != nil {
+		return nil, err
+	}
+	var selected []catalog.Row
+	for _, row := range rows {
+		m := row.Entry.Summary
+		if !matches(m, filter) {
+			continue
+		}
+		include := strings.HasPrefix(strings.ToLower(m.SessionID), strings.ToLower(idPrefix))
+		for _, matcher := range matchers {
+			if matcher(m) {
+				include = true
+			}
+		}
+		if include {
+			selected = append(selected, row)
+		}
+	}
+	sort.Slice(selected, func(i, j int) bool {
+		a, b := selected[i].Entry.Summary, selected[j].Entry.Summary
+		if !a.CapturedAt.Equal(b.CapturedAt) {
+			return a.CapturedAt.After(b.CapturedAt)
+		}
+		return selected[i].Key < selected[j].Key
+	})
+	return hydrateCatalogRows(ctx, snapshot, selected, opts)
 }

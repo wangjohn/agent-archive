@@ -75,7 +75,7 @@ func underlyingSkillEvidence(mode SkillEvidence) SkillEvidence {
 }
 
 func prepareDiscoveryConfig(c *Config) error {
-	if (c.SchemaVersion > 5 && c.SchemaVersion != 7 && c.SchemaVersion != 8) || (c.SchemaVersion == 7 && !c.DurableStorageProtection) || (c.SchemaVersion == 5 && !c.CodexHistoryProtection) || (c.SchemaVersion == 4 && !c.GenerationProtection) || (c.SchemaVersion == 3 && c.CodexCapture == nil) {
+	if (c.SchemaVersion > 5 && c.SchemaVersion != 7 && c.SchemaVersion != 9) || (c.SchemaVersion == 7 && !c.DurableStorageProtection) || (c.SchemaVersion == 5 && !c.CodexHistoryProtection) || (c.SchemaVersion == 4 && !c.GenerationProtection) || (c.SchemaVersion == 3 && c.CodexCapture == nil) {
 		return errors.New("configuration requires a newer agent-archive writer")
 	}
 	if c.Discovery != nil {
@@ -111,7 +111,7 @@ func prepareDiscoveryConfig(c *Config) error {
 		c.SchemaVersion = 7
 	}
 	if c.Storage.EffectiveArchiveFormat() == destination.FormatCatalogV4 {
-		c.SchemaVersion = 8
+		c.SchemaVersion = 9
 	}
 	return validateDiscoveryConfig(*c)
 }
@@ -120,7 +120,7 @@ func validateDiscoveryConfig(c Config) error {
 	if c.Storage.EffectiveArchiveFormat() != destination.FormatLegacy && c.Storage.EffectiveArchiveFormat() != destination.FormatCatalogV4 {
 		return errors.New("unsupported archive format")
 	}
-	if c.SchemaVersion == 8 {
+	if c.SchemaVersion == 9 {
 		if c.Storage.EffectiveArchiveFormat() != destination.FormatCatalogV4 {
 			return errors.New("catalog schema requires catalog format")
 		}

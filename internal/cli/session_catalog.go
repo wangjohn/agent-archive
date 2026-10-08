@@ -12,6 +12,28 @@ import (
 // Paging happens after the final matcher, so exact IDs, configured labels and
 // scope fallback cannot be lost to a reader-side candidate limit.
 func catalogSessions(env metadataCacheDependencies, store storage.ObjectStore, opts listOptions, stderr io.Writer, command string, words []string) ([]archive.Metadata, bool, error) {
+	if reader.CatalogAuthority(store) {
+		cache := listCache(env, opts.noCache)
+		if cache != nil {
+			c, err := reader.OpenSessionCatalog(context.Background(), cache, store, reader.ListOptions{Cache: cache})
+			if err == nil {
+				defer c.Close()
+				if err = c.RefreshRemote(context.Background()); err != nil {
+					return nil, true, err
+				}
+				page, e := c.Query(context.Background(), reader.CatalogQuery{Words: words, Metadata: reader.MetadataQuery{Filter: opts.filter, Order: reader.ActivityOrder}})
+				if e == nil {
+					var sessions []archive.Metadata
+					for _, row := range page.Rows {
+						sessions = append(sessions, row.Summary.Metadata())
+					}
+					return filterListOrigin(sessions, opts.imported, opts.hookCaptured), true, nil
+				}
+			}
+		}
+		sessions, err := reader.CatalogSummaries(context.Background(), store, opts.filter)
+		return filterListOrigin(sessions, opts.imported, opts.hookCaptured), true, err
+	}
 	cache := listCache(env, opts.noCache)
 	if cache == nil {
 		return nil, false, nil

@@ -33,15 +33,29 @@ func (w *Writer) Collect(ctx context.Context, barrier Barrier) error {
 		return errors.New("writer barrier did not provide held ownership")
 	}
 	defer release()
-	h, etag, err := w.gcHead(ctx)
-	if err != nil {
-		return err
-	}
 	clock, err := w.clock.CatalogServerClock(ctx)
 	if err != nil {
 		return err
 	}
 	if err = validateClock(clock); err != nil {
+		return err
+	}
+	// Even a caller-supplied history inventory cannot replace protocol9's real
+	// destination-wide admission fence. All source/commit owners must drain.
+	coordinator := w.Coordinator()
+	seal, err := coordinator.Seal(ctx)
+	if err != nil {
+		return err
+	}
+	ownProtected, ownRelease, err := coordinator.HeldBarrier(seal).Hold(ctx)
+	if err != nil {
+		return err
+	}
+	protected = append(protected, ownProtected...)
+	// On failure, retain the durable seal/hold alongside the GC head lease.
+	// Recovery requires the exact observed GC owner and fresh global barrier.
+	h, etag, err := w.gcHead(ctx)
+	if err != nil {
 		return err
 	}
 	h, leaseETag, err := w.acquireGC(ctx, h, etag, clock)
@@ -50,7 +64,7 @@ func (w *Writer) Collect(ctx context.Context, barrier Barrier) error {
 	}
 	// Any incomplete inventory retains the durable lease. It never expires
 	// into permission and requires explicit owner recovery under the barrier.
-	live := map[string]bool{HeadKey: true}
+	live := map[string]bool{HeadKey: true, CoordinatorKey: true}
 	if err = w.markProtected(ctx, protected, live); err != nil {
 		return err
 	}
@@ -63,7 +77,11 @@ func (w *Writer) Collect(ctx context.Context, barrier Barrier) error {
 	if err = w.removeUnreachable(ctx, live); err != nil {
 		return err
 	}
-	return w.releaseGC(ctx, h, leaseETag)
+	if err = w.releaseGC(ctx, h, leaseETag); err != nil {
+		return err
+	}
+	ownRelease()
+	return nil
 }
 
 func (w *Writer) acquireGC(ctx context.Context, h CatalogHead, etag string, clock storage.CatalogTime) (CatalogHead, string, error) {
@@ -170,7 +188,7 @@ func (w *Writer) removeUnreachable(ctx context.Context, live map[string]bool) er
 		candidates = append(candidates, objects...)
 	}
 	for _, obj := range candidates {
-		if !live[obj.Key] {
+		if !live[obj.Key] && !coordinatorObject(obj.Key) {
 			if err := w.store.Delete(ctx, obj.Key); err != nil {
 				return err
 			}
@@ -280,7 +298,20 @@ func (w *Writer) RecoverGC(ctx context.Context, barrier Barrier, owner string) e
 	if h.GCLease != owner {
 		return ErrConflict
 	}
-	return w.releaseGC(ctx, h, etag)
+	if err = w.releaseGC(ctx, h, etag); err != nil {
+		return err
+	}
+	coordinated, _, err := w.Coordinator().read(ctx)
+	if err != nil {
+		return err
+	}
+	if coordinated.Hold != "" {
+		return w.Coordinator().releaseHeld(ctx, coordinated.Seal, coordinated.Hold)
+	}
+	if coordinated.Seal != "" {
+		return w.Coordinator().Release(ctx, coordinated.Seal)
+	}
+	return nil
 }
 
 func (w *Writer) gcHead(ctx context.Context) (CatalogHead, string, error) {
@@ -292,7 +323,7 @@ func (w *Writer) gcHead(ctx context.Context) (CatalogHead, string, error) {
 	if err != nil {
 		return h, "", err
 	}
-	h = CatalogHead{Schema: 4, Generation: 1, Epoch: id, PublicationEpoch: id}
+	h = CatalogHead{Schema: 4, Protocol: 9, Generation: 1, Epoch: id, PublicationEpoch: id}
 	raw, err := json.Marshal(h)
 	if err != nil {
 		return h, "", err

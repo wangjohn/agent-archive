@@ -10,7 +10,7 @@ import (
 func TestCatalogPendingCommitRoundTripAndMalformedRecovery(t *testing.T) {
 	local := newTestStore(t)
 	source := []byte("private source")
-	pending := PendingPublication{Catalog: &CatalogPublication{ID: "frozen", ExpectedRevision: "previous"}, SourceKey: "source", MetadataKey: "metadata", SourceSHA256: durableRef(source).SHA256, SourceBytes: source, MetadataBytes: []byte(`{}`)}
+	pending := PendingPublication{Catalog: &CatalogPublication{Protocol: 9, ID: "frozen", ExpectedRevision: "previous"}, SourceKey: "source", MetadataKey: "metadata", SourceSHA256: durableRef(source).SHA256, SourceBytes: source, MetadataBytes: []byte(`{}`)}
 	if err := local.SavePending("catalog", pending); err != nil {
 		t.Fatal(err)
 	}

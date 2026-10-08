@@ -111,7 +111,7 @@ func TestFrozenHistoryUsesCatalogAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pending.Catalog = &state.CatalogPublication{ID: id}
+	pending.Catalog = &state.CatalogPublication{Protocol: 9, ID: id}
 	if err = scan.local.SavePending(scan.id(), pending); err != nil {
 		t.Fatal(err)
 	}

@@ -238,3 +238,47 @@ func (s *MeasuredStore) DeleteSession(ctx context.Context, key string) error {
 	}
 	return storage.ErrAtomicCatalogUnqualified
 }
+
+// BeginPublication forwards the global durable pending lifecycle admission.
+func (s *MeasuredStore) BeginPublication(ctx context.Context, id string, raw []byte) error {
+	if lifecycle, ok := s.base().(storage.CatalogLifecycle); ok {
+		return lifecycle.BeginPublication(ctx, id, raw)
+	}
+	return nil
+}
+
+// CompletePublication forwards acknowledged history and pending settlement.
+func (s *MeasuredStore) CompletePublication(ctx context.Context, id string, raw []byte) error {
+	if lifecycle, ok := s.base().(storage.CatalogLifecycle); ok {
+		return lifecycle.CompletePublication(ctx, id, raw)
+	}
+	return nil
+}
+
+// GetCatalogVersion counts exact same-response qualified head reads.
+func (s *MeasuredStore) GetCatalogVersion(ctx context.Context, key string, limit int64) (raw []byte, version storage.CatalogObjectVersion, err error) {
+	defer func() { s.end(raw, nil) }()
+	if err = s.begin(ctx, false); err != nil {
+		return
+	}
+	getter, ok := s.base().(storage.CatalogVersionedGetter)
+	if !ok {
+		return nil, version, storage.ErrAtomicCatalogUnqualified
+	}
+	return getter.GetCatalogVersion(ctx, key, limit)
+}
+
+// CatalogServerClock forwards qualified clock evidence without guessing it.
+func (s *MeasuredStore) CatalogServerClock(ctx context.Context) (storage.CatalogTime, error) {
+	if clock, ok := s.base().(storage.CatalogClock); ok {
+		return clock.CatalogServerClock(ctx)
+	}
+	return storage.CatalogTime{}, storage.ErrAtomicCatalogUnqualified
+}
+
+// EndPublicationAttempt releases the admitted invocation execution claim.
+func (s *MeasuredStore) EndPublicationAttempt(id string) {
+	if lifecycle, ok := s.base().(storage.CatalogLifecycle); ok {
+		lifecycle.EndPublicationAttempt(id)
+	}
+}
