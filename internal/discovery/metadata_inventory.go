@@ -886,7 +886,7 @@ func (s *metadataSlice) Thread(ctx context.Context, id string) (agentapi.CodexRo
 	set, err := s.inventory.thread(op, id)
 	err = s.inventory.operationFailure(ctx, err)
 	if err != nil {
-		return set, err
+		return agentapi.CodexRolloutSet{}, err
 	}
 	refs, err := s.refs(s.inventory.threads[id])
 	err = s.inventory.operationFailure(ctx, err)

@@ -1119,3 +1119,53 @@ func TestMetadataSliceRolloutDebitsProjectionWork(t *testing.T) {
 		t.Fatal("projection cleanup charge", used)
 	}
 }
+
+// A query can finish assembling a revision just as its owned allowance expires.
+// The error must not carry a complete selection, even for an empty native census.
+func TestMetadataThreadExpiryReturnsNoCompleteSelection(t *testing.T) {
+	lookup, _, _ := metadataFixture(t, 0)
+	lookup.homes = nil
+	lookup.roots = nil
+	view := lookup.MetadataInventory().(*metadataInventory)
+	slice, err := view.BeginValidationSlice(t.Context(), agentapi.CodexValidationLimits{})
+	if err != nil || slice.Valid(t.Context()) != nil {
+		t.Fatal("empty census failed", err)
+	}
+	defer func() { _ = slice.Close() }()
+	before, _ := lookup.readBudget.Charged()
+	view.remaining = time.Nanosecond
+	set, err := slice.Thread(t.Context(), "11111111-1111-4111-8111-111111111111")
+	if agentapi.Failure(err) != agentapi.Limit || set.Complete || set.Current != nil || set.Revision != "" || len(set.Candidates) != 0 {
+		t.Fatalf("expired query returned selection authority: %+v %v", set, err)
+	}
+	if after, _ := lookup.readBudget.Charged(); after != before {
+		t.Fatal("failed query retained a result charge", before, after)
+	}
+	for _, deadline := range []bool{false, true} {
+		ctx, cancel := context.WithCancel(t.Context())
+		if deadline {
+			cancel()
+			ctx, cancel = context.WithDeadline(t.Context(), time.Now().Add(-time.Second))
+		} else {
+			cancel()
+		}
+		want := context.Canceled
+		if deadline {
+			want = context.DeadlineExceeded
+		}
+		set, err = slice.Thread(ctx, "11111111-1111-4111-8111-111111111111")
+		cancel()
+		if !errors.Is(err, want) || set.Complete || set.Current != nil || set.Revision != "" || len(set.Candidates) != 0 {
+			t.Fatalf("caller refusal returned selection authority: %+v %v", set, err)
+		}
+	}
+	if err := slice.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := lookup.CloseReadOnly(); err != nil {
+		t.Fatal(err)
+	}
+	if used, _ := lookup.readBudget.Charged(); used != 0 {
+		t.Fatal("failed query cleanup retained shared charge", used)
+	}
+}
