@@ -75,7 +75,7 @@ func (p *CatalogPublication) UnmarshalJSON(data []byte) error {
 	if err := decoder.Decode(&next); err != nil {
 		return ErrDurableStorageRecovery
 	}
-	if next.Protocol == nil || *next.Protocol != 9 || next.ID == nil || next.ExpectedRevision == nil || *next.ID == "" || len(*next.ID) > 128 || len(*next.ExpectedRevision) > 128 {
+	if next.Protocol == nil || *next.Protocol != 10 || next.ID == nil || next.ExpectedRevision == nil || *next.ID == "" || len(*next.ID) > 128 || len(*next.ExpectedRevision) > 128 {
 		return ErrDurableStorageRecovery
 	}
 	if next.Recovery != nil && (next.Recovery.Validate() != nil || next.Recovery.MutationID != *next.ID || next.Recovery.ExpectedRevision != *next.ExpectedRevision) {

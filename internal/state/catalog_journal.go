@@ -15,7 +15,7 @@ import (
 // whole immutable journal. Source bytes use their verified hash and size so
 // recovery adds no second source payload or persisted proof copy.
 func (s *Store) CatalogJournalDigest(id string, pending PendingPublication) (string, error) {
-	if pending.Catalog == nil || pending.Catalog.Protocol != 9 {
+	if pending.Catalog == nil || pending.Catalog.Protocol != 10 {
 		return "", ErrDurableStorageRecovery
 	}
 	if err := s.validateReadablePending(pending); err != nil {

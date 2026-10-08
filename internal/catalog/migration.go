@@ -53,6 +53,7 @@ const (
 //
 //revive:disable-next-line:exported -- Keep accepted protocol API name.
 type CatalogMigration struct {
+	Protocol     uint64             `json:"protocol"`
 	Source       destination.Config `json:"source"`
 	Destination  destination.Config `json:"destination"`
 	Phase        MigrationPhase     `json:"phase"`
@@ -115,7 +116,7 @@ func (m *Migration) proof(ctx context.Context) (CutoverProof, error) {
 	if err != nil {
 		return proof, err
 	}
-	if proof.ID == "" || proof.Protocol != 9 || proof.Source != destinationIdentity(m.State.Source) || proof.Destination != destinationIdentity(m.State.Destination) {
+	if proof.ID == "" || proof.Protocol != 10 || proof.Source != destinationIdentity(m.State.Source) || proof.Destination != destinationIdentity(m.State.Destination) {
 		return proof, errors.New("credential cutover proof differs from migration destination or writer protocol")
 	}
 	return proof, nil
@@ -140,7 +141,7 @@ func OpenMigration(ctx context.Context, source, target storage.ObjectStore, sour
 	if _, ok := source.(storage.LimitedGetter); !ok {
 		return nil, errors.New("migration requires bounded source reads")
 	}
-	m := &Migration{Source: source, Destination: target, Authority: authority, State: CatalogMigration{Source: sourceConfig, Destination: targetConfig}, writer: w}
+	m := &Migration{Source: source, Destination: target, Authority: authority, State: CatalogMigration{Protocol: 10, Source: sourceConfig, Destination: targetConfig}, writer: w}
 	proof, err := m.proof(ctx)
 	if err != nil {
 		return nil, err
@@ -561,7 +562,7 @@ func decodeMigration(raw []byte) (CatalogMigration, error) {
 
 func (state CatalogMigration) validate() error {
 	invalid := errors.New("invalid migration checkpoint descriptor")
-	if !exactHex(state.ID, 24) || !exactHex(state.Owner, 24) || state.Proof == "" || len(state.Proof) > 4096 || len(state.Cursor) > 4096 || len(state.ExpectedHead) > 4096 || !isolated(state.Source, state.Destination) || state.Source.EffectiveArchiveFormat() != destination.FormatLegacy || state.Destination.EffectiveArchiveFormat() != destination.FormatCatalogV4 {
+	if state.Protocol != 10 || !exactHex(state.ID, 24) || !exactHex(state.Owner, 24) || state.Proof == "" || len(state.Proof) > 4096 || len(state.Cursor) > 4096 || len(state.ExpectedHead) > 4096 || !isolated(state.Source, state.Destination) || state.Source.EffectiveArchiveFormat() != destination.FormatLegacy || state.Destination.EffectiveArchiveFormat() != destination.FormatCatalogV4 {
 		return invalid
 	}
 	switch state.Phase {

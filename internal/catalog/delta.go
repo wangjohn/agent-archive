@@ -7,7 +7,9 @@ import (
 )
 
 // Delta is verified reconciliation between two complete identity roots. It
-// carries changed/deleted summaries, never partial canonical LIST authority.
+// carries changed/deleted entries, never partial canonical LIST authority.
+// Changed overflow entries are lazy projections; complete-summary consumers must
+// call ResolveRow before using their summaries.
 type Delta struct {
 	Prior   ObjectRef
 	Next    ObjectRef
@@ -50,7 +52,7 @@ func (s *Snapshot) Delta(ctx context.Context, prior ObjectRef) (Delta, error) {
 	}
 	for key, entry := range next {
 		if previous, ok := old[key]; !ok || previous.Revision != entry.Revision || previous.Metadata != entry.Metadata || previous.OrdinaryChildren != entry.OrdinaryChildren || previous.ReplayChildren != entry.ReplayChildren {
-			d.Changed = append(d.Changed, Row{key, entry})
+			d.Changed = append(d.Changed, Row{Key: key, Entry: entry})
 		}
 	}
 	for key := range old {

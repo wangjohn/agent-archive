@@ -57,7 +57,7 @@ func (w *Writer) Coordinator() *Coordinator { return &Coordinator{writer: w} }
 func (c *Coordinator) read(ctx context.Context) (admissions, string, error) {
 	raw, v, err := c.writer.versioned.GetCatalogVersion(ctx, CoordinatorKey, 4<<20)
 	if errors.Is(err, storage.ErrNotFound) {
-		return admissions{Protocol: 9, Mode: admissionCandidate, Owners: map[string]admission{}}, "", nil
+		return admissions{Protocol: 10, Mode: admissionCandidate, Owners: map[string]admission{}}, "", nil
 	}
 	if err != nil {
 		return admissions{}, "", err

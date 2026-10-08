@@ -41,8 +41,9 @@ type Query struct {
 
 // Row identifies an immutable metadata revision selected from an index.
 type Row struct {
-	Key   string
-	Entry CatalogEntry
+	Key      string
+	Entry    CatalogEntry
+	resolved *resolvedRow
 }
 
 // Page contains at most the requested number of live entries.
@@ -332,8 +333,11 @@ func (s *Snapshot) findPinned(ctx context.Context, key string) (*CatalogEntry, e
 // ReadMetadata verifies the immutable body selected by this snapshot. It never
 // substitutes a newer canonical revision after selection.
 func (s *Snapshot) ReadMetadata(ctx context.Context, entry CatalogEntry) ([]byte, error) {
-	if time.Since(s.started) >= SnapshotLifetime {
-		return nil, ErrStaleCursor
+	if err := s.check(ctx); err != nil {
+		return nil, err
+	}
+	if err := validateEntryReference(entry); err != nil {
+		return nil, err
 	}
 	raw, err := s.writer.readRef(ctx, entry.Metadata, 32<<20)
 	if err != nil {

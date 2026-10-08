@@ -107,6 +107,8 @@ type HeadWitness struct {
 //
 //revive:disable-next-line:exported -- Keep the accepted protocol API name.
 type CatalogEntry struct {
+	// SummaryOverflow marks a lazy index projection resolved through Metadata.
+	SummaryOverflow  string           `json:"SummaryOverflow,omitempty"`
 	OrdinaryChildren uint64           `json:"OrdinaryChildren"`
 	ReplayChildren   uint64           `json:"ReplayChildren"`
 	Revision         string           `json:"Revision"`
@@ -263,7 +265,7 @@ func (w *Writer) readHead(ctx context.Context) (CatalogHead, storage.CatalogObje
 	raw, version, err := w.versioned.GetCatalogVersion(ctx, HeadKey, 16<<10)
 	etag := version.ETag
 	if errors.Is(err, storage.ErrNotFound) {
-		return CatalogHead{Schema: 4, Protocol: 9}, storage.CatalogObjectVersion{}, nil
+		return CatalogHead{Schema: 4, Protocol: 10}, storage.CatalogObjectVersion{}, nil
 	}
 	if err != nil {
 		return CatalogHead{}, storage.CatalogObjectVersion{}, err
@@ -277,7 +279,7 @@ func (w *Writer) readHead(ctx context.Context) (CatalogHead, storage.CatalogObje
 	if err = decoder.Decode(&h); err != nil {
 		return h, storage.CatalogObjectVersion{}, err
 	}
-	if h.Schema != 4 || h.Protocol != 9 || h.Generation == 0 || h.Epoch == "" || h.PublicationEpoch == "" || etag == "" {
+	if h.Schema != 4 || h.Protocol != 10 || h.Generation == 0 || h.Epoch == "" || h.PublicationEpoch == "" || etag == "" {
 		return h, storage.CatalogObjectVersion{}, errors.New("invalid catalog head")
 	}
 	if err = h.validateReferences(); err != nil {
@@ -371,6 +373,9 @@ func (w *Writer) Commit(ctx context.Context, m CatalogMutation) (string, error) 
 	}
 	if w.readOnly {
 		return "", ErrReadOnly
+	}
+	if m.Next != nil && m.Next.SummaryOverflow != "" {
+		return "", errors.New("catalog mutation requires complete metadata summary")
 	}
 	frozen, digest, err := freezeMutation(m)
 	if err != nil {
@@ -468,6 +473,10 @@ func (w *Writer) commitAdmitted(ctx context.Context, m CatalogMutation) (string,
 }
 
 func freezeMutation(m CatalogMutation) (CatalogMutation, string, error) {
+	if m.Next != nil && m.Next.SummaryOverflow != "" {
+		return CatalogMutation{}, "", errors.New("catalog mutation requires complete metadata summary")
+	}
+
 	if m.ID == "" || len(m.ID) > 128 || m.SessionKey == "" || len(m.SessionKey) > 1024 {
 		return m, "", errors.New("invalid catalog mutation")
 	}
@@ -576,27 +585,23 @@ func (w *Writer) updateOrders(ctx context.Context, h *CatalogHead, key string, o
 }
 
 func (w *Writer) verifyEntry(ctx context.Context, key string, entry *CatalogEntry) error {
-	digest, err := hex.DecodeString(entry.Metadata.SHA256)
-	if err != nil || len(digest) != 32 || entry.Metadata.SHA256 != hex.EncodeToString(digest) || entry.Metadata.Key != "catalog-v4/metadata/"+entry.Metadata.SHA256+".json" {
-		return errors.New("catalog metadata requires its immutable checksum key")
+	if err := validateEntryReference(*entry); err != nil {
+		return err
 	}
 	raw, err := w.readRef(ctx, entry.Metadata, 32<<20)
 	if err != nil {
 		return err
 	}
-	var metadata archive.Metadata
-	if err = json.Unmarshal(raw, &metadata); err != nil {
+	metadata, err := decodeEntryBody(*entry, raw)
+	if err != nil {
 		return err
 	}
 	canonical, err := archive.MetadataObjectKey(metadata.Harness.Name, metadata.SessionID)
 	if err != nil || canonical != key {
 		return errors.New("catalog metadata identity mismatch")
 	}
-	expected, _ := json.Marshal(entry.Summary)
-	actual, _ := json.Marshal(metadata)
-	if string(expected) != string(actual) {
-		return errors.New("catalog summary does not match immutable metadata")
-	}
+	entry.Summary = metadata
+	entry.SummaryOverflow = ""
 	refs, err := canonicalSourceReferences(metadata)
 	if err != nil {
 		return err

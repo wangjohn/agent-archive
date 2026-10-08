@@ -6,6 +6,13 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Keep large catalog metadata complete through bounded lazy overflow entries
+  referencing the original immutable body. Protocol10 fences older writers;
+  indexed key limits still apply. Collector retries now verify their originating
+  durable journal under the actual collector lock before resuming, and retain
+  source/history protection through completion acknowledgment.
+
+
 - Add the explicit `migrate --format catalog-v4 --prefix PREFIX` protocol with
   isolated destinations, durable page checkpoints, exhaustive source/history
   verification, owner-fenced activation and unchanged-catalog rollback. Original

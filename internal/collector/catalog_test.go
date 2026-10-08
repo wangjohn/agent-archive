@@ -122,15 +122,15 @@ func TestCollectorCatalogRetryFreezesMutationBeforeUpload(t *testing.T) {
 		t.Fatal("catalog metadata unavailable", err)
 	}
 	loaded, _, err := config.Load(local.Home())
-	if err != nil || !loaded.DurableStorageProtection || loaded.SchemaVersion != 9 {
+	if err != nil || !loaded.DurableStorageProtection || loaded.SchemaVersion != 10 {
 		t.Fatal("durable catalog writer fence missing", err)
 	}
 	rawConfig, err := json.Marshal(loaded)
-	if err != nil || !strings.Contains(string(rawConfig), `"writer":"catalog-v4-v9"`) {
+	if err != nil || !strings.Contains(string(rawConfig), `"writer":"catalog-v4-v10"`) {
 		t.Fatal("missing exact forward catalog writer marker", err)
 	}
 	var roundTrip config.Config
-	if err = json.Unmarshal(rawConfig, &roundTrip); err != nil || roundTrip.SchemaVersion != 9 || !roundTrip.DurableStorageProtection {
+	if err = json.Unmarshal(rawConfig, &roundTrip); err != nil || roundTrip.SchemaVersion != 10 || !roundTrip.DurableStorageProtection {
 		t.Fatal("catalog writer roundtrip", err)
 	}
 }
@@ -150,7 +150,7 @@ func TestFrozenHistoryUsesCatalogAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pending.Catalog = &state.CatalogPublication{Protocol: 9, ID: id}
+	pending.Catalog = &state.CatalogPublication{Protocol: 10, ID: id}
 	if err = scan.local.SavePending(scan.id(), pending); err != nil {
 		t.Fatal(err)
 	}

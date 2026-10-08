@@ -181,7 +181,7 @@ func TestMigrateHelpAndNoForceBypass(t *testing.T) {
 type migrationCLIStore struct{ *qualifiedCLIStore }
 
 func (*migrationCLIStore) VerifyCatalogCutover(_ context.Context, source, target destination.Config) (catalog.CutoverProof, error) {
-	return catalog.CutoverProof{ID: "private-reviewed-cutoff", Source: config.DestinationID(source), Destination: config.DestinationID(target), Protocol: 9}, nil
+	return catalog.CutoverProof{ID: "private-reviewed-cutoff", Source: config.DestinationID(source), Destination: config.DestinationID(target), Protocol: 10}, nil
 }
 
 func TestRunMigrateResumesActivatesAndRollsBackPrivateDestination(t *testing.T) {

@@ -80,7 +80,7 @@ func (s *sessionScan) publishPending(ctx context.Context, pending state.PendingP
 			if err != nil {
 				return outcomeSkipped, err
 			}
-			pending.Catalog = &state.CatalogPublication{Protocol: 9, ID: id, ExpectedRevision: revision}
+			pending.Catalog = &state.CatalogPublication{Protocol: 10, ID: id, ExpectedRevision: revision}
 			if err = s.local.SavePending(s.id(), pending); err != nil {
 				return outcomeSkipped, err
 			}

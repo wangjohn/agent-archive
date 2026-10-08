@@ -23,7 +23,7 @@ const legacyCodexWriter configWriter = "codex-scope-v3"
 
 const codexWriter configWriter = "codex-scope-floor-v3"
 
-const catalogWriter configWriter = "catalog-v4-v9"
+const catalogWriter configWriter = "catalog-v4-v10"
 
 const durableStorageWriter configWriter = "durable-storage-v7"
 
@@ -65,7 +65,7 @@ func (c Config) MarshalJSON() ([]byte, error) {
 		version = writerVersion{Version: 7, Writer: durableStorageWriter}
 	}
 	if c.Storage.EffectiveArchiveFormat() == destination.FormatCatalogV4 {
-		version = writerVersion{Version: 9, Writer: catalogWriter}
+		version = writerVersion{Version: 10, Writer: catalogWriter}
 	}
 	return json.Marshal(struct {
 		SchemaVersion writerVersion `json:"schema_version"`
@@ -108,7 +108,7 @@ func decodeConfig(data []byte, c *Config) (bool, error) {
 			return false, err
 		}
 	}
-	if plain.Storage.EffectiveArchiveFormat() == destination.FormatCatalogV4 && (!fenced || plain.SchemaVersion != 9) {
+	if plain.Storage.EffectiveArchiveFormat() == destination.FormatCatalogV4 && (!fenced || plain.SchemaVersion != 10) {
 		return false, errors.New("catalog format requires its supported forward writer fence")
 	}
 	*c = Config(plain)
@@ -120,10 +120,10 @@ func codexMarkerMatches(mode SkillEvidence, writer configWriter) bool {
 }
 
 func validateWriterVersion(c Config, version writerVersion) error {
-	if (version.Version != 2 || (version.Writer != discoveryWriter && version.Writer != legacyDiscoveryWriter)) && (version.Version != 3 || (version.Writer != codexWriter && version.Writer != legacyCodexWriter)) && (version.Version != 4 || version.Writer != generationWriter) && (version.Version != 5 || version.Writer != codexHistoryWriter) && (version.Version != 7 || version.Writer != durableStorageWriter) && (version.Version != 9 || version.Writer != catalogWriter) {
+	if (version.Version != 2 || (version.Writer != discoveryWriter && version.Writer != legacyDiscoveryWriter)) && (version.Version != 3 || (version.Writer != codexWriter && version.Writer != legacyCodexWriter)) && (version.Version != 4 || version.Writer != generationWriter) && (version.Version != 5 || version.Writer != codexHistoryWriter) && (version.Version != 7 || version.Writer != durableStorageWriter) && (version.Version != 10 || version.Writer != catalogWriter) {
 		return errors.New("configuration requires a supported writer fence")
 	}
-	if version.Version == 9 {
+	if version.Version == 10 {
 		if c.Storage.EffectiveArchiveFormat() != destination.FormatCatalogV4 {
 			return errors.New("catalog writer fence requires catalog format")
 		}

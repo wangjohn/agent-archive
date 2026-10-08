@@ -32,7 +32,7 @@ func catalogRows(ctx context.Context, snapshot *catalog.Snapshot) ([]catalog.Row
 		}
 		rows = append(rows, page.Rows...)
 		if page.Next == "" {
-			return rows, nil
+			return resolveCatalogRows(ctx, snapshot, rows, ListOptions{})
 		}
 		cursor = page.Next
 	}
@@ -62,6 +62,11 @@ func hydrateCatalogRows(ctx context.Context, snapshot *catalog.Snapshot, rows []
 }
 
 func readCatalogRow(ctx context.Context, snapshot *catalog.Snapshot, row catalog.Row, cache *MetadataCache) (selectedRead, bool) {
+	if body, reused, err := snapshot.ResolvedMetadata(ctx, row); err != nil {
+		return selectedRead{Err: err}, false
+	} else if reused {
+		return selectedRead{Metadata: body, Cached: true}, true
+	}
 	raw, cached := cache.get(row.Key, row.Entry.Revision)
 	if cached && !storage.VerifySHA256(raw, row.Entry.Metadata.SHA256) {
 		cached = false
@@ -78,9 +83,7 @@ func readCatalogRow(ctx context.Context, snapshot *catalog.Snapshot, row catalog
 		return selectedRead{Err: err}, false
 	}
 	canonical, err := archive.MetadataObjectKey(metadata.Harness.Name, metadata.SessionID)
-	a, _ := json.Marshal(metadata)
-	b, _ := json.Marshal(row.Entry.Summary)
-	if err != nil || canonical != row.Key || string(a) != string(b) {
+	if err != nil || canonical != row.Key || row.Entry.MatchMetadata(metadata) != nil {
 		return selectedRead{Err: errors.New("catalog selected body differs from summary")}, false
 	}
 	if err = snapshot.ValidateRead(ctx); err != nil {
@@ -239,6 +242,10 @@ func (c *SQLiteSessionCatalog) RefreshRemote(ctx context.Context) error {
 		return err
 	}
 	delta, err = reconcileRemoteDelta(ctx, snapshot, delta, cachedKeys, invalid, expected)
+	if err != nil {
+		return err
+	}
+	delta.Changed, err = resolveCatalogRows(ctx, snapshot, delta.Changed, c.opts)
 	if err != nil {
 		return err
 	}
@@ -481,4 +488,21 @@ func applyRemoteDelta(ctx context.Context, tx *sql.Tx, delta catalog.Delta) erro
 	}
 
 	return nil
+}
+
+func resolveCatalogRows(ctx context.Context, snapshot *catalog.Snapshot, rows []catalog.Row, opts ListOptions) ([]catalog.Row, error) {
+	for i, row := range rows {
+		resolved, raw, err := snapshot.ResolveRow(ctx, row)
+		if err != nil {
+			return nil, err
+		}
+		rows[i] = resolved
+		if len(raw) > 0 {
+			opts.Cache.putVerified(row.Key, row.Entry.Revision, raw)
+			if opts.BodyRead != nil {
+				opts.BodyRead(row.Key, false)
+			}
+		}
+	}
+	return rows, snapshot.ValidateRead(ctx)
 }

@@ -23,7 +23,7 @@ func (a *syntheticCutover) VerifyCatalogCutover(_ context.Context, src, dst dest
 	if !a.valid {
 		return CutoverProof{}, errors.New("synthetic credentials still writable")
 	}
-	return CutoverProof{ID: a.id, Source: destinationIdentity(src), Destination: destinationIdentity(dst), Protocol: 9}, nil
+	return CutoverProof{ID: a.id, Source: destinationIdentity(src), Destination: destinationIdentity(dst), Protocol: 10}, nil
 }
 
 func migrationFixture(t *testing.T, count int) (*storagetest.MemoryStore, *qualifiedStore, destination.Config, destination.Config, *syntheticCutover) {

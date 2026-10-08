@@ -49,7 +49,7 @@ func (w *Writer) Collect(ctx context.Context, barrier Barrier) error {
 	if !ownBarrier {
 		defer release()
 	}
-	// Even a caller-supplied history inventory cannot replace protocol9's real
+	// Even a caller-supplied history inventory cannot replace protocol10's real
 	// destination-wide admission fence. All source/commit owners must drain.
 	coordinator := w.Coordinator()
 	var ownRelease func()
@@ -306,11 +306,15 @@ func (w *Writer) markTree(ctx context.Context, ref ObjectRef, live, visited map[
 		entry := r.Entry
 		// Order leaves carry entries directly; receipt leaves carry no metadata.
 		if entry == nil {
-			var direct CatalogEntry
-			if err = json.Unmarshal(leaf.Value, &direct); err != nil {
+			var fields map[string]json.RawMessage
+			if err = json.Unmarshal(leaf.Value, &fields); err != nil {
 				return err
 			}
-			if direct.Metadata.Key != "" {
+			if _, ok := fields["Metadata"]; ok {
+				var direct CatalogEntry
+				if err = json.Unmarshal(leaf.Value, &direct); err != nil {
+					return err
+				}
 				entry = &direct
 			}
 		}
@@ -368,7 +372,7 @@ func (w *Writer) gcHead(ctx context.Context, authorize func(context.Context, *Wr
 	if err != nil {
 		return h, "", err
 	}
-	h = CatalogHead{Schema: 4, Protocol: 9, Generation: 1, Epoch: id, PublicationEpoch: id}
+	h = CatalogHead{Schema: 4, Protocol: 10, Generation: 1, Epoch: id, PublicationEpoch: id}
 	raw, err := json.Marshal(h)
 	if err != nil {
 		return h, "", err

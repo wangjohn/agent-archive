@@ -47,7 +47,7 @@ func journalFixture(t *testing.T) (*Store, *qualifiedStore, *state.Store, state.
 	if err != nil {
 		t.Fatal(err)
 	}
-	pending := state.PendingPublication{Catalog: &state.CatalogPublication{Protocol: 9, ID: mutation.ID}, SourceKey: source.Key, SourceSHA256: source.SHA256, SourceBytes: bytes, MetadataKey: mutation.SessionKey, MetadataBytes: raw}
+	pending := state.PendingPublication{Catalog: &state.CatalogPublication{Protocol: 10, ID: mutation.ID}, SourceKey: source.Key, SourceSHA256: source.SHA256, SourceBytes: bytes, MetadataKey: mutation.SessionKey, MetadataBytes: raw}
 	digest, err := localStore.CatalogJournalDigest("journal", pending)
 	if err != nil {
 		t.Fatal(err)

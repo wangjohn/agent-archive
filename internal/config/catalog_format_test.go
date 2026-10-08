@@ -14,7 +14,7 @@ import (
 // while provider qualification still prevents production activation.
 func TestLoadedCatalogRequiresItsForwardWriterFence(t *testing.T) {
 	t.Parallel()
-	for _, version := range []string{`1`, `7`, `8`, `9`, `null`, `{"version":7,"writer":"durable-storage-v7"}`, `{"version":8,"writer":"durable-storage-v7"}`, `{"version":8}`, `{"version":8,"writer":"catalog-v4-v8"}`, `{"version":9}`, `{"version":9,"writer":"catalog-v4-v8"}`, `{"version":9,"writer":"catalog-v4-v9"}`} {
+	for _, version := range []string{`1`, `7`, `8`, `9`, `10`, `null`, `{"version":9,"writer":"catalog-v4-v9"}`, `{"version":7,"writer":"durable-storage-v7"}`, `{"version":8,"writer":"durable-storage-v7"}`, `{"version":8}`, `{"version":8,"writer":"catalog-v4-v8"}`, `{"version":10}`, `{"version":10,"writer":"catalog-v4-v8"}`, `{"version":10,"writer":"catalog-v4-v10"}`} {
 		t.Run(version, func(t *testing.T) {
 			t.Parallel()
 			home := t.TempDir()
@@ -23,7 +23,7 @@ func TestLoadedCatalogRequiresItsForwardWriterFence(t *testing.T) {
 				t.Fatal(err)
 			}
 			_, found, fenced, err := loadConfig(home)
-			if version == `{"version":9,"writer":"catalog-v4-v9"}` {
+			if version == `{"version":10,"writer":"catalog-v4-v10"}` {
 				if err != nil || !found || !fenced {
 					t.Fatal("valid catalog fence refused", err)
 				}
@@ -53,14 +53,14 @@ func TestCatalogFormatDefaultsAndWriterFence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(raw), `"writer":"catalog-v4-v9"`) {
+	if !strings.Contains(string(raw), `"writer":"catalog-v4-v10"`) {
 		t.Fatal("missing catalog old-writer fence")
 	}
 	var decoded Config
 	if err = json.Unmarshal(raw, &decoded); err != nil {
 		t.Fatal(err)
 	}
-	if decoded.SchemaVersion != 9 || decoded.Storage.EffectiveArchiveFormat() != destination.FormatCatalogV4 {
+	if decoded.SchemaVersion != 10 || decoded.Storage.EffectiveArchiveFormat() != destination.FormatCatalogV4 {
 		t.Fatal("format roundtrip")
 	}
 	var old struct {

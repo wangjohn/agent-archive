@@ -175,7 +175,7 @@ func (w *Writer) update(ctx context.Context, ref ObjectRef, key string, value an
 	}
 	var raw json.RawMessage
 	if value != nil {
-		b, err := json.Marshal(value)
+		b, err := encodeTreeValue(key, value)
 		if err != nil {
 			return ObjectRef{}, err
 		}

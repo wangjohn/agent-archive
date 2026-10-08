@@ -11,7 +11,7 @@ import (
 func TestCatalogPendingCommitRoundTripAndMalformedRecovery(t *testing.T) {
 	local := newTestStore(t)
 	source := []byte("private source")
-	pending := PendingPublication{Catalog: &CatalogPublication{Protocol: 9, ID: "frozen", ExpectedRevision: "previous"}, SourceKey: "source", MetadataKey: "metadata", SourceSHA256: durableRef(source).SHA256, SourceBytes: source, MetadataBytes: []byte(`{}`)}
+	pending := PendingPublication{Catalog: &CatalogPublication{Protocol: 10, ID: "frozen", ExpectedRevision: "previous"}, SourceKey: "source", MetadataKey: "metadata", SourceSHA256: durableRef(source).SHA256, SourceBytes: source, MetadataBytes: []byte(`{}`)}
 	if err := local.SavePending("catalog", pending); err != nil {
 		t.Fatal(err)
 	}
@@ -50,10 +50,10 @@ func TestCatalogPendingCommitRoundTripAndMalformedRecovery(t *testing.T) {
 		t.Fatal("unreadable expected revision persisted")
 	}
 	var descriptor PendingPublication
-	if err = json.Unmarshal([]byte(`{"commit":{"protocol":9,"id":"frozen","expected_revision":""}}`), &descriptor); err != nil || descriptor.Catalog == nil {
+	if err = json.Unmarshal([]byte(`{"commit":{"protocol":10,"id":"frozen","expected_revision":""}}`), &descriptor); err != nil || descriptor.Catalog == nil {
 		t.Fatal("explicit creation revision refused", err)
 	}
-	for _, protocol := range []string{"", `"protocol":8,`} {
+	for _, protocol := range []string{"", `"protocol":8,`, `"protocol":9,`} {
 		if err = json.Unmarshal([]byte(`{"commit":{`+protocol+`"id":"frozen","expected_revision":""}}`), &descriptor); !errors.Is(err, ErrDurableStorageRecovery) {
 			t.Fatal("older publication admission accepted", err)
 		}

@@ -21,7 +21,7 @@ func exactHex(value string, bytes int) bool {
 var errCoordinatorDescriptor = errors.New("invalid catalog coordinator descriptor")
 
 func (state admissions) validate() error {
-	if state.Protocol != 9 || state.Generation == 0 || state.Owners == nil || len(state.Owners) > 256 {
+	if state.Protocol != 10 || state.Generation == 0 || state.Owners == nil || len(state.Owners) > 256 {
 		return errCoordinatorDescriptor
 	}
 	if state.Mode != admissionCandidate && state.Mode != admissionActive && state.Mode != admissionRollback {
@@ -109,7 +109,7 @@ func (link gcLink) validateReleasedHead() error {
 	if decoder.Decode(&h) != nil || decoder.Decode(new(any)) != io.EOF {
 		return errCoordinatorDescriptor
 	}
-	if h.GCLease != "" || h.GCCoordinator != (gcCoordinatorWitness{}) || h.Protocol != 9 || h.Schema != 4 || h.Generation == 0 || !exactHex(h.Epoch, 24) || h.validateReferences() != nil {
+	if h.GCLease != "" || h.GCCoordinator != (gcCoordinatorWitness{}) || h.Protocol != 10 || h.Schema != 4 || h.Generation == 0 || !exactHex(h.Epoch, 24) || h.validateReferences() != nil {
 		return errCoordinatorDescriptor
 	}
 	return nil
