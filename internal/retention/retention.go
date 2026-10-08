@@ -222,6 +222,9 @@ func (s *sweeper) orphans(keep map[string]bool) {
 var knownHarnesses = agentmeta.Names(agentmeta.Builtins())
 
 func (s *sweeper) orphan(id string) error {
+	if err := s.local.CheckDurableSessionRead(id); err != nil {
+		return err
+	}
 	ageFrom := s.local.OrphanChangedAt(id)
 	summary, found, err := s.local.LoadPublishedSummary(id)
 	if err != nil {
@@ -238,6 +241,9 @@ func (s *sweeper) orphan(id string) error {
 		harnesses = knownHarnesses
 	}
 	for _, harness := range harnesses {
+		if err := s.local.CheckDurableSessionRead(id); err != nil {
+			return err
+		}
 		if err := DeleteWholeSession(s.ctx, s.store, harness, id); err != nil {
 			return fmt.Errorf("delete unregistered session: %w", err)
 		}
@@ -268,6 +274,9 @@ type sweeper struct {
 // session sweeps one registered session.
 func (s *sweeper) session(reg archive.SessionRegistration) error {
 	id := reg.ArchiveSessionID
+	if err := s.local.CheckDurableSessionRead(id); err != nil {
+		return err
+	}
 	summary, found, err := s.local.LoadPublishedSummary(id)
 	if err != nil {
 		return fmt.Errorf("load published cache: %w", err)
@@ -436,8 +445,18 @@ func (s *sweeper) remote(reg archive.SessionRegistration, summary state.Publishe
 	// failed. Remote metadata for the capture already cached says nothing
 	// new: its time is the cached one, clamped or not.
 	capturedAt := ageFrom
-	if remoteErr == nil && metadata.CapturedAt.After(capturedAt) && !metadata.CapturedAt.Equal(summary.CapturedAt) {
-		capturedAt = metadata.CapturedAt
+	if remoteErr == nil {
+		remoteAge, err := metadata.MeaningfulCapturedAt()
+		if err != nil {
+			return err
+		}
+		cachedAge := summary.MeaningfulCapturedAt
+		if cachedAge.IsZero() {
+			cachedAge = summary.CapturedAt
+		}
+		if remoteAge.After(capturedAt) && !remoteAge.Equal(cachedAge) {
+			capturedAt = remoteAge
+		}
 	}
 
 	// locallyExpired already carries SessionMaxAge, the cached capture time,
@@ -446,6 +465,9 @@ func (s *sweeper) remote(reg archive.SessionRegistration, summary state.Publishe
 	if locallyExpired && s.expired(capturedAt) {
 		if !s.clockAllowsDeletion() {
 			return nil
+		}
+		if err := s.local.CheckDurableSessionRead(id); err != nil {
+			return err
 		}
 		if err := DeleteWholeSession(s.ctx, s.store, reg.Harness.Name, id); err != nil {
 			return fmt.Errorf("delete session: %w", err)
@@ -468,7 +490,7 @@ func (s *sweeper) remote(reg archive.SessionRegistration, summary state.Publishe
 	if remoteErr != nil {
 		return fmt.Errorf("current metadata is missing; preserve superseded sources")
 	}
-	return s.deleteSuperseded(reg, superseded, metadata.SourceBundle.Key)
+	return s.deleteSuperseded(reg, superseded, metadata)
 }
 
 // currentMetadata reads the session's live metadata, the pointer every
@@ -479,7 +501,12 @@ func (s *sweeper) currentMetadata(reg archive.SessionRegistration) (archive.Meta
 	if err != nil {
 		return archive.Metadata{}, err
 	}
-	data, err := s.store.Get(s.ctx, metadataKey)
+	var data []byte
+	if reg.Harness.Name == "codex" {
+		data, err = boundedHistoryMetadata(s.ctx, s.store, metadataKey)
+	} else {
+		data, err = s.store.Get(s.ctx, metadataKey)
+	}
 	if errors.Is(err, storage.ErrNotFound) {
 		return archive.Metadata{}, err
 	}
@@ -496,15 +523,33 @@ func (s *sweeper) currentMetadata(reg archive.SessionRegistration) (archive.Meta
 	if metadata.SessionID != reg.ArchiveSessionID || metadata.Harness.Name != reg.Harness.Name || !strings.HasPrefix(metadata.SourceBundle.Key, fmt.Sprintf("sessions/%s/%s/", reg.Harness.Name, reg.ArchiveSessionID)) {
 		return archive.Metadata{}, fmt.Errorf("current metadata belongs to another session")
 	}
-	if err := archive.CheckHistoryMutation(archive.SourceBundle{}, metadata); err != nil {
+	if _, err := metadata.SourceReferences(); err != nil {
 		return archive.Metadata{}, err
+	}
+	if metadata.History != nil && (metadata.NativeSessionID != reg.NativeSessionID || metadata.ProjectID != reg.ProjectID || metadata.CapturedAt.IsZero()) {
+		return archive.Metadata{}, errors.New("complete cleanup history authority required")
 	}
 	return metadata, nil
 }
 
 // deleteSuperseded deletes the ledger's snapshots past their grace period,
 // keeping the current source and the ordinary immediate predecessor.
-func (s *sweeper) deleteSuperseded(reg archive.SessionRegistration, superseded []state.SupersededSource, currentKey string) error {
+func (s *sweeper) deleteSuperseded(reg archive.SessionRegistration, superseded []state.SupersededSource, current archive.Metadata) error {
+	if err := s.local.CheckDurableSessionRead(reg.ArchiveSessionID); err != nil {
+		return err
+	}
+	refs, err := current.SourceReferences()
+	if err != nil {
+		return err
+	}
+	protected := map[string]bool{}
+	for _, ref := range refs {
+		protected[ref.Key] = true
+	}
+	currentDigest, err := current.SourceSetDigest()
+	if err != nil {
+		return err
+	}
 	id := reg.ArchiveSessionID
 	// Append order records supersession order even if the clock moves backward.
 	var predecessorKey string
@@ -512,12 +557,12 @@ func (s *sweeper) deleteSuperseded(reg archive.SessionRegistration, superseded [
 		if !strings.HasPrefix(entry.Key, fmt.Sprintf("sessions/%s/%s/source.", reg.Harness.Name, id)) {
 			return fmt.Errorf("superseded source belongs to another session")
 		}
-		if entry.Key != currentKey {
+		if !protected[entry.Key] {
 			predecessorKey = entry.Key
 		}
 	}
 	for _, entry := range superseded {
-		if entry.Key == currentKey {
+		if protected[entry.Key] {
 			// Defensive: a key must never be both current and superseded;
 			// if it somehow is, trust "current" and just clean the ledger.
 			if err := s.local.RemoveSuperseded(id, entry.Key); err != nil {
@@ -536,15 +581,35 @@ func (s *sweeper) deleteSuperseded(reg archive.SessionRegistration, superseded [
 			if err != nil {
 				return err
 			}
-			if fresh.SourceBundle.Key != currentKey {
+			freshDigest, err := fresh.SourceSetDigest()
+			if err != nil {
+				return err
+			}
+			if freshDigest != currentDigest {
 				return fmt.Errorf("current metadata changed during privacy cleanup")
 			}
 			if !s.opts.PrivacyVerified(reg, fresh) {
 				continue
 			}
 		}
+		// Recheck after receipt callbacks and immediately before deletion. A
+		// reactivated ordinary reference is protected just like a privacy ref.
+		fresh, err := s.currentMetadata(reg)
+		if err != nil {
+			return err
+		}
+		freshDigest, err := fresh.SourceSetDigest()
+		if err != nil {
+			return err
+		}
+		if freshDigest != currentDigest {
+			return errors.New("current metadata changed during source cleanup")
+		}
 		if !s.clockAllowsDeletion() {
 			return nil
+		}
+		if err := s.local.CheckDurableSessionRead(id); err != nil {
+			return err
 		}
 		if err := s.store.Delete(s.ctx, entry.Key); err != nil {
 			return fmt.Errorf("delete superseded source %q: %w", entry.Key, err)

@@ -61,7 +61,7 @@ func handleEvent(home, harness string, payload map[string]any, now time.Time, lo
 	if err != nil {
 		return err
 	}
-	return handleBatch(home, harness, batch, now, lock, afterLock, eventOptions{decoders: testDecoders})
+	return handleBatch(home, harness, batch, now, lock, afterLock, eventOptions{})
 }
 
 func provesFreshSessionStart(harness string, payload map[string]any) bool {
@@ -149,20 +149,32 @@ func emptyTranscriptProvesFreshStart(payload map[string]any) bool {
 	return resolveFreshness([]agentapi.LifecycleEvent{event}, nil)[0].Start.Kind == agentapi.FreshExplicit
 }
 
-func WithDecoders(d agentapi.DecodersLookup) Option { return func(o *eventOptions) { o.decoders = d } }
+type decoderOption struct{ lookup agentapi.DecodersLookup }
 
-func HandleEvent(home, harness string, payload map[string]any, now time.Time, options ...Option) error {
+func WithDecoders(d agentapi.DecodersLookup) decoderOption { return decoderOption{lookup: d} }
+
+func HandleEvent(home, harness string, payload map[string]any, now time.Time, options ...any) error {
 	var o eventOptions
+	var decoders agentapi.DecodersLookup
 	for _, option := range options {
-		option(&o)
+		switch option := option.(type) {
+		case Option:
+			option(&o)
+		case func(*eventOptions):
+			option(&o)
+		case decoderOption:
+			decoders = option.lookup
+		default:
+			return errors.New("unknown synthetic capture option")
+		}
 	}
 	if payload == nil {
 		return nil
 	}
-	if o.decoders == nil {
+	if decoders == nil {
 		return errors.New("lifecycle decoder lookup required")
 	}
-	decoder, ok := o.decoders.LookupDecoder(harness)
+	decoder, ok := decoders.LookupDecoder(harness)
 	if !ok {
 		return nil
 	}

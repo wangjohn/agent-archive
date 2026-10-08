@@ -54,7 +54,7 @@ const MaxRecordBytes = 64 * 1024 * 1024
 // DefaultParserVersion is the source parser version reported by this bounded
 // foundation. The parser is intentionally partial until fixture coverage proves
 // a given native format more completely.
-const DefaultParserVersion = "0.20.0"
+const DefaultParserVersion = "0.21.0"
 
 var supplementalAllowedKeys = map[string]bool{
 	"type": true, "id": true, "uuid": true, "session_id": true, "parent_id": true,
@@ -611,8 +611,6 @@ func isHiddenRole(value string) bool {
 		return false
 	}
 }
-
-type sanitizeState = PrivacyState
 
 func nonEmptyValue(raw any) bool {
 	switch value := raw.(type) {

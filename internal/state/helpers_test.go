@@ -1,6 +1,8 @@
 package state
 
 import (
+	"github.com/wangjohn/agent-archive/internal/config"
+	"os"
 	"testing"
 	"time"
 
@@ -22,9 +24,27 @@ func registration(t *testing.T) archive.SessionRegistration {
 
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
-	store, err := Open(t.TempDir())
+	store, err := openTestStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	return store
+}
+
+func openTestStore(home string) (*Store, error) {
+	if err := os.Chmod(home, 0700); err != nil {
+		return nil, err
+	}
+	store, err := Open(home)
+	if err != nil {
+		return nil, err
+	}
+	_, found, err := config.Load(home)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		err = config.Save(home, config.Config{MachineID: "synthetic"})
+	}
+	return store, err
 }

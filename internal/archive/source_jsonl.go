@@ -4,9 +4,11 @@ import (
 	"bufio"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/jsonwire"
 	"io"
 )
 
@@ -96,13 +98,7 @@ func EncodeSource(w io.Writer, bundle SourceBundle) error {
 	if err := validateBundle(bundle); err != nil {
 		return err
 	}
-	header := SourceHeader{
-		History: bundle.History,
-		Kind:    SourceLineHeader, SchemaVersion: bundle.SchemaVersion,
-		ArchiveSessionID: bundle.ArchiveSessionID, NativeSessionID: bundle.NativeSessionID, ProjectID: bundle.ProjectID,
-		Capture: bundle.Capture, PreviousGenerationID: bundle.PreviousGenerationID, ParentSessionID: bundle.ParentSessionID, LinkedSessions: bundle.LinkedSessions,
-		Counts: SourceCounts{NativeRecords: len(bundle.NativeRecords), NativeText: len(bundle.NativeText), SupplementalEvidence: len(bundle.SupplementalEvidence)},
-	}
+	header := sourceHeader(bundle)
 	write := func(value any) error {
 		line, err := json.Marshal(value)
 		if err != nil {
@@ -111,10 +107,11 @@ func EncodeSource(w io.Writer, bundle SourceBundle) error {
 		if len(line) > MaxSourceLineBytes {
 			return fmt.Errorf("source line of %d bytes exceeds the %d byte line limit", len(line), MaxSourceLineBytes)
 		}
-		if _, err := w.Write(append(line, '\n')); err != nil {
+		if _, err := w.Write(line); err != nil {
 			return err
 		}
-		return nil
+		_, err = w.Write([]byte{'\n'})
+		return err
 	}
 	if err := write(header); err != nil {
 		return err
@@ -139,6 +136,53 @@ func EncodeSource(w io.Writer, bundle SourceBundle) error {
 		}
 	}
 	return nil
+}
+
+func sourceHeader(bundle SourceBundle) SourceHeader {
+	return SourceHeader{
+		History: bundle.History,
+		Kind:    SourceLineHeader, SchemaVersion: bundle.SchemaVersion,
+		ArchiveSessionID: bundle.ArchiveSessionID, NativeSessionID: bundle.NativeSessionID, ProjectID: bundle.ProjectID,
+		Capture: bundle.Capture, PreviousGenerationID: bundle.PreviousGenerationID, ParentSessionID: bundle.ParentSessionID, LinkedSessions: bundle.LinkedSessions,
+		Counts: SourceCounts{NativeRecords: len(bundle.NativeRecords), NativeText: len(bundle.NativeText), SupplementalEvidence: len(bundle.SupplementalEvidence)},
+	}
+}
+
+// SourceEncodingLineBound preflights the largest concrete JSONL envelope. It
+// does not encode records or hold an uncompressed document while counting.
+func SourceEncodingLineBound(ctx context.Context, bundle SourceBundle, limit int64) (int64, error) {
+	if err := validateBundle(bundle); err != nil {
+		return 0, err
+	}
+	largest, err := jsonwire.Bound(ctx, sourceHeader(bundle), limit)
+	if err != nil {
+		return 0, err
+	}
+	check := func(value any) error {
+		n, err := jsonwire.Bound(ctx, value, limit)
+		largest = max(largest, n)
+		return err
+	}
+	for i, record := range bundle.NativeRecords {
+		var ordinal *uint64
+		if bundle.History != nil {
+			ordinal = &bundle.Ordinals[i]
+		}
+		if err := check(nativeRecordLine{Kind: SourceLineNativeRecord, Record: record, Ordinal: ordinal}); err != nil {
+			return 0, err
+		}
+	}
+	for _, text := range bundle.NativeText {
+		if err := check(nativeTextLine{Kind: SourceLineNativeText, Format: text.Format, Content: text.Content}); err != nil {
+			return 0, err
+		}
+	}
+	for _, evidence := range bundle.SupplementalEvidence {
+		if err := check(evidenceLine{Kind: SourceLineSupplementalEvidence, Evidence: evidence}); err != nil {
+			return 0, err
+		}
+	}
+	return largest, nil
 }
 
 // DecodeOptions bounds a streaming decode. Zero values use the defaults.
@@ -447,6 +491,9 @@ func ReadSourceBundle(compressed io.Reader, options DecodeOptions) (SourceBundle
 		return nil
 	})
 	if err != nil {
+		return SourceBundle{}, err
+	}
+	if err := ValidateSessionLabels(bundle); err != nil {
 		return SourceBundle{}, err
 	}
 	return bundle, nil

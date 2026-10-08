@@ -46,7 +46,7 @@ func promptDiscovery(p *prompter, draft *setupDraft, previous config.Config) err
 		return nil
 	}
 	p.note("Automatic Codex discovery can capture supported new tasks without hooks. Existing history stays excluded; an indistinguishable recent copy can also be captured.")
-	enabled, err := p.yesNo("Enable automatic Codex discovery for the reviewed Codex scope and this destination?", false)
+	enabled, err := p.setupYesNo("Enable automatic Codex discovery for the reviewed Codex scope and this destination?", false)
 	if err != nil {
 		draft.DiscoveryReviewed = false
 		return err
@@ -75,7 +75,7 @@ func promptCodexCaptureScope(p *prompter, cfg *config.Config) error {
 	if !containsString(cfg.Harnesses, "codex") {
 		return nil
 	}
-	choice, err := p.menu("Codex capture scope", string(cfg.EffectiveCodexCaptureScope()),
+	choice, err := p.setupMenu("Codex capture scope", string(cfg.EffectiveCodexCaptureScope()),
 		option{string(config.CodexIncludedProjects), "Included projects only (Codex)"},
 		option{string(config.CodexAllProjects), "All current and future projects (Codex only)"})
 	if err != nil {
@@ -123,7 +123,6 @@ func codexConsentRows(cfg config.Config) []reviewRow {
 	if cfg.Discovery != nil && cfg.Discovery.Enabled {
 		sources = cfg.Discovery.CodexHomes
 	}
-	address, _ := storageAddress(cfg.Storage)
 	hooks := "Hook-only capture requires approval; observation is separate"
 	if cfg.Discovery != nil && cfg.Discovery.Enabled {
 		hooks = "Optional for discovery; approval and observation are separate"
@@ -133,7 +132,6 @@ func codexConsentRows(cfg config.Config) []reviewRow {
 		{label: "Codex scope", values: []string{codexScopeLabel(cfg)}},
 		{label: "Exceptions", values: exceptions, detail: "Nearest explicit project rule wins"},
 		{label: "Codex sources", values: sources},
-		{label: "Destination", values: []string{address}},
 		{label: "Starts", values: []string{"After local consent, outside pause or exclusion"}},
 		{label: "History", values: []string{"Old sessions require deliberate backfill"}},
 		{label: "Copies", values: []string{"Qualifying recent native copies may be captured"}},
@@ -199,21 +197,24 @@ func configurePairedDiscovery(p *prompter, cfg *config.Config, opts setupOptions
 // projects. The final review commits these local, forward-only policy changes.
 func promptCodexExceptions(p *prompter, cfg *config.Config, userHome string) error {
 	for {
-		choice, err := p.menu("Codex project exceptions", "done",
+		choice, err := p.setupMenu("Codex project exceptions", "done",
 			option{"exclude", "Exclude a directory and its descendants"},
 			option{"include", "Include a directory, overriding a parent exclusion"},
 			option{"done", "Keep these exceptions and return to review"})
 		if err != nil || choice == "done" {
 			return err
 		}
-		path, err := p.line(p.labelText("Directory: "))
+		var root string
+		_, err = p.guidedText(promptModel{Question: "Directory", Label: "Answer", Validate: func(path string) error {
+			if path == "" {
+				return fmt.Errorf("this value is required")
+			}
+			var err error
+			root, err = projectDir(path, userHome)
+			return err
+		}, ResolveReceipt: func(string) string { return "Directory " + root }})
 		if err != nil {
 			return err
-		}
-		root, err := projectDir(path, userHome)
-		if err != nil {
-			p.warn(err.Error())
-			continue
 		}
 		included := choice == "include"
 		var otherApps []string
@@ -224,7 +225,7 @@ func promptCodexExceptions(p *prompter, cfg *config.Config, userHome string) err
 		}
 		if len(otherApps) > 0 {
 			p.note("Project rules are shared with " + friendlyApps(otherApps) + ". This rule also changes their capture permission for " + root + " and its descendants.")
-			approved, err := p.yesNo("Apply this "+choice+" rule to Codex and "+friendlyApps(otherApps)+"?", false)
+			approved, err := p.setupYesNo("Apply this "+choice+" rule to Codex and "+friendlyApps(otherApps)+"?", false)
 			if err != nil {
 				return err
 			}

@@ -10,7 +10,6 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/state"
-	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
 // parserFor resolves one immutable capability per agent during a collector pass.
@@ -58,7 +57,10 @@ func regenerateMetadata(s *sessionScan) (outcome sessionOutcome, handled bool, e
 	if err != nil {
 		return outcomeSkipped, false, err
 	}
-	last, ok := s.lastPublication(key)
+	last, ok, lastErr := s.lastPublication(key)
+	if lastErr != nil {
+		return outcomeSkipped, true, lastErr
+	}
 	if !ok {
 		return outcomeSkipped, false, nil
 	}
@@ -93,7 +95,10 @@ func regenerateMetadata(s *sessionScan) (outcome sessionOutcome, handled bool, e
 	} else if found && skipped.ParserVersion == s.parserVersion() && skipped.SourceKey == prior.SourceBundle.Key {
 		return outcomeSkipped, false, nil
 	}
-	source, ok := chooseRefreshSource(last.bundle, uploaded, known)
+	source, ok, sourceErr := s.chooseRefreshSource(last.bundle, uploaded, known)
+	if sourceErr != nil {
+		return outcomeSkipped, true, sourceErr
+	}
 	if !ok {
 		// Neither the bytes nor a recorded reference: nothing to publish
 		// against. The next content change publishes current metadata.
@@ -151,21 +156,33 @@ func (s *sessionScan) refreshedMetadata(last lastPublication, source archive.Sou
 		skip := state.RefreshSkip{ParserVersion: s.parserVersion(), SourceKey: prior.SourceBundle.Key, Reason: state.RefreshSkipUnderivable}
 		return nil, false, s.local.SaveRefreshSkip(s.id(), skip)
 	}
+	// Derivation/representation maintenance keeps every alternative and its age.
+	if prior.History != nil {
+		if err := s.validateAuthorityIdentity(prior); err != nil {
+			return nil, false, err
+		}
+		next.SchemaVersion = prior.SchemaVersion
+		next.History = prior.History
+		next.CapturedAt = prior.CapturedAt
+		if _, err := next.SourceReferences(); err != nil {
+			return nil, false, err
+		}
+	}
 	// Unchanged metadata over the same source needs no publication.
 	comparison := next
 	comparison.MetadataDerivedAt = prior.MetadataDerivedAt
-	oldBytes, err := json.Marshal(prior)
+	oldBytes, err := s.marshalRetained(prior)
 	if err != nil {
 		return nil, false, err
 	}
-	comparisonBytes, err := json.Marshal(comparison)
+	comparisonBytes, err := s.marshalRetained(comparison)
 	if err != nil {
 		return nil, false, err
 	}
 	if bytes.Equal(oldBytes, comparisonBytes) {
 		return nil, false, nil
 	}
-	encoded, err = json.Marshal(next)
+	encoded, err = s.marshalRetained(next)
 	return encoded, err == nil, err
 }
 
@@ -185,10 +202,10 @@ type lastPublication struct {
 // published (a blocked, declined, or rate-limited candidate cached alongside
 // it was never made discoverable), or the metadata is unreadable, missing
 // from storage, or describes another session, machine, or source.
-func (s *sessionScan) lastPublication(metadataKey string) (lastPublication, bool) {
+func (s *sessionScan) lastPublication(metadataKey string) (lastPublication, bool, error) {
 	bundle, _, found := s.published.LastPublished()
 	if !found {
-		return lastPublication{}, false
+		return lastPublication{}, false, nil
 	}
 	encoded := s.published.Metadata()
 	legacy := len(encoded) == 0
@@ -197,18 +214,27 @@ func (s *sessionScan) lastPublication(metadataKey string) (lastPublication, bool
 		// A missing or unreachable copy is not fatal: nothing can be refreshed
 		// from it, and normal capture keeps working without it.
 		var err error
-		if encoded, err = storage.ReadPublicationMetadata(s.ctx, s.remote, metadataKey); err != nil {
-			return lastPublication{}, false
+		if encoded, err = s.historyGet(metadataKey, historyMetadataLimit); err != nil {
+			if errors.Is(err, agentapi.ErrReadBudget) {
+				return lastPublication{}, false, err
+			}
+			return lastPublication{}, false, nil
 		}
 	}
 	var metadata archive.Metadata
-	if err := json.Unmarshal(encoded, &metadata); err != nil {
-		return lastPublication{}, false
+	decodeErr := s.unmarshalRetained(encoded, &metadata)
+	if errors.Is(decodeErr, agentapi.ErrReadBudget) {
+		return lastPublication{}, false, decodeErr
 	}
-	if metadata.SessionID != s.id() || metadata.MachineID != s.opts.MachineID || metadata.ValidateSourceReference() != nil {
-		return lastPublication{}, false
+	decodeValid := decodeErr == nil
+	if !decodeValid {
+		return lastPublication{}, false, nil
 	}
-	return lastPublication{bundle: bundle, metadata: metadata, encoded: encoded, legacy: legacy}, true
+	referenceValid := metadata.ValidateSourceReference() == nil
+	if metadata.SessionID != s.id() || metadata.MachineID != s.opts.MachineID || !referenceValid {
+		return lastPublication{}, false, nil
+	}
+	return lastPublication{bundle: bundle, metadata: metadata, encoded: encoded, legacy: legacy}, true, nil
 }
 
 // refreshSource is the source a refreshed metadata document points at, and
@@ -230,16 +256,6 @@ type refreshSource struct {
 //     checked in storage against it (see sessionScan.upload).
 //
 // ok is false when it has neither bytes nor a recorded reference.
-func chooseRefreshSource(bundle archive.SourceBundle, uploaded archive.SourceReference, known bool) (refreshSource, bool) {
-	if compressed, err := archive.BuildCompressedSource(bundle); err == nil {
-		if key, err := archive.SourceObjectKey(bundle, compressed.SHA256); err == nil {
-			ref := archive.SourceReference{Key: key, SHA256: compressed.SHA256, CompressedBytes: len(compressed.Bytes)}
-			return refreshSource{ref: ref, bytes: compressed.Bytes}, true
-		}
-	}
-	return refreshSource{ref: uploaded}, known
-}
-
 // liveTranscriptChanged reports whether normal capture will publish this
 // scan: the source (a transcript on disk, or a Cursor database chat) carries
 // evidence the cached comparison bundle does not, and it still extends what
@@ -275,6 +291,7 @@ func (s *sessionScan) liveTranscriptChanged(lastPublished archive.SourceBundle) 
 	if err != nil {
 		return false
 	}
+	filterMark := len(s.retainedReleases)
 	filtered, observed, err := source.Filter(s.ctx, adapter, s.opts.maxTranscriptBytes())
 	if err != nil {
 		// Native input is optional for a retained-source refresh, but an owned
@@ -286,12 +303,15 @@ func (s *sessionScan) liveTranscriptChanged(lastPublished archive.SourceBundle) 
 	}
 	// Normal capture reads this same source next unless the refresh ends the
 	// scan, so it keeps what was read here.
-	s.filtered = &filteredSource{adapter: adapter, transcript: filtered, observed: observed}
-	candidate, err := archive.NewSourceBundle(s.reg, adapter, filtered, s.now, cached.SupplementalEvidence)
+	s.filtered = &filteredSource{filterLease: s.nativeFilterLease(filterMark), adapter: adapter, transcript: filtered, observed: observed}
+	candidateOwner := len(s.retainedReleases)
+	candidate, err := s.newSourceBundle(s.reg, adapter, filtered, s.now, cached.SupplementalEvidence)
 	if err != nil {
 		return false
 	}
-	same, err := bundleEvidenceEqual(cached, candidate)
+	// This probe returns only a decision; its independent decoded rows end here.
+	defer s.releaseRetainedIndex(candidateOwner)
+	same, err := s.bundleEvidenceEqual(cached, candidate)
 	if err != nil || same {
 		return false
 	}
@@ -340,11 +360,11 @@ func (s *sessionScan) publishRecordedGitHead(last lastPublication, key string) (
 	}
 	next := last.metadata
 	next.ApplyGitHead(s.reg)
-	oldHead, err := json.Marshal(last.metadata.GitHead)
+	oldHead, err := s.marshalRetained(last.metadata.GitHead)
 	if err != nil {
 		return outcomeSkipped, false, err
 	}
-	newHead, err := json.Marshal(next.GitHead)
+	newHead, err := s.marshalRetained(next.GitHead)
 	if err != nil {
 		return outcomeSkipped, false, err
 	}
@@ -364,12 +384,16 @@ func (s *sessionScan) publishRecordedGitHead(last lastPublication, key string) (
 	// a metadata refresh does, so a source missing from storage is repaired
 	// instead of failing this publication on every pass.
 	source := refreshSource{ref: next.SourceBundle}
-	if rebuilt, ok := chooseRefreshSource(last.bundle, uploaded, known); ok && rebuilt.bytes != nil {
+	rebuilt, ok, rebuildErr := s.chooseRefreshSource(last.bundle, uploaded, known)
+	if rebuildErr != nil {
+		return outcomeSkipped, true, rebuildErr
+	}
+	if ok && rebuilt.bytes != nil {
 		source = rebuilt
 	}
 	next.SourceBundle = source.ref
 	next.MetadataDerivedAt = s.now
-	encoded, err := json.Marshal(next)
+	encoded, err := s.marshalRetained(next)
 	if err != nil {
 		return outcomeSkipped, false, err
 	}

@@ -162,3 +162,11 @@ func TestSyncPrunesPreviousDestinationSessionsWithoutTouchingTheBucket(t *testin
 		})
 	}
 }
+
+func (c *cleanupCountingStore) GetLimited(ctx context.Context, key string, limit int64) ([]byte, error) {
+	bounded, ok := c.ObjectStore.(storage.LimitedGetter)
+	if !ok {
+		return nil, errors.New("synthetic cleanup store requires bounded reads")
+	}
+	return bounded.GetLimited(ctx, key, limit)
+}

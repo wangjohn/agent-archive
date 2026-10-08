@@ -7,69 +7,93 @@ Choose Cloudflare R2 or Amazon S3 for private archive storage. Setup will guide 
 
 \e[1mStep 1 of 3 · Choose what to capture\e[0m
 
-\e[1mArchive Codex and Claude Code sessions in ~/src/web-app?\e[0m [\e[1mY\e[0m/n] › y
+? Capture sessions from Codex and Claude Code?
 
-Looking for your other projects...
-On the review screen: Edit a setting adds projects, drops apps, and changes how long sessions are kept.
-\e[1mCodex capture scope\e[0m
-  1) Included projects only (Codex)
+  1) Yes (default)
+  2) No
+
+› Choose [1]: y
+\e[2m✓ Capture sessions from Codex and Claude Code Yes\e[0m
+
+? Codex capture scope
+
+  1) Included projects only (Codex) (default)
   2) All current and future projects (Codex only)
-Enter 1-2 [\e[1m1\e[0m] › included-projects
 
+› Choose [1]: included-projects
+\e[2m✓ Included projects only (Codex)\e[0m
+
+? Which projects?
+
+  Found 1 projects:
+  1) ~/src/web-app · this folder
+
+  1) All 1 found projects (default)
+  2) Choose specific projects
+
+  [p] Add a project path
+  [r] Retry search
+
+› Choose [1]:
+\e[2m✓ Projects All 1 found projects\e[0m
 
 \e[1mStep 2 of 3 · Connect storage\e[0m
 
-\e[1mWhere should your archive live?\e[0m
-  1) Cloudflare R2
+? Where should your archive live?
+
+  1) Cloudflare R2 (default)
   2) Amazon S3
-[h] Setup instructions
-Choose [\e[1m1\e[0m] › s3-existing
 
-\e[1mAWS profile\e[0m › work
+  [h] Setup instructions
 
-\e[1mWhich bucket should sessions be stored in?\e[0m
+› Choose [1]: s3-existing
+\e[2m✓ Provider Amazon S3\e[0m
+
+? AWS profile
+
+  [:back] Back to storage options
+
+› Answer: work
+\e[2m✓ AWS profile work\e[0m
+
+? Which bucket should sessions be stored in?
+
   1) photos
   2) team-archive
-Enter 1-2, or another bucket name › 2
+  Enter a number or bucket name.
+  [:back] Back to storage options
+
+› Choose: 2
+\e[2m✓ team-archive\e[0m
 
 Bucket team-archive is in us-east-1; using that region.
 
 Checking your storage connection…
 \e[32m✓\e[0m Connected to your storage.
 
-\e[1mStep 3 of 3 · Ready to start\e[0m
+\e[1mStep 3 of 3 · Review and start\e[0m
+  Apps      Codex, Claude Code
+  Projects  ~/src/web-app
+  Codex     Included projects only
+  Skills    Metadata, including user folders
+  Storage   s3://team-archive/agent-archive/
+  Keep for  90 days
+  ✓ Storage connected
+  ✓ Bucket is private
+  \e[33m!\e[0m History import is separate.
+  \e[33m!\e[0m Sensitive text may remain after filtering.
 
-  \e[2mApps      \e[0m Codex 0.121.0 · Claude Code 2.1.90
-  \e[2mProjects  \e[0m ~/src/web-app
-  \e[2mCodex capture\e[0m Automatic discovery plus hooks when approved
-  \e[2mCodex scope\e[0m Included projects only
-  \e[2mExceptions\e[0m None configured  \e[2mNearest explicit project rule wins\e[0m
-  \e[2mCodex sources\e[0m /Users/alex/.codex
-  \e[2mDestination\e[0m s3://team-archive/agent-archive/
-  \e[2mStarts    \e[0m After local consent, outside pause or exclusion
-  \e[2mHistory   \e[0m Old sessions require deliberate backfill
-  \e[2mCopies    \e[0m Qualifying recent native copies may be captured
-  \e[2mHooks     \e[0m Optional for discovery; approval and observation are separate
-  \e[2mSkills    \e[0m metadata  \e[2mUser skill roots outside selected projects may be scanned; change with Edit a setting\e[0m
-  \e[2mStorage   \e[0m s3://team-archive/agent-archive/  \e[2mus-east-1 · profile work\e[0m
-  \e[2mKeep for  \e[0m 90 days
+? Start archiving?
 
-  \e[32m✓\e[0m Storage connected       \e[2mwrite, read, list, delete\e[0m
-  \e[32m✓\e[0m Bucket is private       \e[2mall public access blocked\e[0m
-  \e[32m✓\e[0m Hook files are valid    \e[2m~/.codex/hooks.json, ~/.claude/settings.json\e[0m
-  \e[32m✓\e[0m Codex discovery         \e[2msupported new tasks do not require hook approval\e[0m
-
-\e[2m  Edit a setting adds projects, drops apps, and changes how long sessions are kept.\e[0m
-\e[2m  Filtering is best effort; sensitive text may remain in archived sessions.\e[0m
-  \e[2mWhat leaves your machine:\e[0m \e[36mhttps://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md\e[0m
-  \e[2m·\e[0m Machine name: unnamed (random ID suffix after save). Choose Name this machine to set a label; no hostname is read.
-
-\e[1mStart archiving?\e[0m
-  1) Yes, start archiving
+  1) Start archiving (default)
   2) Edit a setting
-  3) Cancel (your setup draft is kept)
-  4) Name this machine (optional)
-Enter 1-4 [\e[1m1\e[0m] › 3
+
+  [d] Full settings and privacy
+  [q] Cancel; keep draft
+  [m] Name this machine
+
+› Choose [1]: q
+\e[2m✓ Cancel; keep draft\e[0m
 
 Cancelled. Active settings are unchanged; your setup draft is saved.
 [exit 0]

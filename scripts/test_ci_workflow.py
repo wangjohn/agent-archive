@@ -83,7 +83,7 @@ class CandidateCampaignTest(unittest.TestCase):
     def test_candidate_validation_never_restores_shared_go_build_state(self):
         # Candidate evidence must come from fresh source/module verification,
         # not executable build state restored from another workflow's cache.
-        expected = {'test': 4, 'levenshtein': 1, 'extended': 4}
+        expected = {'test': 5, 'levenshtein': 1, 'extended': 4}
         for name, count in expected.items():
             workflow = (ROOT / '.github/workflows' / f'{name}.yml').read_text()
             setup = [step for job in jobs(workflow).values() for step in steps(job)
@@ -108,7 +108,7 @@ class CandidateCampaignTest(unittest.TestCase):
     def test_candidate_test_keeps_all_pr_gates(self):
         workflow = (ROOT / '.github/workflows/test.yml').read_text()
         self.assertIn('  pull_request:', workflow)
-        self.assertEqual(set(jobs(workflow)), {'linux-race', 'macos-smoke', 'cross-build', 'lint'})
+        self.assertEqual(set(jobs(workflow)), {'linux-race', 'git-identity-compatibility', 'macos-smoke', 'cross-build', 'lint'})
         for name, text in jobs(workflow).items():
             self.assertIsNone(job_key(text, 'if'), name)
         self.assertIn('go test -race -timeout 20m ./...', workflow)
@@ -129,6 +129,26 @@ class CandidateCampaignTest(unittest.TestCase):
         self.assertIn('-fuzztime 30s -fuzzminimizetime 2s', jobs(workflow)['fuzz'])
         self.assertIn('test "$found" -ge 24', jobs(workflow)['fuzz'])
         self.assertIn('AGENT_ARCHIVE_REAL_SYSTEMD:', jobs(workflow)['real-systemd'])
+
+
+class GitIdentityCompatibilityTest(unittest.TestCase):
+    def test_compatibility_cases_keep_pinned_upstream_releases(self):
+        workflow = (ROOT / '.github/workflows/test.yml').read_text()
+        text = jobs(workflow)['git-identity-compatibility']
+        self.assertEqual(job_key(text, 'runs-on'), 'ubuntu-24.04')
+        for version, commit in {
+            '2.30.2': '94f6e3e283f2adfc518b39cfc39291f1c2832ad0',
+            '2.39.2': 'cbf04937d5b9fcf0a76c28f69e6294e9e3ecd7e6',
+        }.items():
+            self.assertRegex(text, rf'git: upstream-{version}\n            tag: v{version}\n            ref: {commit}\n            expected: git version {version}')
+        self.assertIn('git: runner-current', text)
+        self.assertIn('repository: git/git', text)
+        self.assertIn('test "$(git --version)" = "$EXPECTED_GIT_VERSION"', text)
+        self.assertIn('HOME: ${{ runner.temp }}/git-identity-home', text)
+        self.assertIn('XDG_CONFIG_HOME: ${{ runner.temp }}/git-identity-xdg', text)
+        self.assertIn('./internal/gitremote ./internal/sourcefacts', text)
+        self.assertIn("-run 'RecoveredImport|DeletedWorktree' ./internal/backfill", text)
+        self.assertIn('Older distribution package acceptance is recorded separately.', TESTING_MD.read_text())
 
 
 class JobsParserTest(unittest.TestCase):

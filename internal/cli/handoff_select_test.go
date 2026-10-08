@@ -709,7 +709,7 @@ func TestHandoffPickerFilterKeepsTheTableNumbersOfSessionsActiveSince(t *testing
 		t.Fatalf("3, the table's number of %s, handed off another session:\n%s", f.both[:minShortSessionID], out.String())
 	}
 	_, filtered, found := strings.Cut(out.String(), `"codex" matches 3`)
-	filtered, _, _ = strings.Cut(filtered, "Continue in:")
+	filtered, _, _ = strings.Cut(filtered, "? Continue in")
 	if !found {
 		t.Fatalf("the filter was not drawn:\n%s", out.String())
 	}

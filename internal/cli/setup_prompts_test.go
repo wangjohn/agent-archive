@@ -28,17 +28,17 @@ func TestAppSelectionSuggestionsAndManualFallback(t *testing.T) {
 		prompt   string
 		manual   bool
 	}{
-		{"accept detected", []string{"claude", "codex", "codex"}, nil, "\n", []string{"codex", "claude"}, "Include Codex and Claude Code? [Y/n]", false},
-		{"single app", []string{"cursor"}, nil, "y\n", []string{"cursor"}, "Include Cursor? [Y/n]", false},
+		{"accept detected", []string{"claude", "codex", "codex"}, nil, "\n", []string{"codex", "claude"}, "Include Codex and Claude Code?", false},
+		{"single app", []string{"cursor"}, nil, "y\n", []string{"cursor"}, "Include Cursor?", false},
 		{"choose another app", []string{"codex", "claude"}, nil, "n\nn\nn\ny\n", []string{"cursor"}, "Include Codex and Claude Code?", true},
 		{"nothing detected", nil, nil, "n\ny\nn\n", []string{"claude"}, "No apps found automatically.", true},
-		{"keep prior selection", []string{"claude"}, []string{"claude"}, "\n", []string{"claude"}, "Included: Claude Code. Not included: Codex and Cursor.\nChange which apps are included? [y/N]", false},
-		{"add newly found apps", []string{"codex", "claude", "cursor"}, []string{"cursor"}, "\n", []string{"codex", "claude", "cursor"}, "Included: Cursor.\nAlso found on this computer: Codex and Claude Code.\nAdd them? [Y/n]", false},
-		{"decline newly found apps", []string{"codex", "claude", "cursor"}, []string{"cursor"}, "n\n\n", []string{"cursor"}, "Also found on this computer: Codex and Claude Code.\nAdd them? [Y/n] Change which apps are included? [y/N]", false},
+		{"keep prior selection", []string{"claude"}, []string{"claude"}, "\n", []string{"claude"}, "Change which apps are included?", false},
+		{"add newly found apps", []string{"codex", "claude", "cursor"}, []string{"cursor"}, "\n", []string{"codex", "claude", "cursor"}, "Add them?", false},
+		{"decline newly found apps", []string{"codex", "claude", "cursor"}, []string{"cursor"}, "n\n\n", []string{"cursor"}, "Change which apps are included?", false},
 		{"decline found apps then pick a subset", []string{"codex", "claude", "cursor"}, []string{"cursor"}, "n\ny\nn\ny\ny\n", []string{"claude", "cursor"}, "Change which apps are included?", true},
-		{"add one newly found app", []string{"claude"}, []string{"cursor"}, "y\n", []string{"claude", "cursor"}, "Included: Cursor.\nAlso found on this computer: Claude Code.\nAdd it? [Y/n]", false},
+		{"add one newly found app", []string{"claude"}, []string{"cursor"}, "y\n", []string{"claude", "cursor"}, "Add it?", false},
 		{"add to prior selection", nil, []string{"cursor"}, "y\ny\ny\n\n", []string{"codex", "claude", "cursor"}, "Change which apps are included?", true},
-		{"keep full prior selection", nil, []string{"cursor", "claude", "codex"}, "\n", []string{"codex", "claude", "cursor"}, "Keep Codex, Claude Code, and Cursor? [Y/n]", false},
+		{"keep full prior selection", nil, []string{"cursor", "claude", "codex"}, "\n", []string{"codex", "claude", "cursor"}, "Keep Codex, Claude Code, and Cursor?", false},
 		{"trim full prior selection", nil, []string{"cursor", "claude", "codex"}, "n\nn\n\n\n", []string{"claude", "cursor"}, "Choose which apps to include:", true},
 		{"retry empty selection", nil, nil, "n\nn\nn\ny\nn\nn\n", []string{"codex"}, "Choose at least one app to continue.", true},
 	}
@@ -50,10 +50,10 @@ func TestAppSelectionSuggestionsAndManualFallback(t *testing.T) {
 			if err != nil || !reflect.DeepEqual(got, tt.want) {
 				t.Fatalf("got %v, %v; want %v", got, err, tt.want)
 			}
-			if !strings.Contains(out.String(), tt.prompt) {
+			if !setupContainsText(out.String(), tt.prompt) {
 				t.Fatalf("missing prompt: %s", &out)
 			}
-			if strings.Contains(out.String(), "Choose which apps to include:") != tt.manual {
+			if setupContainsText(out.String(), "Choose which apps to include:") != tt.manual {
 				t.Fatalf("incorrect manual fallback: %s", &out)
 			}
 		})
@@ -69,12 +69,12 @@ func TestDetectedAppsSetupSkipsIndividualQuestions(t *testing.T) {
 	output := setupRun(t, env, input, 0)
 	// The Sessions row is left out while it shows the default.
 	for _, unwanted := range []string{"Detected settings", "capture policy", "Include Cursor?", "Include Codex?", "All new sessions, with or without skills"} {
-		if strings.Contains(output, unwanted) {
+		if setupContainsText(output, unwanted) {
 			t.Fatalf("unexpected %q in %s", unwanted, output)
 		}
 	}
-	for _, want := range []string{"Include Codex and Claude Code?", "Keep for   90 days\n", "Start archiving?\n  1) Yes, start archiving\n  2) Edit a setting\n  3) Cancel"} {
-		if !strings.Contains(output, want) {
+	for _, want := range []string{"Capture sessions from Codex and Claude Code?", "Keep for 90 days", "Start archiving? 1) Start archiving (default) 2) Edit a setting", "[q] Cancel; keep draft"} {
+		if !setupContainsText(output, want) {
 			t.Fatalf("missing %q in %s", want, output)
 		}
 	}
@@ -95,12 +95,12 @@ func TestSetupReviewMarksOnlyChangedValues(t *testing.T) {
 	p := newPrompter(strings.NewReader(""), &out)
 	showSetupReview(p, next, setupReview{existing: old, reconfiguring: true, discoveries: map[string]applicationDiscovery{"cursor": {Installed: true, Version: "3.21.13", VersionState: "observed"}}})
 	got := out.String()
-	for _, want := range []string{"Apps       Cursor 3.21.13", "* Storage    r2://agent-archive/agent-archive/  account newaccount", "was r2://agent-archive/agent-archive/  account oldaccount", "* changed from your current settings"} {
-		if !strings.Contains(got, want) {
+	for _, want := range []string{"Apps Cursor", "* Storage r2://agent-archive/agent-archive/ · account newaccount", "was r2://agent-archive/agent-archive/  account oldaccount", "was r2://agent-archive/agent-archive/  account oldaccount"} {
+		if !setupContainsText(got, want) {
 			t.Fatalf("missing %q in:\n%s", want, got)
 		}
 	}
-	if strings.Count(got, "* ") != 2 || strings.Contains(got, "\x1b[") {
+	if strings.Count(got, "* ") != 1 || setupContainsText(got, "\x1b[") {
 		t.Fatalf("only the storage should be marked, with no color in a buffer:\n%s", got)
 	}
 }
@@ -116,7 +116,7 @@ func TestInteractiveReviewCanChangeSkillEvidence(t *testing.T) {
 	if draft.Config.SkillEvidence != config.SkillEvidenceNone {
 		t.Fatalf("policy = %q\n%s", draft.Config.SkillEvidence, &out)
 	}
-	if !strings.Contains(out.String(), "outside selected projects") {
+	if !setupContainsText(out.String(), "outside selected projects") {
 		t.Fatalf("scope missing: %s", &out)
 	}
 }
@@ -125,7 +125,7 @@ func TestResumePrePolicyFreshDraftDefaultsToMetadata(t *testing.T) {
 	t.Parallel()
 	home, project := t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
-	input := strings.TrimSuffix(s3SetupInput("bucket", "us-east-1", "profile", true, false, false, project), "y\n") + "3\n"
+	input := strings.TrimSuffix(s3SetupInput("bucket", "us-east-1", "profile", true, false, false, project), "y\n") + "q\n"
 	setupRun(t, env, input, 0)
 	draft, found, problem, err := readDraft(home)
 	if err != nil || !found || problem != "" {
@@ -138,12 +138,12 @@ func TestResumePrePolicyFreshDraftDefaultsToMetadata(t *testing.T) {
 	if err := local.Write(draftPath(home), draft); err != nil {
 		t.Fatal(err)
 	}
-	output := setupRun(t, env, "continue\n3\n", 0)
-	if !strings.Contains(output, "Skills") || !strings.Contains(output, "metadata") || strings.Contains(output, "kept from previous setup") {
+	output := setupRun(t, env, "continue\nq\n", 0)
+	if !setupContainsText(output, "Skills") || !setupContainsText(output, "Metadata, including user folders") || setupContainsText(output, "kept from previous setup") {
 		t.Fatalf("fresh draft did not use metadata:\n%s", output)
 	}
 	resumed, _, _, err := readDraft(home)
-	if err != nil || resumed.Config.EffectiveSkillEvidence() != config.SkillEvidenceMetadata {
+	if err != nil || resumed.Config.EffectiveSkillEvidence() != config.SkillEvidenceMetadata || (resumed.Config.Discovery != nil && resumed.Config.Discovery.Enabled) {
 		t.Fatalf("resumed policy = %q, err = %v", resumed.Config.SkillEvidence, err)
 	}
 }
@@ -168,16 +168,16 @@ func TestMenuAcceptsNumbersKeysAndPrefixes(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			var out bytes.Buffer
-			got, err := newPrompter(strings.NewReader(tt.input), &out).menu("What would you like to change?", "capture", options...)
+			got, err := newPrompter(strings.NewReader(tt.input), &out).guidedMenu("What would you like to change?", "capture", options...)
 			if err != nil || got != tt.want {
 				t.Fatalf("got %q, %v; want %q\n%s", got, err, tt.want, &out)
 			}
-			for _, want := range []string{"  1) Apps and projects\n", "  4) All settings\n", "Enter 1-4 [1]: "} {
-				if !strings.Contains(out.String(), want) {
+			for _, want := range []string{"  1) Apps and projects (default)\n", "  4) All settings\n", "Choose [1]: "} {
+				if !setupContainsText(out.String(), want) {
 					t.Fatalf("missing %q in %s", want, &out)
 				}
 			}
-			if strings.Contains(out.String(), "Enter a number from 1 to 4.") != tt.retried {
+			if setupContainsText(out.String(), "Enter one of the available choices.") != tt.retried {
 				t.Fatalf("unexpected retry behavior: %s", &out)
 			}
 		})
@@ -188,15 +188,15 @@ func TestMenuRejectsAmbiguousPrefix(t *testing.T) {
 	t.Parallel()
 	options := []option{{"retention", "Retention"}, {"region", "Region"}}
 	var out bytes.Buffer
-	got, err := newPrompter(strings.NewReader("r\n2\n"), &out).menu("Change?", "", options...)
-	if err != nil || got != "region" || !strings.Contains(out.String(), "Enter 1-2: ") {
+	got, err := newPrompter(strings.NewReader("r\n2\n"), &out).guidedMenu("Change?", "", options...)
+	if err != nil || got != "region" || !setupContainsText(out.String(), "Choose: ") {
 		t.Fatalf("got %q, %v\n%s", got, err, &out)
 	}
 }
 
 func TestReviewActionMapsChoices(t *testing.T) {
 	t.Parallel()
-	for input, want := range map[string]string{"1\n": "start", "\n": "start", "2\n": "edit", "3\n": "cancel", "y\n": "start", "n\n": "cancel", "e\n": "edit"} {
+	for input, want := range map[string]string{"1\n": "start", "\n": "start", "2\n": "edit", "q\n": "cancel", "y\n": "start", "n\n": "cancel", "e\n": "edit"} {
 		got, err := reviewAction(newPrompter(strings.NewReader(input), &bytes.Buffer{}), false, false, false)
 		if err != nil || got != want {
 			t.Fatalf("input %q: got %q, %v; want %q", input, got, err, want)
@@ -208,13 +208,13 @@ func TestReviewActionMapsChoices(t *testing.T) {
 // first choice checks again, and y is asked again rather than taken.
 func TestReviewActionRefusesStartWhenBlocked(t *testing.T) {
 	t.Parallel()
-	for input, want := range map[string]string{"1\n": "check", "\n": "check", "c\n": "check", "2\n": "edit", "e\n": "edit", "3\n": "cancel", "n\n": "cancel", "y\ne\n": "edit", "yes\n3\n": "cancel"} {
+	for input, want := range map[string]string{"1\n": "check", "\n": "check", "c\n": "check", "2\n": "edit", "e\n": "edit", "q\n": "cancel", "n\n": "cancel", "y\ne\n": "edit", "yes\nq\n": "cancel"} {
 		var out bytes.Buffer
 		got, err := reviewAction(newPrompter(strings.NewReader(input), &out), false, true, false)
 		if err != nil || got != want {
 			t.Fatalf("input %q: got %q, %v; want %q\n%s", input, got, err, want, &out)
 		}
-		if strings.Contains(out.String(), "start archiving") || !strings.Contains(out.String(), "1) Check again") {
+		if setupContainsText(out.String(), "start archiving") || !setupContainsText(out.String(), "1) Check again") {
 			t.Fatalf("input %q offered start:\n%s", input, &out)
 		}
 	}
@@ -227,7 +227,7 @@ func TestNewlyFoundAppsOmitAppsNotDetected(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(got, []string{"claude", "cursor"}) {
 		t.Fatalf("got %v, %v", got, err)
 	}
-	if strings.Contains(out.String(), "Codex") || strings.Contains(out.String(), "Not included") {
+	if setupContainsText(out.String(), "Codex") || setupContainsText(out.String(), "Not included") {
 		t.Fatalf("an app neither included nor detected was advertised:\n%s", &out)
 	}
 }
@@ -246,11 +246,11 @@ func TestSetupRemembersDeclinedApps(t *testing.T) {
 	// Apps and projects; decline the found apps; change nothing else; keep
 	// the project; add none; cancel at the review so the draft is kept.
 	output := setupRun(t, env, "capture\nn\n\ny\n\nn\n", 0)
-	if !strings.Contains(output, "Also found on this computer: Codex and Claude Code.\nAdd them? [Y/n]") {
+	if !setupContainsText(output, "Add them?") {
 		t.Fatalf("found apps not offered:\n%s", output)
 	}
 	draft, err := os.ReadFile(filepath.Join(home, "setup-draft.json"))
-	if err != nil || !strings.Contains(string(draft), `"declined_harnesses"`) {
+	if err != nil || !setupContainsText(string(draft), `"declined_harnesses"`) {
 		t.Fatalf("draft lost the declined apps: %v\n%s", err, draft)
 	}
 	// Continue the draft and start archiving.
@@ -261,7 +261,7 @@ func TestSetupRemembersDeclinedApps(t *testing.T) {
 	}
 
 	output = setupRun(t, env, "capture\n\ny\n\ny\n", 0)
-	if strings.Contains(output, "Also found") || !strings.Contains(output, "Included: Cursor. Not included: Codex and Claude Code.") {
+	if setupContainsText(output, "Also found") || !setupContainsText(output, "Included: Cursor. Not included: Codex and Claude Code.") {
 		t.Fatalf("declined apps offered again:\n%s", output)
 	}
 
@@ -283,7 +283,7 @@ func TestReviewEditNeverOffersFoundApps(t *testing.T) {
 	if err := editSetupReview(allHarnesses, p, &draft, t.TempDir(), nil, nil); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(out.String(), "Also found") || !strings.Contains(out.String(), "Change which apps are included?") {
+	if setupContainsText(out.String(), "Also found") || !setupContainsText(out.String(), "Change which apps are included?") {
 		t.Fatalf("unexpected prompts:\n%s", &out)
 	}
 	if !reflect.DeepEqual(draft.Config.Harnesses, []string{"claude", "cursor"}) || !reflect.DeepEqual(draft.Config.DeclinedHarnesses, []string{"codex"}) {
@@ -309,7 +309,7 @@ func TestSetupRemembersAppRemovedByHand(t *testing.T) {
 	}
 
 	output := setupRun(t, env, "capture\n\ny\n\nn\n", 0)
-	if strings.Contains(output, "Also found") || !strings.Contains(output, "Included: Claude Code. Not included: Codex and Cursor.") {
+	if setupContainsText(output, "Also found") || !setupContainsText(output, "Included: Claude Code. Not included: Codex and Cursor.") {
 		t.Fatalf("removed app offered again:\n%s", output)
 	}
 }
@@ -330,7 +330,7 @@ func TestReviewEditRemovalIsNotOfferedAgain(t *testing.T) {
 	if err := chooseHarnesses(allHarnesses, newPrompter(strings.NewReader("\n"), &out), []string{"codex", "claude"}, &draft.Config); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(out.String(), "Also found") || !reflect.DeepEqual(draft.Config.Harnesses, []string{"claude"}) {
+	if setupContainsText(out.String(), "Also found") || !reflect.DeepEqual(draft.Config.Harnesses, []string{"claude"}) {
 		t.Fatalf("removed app offered again: %v\n%s", draft.Config.Harnesses, &out)
 	}
 }
@@ -343,7 +343,7 @@ func TestSetupReviewShowsDeclinedApps(t *testing.T) {
 	var out bytes.Buffer
 	showSetupReview(newPrompter(strings.NewReader(""), &out), next, setupReview{existing: old, reconfiguring: true})
 	got := out.String()
-	if !strings.Contains(got, "* Skipped    Codex and Claude Code (setup will not offer again; to add back, choose Apps and projects in agent-archive setup)") || strings.Contains(got, "Nothing above differs") {
+	if !setupContainsText(got, "* Skipped    Codex and Claude Code (setup will not offer again; to add back, choose Apps and projects in agent-archive setup)") || setupContainsText(got, "Nothing above differs") {
 		t.Fatalf("declining found apps not shown as a change:\n%s", got)
 	}
 }
@@ -360,7 +360,7 @@ func TestDecliningSuggestedProjectUsesManualSelection(t *testing.T) {
 	env.DetectHarnesses = func(string) []string { return []string{"codex"} }
 	var cfg config.Config
 	var out bytes.Buffer
-	err := chooseCapture(newPrompter(strings.NewReader("n\ny\nincluded-projects\n1\n"+other+"\n\n"), &out), &cfg, t.TempDir(), env, nil)
+	err := chooseCapture(newPrompter(strings.NewReader("n\ny\nincluded-projects\nspecific\n1\np\n"+other+"\n\n"), &out), &cfg, t.TempDir(), env, nil)
 	if err != nil || len(cfg.Archive.Projects) != 1 || cfg.Archive.Projects[0].Root != other {
 		t.Fatalf("config=%+v err=%v", cfg, err)
 	}
@@ -379,18 +379,18 @@ func TestLeavingEveryProjectOutAsksAgain(t *testing.T) {
 			other, _ = filepath.EvalSymlinks(other)
 			env := setupTestEnv(t, t.TempDir(), t.TempDir(), newFakeKeychain(), time.Now())
 			env.DetectHarnesses = func(string) []string { return []string{"codex"} }
-			input := "y\nincluded-projects\n\n" + other + "\n\n"
+			input := "y\nincluded-projects\n" + other + "\nspecific\n1\n\n1\n\n"
 			if inRepo {
 				current := gitRepo(t)
 				env.WorkingDir = func() (string, error) { return current, nil }
-				input = "n\ny\nincluded-projects\n1\n\n" + other + "\n\n"
+				input = "n\ny\nincluded-projects\nspecific\n1\n\np\n" + other + "\n\n"
 			} else {
 				env.WorkingDir = func() (string, error) { return other, nil }
 			}
 			var cfg config.Config
 			var out bytes.Buffer
 			err := chooseCapture(newPrompter(strings.NewReader(input), &out), &cfg, t.TempDir(), env, nil)
-			if err != nil || len(cfg.Archive.Projects) != 1 || cfg.Archive.Projects[0].Root != other || !strings.Contains(out.String(), "Choose at least one project") {
+			if err != nil || len(cfg.Archive.Projects) != 1 || cfg.Archive.Projects[0].Root != other || !setupContainsText(out.String(), "choose at least one project") {
 				t.Fatalf("config=%+v err=%v\n%s", cfg, err, &out)
 			}
 		})
@@ -406,11 +406,11 @@ func TestRecentProjectsShowCountsAndATakesAll(t *testing.T) {
 	one, two := gitRepo(t), gitRepo(t)
 	known := []backfill.KnownProject{{Root: one, Sessions: 12}, {Root: two, Sessions: 1}}
 	var out bytes.Buffer
-	projects, err := addProjects(newPrompter(strings.NewReader("a\n\n"), &out), nil, nil, known, "")
+	projects, err := selectSetupProjects(newPrompter(strings.NewReader("all\n"), &out), nil, nil, known, "", "", nil)
 	if err != nil || includedProjects(projects) != 2 || projects[0].Root != one || projects[1].Root != two {
 		t.Fatalf("projects=%+v err=%v", projects, err)
 	}
-	if !strings.Contains(out.String(), "12 sessions") || !strings.Contains(out.String(), "1 session") || !strings.Contains(out.String(), "a includes all listed projects (the default)") {
+	if !setupContainsText(out.String(), "12 sessions") || !setupContainsText(out.String(), "1 session") || !setupContainsText(out.String(), "All 2 found projects (default)") {
 		t.Fatalf("output:\n%s", &out)
 	}
 }
@@ -420,11 +420,11 @@ func TestRecentProjectsEnterTakesDefaultAll(t *testing.T) {
 	one, two := gitRepo(t), gitRepo(t)
 	known := []backfill.KnownProject{{Root: one}, {Root: two}}
 	var out bytes.Buffer
-	projects, err := addProjects(newPrompter(strings.NewReader("\n"), &out), nil, nil, known, "")
+	projects, err := selectSetupProjects(newPrompter(strings.NewReader("\n"), &out), nil, nil, known, "", "", nil)
 	if err != nil || includedProjects(projects) != 2 || projects[0].Root != one || projects[1].Root != two {
 		t.Fatalf("projects=%+v err=%v\n%s", projects, err, &out)
 	}
-	if !strings.Contains(out.String(), "Projects [A]: ") || !strings.Contains(out.String(), "Included: ") {
+	if !setupContainsText(out.String(), "Which projects?") || !setupContainsText(out.String(), "All 2 found projects") {
 		t.Fatalf("output:\n%s", &out)
 	}
 }
@@ -437,8 +437,8 @@ func TestRecentProjectsDefaultRemainsAfterInvalidAnswer(t *testing.T) {
 			one, two := gitRepo(t), gitRepo(t)
 			known := []backfill.KnownProject{{Root: one}, {Root: two}}
 			var out bytes.Buffer
-			projects, err := addProjects(newPrompter(strings.NewReader(first+"\n\n"), &out), nil, nil, known, "")
-			if err != nil || includedProjects(projects) != 2 || strings.Count(out.String(), "Projects [A]: ") != 2 {
+			projects, err := selectSetupProjects(newPrompter(strings.NewReader(first+"\n\n"), &out), nil, nil, known, "", "", nil)
+			if err != nil || includedProjects(projects) != 2 || strings.Count(out.String(), "Which projects?") != 2 {
 				t.Fatalf("projects=%+v err=%v\n%s", projects, err, &out)
 			}
 		})
@@ -453,8 +453,8 @@ func TestRecentProjectsDefaultCannotFinishWithNoProject(t *testing.T) {
 	}
 	known := []backfill.KnownProject{{Root: gone}}
 	var out bytes.Buffer
-	projects, err := addProjects(newPrompter(strings.NewReader("\n"+fallback+"\n\n"), &out), nil, nil, known, "")
-	if err != nil || includedProjects(projects) != 1 || projects[0].Root != fallback || !strings.Contains(out.String(), "Choose at least one project") {
+	projects, err := selectSetupProjects(newPrompter(strings.NewReader("\nspecific\np\n"+fallback+"\n1\n\n"), &out), nil, nil, known, "", "", nil)
+	if err != nil || includedProjects(projects) != 1 || projects[0].Root != fallback || !setupContainsText(out.String(), "Repair the path or leave it out") {
 		t.Fatalf("projects=%+v err=%v\n%s", projects, err, &out)
 	}
 }
@@ -471,8 +471,8 @@ func TestLeavingAListedProjectOutRestoresItsState(t *testing.T) {
 	}
 	known := []backfill.KnownProject{{Root: excluded, Sessions: 3}}
 	var out bytes.Buffer
-	projects, err := addProjects(newPrompter(strings.NewReader("2\n1 2\n\n1\n\n"), &out), result, result, known, current)
-	want := []archive.ProjectActivation{{ProjectID: archive.ProjectID(excluded), Root: excluded}, {ProjectID: archive.ProjectID(current), Root: current, Included: true}}
+	projects, err := selectSetupProjects(newPrompter(strings.NewReader("specific\n2\n1 2\n\n1\n\n"), &out), result, result, known, current, "", nil)
+	want := result
 	if err != nil || !reflect.DeepEqual(projects, want) {
 		t.Fatalf("projects=%+v err=%v\n%s", projects, err, &out)
 	}
@@ -482,7 +482,7 @@ func TestStorageHelpReturnsToSelection(t *testing.T) {
 	t.Parallel()
 	var out bytes.Buffer
 	cfg, _, _, err := promptStorage(newPrompter(strings.NewReader("help\ns3-existing\nprofile\nbucket\nus-east-1\n"), &out), credentials.Config{}, Env{AWSProfiles: func() ([]AWSProfile, error) { return nil, nil }}, "")
-	if err != nil || cfg.Provider != "s3" || !strings.Contains(out.String(), bucketDocURL) {
+	if err != nil || cfg.Provider != "s3" || !setupContainsText(out.String(), bucketDocURL) {
 		t.Fatalf("cfg=%+v err=%v output=%s", cfg, err, &out)
 	}
 }
@@ -491,8 +491,8 @@ func TestStorageHelpReturnsToSelection(t *testing.T) {
 func TestStorageHelpStaysOnTheMenu(t *testing.T) {
 	t.Parallel()
 	var out bytes.Buffer
-	cfg, _, _, err := promptStorage(newPrompter(strings.NewReader("help\n"+storageMenuNumber(t, "help")+"\ns3-existing\nprofile\nbucket\nus-east-1\n"), &out), credentials.Config{}, Env{AWSProfiles: func() ([]AWSProfile, error) { return nil, nil }}, "")
-	if err != nil || cfg.Provider != "s3" || strings.Count(out.String(), bucketDocURL) != 2 || strings.Count(out.String(), "Setup instructions") != 3 {
+	cfg, _, _, err := promptStorage(newPrompter(strings.NewReader("help\nhelp\ns3-existing\nprofile\nbucket\nus-east-1\n"), &out), credentials.Config{}, Env{AWSProfiles: func() ([]AWSProfile, error) { return nil, nil }}, "")
+	if err != nil || cfg.Provider != "s3" || strings.Count(out.String(), bucketDocURL) != 2 || strings.Count(out.String(), "  [h] Setup instructions") != 3 {
 		t.Fatalf("cfg=%+v err=%v output=%s", cfg, err, &out)
 	}
 }
@@ -509,7 +509,7 @@ func TestManualProjectsExpandInjectedHomeAndDeduplicateSymlinks(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
-	projects, err := promptProjects(newPrompter(strings.NewReader("~/project\n~/alias\n\n"), &out), nil, nil, nil, home)
+	projects, err := promptProjects(newPrompter(strings.NewReader("~/project\np\n~/alias\n\n"), &out), nil, nil, nil, home)
 	canonical, _ := filepath.EvalSymlinks(project)
 	if err != nil || len(projects) != 1 || projects[0].Root != canonical {
 		t.Fatalf("projects=%+v err=%v", projects, err)
@@ -525,8 +525,8 @@ func TestProjectChosenAgainAfterDroppingAllKeepsItsActivation(t *testing.T) {
 	activated := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	existing := []archive.ProjectActivation{{ProjectID: archive.ProjectID(root), Root: root, Included: true, ActivatedAt: activated}}
 	var out bytes.Buffer
-	projects, err := promptProjects(newPrompter(strings.NewReader("n\n\n1\n\n"), &out), existing, nil, nil)
-	if err != nil || !reflect.DeepEqual(projects, existing) || !strings.Contains(out.String(), "Choose at least one project") {
+	projects, err := promptProjects(newPrompter(strings.NewReader("specific\n1\n\n1\n\n"), &out), existing, nil, nil)
+	if err != nil || !reflect.DeepEqual(projects, existing) || !setupContainsText(out.String(), "choose at least one project") {
 		t.Fatalf("projects=%+v err=%v\n%s", projects, err, &out)
 	}
 }
@@ -540,7 +540,7 @@ func TestRepeatedNumberIncludesOnce(t *testing.T) {
 	result := []archive.ProjectActivation{{ProjectID: archive.ProjectID(current), Root: current, Included: true}}
 	known := []backfill.KnownProject{{Root: one}, {Root: two}}
 	var out bytes.Buffer
-	projects, err := addProjects(newPrompter(strings.NewReader("2-3 3 2\n\n"), &out), result, nil, known, current)
+	projects, err := selectSetupProjects(newPrompter(strings.NewReader("specific\n2-3 3 2\n\n"), &out), result, nil, known, current, "", nil)
 	if err != nil || includedProjects(projects) != 3 {
 		t.Fatalf("projects=%+v err=%v\n%s", projects, err, &out)
 	}
@@ -563,7 +563,11 @@ func TestNestedProjectsFoldIntoTheCurrentRepository(t *testing.T) {
 		{Root: "/src/other", Sessions: 1, LastUsed: now.Add(-time.Hour)},
 		{Root: "/src/application", Sessions: 4},
 	}
-	if got := foldInto(known, "/src/app"); !reflect.DeepEqual(got, want) {
+	var got []backfill.KnownProject
+	for _, candidate := range setupProjectCandidates(nil, nil, known, "/src/app") {
+		got = append(got, candidate.evidence)
+	}
+	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %+v", got)
 	}
 }
@@ -572,27 +576,38 @@ func TestNestedProjectsFoldIntoTheCurrentRepository(t *testing.T) {
 // each answer reports a count rather than every path.
 func TestSelectionWithManyProjectsPrintsACount(t *testing.T) {
 	t.Parallel()
+	roots := selectorRoots(t, maxKnownProjects+1)
 	var result []archive.ProjectActivation
-	for i := 0; i <= maxKnownProjects; i++ {
-		root := fmt.Sprintf("/imported/%d", i)
-		result = append(result, archive.ProjectActivation{ProjectID: archive.ProjectID(root), Root: root, Included: true})
+	for _, root := range roots {
+		result = append(result, archive.ProjectActivation{ProjectID: archive.ProjectID(root.Root), Root: root.Root, Included: true})
 	}
 	known := []backfill.KnownProject{{Root: gitRepo(t)}}
 	var out bytes.Buffer
-	if _, err := addProjects(newPrompter(strings.NewReader("1\n\n"), &out), result, result, known, ""); err != nil {
+	if _, err := selectSetupProjects(newPrompter(strings.NewReader("all\n"), &out), result, result, known, "", "", nil); err != nil {
 		t.Fatal(err)
 	}
-	if want := fmt.Sprintf("Included: %d projects.", maxKnownProjects+2); !strings.Contains(out.String(), want) || strings.Contains(out.String(), "/imported/0") {
+	if !setupContainsText(out.String(), fmt.Sprintf("Found %d projects", maxKnownProjects+2)) || !setupContainsText(out.String(), "Showing 1–12") {
 		t.Fatalf("output:\n%s", &out)
 	}
 }
 
-func TestFirstSetupReviewKeepsExistingShortAnswers(t *testing.T) {
+// Compatible named answers must still leave resolved, human action receipts.
+// Regression: 2026-10 setup review P2-R1-07.
+func TestSetupReviewNamedAnswersHaveResolvedReceipts(t *testing.T) {
 	t.Parallel()
-	for input, want := range map[string]string{"y\n": "start", "n\n": "cancel", "e\n": "edit", "4\n": "machine"} {
-		got, err := reviewAction(newPrompter(strings.NewReader(input), &bytes.Buffer{}), false, false, true)
-		if err != nil || got != want {
-			t.Fatalf("input %q got %q %v", input, got, err)
+	for _, tc := range []struct {
+		answer    string
+		want      string
+		blocked   bool
+		installed bool
+	}{{"yes", "Start archiving", false, false}, {"y", "Save changes", false, true}, {"n", "Cancel; keep draft", false, false}, {"c", "Check again", true, false}} {
+		var out bytes.Buffer
+		p := newPrompter(strings.NewReader(tc.answer+"\n"), &out)
+		_, err := reviewAction(p, tc.installed, tc.blocked, false)
+		p.close()
+		must(t, err)
+		if setupReceiptIndex(out.String(), tc.want) < 0 {
+			t.Fatalf("alias %s receipt unresolved:\n%s", tc.answer, &out)
 		}
 	}
 }

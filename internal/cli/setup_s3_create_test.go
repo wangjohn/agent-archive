@@ -574,12 +574,12 @@ func TestSetupThroughStorageCheckWithACreatedS3Bucket(t *testing.T) {
 	// The storage question's third choice creates the bucket; the profile,
 	// region and name questions take their defaults; then the review is
 	// cancelled.
-	out := f.runSetup(t, strings.Join([]string{"", storageMenuNumber(t, storageChoiceS3New), "", "", "", "3"}, "\n")+"\n")
+	out := f.runSetup(t, strings.Join([]string{"", "", storageMenuNumber(t, storageChoiceS3New), "", "", "", "q"}, "\n")+"\n")
 	for _, text := range []string{
 		"Created bucket agent-archive-1 in us-west-2.",
 		"Checked: Block Public Access is on for all four settings.",
 		"✓ Connected to your storage.",
-		"s3://agent-archive-1/agent-archive/  us-west-2 · profile default",
+		"s3://agent-archive-1/agent-archive/",
 		`"Resource": "arn:aws:s3:::agent-archive-1/agent-archive/*"`,
 		// The review is cancelled, so the bucket is not in use, but the saved
 		// draft names it: setup says that.

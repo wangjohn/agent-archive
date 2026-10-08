@@ -2,13 +2,17 @@ $ agent-archive setup
 Checking installed applications...
   \e[32m✓\e[0m Codex hooks: ~/.codex/hooks.json
   \e[32m✓\e[0m Background job: launchctl responds
-\e[1mAgent Archive is already set up. What would you like to change?\e[0m
-  1) Apps and projects
+
+? Agent Archive is already set up. What would you like to change?
+
+  1) Apps and projects (default)
   2) Storage (bucket and credentials)
   3) How long sessions are kept
   4) All settings
   5) Nothing, exit
-Enter 1-5 [\e[1m1\e[0m] › 5
+
+› Choose [1]: 5
+\e[2m✓ Nothing, exit\e[0m
 
 Nothing was changed.
 [exit 0]

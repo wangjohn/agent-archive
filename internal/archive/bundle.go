@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -66,6 +67,14 @@ func NewSourceBundle(reg SessionRegistration, adapter Adapter, transcript Filter
 	}
 	if transcript.ObservedHarness.Mode != "" {
 		harness.Mode = transcript.ObservedHarness.Mode
+	}
+	for _, evidence := range supplemental {
+		if evidence.Kind == EvidenceKindSessionLabels {
+			label, ok := labelFromEvidence(evidence)
+			if !ok || evidence.Provenance != labelProvenance(reg.Harness.Name) || label.NativeID != reg.NativeSessionID || transcript.History != nil {
+				return SourceBundle{}, errors.New("session label does not match its owning source")
+			}
+		}
 	}
 	filteredSupplemental, gaps, err := FilterSupplementalEvidence(supplemental)
 	if err != nil {
@@ -180,6 +189,14 @@ func FilterSupplementalEvidence(in []SupplementalEvidence) ([]SupplementalEviden
 		if strings.TrimSpace(string(evidence.Kind)) == "" || strings.TrimSpace(evidence.Provenance) == "" || evidence.ObservedAt.IsZero() {
 			return nil, nil, errors.New("supplemental evidence requires kind, provenance, and observation time")
 		}
+		if evidence.Kind == EvidenceKindSessionLabels {
+			label, ok := labelFromEvidence(evidence)
+			if !ok {
+				return nil, nil, errors.New("invalid session label evidence")
+			}
+			out = append(out, label.Evidence(evidence.ObservedAt.UTC(), labelEvidenceHarness(evidence)))
+			continue
+		}
 		var extraAllowed map[string]bool
 		if evidence.Kind == EvidenceKindCaptureGap {
 			extraAllowed = captureGapKeys
@@ -247,6 +264,20 @@ func MergeSupplementalEvidence(previous, fresh []SupplementalEvidence) []Supplem
 	out := append([]SupplementalEvidence(nil), previous...)
 	for _, candidate := range fresh {
 		switch candidate.Kind {
+		case EvidenceKindSessionLabels:
+			replaced := false
+			for i := range out {
+				if out[i].Kind == EvidenceKindSessionLabels && firstString(out[i].Payload, "native_session_id") == firstString(candidate.Payload, "native_session_id") {
+					if !supplementalPayloadEqual(out[i].Payload, candidate.Payload) {
+						out[i] = candidate
+					}
+					replaced = true
+					break
+				}
+			}
+			if !replaced {
+				out = append(out, candidate)
+			}
 		case EvidenceKindSkillInventory:
 			identity := supplementalIdentity(candidate)
 			unchanged := false
@@ -329,18 +360,7 @@ func BuildCompressedSource(bundle SourceBundle) (CompressedSource, error) {
 		return CompressedSource{}, err
 	}
 	var output bytes.Buffer
-	writer, err := gzip.NewWriterLevel(&output, gzip.DefaultCompression)
-	if err != nil {
-		return CompressedSource{}, err
-	}
-	// A non-zero epoch avoids gzip's special "unknown time" representation
-	// while remaining independent of capture and wall-clock time.
-	writer.ModTime = time.Unix(1, 0).UTC()
-	writer.OS = 255
-	if err = EncodeSource(writer, bundle); err != nil {
-		return CompressedSource{}, err
-	}
-	if err = writer.Close(); err != nil {
+	if err := CompressSource(&output, bundle); err != nil {
 		return CompressedSource{}, err
 	}
 	bytes := output.Bytes()
@@ -348,7 +368,33 @@ func BuildCompressedSource(bundle SourceBundle) (CompressedSource, error) {
 	return CompressedSource{Bytes: append([]byte(nil), bytes...), SHA256: hex.EncodeToString(digest[:])}, nil
 }
 
+// CompressSource streams the canonical deterministic source gzip to output.
+// The caller owns output's allocation and lifetime; errors publish no authority.
+func CompressSource(output io.Writer, bundle SourceBundle) error {
+	if err := validateBundle(bundle); err != nil {
+		return err
+	}
+	writer, err := gzip.NewWriterLevel(output, gzip.DefaultCompression)
+	if err != nil {
+		return err
+	}
+	// A non-zero epoch avoids gzip's special "unknown time" representation
+	// while remaining independent of capture and wall-clock time.
+	writer.ModTime = time.Unix(1, 0).UTC()
+	writer.OS = 255
+	if err = EncodeSource(writer, bundle); err != nil {
+		return err
+	}
+	if err = writer.Close(); err != nil {
+		return err
+	}
+	return nil
+}
+
 func validateBundle(bundle SourceBundle) error {
+	if err := ValidateSessionLabels(bundle); err != nil {
+		return err
+	}
 	if err := bundle.ValidateHistory(); err != nil {
 		return err
 	}

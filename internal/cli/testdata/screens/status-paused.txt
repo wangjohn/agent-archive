@@ -2,16 +2,20 @@ $ agent-archive status
 Agent Archive  ● Paused
 
   ! Collection is paused
-    Run agent-archive resume when ready. Registered sessions can catch up after resume.
+    Run agent-archive resume when ready. Registered sessions can catch up after
+    resume.
 
 Capture
-  ✓ Codex   automatic capture; included projects   1 session · 1 archived (1 verified)
+  ✓ Codex   automatic capture; included projects
+    1 session · 1 archived (1 verified)
   · Identity recovery: complete
 
 Storage
   ✓ s3://team-archive/agent-archive/   reachable · uploaded 1 minute ago
   · Background collector paused        last scan 1 minute ago
-  ! Bucket privacy not verified        this storage can't be inspected; see https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
+  ! Bucket privacy not verified
+    this storage can't be inspected; see
+    https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
 
 More: agent-archive status --verbose · agent-archive status codex
 [exit 0]

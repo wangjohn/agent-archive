@@ -3,6 +3,7 @@ package archive
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 	"strings"
 	"testing"
@@ -173,6 +174,22 @@ func TestHistoryOutputMatchesPublishedSchemas(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
+	previous := b
+	previous.Capture.CapturedAt = previous.Capture.CapturedAt.Add(-time.Hour)
+	history := *previous.History
+	history.ActiveRolloutID = "22222222-2222-4222-8222-222222222222"
+	history.Spans = append([]HistorySpan(nil), history.Spans...)
+	history.Spans[len(history.Spans)-1].RolloutID = history.ActiveRolloutID
+	previous.History = &history
+	priorCompressed, e := BuildCompressedSource(previous)
+	if e != nil {
+		t.Fatal(e)
+	}
+	priorKey, e := SourceObjectKey(previous, priorCompressed.SHA256)
+	if e != nil {
+		t.Fatal(e)
+	}
+	metadata.History.Preserved = []RevisionReference{{RevisionID: "22222222-2222-4222-8222-222222222222", CapturedAt: previous.Capture.CapturedAt, SourceSchemaVersion: 3, FilterVersion: previous.Capture.FilterVersion, Source: SourceReference{Key: priorKey, SHA256: priorCompressed.SHA256, CompressedBytes: len(priorCompressed.Bytes)}}}
 	encoded, e := json.Marshal(metadata)
 	if e != nil {
 		t.Fatal(e)
@@ -183,5 +200,74 @@ func TestHistoryOutputMatchesPublishedSchemas(t *testing.T) {
 	}
 	if e := metadataSchema.Validate(value); e != nil {
 		t.Fatal(e)
+	}
+}
+
+func TestSourceSetDigestIncludesActiveCaptureAndRevisionProvenance(t *testing.T) {
+	t.Parallel()
+	b := retainedHistoryFixture()
+	packed, err := BuildCompressedSource(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := SourceObjectKey(b, packed.SHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := SourceReference{Key: key, SHA256: packed.SHA256, CompressedBytes: len(packed.Bytes)}
+	m := Metadata{SchemaVersion: HistoryMetadataSchemaVersion, SessionID: b.ArchiveSessionID, NativeSessionID: b.NativeSessionID, ProjectID: b.ProjectID, Harness: b.Capture.Harness, CapturedAt: b.Capture.CapturedAt, SourceBundle: ref, History: &RevisionHistory{CurrentRevision: b.History.ActiveRolloutID}}
+	first, err := m.SourceSetDigest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.CapturedAt = m.CapturedAt.Add(time.Second)
+	changed, err := m.SourceSetDigest()
+	if err != nil || first == changed {
+		t.Fatal("active capture omitted", err)
+	}
+	b.Capture.CapturedAt = b.Capture.CapturedAt.Add(-time.Hour)
+	packed, err = BuildCompressedSource(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err = SourceObjectKey(b, packed.SHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.History.Preserved = []RevisionReference{{RevisionID: "22222222-2222-4222-8222-222222222222", CapturedAt: b.Capture.CapturedAt, Source: SourceReference{Key: key, SHA256: packed.SHA256, CompressedBytes: len(packed.Bytes)}}}
+	first, err = m.SourceSetDigest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.History.Preserved[0].SourceSchemaVersion = 3
+	m.History.Preserved[0].FilterVersion = "14"
+	changed, err = m.SourceSetDigest()
+	if err != nil || first == changed {
+		t.Fatal("revision provenance omitted", err)
+	}
+}
+
+// Preserved source references across revisions are distinct from one graph's nodes.
+func TestHistorySourceUnionKeepsActivePlus64Preserved(t *testing.T) {
+	b := retainedHistoryFixture()
+	makeRef := func(i int) SourceReference {
+		hash := fmt.Sprintf("%064x", i+1)
+		key, err := SourceObjectKey(b, hash)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return SourceReference{Key: key, SHA256: hash, CompressedBytes: 1}
+	}
+	m := Metadata{SchemaVersion: HistoryMetadataSchemaVersion, SessionID: b.ArchiveSessionID, NativeSessionID: b.NativeSessionID, ProjectID: b.ProjectID, Harness: b.Capture.Harness, CapturedAt: b.Capture.CapturedAt, SourceBundle: makeRef(0), History: &RevisionHistory{CurrentRevision: b.History.ActiveRolloutID}}
+	for i := range 64 {
+		m.History.Preserved = append(m.History.Preserved, RevisionReference{RevisionID: fmt.Sprintf("%08x-2222-4222-8222-222222222222", i+1), CapturedAt: m.CapturedAt, Source: makeRef(i + 1)})
+	}
+	refs, err := m.SourceReferences()
+	if err != nil || len(refs) != 65 {
+		t.Fatal("active plus64 preserved rejected", len(refs), err)
+	}
+	m.History.Preserved = append(m.History.Preserved, RevisionReference{RevisionID: "ffffffff-2222-4222-8222-222222222222", CapturedAt: m.CapturedAt, Source: makeRef(65)})
+	if _, err := m.SourceReferences(); err == nil {
+		t.Fatal("65 preserved refs accepted")
 	}
 }

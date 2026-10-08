@@ -1,8 +1,10 @@
 package state
 
 import (
+	"encoding/json"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -79,7 +81,7 @@ func TestPublishedSummaryOfOlderStateDecodesInFull(t *testing.T) {
 	if err != nil || !found || !head.Published || !head.CapturedAt.Equal(at) || head.Status != CacheStatusPublished {
 		t.Fatalf("%#v %v %v", head, found, err)
 	}
-	if _, ok := readLeadingSummary(store.publishedPath("session-1")); ok {
+	if _, ok := readTestLeadingSummary(store.publishedPath("session-1")); ok {
 		t.Fatal("a reader outside a collector pass rewrote the file")
 	}
 	// A collector pass, the file's writer, migrates it once, so later reads
@@ -87,7 +89,7 @@ func TestPublishedSummaryOfOlderStateDecodesInFull(t *testing.T) {
 	if _, _, err := store.ForCollectorPass().LoadPublishedSummary("session-1"); err != nil {
 		t.Fatal(err)
 	}
-	if migrated, ok := readLeadingSummary(store.publishedPath("session-1")); !ok || !reflect.DeepEqual(migrated, head) {
+	if migrated, ok := readTestLeadingSummary(store.publishedPath("session-1")); !ok || !reflect.DeepEqual(migrated, head) {
 		t.Fatalf("not migrated: %#v %v", migrated, ok)
 	}
 }
@@ -153,4 +155,65 @@ func TestClampSupersededKeepsOrder(t *testing.T) {
 	if _, err := os.Stat(store.supersededPath("session-1")); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestSummaryRetainsCompleteHistoryAgeAcrossMaintenanceAndClamp(t *testing.T) {
+	s := newTestStore(t)
+	p, err := s.LoadPublishedState("session-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	b := archive.SourceBundle{SchemaVersion: archive.SourceSchemaVersion, ArchiveSessionID: "session-1", NativeSessionID: "11111111-1111-4111-8111-111111111111", ProjectID: "project-1", Capture: archive.SourceCapture{Harness: archive.Harness{Name: "codex"}, CapturedAt: at}}
+	ref := archive.SourceReference{Key: "sessions/codex/session-1/source." + strings.Repeat("a", 64) + ".jsonl.gz", SHA256: strings.Repeat("a", 64), CompressedBytes: 10}
+	old := archive.SourceReference{Key: "sessions/codex/session-1/source." + strings.Repeat("b", 64) + ".jsonl.gz", SHA256: strings.Repeat("b", 64), CompressedBytes: 10}
+	observed := at.Add(time.Hour)
+	m := archive.Metadata{SchemaVersion: archive.HistoryMetadataSchemaVersion, SessionID: b.ArchiveSessionID, NativeSessionID: b.NativeSessionID, ProjectID: b.ProjectID, Harness: b.Capture.Harness, CapturedAt: at, SourceBundle: ref, History: &archive.RevisionHistory{CurrentRevision: b.NativeSessionID, Preserved: []archive.RevisionReference{{RevisionID: "22222222-2222-4222-8222-222222222222", Source: old, CapturedAt: observed}}}}
+	raw, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.SavePublication(b, at, ref, raw); err != nil {
+		t.Fatal(err)
+	}
+	summary, found, err := s.LoadPublishedSummary("session-1")
+	if err != nil || !found || !summary.RetentionAge().Equal(observed) || !summary.SourceSetComplete || summary.CurrentRevision != b.NativeSessionID || summary.SourceSetDigest == "" {
+		t.Fatal(summary, err)
+	}
+	clamped := at.Add(-time.Hour)
+	if err := p.ClampAgeFrom(clamped); err != nil {
+		t.Fatal(err)
+	}
+	m.MetadataDerivedAt = at.Add(24 * time.Hour)
+	raw, err = json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.SavePublication(b, at.Add(24*time.Hour), ref, raw); err != nil {
+		t.Fatal(err)
+	}
+	if !p.Summary().RetentionAge().Equal(clamped) {
+		t.Fatal("maintenance lost meaningful-age clamp", p.Summary())
+	}
+	m.History.Preserved[0].CapturedAt = observed.Add(time.Hour)
+	raw, err = json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.SavePublication(b, at.Add(25*time.Hour), ref, raw); err != nil {
+		t.Fatal(err)
+	}
+	if !p.Summary().RetentionAge().Equal(observed.Add(time.Hour)) {
+		t.Fatal("new retained observation kept stale clamp", p.Summary())
+	}
+}
+
+func readTestLeadingSummary(path string) (PublishedSummary, bool) {
+	f, err := os.Open(path)
+	if err != nil {
+		return PublishedSummary{}, false
+	}
+	defer func() { _ = f.Close() }()
+	summary, found, _ := readLeadingSummary(f)
+	return summary, found
 }

@@ -16,6 +16,7 @@ import (
 
 // Integration binds implemented operations to an identity declaration.
 type Integration struct {
+	Labels          agentapi.LabelProvider
 	Descriptor      agentmeta.Descriptor
 	Launcher        agentapi.Launcher
 	Parser          agentapi.TranscriptParser
@@ -129,13 +130,19 @@ func (r *Registry) Supporting(op agentmeta.Operation) []Integration {
 func NewBuiltins() *Registry {
 	r, err := New(agentmeta.Builtins(), []Integration{
 		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Claude}, Launcher: claude.Launcher{}, Skills: claude.Skills(), Imports: claude.Imports(), Evidence: claude.CapabilityEvidence{}, Version: claude.VersionInspector{}, NativeHeaders: claude.NativeHeaders{}, Discovery: claude.NativeHeaders{}, NativePaths: claude.ProjectEvidence{}, Worktrees: claude.ProjectEvidence{}, Children: claude.Children{}, Sources: claude.SourceProvider{}, Filter: claude.Filter{}, Runtime: claude.RuntimeDetector{}, Hooks: claude.Hooks(), Decoder: claude.Decoder(), Parser: claude.Parser{}, Preview: claude.Previewer{}},
-		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Codex}, Launcher: codex.Launcher{}, Skills: codex.Skills(), Imports: codex.Imports(), Evidence: codex.CapabilityEvidence{}, Version: codex.VersionInspector{}, NativeHeaders: codex.NativeHeaders{}, Discovery: codex.NativeHeaders{}, NativePaths: codex.ProjectEvidence{}, Sources: codex.SourceProvider{}, Filter: codex.Filter{}, Runtime: codex.RuntimeDetector{}, Hooks: codex.Hooks(), Decoder: codex.Decoder(), Parser: codex.Parser{}, Preview: codex.Previewer{}},
+		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Codex}, Launcher: codex.Launcher{}, Skills: codex.Skills(), Imports: codex.Imports(), Evidence: codex.CapabilityEvidence{}, Version: codex.VersionInspector{}, NativeHeaders: codex.NativeHeaders{}, Discovery: codex.NativeHeaders{}, NativePaths: codex.ProjectEvidence{}, Sources: codex.SourceProvider{}, Filter: codex.Filter{}, Runtime: codex.RuntimeDetector{}, Hooks: codex.Hooks(), Decoder: codex.Decoder(), Parser: codex.Parser{}, Preview: codex.Previewer{}, Labels: codex.LabelProvider{}},
 		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Cursor}, Launcher: cursor.Launcher{}, Skills: cursor.Skills(), Imports: cursor.Imports(), Evidence: cursor.CapabilityEvidence{}, Version: cursor.VersionInspector{}, Discovery: cursor.Discovery{}, NativePaths: cursor.ProjectEvidence{}, Workspace: cursor.ProjectEvidence{}, DatabaseCatalog: cursor.DatabaseCatalogInspector{}, Sources: cursor.SourceProvider{}, Filter: cursor.Filter{}, Runtime: cursor.RuntimeDetector{}, Hooks: cursor.Hooks(), Decoder: cursor.Decoder(), Parser: cursor.Parser{}},
 	})
 	if err != nil {
 		panic(err)
 	}
 	return r
+}
+
+// LookupLabels resolves the optional native metadata provider without probing.
+func (r *Registry) LookupLabels(name string) (agentapi.LabelProvider, bool) {
+	b, ok := r.sourceBindings[agentmeta.Normalize(name)]
+	return b.Labels, ok && b.Labels != nil
 }
 
 // LookupParser resolves only the parser needed by retained-source derivation.
@@ -391,6 +398,7 @@ func implementedOperations(b Integration) ([]agentmeta.Operation, error) {
 		{"runtime", agentmeta.Runtime, b.Runtime},
 		{"parser", agentmeta.Parse, b.Parser},
 		{"preview", "", b.Preview},
+		{"labels", "", b.Labels},
 		{"sources", agentmeta.Source, b.Sources},
 		{"filter", "", b.Filter},
 		{"decoder", agentmeta.LifecycleHooks, b.Decoder},
@@ -428,4 +436,21 @@ func implementedOperations(b Integration) ([]agentmeta.Operation, error) {
 func (r *Registry) CanonicalDiscovery(name string) (string, bool) {
 	b, ok := r.sourceBindings[agentmeta.Normalize(name)]
 	return string(b.Descriptor.ID), ok && b.Discovery != nil
+}
+
+// WithCodexLabelHost returns a narrow pass composition without mutating the registry.
+func (r *Registry) WithCodexLabelHost(host agentapi.LabelHostFactory) agentapi.LabelsLookup {
+	return nativeLabels{registry: r, host: host}
+}
+
+type nativeLabels struct {
+	registry *Registry
+	host     agentapi.LabelHostFactory
+}
+
+func (n nativeLabels) LookupLabels(name string) (agentapi.LabelProvider, bool) {
+	if agentmeta.Normalize(name) == "codex" {
+		return codex.NativeLabelProvider{Host: n.host}, true
+	}
+	return n.registry.LookupLabels(name)
 }

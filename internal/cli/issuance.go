@@ -407,7 +407,7 @@ func choosePairingKey(home string, cfg config.Config, p *prompter, env Env, yes,
 		if yes {
 			return selected, nil, errors.New("no eligible spare: set CLOUDFLARE_API_TOKEN or deliberately use --share-key; no key was shared")
 		}
-		choice, err := p.menu("No spare key available", "cancel", option{"create", "Paste a Cloudflare token to create a dedicated key"}, option{"share", "Share this machine's key (cannot revoke recipient independently)"}, option{"cancel", "Cancel"})
+		choice, err := p.guidedChoice(promptModel{Question: "Create separate access for this machine?", Helpers: []string{"Separate access lets you revoke this machine later without affecting other machines."}, Default: "create", Primary: []option{{"create", "Create a Cloudflare key (recommended)"}, {"share", "Share existing access (revoking it affects all machines using it)"}}, Secondary: []actionOption{{"cancel", "q", "Cancel"}}})
 		if err != nil {
 			return selected, nil, err
 		}

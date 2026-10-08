@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sync/atomic"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/cursorstore"
+	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 	"github.com/wangjohn/agent-archive/internal/sourceio"
 	"github.com/wangjohn/agent-archive/internal/state"
@@ -19,6 +21,7 @@ import (
 
 // sourceState carries a provider observation and legacy equality facts.
 type sourceState struct {
+	binding     *archive.CodexSourceBinding
 	kind        archive.SourceKind
 	file        transcriptFileInfo
 	cursor      cursorstore.Signature
@@ -71,7 +74,14 @@ func observe(kind archive.SourceKind, o agentapi.SourceObservation) sourceState 
 }
 
 func sourceRef(reg archive.SessionRegistration) agentapi.SourceRef {
-	return agentapi.SourceRef{Kind: reg.SourceKind, Path: reg.TranscriptPath, Key: reg.SourceKey}
+	if reg.CodexBinding != nil {
+		return agentapi.SourceRef{Kind: archive.SourceKindFile, Path: reg.CodexBinding.Path, Key: reg.NativeSessionID}
+	}
+	key := reg.SourceKey
+	if reg.Harness.Name == "codex" && reg.ReadsTranscriptFile() {
+		key = reg.NativeSessionID
+	}
+	return agentapi.SourceRef{Kind: reg.SourceKind, Path: reg.TranscriptPath, Key: key}
 }
 
 // sourceReader remains a small compatibility seam while policy consumes provider values.
@@ -87,14 +97,18 @@ func newSourceReader(reg archive.SessionRegistration, opts Options) (sourceReade
 	return providerReader{
 		ref: sourceRef(reg), harness: reg.Harness.Name, startedAt: reg.SessionStartedAt,
 		subagentMetadata: reg.ParentSessionID != "", sources: opts.Sources,
-		passes: opts.sourcePasses, database: opts.CursorDatabase, rollouts: opts.CodexRollouts,
-		discovery: discoveryRegistration(reg),
+		passes: opts.sourcePasses, resourceOwner: opts.retainedOwner, database: opts.CursorDatabase, rollouts: opts.CodexRollouts, pendingRollouts: opts.PendingCodexRollouts,
+		admission: sourceAdmission(reg),
+		discovery: confinedSourceRegistration(reg, opts.ConfiguredCodexHomes),
 	}, true
 }
 
 // providerReader keeps only read dependencies; boxing whole registrations and
 // collector options would allocate their unrelated policy fields per source.
 type providerReader struct {
+	pendingRollouts  func() agentapi.CodexRolloutLookup
+	resourceOwner    *sessionScan
+	admission        agentapi.SourceAdmission
 	rollouts         agentapi.CodexRolloutLookup
 	ref              agentapi.SourceRef
 	harness          string
@@ -108,9 +122,48 @@ type providerReader struct {
 
 // discoveryRegistration retains only discovery authority for strict native reads.
 func discoveryRegistration(reg archive.SessionRegistration) *archive.SessionRegistration {
-	if reg.Origin != archive.SessionOriginDiscovery {
+	if reg.Origin != archive.SessionOriginDiscovery && (reg.CodexBinding == nil || reg.CodexBinding.Home == "") {
 		return nil
 	}
+	return &reg
+}
+
+// confinedSourceRegistration recognizes only an admitted native locator below
+// an actual configured home. Lookup hints never supply containment authority.
+func confinedSourceRegistration(reg archive.SessionRegistration, homes []string) *archive.SessionRegistration {
+	if confined := discoveryRegistration(reg); confined != nil {
+		return confined
+	}
+	ref := sourceRef(reg)
+	if reg.Harness.Name != archive.HarnessCodex || sourcefacts.RolloutID(ref.Path) == "" {
+		return nil
+	}
+	root := ""
+	for _, home := range homes {
+		canonical, err := filepath.EvalSymlinks(home)
+		if err != nil || !filepath.IsAbs(canonical) {
+			continue
+		}
+		info, err := os.Stat(canonical)
+		if err != nil || !info.IsDir() {
+			continue
+		}
+		// The configured root itself may use a platform alias (for example
+		// /var on macOS). OpenRoot still confines every descendant and rejects
+		// native symlinks; the alias does not authorize another home.
+		for _, scope := range []string{filepath.Clean(home), canonical} {
+			if !filepath.IsAbs(scope) || (!local.PathWithin(ref.Path, filepath.Join(scope, "sessions")) && !local.PathWithin(ref.Path, filepath.Join(scope, "archived_sessions"))) {
+				continue
+			}
+			if root == "" || len(scope) > len(root) {
+				root = scope
+			}
+		}
+	}
+	if root == "" {
+		return nil
+	}
+	reg.DiscoveryRoot = root // transient read policy only; persisted provenance is unchanged.
 	return &reg
 }
 
@@ -119,13 +172,17 @@ func discoveryRegistration(reg archive.SessionRegistration) *archive.SessionRegi
 func sourceEnvironment(reg *archive.SessionRegistration, database string) agentapi.SourceEnvironment {
 	db := (Options{CursorDatabase: database}).cursorDatabase()
 	if reg != nil {
+		root := reg.DiscoveryRoot
+		if reg.CodexBinding != nil && reg.CodexBinding.Home != "" {
+			root = reg.CodexBinding.Home
+		}
 		return agentapi.SourceEnvironment{
-			Database: db,
-			Files:    sourcefacts.RootOpener{Root: reg.DiscoveryRoot},
-			Policy:   transcriptio.OpenPolicy{Root: reg.DiscoveryRoot, RejectSymlinks: true},
+			Database: db, RequireConfinedHistory: true,
+			Files:  sourcefacts.RootOpener{Root: root},
+			Policy: transcriptio.OpenPolicy{Root: root, RejectSymlinks: true},
 		}
 	}
-	return agentapi.SourceEnvironment{Database: db}
+	return agentapi.SourceEnvironment{Database: db, RequireConfinedHistory: true}
 }
 
 func (r providerReader) binding() (agentapi.SourceProvider, agentapi.TranscriptFilter, error) {
@@ -144,11 +201,19 @@ func (r providerReader) binding() (agentapi.SourceProvider, agentapi.TranscriptF
 
 func (r providerReader) pass(ctx context.Context, p agentapi.SourceProvider, key string) (agentapi.SourcePass, func() error, error) {
 	if r.passes != nil {
-		pass, err := r.passes.get(ctx, sourcePassKey{name: key, root: r.discoveryRoot(), discovery: r.discovery != nil}, p)
-		return pass, func() error { return nil }, err
+		pass, err := r.passes.get(ctx, sourcePassKey{name: key, root: r.discoveryRoot(), discovery: r.discovery != nil, legacy: r.harness == archive.HarnessCodex && r.admission.Binding == nil && (r.discovery == nil || r.discovery.Origin != archive.SessionOriginDiscovery)}, p)
+		if err != nil {
+			return nil, nil, err
+		}
+		r.passes.active++
+		return pass, func() error { r.passes.active--; return nil }, nil
 	}
 	env := sourceEnvironment(r.discovery, r.database)
 	env.CodexRollouts = r.rollouts
+	if r.resourceOwner != nil {
+		env.ReadBudget = r.resourceOwner.readBudget()
+	}
+	env.LegacyUnboundRegistration = r.harness == archive.HarnessCodex && r.admission.Binding == nil && (r.discovery == nil || r.discovery.Origin != archive.SessionOriginDiscovery)
 	pass, err := p.OpenPass(ctx, env)
 	if err != nil {
 		return nil, nil, err
@@ -158,12 +223,32 @@ func (r providerReader) pass(ctx context.Context, p agentapi.SourceProvider, key
 
 func (r providerReader) discoveryRoot() string {
 	if r.discovery != nil {
+		if r.discovery.CodexBinding != nil && r.discovery.CodexBinding.Home != "" {
+			return r.discovery.CodexBinding.Home
+		}
 		return r.discovery.DiscoveryRoot
 	}
 	return ""
 }
 
+// validationContext bounds explicit historical source reads as well as their sweep.
+// Ordinary captures retain their caller's existing context and filesystem costs.
+func (r providerReader) validationContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	lookup := r.rollouts
+	if r.passes != nil {
+		lookup = r.passes.env.CodexRollouts
+	}
+	if _, ok := lookup.(agentapi.CodexRolloutSliceProvider); ok {
+		if _, bounded := ctx.Deadline(); !bounded {
+			return context.WithTimeout(ctx, 30*time.Second)
+		}
+	}
+	return ctx, func() {}
+}
+
 func (r providerReader) Signature(ctx context.Context) (out sourceState, err error) {
+	ctx, cancel := r.validationContext(ctx)
+	defer cancel()
 	provider, filter, err := r.binding()
 	if err != nil {
 		return out, err
@@ -173,31 +258,27 @@ func (r providerReader) Signature(ctx context.Context) (out sourceState, err err
 		return out, err
 	}
 	defer func() { err = errors.Join(err, closePass()) }()
-	if r.discovery != nil {
-		// A stat-only provider signature would skip component symlink checks.
-		snap, readErr := p.Read(ctx, r.ref, agentapi.ReadLimits{})
-		if readErr != nil {
-			return out, translateSourceError(readErr)
+	if validator, ok := p.(agentapi.SourceAdmissionSignature); ok && r.admission.NativeID != "" {
+		if err := validator.ValidateSourceAdmission(ctx, r.ref, r.admission); err != nil {
+			legacy := r.discovery == nil && r.admission.Binding == nil && r.rollouts == nil && (agentapi.Failure(err) == agentapi.FormatMismatch || agentapi.Failure(err) == agentapi.Unavailable)
+			if !legacy {
+				return out, r.observePendingHistory(ctx, err)
+			}
 		}
-		defer func() { err = errors.Join(err, snap.Close()) }()
-		file := snap.Input().File
-		if file == nil {
-			return out, errors.New("discovery signature requires a confined file snapshot")
-		}
-		if err := file.Check(); err != nil {
-			return out, err
-		}
-		o := snap.Observation()
-		return observe(r.ref.Kind, o), r.validateObservation(provider, o)
+	} else if r.discovery != nil {
+		return out, errors.New("confined source admission validator required")
 	}
+
 	o, err := p.Signature(ctx, r.ref)
 	if err == nil {
 		err = r.validateObservation(provider, o)
 	}
-	return observe(r.ref.Kind, o), err
+	return observe(r.ref.Kind, o), r.observePendingHistory(ctx, err)
 }
 
 func (r providerReader) Filter(ctx context.Context, adapter archive.Adapter, maxBytes int64) (out archive.FilteredTranscript, observed sourceState, err error) {
+	ctx, cancel := r.validationContext(ctx)
+	defer cancel()
 	provider, _, err := r.binding()
 	if err != nil {
 		return out, observed, err
@@ -220,7 +301,7 @@ func (r providerReader) Filter(ctx context.Context, adapter archive.Adapter, max
 			}
 			observed = observe(r.ref.Kind, o)
 		}
-		return out, observed, translateSourceError(err)
+		return out, observed, translateSourceError(r.observePendingHistory(ctx, err))
 	}
 	defer func() { err = errors.Join(err, snap.Close()) }()
 	observed = observe(r.ref.Kind, snap.Observation())
@@ -231,16 +312,48 @@ func (r providerReader) Filter(ctx context.Context, adapter archive.Adapter, max
 		transcriptFilters.Add(1)
 	}
 	in := snap.Input()
-	if r.discovery != nil {
-		if err = validateDiscoveryInput(ctx, in.File, *r.discovery); err != nil {
-			return out, observed, err
-		}
-	}
-	out, err = f.Filter(ctx, in, agentapi.FilterContext{Filename: filepath.Base(r.ref.Path), StartedAt: r.startedAt, Limits: limits})
+	observed.binding, err = r.snapshotBinding(ctx, snap)
 	if err != nil {
-		return out, observed, translateSourceError(err)
+		return out, observed, err
+	}
+
+	out, err = r.filterOwned(ctx, f, in, agentapi.FilterContext{Filename: filepath.Base(r.ref.Path), StartedAt: r.startedAt, Limits: limits})
+	if err != nil {
+		return out, observed, translateSourceError(r.observePendingHistory(ctx, err))
 	}
 	return out, observed, checkFilteredSize(out, maxBytes)
+}
+
+// observePendingHistory is a diagnostic-only route behind the existing fence.
+// It never supplies the catalog to the active capture pass or filters ancestors.
+func (r providerReader) observePendingHistory(ctx context.Context, original error) (out error) {
+	if r.harness != "codex" || r.pendingRollouts == nil || !errors.Is(original, archive.ErrRelatedHistory) {
+		return original
+	}
+	lookup := r.pendingRollouts()
+	if lookup == nil {
+		return original
+	}
+	bounded, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+	defer cancel()
+	if provider, ok := lookup.(agentapi.CodexRolloutSliceProvider); ok {
+		slice, err := provider.BeginValidationSlice(bounded, agentapi.CodexValidationLimits{Steps: 8, Duration: 100 * time.Millisecond})
+		if err != nil {
+			return errors.Join(original, errors.New("pending Codex history: locator evidence unavailable"))
+		}
+		defer func() {
+			if err := slice.Close(); err != nil {
+				out = errors.Join(out, errors.New("pending Codex history: locator evidence unavailable"))
+			}
+		}()
+		lookup = slice
+	}
+	refs, err := lookup.Rollout(bounded, sourcefacts.RolloutID(r.ref.Path))
+	if err != nil {
+		return errors.Join(original, errors.New("pending Codex history: locator evidence unavailable"))
+	}
+	detail := fmt.Sprintf("%d candidate rollout locators", len(refs))
+	return errors.Join(original, fmt.Errorf("pending Codex history: %s; this operation remains pending", detail))
 }
 
 func (r providerReader) validateObservation(provider agentapi.SourceProvider, o agentapi.SourceObservation) error {
@@ -351,18 +464,69 @@ type sourcePassKey struct {
 	name      string
 	root      string
 	discovery bool
+	legacy    bool
 }
 
 type sourcePassSet struct {
-	env    agentapi.SourceEnvironment
-	passes map[sourcePassKey]agentapi.SourcePass
+	sliceFailure error
+	slice        agentapi.CodexRolloutSlice
+	active       int
+	env          agentapi.SourceEnvironment
+	passes       map[sourcePassKey]agentapi.SourcePass
 }
 
 func (s *sourcePassSet) get(ctx context.Context, key sourcePassKey, p agentapi.SourceProvider) (agentapi.SourcePass, error) {
+	if key.name == "codex" {
+		if provider, ok := s.env.CodexRollouts.(agentapi.CodexRolloutSliceProvider); ok {
+			var validation error
+			if s.slice != nil {
+				validation = s.slice.Valid(ctx)
+				// Preserve the failed sweep for its bounded slice. Expiry returns
+				// a distinct error and permits renewal after all readers close.
+				if validation != nil && errors.Is(validation, s.sliceFailure) {
+					return nil, validation
+				}
+			}
+			if s.slice == nil || validation != nil {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
+				if s.active != 0 {
+					return nil, agentapi.Wrap(agentapi.Limit, errors.New("close active source snapshots before renewing catalog validation"))
+				}
+				for k, pass := range s.passes {
+					if k.name == "codex" {
+						if err := pass.Close(); err != nil {
+							return nil, err
+						}
+						delete(s.passes, k)
+					}
+				}
+				if s.slice != nil {
+					if err := s.slice.Close(); err != nil {
+						return nil, err
+					}
+				}
+				slice, err := provider.BeginValidationSlice(ctx, agentapi.CodexValidationLimits{})
+				if err != nil {
+					return nil, err
+				}
+				s.slice = slice
+				s.sliceFailure = slice.Valid(ctx)
+				if s.sliceFailure != nil {
+					return nil, s.sliceFailure
+				}
+			}
+		}
+	}
 	if pass := s.passes[key]; pass != nil {
 		return pass, nil
 	}
 	e := s.env
+	if key.name == "codex" && s.slice != nil {
+		e.CodexRollouts = s.slice
+	}
+	e.LegacyUnboundRegistration = key.legacy
 	if key.discovery {
 		e.Files = sourcefacts.RootOpener{Root: key.root}
 		e.Policy = transcriptio.OpenPolicy{Root: key.root, RejectSymlinks: true}
@@ -375,7 +539,11 @@ func (s *sourcePassSet) get(ctx context.Context, key sourcePassKey, p agentapi.S
 }
 
 func openCursorPass(_ []archive.SessionRegistration, opts *Options) func() error {
-	opts.sourcePasses = &sourcePassSet{env: agentapi.SourceEnvironment{Database: opts.cursorDatabase(), CodexRollouts: opts.CodexRollouts}, passes: map[sourcePassKey]agentapi.SourcePass{}}
+	budget := agentapi.NewNativeReadBudget(128 << 20)
+	if shared, ok := opts.CodexRollouts.(agentapi.CodexRolloutResourceBudget); ok && shared.NativeReadBudget() != nil {
+		budget = shared.NativeReadBudget()
+	}
+	opts.sourcePasses = &sourcePassSet{env: agentapi.SourceEnvironment{ReadBudget: budget, RequireConfinedHistory: true, Database: opts.cursorDatabase(), CodexRollouts: opts.CodexRollouts}, passes: map[sourcePassKey]agentapi.SourcePass{}}
 	return func() error {
 		var err error
 		for _, p := range opts.sourcePasses.passes {
@@ -383,6 +551,9 @@ func openCursorPass(_ []archive.SessionRegistration, opts *Options) func() error
 				opts.afterCursorPass(counter.Snapshots())
 			}
 			err = errors.Join(err, p.Close())
+		}
+		if opts.sourcePasses.slice != nil {
+			err = errors.Join(err, opts.sourcePasses.slice.Close())
 		}
 		return err
 	}
@@ -410,8 +581,9 @@ func rememberFailedRead(local *state.Store, reg archive.SessionRegistration, ada
 		message = failure.Error()
 	}
 	return local.SaveScanSignature(reg.ArchiveSessionID, state.ScanSignature{
-		SkillEvidence: string(opts.skillEvidence()),
-		ParserVersion: opts.parserVersionFor(reg.Harness.Name), FilterVersion: archive.FilterVersion, AdapterVersion: adapter.Version(),
+		SourceSetVersion: sourceSetVersion(reg),
+		SkillEvidence:    string(opts.skillEvidence()),
+		ParserVersion:    opts.parserVersionFor(reg.Harness.Name), FilterVersion: archive.FilterVersion, AdapterVersion: adapter.Version(),
 		SourceSignature: signaturePointer(observed), SourceKind: observed.kind, CursorLastUpdatedAt: observed.cursor.LastUpdatedAt,
 		CursorHeaderCount: observed.cursor.HeaderCount, CursorLastBubbleID: observed.cursor.LastBubbleID,
 		CursorMessageRows: observed.cursor.MessageRows, CursorLastMessageHash: observed.cursor.LastMessageHash,
@@ -495,4 +667,78 @@ func sourceSemantics(sources agentapi.SourcesLookup, reg archive.SessionRegistra
 		return agentapi.SourceSemantics{}, errors.New("source integration unavailable")
 	}
 	return p.Describe(sourceRef(reg))
+}
+
+func sourceAdmission(reg archive.SessionRegistration) agentapi.SourceAdmission {
+	if reg.Harness.Name != "codex" {
+		return agentapi.SourceAdmission{}
+	}
+	cwd := ""
+	if reg.Origin == archive.SessionOriginDiscovery {
+		cwd = reg.DiscoveryCwd
+	}
+	if reg.CodexBinding != nil {
+		cwd = ""
+	}
+	createdAt := time.Time{}
+	producerVersion, producerOriginator, producerSource := "", "", ""
+	if reg.Origin == archive.SessionOriginDiscovery && reg.CodexBinding == nil {
+		createdAt = reg.SessionStartedAt
+		producerVersion = reg.Harness.Version
+		producerOriginator = reg.DiscoveryProducerOriginator
+		producerSource = reg.DiscoveryProducerSource
+	}
+	return agentapi.SourceAdmission{NativeID: reg.NativeSessionID, Cwd: cwd, Binding: reg.CodexBinding, NativeCreatedAt: createdAt, InitialProducerVersion: producerVersion, InitialProducerOriginator: producerOriginator, InitialProducerSource: producerSource}
+}
+
+func (r providerReader) snapshotBinding(ctx context.Context, snap agentapi.SourceSnapshot) (*archive.CodexSourceBinding, error) {
+	var binding *archive.CodexSourceBinding
+	if evidenceReader, ok := snap.(agentapi.SourceAdmissionEvidence); ok && r.admission.NativeID != "" {
+		evidence, evidenceErr := evidenceReader.AdmissionEvidence(ctx, r.admission)
+		if evidenceErr != nil {
+			return nil, evidenceErr
+		}
+		if evidence.Binding.Child && evidence.Task.Seen && (!evidence.Task.Native || !evidence.Task.LocalExecution) {
+			return nil, agentapi.Wrap(agentapi.Unavailable, errors.New("first own task does not establish native execution"))
+		}
+		if r.admission.Binding != nil && !r.admission.Binding.FirstNativeTaskAt.IsZero() {
+			evidence.Binding.FirstNativeTaskAt = r.admission.Binding.FirstNativeTaskAt
+			evidence.Binding.FirstNativeTaskID = r.admission.Binding.FirstNativeTaskID
+		} else if evidence.Task.Native && evidence.Task.LocalExecution {
+			evidence.Binding.FirstNativeTaskAt = evidence.Task.StartedAt
+			evidence.Binding.FirstNativeTaskID = evidence.Task.TurnID
+		}
+		binding = &evidence.Binding
+	} else {
+		if validator, ok := snap.(agentapi.SourceAdmissionValidator); ok && r.admission.NativeID != "" {
+			if err := validator.ValidateAdmission(ctx, r.admission); err != nil {
+				return nil, err
+			}
+		} else if r.discovery != nil {
+			return nil, errors.New("confined source admission validator required")
+		}
+		if facts, ok := snap.(agentapi.SourceAdmissionFacts); ok && r.admission.NativeID != "" {
+			factsBinding, err := facts.AdmissionFacts(ctx)
+			if err != nil {
+				return nil, err
+			}
+			binding = &factsBinding
+		}
+	}
+	if binding != nil && r.discovery != nil && r.discovery.Origin == archive.SessionOriginDiscovery && !binding.NativeCreatedAt.Equal(r.discovery.SessionStartedAt) {
+		return nil, errors.New("native original creation evidence changed")
+	}
+
+	return binding, nil
+}
+
+func (r providerReader) filterOwned(ctx context.Context, filter agentapi.TranscriptFilter, in agentapi.NativeInput, c agentapi.FilterContext) (archive.FilteredTranscript, error) {
+	if leased, ok := filter.(agentapi.LeasedTranscriptFilter); ok && r.resourceOwner != nil && leased.LeasedFilterFor(filter) {
+		out, release, err := leased.FilterLeased(ctx, in, c, r.resourceOwner.readBudget())
+		if err == nil {
+			r.resourceOwner.retainedReleases = append(r.resourceOwner.retainedReleases, release)
+		}
+		return out, err
+	}
+	return filter.Filter(ctx, in, c)
 }

@@ -4,32 +4,69 @@ Checking installed applications...
 Choose Cloudflare R2 or Amazon S3 for private archive storage. Setup will guide you through connecting your account.
 
 \e[1mStep 1 of 3 · Choose what to capture\e[0m
-
 No apps found automatically.
 Choose which apps to include:
-\e[1mInclude Codex?\e[0m [y/\e[1mN\e[0m] › y
 
-\e[1mInclude Claude Code?\e[0m [y/\e[1mN\e[0m] › n
+? Include Codex?
 
-\e[1mInclude Cursor?\e[0m [y/\e[1mN\e[0m] › n
+  1) Yes
+  2) No (default)
 
-\e[1mCodex capture scope\e[0m
-  1) Included projects only (Codex)
+› Choose [2]: y
+\e[2m✓ Include Codex Yes\e[0m
+
+? Include Claude Code?
+
+  1) Yes
+  2) No (default)
+
+› Choose [2]: n
+\e[2m✓ Include Claude Code No\e[0m
+
+? Include Cursor?
+
+  1) Yes
+  2) No (default)
+
+› Choose [2]: n
+\e[2m✓ Include Cursor No\e[0m
+
+? Codex capture scope
+
+  1) Included projects only (Codex) (default)
   2) All current and future projects (Codex only)
-Enter 1-2 [\e[1m1\e[0m] › included-projects
 
-Add project directories, one per line. Enter a blank line when finished.
-\e[1mProject path\e[0m › ~/src/web-app
+› Choose [1]: included-projects
+\e[2m✓ Included projects only (Codex)\e[0m
 
-\e[1mProject path\e[0m › 
+? Add a project path
 
+› Path: ~/src/web-app
+\e[2m✓ Project ~/src/web-app\e[0m
+
+? Which projects?
+
+  Found 1 projects:
+  1) ~/src/web-app
+
+  1) All 1 found projects (default)
+  2) Choose specific projects
+
+  [p] Add a project path
+  [r] Retry search
+
+› Choose [1]:
+\e[2m✓ Projects All 1 found projects\e[0m
 
 \e[1mStep 2 of 3 · Connect storage\e[0m
 
-\e[1mWhere should your archive live?\e[0m
-  1) Cloudflare R2
+? Where should your archive live?
+
+  1) Cloudflare R2 (default)
   2) Amazon S3
-[h] Setup instructions
-Choose [\e[1m1\e[0m] › Setup incomplete: no more input: EOF
+
+  [h] Setup instructions
+
+› Choose [1]: Setup incomplete: no more input: EOF
 Run agent-archive setup to continue.
 [exit 1]

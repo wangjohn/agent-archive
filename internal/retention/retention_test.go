@@ -15,6 +15,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/collector"
+	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
@@ -43,7 +44,14 @@ func registration(id, transcriptPath string) archive.SessionRegistration {
 
 func newTestStore(t *testing.T) *state.Store {
 	t.Helper()
-	store, err := state.Open(t.TempDir())
+	home := t.TempDir()
+	if err := os.Chmod(home, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.Save(home, config.Config{MachineID: "synthetic"}); err != nil {
+		t.Fatal(err)
+	}
+	store, err := state.Open(home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -617,8 +625,8 @@ func TestSweepSkipsRemoteReadWhenNothingIsExpirable(t *testing.T) {
 	if err != nil || len(result.Errors) != 0 || result.DeletedSnapshots != 1 {
 		t.Fatalf("%#v %v", result, err)
 	}
-	if store.gets != 1 {
-		t.Fatalf("expected exactly one remote metadata read; gets=%d", store.gets)
+	if store.gets != 2 {
+		t.Fatalf("expected the initial pointer read and immediate deletion recheck; gets=%d", store.gets)
 	}
 	if _, err := mem.Get(context.Background(), first); err == nil {
 		t.Fatal("older snapshot retained")

@@ -72,16 +72,24 @@ var terminalPackageUses = classifiedCalls{
 	"ui.go": {"term.IsTerminal": 2, "term.GetSize": 2},
 	// Key mode: the session browser reads keys one at a time. It is set up
 	// only by runBrowser, which runs after browseInteractive, and
-	// its terminal is restored on every way out.
+	// its terminal is restored on every way out. The prompt line guard also
+	// restores hidden input before interrupts and job control; the pending-input
+	// probe only checks readiness and never consumes an answer. Before ordinary
+	// prompt emission, echoSuppressed inspects the original ECHO/ECHONL modes
+	// so completion counts only actual character echo and supplies missing
+	// newline echo without changing the user's modes.
 	"keys_unix.go": {
-		"term.IsTerminal": 1, "unix.IoctlGetTermios": 3, "unix.IoctlSetTermios": 2,
-		"unix.ICANON": 1, "unix.ECHO": 1, "unix.ECHONL": 1, "unix.IEXTEN": 1, "unix.ISIG": 1,
+		"term.IsTerminal": 1, "unix.IoctlGetTermios": 5, "unix.IoctlSetTermios": 5,
+		"unix.ICANON": 2, "unix.ECHO": 4, "unix.ECHONL": 3, "unix.IEXTEN": 1, "unix.ISIG": 2, "unix.ICRNL": 1,
 		"unix.VMIN": 1, "unix.VTIME": 1, "unix.VQUIT": 1,
-		"unix.Select": 1, "unix.FdSet": 1, "unix.NsecToTimeval": 1, "unix.Read": 1, "unix.EINTR": 2,
-		"unix.Kill": 2, "unix.SIGSTOP": 2,
+		"unix.Select": 2, "unix.FdSet": 2, "unix.Timeval": 1, "unix.NsecToTimeval": 1, "unix.Read": 1, "unix.EINTR": 2,
+		"unix.Kill": 3, "unix.SIGSTOP": 3, "unix.Termios": 2,
 	},
-	"keys_darwin.go": {"unix.TIOCGETA": 1, "unix.TIOCSETA": 1, "unix.TIOCSETAF": 1},
-	"keys_linux.go":  {"unix.TCGETS": 1, "unix.TCSETS": 1, "unix.TCSETSF": 1},
+	// Prompt capabilities use descriptor identity/size for presentation; guarded
+	// hidden reads and lifecycle restoration require terminal mechanisms.
+	"prompt_render.go": {"term.IsTerminal": 4, "term.GetSize": 1},
+	"keys_darwin.go":   {"unix.TIOCGETA": 1, "unix.TIOCSETA": 1, "unix.TIOCSETAF": 1},
+	"keys_linux.go":    {"unix.TCGETS": 1, "unix.TCSETS": 1, "unix.TCSETSF": 1},
 	// saveTerminalState restores modes the pager or a prompt changed; it does
 	// nothing unless something interactive already ran.
 	"list_browse.go": {"term.IsTerminal": 1, "term.GetState": 1, "term.Restore": 1},
@@ -101,6 +109,7 @@ var terminalPackageUses = classifiedCalls{
 // hand): every place agent-archive can ask a question. The comment says what
 // stops the question when interaction is off.
 var promptSites = classifiedCalls{
+	"purge.go":            {"newPrompter": 1},                  // Exact digest consent is refused when noninteractive unless --yes.
 	"machines_revoke.go":  {"newPrompter": 1},                  // confirmation and token prompt require Env.interactive; --yes/--json never prompt
 	"machines_own_key.go": {"newPrompter": 1},                  // own-key confirmation/token require Env.interactive; --yes uses environment only
 	"pairing_rollout.go":  {"newPrompter": 1},                  // first-run question requires terminal input/output, fresh setup, and Env.interactive
@@ -109,7 +118,8 @@ var promptSites = classifiedCalls{
 	"pairing_source.go":   {"newPrompter": 1},                  // source requires interactive input/output unless deliberate --yes; the scripted path never prompts
 	"pairing_receive.go":  {"newPrompter": 2},                  // receiver refuses prompts-off unless --yes; redirected bundle input switches code and review to a checked private terminal
 	"prompt.go":           {"newPrompter": 2, "prompter{}": 1}, // the definition, and typedInput.prompter, which handoff's picker and ambiguous-title chooser ask through (both behind browseInteractive: see handoff_select.go and handoff_title.go)
-	"setup.go":            {"newPrompter": 2},                  // interactive setup plus buffered-input handoff; runSetupCommand requires Env.interactive
+	"setup.go":            {"newPrompter": 3},                  // interactive setup, buffered-input handoff, and output-only completion buffer; runSetupCommand requires Env.interactive
+	"setup_review.go":     {"newPrompter": 1},                  // Details is rendered to an output-only buffer; it never reads or asks a question.
 	"setup_flags.go":      {"newPrompter": 1, "prompter{}": 1}, // setup --yes: only reads a secret, guarded in readR2Secret; the literal has no input, it only prints
 	"uninstall.go":        {"newPrompter": 1},                  // runUninstallCommand refuses unless env.interactive(stdin) or --yes
 	"backfill.go":         {"newPrompter": 1},                  // runBackfillCommand refuses unless env.interactive(stdin) or --yes
@@ -126,10 +136,11 @@ var promptSites = classifiedCalls{
 // through a prompter. A read of standard input that waits for a person must
 // be refused when interaction is off; a read of a file need not be.
 var inputReads = classifiedCalls{
-	"setup_project_scope.go": {"json.NewDecoder": 1, "io.ReadAll": 1}, // explicit JSON or --yes file/stdin scope, never an implicit prompt
-	"pairing_receive.go":     {"io.ReadAll": 1, "bufio.NewReader": 1}, // bounded bundle input and buffered first-run answers; code/review preserve the checked terminal
-	"pairing_ledger.go":      {"io.ReadAll": 1},                       // bounded local ledger files, never input
-	"machines_revoke.go":     {"io.ReadAll": 1, "json.NewDecoder": 1}, // explicitly selected bounded operator binding file, never stdin
+	"codex_label_host.go":    {"bufio.NewReaderSize": 1, "io.Copy": 1}, // bounded native process stdout/stderr only; never terminal input or an approval prompt
+	"setup_project_scope.go": {"json.NewDecoder": 1, "io.ReadAll": 1},  // explicit JSON or --yes file/stdin scope, never an implicit prompt
+	"pairing_receive.go":     {"io.ReadAll": 1, "bufio.NewReader": 1},  // bounded bundle input and buffered first-run answers; code/review preserve the checked terminal
+	"pairing_ledger.go":      {"io.ReadAll": 1},                        // bounded local ledger files, never input
+	"machines_revoke.go":     {"io.ReadAll": 1, "json.NewDecoder": 1},  // explicitly selected bounded operator binding file, never stdin
 
 	// The prompter's own line reader: every prompt (see promptSites); and
 	// handoff's one buffer for its answers (typedInput), read only by the
@@ -142,7 +153,6 @@ var inputReads = classifiedCalls{
 	"hook_command.go": {"json.NewDecoder": 1},
 	// purge apply's typed digest: refused in runPurgeApply when the switch is
 	// on and --yes is not given.
-	"purge.go": {"bufio.NewReader": 1},
 	// Files, not standard input.
 	"setup_aws.go": {"bufio.NewScanner": 1},
 	// eval export --ids-from -: a list piped in, refused when standard input

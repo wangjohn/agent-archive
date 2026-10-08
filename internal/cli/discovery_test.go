@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -107,6 +108,7 @@ func TestSupportedDiscoveryPublishesWithoutHooksAndAcceptsRecentCopy(t *testing.
 		return path
 	}
 	home, userHome, project, source := physicalTemp(), physicalTemp(), physicalTemp(), physicalTemp()
+	must(t, os.Chmod(home, 0700))
 	cfg := config.Config{MachineID: "synthetic-machine", Storage: credentialsTestConfig(), Harnesses: []string{"codex"}, Archive: archive.Config{Enabled: true, Projects: []archive.ProjectActivation{{Root: project, ProjectID: archive.ProjectID(project), Included: true, ActivatedAt: at}}}, Discovery: &config.DiscoveryConfig{Enabled: true, CodexHomes: []string{source}}}
 	must(t, config.ReconcileDiscovery(&cfg, config.Config{}, at))
 	must(t, config.Save(home, cfg))
@@ -114,20 +116,27 @@ func TestSupportedDiscoveryPublishesWithoutHooksAndAcceptsRecentCopy(t *testing.
 	must(t, err)
 	cfg, err = config.SetPaused(home, false, at.Add(30*time.Second))
 	must(t, err)
+	db, err := sql.Open("sqlite", filepath.Join(source, "state_5.sqlite"))
+	must(t, err)
+	defer func() { _ = db.Close() }()
+	_, err = db.ExecContext(t.Context(), "PRAGMA journal_mode=WAL; CREATE TABLE threads(id TEXT PRIMARY KEY, rollout_path TEXT)")
+	must(t, err)
 	for n, created := range []time.Time{at.Add(time.Minute), at.Add(-time.Hour), at.Add(25 * time.Second)} {
 		id := fmt.Sprintf("00000000-0000-0000-0000-%012d", n+1)
 		path := filepath.Join(source, "sessions", "rollout-2026-10-02T12-00-00-"+id+".jsonl")
 		must(t, os.MkdirAll(filepath.Dir(path), 0700))
-		meta, err := json.Marshal(map[string]any{"type": "session_meta", "timestamp": created.Format(time.RFC3339Nano), "payload": map[string]any{"id": id, "timestamp": created.Format(time.RFC3339Nano), "cwd": project, "source": "cli", "originator": "codex-tui", "cli_version": "0.159.3", "history_mode": "paginated"}})
+		meta, err := json.Marshal(map[string]any{"type": "session_meta", "ordinal": 0, "timestamp": created.Format(time.RFC3339Nano), "payload": map[string]any{"id": id, "timestamp": created.Format(time.RFC3339Nano), "cwd": project, "source": "cli", "originator": "codex-tui", "cli_version": "0.159.3", "history_mode": "paginated"}})
 		must(t, err)
-		task, err := json.Marshal(map[string]any{"type": "event_msg", "timestamp": created.Format(time.RFC3339Nano), "payload": map[string]any{"type": "task_started", "turn_id": id, "root_turn_id": id, "started_at": created.Format(time.RFC3339Nano)}})
+		task, err := json.Marshal(map[string]any{"type": "event_msg", "ordinal": 1, "timestamp": created.Format(time.RFC3339Nano), "payload": map[string]any{"type": "task_started", "turn_id": id, "root_turn_id": id, "started_at": created.Format(time.RFC3339Nano)}})
 		must(t, err)
-		prompt := `{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Synthetic task contains API_KEY=sk-abcdefghijklmnopqrstuvwxyz123456"}]}}`
+		prompt := `{"type":"response_item","ordinal":2,"payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Synthetic task contains API_KEY=sk-abcdefghijklmnopqrstuvwxyz123456"}]}}`
 		original := filepath.Join(t.TempDir(), "copied-native.jsonl")
 		must(t, os.WriteFile(original, []byte(string(meta)+"\n"+string(task)+"\n"+prompt+"\n"), 0600))
 		copied, err := os.ReadFile(original)
 		must(t, err)
 		must(t, os.WriteFile(path, copied, 0600))
+		_, err = db.ExecContext(t.Context(), "INSERT INTO threads VALUES(?,?)", id, path)
+		must(t, err)
 	}
 	remote := storagetest.NewMemoryStore()
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), at.Add(2*time.Minute))
@@ -148,6 +157,8 @@ func TestSupportedDiscoveryPublishesWithoutHooksAndAcceptsRecentCopy(t *testing.
 	must(t, err)
 	must(t, os.WriteFile(archived, moved, 0600))
 	must(t, os.Remove(reg.TranscriptPath))
+	_, err = db.ExecContext(t.Context(), "UPDATE threads SET rollout_path=? WHERE id=?", archived, reg.NativeSessionID)
+	must(t, err)
 	for range 2 {
 		result, err := runOnePass(env, true)
 		if err != nil || len(result.Errors) > 0 {

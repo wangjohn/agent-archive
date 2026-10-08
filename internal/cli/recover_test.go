@@ -363,7 +363,7 @@ func TestRecoverPreviewConfirmAndHookRouting(t *testing.T) {
 		t.Fatalf("confirm exit %d %s", code, errOut.String())
 	}
 	cfg, _, err := config.Load(home)
-	if err != nil || !cfg.GenerationProtection || cfg.SchemaVersion != 4 {
+	if err != nil || !cfg.GenerationProtection || !cfg.DurableStorageProtection || cfg.SchemaVersion != 7 {
 		t.Fatalf("missing downgrade protection %#v %v", cfg, err)
 	}
 	next, found, err := store.GenerationSuccessor(id)

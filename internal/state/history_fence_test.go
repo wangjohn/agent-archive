@@ -11,7 +11,7 @@ import (
 
 func TestHistoryGenerationRecoveryLeavesStateUnchanged(t *testing.T) {
 	t.Parallel()
-	store, err := Open(t.TempDir())
+	store, err := openTestStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +36,7 @@ func TestHistoryGenerationRecoveryLeavesStateUnchanged(t *testing.T) {
 	if err != nil || string(after) != string(before) {
 		t.Fatal("protected state changed")
 	}
-	if err := validateGenerationPublication(archive.SessionRegistration{}, PendingPublication{Bundle: archive.SourceBundle{SchemaVersion: archive.HistorySourceSchemaVersion}}); !errors.Is(err, archive.ErrHistoryMutationPending) {
+	if err := validateGenerationPublication(archive.SessionRegistration{}, PendingPublication{Bundle: archive.SourceBundle{SchemaVersion: archive.HistorySourceSchemaVersion}}, nil, t.Context()); !errors.Is(err, archive.ErrHistoryMutationPending) {
 		t.Fatalf("replay history: %v", err)
 	}
 }

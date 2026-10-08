@@ -133,7 +133,7 @@ func runHandoffCommand(args []string, stdin io.Reader, stdout, stderr io.Writer,
 				return code
 			}
 		}
-		target, err = resolveHandoffTarget(opts, home, stderr, env, newRepoMatchGate(opts, interactive, answers, stderr))
+		target, err = resolveHandoffTarget(opts, home, stderr, env, newRepoMatchGate(opts, interactive, answers, stderr, stdin))
 		if err != nil {
 			if errors.Is(err, errRepoMatchNotUsed) {
 				// The gate said why, and how to use the session.
@@ -171,6 +171,8 @@ func runHandoffCommand(args []string, stdin io.Reader, stdout, stderr io.Writer,
 	dest := handoffDestination(opts.to)
 	if offersDestinations(opts, interactive) {
 		p := newPrompter(answers, stdout)
+		p.source = stdin
+		defer p.close()
 		var choice handoffChoice
 		var err error
 		if opts.config != nil {
@@ -192,6 +194,7 @@ func runHandoffCommand(args []string, stdin io.Reader, stdout, stderr io.Writer,
 			return 0
 		}
 		dest = choice.dest
+		p.close()
 	}
 	if dest != "" {
 		// Run from inside an agent (interaction is off there), without a
@@ -584,6 +587,13 @@ func (r handoffResolver) localCandidates(regs []archive.SessionRegistration, dir
 // r.gate first, which may end the search with an error.
 func (r handoffResolver) firstLocal(candidates []localHandoffCandidate, now time.Time, skipped *[]string) (handoffTarget, bool, error) {
 	for _, c := range candidates {
+		// Untrusted locator text cannot become a filename or a diagnostic before
+		// the existing bounded repository-only refusal has been offered.
+		if c.byRepo && !wellFormedID.MatchString(c.reg.ArchiveSessionID) {
+			if err := r.acceptRepoMatch(localRepoMatch(c.reg, archive.Analysis{})); err != nil {
+				return handoffTarget{}, false, err
+			}
+		}
 		target, err := r.localTarget(c.reg)
 		if err == nil && !hasPrompt(target.analysis) {
 			err = errors.New("no prompt yet")
@@ -594,7 +604,7 @@ func (r handoffResolver) firstLocal(candidates []localHandoffCandidate, now time
 			}
 			continue
 		}
-		if c.byRepo {
+		if c.byRepo && wellFormedID.MatchString(c.reg.ArchiveSessionID) {
 			if err := r.acceptRepoMatch(localRepoMatch(c.reg, target.analysis)); err != nil {
 				return handoffTarget{}, false, err
 			}

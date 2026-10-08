@@ -6,6 +6,7 @@ Checking your storage connection…
 Apps: Claude Code. Projects: 1. Storage: Amazon S3 bucket team-archive.
 Skill evidence: metadata. User-level skill roots outside selected projects may be scanned.
   ✗ Bucket is public        a bucket policy allows public access
-    Fix its access before archiving: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
+    Fix its access before archiving:
+    https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
 Setup incomplete: bucket team-archive allows public access (a bucket policy allows public access); nothing was changed. Fix its access (https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html), then run the same agent-archive setup --yes command again
 [exit 1]

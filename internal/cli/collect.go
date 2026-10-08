@@ -100,7 +100,7 @@ type passOptions struct {
 	stop     func() bool
 }
 
-func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, error) {
+func runPass(env Env, quietOnBusy bool, pass passOptions) (result collector.Result, resultErr error) {
 	// Read-only until the configuration is found: sync before setup leaves
 	// no data directory behind.
 	home, err := env.readHome()
@@ -150,6 +150,10 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 	stop := func() bool {
 		return time.Since(started) >= collectSoftDeadline || (pass.stop != nil && pass.stop())
 	}
+	if err := checkDurablePassRoots(ctx, localStore); err != nil {
+		recordPreflightError(localStore, err)
+		return collector.Result{}, err
+	}
 	// Local identity recovery and admission must not depend on credentials or
 	// storage availability. Source observation retains its own short budget.
 	// The complete authority census precedes the application allowance. Give it
@@ -166,7 +170,14 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 		recordPreflightError(localStore, recoveryErr)
 	}
 	recoveryCancel()
-	_, discoveryErr := discovery.Run(ctx, localStore, cfg, discovery.Options{Now: env.Now, Stop: stop, RepositoryIdentity: gitremote.ProjectIdentity, RepositoryIdentityCurrent: gitremote.ProjectIdentityCurrent})
+	rollouts, readHomes, err := passCodexRollouts(ctx, localStore, cfg, env)
+	if err != nil {
+		recordPreflightError(localStore, err)
+		return collector.Result{}, err
+	}
+	defer func() { resultErr = errors.Join(resultErr, rollouts.Close()) }()
+	observer := &gitremote.IdentityObserver{}
+	_, discoveryErr := discovery.Run(ctx, localStore, cfg, discovery.Options{Now: env.Now, Stop: stop, Rollouts: rollouts, RepositoryIdentity: observer.Lookup, RepositoryIdentityCurrent: gitremote.ProjectIdentityCurrent})
 	if discoveryErr != nil {
 		recordPreflightError(localStore, errors.Join(recoveryErr, discoveryErr))
 	}
@@ -184,8 +195,28 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 	if previous, err := localStore.LoadStatus(); err == nil {
 		previousScanAt = previous.LastScanAt
 	}
-	result, err := collector.Run(ctx, localStore, objectStore, collector.Options{
+	labelHomes := []string{}
+	if cfg.Discovery != nil {
+		labelHomes = append(labelHomes, cfg.Discovery.CodexHomes...)
+	}
+	if len(labelHomes) == 0 {
+		if userHome, err := env.userHomeDir(); err == nil {
+			if file := env.hookFiles(userHome)["codex"]; file != "" {
+				labelHomes = append(labelHomes, filepath.Dir(file))
+			}
+		}
+	}
+	result, err = collector.Run(ctx, localStore, objectStore, collector.Options{
+		Labels:           env.labelProviders(cfg),
+		LabelEnvironment: env.labelEnvironment(cfg, labelHomes),
+		PrepareCodexCoverage: func(ctx context.Context, regs []archive.SessionRegistration) error {
+			return rollouts.PrepareRegistered(ctx, cfg, regs, discovery.Options{Now: env.Now, Stop: stop})
+		},
 		SkipSessionIndexRecovery: true,
+		CodexRollouts:            rollouts,
+		PendingCodexRollouts:     pendingCodexRollouts(rollouts),
+		ConfiguredCodexHomes:     readHomes,
+		ResolveCodexReadHomes:    func(current config.Config) ([]string, error) { return trustedCodexReadHomes(current, env) },
 		Parsers:                  parsersFor(env),
 		Sources:                  registryFor(env),
 		Decoders:                 env.agentRegistry(),
@@ -538,4 +569,30 @@ func skillEvidenceRoots(env Env, name string, l agentapi.SkillLocations) []agent
 		return p.EvidenceRoots(l)
 	}
 	return nil
+}
+
+// pendingCodexRollouts requests the existing pass owner's metadata view lazily.
+func pendingCodexRollouts(lookup *discovery.CodexRolloutLookup) func() agentapi.CodexRolloutLookup {
+	return func() agentapi.CodexRolloutLookup {
+		if lookup == nil {
+			return nil
+		}
+		return lookup.MetadataInventory()
+	}
+}
+
+// This short read scope binds the cached rooted observation to this pass deadline.
+func checkDurablePassRoots(ctx context.Context, store *state.Store) error {
+	scoped, closeScope := store.WithReadBudget(ctx, nil)
+	defer closeScope()
+	obligations, err := scoped.DurableStorageObligations()
+	if err != nil {
+		return err
+	}
+	for _, obligation := range obligations {
+		if obligation.SessionID == "" {
+			return state.ErrDurableStorageRecovery
+		}
+	}
+	return ctx.Err()
 }

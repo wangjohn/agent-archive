@@ -45,7 +45,10 @@ const (
 	// the description the parent gave a Claude Code subagent's task, read
 	// from the sibling .meta.json. Filter 15 redacts aa-pair1 pairing bundles,
 	// including truncated payloads. See dev/specs/privacy-filter.md.
-	FilterVersion = "15"
+	// Filter 18 additionally accepts pinned opt-in API label evidence.
+	// Filter 17 retains typed, owning Codex session_labels metadata with
+	// prompt redaction and a bounded display name; it never establishes activity.
+	FilterVersion = "18"
 	// OpenTelemetryGenAIRevision pins the upstream definitions used by the
 	// three gen_ai.* attributes emitted by BuildMetadata. The archive is not
 	// an OTLP payload; all agent_archive.* attributes are local extensions.
@@ -159,7 +162,7 @@ const (
 	SkillUseEvidenceReadInference SkillUseEvidence = "skill_read_inference"
 )
 
-// SupplementalEvidenceKind names the recognized shapes of hook-only evidence.
+// SupplementalEvidenceKind names the recognized shapes of hook or verified native metadata evidence.
 // It is a named string, not a closed set: a hook may report a kind this
 // package does not recognize, and such evidence is still preserved as-is.
 type SupplementalEvidenceKind string
@@ -169,6 +172,7 @@ type SupplementalEvidenceKind string
 // read; a lifecycle event; a final response; explicit user feedback; a linked
 // child session; and a capture gap.
 const (
+	EvidenceKindSessionLabels    SupplementalEvidenceKind = "session_labels"
 	EvidenceKindSkillInventory   SupplementalEvidenceKind = "skill_inventory"
 	EvidenceKindSkillDiscovered  SupplementalEvidenceKind = "skill_discovered"
 	EvidenceKindSkillSnapshot    SupplementalEvidenceKind = "skill_snapshot"
@@ -309,12 +313,6 @@ const (
 	StartedAtSourceCursorComposer StartedAtSource = "cursor_composer" // phase 2: composerData.createdAt
 )
 
-// SessionRegistration is the small hook-produced observation a later collector
-// needs. TranscriptPath is local operational data and is never placed in a
-// SourceBundle or Metadata document.
-//
-// SessionStartedAt is when the conversation began. It is not the capture
-// boundary: project activation and the storage destination compare Admitted().
 // CodexAdmissionProof is immutable evidence of fresh blanket admission.
 type CodexAdmissionProof struct {
 	Cwd        string `json:"cwd"`
@@ -325,20 +323,29 @@ type CodexAdmissionProof struct {
 // ProjectResolution is private, bounded evidence retained with local ownership.
 // Root is the selected configured spelling; Context is a content-free policy digest.
 type ProjectResolution struct {
-	OriginalCwd     string `json:"original_cwd"`
-	CanonicalCwd    string `json:"canonical_cwd,omitempty"`
-	Root            string `json:"root"`
-	Method          string `json:"method"`
-	RecordedRepoKey string `json:"recorded_repo_key,omitempty"`
-	Context         string `json:"context"`
-	PolicyContext   string `json:"policy_context"`
-	InventoryDigest string `json:"inventory_digest,omitempty"`
+	OriginalCwd      string `json:"original_cwd"`
+	CanonicalCwd     string `json:"canonical_cwd,omitempty"`
+	Root             string `json:"root"`
+	Method           string `json:"method"`
+	RecordedRepoKey  string `json:"recorded_repo_key,omitempty"`
+	Context          string `json:"context"`
+	PolicyContext    string `json:"policy_context"`
+	InventoryDigest  string `json:"inventory_digest,omitempty"`
+	ValidationMethod string `json:"validation_method,omitempty"`
 }
 
+// SessionRegistration is the small hook-produced observation a later collector
+// needs. TranscriptPath is local operational data and is never placed in a
+// SourceBundle or Metadata document.
+//
+// SessionStartedAt is when the conversation began. It is not the capture
+// boundary: project activation and the storage destination compare Admitted().
 type SessionRegistration struct {
-	ProjectResolution *ProjectResolution   `json:"project_resolution,omitempty"`
-	CodexAdmission    *CodexAdmissionProof `json:"codex_admission,omitempty"`
-	ArchiveSessionID  string               `json:"archive_session_id"`
+	ProjectResolution  *ProjectResolution   `json:"project_resolution,omitempty"`
+	CodexBinding       *CodexSourceBinding  `json:"codex_binding,omitempty"`
+	CodexCandidatePath string               `json:"codex_candidate_path,omitempty"`
+	CodexAdmission     *CodexAdmissionProof `json:"codex_admission,omitempty"`
+	ArchiveSessionID   string               `json:"archive_session_id"`
 	// PreviousGenerationID links recovery generations independently of subagents.
 	PreviousGenerationID string `json:"previous_generation_id,omitempty"`
 	// CaptureFrozen forbids further native capture; retained privacy maintenance remains.
@@ -431,6 +438,17 @@ func (r SessionRegistration) Imported() bool {
 // a missing session ID, project, harness name, or start time, or source
 // fields (SourceKind, SourceKey, TranscriptPath) that do not fit together.
 func (r SessionRegistration) Validate() error {
+	if r.CodexBinding != nil {
+		if r.Harness.Name != "codex" || r.CodexBinding.NativeThreadID != r.NativeSessionID {
+			return errors.New("codex binding requires matching codex registration")
+		}
+		if err := r.CodexBinding.Validate(); err != nil {
+			return err
+		}
+	}
+	if r.CodexCandidatePath != "" && (r.Harness.Name != "codex" || !filepath.IsAbs(r.CodexCandidatePath) || len(r.CodexCandidatePath) > 4096) {
+		return errors.New("invalid Codex candidate locator")
+	}
 	if r.PreviousGenerationID == r.ArchiveSessionID && r.PreviousGenerationID != "" {
 		return errors.New("generation cannot precede itself")
 	}
@@ -497,7 +515,7 @@ type FilteredTranscript struct {
 	NativeStartComplete bool            `json:"-"`
 }
 
-// SupplementalEvidence is hook-only evidence. Payload must already be
+// SupplementalEvidence is hook or verified native metadata evidence. Payload must already be
 // privacy-filtered by the producer; this package preserves it separately from
 // native records and does not reconcile it into a transcript.
 type SupplementalEvidence struct {
@@ -799,11 +817,12 @@ type Metadata struct {
 	Replay *Replay `json:"replay,omitempty"`
 }
 
-// CaptureGapImportedWithoutHookEvidence marks an imported session: no hook
-// ran while it happened, so it has no lifecycle events, final-response text,
-// or skill inventory.
+// CaptureGapDiscoveredWithoutHookEvidence marks admitted background capture
+// without hook lifecycle events or a contemporaneous skill inventory.
 const CaptureGapDiscoveredWithoutHookEvidence = "discovered_without_hook_evidence"
 
+// CaptureGapImportedWithoutHookEvidence marks a historical import without
+// contemporaneous hook lifecycle events or a skill inventory.
 const CaptureGapImportedWithoutHookEvidence = "imported_without_hook_evidence"
 
 // ApplyRegistrationProvenance records how the session entered the archive.

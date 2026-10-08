@@ -8,18 +8,21 @@ affects.
 | Version | Where | Recorded in | Current | Changes when |
 | --- | --- | --- | --- | --- |
 | Release | `cli.Version` (set at build time) | `--version` | Build-dependent (`dev-<commit>` from source) | A tag is cut. |
-| Filter | `archive.FilterVersion` | source header `capture.filter_version`, metadata `filter_version` | 15 | What the privacy filter keeps, drops, or redacts changes: any change to filtered output. |
-| Adapter | `adapterVersion` in `internal/archive/adapters.go` | `capture.adapter_version` | 0.15.0 | An adapter's output changes (bumped with the filter in practice). |
-| Parser | per-agent `Parser.Version()` / `archive.DefaultParserVersion` | metadata `parser.version` | 0.20.0 | How metadata is derived from a source changes: counts, turns, models, skills, gaps, titles, session names, branch, linked pull requests, tools used, end time, tokens (per model too), tool errors, MCP calls, git activity, the repository key (derived from the project's git origin, not the source). |
+| Filter | `archive.FilterVersion` | source header `capture.filter_version`, metadata `filter_version` | 18 | What the privacy filter keeps, drops, or redacts changes: any change to filtered output. |
+| Adapter | `adapterVersion` in `internal/archive/adapters.go` | `capture.adapter_version` | 0.18.0 | An adapter's output changes (bumped with the filter in practice). |
+| Parser | per-agent `Parser.Version()` / `archive.DefaultParserVersion` | metadata `parser.version` | 0.21.0 | How metadata is derived from a source changes: counts, turns, models, skills, gaps, titles, session names, branch, linked pull requests, tools used, end time, tokens (per model too), tool errors, MCP calls, git activity, the repository key (derived from the project's git origin, not the source). |
 | Source schema | `archive.SourceSchemaVersion` / `HistorySourceSchemaVersion` | source header `schema_version` | 2 | The source bundle's line format changes. Readers refuse other versions. |
 | Metadata schema | `archive.MetadataSchemaVersion` / `HistoryMetadataSchemaVersion` | metadata `schema_version` | 1 | The metadata sidecar changes incompatibly. Optional fields don't bump it. |
-| Codex parser | `codex.Parser.Version()` | metadata `parser.version` | 0.22.0 | Codex identity, ownership or metadata interpretation changes. |
+| Codex parser | `codex.Parser.Version()` | metadata `parser.version` | 0.25.0 | Codex identity, ownership or metadata interpretation changes. |
 | History source schema | `archive.HistorySourceSchemaVersion` | source header `schema_version` | 3 | The self-contained Codex history manifest or record envelopes change. |
 | History metadata schema | `archive.HistoryMetadataSchemaVersion` | metadata `schema_version` | 2 | Preserved native revision references change incompatibly. |
 | Machine record | `machines.SchemaVersion` | `machines/<machine_id>.json` and `machines --json` | 1 | Informational registry format changes incompatibly; independent of session schemas and filtering. |
 | Configuration | `config.SchemaVersion` | `config.json` `schema_version` | 1 | `config.json` changes incompatibly. |
 | List JSON | `cli.listSchemaVersion` | `list --json` `schema_version` | 4 | The script-facing list document changes incompatibly. Version 3 removed `unavailable`; version 4 makes exact-count knowledge explicit. |
 | Status JSON | `statusView.Version` in `internal/cli/status.go` | `status --json` `schema_version` | 4 | Status output changes incompatibly; schema 4 separates discovery from actual hook evidence. |
+
+Claude uses the common parser version; Cursor remains at parser 0.20.0.
+Codex has its own parser version as recorded above.
 
 The per-version filter changes are in the
 [filter changelog](../specs/privacy-filter-changelog.md).
@@ -130,5 +133,18 @@ remains counted. Source schema 3 and metadata schema 2 are additional readable
 formats for self-contained history and preserved revision references. Ordinary
 schema-2 encoding remains compatible, with filter 15 and adapter 0.15.0 unchanged.
 The Codex source signature includes `codex-history-v1` interpretation evidence;
-this does not change Claude or Cursor parser/adapter behavior. History mutation
-remains fenced until revision-aware lifecycle support is installed.
+this does not change Claude or Cursor parser/adapter behavior. Revision-aware
+history publication now uses verified retained source sets and exact authority
+through the pending journal; config-v5 protects it from older writers. This
+lifecycle work does not change the reader schemas or parser/filter versions.
+
+Opt-in Codex native naming adds a fixed API evidence source/contract with filter
+18, adapter 0.18.0 and Codex parser 0.25.0. Existing file observations remain
+readable. The optional codex_name_lookup setting needs no writer fence: loss by
+an older writer safely returns to files. Source/metadata schemas stay compatible.
+
+Listing v3 evolves only its auxiliary object-key encoding: canonical base64url
+summaries are split at 255-byte path-component boundaries. Readers retain old
+single-component v2/v3 hints, and older readers use compatibility scanning when
+they reject segmented hints. Canonical source and metadata schemas, derived
+metadata, privacy filtering, adapter and parser versions are unchanged.

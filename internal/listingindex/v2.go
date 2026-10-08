@@ -56,6 +56,18 @@ func NewRevision(key string, data []byte, etag string) (Revision, error) {
 }
 
 func newRevision(key string, data []byte, etag, nonce string) (Revision, error) {
+	r, err := revisionSummary(key, data, etag, nonce)
+	if err != nil {
+		return Revision{}, err
+	}
+	r.Key, err = revisionKey(r)
+	if err != nil {
+		return Revision{}, err
+	}
+	return r, nil
+}
+
+func revisionSummary(key string, data []byte, etag, nonce string) (Revision, error) {
 	legacy, err := New(key, data)
 	if err != nil {
 		return Revision{}, err
@@ -67,17 +79,39 @@ func newRevision(key string, data []byte, etag, nonce string) (Revision, error) 
 	if err := json.Unmarshal(data, &m); err != nil {
 		return Revision{}, err
 	}
-	r := Revision{Nonce: nonce, MetadataKey: key, CapturedAt: m.CapturedAt, ETag: etag, Hash: legacy.Hash, Activity: ActivityTime(m), Parent: m.ParentSessionID, Replay: m.Replay != nil, ProjectID: m.ProjectID, RepoKey: m.RepoKey}
+	return Revision{Nonce: nonce, MetadataKey: key, CapturedAt: m.CapturedAt, ETag: etag, Hash: legacy.Hash, Activity: ActivityTime(m), Parent: m.ParentSessionID, Replay: m.Replay != nil, ProjectID: m.ProjectID, RepoKey: m.RepoKey}, nil
+}
+
+const revisionComponentLimit = 255
+
+// revisionKey preserves session ownership and timestamp order while splitting
+// only the base64url summary into filesystem-compatible path components.
+func revisionKey(r Revision) (string, error) {
 	encoded, err := json.Marshal(r)
 	if err != nil {
-		return Revision{}, err
+		return "", err
 	}
-	components := strings.Split(strings.TrimPrefix(legacy.Key, Prefix), "/")
-	r.Key = V3Prefix + components[1] + "/" + components[2] + "/" + components[0] + "/" + base64.RawURLEncoding.EncodeToString(encoded)
-	if len(r.Key) > 1024 {
-		return Revision{}, errors.New("listing entry exceeds object key limit")
+	parts := strings.Split(r.MetadataKey, "/")
+	reverse := fmt.Sprintf("%019d", maxTime-uint64(r.CapturedAt.UnixNano()))
+	key := V3Prefix + parts[1] + "/" + parts[2] + "/" + reverse + "/" + splitSummary(base64.RawURLEncoding.EncodeToString(encoded))
+	if len(key) > 1024 {
+		return "", errors.New("listing entry exceeds object key limit")
 	}
-	return r, nil
+	for component := range strings.SplitSeq(key, "/") {
+		if len(component) > revisionComponentLimit {
+			return "", errors.New("listing entry exceeds object component limit")
+		}
+	}
+	return key, nil
+}
+
+func splitSummary(summary string) string {
+	var chunks []string
+	for len(summary) > revisionComponentLimit {
+		chunks = append(chunks, summary[:revisionComponentLimit])
+		summary = summary[revisionComponentLimit:]
+	}
+	return strings.Join(append(chunks, summary), "/")
 }
 
 // ParseRevision rejects unsupported and noncanonical encodings.
@@ -86,7 +120,14 @@ func ParseRevision(key string) (Revision, error) {
 		return Revision{}, errors.New("unsupported listing entry")
 	}
 	parts := strings.Split(strings.TrimPrefix(strings.TrimPrefix(key, V2Prefix), V3Prefix), "/")
-	if strings.HasPrefix(key, V3Prefix) && len(parts) == 4 {
+	if strings.HasPrefix(key, V3Prefix) && len(parts) >= 4 {
+		if len(parts) > 4 {
+			summary := strings.Join(parts[3:], "")
+			if strings.Join(parts[3:], "/") != splitSummary(summary) {
+				return Revision{}, errors.New("noncanonical listing summary components")
+			}
+			parts = append(parts[:3], summary)
+		}
 		parts[0], parts[1], parts[2] = parts[2], parts[0], parts[1]
 	}
 	if len(parts) != 4 || len(parts[0]) != 19 {
@@ -120,7 +161,7 @@ func ParseRevision(key string) (Revision, error) {
 // ValidateMetadata checks identity, schema, digest and every discovery field
 // against canonical bytes, preserving this immutable publication identity.
 func (r Revision) ValidateMetadata(data []byte) error {
-	check, err := newRevision(r.MetadataKey, data, r.ETag, r.Nonce)
+	check, err := revisionSummary(r.MetadataKey, data, r.ETag, r.Nonce)
 	if err != nil {
 		return err
 	}
@@ -161,6 +202,13 @@ func PutRevision(ctx context.Context, store storage.ObjectStore, r Revision) err
 	if !strings.HasPrefix(r.Key, V3Prefix) {
 		return errors.New("legacy listing revisions are read-only")
 	}
+	canonicalKey, err := revisionKey(r)
+	if err != nil {
+		return err
+	}
+	if r.Key != canonicalKey {
+		return errors.New("legacy listing encodings are read-only; rebuild the index")
+	}
 	return store.Put(ctx, r.Key, nil)
 }
 
@@ -198,13 +246,10 @@ func repairRevision(ctx context.Context, store storage.ObjectStore, r Revision, 
 	}
 	r = parsed
 	r.Nonce = rand.Text()
-	encoded, err := json.Marshal(r)
+	r.Key, err = revisionKey(r)
 	if err != nil {
 		return err
 	}
-	parts := strings.Split(strings.TrimPrefix(r.MetadataKey, "sessions/"), "/")
-	reverse := fmt.Sprintf("%019d", maxTime-uint64(r.CapturedAt.UnixNano()))
-	r.Key = V3Prefix + parts[0] + "/" + parts[1] + "/" + reverse + "/" + base64.RawURLEncoding.EncodeToString(encoded)
 	candidates, err := store.List(ctx, revisionSessionPrefix(r.MetadataKey))
 	if err != nil {
 		return err

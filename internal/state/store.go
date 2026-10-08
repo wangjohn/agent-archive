@@ -23,6 +23,9 @@
 package state
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -36,6 +39,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/sourceidentity"
 	"github.com/wangjohn/agent-archive/internal/trace"
@@ -48,6 +52,10 @@ import (
 // never stores credentials or a second copy of conversation content beyond
 // what the published source bundle itself already contains.
 type Store struct {
+	durableInspection *durableInspectionCache
+	resourceBudget    *agentapi.NativeReadBudget
+	resourceContext   context.Context
+	resourceReleases  *[]func()
 	// indexSnapshots uses logical packed authority for qualified-index writes.
 	indexSnapshots bool
 	// onPackedEnumeration observes collector-only physical-index directory probes.
@@ -79,7 +87,9 @@ type Store struct {
 // home without creating any of its directories, for commands that only read
 // it (status, handoff, backfill planning). A missing directory reads as
 // nothing recorded.
-func OpenReadOnly(home string) *Store { return &Store{home: home} }
+func OpenReadOnly(home string) *Store {
+	return &Store{home: home, durableInspection: &durableInspectionCache{}}
+}
 
 // Open creates (if needed) the local store's directory layout under
 // home — ordinarily the result of local.Home() — and returns a handle to it.
@@ -93,7 +103,7 @@ func Open(home string) (*Store, error) {
 			return nil, fmt.Errorf("create local store directory %q: %w", dir, err)
 		}
 	}
-	return &Store{home: home}, nil
+	return &Store{home: home, durableInspection: &durableInspectionCache{}}, nil
 }
 
 // Home returns the data directory the store keeps its files in.
@@ -113,7 +123,7 @@ var lazyStoreDirs = []string{generationHeadsDir, generationNodesDir, generationR
 // its list against this one, so a new directory cannot be left behind.
 func OwnedEntries() []string {
 	entries := append(append([]string{}, storeDirs...), lazyStoreDirs...)
-	return append(entries, "status.json", storageClockFile, sessionIndexMarkerFile, sessionMembershipFile, sessionMembershipLock, sessionRecoveryCursorFile)
+	return append(entries, "status.json", storageClockFile, sessionIndexMarkerFile, sessionMembershipFile, sessionMembershipLock, sessionRecoveryCursorFile, "temporary-quota")
 }
 
 func safeFileComponent(value string) bool {
@@ -211,6 +221,15 @@ func (s *Store) updateRegistration(archiveSessionID string, update func(*archive
 		if err := json.Unmarshal(current.data, &reg); err != nil {
 			return nil, false, fmt.Errorf("read registration %q: %w", archiveSessionID, err)
 		}
+		originalBinding := reg.CodexBinding
+		if originalBinding != nil {
+			copyBinding := *originalBinding
+			if copyBinding.OwnStart != nil {
+				boundary := *copyBinding.OwnStart
+				copyBinding.OwnStart = &boundary
+			}
+			originalBinding = &copyBinding
+		}
 		var originalProof *archive.CodexAdmissionProof
 		if reg.CodexAdmission != nil {
 			proof := *reg.CodexAdmission
@@ -226,6 +245,9 @@ func (s *Store) updateRegistration(archiveSessionID string, update func(*archive
 		if err := update(&reg); err != nil {
 			updateFailed = true
 			return nil, false, err
+		}
+		if !reg.CodexBinding.PreservesFacts(originalBinding) {
+			return nil, false, errors.New("a registration update cannot change native Codex binding facts")
 		}
 		if !sameCodexAdmission(originalProof, reg.CodexAdmission) {
 			return nil, false, errors.New("a registration update cannot change Codex admission proof")
@@ -722,8 +744,12 @@ func (s *Store) CompleteRequest(archiveSessionID, coveredToken string) (bool, er
 // every retry uses the same hash and timestamps even after process restart.
 // Bundle remains available for change detection and future parser-only rebuilds.
 type PendingPublication struct {
-	Commit        *PublicationCommit   `json:"commit,omitempty"`
-	Sources       []PublicationSource  `json:"sources,omitempty"`
+	Commit  *PublicationCommit  `json:"commit,omitempty"`
+	Sources []PublicationSource `json:"sources,omitempty"`
+	// ScanSignature freezes the consumed native observation for resumed history
+	// acknowledgement. It never licenses newer input or a privacy successor.
+	ScanSignature *ScanSignature       `json:"scan_signature,omitempty"`
+	History       *PendingHistory      `json:"history,omitempty"`
 	SkillEvidence string               `json:"skill_evidence,omitempty"`
 	MetadataOnly  bool                 `json:"metadata_only,omitempty"`
 	Bundle        archive.SourceBundle `json:"bundle"`
@@ -761,6 +787,42 @@ func (s *Store) pendingPath(id string) string {
 	return filepath.Join(s.home, "pending", id+".json")
 }
 
+// validateComplete is the supported transaction structure shared by writes
+// and protected reads. History validation keeps its separate budget ownership.
+func (pending PendingPublication) validateComplete() error {
+	if len(pending.SourceBytes) > maxPendingHistoryBytes {
+		return ErrDurableStorageCapacity
+	}
+	if pending.SourceKey == "" || pending.MetadataKey == "" || pending.SourceSHA256 == "" || len(pending.MetadataBytes) == 0 || (len(pending.SourceBytes) == 0 && (!pending.MetadataOnly || pending.SourceSize <= 0)) {
+		return errors.New("pending publication is incomplete")
+	}
+	return nil
+}
+
+// validateReadablePending applies the existing publication checksum and JSON
+// preconditions without deriving new ownership or remote-source authority.
+func (s *Store) validateReadablePending(pending PendingPublication) error {
+	if err := pending.validateComplete(); err != nil {
+		return err
+	}
+	if !pending.CarriesNoSource() {
+		sum := sha256.Sum256(pending.SourceBytes)
+		if !strings.EqualFold(hex.EncodeToString(sum[:]), strings.TrimSpace(pending.SourceSHA256)) {
+			return errors.New("pending source checksum does not match its persisted bytes")
+		}
+	}
+	scratch, closeScratch := s.WithReadBudget(s.durableContext(), s.resourceBudget)
+	defer closeScratch()
+	var metadata archive.Metadata
+	if err := scratch.unmarshalOwned(pending.MetadataBytes, &metadata); err != nil {
+		return err
+	}
+	if pending.History == nil {
+		return archive.CheckHistoryMutation(pending.Bundle, metadata)
+	}
+	return nil
+}
+
 // SavePending durably records a session's publication transaction before its
 // first remote write. It refuses an incomplete one: every retry must upload
 // exactly the same bytes under exactly the same keys.
@@ -768,48 +830,77 @@ func (s *Store) SavePending(id string, pending PendingPublication) error {
 	if !safeFileComponent(id) {
 		return errors.New("archive session ID is not a safe file name component")
 	}
-	if pending.SourceKey == "" || pending.MetadataKey == "" || pending.SourceSHA256 == "" || len(pending.MetadataBytes) == 0 || (len(pending.SourceBytes) == 0 && (!pending.MetadataOnly || pending.SourceSize <= 0)) {
-		return errors.New("pending publication is incomplete")
+	if err := pending.validateComplete(); err != nil {
+		return err
 	}
 	if pending.Commit != nil {
 		if err := pending.ValidatePublication(); err != nil {
 			return err
 		}
 	}
-	return local.WriteCompact(s.pendingPath(id), pending)
+	if err := pending.ValidateHistoryBudgeted(id, s.resourceBudget); err != nil {
+		return err
+	}
+	return config.WithDurableStorage(s.home, func(g config.DurableStorageGuard) error {
+		return s.savePendingGuard(s.durableContext(), g, id, pending)
+	})
 }
 
 // LoadPending returns a session's outstanding publication transaction, if
 // any. Decoding it reads the whole compressed source; HasPending answers
 // whether one exists without that cost.
 //
-// An unreadable journal remains in place as actionable recovery evidence.
-// It may contain the only admitted bytes or describe metadata already uploaded;
-// scans must not treat it as absent, even under the collector lock.
+// A supported legacy collector pass may quarantine damaged ordinary state.
+// Protected state stays present and returns ErrDurableStorageRecovery instead.
 func (s *Store) LoadPending(id string) (PendingPublication, bool, error) {
 	if !safeFileComponent(id) {
 		return PendingPublication{}, false, errors.New("archive session ID is not a safe file name component")
 	}
-	// Bound the entire encoded journal before decoding bundle/base64 payloads.
-	// Inline compressed bytes have the separate 128 MiB limit; this ceiling
-	// includes the filtered comparison bundle, metadata and JSON encoding overhead.
-	if info, err := os.Stat(s.pendingPath(id)); err == nil && info.Size() > 512<<20 {
-		return PendingPublication{}, false, errors.New("pending publication exceeds 512 MiB encoded journal bound; retain evidence and reconcile")
-	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return PendingPublication{}, false, err
+	protected, probeErr := s.protectedStorage(id)
+	if probeErr != nil {
+		return PendingPublication{}, true, errors.Join(ErrDurableStorageRecovery, probeErr)
+	}
+	cfg, cfgErr := s.inspectDurableReadRoots()
+	if cfgErr != nil {
+		return PendingPublication{}, true, errors.Join(ErrDurableStorageRecovery, cfgErr)
+	}
+	if evidence, e := s.hasPublicationEvidence(id); e != nil || evidence {
+		return PendingPublication{}, true, errors.Join(ErrDurableStorageRecovery, e)
+	}
+	protected = protected || cfg.DurableStorageProtection
+	if err := s.checkPendingHistoryVersion(id); err != nil {
+		return PendingPublication{}, true, err
 	}
 	var pending PendingPublication
-	err := local.Read(s.pendingPath(id), &pending)
-	if errors.Is(err, os.ErrNotExist) {
-		return PendingPublication{}, false, nil
+	var found bool
+	var err error
+	if protected {
+		err = s.readBudgeted(s.pendingPath(id), &pending, true)
+		if errors.Is(err, os.ErrNotExist) {
+			owed, e := s.protectedStorage(id)
+			if owed || e != nil {
+				return PendingPublication{}, true, errors.Join(ErrDurableStorageRecovery, e)
+			}
+			return PendingPublication{}, false, nil
+		}
+		found = true
+	} else {
+		found, err = s.readOwned(s.pendingPath(id), &pending)
 	}
 	if err != nil {
-		return PendingPublication{}, true, fmt.Errorf("read pending publication %q; retain evidence and reconcile: %w", id, err)
+		return PendingPublication{}, protected || cfg.DurableStorageProtection || errors.Is(err, ErrDurableStorageRecovery), fmt.Errorf("read pending publication %q: %w", id, errors.Join(ErrDurableStorageRecovery, err))
 	}
-	found := true
-	if found && pending.Commit != nil {
-		if err := pending.ValidatePublication(); err != nil {
-			return pending, true, err
+	if found {
+		if protected {
+			if err := s.validateReadablePending(pending); err != nil {
+				return PendingPublication{}, true, errors.Join(ErrDurableStorageRecovery, err)
+			}
+		}
+		if err := pending.ValidateHistoryBudgeted(id, s.resourceBudget); err != nil {
+			if protected {
+				err = errors.Join(ErrDurableStorageRecovery, err)
+			}
+			return PendingPublication{}, true, err
 		}
 	}
 	return pending, found, nil
@@ -830,28 +921,75 @@ func (s *Store) afterLoss(id string, err error) error {
 // without decoding it. The pending file carries the compressed source bytes,
 // so a stat is the only way to ask this question cheaply enough to ask it for
 // every registered session on every pass.
-func (s *Store) HasPending(id string) (bool, error) {
+func (s *Store) HasPending(id string) (owed bool, err error) {
 	if !safeFileComponent(id) {
 		return false, errors.New("archive session ID is not a safe file name component")
 	}
-	_, err := os.Stat(s.pendingPath(id))
+	home, err := local.OpenRootedHome(s.home)
 	if errors.Is(err, os.ErrNotExist) {
 		return false, nil
 	}
 	if err != nil {
-		return false, fmt.Errorf("stat pending publication %q: %w", id, err)
+		return true, err
 	}
-	return true, nil
+	defer func() {
+		err = errors.Join(err, home.Close())
+		if err != nil {
+			owed = true
+		}
+	}()
+	info, err := home.Root.Lstat(filepath.Join("pending", id+".json"))
+	if err == nil {
+		if !info.Mode().IsRegular() {
+			return true, ErrDurableStorageRecovery
+		}
+		return true, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return true, err
+	}
+	history, herr := rootHasEntries(home.Root, filepath.Join("sessions", id, "pending-sources"))
+	evidence, eerr := rootHasEntries(home.Root, filepath.Join("publication-evidence", id))
+	return history || evidence || herr != nil || eerr != nil, errors.Join(herr, eerr)
 }
 
 // RemovePending discards a session's publication transaction once it has
 // been published and acknowledged locally. A missing one is not an error.
 func (s *Store) RemovePending(id string) error {
-	err := os.Remove(s.pendingPath(id))
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("remove pending publication %q: %w", id, err)
+	if !safeFileComponent(id) {
+		return errors.New("archive session ID is not a safe file name component")
 	}
-	return nil
+	if _, err := os.Lstat(s.pendingPath(id)); errors.Is(err, os.ErrNotExist) {
+		if owed, e := s.protectedStorage(id); owed || e != nil {
+			return errors.Join(ErrDurableStorageRecovery, e)
+		}
+		return nil
+	} else if err != nil {
+		return err
+	}
+	// Keep the journal until its private cleanup succeeds. After a crash, final
+	// remote bytes can restore any stage already removed by this cleanup.
+	if err := s.removePendingSources(id, nil); err != nil {
+		return err
+	}
+	home, err := local.OpenRootedHome(s.home)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = home.Close() }()
+	dir, err := privateDirectory(home.Root, "pending", false)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = dir.Close() }()
+	if err = dir.Remove(id + ".json"); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	d, err := dir.Open(".")
+	if err != nil {
+		return err
+	}
+	return errors.Join(d.Sync(), d.Close())
 }
 
 // Status summarizes the collector's local state for a future `status`
@@ -1071,6 +1209,18 @@ func (s *Store) ScanPending(id string) (bool, error) {
 // Anything that invalidates the assertion removes the token (see
 // RemoveScanSignature's callers).
 type ScanSignature struct {
+	// PublishedLabel identifies retained safe native name evidence, independently of lookup time.
+	PublishedLabel string `json:"published_label,omitempty"`
+	// A settled complete authority token carries only compact acknowledged facts.
+	SourceSetDigest       string    `json:"source_set_digest,omitempty"`
+	CurrentRevision       string    `json:"current_revision,omitempty"`
+	SourceSchemaVersion   int       `json:"source_schema_version,omitempty"`
+	MetadataSchemaVersion int       `json:"metadata_schema_version,omitempty"`
+	SourceSetComplete     bool      `json:"source_set_complete,omitempty"`
+	MeaningfulCapturedAt  time.Time `json:"meaningful_captured_at,omitzero"`
+
+	// SourceSetVersion invalidates earlier Codex signatures without decoding bundles.
+	SourceSetVersion int `json:"source_set_version,omitempty"`
 	// Frozen marks completed retained-history maintenance, independently of
 	// the live native source's stat. Ordinary capture never trusts this token.
 	Frozen          bool                      `json:"frozen,omitempty"`

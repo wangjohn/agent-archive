@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"maps"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -130,6 +131,7 @@ func TestStatusWarnsWhenTheShellsXDGDirectoriesDriftFromTheCollectors(t *testing
 func TestStatusWarnsWhenTheCollectorHasNoXDGDirectoryTheShellHas(t *testing.T) {
 	t.Parallel()
 	l := newLinuxInstall(t)
+	must(t, os.Chmod(l.home, 0700))
 	l.env.LookupEnv = shellEnvironment(map[string]string{})
 	l.setup()
 	if warnings := statusWarnings(t, l.env); len(warnings) != 0 {
@@ -180,6 +182,7 @@ func TestXDGDriftWarningSaysWhatEachSideHas(t *testing.T) {
 func TestLinuxR2SetupRecordsXDGDirectoriesAndRefreshKeepsThem(t *testing.T) {
 	t.Parallel()
 	l := newLinuxInstall(t)
+	must(t, os.Chmod(l.home, 0700))
 	recorded := map[string]string{"XDG_CONFIG_HOME": "/srv/config", "XDG_CACHE_HOME": "/srv/cache/"}
 	l.env.LookupEnv = shellEnvironment(recorded)
 	setupRun(t, l.env, r2SetupInput(t.TempDir(), "r2-secret"), 0)
@@ -209,6 +212,7 @@ func TestLinuxR2SetupRecordsXDGDirectoriesAndRefreshKeepsThem(t *testing.T) {
 func TestStatusOnMacOSIgnoresXDGDirectories(t *testing.T) {
 	t.Parallel()
 	home, userHome := t.TempDir(), t.TempDir()
+	must(t, os.Chmod(home, 0700))
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
 	env.LookupEnv = shellEnvironment(map[string]string{"XDG_CONFIG_HOME": "/srv/config", "XDG_CACHE_HOME": "/srv/cache"})
 	setupRun(t, env, s3SetupInput("test-bucket", "us-east-1", "profile", true, true, false, t.TempDir()), 0)

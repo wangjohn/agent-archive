@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
@@ -90,6 +91,7 @@ var corruptionPolicies = map[string]corruption{
 	"status.json":             replacedByNextPass,
 	storageClockFile:          readAsAbsent,
 	"request-locks":           holdsNoContent,
+	"temporary-quota":         holdsNoContent,
 }
 
 // quarantineDirs are the directories whose files a reader may move aside.
@@ -122,7 +124,7 @@ func (s *Store) ForCollectorPass() *Store {
 // when the store belongs to a collector pass (the error then wraps
 // ErrQuarantined, once) and reported otherwise.
 func (s *Store) readOwned(path string, value any) (found bool, err error) {
-	err = local.Read(path, value)
+	err = s.readBudgeted(path, value, true)
 	switch {
 	case err == nil:
 		return true, nil
@@ -437,8 +439,19 @@ const staleTempAge = time.Hour
 // left in the directories this store owns. Best effort: a failure only
 // leaves the file for the next pass.
 func (s *Store) RemoveStaleTemps() {
+	protect := true
+	if home, err := local.OpenRootedHome(s.home); err == nil {
+		cfg, found, e := config.LoadRooted(home)
+		protect = e != nil || !found || cfg.DurableStorageProtection
+		if e = home.Close(); e != nil {
+			protect = true
+		}
+	}
 	dirs := []string{s.home}
 	for _, dir := range append(append([]string{}, storeDirs...), lazyStoreDirs...) {
+		if protect && protectedDurableRoot(dir) {
+			continue
+		}
 		dirs = append(dirs, filepath.Join(s.home, dir))
 	}
 	// Per-session evidence directories (see SessionDir) sit one level down.

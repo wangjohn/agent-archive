@@ -75,6 +75,16 @@ func testExecutable(t *testing.T) string {
 
 func setupTestEnv(t *testing.T, home, userHome string, keychain *fakeKeychain, now time.Time) Env {
 	t.Helper()
+	// Positive setup fixtures begin with a private existing archive root. Leave
+	// absent paths, final links, user homes, and all descendants to their owners.
+	info, err := os.Lstat(home)
+	if err == nil && info.IsDir() {
+		if err := os.Chmod(home, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		t.Fatal(err)
+	}
 	env := testEnv(t, home, now)
 	env.AWSProfiles = func() ([]AWSProfile, error) { return nil, nil }
 	env.WorkingDir = func() (string, error) { return "", errors.New("no current project") }
@@ -374,10 +384,10 @@ func TestPromptsRetryInvalidValuesAndDeduplicatePaths(t *testing.T) {
 	t.Parallel()
 	var out bytes.Buffer
 	p := newPrompter(strings.NewReader("maybe\ny\n0\n-1\n30\n"), &out)
-	if yes, err := p.yesNo("Enable?", false); err != nil || !yes {
+	if yes, err := p.guidedYesNo("Enable?"); err != nil || !yes {
 		t.Fatal(err)
 	}
-	if n, err := p.retentionDays(90); err != nil || n != 30 {
+	if n, err := p.guidedRetention(90); err != nil || n != 30 {
 		t.Fatal(n, err)
 	}
 	root := t.TempDir()

@@ -109,7 +109,7 @@ func TestParserMetadataRetryUsesSavedBytes(t *testing.T) {
 	}
 	remote.failMetadata = false
 	now = now.Add(24 * time.Hour)
-	restarted, err := state.Open(local.Home())
+	restarted, err := openTestStore(local.Home())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +185,6 @@ func (s *countedGets) GetLimited(ctx context.Context, key string, limit int64) (
 	return s.MemoryStore.GetLimited(ctx, key, limit)
 }
 
-// GetVersioned counts the response-bound metadata confirmation too.
 func (s *countedGets) GetVersioned(ctx context.Context, key string) ([]byte, string, error) {
 	s.gets++
 	return s.MemoryStore.GetVersioned(ctx, key)

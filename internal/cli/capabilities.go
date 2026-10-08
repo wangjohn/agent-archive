@@ -30,11 +30,6 @@ const (
 
 type applicationDiscovery = agentapi.ApplicationDiscovery
 
-const (
-	versionKindCLI       = "cli"
-	versionKindAppBundle = "app_bundle"
-)
-
 // Reason codes for installed_version_support = unverified. They are an API.
 const (
 	supportReasonNoVerifiedCapture = "no_verified_capture"

@@ -666,7 +666,7 @@ func protectSetupWriter(home string, current config.Config, proposed ...config.C
 	if setupjournal.TransactionPending(home) {
 		return errors.New("setup pending before writer protection")
 	}
-	if len(proposed) > 0 && proposed[0].CodexCapture != nil && current.CodexCapture == nil {
+	if len(proposed) > 0 && ((proposed[0].CodexCapture != nil && current.CodexCapture == nil) || (proposed[0].CodexHistoryProtection && !current.CodexHistoryProtection) || (proposed[0].GenerationProtection && !current.GenerationProtection) || (proposed[0].DurableStorageProtection && !current.DurableStorageProtection)) {
 		if _, found, err := config.Load(home); err != nil {
 			return err
 		} else if found {

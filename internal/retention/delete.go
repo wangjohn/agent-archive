@@ -22,7 +22,7 @@ func DeleteWholeSession(ctx context.Context, store storage.ObjectStore, harness,
 		return err
 	}
 	if harness == "codex" {
-		raw, readErr := store.Get(ctx, metadataKey)
+		raw, readErr := boundedHistoryMetadata(ctx, store, metadataKey)
 		if readErr != nil && !errors.Is(readErr, storage.ErrNotFound) {
 			return readErr
 		}
@@ -31,8 +31,11 @@ func DeleteWholeSession(ctx context.Context, store storage.ObjectStore, harness,
 			if err := json.Unmarshal(raw, &metadata); err != nil {
 				return err
 			}
-			if err := archive.CheckHistoryMutation(archive.SourceBundle{}, metadata); err != nil {
+			if _, err := metadata.SourceReferences(); err != nil {
 				return err
+			}
+			if metadata.SessionID != archiveSessionID || metadata.Harness.Name != harness {
+				return errors.New("deletion metadata belongs to another session")
 			}
 		}
 	}
@@ -54,4 +57,21 @@ func DeleteWholeSession(ctx context.Context, store storage.ObjectStore, harness,
 		return fmt.Errorf("delete listing index: %w", indexErr)
 	}
 	return nil
+}
+
+// boundedHistoryMetadata refuses allocation-unbounded deletion authority reads.
+func boundedHistoryMetadata(ctx context.Context, store storage.ObjectStore, key string) ([]byte, error) {
+	bounded, ok := store.(storage.LimitedGetter)
+	if !ok {
+		return nil, errors.New("history cleanup requires bounded metadata reads")
+	}
+	const limit = 32 << 20
+	raw, err := bounded.GetLimited(ctx, key, limit)
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) > limit {
+		return nil, storage.ErrObjectTooLarge
+	}
+	return raw, nil
 }

@@ -33,16 +33,33 @@ import (
 // local.Lock(home) around Run; Run itself does not acquire it, so it stays
 // simple to call directly from tests.
 type Options struct {
+	labelReadObserver func(int64)
+	// Labels supplies optional bounded native metadata for existing retained sessions.
+	Labels           agentapi.LabelsLookup
+	LabelEnvironment agentapi.LabelEnvironment
+	labels           map[string]state.LabelEntry
+	// PrepareCodexCoverage advances caller-owned qualified coverage once after admission work loads.
+	PrepareCodexCoverage func(context.Context, []archive.SessionRegistration) error
 	// CodexRollouts is one caller-owned bounded locator view shared by the pass.
 	CodexRollouts agentapi.CodexRolloutLookup
+	// PendingCodexRollouts observes locator evidence only after a history fence.
+	// The caller shares one lazy catalog; it must not grant publication authority.
+	PendingCodexRollouts func() agentapi.CodexRolloutLookup
+	// ConfiguredCodexHomes supplies confined migration roots from configuration,
+	// independently of current-locator hints. Native evidence still validates identity.
+	ConfiguredCodexHomes []string
+	// ResolveCodexReadHomes revalidates trusted default/hook/import/config roots
+	// against current configuration; lookup observations never supply authority.
+	ResolveCodexReadHomes func(config.Config) ([]string, error)
 	// SkipSessionIndexRecovery is set after the CLI has already attempted its
 	// bounded local recovery stage. Direct collector callers recover once.
 	SkipSessionIndexRecovery bool
 	// Parsers resolves pure derivation separately from native source access.
-	Parsers      agentapi.ParsersLookup
-	parserCache  map[string]agentapi.TranscriptParser
-	Sources      agentapi.SourcesLookup
-	sourcePasses *sourcePassSet
+	Parsers       agentapi.ParsersLookup
+	parserCache   map[string]agentapi.TranscriptParser
+	Sources       agentapi.SourcesLookup
+	sourcePasses  *sourcePassSet
+	retainedOwner *sessionScan
 	// Decoders translates retained legacy admission intents; no lookup is needed for new generic effects.
 	Decoders agentapi.DecodersLookup
 	// ParserVersion identifies metadata derivation independently of source capture.
@@ -200,8 +217,23 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	if opts.MachineID == "" {
 		return Result{}, errors.New("machine ID is required")
 	}
-	if err := local.ResumeGenerationRecoveries(ctx); err != nil {
-		return Result{}, err
+	durableObligations, durableErr := local.DurableStorageObligations()
+	if durableErr != nil {
+		return Result{Errors: map[string]error{"durable-storage": durableErr}}, durableErr
+	}
+	for _, obligation := range durableObligations {
+		if obligation.SessionID == "" {
+			return Result{Errors: map[string]error{"durable-storage": state.ErrDurableStorageRecovery}}, state.ErrDurableStorageRecovery
+		}
+	}
+	recoveryLocal, closeRecovery := local.WithReadBudget(ctx, (&sessionScan{opts: opts}).readBudget())
+	var generationRecoveryErr error
+	if ctx.Err() == nil {
+		generationRecoveryErr = recoveryLocal.ResumeGenerationRecoveries(ctx)
+	}
+	if generationRecoveryStopsPass(generationRecoveryErr) {
+		closeRecovery()
+		return Result{}, generationRecoveryErr
 	}
 	opts.parserCache = make(map[string]agentapi.TranscriptParser)
 	now := opts.now()
@@ -209,8 +241,9 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	// user's turn before scanning registrations for this pass.
 	var recoveryErr error
 	if ctx.Err() == nil && !opts.SkipSessionIndexRecovery {
-		_, recoveryErr = local.RecoverSessionIndexScheduled(ctx, state.SessionIndexRecoverySlice)
+		_, recoveryErr = recoveryLocal.RecoverSessionIndexScheduled(ctx, state.SessionIndexRecoverySlice)
 	}
+	closeRecovery()
 	if state.SessionIndexRecoveryInterrupted(recoveryErr) {
 		recoveryErr = nil
 	}
@@ -224,16 +257,28 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	if sweeper, ok := opts.Sources.(agentapi.SourceSweeper); ok {
 		sweeper.SweepSources()
 	}
+	// Establish one lazy source scope before child admission borrows its ledger.
+	closeCursorPass := openCursorPass(nil, &opts)
+	defer func() {
+		if err := closeCursorPass(); err != nil {
+			runErr = errors.Join(runErr, err)
+		}
+	}()
 	subagents := materializeSubagentCandidates(ctx, local, opts, now)
 	opts.repoKeys = newRepoKeyCache(opts.RepoKey)
 	p := &pass{
-		ctx:              ctx,
-		local:            local,
-		remote:           store,
-		opts:             opts,
-		now:              now,
-		result:           Result{Errors: subagents.errors, WaitingSubagents: subagents.waiting, RejectedSubagents: subagents.rejected},
-		expiredSubagents: subagents.expired,
+		ctx:                ctx,
+		local:              local,
+		remote:             store,
+		opts:               opts,
+		now:                now,
+		durableObligations: durableObligations,
+		result:             Result{Errors: subagents.errors, WaitingSubagents: subagents.waiting, RejectedSubagents: subagents.rejected},
+		expiredSubagents:   subagents.expired,
+	}
+	defer p.releaseLabelResources()
+	if generationRecoveryErr != nil {
+		p.result.Errors["generation-recovery"] = generationRecoveryErr
 	}
 	if recoveryErr != nil {
 		p.result.Errors["session-index"] = recoveryErr
@@ -247,14 +292,14 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	if err := p.loadWork(); err != nil {
 		return Result{}, err
 	}
+	if p.opts.PrepareCodexCoverage != nil {
+		if err := p.opts.PrepareCodexCoverage(ctx, p.registrations); err != nil {
+			p.result.Errors["native-coverage"] = err
+		}
+	}
+	p.observeLabels(ctx)
 	p.repairListingIndex()
 	orderOldestRequestsFirst(p.registrations, p.requests)
-	closeCursorPass := openCursorPass(p.registrations, &p.opts)
-	defer func() {
-		if err := closeCursorPass(); err != nil {
-			runErr = errors.Join(runErr, err)
-		}
-	}()
 	for i, reg := range p.registrations {
 		// A pass past its deadline ends like a stopped one: nothing more can
 		// reach storage, so the rest keep their work rather than each
@@ -271,13 +316,22 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	return p.result, p.saveStatus()
 }
 
+// Cancellation remains fatal even when a refusal also identifies owed work.
+func generationRecoveryStopsPass(err error) bool {
+	return err != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || (!errors.Is(err, state.ErrDurableStorageRecovery) && !errors.Is(err, agentapi.ErrReadBudget)))
+}
+
 // pass is one Run: its inputs, what it has found so far, and its result.
 type pass struct {
-	ctx    context.Context
-	local  *state.Store
-	remote storage.ObjectStore
-	opts   Options
-	now    time.Time
+	labelLocal          *state.Store
+	closeLabelResources func()
+	labelStates         map[string]*state.Published
+	labelBytes          int64
+	ctx                 context.Context
+	local               *state.Store
+	remote              storage.ObjectStore
+	opts                Options
+	now                 time.Time
 
 	registrations []archive.SessionRegistration
 	requests      map[string]state.Request
@@ -295,8 +349,10 @@ type pass struct {
 	pending int
 	// expiredSubagents lists the subagents this pass stopped waiting for
 	// (see state.Status.ExpiredSubagents).
-	expiredSubagents []state.ExpiredSubagent
-	result           Result
+	expiredSubagents   []state.ExpiredSubagent
+	result             Result
+	durableObligations []state.DurableStorageObligation
+	durableCounted     map[string]bool
 }
 
 // loadWork lists the registered sessions and their pending requests. One
@@ -322,6 +378,30 @@ func (p *pass) loadWork() error {
 	for id, issue := range registrationIssues {
 		addError(p.result.Errors, id, issue)
 		registered[id] = !errors.Is(issue, state.ErrQuarantined)
+	}
+	p.durableCounted = map[string]bool{}
+	obligations := p.durableObligations
+	orphaned := map[string]bool{}
+	for _, obligation := range obligations {
+		id := obligation.SessionID
+		if id == "" {
+			addError(p.result.Errors, "durable-storage", state.ErrDurableStorageRecovery)
+			continue
+		}
+		if registered[id] && obligation.Namespace == state.GenerationRecoveryStorage && !orphaned[id] {
+			if err := checkDurableSessionRead(p.ctx, p.local, id, p.opts); err != nil {
+				orphaned[id] = true
+				p.pending++
+				p.durableCounted[id] = true
+				p.unreadable[id] = true
+				addError(p.result.Errors, id, err)
+			}
+		}
+		if !registered[id] && !orphaned[id] {
+			orphaned[id] = true
+			p.pending++
+			addError(p.result.Errors, id, state.ErrDurableStorageRecovery)
+		}
 	}
 	// Lock files of sessions and candidates that are gone go now, while the
 	// registrations just listed say which those are.
@@ -360,7 +440,7 @@ func (p *pass) loadWork() error {
 // work (a request) is left for the next pass.
 func (p *pass) leaveForNextPass(rest []archive.SessionRegistration) {
 	for _, reg := range rest {
-		if p.requests[reg.ArchiveSessionID].Token != "" && (p.opts.AcceptSession == nil || p.opts.AcceptSession(reg)) {
+		if !p.durableCounted[reg.ArchiveSessionID] && p.requests[reg.ArchiveSessionID].Token != "" && (p.opts.AcceptSession == nil || p.opts.AcceptSession(reg)) {
 			p.pending++
 		}
 	}
@@ -377,10 +457,16 @@ func (p *pass) fail(id string, err error) {
 // scan gives one session its turn in the pass: skip it if nothing about it
 // changed, otherwise scan it (sessionScan.run) and account for the outcome.
 func (p *pass) scan(reg archive.SessionRegistration) {
+	priorLocal := p.local
+	scopedLocal, closeLocal := p.local.WithReadBudget(p.ctx, (&sessionScan{opts: p.opts}).readBudget())
+	p.local = scopedLocal
+	defer func() { closeLocal(); p.local = priorLocal }()
 	id := reg.ArchiveSessionID
 	p.result.Scanned++
 	if p.unreadable[id] {
-		p.pending++
+		if !p.durableCounted[id] {
+			p.pending++
+		}
 		p.opts.progress(id, false)
 		return
 	}
@@ -393,7 +479,12 @@ func (p *pass) scan(reg archive.SessionRegistration) {
 		return
 	}
 	// The session's published state, read once for the whole scan.
-	published, err := p.local.LoadPublishedState(id)
+	published := p.labelStates[id]
+	delete(p.labelStates, id)
+	var err error
+	if published == nil {
+		published, err = p.local.LoadPublishedState(id)
+	}
 	if err != nil {
 		p.fail(id, fmt.Errorf("load published cache: %w", err))
 		return
@@ -403,6 +494,7 @@ func (p *pass) scan(reg archive.SessionRegistration) {
 		p.pending++
 	}
 	scan := newSessionScan(p.ctx, p.local, p.remote, reg, req, published, p.now, p.opts)
+	defer scan.releaseRetained()
 	outcome, err := scan.run()
 	for _, warning := range scan.warnings {
 		addError(p.result.Errors, id, warning)

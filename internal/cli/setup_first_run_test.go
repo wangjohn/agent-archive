@@ -57,10 +57,10 @@ func TestSetupOffersProjectsFromAppHistory(t *testing.T) {
 	writeClaudeSession(t, userHome, "two", newer, now.Add(-time.Hour))
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), now)
 	env.BackfillTempDirs = []string{}
-	input := strings.Join([]string{"y", "n", "n", "included-projects", "9", "1 2", typed, "", "s3-existing", "b", "profile", "us-east-1", "y"}, "\n") + "\n"
+	input := strings.Join([]string{"n", "y", "n", "specific", "9", "p", typed, "", "s3-existing", "b", "profile", "us-east-1", "y"}, "\n") + "\n"
 	output := setupRun(t, env, input, 0)
 	first, second := strings.Index(output, "1) "+newer), strings.Index(output, "2) "+older)
-	if first < 0 || second < first || !strings.Contains(output, "today") || !strings.Contains(output, "3 days ago") || !strings.Contains(output, "Enter numbers from 1 to 2") {
+	if first < 0 || second < first || !setupContainsText(output, "today") || !setupContainsText(output, "3 days ago") || !setupContainsText(output, "enter project numbers") {
 		t.Fatalf("projects not offered newest first:\n%s", output)
 	}
 	cfg, _, _ := config.Load(home)
@@ -87,9 +87,9 @@ func TestSetupListsRecentProjectsAfterTheCurrentRepository(t *testing.T) {
 			writeClaudeSession(t, userHome, "two", other, now.Add(-2*time.Hour))
 			env := setupTestEnv(t, home, userHome, newFakeKeychain(), now)
 			env.WorkingDir = func() (string, error) { return current, nil }
-			answers := []string{"y", "n", "n", "included-projects", ""}
+			answers := []string{"n", "y", "n", "specific", "2", ""}
 			if add {
-				answers = []string{"y", "n", "n", "included-projects", "2", ""}
+				answers = []string{"n", "y", "n", ""}
 			}
 			input := strings.Join(append(answers, "s3-existing", "b", "profile", "us-east-1", "y"), "\n") + "\n"
 			output := setupRun(t, env, input, 0)
@@ -98,8 +98,8 @@ func TestSetupListsRecentProjectsAfterTheCurrentRepository(t *testing.T) {
 			if add {
 				want = 2
 			}
-			if !strings.Contains(output, "1) ✓ "+current) || !strings.Contains(output, "2)   "+other) || !strings.Contains(output, "2 sessions · today") ||
-				strings.Contains(output, "Add another project?") || includedProjects(cfg.Archive.Projects) != want || cfg.Archive.Projects[0].Root != current {
+			if !setupContainsText(output, "1) "+current) || !setupContainsText(output, "2) "+other) || !setupContainsText(output, "2 sessions · today") ||
+				setupContainsText(output, "Add another project?") || includedProjects(cfg.Archive.Projects) != want || cfg.Archive.Projects[0].Root != current {
 				t.Fatalf("projects %+v\n%s", cfg.Archive.Projects, output)
 			}
 		})
@@ -118,7 +118,7 @@ func TestSetupTakesAccountAndBucketFromTheR2BucketURL(t *testing.T) {
 		"https://" + testR2Account + ".r2.cloudflarestorage.com/my-bucket",
 		"ACCESS", "secret-value", "y"}, "\n") + "\n"
 	output := setupRun(t, env, input, 0)
-	if strings.Contains(output, "Bucket name") || !strings.Contains(output, "Bucket: my-bucket") || !strings.Contains(output, "only the bucket") {
+	if setupContainsText(output, "Bucket name") || !setupContainsText(output, "Bucket: my-bucket") || !setupContainsText(output, "only the bucket") {
 		t.Fatalf("unexpected prompts:\n%s", output)
 	}
 	cfg, _, _ := config.Load(home)
@@ -140,7 +140,7 @@ func TestSetupNextStepsNameEachApp(t *testing.T) {
 		"Cursor: nothing to approve; start a new Agent chat.\n",
 		"Sessions already open are not captured",
 	} {
-		if !strings.Contains(output, want) {
+		if !setupContainsText(output, want) {
 			t.Fatalf("missing %q:\n%s", want, output)
 		}
 	}
@@ -153,7 +153,7 @@ func TestSetupReviewRemindsR2UsersToCheckPublicAccess(t *testing.T) {
 	home := t.TempDir()
 	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
 	output := setupRun(t, env, r2SetupInput(t.TempDir(), "secret-value"), 0)
-	if strings.Contains(output, "public-access settings could not be read") || !strings.Contains(output, "! Bucket privacy unknown  check public access in the Cloudflare dashboard") {
+	if setupContainsText(output, "public-access settings could not be read") || !setupContainsText(output, "! Bucket privacy unknown · check public access in the Cloudflare dashboard") {
 		t.Fatalf("unexpected privacy note:\n%s", output)
 	}
 	cfg, _, _ := config.Load(home)
@@ -177,12 +177,12 @@ func TestSetupReviewShowsSessionsOnlyWhenNotTheDefault(t *testing.T) {
 		want          string
 	}{
 		{"default", cfg, config.Config{}, false, ""},
-		{"skills only", skills, config.Config{}, false, "Sessions   Only new sessions that use skills"},
-		{"back to all", cfg, skills, true, "* Sessions   All new sessions, with or without skills"},
+		{"skills only", skills, config.Config{}, false, "Only new sessions that use skills"},
+		{"back to all", cfg, skills, true, "All new sessions, with or without skills"},
 	} {
 		var out strings.Builder
 		showSetupReview(newPrompter(strings.NewReader(""), &out), tc.next, setupReview{existing: tc.current, reconfiguring: tc.reconfiguring})
-		if got := out.String(); tc.want == "" && strings.Contains(got, "Sessions") || tc.want != "" && !strings.Contains(got, tc.want) {
+		if got := out.String(); tc.want == "" && setupContainsText(got, "Sessions") || tc.want != "" && !setupContainsText(got, tc.want) {
 			t.Errorf("%s: review:\n%s", tc.name, got)
 		}
 	}

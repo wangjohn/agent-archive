@@ -631,7 +631,7 @@ func TestPublicationRecoveryMetadataReadsUseAllocationBound(t *testing.T) {
 	if err := scan.checkHistoryPublication(pending); !errors.Is(err, storage.ErrObjectTooLarge) {
 		t.Fatal(err)
 	}
-	if _, usable := scan.lastPublication(pending.MetadataKey); usable {
+	if _, usable, _ := scan.lastPublication(pending.MetadataKey); usable {
 		t.Fatal("oversized legacy metadata adopted")
 	}
 	if bounded.unlimitedReads != 0 || bounded.limitedReads != 2 {

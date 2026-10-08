@@ -1,0 +1,29 @@
+$ agent-archive backfill undo
+Checking storage… ready.
+
+Undo import 2026-09-23-1, started 2026-09-23 12:00.
+
+If you continue:
+  • 12 sessions and 2 subagent transcripts are deleted from
+    s3 / personal-agent-archive / agent-archive/.
+  • 4 projects the import added are excluded from capture; setup can
+    include them again:
+      ~/Library/Application Support/Claude/scratch-workspaces
+      ~/levenshtein
+      ~/old-notes
+      ~/personal-website
+  • Codex and Cursor imports without hooks are no longer published.
+  • Hook-captured sessions and the apps' own files are not touched.
+  • These sessions are not imported again unless you run
+    agent-archive backfill --include-removed.
+
+? Delete 12 sessions from the archive? This cannot be undone.
+
+  1) Yes
+  2) No (default)
+
+› Choose [2]: yes
+\e[6A\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[6A✓ Delete 12 sessions from the archive Yes
+
+Import 2026-09-23-1: Deleted 12 sessions and 2 subagent transcripts from the archive, excluded 4 projects.
+[exit 0]
