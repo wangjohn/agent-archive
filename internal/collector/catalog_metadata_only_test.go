@@ -74,7 +74,7 @@ func TestCatalogMetadataOnlySourceFailureRetainsExactJournalForFreshRetry(t *tes
 			if err != nil {
 				t.Fatal(err)
 			}
-			bundle.SchemaVersion++ // Retained evidence from a build this one cannot reproduce.
+			bundle.SchemaVersion = 1 // Older ordinary source schema this build cannot reproduce.
 			if _, err = archive.BuildCompressedSource(bundle); err == nil {
 				t.Fatal("fixture bundle remained reproducible")
 			}
