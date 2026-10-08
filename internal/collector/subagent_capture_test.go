@@ -22,7 +22,7 @@ import (
 func TestRunMaterializesAndPublishesSeparateClaudeSubagent(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
-	local, err := state.Open(home)
+	local, err := openTestStore(home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func TestRunMaterializesAndPublishesSeparateClaudeSubagent(t *testing.T) {
 func TestMaterializeRejectsMismatchedSubagentOwnership(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
-	local, _ := state.Open(home)
+	local, _ := openTestStore(home)
 	start := time.Date(2026, 9, 21, 10, 0, 0, 0, time.UTC)
 	path := filepath.Join(home, "wrong.jsonl")
 	if err := os.WriteFile(path, []byte(`{"type":"assistant","sessionId":"other-parent","agentId":"agent-1","timestamp":"2026-09-21T10:02:00Z","message":{"role":"assistant","content":"wrong"}}`+"\n"), 0o600); err != nil {
@@ -123,7 +123,7 @@ func TestMaterializeResumesAfterRegistrationWrite(t *testing.T) {
 		t.Run(string(origin), func(t *testing.T) {
 			t.Parallel()
 			home := t.TempDir()
-			local, err := state.Open(home)
+			local, err := openTestStore(home)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -409,7 +409,7 @@ func TestChildProvenanceRequiresAgentIdentityAndStableStart(t *testing.T) {
 func TestMissingChildTranscriptRemainsRetryable(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
-	store, err := state.Open(home)
+	store, err := openTestStore(home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -541,7 +541,7 @@ type resumedSubagentFixture struct {
 func newResumedSubagentFixture(t *testing.T) *resumedSubagentFixture {
 	t.Helper()
 	home := t.TempDir()
-	local, err := state.Open(home)
+	local, err := openTestStore(home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -754,7 +754,7 @@ func TestFutureDatedSubagentRecordIsNotRunning(t *testing.T) {
 func TestAssembleDiscoveryChildKeepsNativeStartProvenance(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
-	local, err := state.Open(home)
+	local, err := openTestStore(home)
 	if err != nil {
 		t.Fatal(err)
 	}

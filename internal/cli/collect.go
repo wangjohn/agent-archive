@@ -150,6 +150,10 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (result collector.Resu
 	stop := func() bool {
 		return time.Since(started) >= collectSoftDeadline || (pass.stop != nil && pass.stop())
 	}
+	if err := checkDurablePassRoots(ctx, localStore); err != nil {
+		recordPreflightError(localStore, err)
+		return collector.Result{}, err
+	}
 	// Local identity recovery and admission must not depend on credentials or
 	// storage availability. Source observation retains its own short budget.
 	// The complete authority census precedes the application allowance. Give it
@@ -575,4 +579,20 @@ func pendingCodexRollouts(lookup *discovery.CodexRolloutLookup) func() agentapi.
 		}
 		return lookup.MetadataInventory()
 	}
+}
+
+// This short read scope binds the cached rooted observation to this pass deadline.
+func checkDurablePassRoots(ctx context.Context, store *state.Store) error {
+	scoped, closeScope := store.WithReadBudget(ctx, nil)
+	defer closeScope()
+	obligations, err := scoped.DurableStorageObligations()
+	if err != nil {
+		return err
+	}
+	for _, obligation := range obligations {
+		if obligation.SessionID == "" {
+			return state.ErrDurableStorageRecovery
+		}
+	}
+	return ctx.Err()
 }

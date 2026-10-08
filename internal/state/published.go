@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -471,12 +472,19 @@ func (s *Store) LoadPublishedSummary(archiveSessionID string) (summary Published
 	if !safeFileComponent(archiveSessionID) {
 		return PublishedSummary{}, false, errors.New("archive session ID is not a safe file name component")
 	}
-	if summary, ok := readLeadingSummary(s.publishedPath(archiveSessionID)); ok {
+	summary, exists, head, _, err := s.publishedPrefix(archiveSessionID)
+	if err != nil {
+		return PublishedSummary{}, exists, err
+	}
+	if !exists {
+		return PublishedSummary{}, false, nil
+	}
+	if head {
 		return summary, true, nil
 	}
 	p, err := s.LoadPublishedState(archiveSessionID)
 	if err != nil || !p.found {
-		return PublishedSummary{}, false, err
+		return PublishedSummary{}, errors.Is(err, ErrDurableStorageRecovery), err
 	}
 	// State from before the summary existed is rewritten with one, once, by
 	// the collector pass that owns it; until then every read would decode it
@@ -491,24 +499,26 @@ func (s *Store) LoadPublishedSummary(archiveSessionID string) (summary Published
 // published state file. ok is false when there is none to trust: no file,
 // an older file without one, or anything unexpected, all of which the
 // caller answers with a full decode.
-func readLeadingSummary(path string) (summary PublishedSummary, ok bool) {
-	f, err := os.Open(path)
-	if err != nil {
-		return PublishedSummary{}, false
-	}
-	defer func() { _ = f.Close() }()
-	decoder := json.NewDecoder(bufio.NewReaderSize(f, 4096))
+func readLeadingSummary(reader io.Reader) (summary PublishedSummary, ok bool, err error) {
+	decoder := json.NewDecoder(bufio.NewReaderSize(reader, 4096))
 	if token, err := decoder.Token(); err != nil || token != json.Delim('{') {
-		return PublishedSummary{}, false
+		return summary, false, errors.Join(io.ErrUnexpectedEOF, err)
 	}
-	if key, err := decoder.Token(); err != nil || key != "summary" {
-		return PublishedSummary{}, false
+	key, err := decoder.Token()
+	if err != nil {
+		return summary, false, err
+	}
+	if key == "publication_version" {
+		return summary, false, ErrDurableStorageRecovery
+	}
+	if key != "summary" {
+		return summary, false, nil
 	}
 	var head *PublishedSummary
 	if err := decoder.Decode(&head); err != nil || head == nil {
-		return PublishedSummary{}, false
+		return summary, false, errors.Join(io.ErrUnexpectedEOF, err)
 	}
-	return *head, true
+	return *head, true, nil
 }
 
 // Cached returns the bundle a scan compares against and why it is there:
@@ -733,7 +743,7 @@ func (s *Store) LoadBlocked(archiveSessionID string) (BlockedReason, bool, error
 func (s *Store) LoadPublished(archiveSessionID string) (bundle archive.SourceBundle, publishedAt time.Time, status CacheStatus, found bool, err error) {
 	p, err := s.LoadPublishedState(archiveSessionID)
 	if err != nil {
-		return archive.SourceBundle{}, time.Time{}, "", false, err
+		return archive.SourceBundle{}, time.Time{}, "", errors.Is(err, ErrDurableStorageRecovery), err
 	}
 	bundle, publishedAt, status, found = p.Cached()
 	return bundle, publishedAt, status, found, nil
@@ -744,7 +754,7 @@ func (s *Store) LoadPublished(archiveSessionID string) (bundle archive.SourceBun
 func (s *Store) LoadLastPublished(archiveSessionID string) (bundle archive.SourceBundle, publishedAt time.Time, found bool, err error) {
 	p, err := s.LoadPublishedState(archiveSessionID)
 	if err != nil {
-		return archive.SourceBundle{}, time.Time{}, false, err
+		return archive.SourceBundle{}, time.Time{}, errors.Is(err, ErrDurableStorageRecovery), err
 	}
 	bundle, publishedAt, found = p.LastPublished()
 	return bundle, publishedAt, found, nil
