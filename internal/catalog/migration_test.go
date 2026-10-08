@@ -299,3 +299,21 @@ func TestMigrationCopiesPreservedHistoryWithOriginalCaptureDates(t *testing.T) {
 		}
 	}
 }
+
+func TestMigrationEndpointAliasesCannotEvadeIsolation(t *testing.T) {
+	source, target, _, _, authority := migrationFixture(t, 1)
+	original := destination.Config{Provider: "r2", Bucket: "private-bucket", Prefix: "old", R2AccountID: "private-account"}
+	for _, cfg := range []destination.Config{
+		{Provider: "R2", Bucket: "private-bucket", Prefix: "/old/", R2Endpoint: "https://private-account.r2.cloudflarestorage.com/", ArchiveFormat: destination.FormatCatalogV4},
+		{Provider: " r2 ", Bucket: "private-bucket", Prefix: "old/nested", R2Endpoint: "https://PRIVATE-ACCOUNT.r2.cloudflarestorage.com", ArchiveFormat: destination.FormatCatalogV4},
+		{Provider: "r2", Bucket: "private-bucket", Prefix: "different", R2Endpoint: "https://private-account.r2.cloudflarestorage.com/invalid", ArchiveFormat: destination.FormatCatalogV4},
+	} {
+		if _, err := OpenMigration(t.Context(), source, target, original, cfg, authority); err == nil {
+			t.Fatal("aliased or invalid endpoint passed isolation", cfg.Prefix)
+		}
+		objects, err := target.List(t.Context(), "")
+		if err != nil || len(objects) != 0 {
+			t.Fatal("isolation refusal wrote target", objects, err)
+		}
+	}
+}

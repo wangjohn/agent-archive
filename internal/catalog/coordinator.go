@@ -1,9 +1,11 @@
 package catalog
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"strings"
 
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -50,7 +52,9 @@ func (c *Coordinator) read(ctx context.Context) (admissions, string, error) {
 		return admissions{}, "", err
 	}
 	var state admissions
-	if json.Unmarshal(raw, &state) != nil || state.Protocol != 9 || state.Generation == 0 || state.Owners == nil || v.ETag == "" {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if len(raw) > 4<<20 || decoder.Decode(&state) != nil || decoder.Decode(new(any)) != io.EOF || state.validate() != nil || v.ETag == "" {
 		return state, "", errors.New("invalid catalog coordinator")
 	}
 	return state, v.ETag, nil

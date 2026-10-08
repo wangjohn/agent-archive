@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
@@ -156,5 +157,126 @@ func TestUnleasedSealRecoveryRequiresExactOwnerGeneration(t *testing.T) {
 	}
 	if err = w.Coordinator().RecoverUnleasedSeal(t.Context(), owner, state.Generation); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestGCRecoveryRefusesForeignHeadAndDamagedDescriptor(t *testing.T) {
+	for _, damage := range []string{"foreign-head", "generation", "inventory", "released-bytes", "unknown-field"} {
+		t.Run(damage, func(t *testing.T) {
+			raw := &gcCrashStore{qualifiedStore: &qualifiedStore{storagetest.NewMemoryStore()}}
+			w, err := New(raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			m := mutation(t, w, "damage")
+			if _, err = w.Commit(t.Context(), m); err != nil {
+				t.Fatal(err)
+			}
+			raw.fault = "before-release"
+			if err = w.Collect(t.Context(), heldBarrier{}); err == nil {
+				t.Fatal("crash ignored")
+			}
+			state, etag, err := w.Coordinator().read(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			owner := state.GCLink.Owner
+			if damage == "foreign-head" {
+				head, headETag, err := w.Head(t.Context())
+				if err != nil {
+					t.Fatal(err)
+				}
+				head.Generation++
+				body, err := json.Marshal(head)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err = raw.PutConditional(t.Context(), HeadKey, body, storage.PutCondition{MatchETag: headETag}); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				switch damage {
+				case "generation":
+					state.Generation++
+				case "inventory":
+					state.GCLink.Inventory = append(state.GCLink.Inventory, m.Next.Metadata)
+				case "released-bytes":
+					state.GCLink.ReleasedHead = []byte(`{"foreign":true}`)
+				}
+				body, err := json.Marshal(state)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if damage == "unknown-field" {
+					var fields map[string]any
+					if err = json.Unmarshal(body, &fields); err != nil {
+						t.Fatal(err)
+					}
+					fields["unknown"] = "damaged"
+					body, err = json.Marshal(fields)
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
+				if _, err = raw.PutConditional(t.Context(), CoordinatorKey, body, storage.PutCondition{MatchETag: etag}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			before, err := raw.Get(t.Context(), CoordinatorKey)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = w.RecoverGC(t.Context(), heldBarrier{}, owner); err == nil {
+				t.Fatal("damaged authority recovered")
+			}
+			after, err := raw.Get(t.Context(), CoordinatorKey)
+			if err != nil || string(before) != string(after) {
+				t.Fatal("recovery changed damaged authority", err)
+			}
+		})
+	}
+}
+
+func TestCoordinatorMaintenanceClockRefusalPerformsNoWrites(t *testing.T) {
+	for _, mode := range []string{"uncertain", "regressing", "precision"} {
+		t.Run(mode, func(t *testing.T) {
+			raw := &clockFixture{qualifiedStore: &qualifiedStore{storagetest.NewMemoryStore()}}
+			w, err := New(raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			m := mutation(t, w, "clock-preflight")
+			if _, err = w.Commit(t.Context(), m); err != nil {
+				t.Fatal(err)
+			}
+			switch mode {
+			case "uncertain":
+				raw.override = true
+				raw.clock = storage.CatalogTime{Earliest: time.Now().Add(-time.Hour), Latest: time.Now().Add(time.Hour)}
+			case "regressing":
+				raw.override = true
+				raw.clock = storage.CatalogTime{Earliest: time.Now().Add(-time.Hour), Latest: time.Now().Add(-time.Hour)}
+			case "precision":
+				raw.missingPrecision = true
+			}
+			store, err := Wrap(raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			before, err := raw.Get(t.Context(), CoordinatorKey)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = store.CatalogBarrier(t.Context()); err == nil {
+				t.Fatal("invalid clock acquired seal")
+			}
+			if err = w.Collect(t.Context(), heldBarrier{}); err == nil {
+				t.Fatal("invalid clock collected")
+			}
+			after, err := raw.Get(t.Context(), CoordinatorKey)
+			if err != nil || string(before) != string(after) {
+				t.Fatal("clock refusal changed coordinator", err)
+			}
+		})
 	}
 }

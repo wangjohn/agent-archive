@@ -100,7 +100,7 @@ func (w *Writer) bindGCRelease(ctx context.Context, h CatalogHead, owner string)
 		if link.ReleasedSHA256 != "" {
 			link.StateGeneration = state.Generation + 1
 			raw = append([]byte(nil), link.ReleasedHead...)
-			return nil
+			return validateReleasedHead(h, raw)
 		}
 		h.GCLease = ""
 		h.GCCoordinator = gcCoordinatorWitness{}
@@ -226,6 +226,9 @@ func (w *Writer) recoverLinkedGC(ctx context.Context, owner string) error {
 	if link.ReleasedSHA256 != "" && hash == link.ReleasedSHA256 {
 		return w.finishGCRelease(ctx, owner)
 	}
+	if hash == link.LeasedSHA256 && (h.GCLease != owner || h.GCCoordinator != link.Witness) {
+		return ErrConflict
+	}
 	if hash != link.LeasedSHA256 && !(hash == link.PriorSHA256 && etag == link.PriorETag) {
 		return ErrConflict
 	}
@@ -293,6 +296,21 @@ func (w *Writer) completedGC(ctx context.Context, owner string) error {
 		return err
 	}
 	if hash != state.GCReceipt.ReleasedSHA256 {
+		return ErrConflict
+	}
+	return nil
+}
+
+func validateReleasedHead(base CatalogHead, raw []byte) error {
+	var released CatalogHead
+	if json.Unmarshal(raw, &released) != nil || released.Generation < base.Generation || released.Generation > base.Generation+1 || released.Epoch == base.Epoch {
+		return ErrConflict
+	}
+	base.GCLease = ""
+	base.GCCoordinator = gcCoordinatorWitness{}
+	base.Epoch = released.Epoch
+	base.Generation = released.Generation
+	if headHash(base) != storage.SHA256Hex(raw) {
 		return ErrConflict
 	}
 	return nil

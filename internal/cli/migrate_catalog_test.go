@@ -2,14 +2,19 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/wangjohn/agent-archive/internal/catalog"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/destination"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
@@ -116,5 +121,114 @@ func TestMigrateHelpAndNoForceBypass(t *testing.T) {
 	}
 	if !reflect.DeepEqual(commandHelp["migrate"][:6], "Usage:") {
 		t.Fatal("missing help")
+	}
+}
+
+type migrationCLIStore struct{ *qualifiedCLIStore }
+
+func (*migrationCLIStore) VerifyCatalogCutover(_ context.Context, source, target destination.Config) (catalog.CutoverProof, error) {
+	return catalog.CutoverProof{ID: "private-reviewed-cutoff", Source: config.DestinationID(source), Destination: config.DestinationID(target), Protocol: 9}, nil
+}
+
+func TestRunMigrateResumesActivatesAndRollsBackPrivateDestination(t *testing.T) {
+	source := storagetest.NewMemoryStore()
+	target := &migrationCLIStore{&qualifiedCLIStore{storagetest.NewMemoryStore()}}
+	original := config.Config{SchemaVersion: 1, Storage: destination.Config{Provider: "s3", Bucket: "private-source", Prefix: "old", Region: "us-east-1", AWSProfile: "private-synthetic"}}
+	env := operatorTestEnv(t, original)
+	env.OpenStore = func(cfg config.Config) (storage.ObjectStore, error) {
+		if cfg.Storage.Bucket == "private-target" {
+			return target, nil
+		}
+		if cfg.Storage.Bucket == original.Storage.Bucket {
+			return source, nil
+		}
+		return nil, errors.New("fixture refuses unknown destination")
+	}
+	captured := time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC)
+	for i := range 80 {
+		id := fmt.Sprintf("private-%03d", i)
+		body := []byte("private source " + id)
+		sourceKey := "sessions/claude/" + id + "/source." + storage.SHA256Hex(body) + ".jsonl.gz"
+		metadata := archive.Metadata{SchemaVersion: 1, SessionID: id, Harness: archive.Harness{Name: "claude"}, CapturedAt: captured, SourceBundle: archive.SourceReference{Key: sourceKey, SHA256: storage.SHA256Hex(body), CompressedBytes: len(body)}}
+		raw, err := json.Marshal(metadata)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = source.Put(t.Context(), sourceKey, body); err != nil {
+			t.Fatal(err)
+		}
+		key, err := archive.MetadataObjectKey("claude", id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = source.Put(t.Context(), key, raw); err != nil {
+			t.Fatal(err)
+		}
+	}
+	destinationConfig := original.Storage
+	destinationConfig.Bucket = "private-target"
+	destinationConfig.Prefix = "new"
+	destinationConfig.ArchiveFormat = destination.FormatCatalogV4
+	migration, err := catalog.OpenMigration(t.Context(), source, target, original.Storage, destinationConfig, target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done, err := migration.Step(t.Context())
+	if err != nil || done || migration.State.Copied == 0 || migration.State.Copied >= 80 {
+		t.Fatal("first bounded checkpoint", done, migration.State.Copied, err)
+	}
+	if _, err = catalog.OpenSnapshot(t.Context(), target, nil); err == nil {
+		t.Fatal("candidate read activation")
+	}
+	run := func(extra ...string) int {
+		args := append([]string{"migrate", "--format", "catalog-v4", "--bucket", "private-target", "--prefix", "new"}, extra...)
+		var out, stderr bytes.Buffer
+		code := Run(args, bytes.NewReader(nil), &out, &stderr, env)
+		if code != 0 {
+			t.Log(out.String(), stderr.String())
+		}
+		return code
+	}
+	if code := run(); code != 0 {
+		t.Fatal("resume/activation", code)
+	}
+	home, err := env.readHome()
+	if err != nil {
+		t.Fatal(err)
+	}
+	activated, found, err := config.Load(home)
+	if err != nil || !found || activated.Storage.EffectiveArchiveFormat() != destination.FormatCatalogV4 {
+		t.Fatal("config cutover", err)
+	}
+	snapshot, err := catalog.OpenSnapshot(t.Context(), target, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, err := snapshot.Query(t.Context(), catalog.Query{Index: catalog.IdentityIndex}, "", 1000)
+	if err != nil || len(page.Rows) != 80 {
+		t.Fatal("catalog oracle", len(page.Rows), err)
+	}
+	for _, row := range page.Rows {
+		body, err := snapshot.ReadMetadata(t.Context(), row.Entry)
+		if err != nil {
+			t.Fatal(err)
+		}
+		originalBody, err := source.Get(t.Context(), row.Key)
+		if err != nil || !bytes.Equal(body, originalBody) || !row.Entry.Summary.CapturedAt.Equal(captured) {
+			t.Fatal("body/retention changed", err)
+		}
+	}
+	if code := run(); code != 0 {
+		t.Fatal("activation retry", code)
+	}
+	if code := run("--rollback"); code != 0 {
+		t.Fatal("rollback", code)
+	}
+	rolled, found, err := config.Load(home)
+	if err != nil || !found || !rolled.Paused || rolled.Storage != original.Storage {
+		t.Fatal("read-only rollback config", err)
+	}
+	if _, err = catalog.OpenSnapshot(t.Context(), target, nil); err == nil {
+		t.Fatal("rollback remained activated")
 	}
 }

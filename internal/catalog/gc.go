@@ -34,6 +34,10 @@ func (w *Writer) Collect(ctx context.Context, barrier Barrier) error {
 	if barrier == nil {
 		return errors.New("complete writer barrier is required")
 	}
+	clock, err := w.preflightClock(ctx)
+	if err != nil {
+		return err
+	}
 	protected, release, err := barrier.Hold(ctx)
 	if err != nil {
 		return err
@@ -44,13 +48,6 @@ func (w *Writer) Collect(ctx context.Context, barrier Barrier) error {
 	owned, ownBarrier := barrier.(heldCoordinator)
 	if !ownBarrier {
 		defer release()
-	}
-	clock, err := w.clock.CatalogServerClock(ctx)
-	if err != nil {
-		return err
-	}
-	if err = validateClock(clock); err != nil {
-		return err
 	}
 	// Even a caller-supplied history inventory cannot replace protocol9's real
 	// destination-wide admission fence. All source/commit owners must drain.
@@ -369,4 +366,22 @@ func validateClock(clock storage.CatalogTime) error {
 		return errors.New("catalog provider clock uncertainty is unqualified")
 	}
 	return nil
+}
+
+func (w *Writer) preflightClock(ctx context.Context) (storage.CatalogTime, error) {
+	clock, err := w.clock.CatalogServerClock(ctx)
+	if err != nil {
+		return clock, err
+	}
+	if err = validateClock(clock); err != nil {
+		return clock, err
+	}
+	h, etag, err := w.Head(ctx)
+	if err != nil {
+		return clock, err
+	}
+	if etag != "" && h.PublicationWitness.LastModified.After(clock.Latest.Add(h.PublicationWitness.Precision)) {
+		return clock, errors.New("catalog provider clock regressed before publication witness")
+	}
+	return clock, nil
 }

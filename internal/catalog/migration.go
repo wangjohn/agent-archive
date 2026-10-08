@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/destination"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
@@ -53,15 +54,28 @@ type Migration struct {
 	checkpointETag string
 }
 
-func destinationIdentity(cfg destination.Config) string {
-	// Credential names are deliberately excluded from identity; provider scope
-	// is the authority, and credential changes cannot evade isolation checks.
-	raw, _ := json.Marshal(struct{ Provider, Bucket, Prefix, Endpoint, Account string }{strings.ToLower(strings.TrimSpace(cfg.Provider)), cfg.Bucket, strings.Trim(cfg.Prefix, "/"), strings.TrimRight(strings.ToLower(cfg.R2Endpoint), "/"), cfg.R2AccountID})
-	return storage.SHA256Hex(raw)
+func destinationIdentity(cfg destination.Config) string { return config.DestinationID(cfg) }
+
+func providerNamespace(cfg destination.Config) (string, error) {
+	provider := strings.ToLower(strings.TrimSpace(cfg.Provider))
+	endpoint := ""
+	if provider == destination.ProviderR2 {
+		var err error
+		endpoint, err = destination.R2Endpoint(cfg.R2Endpoint, cfg.R2AccountID)
+		if err != nil {
+			return "", err
+		}
+	}
+	return provider + "\x00" + strings.ToLower(endpoint) + "\x00" + cfg.Bucket, nil
 }
 
 func isolated(source, target destination.Config) bool {
-	if !strings.EqualFold(strings.TrimSpace(source.Provider), strings.TrimSpace(target.Provider)) || source.Bucket != target.Bucket || strings.TrimRight(strings.ToLower(source.R2Endpoint), "/") != strings.TrimRight(strings.ToLower(target.R2Endpoint), "/") || source.R2AccountID != target.R2AccountID {
+	aNamespace, aErr := providerNamespace(source)
+	bNamespace, bErr := providerNamespace(target)
+	if aErr != nil || bErr != nil {
+		return false
+	}
+	if aNamespace != bNamespace {
 		return true
 	}
 	a, b := strings.Trim(source.Prefix, "/"), strings.Trim(target.Prefix, "/")

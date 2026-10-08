@@ -249,6 +249,9 @@ func (s *Store) CatalogMetadataAuthority() bool { return true }
 // CatalogBarrier obtains the underlying destination coordinator's complete
 // global writer/history/pending barrier. A missing coordinator never grants GC.
 func (s *Store) CatalogBarrier(ctx context.Context) (Barrier, error) {
+	if _, err := s.Writer.preflightClock(ctx); err != nil {
+		return nil, err
+	}
 	provider, ok := s.ObjectStore.(interface {
 		CatalogBarrier(context.Context) (Barrier, error)
 	})
