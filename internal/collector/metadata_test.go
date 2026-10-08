@@ -252,9 +252,7 @@ func TestLegacyMetadataMigrationFailureRetainsPendingWithoutReplacementAuthority
 			opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "machine", ParserVersion: "one", Now: func() time.Time { return now }}
 			before := publishOnce(t, local, remote, reg, &opts)
 			// Missing local exact bytes cannot authorize replacement from a guessed body.
-			if err := statetest.CacheMetadata(local, reg.ArchiveSessionID, nil); err != nil {
-				t.Fatal(err)
-			}
+			editPublishedState(t, local, func(raw map[string]any) { delete(raw, "metadata_bytes") })
 			corrupt(t, remote, reg, before)
 
 			writeTranscript(t, dir, "s.jsonl", grownCodexTranscript)
@@ -286,7 +284,7 @@ func TestLegacyMetadataMigrationFailureRetainsPendingWithoutReplacementAuthority
 	}
 }
 
-func TestLegacyFailedParseMigratesOnceWithoutRebuilding(t *testing.T) {
+func TestLegacyFailedParseFetchesWithoutDurableAuthorityOrRebuilding(t *testing.T) {
 	t.Parallel()
 	local := newTestStore(t)
 	reg := registration(t, writeTranscript(t, t.TempDir(), "s.jsonl", codexTranscript))
@@ -294,9 +292,7 @@ func TestLegacyFailedParseMigratesOnceWithoutRebuilding(t *testing.T) {
 	now := reg.RegisteredAt.Add(time.Hour)
 	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "machine", ParserVersion: "one", Now: func() time.Time { return now }}
 	published := publishOnce(t, local, remote, reg, &opts)
-	if err := statetest.CacheMetadata(local, reg.ArchiveSessionID, nil); err != nil {
-		t.Fatal(err)
-	}
+	editPublishedState(t, local, func(raw map[string]any) { delete(raw, "metadata_bytes") })
 	// State written before metadata was cached also predates scan signatures;
 	// without this the session would be skipped as unchanged, which a real
 	// legacy install never is.
@@ -306,24 +302,46 @@ func TestLegacyFailedParseMigratesOnceWithoutRebuilding(t *testing.T) {
 	published.Parser.Status = archive.ParserStatusFailed
 	putMetadata(t, remote, reg, published)
 
+	// This legacy fixture predates the leading summary. Normalize that existing
+	// non-authority cache migration before checking read-only metadata retry.
+	if _, _, err := local.ForCollectorPass().LoadPublishedSummary(reg.ArchiveSessionID); err != nil {
+		t.Fatal(err)
+	}
+	prior, err := os.ReadFile(publishedPath(local, reg.ArchiveSessionID))
+	if err != nil {
+		t.Fatal(err)
+	}
 	for scan := 1; scan <= 2; scan++ {
+		// Exercise the legacy read path again rather than an unchanged stat skip.
+		if err := local.RemoveScanSignature(reg.ArchiveSessionID); err != nil {
+			t.Fatal(err)
+		}
 		now = now.Add(time.Hour)
 		remote.gets = 0
 		result, err := Run(context.Background(), local, remote, opts)
 		if err != nil || len(result.Errors) != 0 || len(result.Published) != 0 {
 			t.Fatalf("scan %d: %#v %v", scan, result, err)
 		}
-		want := 1
-		if scan > 1 {
-			want = 0
-		}
-		if remote.gets != want {
-			t.Fatalf("scan %d performed %d remote reads, want %d", scan, remote.gets, want)
+		if remote.gets != 1 {
+			t.Fatalf("scan %d performed %d remote reads, want 1", scan, remote.gets)
 		}
 		cached, err := local.PublishedMetadata(reg.ArchiveSessionID)
-		if err != nil || len(cached) == 0 {
-			t.Fatalf("scan %d did not cache the migrated metadata: %v", scan, err)
+		if err != nil || len(cached) != 0 {
+			t.Fatalf("scan %d minted durable metadata: %v", scan, err)
 		}
+		got, err := os.ReadFile(publishedPath(local, reg.ArchiveSessionID))
+		if err != nil || !bytes.Equal(got, prior) {
+			t.Fatalf("legacy state changed: %v\nbefore=%s\nafter=%s", err, prior, got)
+		}
+		local, err = state.Open(local.Home())
+		if err != nil {
+			t.Fatal(err)
+		}
+		published, err := local.LoadPublishedState(reg.ArchiveSessionID)
+		if err != nil || published.PublicationPredecessor().State != state.PredecessorUnknown {
+			t.Fatalf("unknown predecessor lost: %v", err)
+		}
+
 	}
 }
 

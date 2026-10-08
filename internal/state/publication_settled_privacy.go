@@ -90,7 +90,9 @@ func (s *Store) mintSettledPrivacy(p publishedState) (publishedState, error) {
 
 	// Strings and handles borrow the already-owned immutable preparation. The
 	// new fact cells and digest strings have their own scope-long ownership.
-	factCharge := int64(16<<10) * int64(len(a.Inputs)+1)
+	factCharge := int64(16<<10)*int64(len(a.Inputs)+1) + int64(len(origin.SessionID)+len(origin.NativeSessionID)+len(origin.ProjectID)+len(origin.MachineID)+len(origin.Harness.Name)+len(origin.Harness.Version)+len(origin.Harness.Mode)+len(origin.Origin)+len(origin.StartedAtSource)+len(origin.PreviousGenerationID))
+	// The decoded identity strings are newly owned facts, rather than aliases
+	// into the preparation. Retain their exact bytes after the decoding loan ends.
 	if !s.resourceBudget.Reserve(factCharge) {
 		return p, errStateBudget
 	}

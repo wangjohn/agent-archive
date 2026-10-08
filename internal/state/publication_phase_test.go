@@ -225,3 +225,102 @@ func TestPublicationSelectingWriteBudgetRefusalKeepsPending(t *testing.T) {
 		}
 	}
 }
+
+func TestPublicationClosedVersionRejectsErasedAuthorityClaims(t *testing.T) {
+	legacy := publicationFixture(t, publicationThread, time.Date(2026, 10, 6, 0, 0, 0, 0, time.UTC))
+	raw, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var valid PendingPublication
+	if err := json.Unmarshal(raw, &valid); err != nil {
+		t.Fatal("known legacy producer rejected", err)
+	}
+	for _, claim := range []string{`"journal_version":0`, `"journal_version":null`, `"phase":null`, `"phase":""`, `"preparation":null`, `"progress":null`, `"cleanup":null`, `"PREPARATION":null`} {
+		poisoned := append([]byte("{"+claim+","), raw[1:]...)
+		var p PendingPublication
+		if err := json.Unmarshal(poisoned, &p); !errors.Is(err, ErrDurableStorageRecovery) {
+			t.Fatal("erased pending authority accepted", claim, err)
+		}
+	}
+	ready, err := PreparePublicationV2(legacy, PublicationPredecessor{State: PredecessorAbsent}, "destination", "admission", "policy", PublicationCapture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err = json.Marshal(publicationWire(ready))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, claim := range []string{`"source_bytes":null`, `"source_bytes":""`, `"SOURCE_BYTES":null`} {
+		var p PendingPublication
+		if err := json.Unmarshal(append([]byte("{"+claim+","), raw[1:]...), &p); !errors.Is(err, ErrDurableStorageRecovery) {
+			t.Fatal("second wire byte authority accepted", claim, err)
+		}
+	}
+	if err := json.Unmarshal(raw, &valid); err != nil {
+		t.Fatal("current producer rejected", err)
+	}
+	published := publishedState{Bundle: legacy.Bundle, Status: CacheStatusPublished, PublishedAt: legacy.Bundle.Capture.CapturedAt}
+	raw, err = json.Marshal(published)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var loaded publishedState
+	if err := json.Unmarshal(raw, &loaded); err != nil {
+		t.Fatal("known ordinary legacy producer rejected", err)
+	}
+	for _, claim := range []string{`"publication_version":0`, `"publication_version":null`, `"settled_privacy":null`, `"privacy_receipts":null`, `"privacy_receipts":[]`, `"privacy_receipts":[{}]`, `"preparation":null`, `"payloads":[]`, `"cleanup":null`, `"PREPARATION":null`, `"status":"published","STATUS":"published"`} {
+		if err := json.Unmarshal(append([]byte("{"+claim+","), raw[1:]...), &loaded); !errors.Is(err, ErrDurableStorageRecovery) {
+			t.Fatal("erased published authority accepted", claim, err)
+		}
+	}
+	if err := json.Unmarshal(append(raw, []byte(` {}`)...), &loaded); err == nil {
+		t.Fatal("trailing record accepted")
+	}
+}
+
+func TestPublicationClosedNestedAuthorityRejectsCaseAlias(t *testing.T) {
+	legacy := publicationFixture(t, publicationThread, time.Date(2026, 10, 6, 0, 0, 0, 0, time.UTC))
+	ready, err := PreparePublicationV2(legacy, PublicationPredecessor{State: PredecessorAbsent}, "destination", "admission", "policy", PublicationCapture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(publicationWire(ready))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, variant := range []string{"commit-equal", "commit-conflicting", "payload", "preparation"} {
+		t.Run(variant, func(t *testing.T) {
+			var shape map[string]any
+			if err := json.Unmarshal(raw, &shape); err != nil {
+				t.Fatal(err)
+			}
+			switch variant {
+			case "commit-equal":
+				shape["commit"].(map[string]any)["VERSION"] = float64(2)
+			case "commit-conflicting":
+				shape["commit"].(map[string]any)["VERSION"] = float64(9)
+			case "preparation":
+				shape["preparation"].(map[string]any)["VERSION"] = shape["preparation"].(map[string]any)["version"]
+			case "payload":
+				payload := shape["sources"].([]any)[0].(map[string]any)["payload"].(map[string]any)
+				payload["KIND"] = payload["kind"]
+			}
+			poisoned, err := json.Marshal(shape)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var loaded PendingPublication
+			if err := json.Unmarshal(poisoned, &loaded); !errors.Is(err, ErrDurableStorageRecovery) {
+				t.Fatalf("nested authority aliases accepted: %v", err)
+			}
+		})
+	}
+	// Native payload maps are opaque case-sensitive data, not typed authority.
+	var native struct {
+		NativeRecords []map[string]any `json:"native_records"`
+	}
+	if err := closedPublicationDecode([]byte(`{"native_records":[{"Secret":"first","secret":"second"}]}`), &native); err != nil || native.NativeRecords[0]["Secret"] != "first" || native.NativeRecords[0]["secret"] != "second" {
+		t.Fatal("case-distinct native payload changed", err)
+	}
+}

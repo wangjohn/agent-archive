@@ -165,6 +165,12 @@ func (s *sessionScan) maintainFrozen() (sessionOutcome, error) {
 // its token; requests and publication/scan journals still force maintenance.
 func (p *pass) unchangedFrozenSinceLastScan(reg archive.SessionRegistration) (bool, state.ScanSignature, error) {
 	var signature state.ScanSignature
+	if err := checkPublicationSessionRead(p.ctx, p.local, reg, p.opts); err != nil {
+		return false, signature, err
+	}
+	if settled, _, err := p.owesNothing(reg.ArchiveSessionID, false); err != nil || !settled {
+		return false, signature, err
+	}
 	if err := p.local.FrozenGeneration(reg); err != nil {
 		return false, signature, err
 	}
@@ -179,8 +185,7 @@ func (p *pass) unchangedFrozenSinceLastScan(reg archive.SessionRegistration) (bo
 	if !known || signature.ParserVersion != p.opts.parserVersionFor(reg.Harness.Name) || signature.FilterVersion != archive.FilterVersion || signature.AdapterVersion != adapterVersion || pendingSkillMode(signature.SkillEvidence) != p.opts.skillEvidence() || signature.PublishedLastHead != headFingerprint(reg.LastHead) {
 		return false, signature, nil
 	}
-	unchanged, _, err := p.owesNothing(reg.ArchiveSessionID, false)
-	return unchanged, signature, err
+	return true, signature, nil
 }
 
 func (s *sessionScan) recordFrozenSignature() error {

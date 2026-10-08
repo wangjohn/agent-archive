@@ -426,3 +426,50 @@ func convergeHistoryLocalRetry(t *testing.T, scan *sessionScan, remote *historyC
 	t.Fatal("frozen local retry did not converge")
 	return final
 }
+
+// freshLegacyHistoryOriginal imports a synthetic complete original descriptor
+// before its first seal, preserving every verified original stage and age.
+func freshLegacyHistoryOriginal(t *testing.T, scan *sessionScan, p state.PendingPublication) state.PendingPublication {
+	t.Helper()
+	var m archive.Metadata
+	if err := json.Unmarshal(p.MetadataBytes, &m); err != nil {
+		t.Fatal(err)
+	}
+	current, err := scan.readRetainedInputBytes(m.SourceBundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := scan.local
+	fresh := newTestStore(t)
+	cfg, _, err := config.Load(original.Home())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := config.Save(fresh.Home(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := fresh.SaveRegistration(scan.reg); err != nil {
+		t.Fatal(err)
+	}
+	out := state.PendingPublication{Bundle: p.Bundle, SourceKey: m.SourceBundle.Key, SourceSHA256: m.SourceBundle.SHA256, SourceBytes: current, MetadataKey: p.MetadataKey, MetadataBytes: p.MetadataBytes, ReadyAt: p.ReadyAt, SkillEvidence: p.SkillEvidence, History: &state.PendingHistory{Version: 1, Preparing: true, Inputs: p.History.Inputs, FilterVersion: archive.FilterVersion, AdapterVersion: p.Bundle.Capture.AdapterVersion}}
+	for _, input := range out.History.Inputs {
+		raw, err := original.ReadPendingSource(scan.id(), state.PendingSource{Reference: input.Reference, Name: input.Reference.SHA256 + ".gz"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		stage, err := fresh.StagePendingSource(scan.id(), input.Reference, raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out.History.Sources = append(out.History.Sources, stage)
+	}
+	scan.local = fresh
+	scan.published, err = fresh.LoadPublishedState(scan.id())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fresh.SavePending(scan.id(), out); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}

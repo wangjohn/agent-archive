@@ -2,9 +2,12 @@ package collector
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -284,6 +287,7 @@ func TestMixedHistoryPreparationRestartsAndReadsOriginalReplacedStage(t *testing
 		}
 	}
 	p.History.Sources = stages
+	p = freshLegacyHistoryOriginal(t, scan, p)
 	p.History.Preparing, p.History.PrivacyCursor, p.History.PreparedAt = true, 0, time.Time{}
 	for range len(p.History.Inputs) {
 		if err := scan.local.SavePending(scan.id(), p); err != nil {
@@ -293,7 +297,7 @@ func TestMixedHistoryPreparationRestartsAndReadsOriginalReplacedStage(t *testing
 		if err != nil {
 			t.Fatal(err)
 		}
-		p, _, err = scan.local.LoadPending(scan.id())
+		p, _, err = scan.local.LoadPublicationPending(scan.id())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -343,6 +347,12 @@ func TestMixedHistoryPreparationRestartsAndReadsOriginalReplacedStage(t *testing
 }
 
 func TestRunAcknowledgedAllRefPrivacyPublishesTogetherWithoutNativeReads(t *testing.T) {
+	for _, covered := range []bool{false, true} {
+		t.Run(map[bool]string{false: "live-newer-owed", true: "frozen-covered"}[covered], func(t *testing.T) { runAcknowledgedPrivacyHook(t, covered) })
+	}
+}
+
+func runAcknowledgedPrivacyHook(t *testing.T, covered bool) {
 	scan, p := privacyJournal(t)
 	var m archive.Metadata
 	if err := json.Unmarshal(p.MetadataBytes, &m); err != nil {
@@ -395,7 +405,28 @@ func TestRunAcknowledgedAllRefPrivacyPublishesTogetherWithoutNativeReads(t *test
 	if err := scan.local.RemovePending(scan.id()); err != nil {
 		t.Fatal(err)
 	}
-	if err := scan.local.SaveRequest(scan.id(), "stop", scan.now); err != nil {
+	if covered {
+		if err := scan.published.SaveBlocked(p.Bundle, scan.now, state.BlockedReasonTranscriptRewritten); err != nil {
+			t.Fatal(err)
+		}
+		opts := scan.opts
+		opts.RepoKey = func(string) string { return "" }
+		builder, closePreview, err := PrepareGenerationRecovery(t.Context(), scan.reg, scan.now.Add(time.Hour), opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = scan.local.BeginGenerationRecovery(scan.id(), scan.now.Add(time.Hour), builder)
+		closePreview()
+		if err != nil {
+			t.Fatal(err)
+		}
+		scan.reg, _, err = scan.local.LoadRegistration(scan.id())
+		if err != nil || !scan.reg.CaptureFrozen {
+			t.Fatal("actual frozen owner missing", err)
+		}
+		scan.opts.AcceptSession = func(reg archive.SessionRegistration) bool { return reg.ArchiveSessionID == scan.id() }
+	}
+	if err := scan.local.SaveRequest(scan.id(), "feedback", scan.now, archive.SupplementalEvidence{Kind: archive.EvidenceKindExplicitFeedback, Provenance: "synthetic-owned-hook", ObservedAt: scan.now, Payload: map[string]any{"text": "combined frozen observation sk-abcdefghijklmnopqrstuv"}}); err != nil {
 		t.Fatal(err)
 	}
 	request, _, err := scan.local.LoadRequest(scan.id())
@@ -418,8 +449,18 @@ func TestRunAcknowledgedAllRefPrivacyPublishesTogetherWithoutNativeReads(t *test
 				t.Fatal("complete maintenance did not publish", result, err)
 			}
 			current, found, err := scan.local.LoadRequest(scan.id())
-			if err != nil || !found || current.Token != request.Token {
-				t.Fatal("live native request lost", err)
+			if covered {
+				if err != nil || found {
+					t.Fatal("exact frozen covered token was not completed", err)
+				}
+			} else {
+				if err != nil || !found || current.Token != request.Token {
+					t.Fatal("live native request lost", err)
+				}
+				requestBody, err := json.Marshal(current.HookEvidence)
+				if err != nil || !bytes.Contains(requestBody, []byte("combined frozen observation sk-abcdefghijklmnopqrstuv")) || !bytes.Contains(requestBody, []byte("newer observation must stay owed")) {
+					t.Fatal("exact live owed observations lost", err)
+				}
 			}
 			final, err := scan.remote.Get(t.Context(), p.MetadataKey)
 			if err != nil || bytes.Equal(final, raw) {
@@ -446,11 +487,21 @@ func TestRunAcknowledgedAllRefPrivacyPublishesTogetherWithoutNativeReads(t *test
 					t.Fatal("partial refilter or changed capture", err)
 				}
 			}
+			currentSource, err := scan.local.LoadPublishedState(scan.id())
+			if err != nil {
+				t.Fatal(err)
+			}
+			selected, _, _ := currentSource.LastPublished()
+			selectedRaw, err := json.Marshal(selected)
+			if err != nil || !bytes.Contains(selectedRaw, []byte("combined frozen observation")) || bytes.Contains(selectedRaw, []byte("newer observation must stay owed")) || bytes.Contains(selectedRaw, []byte("sk-abcdefghijklmnopqrstuv")) {
+				t.Fatal("combined owned selection changed after restart", err)
+			}
 			privateRaw, err := os.ReadFile(publishedPath(scan.local, scan.id()))
 			if err != nil {
 				t.Fatal(err)
 			}
 			var private struct {
+				Settled     json.RawMessage `json:"settled_privacy"`
 				Preparation *struct {
 					OriginMetadata          []byte `json:"origin_metadata"`
 					PrivacyPreviousMetadata []byte `json:"privacy_previous_metadata"`
@@ -462,6 +513,9 @@ func TestRunAcknowledgedAllRefPrivacyPublishesTogetherWithoutNativeReads(t *test
 			if err = json.Unmarshal(privateRaw, &private); err != nil {
 				t.Fatal(err)
 			}
+			if private.Preparation != nil || len(private.Settled) == 0 {
+				t.Fatal("successful privacy selection did not prune full private preparation")
+			}
 			if private.Preparation != nil {
 				if bytes.Contains(private.Preparation.OriginMetadata, []byte("sk-abcdefghijklmnopqrstuv")) || bytes.Contains(private.Preparation.PrivacyPreviousMetadata, []byte("sk-abcdefghijklmnopqrstuv")) || private.Preparation.Migration != nil && bytes.Contains(private.Preparation.Migration.PreviousMetadata, []byte("sk-abcdefghijklmnopqrstuv")) {
 					t.Fatal("successful privacy successor retained private prior metadata secret")
@@ -469,6 +523,11 @@ func TestRunAcknowledgedAllRefPrivacyPublishesTogetherWithoutNativeReads(t *test
 			}
 			if _, found, err := scan.local.LoadPending(scan.id()); err != nil || found {
 				t.Fatal("maintenance cleanup incomplete", err)
+			}
+			if covered {
+				assertPrivateTreeHasNoSecret(t, scan.local.Home(), "sk-abcdefghijklmnopqrstuv")
+			} else {
+				assertPrivateTreeHasNoSecret(t, scan.local.Home(), "sk-abcdefghijklmnopqrstuv", filepath.Join(scan.local.Home(), "requests", scan.id()+".json"))
 			}
 			return
 		}
@@ -478,6 +537,33 @@ func TestRunAcknowledgedAllRefPrivacyPublishesTogetherWithoutNativeReads(t *test
 		current, found, err := scan.local.LoadRequest(scan.id())
 		if err != nil || !found || current.Token != request.Token {
 			t.Fatal("preparation acknowledged", err)
+		}
+		if pass == 0 {
+			frozen, found, err := scan.local.LoadPublicationPending(scan.id())
+			if err != nil || !found || frozen.Preparation == nil {
+				t.Fatal("combined original not frozen", err)
+			}
+			hooks := 0
+			for _, input := range frozen.Preparation.Inputs {
+				if input.HookObservations != nil {
+					hooks++
+					if input.Selection.Role != "current" || !bytes.Contains(input.HookObservations.Body, []byte("combined frozen observation")) {
+						t.Fatal("wrong frozen hook owner")
+					}
+				}
+			}
+			if hooks != 1 {
+				t.Fatal("owned observations missing from actual preparation", hooks)
+			}
+			if !covered {
+				if err := scan.local.SaveRequest(scan.id(), "newer", scan.now.Add(time.Hour), archive.SupplementalEvidence{Kind: archive.EvidenceKindExplicitFeedback, Provenance: "synthetic-newer-hook", ObservedAt: scan.now.Add(time.Hour), Payload: map[string]any{"text": "newer observation must stay owed"}}); err != nil {
+					t.Fatal(err)
+				}
+				request, _, err = scan.local.LoadRequest(scan.id())
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
 		}
 		remote, err := scan.remote.Get(t.Context(), p.MetadataKey)
 		if err != nil || !bytes.Equal(remote, raw) {
@@ -858,7 +944,15 @@ func TestPublicationPrivacySettlementMintBudgetRefusalRetainsFullPending(t *test
 	}
 	facts := len(p.Sources) + len(p.Progress.Outputs) + len(p.Preparation.Inputs)
 	validationLoan := int64(8*metadataBytes + (facts+1)*(16<<10))
-	projectionFacts := int64(len(p.Preparation.Inputs)+1) * (16 << 10)
+	var origin archive.Metadata
+	if err := json.Unmarshal(p.Preparation.OriginMetadata, &origin); err != nil {
+		t.Fatal(err)
+	}
+	identityBytes := int64(len(origin.SessionID) + len(origin.NativeSessionID) + len(origin.ProjectID) + len(origin.MachineID) + len(origin.Harness.Name) + len(origin.Harness.Version) + len(origin.Harness.Mode) + len(origin.Origin) + len(origin.StartedAtSource) + len(origin.PreviousGenerationID))
+	if identityBytes == 0 {
+		t.Fatal("identity string fixture missing")
+	}
+	projectionFacts := int64(len(p.Preparation.Inputs)+1)*(16<<10) + identityBytes
 	for _, canceled := range []bool{false, true} {
 		ctx, cancel := context.WithCancel(t.Context())
 		budget := agentapi.NewNativeReadBudget(validationLoan + projectionFacts - 1)
@@ -889,5 +983,104 @@ func TestPublicationPrivacySettlementMintBudgetRefusalRetainsFullPending(t *test
 		if used, _ := budget.Charged(); used != 0 {
 			t.Fatal("mint ownership leaked", used)
 		}
+	}
+	budget := agentapi.NewNativeReadBudget(256 << 20)
+	local, closeScope := scan.local.WithReadBudget(t.Context(), budget)
+	published, err := local.LoadPublishedState(scan.id())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := published.SaveCommittedPublication(p, scan.now); err != nil {
+		t.Fatal(err)
+	}
+	used, _ := budget.Charged()
+	if used < projectionFacts || used >= validationLoan+projectionFacts {
+		t.Fatal("mint did not retain fact ownership after releasing decode loan", used, projectionFacts, validationLoan)
+	}
+	closeScope()
+	closeScope()
+	if used, _ := budget.Charged(); used != 0 {
+		t.Fatal("settled fact ownership did not release once", used)
+	}
+
+}
+
+// Inspect real disposable private files, including base64 metadata/inline bodies
+// and gzip payloads. These fixtures are tiny; refuse a surprise large fixture.
+func assertPrivateTreeHasNoSecret(t *testing.T, home, secret string, verifiedOwedRequest ...string) {
+	t.Helper()
+	var inspectingPath string
+	var inspect func([]byte, int)
+	inspect = func(raw []byte, depth int) {
+		if depth > 8 || len(raw) > 4<<20 {
+			t.Fatal("unexpected private fixture expansion")
+		}
+		if bytes.Contains(raw, []byte(secret)) {
+			t.Fatal("obsolete sensitive private bytes survived full cleanup", inspectingPath, "decoded depth", depth)
+		}
+		if len(raw) > 2 && raw[0] == 0x1f && raw[1] == 0x8b {
+			r, err := gzip.NewReader(bytes.NewReader(raw))
+			if err != nil {
+				t.Fatal(err)
+			}
+			body, err := io.ReadAll(io.LimitReader(r, (4<<20)+1))
+			_ = r.Close()
+			if err != nil {
+				t.Fatal(err)
+			}
+			inspect(body, depth+1)
+			return
+		}
+		var v any
+		if json.Unmarshal(raw, &v) != nil {
+			return
+		}
+		var walk func(any)
+		walk = func(v any) {
+			switch x := v.(type) {
+			case string:
+				if b, err := base64.StdEncoding.DecodeString(x); err == nil && len(b) > 0 {
+					inspect(b, depth+1)
+				}
+			case []any:
+				for _, item := range x {
+					walk(item)
+				}
+			case map[string]any:
+				for _, item := range x {
+					walk(item)
+				}
+			}
+		}
+		walk(v)
+	}
+	if err := filepath.WalkDir(home, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		for _, exact := range verifiedOwedRequest {
+			if path == exact {
+				return nil
+			}
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() || info.Size() > 4<<20 {
+			t.Fatal("unexpected private fixture file", path)
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		inspectingPath = path
+		inspect(raw, 0)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -7,11 +7,12 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"io"
 	"reflect"
+	"strings"
 )
 
 // Closed protocols never let future authority fall through to a legacy record.
 func closedPublicationDecode(data []byte, dst any, fields ...map[string]bool) error {
-	if err := uniquePublicationJSON(json.NewDecoder(bytes.NewReader(data)), 0, fields...); err != nil {
+	if err := uniquePublicationJSON(json.NewDecoder(bytes.NewReader(data)), 0, reflect.TypeOf(dst), fields...); err != nil {
 		return errors.Join(ErrDurableStorageRecovery, err)
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
@@ -28,12 +29,13 @@ func closedPublicationDecode(data []byte, dst any, fields ...map[string]bool) er
 func (p *PendingPublication) UnmarshalJSON(data []byte) error {
 	type pendingJSON PendingPublication
 	var decoded pendingJSON
-	if err := closedPublicationDecode(data, &decoded); err != nil {
+	fields := make(map[string]bool)
+	if err := closedPublicationDecode(data, &decoded, fields); err != nil {
 		return err
 	}
 	*p = PendingPublication(decoded)
 	if p.JournalVersion == 2 {
-		if len(p.SourceBytes) != 0 {
+		if fields["source_bytes"] {
 			return ErrDurableStorageRecovery
 		}
 		if len(p.Sources) > 0 && p.Sources[0].Payload.Kind == "inline" {
@@ -42,8 +44,15 @@ func (p *PendingPublication) UnmarshalJSON(data []byte) error {
 		if err := p.validatePublicationEnvelope(); err != nil {
 			return errors.Join(ErrDurableStorageRecovery, err)
 		}
-	} else if p.JournalVersion != 0 || p.Phase != "" || p.Preparation != nil || p.Progress != nil || p.Cleanup != nil || p.Commit != nil && p.Commit.Version != 1 {
-		return ErrDurableStorageRecovery
+	} else {
+		for _, field := range []string{"journal_version", "phase", "preparation", "progress", "cleanup"} {
+			if fields[field] {
+				return ErrDurableStorageRecovery
+			}
+		}
+		if p.JournalVersion != 0 || p.Phase != "" || p.Preparation != nil || p.Progress != nil || p.Cleanup != nil || p.Commit != nil && p.Commit.Version != 1 {
+			return ErrDurableStorageRecovery
+		}
 	}
 	return nil
 }
@@ -58,6 +67,11 @@ func (p *publishedState) UnmarshalJSON(data []byte) error {
 	*p = publishedState(decoded)
 	if p.PublicationVersion == 2 {
 		return p.validateSelectingPublished()
+	}
+	for _, field := range []string{"publication_version", "settled_privacy", "preparation", "payloads", "cleanup", "privacy_receipts"} {
+		if fields[field] {
+			return ErrDurableStorageRecovery
+		}
 	}
 	// Claimed authority cannot disappear through null/empty JSON values. A
 	// complete legacy Commit1 is the only supported legacy selecting variant.
@@ -161,7 +175,10 @@ func (p publishedState) validateSelectingPublished() error {
 }
 
 // uniquePublicationJSON rejects duplicate authority keys before typed decoding.
-func uniquePublicationJSON(d *json.Decoder, depth int, topFields ...map[string]bool) error {
+func uniquePublicationJSON(d *json.Decoder, depth int, destination reflect.Type, topFields ...map[string]bool) error {
+	for destination != nil && destination.Kind() == reflect.Pointer {
+		destination = destination.Elem()
+	}
 	if depth > 128 {
 		return ErrDurableStorageRecovery
 	}
@@ -182,6 +199,33 @@ func uniquePublicationJSON(d *json.Decoder, depth int, topFields ...map[string]b
 				return err
 			}
 			name, ok := key.(string)
+			var child reflect.Type
+			// Go's typed JSON decoder accepts case aliases for struct fields.
+			// Canonicalize only those fields; arbitrary native map keys remain exact.
+			if destination != nil && destination.Kind() == reflect.Struct {
+				for i := 0; i < destination.NumField(); i++ {
+					field := destination.Field(i)
+					if field.PkgPath != "" {
+						continue
+					}
+					tag := strings.Split(field.Tag.Get("json"), ",")[0]
+					if tag == "-" {
+						continue
+					}
+					if tag == "" {
+						tag = field.Name
+					}
+					if strings.EqualFold(name, tag) {
+						name, child = tag, field.Type
+						break
+					}
+				}
+			} else if destination != nil && destination.Kind() == reflect.Map {
+				child = destination.Elem()
+			}
+			if depth == 0 && len(topFields) > 0 {
+				name = strings.ToLower(name)
+			}
 			if !ok || keys[name] {
 				return ErrDurableStorageRecovery
 			}
@@ -189,13 +233,17 @@ func uniquePublicationJSON(d *json.Decoder, depth int, topFields ...map[string]b
 			if depth == 0 && len(topFields) > 0 {
 				topFields[0][name] = true
 			}
-			if err = uniquePublicationJSON(d, depth+1); err != nil {
+			if err = uniquePublicationJSON(d, depth+1, child); err != nil {
 				return err
 			}
 		}
 	case '[':
+		var child reflect.Type
+		if destination != nil && (destination.Kind() == reflect.Slice || destination.Kind() == reflect.Array) {
+			child = destination.Elem()
+		}
 		for d.More() {
-			if err = uniquePublicationJSON(d, depth+1); err != nil {
+			if err = uniquePublicationJSON(d, depth+1, child); err != nil {
 				return err
 			}
 		}

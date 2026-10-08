@@ -509,6 +509,11 @@ func (s *sessionScan) compare(read sourceRead, candidate *archive.SourceBundle) 
 	// Unchanged since the last actual publish, or since a policy decline:
 	// nothing to do. A decline is reconsidered only by a genuine further
 	// content change, never by time alone.
+	// Unchanged transcript bytes do not settle a hook's unpublished HEAD.
+	// A missing/unreadable legacy sidecar leaves that observation owed.
+	if _, _, published := s.published.LastPublished(); published && headFingerprint(s.reg.LastHead) != "" && headFingerprint(s.reg.LastHead) != s.publishedLastHead() {
+		return true, storage.ErrPublicationConflict
+	}
 	if err := s.completeRequest("complete unchanged request"); err != nil {
 		return true, err
 	}

@@ -44,6 +44,13 @@ func (s *getOnlyStore) Get(ctx context.Context, key string) ([]byte, error) {
 	return s.inner.Get(ctx, key)
 }
 
+// Preserve the read-only source verification fallback while exposing the
+// synthetic backend's real pre-copy bound. No Stat or validator is invented.
+func (s *getOnlyStore) GetLimited(ctx context.Context, key string, limit int64) ([]byte, error) {
+	s.gets++
+	return s.inner.GetLimited(ctx, key, limit)
+}
+
 func (s *getOnlyStore) List(ctx context.Context, prefix string) ([]storage.Object, error) {
 	return s.inner.List(ctx, prefix)
 }

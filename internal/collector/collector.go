@@ -372,8 +372,10 @@ func (p *pass) loadWork() error {
 	// pass like any other outstanding work.
 	p.pending = len(registrationIssues)
 	registered := make(map[string]bool, len(registrations)+len(registrationIssues))
+	publicationOwners := make(map[string]archive.SessionRegistration, len(registrations))
 	for _, reg := range registrations {
 		registered[reg.ArchiveSessionID] = true
+		publicationOwners[reg.ArchiveSessionID] = reg
 	}
 	for id, issue := range registrationIssues {
 		addError(p.result.Errors, id, issue)
@@ -389,7 +391,14 @@ func (p *pass) loadWork() error {
 			continue
 		}
 		if registered[id] && obligation.Namespace == state.GenerationRecoveryStorage && !orphaned[id] {
-			if err := checkDurableSessionRead(p.ctx, p.local, id, p.opts); err != nil {
+			owner, found := publicationOwners[id]
+			var readErr error
+			if found {
+				readErr = checkPublicationSessionRead(p.ctx, p.local, owner, p.opts)
+			} else {
+				readErr = checkDurableSessionRead(p.ctx, p.local, id, p.opts)
+			}
+			if err := readErr; err != nil {
 				orphaned[id] = true
 				p.pending++
 				p.durableCounted[id] = true

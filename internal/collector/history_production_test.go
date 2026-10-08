@@ -216,6 +216,11 @@ func TestRunHistoryPublicationReopensAtEveryRemoteBoundary(t *testing.T) {
 func TestRunCommittedHistoryRetryDoesNotRequireRemovedPrivateStages(t *testing.T) {
 	scan, p := privacyJournal(t)
 	cloud := scan.remote.(*storagetest.MemoryStore)
+	endAttempt, err := scan.beginPublicationAttempt()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer endAttempt()
 	if _, err := scan.upload(p); err != nil {
 		t.Fatal(err)
 	}
@@ -248,6 +253,9 @@ func TestRunCommittedHistoryCleanupFailuresRetainRetry(t *testing.T) {
 			// successor of an exact acknowledged historical selecting manifest.
 			older := p.Bundle
 			older.Capture.FilterVersion = "14"
+			for _, record := range older.NativeRecords {
+				record["api_key"] = "sk-abcdefghijklmnopqrstuv"
+			}
 			packed, err := archive.BuildCompressedSource(older)
 			if err != nil {
 				t.Fatal(err)
@@ -262,6 +270,7 @@ func TestRunCommittedHistoryCleanupFailuresRetainRetry(t *testing.T) {
 				t.Fatal(err)
 			}
 			previous.SourceBundle, previous.FilterVersion = retired, "14"
+			previous.Title = "sk-abcdefghijklmnopqrstuv"
 			previousBody, err := json.Marshal(previous)
 			if err != nil {
 				t.Fatal(err)
@@ -376,6 +385,7 @@ func TestRunCommittedHistoryCleanupFailuresRetainRetry(t *testing.T) {
 				t.Fatal("committed cleanup retry", final, remote.puts, puts)
 			}
 			assertCompleteHistory(t, scan, p, remote)
+			assertPrivateTreeHasNoSecret(t, scan.local.Home(), "sk-abcdefghijklmnopqrstuv")
 			ledger, err := scan.local.LoadSuperseded(scan.id())
 			if err != nil || len(ledger) != 1 || ledger[0].Key != retired.Key || !ledger[0].PrivacySensitive || !ledger[0].SupersededAt.Equal(scan.now) {
 				t.Fatal("retirement lost", ledger, err)

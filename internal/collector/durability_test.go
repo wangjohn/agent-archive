@@ -539,17 +539,29 @@ func TestRunRemovesStaleWriteTemporaries(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := Run(context.Background(), local, storagetest.NewMemoryStore(), Options{Sources: testSources, Parsers: testParsers, MachineID: "m"}); err != nil {
+	result, err := Run(context.Background(), local, storagetest.NewMemoryStore(), Options{Sources: testSources, Parsers: testParsers, MachineID: "m"})
+	if !errors.Is(err, state.ErrDurableStorageRecovery) || !errors.Is(result.Errors["durable-storage"], state.ErrDurableStorageRecovery) || len(result.Published) != 0 {
+		t.Fatalf("young anonymous published remainder not retained as owed: %+v %v", result, err)
+	}
+	// Global census refuses before hygiene: none of these originals are lost.
+	for _, path := range []string{stale, fresh, nested} {
+		if raw, err := os.ReadFile(path); err != nil || string(raw) != "partial" {
+			t.Fatalf("owed temporary changed: %s %v", path, err)
+		}
+	}
+	// Resolve only the injected young obstruction, then exercise actual hygiene.
+	if err := os.Remove(fresh); err != nil {
 		t.Fatal(err)
+	}
+	if result, err := Run(t.Context(), local, storagetest.NewMemoryStore(), Options{Sources: testSources, Parsers: testParsers, MachineID: "m"}); err != nil || len(result.Errors) != 0 {
+		t.Fatal(result, err)
 	}
 	for _, path := range []string{stale, nested} {
 		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("stale temporary %s survived: %v", path, err)
 		}
 	}
-	if _, err := os.Stat(fresh); err != nil {
-		t.Fatalf("fresh temporary was removed: %v", err)
-	}
+
 }
 
 // A publication whose upload keeps failing is retried every pass, and its

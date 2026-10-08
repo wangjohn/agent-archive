@@ -173,6 +173,19 @@ func (s *sourceReadCounter) Get(ctx context.Context, key string) ([]byte, error)
 	return s.MemoryStore.Get(ctx, key)
 }
 
+func (s *sourceReadCounter) GetLimited(ctx context.Context, key string, limit int64) ([]byte, error) {
+	if key == s.key {
+		s.reads++
+	}
+	return s.MemoryStore.GetLimited(ctx, key, limit)
+}
+func (s *sourceReadCounter) GetVersionedLimited(ctx context.Context, key string, limit int64) ([]byte, string, error) {
+	if key == s.key {
+		s.reads++
+	}
+	return s.MemoryStore.GetVersionedLimited(ctx, key, limit)
+}
+
 func (s *sourceReadCounter) Stat(ctx context.Context, key string) (storage.ObjectInfo, error) {
 	if key == s.key {
 		s.reads++
