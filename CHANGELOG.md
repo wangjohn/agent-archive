@@ -17,6 +17,8 @@ follow [Semantic Versioning](https://semver.org/).
 
 - Read up to eight selected metadata sidecars concurrently for faster cold and
   changed-cache listings, preserving selection order and revision validation.
+- Open the metadata cache without scanning session directories. Commands clean
+  up at most 64 cached sessions, with progress saved for later commands.
 
 - Preserve settled capture and source bytes when cached native naming reads are
   unavailable and the same observation uses an equivalent timezone offset.

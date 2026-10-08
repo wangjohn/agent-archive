@@ -182,6 +182,7 @@ type ListOptions struct {
 // a sequential read would. A listing split into ranges fails with the error
 // of the first range to fail, which need not be the lowest in key order.
 func ListMetadataWithOptions(ctx context.Context, store storage.ObjectStore, prefix string, filter Filter, options ListOptions) ([]archive.Metadata, error) {
+	options.Cache.maintain(ctx, 64)
 	span := trace.Start("list metadata")
 	defer span.End()
 	listPrefix := listPrefixFor(prefix, filter.Harness)
@@ -209,12 +210,13 @@ func listMetadataFromHeaders(ctx context.Context, store storage.ObjectStore, fil
 	}
 	span.Count("keys", len(objects))
 	span.Count("sidecars", len(sidecars))
+	// Complete fresh headers establish deletion independently of whether the
+	// remaining bodies can be read. A later read error must not retain an
+	// absent session's cached metadata.
+	options.Cache.evictUnlisted(known, sidecars)
 	loaded, skipped, err := readSidecars(ctx, store, sidecars, options.Cache, options.Progress)
 	if err != nil {
 		return nil, err
-	}
-	if options.Cache != nil {
-		options.Cache.evictUnlisted(known, sidecars)
 	}
 	if options.Skipped != nil {
 		for _, s := range skipped {
