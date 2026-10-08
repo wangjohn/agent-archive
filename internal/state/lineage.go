@@ -161,6 +161,9 @@ func (s *Store) ForgetIdleSession(archiveSessionID string, key agentmeta.Session
 	if removal != nil && agentmeta.Canonical(agentmeta.Builtins(), removal.Harness) != string(key.Agent) {
 		return false, ErrSessionIdentityConflict
 	}
+	if err := s.CheckDurableSessionRead(archiveSessionID); err != nil {
+		return false, err
+	}
 	packedIDs, err := s.packedRemovalIDs(archiveSessionID)
 	if err != nil {
 		return false, err
@@ -216,6 +219,9 @@ func (s *Store) forgetIdleLocked(archiveSessionID string, key agentmeta.SessionK
 		return false, err
 	}
 	defer unlock()
+	if err := s.CheckDurableSessionRead(archiveSessionID); err != nil {
+		return false, err
+	}
 	if deferForWork {
 		if work, err := s.hasWork(archiveSessionID); err != nil || work {
 			return false, err
@@ -320,6 +326,9 @@ func (s *Store) ForgetOrphan(archiveSessionID string) (forgotten bool, err error
 	if !safeFileComponent(archiveSessionID) {
 		return false, errors.New("archive session ID is not a safe file name component")
 	}
+	if err := s.CheckDurableSessionRead(archiveSessionID); err != nil {
+		return false, err
+	}
 	packedIDs, err := s.packedRemovalIDs(archiveSessionID)
 	if err != nil {
 		return false, err
@@ -336,6 +345,9 @@ func (s *Store) ForgetOrphan(archiveSessionID string) (forgotten bool, err error
 	}
 	defer unlock()
 	if _, err := os.Lstat(s.registrationPath(archiveSessionID)); !errors.Is(err, os.ErrNotExist) {
+		return false, err
+	}
+	if err := s.CheckDurableSessionRead(archiveSessionID); err != nil {
 		return false, err
 	}
 	busy, err := s.removeSubagentCandidatesWithoutWaiting(archiveSessionID)
@@ -373,6 +385,9 @@ func (s *Store) SessionDir(archiveSessionID string) string {
 // to write for the session, UpdateRegistration reports it forgotten, and
 // RegisterNewSession assigns a fresh archive ID instead of reusing this one.
 func (s *Store) ForgetSession(archiveSessionID string, key agentmeta.SessionKey) error {
+	if err := s.CheckDurableSessionRead(archiveSessionID); err != nil {
+		return err
+	}
 	packedIDs, err := s.packedRemovalIDs(archiveSessionID)
 	if err != nil {
 		return err
@@ -418,6 +433,9 @@ func (s *Store) forgetSession(archiveSessionID string, key agentmeta.SessionKey,
 				return ErrSessionIdentityConflict
 			}
 		}
+	}
+	if err := s.CheckDurableSessionRead(archiveSessionID); err != nil {
+		return err
 	}
 	if withCandidates {
 		if err := s.removeSubagentCandidatesForSession(archiveSessionID); err != nil {

@@ -281,7 +281,7 @@ func runLifecycleScale(t *testing.T, n int) {
 		}
 	}
 	phase("ordinary_initial", true)
-	reopened, err := state.Open(local.Home())
+	reopened, err := openTestStore(local.Home())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -377,7 +377,7 @@ func runLifecycleScale(t *testing.T, n int) {
 			t.Fatal(err)
 		}
 	}
-	local, err = state.Open(local.Home())
+	local, err = openTestStore(local.Home())
 	if err != nil {
 		t.Fatal(err)
 	}

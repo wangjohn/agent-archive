@@ -17,6 +17,9 @@ func TestQualifiedBackfillKeepsParentChildIDsAcrossInterruptedHolds(t *testing.T
 	for _, expire := range []bool{false, true} {
 		t.Run(map[bool]string{false: "restart after child candidate", true: "reservation removed before parent commit"}[expire], func(t *testing.T) {
 			home, project := t.TempDir(), t.TempDir()
+			if err := os.Chmod(home, 0700); err != nil {
+				t.Fatal(err)
+			}
 			at := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
 			cfg := config.Config{Archive: archive.Config{Enabled: true, Projects: []archive.ProjectActivation{{ProjectID: archive.ProjectID(project), Root: project, Included: true, ActivatedAt: at.Add(-time.Hour)}}}}
 			if err := config.Save(home, cfg); err != nil {

@@ -35,7 +35,7 @@ func benchmarkScan(b *testing.B, records int, prepare func(b *testing.B, local *
 	if err := os.WriteFile(path, []byte(largeTranscript(records)), 0o600); err != nil {
 		b.Fatal(err)
 	}
-	local, err := state.Open(b.TempDir())
+	local, err := openTestStore(b.TempDir())
 	if err != nil {
 		b.Fatal(err)
 	}

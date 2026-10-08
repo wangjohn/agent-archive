@@ -12,7 +12,7 @@ import (
 // the published state, pending first, and nothing for a session with
 // neither.
 func TestStoredEvidenceReadsPendingAndPublished(t *testing.T) {
-	store, err := Open(t.TempDir())
+	store, err := openTestStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}

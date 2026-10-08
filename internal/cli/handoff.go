@@ -587,6 +587,13 @@ func (r handoffResolver) localCandidates(regs []archive.SessionRegistration, dir
 // r.gate first, which may end the search with an error.
 func (r handoffResolver) firstLocal(candidates []localHandoffCandidate, now time.Time, skipped *[]string) (handoffTarget, bool, error) {
 	for _, c := range candidates {
+		// Untrusted locator text cannot become a filename or a diagnostic before
+		// the existing bounded repository-only refusal has been offered.
+		if c.byRepo && !wellFormedID.MatchString(c.reg.ArchiveSessionID) {
+			if err := r.acceptRepoMatch(localRepoMatch(c.reg, archive.Analysis{})); err != nil {
+				return handoffTarget{}, false, err
+			}
+		}
 		target, err := r.localTarget(c.reg)
 		if err == nil && !hasPrompt(target.analysis) {
 			err = errors.New("no prompt yet")
@@ -597,7 +604,7 @@ func (r handoffResolver) firstLocal(candidates []localHandoffCandidate, now time
 			}
 			continue
 		}
-		if c.byRepo {
+		if c.byRepo && wellFormedID.MatchString(c.reg.ArchiveSessionID) {
 			if err := r.acceptRepoMatch(localRepoMatch(c.reg, target.analysis)); err != nil {
 				return handoffTarget{}, false, err
 			}

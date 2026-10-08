@@ -288,6 +288,7 @@ func TestVersionDirPatternIsAnchored(t *testing.T) {
 func TestVersionSupportUsesPublishedVersionNotResumedRegistration(t *testing.T) {
 	t.Parallel()
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
+	must(t, os.Chmod(home, 0700))
 	at := time.Now().UTC()
 	cfg := config.Config{MachineID: "machine", Storage: credentialsTestConfig(), Harnesses: []string{"codex"}, Archive: archive.Config{Enabled: true, Projects: []archive.ProjectActivation{{Root: project, Included: true, ActivatedAt: at.Add(-time.Hour)}}}}
 	if err := config.Save(home, cfg); err != nil {
