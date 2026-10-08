@@ -6,6 +6,9 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Read linked child metadata and known-harness show probes concurrently, and
+  reuse selected parent metadata for summaries and verified transcripts.
+
 - Read up to eight selected metadata sidecars concurrently for faster cold and
   changed-cache listings, preserving selection order and revision validation.
 
