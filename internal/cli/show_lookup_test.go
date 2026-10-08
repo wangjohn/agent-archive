@@ -3,6 +3,8 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"os"
 	"path/filepath"
 	"strings"
@@ -73,5 +75,66 @@ func TestShowAmbiguousHarnessesWinOverMalformedMetadata(t *testing.T) {
 	lists, gets := recorder.take()
 	if len(lists) != 0 || len(gets) != len(agentmeta.Names(agentmeta.Builtins())) {
 		t.Fatalf("ambiguity reread/listed: %v %v", lists, gets)
+	}
+}
+
+func TestWarmShowProjectionLoadsAuthoritativeJSONAndTranscript(t *testing.T) {
+	env, mem, id := publishedFixture(t)
+	key := "sessions/codex/" + id + "/metadata.json"
+	raw, err := mem.Get(t.Context(), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var metadata archive.Metadata
+	if err = json.Unmarshal(raw, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	metadata.Title = "Unique provenance ÉCOLE"
+	metadata.PullRequests = []archive.PullRequestLink{{Number: 9123}}
+	raw, err = json.Marshal(metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = mem.Put(t.Context(), key, raw); err != nil {
+		t.Fatal(err)
+	}
+	recorder := &recordingStore{ObjectStore: mem}
+	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return recorder, nil }
+	var warm, stderr bytes.Buffer
+	if code := Run([]string{"list", "--all-projects", "--limit", "0"}, nil, &warm, &stderr, env); code != 0 {
+		t.Fatal(code, stderr.String())
+	}
+	recorder.take()
+	for _, flags := range [][]string{{"--json"}, {"--transcript", "--no-pager"}} {
+		var want, wantErr bytes.Buffer
+		if code := Run(append([]string{"show", id}, flags...), nil, &want, &wantErr, env); code != 0 {
+			t.Fatal(code, wantErr.String())
+		}
+		recorder.take()
+		for _, query := range []string{id[:8], "école", "#9123"} {
+			var got, gotErr bytes.Buffer
+			if code := Run(append([]string{"show", query}, flags...), nil, &got, &gotErr, env); code != 0 || got.String() != want.String() || gotErr.String() != wantErr.String() {
+				t.Fatalf("%s %v: code=%d got=%s error=%s want=%s", query, flags, code, got.String(), gotErr.String(), want.String())
+			}
+			_, gets := recorder.take()
+			parentReads := 0
+			for _, gotKey := range gets {
+				if gotKey == key {
+					parentReads++
+				}
+			}
+			if parentReads != 1 {
+				t.Fatalf("projection selected body reads=%d gets=%v", parentReads, gets)
+			}
+			if flags[0] == "--json" {
+				var authoritative archive.Metadata
+				if err = json.Unmarshal(got.Bytes(), &authoritative); err != nil {
+					t.Fatal(err)
+				}
+				if authoritative.SourceBundle != metadata.SourceBundle || authoritative.Counts != metadata.Counts {
+					t.Fatal("projection lost body-only source/count fields")
+				}
+			}
+		}
 	}
 }

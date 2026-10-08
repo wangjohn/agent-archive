@@ -16,6 +16,11 @@ func catalogSessions(env metadataCacheDependencies, store storage.ObjectStore, o
 }
 
 func catalogSessionsInContext(ctx context.Context, env metadataCacheDependencies, store storage.ObjectStore, opts listOptions, stderr io.Writer, command string, words []string) ([]archive.Metadata, bool, error) {
+	sessions, used, _, err := catalogCandidateSessions(ctx, env, store, opts, stderr, command, words)
+	return sessions, used, err
+}
+
+func catalogCandidateSessions(ctx context.Context, env metadataCacheDependencies, store storage.ObjectStore, opts listOptions, stderr io.Writer, command string, words []string) ([]archive.Metadata, bool, bool, error) {
 	if reader.CatalogAuthority(store) {
 		cache := listCache(env, opts.noCache)
 		if cache != nil {
@@ -23,7 +28,7 @@ func catalogSessionsInContext(ctx context.Context, env metadataCacheDependencies
 			if err == nil {
 				defer func() { _ = c.Close() }()
 				if err = c.RefreshRemote(ctx); err != nil {
-					return nil, true, err
+					return nil, true, false, err
 				}
 				page, e := c.Query(ctx, reader.CatalogQuery{Words: words, Metadata: reader.MetadataQuery{Filter: opts.filter, Order: reader.ActivityOrder}})
 				if e == nil {
@@ -31,32 +36,32 @@ func catalogSessionsInContext(ctx context.Context, env metadataCacheDependencies
 					for _, row := range page.Rows {
 						sessions = append(sessions, row.Summary.Metadata())
 					}
-					return filterListOrigin(sessions, opts.imported, opts.hookCaptured), true, nil
+					return filterListOrigin(sessions, opts.imported, opts.hookCaptured), true, false, nil
 				}
 			}
 		}
 		sessions, err := reader.CatalogSummaries(ctx, store, opts.filter)
-		return filterListOrigin(sessions, opts.imported, opts.hookCaptured), true, err
+		return filterListOrigin(sessions, opts.imported, opts.hookCaptured), true, false, err
 	}
 
 	cache := listCache(env, opts.noCache)
 	if cache == nil {
-		return nil, false, nil
+		return nil, false, false, nil
 	}
 	readOpts := reader.ListOptions{Cache: cache, Skipped: warnSkippedSidecar(stderr, command), BodyRead: catalogBodyObserver(env)}
 	catalog, err := reader.OpenSessionCatalog(ctx, cache, store, readOpts)
 	if err != nil {
-		return nil, false, nil
+		return nil, false, false, nil
 	}
 	defer func() { _ = catalog.Close() }()
 	headers, err := reader.DiscoverCatalogHeaders(ctx, store, readOpts)
 	if err != nil {
-		return nil, true, err
+		return nil, true, false, err
 	}
 	if err = catalog.Refresh(ctx, headers); err != nil {
 		sessions, fallbackErr := reader.ListMetadataFromSnapshot(ctx, store, headers, opts.filter, readOpts)
 		sortByActivity(sessions)
-		return filterListOrigin(sessions, opts.imported, opts.hookCaptured), true, fallbackErr
+		return filterListOrigin(sessions, opts.imported, opts.hookCaptured), true, true, fallbackErr
 	}
 	query := reader.CatalogQuery{Words: words, Metadata: reader.MetadataQuery{Filter: opts.filter, Order: reader.ActivityOrder}}
 	var sessions []archive.Metadata
@@ -67,7 +72,7 @@ func catalogSessionsInContext(ctx context.Context, env metadataCacheDependencies
 			// Reuse this command's fresh headers for the verified legacy fallback.
 			sessions, fallbackErr := reader.ListMetadataFromSnapshot(ctx, store, headers, opts.filter, readOpts)
 			sortByActivity(sessions)
-			return filterListOrigin(sessions, opts.imported, opts.hookCaptured), true, fallbackErr
+			return filterListOrigin(sessions, opts.imported, opts.hookCaptured), true, true, fallbackErr
 		}
 		for _, row := range page.Rows {
 			sessions = append(sessions, row.Summary.Metadata())
@@ -77,7 +82,7 @@ func catalogSessionsInContext(ctx context.Context, env metadataCacheDependencies
 		}
 		query.Cursor = page.Next
 	}
-	return filterListOrigin(sessions, opts.imported, opts.hookCaptured), true, nil
+	return filterListOrigin(sessions, opts.imported, opts.hookCaptured), true, false, nil
 }
 
 // readListCandidates retains selected reads for simple bounded listings and
@@ -99,9 +104,9 @@ func readListCandidates(env metadataCacheDependencies, store storage.ObjectStore
 // The resolver may reuse only the latter as selected metadata authority.
 func readShowCandidates(ctx context.Context, store storage.ObjectStore, env metadataCacheDependencies, harness, query string, stderr io.Writer) ([]archive.Metadata, bool, error) {
 	opts := listOptions{filter: reader.Filter{Harness: harness}}
-	sessions, used, err := catalogSessionsInContext(ctx, env, store, opts, stderr, "show", nil)
+	sessions, used, fullBodies, err := catalogCandidateSessions(ctx, env, store, opts, stderr, "show", nil)
 	if used {
-		return sessions, false, err
+		return sessions, fullBodies, err
 	}
 	readOpts := reader.ListOptions{Cache: listCache(env, false), Skipped: warnSkippedSidecar(stderr, "show"), BodyRead: catalogBodyObserver(env)}
 	sessions, err = reader.FindMetadataPrefix(ctx, store, archiveSessionsPrefix, query, opts.filter, readOpts, func(archive.Metadata) bool { return true })
