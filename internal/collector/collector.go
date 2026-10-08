@@ -25,6 +25,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/listingindex"
+	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
@@ -33,7 +34,12 @@ import (
 // local.Lock(home) around Run; Run itself does not acquire it, so it stays
 // simple to call directly from tests.
 type Options struct {
-	labelReadObserver func(int64)
+	// CollectorGuard enables origin-proved catalog journal recovery. Direct
+	// callers without the actual flock retain the existing non-recovery path.
+	CollectorGuard *local.CollectorGuard
+	// CatalogDestination is the configured credential-free namespace identity.
+	CatalogDestination string
+	labelReadObserver  func(int64)
 	// Labels supplies optional bounded native metadata for existing retained sessions.
 	Labels           agentapi.LabelsLookup
 	LabelEnvironment agentapi.LabelEnvironment
@@ -216,6 +222,9 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	}
 	if opts.MachineID == "" {
 		return Result{}, errors.New("machine ID is required")
+	}
+	if err := recoverCatalogRemovals(ctx, local, store, opts); err != nil {
+		return Result{}, err
 	}
 	durableObligations, durableErr := local.DurableStorageObligations()
 	if durableErr != nil {

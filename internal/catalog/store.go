@@ -8,6 +8,8 @@ import (
 	"sync"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/destination"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -18,13 +20,31 @@ var ErrGCRequired = errors.New("catalog source deletion requires fenced garbage 
 // query activation belongs to migration; no canonical metadata is dual-written.
 type Store struct {
 	storage.ObjectStore
-	Writer    *Writer
-	pendingMu sync.Mutex
-	pending   map[string]string
-	running   map[string]bool
-	claims    map[string]*publicationClaim
-	owners    map[string]string
-	readScope string
+	Writer        *Writer
+	pendingMu     sync.Mutex
+	pending       map[string]string
+	running       map[string]bool
+	claims        map[string]*publicationClaim
+	owners        map[string]string
+	readScope     string
+	destinationID string
+}
+
+// WrapConfigured binds journal recovery to the existing credential-free
+// configured namespace identity. An unbound Wrap cannot transfer old owners.
+func WrapConfigured(store storage.ObjectStore, cfg destination.Config) (*Store, error) {
+	wrapped, err := Wrap(store)
+	if err != nil {
+		return nil, err
+	}
+	id := config.DestinationID(cfg)
+	wrapped.pendingMu.Lock()
+	defer wrapped.pendingMu.Unlock()
+	if id == "" || (wrapped.destinationID != "" && wrapped.destinationID != id) {
+		return nil, ErrAdmissionClosed
+	}
+	wrapped.destinationID = id
+	return wrapped, nil
 }
 
 // Wrap installs catalog metadata authority over a qualified object store.
@@ -144,6 +164,9 @@ func (s *Store) ObjectKey(key string) string {
 
 // Put refuses unfrozen metadata and creates immutable source bytes.
 func (s *Store) Put(ctx context.Context, key string, raw []byte) error {
+	if strings.HasPrefix(key, "catalog-v4/") {
+		return ErrAdmissionClosed
+	}
 	if metadataKey(key) {
 		return errors.New("catalog metadata requires a frozen mutation")
 	}

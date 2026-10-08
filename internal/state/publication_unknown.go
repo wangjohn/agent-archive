@@ -3,6 +3,7 @@ package state
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/wangjohn/agent-archive/internal/local"
 )
 
 // Future publication fields cannot become a legacy ready transaction simply
@@ -64,9 +65,10 @@ func (p *publishedState) UnmarshalJSON(data []byte) error {
 // protected catalog transaction could fall back to ordinary publication.
 func (p *CatalogPublication) UnmarshalJSON(data []byte) error {
 	var next struct {
-		Protocol         *uint64 `json:"protocol"`
-		ID               *string `json:"id"`
-		ExpectedRevision *string `json:"expected_revision"`
+		Protocol         *uint64               `json:"protocol"`
+		ID               *string               `json:"id"`
+		ExpectedRevision *string               `json:"expected_revision"`
+		Recovery         *local.CatalogJournal `json:"recovery,omitempty"`
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
@@ -76,6 +78,9 @@ func (p *CatalogPublication) UnmarshalJSON(data []byte) error {
 	if next.Protocol == nil || *next.Protocol != 9 || next.ID == nil || next.ExpectedRevision == nil || *next.ID == "" || len(*next.ID) > 128 || len(*next.ExpectedRevision) > 128 {
 		return ErrDurableStorageRecovery
 	}
-	*p = CatalogPublication{Protocol: *next.Protocol, ID: *next.ID, ExpectedRevision: *next.ExpectedRevision}
+	if next.Recovery != nil && (next.Recovery.Validate() != nil || next.Recovery.MutationID != *next.ID || next.Recovery.ExpectedRevision != *next.ExpectedRevision) {
+		return ErrDurableStorageRecovery
+	}
+	*p = CatalogPublication{Protocol: *next.Protocol, ID: *next.ID, ExpectedRevision: *next.ExpectedRevision, Recovery: next.Recovery}
 	return nil
 }

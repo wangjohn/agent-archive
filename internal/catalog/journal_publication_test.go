@@ -1,0 +1,183 @@
+package catalog
+
+import (
+	"context"
+	"errors"
+	"testing"
+
+	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/destination"
+	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/state"
+)
+
+func journalFixture(t *testing.T) (*Store, *qualifiedStore, *state.Store, state.PendingPublication, *local.CollectorGuard, destination.Config) {
+	t.Helper()
+	w, provider := fixture(t)
+	mutation := mutation(t, w, "journal")
+	raw, err := w.readRef(t.Context(), mutation.Next.Metadata, 32<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := mutation.Next.Summary.SourceBundle
+	bytes, err := provider.Get(t.Context(), source.Key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	home := t.TempDir()
+	localStore, err := state.Open(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = config.Save(home, config.Config{MachineID: "private"}); err != nil {
+		t.Fatal(err)
+	}
+	guard, err := local.LockCollectorGuard(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(guard.Release)
+	cfg := destination.Config{Provider: "synthetic", Bucket: "private", Prefix: "catalog", ArchiveFormat: destination.FormatCatalogV4}
+	store, err := WrapConfigured(provider, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending := state.PendingPublication{Catalog: &state.CatalogPublication{Protocol: 9, ID: mutation.ID}, SourceKey: source.Key, SourceSHA256: source.SHA256, SourceBytes: bytes, MetadataKey: mutation.SessionKey, MetadataBytes: raw}
+	digest, err := localStore.CatalogJournalDigest("journal", pending)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := local.ID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	origin, err := guard.Origin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending.Catalog.Recovery = &local.CatalogJournal{Owner: owner, Origin: origin, Destination: config.DestinationID(cfg), SessionID: "journal", MutationID: mutation.ID, SHA256: digest}
+	if err = localStore.SavePending("journal", pending); err != nil {
+		t.Fatal(err)
+	}
+	if err = localStore.VerifyCatalogJournal("journal", pending, guard, config.DestinationID(cfg)); err != nil {
+		t.Fatal(err)
+	}
+	return store, provider, localStore, pending, guard, cfg
+}
+
+func TestJournalAdmissionFreshStoreSealedResumeAndStaleInvocation(t *testing.T) {
+	store, provider, localStore, pending, guard, cfg := journalFixture(t)
+	j := *pending.Catalog.Recovery
+	ctx, settled, err := store.BeginJournalPublication(t.Context(), j.MutationID, pending.MetadataBytes, j, guard)
+	if err != nil || settled {
+		t.Fatal("first admission", settled, err)
+	}
+	fresh, err := WrapConfigured(provider, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = fresh.BeginJournalPublication(t.Context(), j.MutationID, pending.MetadataBytes, j, guard); err == nil {
+		t.Fatal("parallel fresh wrapper stole running invocation")
+	}
+	seal, err := store.Writer.Coordinator().Seal(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.EndPublicationAttempt(j.MutationID)
+	guard.Release()
+	guard, err = local.LockCollectorGuard(localStore.Home())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer guard.Release()
+	if err = localStore.VerifyCatalogJournal("journal", pending, guard, config.DestinationID(cfg)); err != nil {
+		t.Fatal(err)
+	}
+	resumed, settled, err := fresh.BeginJournalPublication(t.Context(), j.MutationID, pending.MetadataBytes, j, guard)
+	if err != nil || settled {
+		t.Fatal("pre-seal exact owner did not resume", settled, err)
+	}
+	defer fresh.EndPublicationAttempt(j.MutationID)
+	if err = store.Put(ctx, pending.SourceKey, pending.SourceBytes); !errors.Is(err, ErrAdmissionClosed) {
+		t.Fatal("stale invocation still stages source", err)
+	}
+	if err = fresh.Put(resumed, pending.SourceKey, pending.SourceBytes); err != nil {
+		t.Fatal(err)
+	}
+	if err = fresh.Publication(j.MutationID, pending.MetadataKey, "").Put(resumed, pending.MetadataKey, pending.MetadataBytes); err != nil {
+		t.Fatal(err)
+	}
+	if err = fresh.CompletePublication(resumed, j.MutationID, pending.MetadataBytes); err != nil {
+		t.Fatal(err)
+	}
+	state, _, err := fresh.Writer.Coordinator().read(t.Context())
+	if err != nil || len(state.Owners) != 0 || len(state.Completed) != 1 {
+		t.Fatal("completion did not retain exact receipt", err)
+	}
+	refs, release, err := fresh.Writer.Coordinator().HeldBarrier(seal).Hold(t.Context())
+	if err != nil || len(refs) != 2 {
+		t.Fatal("receipt sources/body missing from held inventory", err)
+	}
+	release()
+	if err = guard.RecordJournalRemoval(j); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = guard.ProveJournalRemoval(j); err == nil {
+		t.Fatal("receipt acknowledged before pending unlink")
+	}
+	if err = localStore.RemovePending("journal"); err != nil {
+		t.Fatal(err)
+	}
+	proof, err := guard.ProveJournalRemoval(j)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = fresh.AcknowledgeJournalRemoval(t.Context(), proof, guard); err != nil {
+		t.Fatal(err)
+	}
+	if err = fresh.AcknowledgeJournalRemoval(t.Context(), proof, guard); err != nil {
+		t.Fatal("lost acknowledgment retry", err)
+	}
+}
+
+func TestJournalAdmissionWrongBindingAndIncompleteFinalRefuse(t *testing.T) {
+	store, provider, _, pending, guard, cfg := journalFixture(t)
+	j := *pending.Catalog.Recovery
+	for _, change := range []func(*local.CatalogJournal){
+		func(j *local.CatalogJournal) { j.Destination = "different" },
+		func(j *local.CatalogJournal) { j.Origin = j.SHA256 },
+	} {
+		bad := j
+		change(&bad)
+		if _, _, err := store.BeginJournalPublication(t.Context(), j.MutationID, pending.MetadataBytes, bad, guard); err == nil {
+			t.Fatal("foreign journal admitted")
+		}
+	}
+	unbound, err := Wrap(provider)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = unbound.BeginJournalPublication(t.Context(), j.MutationID, pending.MetadataBytes, j, guard); err == nil {
+		t.Fatal("unbound destination recovered journal")
+	}
+	other := cfg
+	other.Prefix = "different"
+	wrong, err := WrapConfigured(provider, other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = wrong.BeginJournalPublication(t.Context(), j.MutationID, pending.MetadataBytes, j, guard); err == nil {
+		t.Fatal("changed configured destination admitted journal")
+	}
+	ctx, _, err := store.BeginJournalPublication(t.Context(), j.MutationID, pending.MetadataBytes, j, guard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.EndPublicationAttempt(j.MutationID)
+	if err = store.CompletePublication(ctx, j.MutationID, pending.MetadataBytes); err == nil {
+		t.Fatal("uncommitted publication acknowledged")
+	}
+	if err = store.Writer.Coordinator().Complete(context.Background(), store.owners[j.MutationID], store.pending[j.MutationID]); !errors.Is(err, ErrAdmissionClosed) {
+		t.Fatal("generic completion bypassed journal receipt", err)
+	}
+}

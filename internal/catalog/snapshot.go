@@ -128,6 +128,11 @@ func openSnapshotStarted(ctx context.Context, store storage.ObjectStore, cache *
 // epochs. It is suitable for verified prior-root to new-root reconciliation.
 func (s *Snapshot) Root() ObjectRef { return s.head.Identity }
 
+// ValidateRead checks cancellation and the captured request lifetime without
+// refreshing the head or changing the snapshot. Cached bodies must pass this
+// check after decoding and before a joined selection returns.
+func (s *Snapshot) ValidateRead(ctx context.Context) error { return s.check(ctx) }
+
 func (s *Snapshot) check(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err

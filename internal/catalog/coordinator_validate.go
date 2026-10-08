@@ -39,6 +39,14 @@ func (state admissions) validate() error {
 	if err := validateAdmissions(state.Owners); err != nil {
 		return err
 	}
+	if len(state.Completed) > 256 || validateAdmissions(state.Completed) != nil {
+		return errCoordinatorDescriptor
+	}
+	for key, receipt := range state.Completed {
+		if receipt.Journal == nil || key != receipt.Journal.Owner || !exactHex(receipt.Digest, 32) {
+			return errCoordinatorDescriptor
+		}
+	}
 	if receipt := state.GCReceipt; receipt != nil && (!exactHex(receipt.Owner, 24) || !exactHex(receipt.ReleasedSHA256, 32)) {
 		return errCoordinatorDescriptor
 	}
@@ -51,6 +59,9 @@ func (state admissions) validate() error {
 func validateAdmissions(owners map[string]admission) error {
 	for owner, claim := range owners {
 		if owner == "" || len(owner) > 512 || claim.Digest == "" || len(claim.Refs) > 256 {
+			return errCoordinatorDescriptor
+		}
+		if claim.Journal != nil && claim.Journal.Validate() != nil {
 			return errCoordinatorDescriptor
 		}
 		for _, ref := range claim.Refs {

@@ -90,14 +90,18 @@ func (s *sessionScan) publishPending(ctx context.Context, pending state.PendingP
 	}
 
 	if remote, ok := s.remote.(storage.CatalogLifecycle); ok && pending.Catalog != nil {
-		admittedCtx, err := remote.BeginPublication(ctx, pending.Catalog.ID, pending.MetadataBytes)
+		var settled bool
+		var err error
+		pending, ctx, settled, err = s.beginCatalogJournal(ctx, pending, remote)
 		if err != nil {
 			return outcomeSkipped, err
 		}
-		originalCtx := ctx
-		ctx = admittedCtx
+		originalCtx := s.ctx
 		s.ctx = ctx
 		defer func() { remote.EndPublicationAttempt(pending.Catalog.ID); s.ctx = originalCtx }()
+		if settled {
+			return s.acknowledgePublication(pending, false)
+		}
 	}
 
 	if err := s.checkHistoryPublication(pending); err != nil {
@@ -216,7 +220,7 @@ func (s *sessionScan) acknowledgePublication(pending state.PendingPublication, k
 			return outcomeSkipped, fmt.Errorf("complete published request: %w", err)
 		}
 	}
-	if !keepPending && pending.Catalog != nil {
+	if !keepPending && pending.Catalog != nil && s.ctx.Value(catalogSettledKey{}) != true {
 		if remote, ok := s.remote.(storage.CatalogLifecycle); ok {
 			if err := remote.CompletePublication(s.ctx, pending.Catalog.ID, pending.MetadataBytes); err != nil {
 				return outcomeSkipped, err
@@ -224,10 +228,11 @@ func (s *sessionScan) acknowledgePublication(pending state.PendingPublication, k
 		}
 	}
 	if !keepPending {
-		if err := s.local.RemovePending(s.id()); err != nil {
+		if err := s.removeCompletedCatalogJournal(pending); err != nil {
 			return outcomeSkipped, err
 		}
 	}
+
 	return outcomePublished, nil
 }
 

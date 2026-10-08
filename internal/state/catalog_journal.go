@@ -1,0 +1,71 @@
+package state
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"path/filepath"
+
+	"github.com/wangjohn/agent-archive/internal/local"
+)
+
+// CatalogJournalDigest validates frozen source/history authority and hashes the
+// whole immutable journal. Source bytes use their verified hash and size so
+// recovery adds no second source payload or persisted proof copy.
+func (s *Store) CatalogJournalDigest(id string, pending PendingPublication) (string, error) {
+	if pending.Catalog == nil || pending.Catalog.Protocol != 9 {
+		return "", ErrDurableStorageRecovery
+	}
+	if err := s.validateReadablePending(pending); err != nil {
+		return "", err
+	}
+	if err := pending.ValidateHistoryBudgeted(id, s.resourceBudget); err != nil {
+		return "", err
+	}
+	frozen := pending
+	commit := *pending.Catalog
+	commit.Recovery = nil
+	frozen.Catalog = &commit
+	frozen.Attempted = false
+	if !pending.CarriesNoSource() {
+		frozen.SourceSize = len(pending.SourceBytes)
+	}
+	frozen.SourceBytes = nil
+	digest := sha256.New()
+	if err := json.NewEncoder(digest).Encode(frozen); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(digest.Sum(nil)), nil
+}
+
+// VerifyCatalogJournal verifies a descriptor against the exact persisted
+// pending transaction while its originating collector lock remains held.
+func (s *Store) VerifyCatalogJournal(id string, pending PendingPublication, guard *local.CollectorGuard, destination string) error {
+	if pending.Catalog == nil || pending.Catalog.Recovery == nil {
+		return ErrDurableStorageRecovery
+	}
+	j := *pending.Catalog.Recovery
+	home, homeErr := guard.Home()
+	expectedHome, resolveErr := filepath.EvalSymlinks(s.home)
+	if homeErr != nil || resolveErr != nil || home != expectedHome {
+		return ErrDurableStorageRecovery
+	}
+	origin, err := guard.Origin()
+	if err != nil || j.Validate() != nil || j.Origin != origin || j.Destination != destination || j.SessionID != id || j.MutationID != pending.Catalog.ID || j.ExpectedRevision != pending.Catalog.ExpectedRevision {
+		return errors.Join(ErrDurableStorageRecovery, err)
+	}
+	digest, err := s.CatalogJournalDigest(id, pending)
+	if err != nil || digest != j.SHA256 {
+		return errors.Join(ErrDurableStorageRecovery, err)
+	}
+	persisted, found, err := s.LoadPending(id)
+	if err != nil || !found || persisted.Catalog == nil || persisted.Catalog.Recovery == nil || *persisted.Catalog.Recovery != j {
+		return errors.Join(ErrDurableStorageRecovery, err)
+	}
+	actual, err := s.CatalogJournalDigest(id, persisted)
+	if err != nil || actual != digest {
+		return errors.Join(ErrDurableStorageRecovery, err)
+	}
+	return nil
+}

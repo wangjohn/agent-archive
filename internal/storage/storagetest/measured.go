@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -260,6 +261,22 @@ func (s *MeasuredStore) EndPublicationAttempt(id string) {
 	if lifecycle, ok := s.base().(storage.CatalogLifecycle); ok {
 		lifecycle.EndPublicationAttempt(id)
 	}
+}
+
+// BeginJournalPublication forwards actual originating-journal authority.
+func (s *MeasuredStore) BeginJournalPublication(ctx context.Context, id string, raw []byte, journal local.CatalogJournal, guard *local.CollectorGuard) (context.Context, bool, error) {
+	if lifecycle, ok := s.base().(storage.CatalogJournalLifecycle); ok {
+		return lifecycle.BeginJournalPublication(ctx, id, raw, journal, guard)
+	}
+	return nil, false, storage.ErrAtomicCatalogUnqualified
+}
+
+// AcknowledgeJournalRemoval forwards positive durable unlink evidence.
+func (s *MeasuredStore) AcknowledgeJournalRemoval(ctx context.Context, proof *local.JournalRemoval, guard *local.CollectorGuard) error {
+	if lifecycle, ok := s.base().(storage.CatalogJournalLifecycle); ok {
+		return lifecycle.AcknowledgeJournalRemoval(ctx, proof, guard)
+	}
+	return storage.ErrAtomicCatalogUnqualified
 }
 
 // CatalogReadScope forwards an actual opaque catalog authority key. An absent

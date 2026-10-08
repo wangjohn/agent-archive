@@ -8,6 +8,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -19,8 +20,9 @@ const CoordinatorKey = "catalog-v4/coordinator.json"
 var ErrAdmissionClosed = errors.New("catalog admission sealed or owners not drained")
 
 type admission struct {
-	Digest string      `json:"digest"`
-	Refs   []ObjectRef `json:"refs"`
+	Digest  string                `json:"digest"`
+	Refs    []ObjectRef           `json:"refs"`
+	Journal *local.CatalogJournal `json:"journal,omitempty"`
 }
 
 type admissionMode string
@@ -41,6 +43,7 @@ type admissions struct {
 	GCReceipt  *gcCompletion        `json:"gc_receipt,omitempty"`
 	GCLink     *gcLink              `json:"gc_link,omitempty"`
 	Owners     map[string]admission `json:"owners"`
+	Completed  map[string]admission `json:"completed,omitempty"`
 }
 
 // Coordinator uses the qualified provider's single CAS admission authority.
@@ -144,6 +147,9 @@ func (c *Coordinator) Complete(ctx context.Context, owner, digest string) error 
 		if prior.Digest != digest {
 			return ErrMutationReuse
 		}
+		if prior.Journal != nil {
+			return ErrAdmissionClosed
+		}
 		delete(state.Owners, owner)
 		return nil
 	})
@@ -182,17 +188,19 @@ func (b heldCoordinator) Hold(ctx context.Context) ([]ObjectRef, func(), error) 
 	if err != nil {
 		return nil, nil, err
 	}
+	var protected []ObjectRef
 	err = b.coordinator.change(ctx, func(state *admissions) error {
 		if b.owner == "" || state.Seal != b.owner || len(state.Owners) != 0 || state.Hold != "" {
 			return ErrAdmissionClosed
 		}
 		state.Hold = hold
+		protected = completedReferences(*state)
 		return nil
 	})
 	if err != nil {
 		return nil, nil, err
 	}
-	return nil, func() { _ = b.coordinator.releaseHeld(context.WithoutCancel(ctx), b.owner, hold) }, nil
+	return protected, func() { _ = b.coordinator.releaseHeld(context.WithoutCancel(ctx), b.owner, hold) }, nil
 }
 
 // Release is explicit owner-checked recovery. Unfinished owners always refuse.
@@ -236,7 +244,7 @@ func (s *Store) BeginPublication(ctx context.Context, id string, metadata []byte
 		oldOwner := s.owners[id]
 		err = s.Writer.Coordinator().change(ctx, func(state *admissions) error {
 			previous, ok := state.Owners[oldOwner]
-			if !ok || previous.Digest != digest || state.Seal != "" || state.Hold != "" {
+			if !ok || previous.Digest != digest || previous.Journal != nil || state.Seal != "" || state.Hold != "" {
 				return ErrAdmissionClosed
 			}
 			delete(state.Owners, oldOwner)
@@ -285,8 +293,24 @@ func (s *Store) CompletePublication(ctx context.Context, id string, metadata []b
 	if err != nil || claim.id != id || claim.digest != digest {
 		return ErrAdmissionClosed
 	}
-	if err = s.Writer.Coordinator().Complete(ctx, claim.owner, digest); err != nil {
+	if claim.journal != nil {
+		err = s.completeJournal(ctx, claim)
+	} else {
+		err = s.Writer.Coordinator().Complete(ctx, claim.owner, digest)
+	}
+	if err != nil {
 		return err
+	}
+	if claim.journal != nil {
+		// The remote receipt is settled, but local removal still belongs to this
+		// exact invocation and must join before its collector lock is released.
+		claim.replayOnly = true
+		delete(s.pending, id)
+		delete(s.owners, id)
+		return nil
+	}
+	if claim.release != nil {
+		claim.release()
 	}
 	delete(s.pending, id)
 	delete(s.claims, id)
@@ -300,6 +324,9 @@ func (s *Store) CompletePublication(ctx context.Context, id string, metadata []b
 func (s *Store) EndPublicationAttempt(id string) {
 	s.pendingMu.Lock()
 	defer s.pendingMu.Unlock()
+	if claim := s.claims[id]; claim != nil && claim.release != nil {
+		claim.release()
+	}
 	delete(s.running, id)
 	delete(s.claims, id)
 }

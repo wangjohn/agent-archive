@@ -43,46 +43,53 @@ func hydrateCatalogRows(ctx context.Context, snapshot *catalog.Snapshot, rows []
 	span.Count("sidecars", len(rows))
 	cacheHits, downloaded := 0, 0
 	defer func() { span.Count("from cache", cacheHits); span.Count("downloaded", downloaded); span.End() }()
+	reads := readSelectedRows(ctx, len(rows), opts, func(i int) (selectedRead, bool) {
+		return readCatalogRow(ctx, snapshot, rows[i], opts.Cache)
+	}, func(i int) string { return rows[i].Key })
 	result := make([]archive.Metadata, 0, len(rows))
-	for i, row := range rows {
-		raw, cached := opts.Cache.get(row.Key, row.Entry.Revision)
-		if cached && !storage.VerifySHA256(raw, row.Entry.Metadata.SHA256) {
-			cached = false
+	for _, read := range reads {
+		if read.Err != nil {
+			return nil, read.Err
 		}
-		if !cached {
-			var err error
-			raw, err = snapshot.ReadMetadata(ctx, row.Entry)
-			if err != nil {
-				return nil, err
-			}
-		}
-		metadata, err := decodeMetadata(row.Key, raw)
-		if err != nil {
-			return nil, err
-		}
-		canonical, err := archive.MetadataObjectKey(metadata.Harness.Name, metadata.SessionID)
-		a, _ := json.Marshal(metadata)
-		b, _ := json.Marshal(row.Entry.Summary)
-		if err != nil || canonical != row.Key || string(a) != string(b) {
-			return nil, errors.New("catalog selected body differs from summary")
-		}
-		if !cached {
-			opts.Cache.putVerified(row.Key, row.Entry.Revision, raw)
-		}
-		if cached {
+		if read.Cached {
 			cacheHits++
 		} else {
 			downloaded++
 		}
-		if opts.BodyRead != nil {
-			opts.BodyRead(row.Key, cached)
-		}
-		if opts.Progress != nil {
-			opts.Progress(i+1, len(rows))
-		}
-		result = append(result, metadata)
+		result = append(result, read.Metadata)
 	}
-	return result, ctx.Err()
+	return result, snapshot.ValidateRead(ctx)
+}
+
+func readCatalogRow(ctx context.Context, snapshot *catalog.Snapshot, row catalog.Row, cache *MetadataCache) (selectedRead, bool) {
+	raw, cached := cache.get(row.Key, row.Entry.Revision)
+	if cached && !storage.VerifySHA256(raw, row.Entry.Metadata.SHA256) {
+		cached = false
+	}
+	if !cached {
+		var err error
+		raw, err = snapshot.ReadMetadata(ctx, row.Entry)
+		if err != nil {
+			return selectedRead{Err: err}, false
+		}
+	}
+	metadata, err := decodeMetadata(row.Key, raw)
+	if err != nil {
+		return selectedRead{Err: err}, false
+	}
+	canonical, err := archive.MetadataObjectKey(metadata.Harness.Name, metadata.SessionID)
+	a, _ := json.Marshal(metadata)
+	b, _ := json.Marshal(row.Entry.Summary)
+	if err != nil || canonical != row.Key || string(a) != string(b) {
+		return selectedRead{Err: errors.New("catalog selected body differs from summary")}, false
+	}
+	if err = snapshot.ValidateRead(ctx); err != nil {
+		return selectedRead{Err: err}, false
+	}
+	if !cached {
+		cache.putVerified(row.Key, row.Entry.Revision, raw)
+	}
+	return selectedRead{Metadata: metadata, Cached: cached}, true
 }
 
 func catalogMetadata(ctx context.Context, store storage.ObjectStore, prefix string, filter Filter, opts ListOptions) ([]archive.Metadata, error) {

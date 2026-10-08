@@ -770,3 +770,29 @@ func TestNodeCountRejectsOverflowBeforeAggregateReuse(t *testing.T) {
 		t.Fatal("wrapped aggregate accepted")
 	}
 }
+
+func TestSnapshotValidateReadExpiryCancellationDoesNotReadProvider(t *testing.T) {
+	w, raw := fixture(t)
+	activateFixture(t, w)
+	measured := storagetest.NewMeasuredStore(raw, 0)
+	snapshot, err := OpenSnapshot(t.Context(), measured, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	measured.Reset()
+	if err = snapshot.ValidateRead(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	snapshot.started = time.Now().Add(-SnapshotLifetime)
+	if err = snapshot.ValidateRead(t.Context()); !errors.Is(err, ErrStaleCursor) {
+		t.Fatal("expired cache read accepted", err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err = snapshot.ValidateRead(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatal("cancellation ignored", err)
+	}
+	if counts := measured.Metrics(); counts.Gets != 0 || counts.Lists != 0 {
+		t.Fatal("validation refreshed provider", counts)
+	}
+}

@@ -11,6 +11,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/catalog"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/destination"
+	localfiles "github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
@@ -55,7 +56,7 @@ func TestCollectorCatalogRetryFreezesMutationBeforeUpload(t *testing.T) {
 		t.Fatal(err)
 	}
 	raw := &collectorCatalogStore{MemoryStore: storagetest.NewMemoryStore(), local: local, t: t}
-	remote, err := catalog.Wrap(raw)
+	remote, err := catalog.WrapConfigured(raw, cfg.Storage)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +65,12 @@ func TestCollectorCatalogRetryFreezesMutationBeforeUpload(t *testing.T) {
 		t.Fatal(err)
 	}
 	at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
-	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return at }}
+	guard, err := localfiles.LockCollectorGuard(raw.local.Home())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { guard.Release() }()
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return at }, CollectorGuard: guard, CatalogDestination: config.DestinationID(cfg.Storage)}
 	result, err := Run(t.Context(), local, remote, opts)
 	if err != nil {
 		t.Fatal(err)
@@ -73,10 +79,28 @@ func TestCollectorCatalogRetryFreezesMutationBeforeUpload(t *testing.T) {
 		t.Fatal("interrupted head was acknowledged")
 	}
 	pending, found, err := local.LoadPending("session-1")
-	if err != nil || !found || pending.Catalog == nil || pending.Catalog.ID != raw.frozen {
+	if err != nil || !found || pending.Catalog == nil || pending.Catalog.Recovery == nil || pending.Catalog.ID != raw.frozen {
 		t.Fatal("frozen mutation missing after crash", err)
 	}
-	// Restart operates exclusively on private persisted pending bytes.
+	seal, err := remote.Writer.Coordinator().Seal(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = remote.Writer.Coordinator().HeldBarrier(seal).Hold(t.Context()); !errors.Is(err, catalog.ErrAdmissionClosed) {
+		t.Fatal("unfinished publication did not block GC", err)
+	}
+	// A genuinely fresh Store and a reacquired actual flock operate exclusively
+	// on the same private persisted pending bytes, even after admission seals.
+	guard.Release()
+	guard, err = localfiles.LockCollectorGuard(raw.local.Home())
+	if err != nil {
+		t.Fatal(err)
+	}
+	remote, err = catalog.WrapConfigured(raw, cfg.Storage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts.CollectorGuard = guard
 	at = at.Add(time.Hour)
 	result, err = Run(t.Context(), local, remote, opts)
 	if err != nil || len(result.Errors) != 0 || len(result.Published) != 1 {
@@ -84,6 +108,12 @@ func TestCollectorCatalogRetryFreezesMutationBeforeUpload(t *testing.T) {
 	}
 	if found, err = local.HasPending("session-1"); err != nil || found {
 		t.Fatal("acknowledged retry stayed pending", err)
+	}
+	if removals, err := guard.JournalRemovals(); err != nil || len(removals) != 0 {
+		t.Fatal("completed receipt cleanup remained pending", err)
+	}
+	if err = remote.Writer.Coordinator().Release(t.Context(), seal); err != nil {
+		t.Fatal("resumed owner did not drain", err)
 	}
 	if _, err = raw.Get(t.Context(), pending.MetadataKey); !errors.Is(err, storage.ErrNotFound) {
 		t.Fatal("canonical metadata was published")

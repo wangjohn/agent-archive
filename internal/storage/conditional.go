@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"github.com/wangjohn/agent-archive/internal/local"
 	"io"
 	"strings"
 	"time"
@@ -154,4 +155,11 @@ type CatalogLifecycle interface {
 	BeginPublication(context.Context, string, []byte) (context.Context, error)
 	CompletePublication(context.Context, string, []byte) error
 	EndPublicationAttempt(string)
+}
+
+// CatalogJournalLifecycle resumes only an exact durable collector journal
+// under its actual originating flock. Direct unfinished owners stay fenced.
+type CatalogJournalLifecycle interface {
+	BeginJournalPublication(context.Context, string, []byte, local.CatalogJournal, *local.CollectorGuard) (context.Context, bool, error)
+	AcknowledgeJournalRemoval(context.Context, *local.JournalRemoval, *local.CollectorGuard) error
 }

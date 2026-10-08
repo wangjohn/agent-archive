@@ -621,7 +621,7 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	ctx := catalog.WithReadView(context.Background())
 	summary := summaryOptions{Now: env.now(), Style: styleFor(stdout), Projects: projectLabels(cfg), Hints: true}
 	if sessionID == "" {
-		return runBareShow(env, store, cfg, stdin, stdout, stderr, *harness, *jsonOut, *noPager)
+		return runBareShow(ctx, env, store, cfg, stdin, stdout, stderr, *harness, *jsonOut, *noPager)
 	}
 
 	lookup, code := resolveShowQuery(ctx, store, env, stdin, stdout, stderr, *harness, sessionID, summary.Projects, *noPager, *transcript || *jsonOut)
@@ -667,13 +667,13 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 
 // runBareShow is `show` with no SESSION_ID on a terminal: the browser, or with
 // --json one session picked in it and printed as its sidecar.
-func runBareShow(env showCommandDependencies, store storage.ObjectStore, cfg config.Config, stdin io.Reader, stdout, stderr io.Writer, harness string, jsonOut, noPager bool) int {
+func runBareShow(ctx context.Context, env showCommandDependencies, store storage.ObjectStore, cfg config.Config, stdin io.Reader, stdout, stderr io.Writer, harness string, jsonOut, noPager bool) int {
 	if jsonOut {
-		row, selected, code := selectArchivedSession(env, store, cfg, stdin, stdout, stderr, harness, "show", "Show")
+		row, selected, code := selectArchivedSession(ctx, env, store, cfg, stdin, stdout, stderr, harness, "show", "Show")
 		if code != 0 || !selected {
 			return code
 		}
-		view, err := readSessionView(context.Background(), store, row.HarnessKey, row.SessionID)
+		view, err := readSessionView(catalog.NewReadView(ctx), store, row.HarnessKey, row.SessionID)
 		if err != nil {
 			terminal.Printf(stderr, "agent-archive: show: %v\n", err)
 			return 1
@@ -684,7 +684,7 @@ func runBareShow(env showCommandDependencies, store storage.ObjectStore, cfg con
 	if !ok {
 		return code
 	}
-	_, _, code = runBrowser(context.Background(), env, newPrompter(stdin, stdout), stdout, stderr, browserSpec{Mode: browseSessions, Choices: choices, Command: "show", Store: store, NoPager: noPager})
+	_, _, code = runBrowser(ctx, env, newPrompter(stdin, stdout), stdout, stderr, browserSpec{Mode: browseSessions, Choices: choices, Command: "show", Store: store, NoPager: noPager})
 	return code
 }
 

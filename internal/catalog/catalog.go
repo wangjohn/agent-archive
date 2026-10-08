@@ -210,6 +210,9 @@ func (w *Writer) putJSON(ctx context.Context, kind ImmutableKind, value any, lim
 
 // PutImmutable creates exact content-addressed objects without replacement.
 func (w *Writer) PutImmutable(ctx context.Context, kind ImmutableKind, b []byte) (ObjectRef, error) {
+	if ctx.Value(publicationClaimKey{}) != nil {
+		return ObjectRef{}, ErrAdmissionClosed
+	}
 	if w.readOnly {
 		return ObjectRef{}, ErrReadOnly
 	}
@@ -363,6 +366,9 @@ func allOrderKeys(key string, e *CatalogEntry) [][]string {
 // Commit rebases only across other sessions. Every acknowledged mutation has
 // a durable receipt; an ambiguous response never licenses a blind overwrite.
 func (w *Writer) Commit(ctx context.Context, m CatalogMutation) (string, error) {
+	if ctx.Value(publicationClaimKey{}) != nil {
+		return "", ErrAdmissionClosed
+	}
 	if w.readOnly {
 		return "", ErrReadOnly
 	}

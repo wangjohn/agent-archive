@@ -981,12 +981,12 @@ type archivedSessionDependencies interface {
 // returns the session chosen; handoff's also lists local sessions
 // (selectHandoffSession). verb is what Enter does, as the heading says it. It
 // returns selected=false when the archive is empty or the user quits.
-func selectArchivedSession(env archivedSessionDependencies, store storage.ObjectStore, cfg config.Config, stdin io.Reader, stdout, stderr io.Writer, harness, command, verb string) (row listRow, selected bool, code int) {
+func selectArchivedSession(ctx context.Context, env archivedSessionDependencies, store storage.ObjectStore, cfg config.Config, stdin io.Reader, stdout, stderr io.Writer, harness, command, verb string) (row listRow, selected bool, code int) {
 	choices, ok, code := findBrowseSessions(env, store, cfg, stdout, stderr, harness, command)
 	if !ok {
 		return listRow{}, false, code
 	}
-	return runBrowser(context.Background(), env, newPrompter(stdin, stdout), stdout, stderr, browserSpec{Mode: pickSession, Verb: verb, Choices: choices, Command: command})
+	return runBrowser(ctx, env, newPrompter(stdin, stdout), stdout, stderr, browserSpec{Mode: pickSession, Verb: verb, Choices: choices, Command: command})
 }
 
 // saveTerminalState records the terminal modes of in, when it is a

@@ -5,17 +5,22 @@ import (
 	"errors"
 	"slices"
 
+	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
 type publicationClaimKey struct{}
 
 type publicationClaim struct {
-	store  *Store
-	id     string
-	owner  string
-	digest string
-	refs   []ObjectRef
+	store      *Store
+	id         string
+	owner      string
+	digest     string
+	refs       []ObjectRef
+	journal    *local.CatalogJournal
+	guard      *local.CollectorGuard
+	release    func()
+	replayOnly bool
 }
 
 // Caller holds pendingMu through its complete subordinate operation so End
@@ -25,8 +30,14 @@ func (s *Store) publicationClaim(ctx context.Context) (*publicationClaim, error)
 		return nil, err
 	}
 	claim, ok := ctx.Value(publicationClaimKey{}).(*publicationClaim)
-	if !ok || claim.store != s || !s.running[claim.id] || s.claims[claim.id] != claim {
+	if !ok || claim.replayOnly || claim.store != s || !s.running[claim.id] || s.claims[claim.id] != claim {
 		return nil, ErrAdmissionClosed
+	}
+	if claim.journal != nil {
+		origin, err := claim.guard.Origin()
+		if err != nil || origin != claim.journal.Origin {
+			return nil, ErrAdmissionClosed
+		}
 	}
 	state, _, err := s.Writer.Coordinator().read(ctx)
 	if err != nil {
@@ -34,6 +45,9 @@ func (s *Store) publicationClaim(ctx context.Context) (*publicationClaim, error)
 	}
 	owner, ok := state.Owners[claim.owner]
 	if !ok || owner.Digest != claim.digest || state.Hold != "" || len(owner.Refs) != len(claim.refs) {
+		return nil, ErrAdmissionClosed
+	}
+	if claim.journal != nil && (owner.Journal == nil || *owner.Journal != *claim.journal) {
 		return nil, ErrAdmissionClosed
 	}
 	for i, ref := range owner.Refs {

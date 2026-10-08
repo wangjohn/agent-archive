@@ -125,7 +125,7 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (result collector.Resu
 		return collector.Result{}, fmt.Errorf("open local store: %w", err)
 	}
 
-	unlock, err := lockCollector(home, collectorPassHolder(quietOnBusy, pass), env.now())
+	guard, unlock, err := lockCollectorGuard(home, collectorPassHolder(quietOnBusy, pass), env.now(), cfg.Storage.EffectiveArchiveFormat())
 	if err != nil {
 		if errors.Is(err, local.ErrBusy) {
 			if quietOnBusy {
@@ -209,8 +209,10 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (result collector.Resu
 		}
 	}
 	result, err = collector.Run(ctx, localStore, objectStore, collector.Options{
-		Labels:           env.labelProviders(cfg),
-		LabelEnvironment: env.labelEnvironment(cfg, labelHomes),
+		CollectorGuard:     guard,
+		CatalogDestination: config.DestinationID(cfg.Storage),
+		Labels:             env.labelProviders(cfg),
+		LabelEnvironment:   env.labelEnvironment(cfg, labelHomes),
 		PrepareCodexCoverage: func(ctx context.Context, regs []archive.SessionRegistration) error {
 			return rollouts.PrepareRegistered(ctx, cfg, regs, discovery.Options{Now: env.Now, Stop: stop})
 		},
@@ -529,6 +531,9 @@ func openConfiguredStoreContext(ctx context.Context, cfg config.Config, credenti
 	remote, err := storage.NewConfiguredStore(ctx, cfg.Storage, store)
 	if err != nil {
 		return nil, err
+	}
+	if cfg.Storage.EffectiveArchiveFormat() == destination.FormatCatalogV4 {
+		return catalog.WrapConfigured(remote, cfg.Storage)
 	}
 	return configuredArchiveStore(cfg.Storage.EffectiveArchiveFormat(), remote)
 }

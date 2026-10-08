@@ -745,9 +745,10 @@ func (s *Store) CompleteRequest(archiveSessionID, coveredToken string) (bool, er
 // Bundle remains available for change detection and future parser-only rebuilds.
 // CatalogPublication freezes the remote transaction before source upload.
 type CatalogPublication struct {
-	Protocol         uint64 `json:"protocol"`
-	ID               string `json:"id"`
-	ExpectedRevision string `json:"expected_revision"`
+	Protocol         uint64                `json:"protocol"`
+	ID               string                `json:"id"`
+	ExpectedRevision string                `json:"expected_revision"`
+	Recovery         *local.CatalogJournal `json:"recovery,omitempty"`
 }
 
 type PendingPublication struct {
