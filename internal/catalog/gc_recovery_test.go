@@ -84,7 +84,7 @@ func TestGCRecoveryPhasesKeepExactDurableAuthority(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			m := mutation(t, w, "crash-"+phase)
+			m := mutation(t, w, "crash-"+string(phase))
 			if _, err = w.Commit(t.Context(), m); err != nil {
 				t.Fatal(err)
 			}

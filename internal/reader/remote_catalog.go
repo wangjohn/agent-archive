@@ -147,8 +147,8 @@ func selectCatalogMetadata(ctx context.Context, store storage.ObjectStore, prefi
 	for _, revision := range selected {
 		rows = append(rows, byKey[revision.MetadataKey])
 	}
-	sessions, err := hydrateCatalogRows(ctx, snapshot, rows, opts)
-	return RecentResult{Complete: true, TotalMatched: matched, Children: children, Hidden: hiddenTotal, Sessions: sessions}, err
+	result.Sessions, err = hydrateCatalogRows(ctx, snapshot, rows, opts)
+	return result, err
 }
 
 // CatalogSummaries discovers the complete fresh catalog summary universe.
