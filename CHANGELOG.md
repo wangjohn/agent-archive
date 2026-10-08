@@ -6,6 +6,10 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Keep listing revision path components within 255 bytes so capture and index
+  rebuild work with filesystem-backed S3 stores such as MinIO. Existing v2/v3
+  hints remain readable and are retired by repair or rebuild.
+
 - Add explicit `codex_name_lookup: "native"` opt-in for bounded metadata-only
   Codex naming requests, with guarded file fallback. Files remain the default.
   Native startup can write Codex state; desktop coexistence is unverified.

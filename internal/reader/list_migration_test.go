@@ -2,10 +2,12 @@ package reader
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
 
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/listingindex"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
@@ -18,7 +20,7 @@ func legacyRevision(t *testing.T, key string, data []byte, validator string) lis
 		t.Fatal(err)
 	}
 	parts := strings.Split(strings.TrimPrefix(r.Key, listingindex.V3Prefix), "/")
-	r.Key = listingindex.V2Prefix + parts[2] + "/" + parts[0] + "/" + parts[1] + "/" + parts[3]
+	r.Key = listingindex.V2Prefix + parts[2] + "/" + parts[0] + "/" + parts[1] + "/" + strings.Join(parts[3:], "")
 	r, err = listingindex.ParseRevision(r.Key)
 	if err != nil {
 		t.Fatal(err)
@@ -368,5 +370,71 @@ func TestAbsentMixedCleanupAndPartialLegacyPointersResume(t *testing.T) {
 	pointers, _ := s.List(ctx, "listing/by-session-v2/")
 	if len(hints) != 0 || len(pointers) != 0 {
 		t.Fatalf("canonical-absent rebuild left artifacts: hints=%d pointers=%d", len(hints), len(pointers))
+	}
+}
+
+type filesystemListingStore struct {
+	*opaqueListingStore
+}
+
+func (s *filesystemListingStore) Put(ctx context.Context, key string, data []byte) error {
+	for _, component := range strings.Split(key, "/") {
+		if len(component) > 255 {
+			return fmt.Errorf("object component exceeds 255 bytes")
+		}
+	}
+	return s.opaqueListingStore.Put(ctx, key, data)
+}
+
+func TestRebuildKeepsIndexedCoverageWithFilesystemComponents(t *testing.T) {
+	ctx := context.Background()
+	s := &filesystemListingStore{newOpaqueListingStore()}
+	key := putSession(t, s, "codex", "filesystem", baseTime)
+	data, _, err := s.GetVersioned(ctx, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var metadata archive.Metadata
+	if err := json.Unmarshal(data, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	metadata.RepoKey = strings.Repeat("b", 64)
+	data, err = json.Marshal(metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Put(ctx, key, data); err != nil {
+		t.Fatal(err)
+	}
+	_, validator, err := s.GetVersioned(ctx, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := legacyRevision(t, key, data, validator)
+	if err := putRevisionFixture(ctx, s.opaqueListingStore, legacy); err != nil {
+		t.Fatal(err)
+	}
+	parts := strings.Split(strings.TrimPrefix(legacy.Key, listingindex.V2Prefix), "/")
+	oldV3 := listingindex.V3Prefix + parts[1] + "/" + parts[2] + "/" + parts[0] + "/" + parts[3]
+	if err := s.opaqueListingStore.Put(ctx, oldV3, nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, rebuild := range []bool{false, true} {
+		if rebuild {
+			if _, err := RebuildIndex(ctx, s, "sessions"); err != nil {
+				t.Fatal(err)
+			}
+			hints, err := listRevisionHeaders(ctx, s)
+			if err != nil || len(hints) != 1 || len(strings.Split(hints[0].Key, "/")) < 7 {
+				t.Fatalf("hints=%v err=%v", hints, err)
+			}
+		}
+		s.reset()
+		scan := false
+		got, err := ListRecent(ctx, s, "sessions", Filter{}, 1, ListOptions{CompatibilityScan: func(string) { scan = true }})
+		_, gets := s.counts()
+		if err != nil || scan || got.TotalMatched != 1 || len(got.Sessions) != 1 || len(gets) != 1 || gets[0] != key {
+			t.Fatalf("rebuild=%v result=%+v scan=%v gets=%v err=%v", rebuild, got, scan, gets, err)
+		}
 	}
 }
