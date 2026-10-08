@@ -154,7 +154,7 @@ func openSessionCatalog(ctx context.Context, cache *MetadataCache, store storage
 		return nil, err
 	}
 	if !repair {
-		unlock, e := local.NamedLock(dir, "open.lock")
+		unlock, e := lockCatalogOpen(dir)
 		if e != nil {
 			return nil, e
 		}
@@ -212,6 +212,19 @@ func openSessionCatalog(ctx context.Context, cache *MetadataCache, store storage
 	}
 	opts.Cache = cache
 	return &SQLiteSessionCatalog{db: db, store: store, opts: opts}, nil
+}
+
+func lockCatalogOpen(dir string) (func(), error) {
+	// NamedLock creates its file, so reject a preexisting symlink before
+	// opening it rather than letting a dangling link create another path.
+	info, err := os.Lstat(filepath.Join(dir, "open.lock"))
+	if err == nil && !info.Mode().IsRegular() {
+		return nil, errors.New("catalog requires regular files")
+	}
+	if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	return local.NamedLock(dir, "open.lock")
 }
 
 func initializeCatalogState(ctx context.Context, db *sql.DB) error {

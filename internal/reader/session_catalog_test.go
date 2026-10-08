@@ -229,6 +229,29 @@ func TestSessionCatalogCorruptionRebuild(t *testing.T) {
 	}
 }
 
+func TestSessionCatalogRefusesDanglingLockSymlinkBeforeCreatingTarget(t *testing.T) {
+	home := t.TempDir()
+	cache, err := OpenMetadataCache(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(home, "cache", "catalog")
+	if err = os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(t.TempDir(), "outside-catalog")
+	if err = os.Symlink(target, filepath.Join(dir, "open.lock")); err != nil {
+		t.Fatal(err)
+	}
+	if catalog, e := OpenSessionCatalog(t.Context(), cache, newCountingStore(), ListOptions{}); e == nil {
+		_ = catalog.Close()
+		t.Fatal("accepted catalog lock symlink")
+	}
+	if _, err = os.Lstat(target); !os.IsNotExist(err) {
+		t.Fatalf("lock symlink target was created: %v", err)
+	}
+}
+
 func TestSessionCatalogTypedFiltersEqualExhaustiveOracle(t *testing.T) {
 	ctx := context.Background()
 	cache, err := OpenMetadataCache(t.TempDir())
