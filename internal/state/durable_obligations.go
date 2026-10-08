@@ -106,18 +106,9 @@ func (s *Store) DurableStorageObligations() (out []DurableStorageObligation, err
 		return []DurableStorageObligation{{Namespace: UnavailableStorage}}, errors.Join(ErrDurableStorageRecovery, e)
 	}
 	pending, _, used, e := s.inspectPendingRoots(home, found && !cfg.DurableStorageProtection)
-	for _, obligation := range pending {
-		if found && obligation.Namespace == GenerationRecoveryStorage && obligation.SessionID != "" {
-			complete, receiptErr := s.completedGenerationReceipt(home, obligation.SessionID)
-			if receiptErr != nil {
-				out = append(out, obligation)
-				return out, errors.Join(ErrDurableStorageRecovery, receiptErr)
-			}
-			if complete {
-				continue
-			}
-		}
-		out = append(out, obligation)
+	out, err = s.classifyGenerationObligations(home, pending, found)
+	if err != nil {
+		return out, err
 	}
 	if e != nil {
 		return append(out, DurableStorageObligation{Namespace: UnavailableStorage}), errors.Join(ErrDurableStorageRecovery, e)
@@ -196,6 +187,23 @@ func (s *Store) DurableStorageObligations() (out []DurableStorageObligation, err
 		err = errors.Join(ErrDurableStorageRecovery, err)
 	}
 	return out, errors.Join(err, home.Check())
+}
+
+func (s *Store) classifyGenerationObligations(home *local.RootedHome, pending []DurableStorageObligation, found bool) (out []DurableStorageObligation, err error) {
+	for _, obligation := range pending {
+		if found && obligation.Namespace == GenerationRecoveryStorage && obligation.SessionID != "" {
+			complete, receiptErr := s.completedGenerationReceipt(home, obligation.SessionID)
+			if receiptErr != nil {
+				out = append(out, obligation)
+				return out, errors.Join(ErrDurableStorageRecovery, receiptErr)
+			}
+			if complete {
+				continue
+			}
+		}
+		out = append(out, obligation)
+	}
+	return out, nil
 }
 
 func unavailableStorageObligations(root *os.Root, remaining *int) (out []DurableStorageObligation, err error) {
