@@ -181,6 +181,7 @@ func TestStatusWithoutImportsHasNoImportedLine(t *testing.T) {
 func TestStatusObservesLaterHookOnImportWithoutPromotingCapture(t *testing.T) {
 	t.Parallel()
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
+	must(t, os.Chmod(home, 0700))
 	now := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
 	cfg := pairTestConfig(now, []string{"codex"}, project)
 	if err := config.Save(home, cfg); err != nil {

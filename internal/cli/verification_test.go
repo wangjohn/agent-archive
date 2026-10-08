@@ -28,6 +28,7 @@ import (
 // the session index. It returns the configuration and the store.
 func publishSyntheticSessions(t *testing.T, home, project string, remote storage.ObjectStore, at time.Time, n int) (config.Config, *state.Store) {
 	t.Helper()
+	must(t, os.Chmod(home, 0700))
 	cfg := config.Config{MachineID: "machine", Storage: credentialsTestConfig(), Harnesses: []string{"codex"}, Archive: archive.Config{Enabled: true, Projects: []archive.ProjectActivation{{Root: project, Included: true, ActivatedAt: at.Add(-time.Hour)}}}}
 	if err := config.Save(home, cfg); err != nil {
 		t.Fatal(err)
