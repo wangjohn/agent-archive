@@ -97,7 +97,7 @@ func revisionKey(r Revision) (string, error) {
 	if len(key) > 1024 {
 		return "", errors.New("listing entry exceeds object key limit")
 	}
-	for _, component := range strings.Split(key, "/") {
+	for component := range strings.SplitSeq(key, "/") {
 		if len(component) > revisionComponentLimit {
 			return "", errors.New("listing entry exceeds object component limit")
 		}

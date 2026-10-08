@@ -17,7 +17,7 @@ import (
 type componentLimitedStore struct{ *storagetest.MemoryStore }
 
 func (s *componentLimitedStore) Put(ctx context.Context, key string, data []byte) error {
-	for _, component := range strings.Split(key, "/") {
+	for component := range strings.SplitSeq(key, "/") {
 		if len(component) > 255 {
 			return fmt.Errorf("object component exceeds 255 bytes")
 		}
@@ -176,10 +176,13 @@ func TestRevisionRefusesNoncanonicalSummaryComponents(t *testing.T) {
 
 func TestRevisionKeyBoundsIncludeChunkSeparators(t *testing.T) {
 	key, data := revisionMetadata(t)
-	var previous listingindex.Revision
 	for size := 1; size < 1000; size++ {
 		r, err := listingindex.NewRevision(key, data, strings.Repeat("v", size))
 		if err != nil {
+			previous, previousErr := listingindex.NewRevision(key, data, strings.Repeat("v", size-1))
+			if previousErr != nil {
+				t.Fatal(previousErr)
+			}
 			if len(previous.Key) < 1022 {
 				t.Fatalf("premature key bound: %d, %v", len(previous.Key), err)
 			}
@@ -218,18 +221,17 @@ func TestRevisionKeyBoundsIncludeChunkSeparators(t *testing.T) {
 		if len(r.Key) > 1024 {
 			t.Fatal("oversized key")
 		}
-		for _, component := range strings.Split(r.Key, "/") {
+		for component := range strings.SplitSeq(r.Key, "/") {
 			if len(component) > 255 {
 				t.Fatal("oversized component")
 			}
 		}
-		previous = r
 	}
 	t.Fatal("object key bound not enforced")
 }
 
 func TestRevisionWriterRefusesOversizedIdentityComponents(t *testing.T) {
-	key, data := revisionMetadata(t)
+	_, data := revisionMetadata(t)
 	var m archive.Metadata
 	if err := json.Unmarshal(data, &m); err != nil {
 		t.Fatal(err)
@@ -239,7 +241,7 @@ func TestRevisionWriterRefusesOversizedIdentityComponents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	key = "sessions/codex/" + m.SessionID + "/metadata.json"
+	key := "sessions/codex/" + m.SessionID + "/metadata.json"
 	if _, err := listingindex.NewRevision(key, data, "validator"); err == nil || !strings.Contains(err.Error(), "component limit") {
 		t.Fatalf("oversized identity: %v", err)
 	}

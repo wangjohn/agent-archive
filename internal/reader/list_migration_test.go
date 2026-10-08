@@ -378,7 +378,7 @@ type filesystemListingStore struct {
 }
 
 func (s *filesystemListingStore) Put(ctx context.Context, key string, data []byte) error {
-	for _, component := range strings.Split(key, "/") {
+	for component := range strings.SplitSeq(key, "/") {
 		if len(component) > 255 {
 			return fmt.Errorf("object component exceeds 255 bytes")
 		}
