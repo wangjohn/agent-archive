@@ -203,7 +203,7 @@ func TestPackedOversizedIdentityFallsBack(t *testing.T) {
 }
 
 func TestPackedScheduledResumeRepairAndCertification(t *testing.T) {
-	s, err := Open(t.TempDir())
+	s, err := openTestStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,6 +1,7 @@
 package state
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -8,6 +9,19 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/local"
 )
+
+// The census needs only proof that these payloads have been cleared. Never
+// materialize a nested publication merely to reject an uncleared receipt.
+type clearedGenerationPayload struct{}
+
+func (*clearedGenerationPayload) UnmarshalJSON(raw []byte) error {
+	if !bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return ErrDurableStorageRecovery
+	}
+	return nil
+}
+
+type generationReceiptJSON generationRecovery
 
 // Completed receipts are classified only for a global census. Directory
 // observation caching never proves the contents of an in-place rewritten file.
@@ -46,7 +60,13 @@ func (s *Store) completedGenerationReceipt(home *local.RootedHome, id string) (c
 	var receipt generationRecovery
 	decoder := json.NewDecoder(io.LimitReader(file, durableControlBytes+1))
 	decoder.DisallowUnknownFields()
-	decodeErr := decoder.Decode(&receipt)
+	wire := struct {
+		*generationReceiptJSON
+		Registration clearedGenerationPayload `json:"registration"`
+		Pending      clearedGenerationPayload `json:"pending"`
+		Request      clearedGenerationPayload `json:"request"`
+	}{generationReceiptJSON: (*generationReceiptJSON)(&receipt)}
+	decodeErr := decoder.Decode(&wire)
 	if decodeErr == nil {
 		var extra any
 		if !errors.Is(decoder.Decode(&extra), io.EOF) {

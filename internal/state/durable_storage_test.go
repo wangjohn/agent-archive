@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -618,6 +619,24 @@ func TestDurableGlobalGenerationReceiptsAreRevalidatedAndBounded(t *testing.T) {
 	if err != nil || len(obligations) != 0 {
 		t.Fatalf("valid complete receipt: %+v %v", obligations, err)
 	}
+	for _, key := range []string{"registration", "pending", "request"} {
+		nullReceipt := strings.TrimSuffix(complete, "}") + `,"` + key + `":null}`
+		if err := os.WriteFile(path, []byte(nullReceipt), 0600); err != nil {
+			t.Fatal(err)
+		}
+		obligations, err = s.DurableStorageObligations()
+		if err != nil || len(obligations) != 0 {
+			t.Fatalf("explicit null %s: %+v %v", key, obligations, err)
+		}
+		nonnullReceipt := strings.TrimSuffix(complete, "}") + `,"` + key + `":{}}`
+		if err := os.WriteFile(path, []byte(nonnullReceipt), 0600); err != nil {
+			t.Fatal(err)
+		}
+		obligations, err = s.DurableStorageObligations()
+		if err != nil || len(obligations) != 1 {
+			t.Fatalf("nonnull %s not owed: %+v %v", key, obligations, err)
+		}
+	}
 	scans := s.durableInspection.scans
 	for _, raw := range []string{strings.Replace(complete, `"complete":true`, `"complete":false`, 1), strings.Replace(complete, `"complete":true`, `"complete":true,"future":null`, 1), `{`, strings.Repeat(" ", int(durableControlBytes)+1)} {
 		if err := os.WriteFile(path, []byte(raw), 0600); err != nil {
@@ -637,5 +656,41 @@ func TestDurableGlobalGenerationReceiptsAreRevalidatedAndBounded(t *testing.T) {
 	obligations, err = s.DurableStorageObligations()
 	if err != nil || len(obligations) != 0 {
 		t.Fatalf("completed replacement not observed: %+v %v", obligations, err)
+	}
+}
+
+func TestDurableGenerationCensusDoesNotMaterializeUnclearedPayload(t *testing.T) {
+	s := newTestStore(t)
+	if err := os.MkdirAll(filepath.Join(s.home, generationRecoveryDir), 0700); err != nil {
+		t.Fatal(err)
+	}
+	raw := `{"version":1,"key":{"Agent":"codex","NativeID":"native"},"previous":"previous","next":"next","complete":true,"pending":{"history":{"sources":[` + strings.Repeat(`{},`, 18000) + `{}]}}}`
+	if len(raw) > int(durableControlBytes) {
+		t.Fatal("fixture exceeds receipt bound")
+	}
+	path := s.generationRecoveryPath("previous")
+	if err := os.WriteFile(path, []byte(raw), 0600); err != nil {
+		t.Fatal(err)
+	}
+	home, err := local.OpenRootedHome(s.home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer home.Close()
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	complete, err := s.completedGenerationReceipt(home, "previous")
+	runtime.ReadMemStats(&after)
+	if err != nil || complete {
+		t.Fatalf("uncleared payload accepted: %v %v", complete, err)
+	}
+	if allocated := after.TotalAlloc - before.TotalAlloc; allocated > 1024*1024 {
+		t.Fatalf("bounded census amplified nested payload: %d bytes", allocated)
+	} else {
+		t.Logf("%d input bytes; %d allocated bytes", len(raw), allocated)
+	}
+	actual, err := os.ReadFile(path)
+	if err != nil || string(actual) != raw {
+		t.Fatal("census changed owed bytes")
 	}
 }

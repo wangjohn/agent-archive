@@ -597,9 +597,11 @@ func readSessionStatus(view *statusView, cfg config.Config, home string, store *
 			view.Warnings = append(view.Warnings, "A private durable storage root requires recovery.")
 			continue
 		}
-		if registered[id] && obligation.Namespace == state.GenerationRecoveryStorage && !counted[id] {
-			counted[id] = true
-			pending++
+		if registered[id] && obligation.Namespace == state.GenerationRecoveryStorage {
+			if !counted[id] {
+				counted[id] = true
+				pending++
+			}
 			view.Warnings = append(view.Warnings, fmt.Sprintf("Session %q retains a generation recovery obligation; recover it before collecting or cleaning up.", id))
 		}
 		if !registered[id] && !orphans[id] {
