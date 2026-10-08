@@ -137,7 +137,6 @@ type r2Created struct {
 // setup calls finishGuidedCreation or rollbackGuidedCreation.
 func createR2Bucket(p *prompter, env Env) (credentials.Config, credentials.R2Credentials, bool, error) {
 	var none credentials.R2Credentials
-	printR2BootstrapInstructions(p)
 	token, fromEnv, removed, err := askBootstrapToken(p, env)
 	if err != nil {
 		return credentials.Config{}, none, false, err
@@ -205,7 +204,7 @@ func (c *r2Creator) connect() error {
 		if !errors.Is(err, errChooseStorageAgain) && err != nil && c.account == "" {
 			return err
 		}
-		choice, err := c.p.actions("What next?", string(r2ConnectToken),
+		choice, err := c.p.setupActions("What next?", string(r2ConnectToken),
 			[]option{{string(r2ConnectToken), "Paste a different token"}, {string(r2ConnectRetry), "Retry after updating permissions"}},
 			[]actionOption{{string(r2ConnectExisting), "e", "Use an existing bucket"}, {string(r2ConnectOther), "b", "Back"}, {string(r2ConnectStop), "q", "Stop setup"}})
 		if err != nil {
@@ -213,7 +212,12 @@ func (c *r2Creator) connect() error {
 		}
 		switch r2ConnectChoice(choice) {
 		case r2ConnectToken:
-			token, err := c.p.secret("Cloudflare API token (hidden; Enter to go back): ")
+			token, err := c.p.guidedText(promptModel{Question: "Cloudflare API token (hidden; Enter to go back)", Label: "Credential", Secret: true, Validate: func(value string) error {
+				if value == "" {
+					return nil
+				}
+				return validateManagementToken(value)
+			}})
 			if err != nil {
 				return err
 			}
@@ -391,22 +395,21 @@ func (c *r2Creator) storageConfig() credentials.Config {
 	return credentials.Config{Provider: credentials.ProviderR2, Bucket: c.bucket.Name, R2Endpoint: endpoint, R2AccountID: accountID, Prefix: defaultPrefix}
 }
 
-func printR2BootstrapInstructions(p *prompter) {
-	out := p.out
-	terminal.Println(out, "Setup can create a new Cloudflare R2 bucket (Cloudflare buckets have no public access by default), and a key that reaches only that bucket.")
-	terminal.Println(out, "Setup needs a Cloudflare API token to create the bucket and key, and won't save it.")
-	terminal.Println(out, "")
-	terminal.Println(out, "Get your token: "+cloudflare.TokenDashboardURL)
-	terminal.Println(out, "1. Sign in, select your account, and open Manage account > Account API tokens.")
-	terminal.Println(out, "   If you see Create Account API token and Object Read & Write, return to Manage account: that is the R2-specific form.")
-	terminal.Println(out, "2. Choose Create Token and use the custom token form. Name it agent-archive setup.")
-	terminal.Println(out, "3. Add these two permission rows (choose Edit for each):")
-	terminal.Println(out, "   Account > Workers R2 Storage > Edit")
-	terminal.Println(out, "   Account > Account API Tokens > Edit")
-	terminal.Println(out, "4. Limit access to this account only, review the summary, and create the token.")
-	terminal.Println(out, "5. Copy the API token value and paste it below (not the S3 Access Key ID or Secret Access Key).")
-	terminal.Println(out, "If these permissions aren't available, ask an account administrator or choose existing R2 storage and follow the manual steps: "+bucketDocURL)
-	terminal.Println(out, "")
+func r2BootstrapInstructions() []string {
+	return []string{
+		"Setup can create a new Cloudflare R2 bucket (Cloudflare buckets have no public access by default), and a key that reaches only that bucket.",
+		"Setup needs a Cloudflare API token to create the bucket and key, and won't save it.",
+		"Get your token: " + cloudflare.TokenDashboardURL,
+		"1. Sign in, select your account, and open Manage account > Account API tokens.",
+		"   If you see Create Account API token and Object Read & Write, return to Manage account: that is the R2-specific form.",
+		"2. Choose Create Token and use the custom token form. Name it agent-archive setup.",
+		"3. Add these two permission rows (choose Edit for each):",
+		"   Account > Workers R2 Storage > Edit",
+		"   Account > Account API Tokens > Edit",
+		"4. Limit access to this account only, review the summary, and create the token.",
+		"5. Copy the API token value and paste it below (not the S3 Access Key ID or Secret Access Key).",
+		"If these permissions aren't available, ask an account administrator or choose existing R2 storage and follow the manual steps: " + bucketDocURL,
+	}
 }
 
 // askBootstrapToken reads the bootstrap token from CLOUDFLARE_API_TOKEN, as
@@ -416,6 +419,9 @@ func printR2BootstrapInstructions(p *prompter) {
 // or a profile's credential_process, does not inherit it. An empty answer goes
 // back to the storage menu.
 func askBootstrapToken(p *prompter, env Env) (token string, fromEnv, removed bool, err error) {
+	oldHelpers := p.tokenHelpers
+	p.tokenHelpers = r2BootstrapInstructions()
+	defer func() { p.tokenHelpers = oldHelpers }()
 	token, fromEnv, removed, err = readManagementToken(context.Background(), p, env, p.tokenCommand, len(p.tokenCommand) == 0 || env.interactive(p.source))
 	if fromEnv && err == nil {
 		terminal.Println(p.out, "Using the API token in CLOUDFLARE_API_TOKEN.")
@@ -458,18 +464,21 @@ func (c *r2Creator) chooseAccount() error {
 		}
 	}
 	terminal.Println(c.p.out, "Find the Account ID in the Cloudflare dashboard > Storage & databases > R2 > Overview.")
-	for {
-		answer, err := c.p.required("Cloudflare account ID", "")
+	answer, err := c.p.guidedText(promptModel{Question: "Cloudflare account ID", Label: "Answer", Validate: func(value string) error {
+		_, err := parseR2AccountID(value)
 		if err != nil {
-			return err
+			return fmt.Errorf("that isn't a Cloudflare account ID (%w)", err)
 		}
-		account, e := parseR2AccountID(answer)
-		if e == nil {
-			c.account = account
-			return nil
-		}
-		terminal.Printf(c.p.out, "That isn't a Cloudflare account ID (%v).\n", e)
+		return nil
+	}, ResolveReceipt: func(value string) string {
+		account, _ := parseR2AccountID(value)
+		return "Cloudflare account ID " + account
+	}})
+	if err != nil {
+		return err
 	}
+	c.account, err = parseR2AccountID(answer)
+	return err
 }
 
 // parseR2AccountID reads a 32-character account ID.
@@ -490,23 +499,13 @@ func (c *r2Creator) askBucket() {
 }
 
 func (c *r2Creator) askBucketName(label, def string) (string, error) {
-	for {
-		name, err := c.p.required(label, def)
-		if err != nil {
-			return "", err
-		}
-		name = strings.ToLower(name)
-		if e := cloudflare.ValidateBucketName(name); e != nil {
-			terminal.Println(c.p.out, e.Error()+".")
-			continue
-		}
-		return name, nil
-	}
+	name, err := c.p.guidedText(promptModel{Question: label, Label: "Name", Default: def, ResolveReceipt: func(name string) string { return "Bucket " + strings.ToLower(name) }, Validate: func(name string) error { return cloudflare.ValidateBucketName(strings.ToLower(name)) }})
+	return strings.ToLower(name), err
 }
 
 func (c *r2Creator) askLocation() error {
 	p := c.p
-	change, err := p.yesNo("Customize storage location? Leave this off for automatic placement.", false)
+	change, err := p.setupYesNo("Customize storage location? Leave this off for automatic placement.", false)
 	if err != nil {
 		return err
 	}
@@ -514,31 +513,36 @@ func (c *r2Creator) askLocation() error {
 		c.bucket.Jurisdiction, c.bucket.LocationHint = "", ""
 		return nil
 	}
-	for {
-		answer, e := p.withDefault("Jurisdiction ("+strings.Join(cloudflare.Jurisdictions, ", ")+"; Enter for none)", "")
-		if e != nil {
-			return e
+	jurisdictionLabel := "Jurisdiction (" + strings.Join(cloudflare.Jurisdictions, ", ") + "; Enter for none)"
+	jurisdiction, err := p.guidedText(promptModel{Question: jurisdictionLabel, Label: "Answer", Validate: func(value string) error {
+		if value != "" && !cloudflare.ValidJurisdiction(strings.ToLower(value)) {
+			return fmt.Errorf("choose one of %s, or press Enter for none", strings.Join(cloudflare.Jurisdictions, ", "))
 		}
-		if answer == "" || cloudflare.ValidJurisdiction(strings.ToLower(answer)) {
-			c.bucket.Jurisdiction = strings.ToLower(answer)
-			break
-		}
-		terminal.Println(p.out, "Choose one of "+strings.Join(cloudflare.Jurisdictions, ", ")+", or press Enter for none.")
+		return nil
+	}, ResolveReceipt: func(value string) string {
+		return "Jurisdiction " + firstNonEmpty(strings.ToLower(value), "none")
+	}})
+	if err != nil {
+		return err
 	}
+	c.bucket.Jurisdiction = strings.ToLower(jurisdiction)
 	if c.bucket.Jurisdiction != "" {
 		terminal.Println(p.out, "A jurisdiction can't be changed later, and the bucket is reached only at "+cloudflare.Endpoint(c.account, c.bucket.Jurisdiction)+".")
 	}
-	for {
-		answer, e := p.withDefault("Location hint ("+strings.Join(cloudflare.LocationHints, ", ")+"; Enter for automatic)", "")
-		if e != nil {
-			return e
+	locationLabel := "Location hint (" + strings.Join(cloudflare.LocationHints, ", ") + "; Enter for automatic)"
+	location, err := p.guidedText(promptModel{Question: locationLabel, Label: "Answer", Validate: func(value string) error {
+		if value != "" && !cloudflare.ValidLocationHint(strings.ToLower(value)) {
+			return fmt.Errorf("choose one of %s, or press Enter for automatic", strings.Join(cloudflare.LocationHints, ", "))
 		}
-		if answer == "" || cloudflare.ValidLocationHint(strings.ToLower(answer)) {
-			c.bucket.LocationHint = strings.ToLower(answer)
-			return nil
-		}
-		terminal.Println(p.out, "Choose one of "+strings.Join(cloudflare.LocationHints, ", ")+", or press Enter for automatic.")
+		return nil
+	}, ResolveReceipt: func(value string) string {
+		return "Location hint " + firstNonEmpty(strings.ToLower(value), "automatic")
+	}})
+	if err != nil {
+		return err
 	}
+	c.bucket.LocationHint = strings.ToLower(location)
+	return nil
 }
 
 // createUntilVerified creates the bucket, mints the key, and checks it, and
@@ -566,7 +570,7 @@ func (c *r2Creator) createUntilVerified() (credentials.R2Credentials, error) {
 			}
 			terminal.Println(c.p.out, "Location: "+location)
 			terminal.Println(c.p.out, "Setup will leave public access off and create a key for this bucket only.")
-			choice, e := c.p.actions("Your archive storage", "create", nil, []actionOption{{"create", "", "Create"}, {"customize", "c", "Customize name or location"}, {"existing", "e", "Use an existing bucket"}, {"back", "b", "Back"}})
+			choice, e := c.p.setupActions("Your archive storage", "create", nil, []actionOption{{"create", "", "Create"}, {"customize", "c", "Customize name or location"}, {"existing", "e", "Use an existing bucket"}, {"back", "b", "Back"}})
 			if e != nil {
 				return credentials.R2Credentials{}, e
 			}
@@ -608,7 +612,7 @@ func (c *r2Creator) createUntilVerified() (credentials.R2Credentials, error) {
 		if c.bucketCreated {
 			retry = "Try again with the same bucket (" + c.bucket.Name + ")"
 		}
-		choice, e := c.p.actions("What next?", "retry", []option{{"retry", retry}}, []actionOption{{"existing", "e", "Use an existing bucket"}, {"other", "b", "Back"}, {"stop", "q", "Stop setup"}})
+		choice, e := c.p.setupActions("What next?", "retry", []option{{"retry", retry}}, []actionOption{{"existing", "e", "Use an existing bucket"}, {"other", "b", "Back"}, {"stop", "q", "Stop setup"}})
 		if e != nil {
 			return credentials.R2Credentials{}, e
 		}
@@ -1001,7 +1005,7 @@ func (c *r2Creator) confirmPublicAccess() error {
 		if !c.reportPublicAccess() {
 			return nil
 		}
-		choice, err := c.p.menu("What now?", "other",
+		choice, err := c.p.setupMenu("What now?", "other",
 			option{"again", "Check again"},
 			option{"other", "Choose another storage option"},
 			option{"continue", "Continue anyway (the bucket is publicly readable)"})

@@ -16,4 +16,12 @@ If you continue:
   • These sessions are not imported again unless you run
     agent-archive backfill --include-removed.
 
-Delete 12 sessions from the archive? This cannot be undone. [y/N] Import 2026-09-23-1: Deleted 12 sessions and 2 subagent transcripts from the archive, excluded 4 projects.
+? Delete 12 sessions from the archive? This cannot be undone.
+
+  1) Yes
+  2) No (default)
+
+> Choose [2]:
+OK Delete 12 sessions from the archive Yes
+
+Import 2026-09-23-1: Deleted 12 sessions and 2 subagent transcripts from the archive, excluded 4 projects.

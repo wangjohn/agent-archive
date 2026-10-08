@@ -9,7 +9,6 @@ Checking your storage connection…
   · Codex scope: All current and future projects (Codex only).
   · Exceptions: None configured.
   · Codex sources: Automatic discovery off.
-  · Destination: s3://team-archive/agent-archive/.
   · Starts: After local consent, outside pause or exclusion.
   · History: Old sessions require deliberate backfill.
   · Copies: Qualifying recent native copies may be captured.
@@ -19,17 +18,16 @@ Skill evidence: metadata. User-level skill roots outside selected projects may b
   ! Bucket privacy not verified: public-access settings could not be read.
     Make sure public access is off: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
 
-Configuration saved.
+✓ Setup complete · Codex hook capture is configured
 Installed /handoff, which continues a session in another agent: ~/.agents/skills/handoff/SKILL.md
 Installed the agent-archive skill, which lets your agents look up and pull in past sessions: ~/.agents/skills/agent-archive/SKILL.md
 To remove the agent skills and keep them off, run agent-archive setup --no-skills.
 
-Next, in each app:
-  Codex: run /hooks and approve the archive hooks, then start a new session (or /clear).
+Next, in each app
+  Codex: run /hooks and approve the archive hooks, then start a new session (or
+  /clear).
 Sessions already open are not captured. Start a supported new Codex task in any non-excluded project.
 Import sessions from before setup with agent-archive backfill.
 Check progress with agent-archive status.
-
-To set up another machine with this storage, run there:
-  agent-archive setup --yes --provider s3 --bucket team-archive --aws-profile work --region us-east-1 --apps codex --codex-discovery off --codex-capture-scope all-projects --prefix agent-archive/ --retention-days 90 --no-require-skill-use --skill-evidence metadata --skills
+  · Another machine: agent-archive machines pair
 [exit 0]

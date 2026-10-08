@@ -26,11 +26,11 @@ func TestSetupShowsVersionsBeforeActivationAndDiscoversOnce(t *testing.T) {
 		return map[string]applicationDiscovery{"codex": {Installed: true, Version: "1.2.3", VersionState: "observed"}}
 	}
 	input := s3SetupInput("test", "us-east-1", "profile", true, false, false, project)
-	output := setupRun(t, env, strings.TrimSuffix(input, "y\n")+"n\n", 0)
-	if calls != 1 || !strings.Contains(output, "Codex 1.2.3") {
+	output := setupRun(t, env, strings.TrimSuffix(input, "y\n")+"d\nn\n", 0)
+	if calls != 1 || !setupContainsText(output, "Codex 1.2.3") {
 		t.Fatalf("calls %d output %s", calls, output)
 	}
-	if !strings.Contains(output, "Checking installed applications...") {
+	if !setupContainsText(output, "Checking installed applications...") {
 		t.Fatalf("discovery ran without notice: %s", output)
 	}
 	if _, found, _ := config.Load(home); found {
@@ -51,9 +51,9 @@ func TestSetupReviewDoesNotCallDetectedAppsNotFound(t *testing.T) {
 	env.DiscoverApplications = func(string) map[string]applicationDiscovery {
 		return map[string]applicationDiscovery{"codex": {VersionState: "absent"}}
 	}
-	input := strings.Join([]string{"y", "included-projects", project, "", "s3-existing", "profile", "test", "us-east-1", "y"}, "\n") + "\n"
+	input := strings.Join([]string{"y", "included-projects", project, "", "s3-existing", "profile", "test", "us-east-1", "d", "y"}, "\n") + "\n"
 	output := setupRun(t, env, input, 0)
-	if !strings.Contains(output, "Codex (version not detected)") || strings.Contains(output, "not found") {
+	if !setupContainsText(output, "Codex (version not detected)") || setupContainsText(output, "not found") {
 		t.Fatalf("detected app shown as not found:\n%s", output)
 	}
 	// Only the display changes; the recorded discovery keeps what was seen.
@@ -92,7 +92,7 @@ func TestRetentionReductionShowsImpactBeforeConfirmation(t *testing.T) {
 	}
 	env.Now = func() time.Time { return now.Add(45 * 24 * time.Hour) }
 	output := setupRun(t, env, "retention\n30\nn\n", 0)
-	if !strings.Contains(output, "1 session captured on or before "+now.Add(15*24*time.Hour).Format(time.DateOnly)+" will be eligible for deletion.") {
+	if !setupContainsText(output, "1 session captured on or before "+now.Add(15*24*time.Hour).Format(time.DateOnly)+" will be eligible for deletion.") {
 		t.Fatal(output)
 	}
 	cfg, _, _ := config.Load(home)
@@ -113,10 +113,10 @@ func TestSetupReviewWarnsWhenHookFilesMove(t *testing.T) {
 	env.LookupEnv = func(k string) (string, bool) { return elsewhere, k == "CLAUDE_CONFIG_DIR" }
 	// Change retention (menu choice 3), keep 90 days, then cancel at review.
 	var out, errOut bytes.Buffer
-	Run([]string{"setup"}, strings.NewReader("3\n90\n3\n"), &out, &errOut, env)
+	Run([]string{"setup"}, strings.NewReader("3\n90\nd\nq\n"), &out, &errOut, env)
 	output := out.String()
-	if !strings.Contains(output, "Hook file is valid      ~/elsewhere/settings.json") ||
-		!strings.Contains(output, "Claude Code hooks move to ~/elsewhere/settings.json from ~/.claude/settings.json.") {
+	if !setupContainsText(output, "~/elsewhere/settings.json") ||
+		!setupContainsText(output, "Claude Code hooks move to ~/elsewhere/settings.json from ~/.claude/settings.json.") {
 		t.Fatalf("no warning:\n%s%s", output, &errOut)
 	}
 	_ = home
@@ -137,8 +137,8 @@ func TestSetupReviewMoveWarningForUnrecordedHookFiles(t *testing.T) {
 	must(t, os.MkdirAll(elsewhere, 0700))
 	env.LookupEnv = func(k string) (string, bool) { return elsewhere, k == "CLAUDE_CONFIG_DIR" }
 	var out, errOut bytes.Buffer
-	Run([]string{"setup"}, strings.NewReader("3\n90\n3\n"), &out, &errOut, env)
-	if !strings.Contains(out.String(), "An earlier release installed them at the fixed path") || strings.Contains(out.String(), "differs from when setup last ran") {
+	Run([]string{"setup"}, strings.NewReader("3\n90\nd\nq\n"), &out, &errOut, env)
+	if !setupContainsText(out.String(), "An earlier release installed them at the fixed path") || setupContainsText(out.String(), "differs from when setup last ran") {
 		t.Fatalf("review:\n%s%s", &out, &errOut)
 	}
 }
@@ -178,7 +178,7 @@ func TestShortSetupAndReviewEdits(t *testing.T) {
 				}
 				return storagetest.NewMemoryStore(), nil
 			}
-			out := setupRun(t, env, "\nincluded-projects\ns3-existing\n\ntest-bucket\n"+tc.edits, 0)
+			out := setupRun(t, env, "\nincluded-projects\n\ns3-existing\n\ntest-bucket\n"+tc.edits, 0)
 			cfg, found, err := config.Load(home)
 			if err != nil || !found {
 				t.Fatalf("load: %v", err)
@@ -190,7 +190,7 @@ func TestShortSetupAndReviewEdits(t *testing.T) {
 				t.Fatalf("unexpected config: %+v", cfg)
 			}
 			for _, unwanted := range []string{"Change these settings?", "Bucket region (", "Project path"} {
-				if strings.Contains(out, unwanted) {
+				if setupContainsText(out, unwanted) {
 					t.Fatalf("unexpected %q: %s", unwanted, out)
 				}
 			}
@@ -261,7 +261,7 @@ func TestReviewChecklistShowsCodexStepOnlyWhenNew(t *testing.T) {
 	step := func(review setupReview) bool {
 		for _, check := range reviewChecklist(cfg, review, time.Now()) {
 			if check.label == "Codex needs one step" {
-				return check.mark == symbolWarn && strings.Contains(check.detail, "/hooks")
+				return check.mark == symbolWarn && setupContainsText(check.detail, "/hooks")
 			}
 		}
 		return false
@@ -313,11 +313,15 @@ func TestSetupReviewBlocksStartOnHookFileBrokenAfterPreflight(t *testing.T) {
 	}
 	output := out.String()
 	blocked := strings.Index(output, "✗ Codex hook file is invalid")
-	refused := strings.Index(output, "Enter a number from 1 to 4.")
-	if blocked < 0 || refused < blocked || !strings.Contains(output, "Fix what is marked ✗ above first.\n  1) Check again") {
+	refused := strings.Index(output, "Enter one of the available choices.")
+	if blocked < 0 || refused < blocked || !setupContainsText(output, "Fix the blocking checks first.") {
 		t.Fatalf("✗ did not block starting:\n%s", output)
 	}
-	if !strings.Contains(output[refused:], "✓ Hook file is valid") || !strings.Contains(output[refused:], "1) Yes, start archiving") {
+	checked := setupReceiptIndex(output, "Check again")
+	if checked < 0 {
+		t.Fatalf("missing check receipt: %s", output)
+	}
+	if setupContainsText(output[checked:], "✗ Codex hook file is invalid") || !setupContainsText(output[refused:], "1) Start archiving (default)") {
 		t.Fatalf("check again did not clear the ✗:\n%s", output)
 	}
 	if _, found, err := config.Load(home); err != nil || !found {
@@ -344,4 +348,78 @@ func (a *hookFixingAnswers) Read(p []byte) (int, error) {
 	line := a.answers[a.next] + "\n"
 	a.next++
 	return copy(p, line), nil
+}
+
+// Details renders through a buffer, which must retain the invoking terminal's
+// dimensions and show every selected app's native capture roots.
+// Regression: 2026-10 setup review P2-R1-03/P2-R1-04.
+func TestSetupDetailsRetainsNarrowLayoutAndAllAppSourceRoots(t *testing.T) {
+	t.Parallel()
+	f := newScreenFixture(t)
+	f.withApps(t, "claude", "cursor")
+	f.inWebApp(t)
+	out := &promptScreen{caps: promptCapabilities{Width: 36, Height: 20}}
+	input := strings.NewReader("\n\ns3-existing\nwork\n2\ndetails\nq\n")
+	if code := Run([]string{"setup"}, input, out, out, f.env); code != 0 {
+		t.Fatalf("exit %d\n%s", code, out.String())
+	}
+	text := f.normalize(out.String())
+	detailsAt := strings.Index(text, "\nFull settings and privacy\n")
+	if detailsAt < 0 {
+		t.Fatalf("missing Details heading: %s", text)
+	}
+	details := text[detailsAt+1:]
+	if !strings.Contains(details, "  Apps\n    Claude Code") || !setupContainsText(details, "Claude Code: ~/.claude") || !setupContainsText(details, "Cursor: ~/.cursor") {
+		t.Fatalf("details lost width or source roots:\n%s", details)
+	}
+}
+
+// Removing the final imported-only app is a meaningful publishing change, so
+// both review views must retain its old/new row before Save.
+// Regression: 2026-10 setup review P2-R1-05.
+func TestSetupReviewShowsRemovedImportedApps(t *testing.T) {
+	t.Parallel()
+	old := config.Config{Harnesses: []string{"claude"}, ImportedHarnesses: []string{"cursor"}, RetentionDays: 90}
+	next := old
+	next.ImportedHarnesses = nil
+	model := buildSetupReviewModel(next, setupReview{existing: old, reconfiguring: true}, time.Now())
+	for _, details := range []bool{false, true} {
+		var out bytes.Buffer
+		p := newPrompter(strings.NewReader(""), &out)
+		renderSetupReview(p, model, details)
+		p.close()
+		if !setupContainsText(out.String(), "* Imported none") || !setupContainsText(out.String(), "was Cursor (sessions imported") {
+			t.Fatalf("removed publishing scope missing:\n%s", &out)
+		}
+	}
+}
+
+// A receiver reviews consent before credentials are staged or storage is probed.
+// Regression: 2026-10 setup review P2-R1-08.
+func TestSetupReviewBeforeProbeDoesNotClaimStorageConnected(t *testing.T) {
+	t.Parallel()
+	var out bytes.Buffer
+	p := newPrompter(strings.NewReader(""), &out)
+	defer p.close()
+	showSetupReview(p, config.Config{}, setupReview{storageUnchecked: true})
+	if strings.Contains(out.String(), "✓ Storage connected") || !setupContainsText(out.String(), "Storage not checked yet · Connection will be checked after you confirm these settings") {
+		t.Fatal(out.String())
+	}
+}
+
+// Configuration establishes hook capture, but cannot establish app approval.
+// Regression: 2026-10 setup review P2-R1-09.
+func TestSetupHookOnlyCompletionDoesNotClaimAutomaticCaptureOn(t *testing.T) {
+	t.Parallel()
+	f := newScreenFixture(t)
+	f.withApps(t, "codex")
+	f.inWebApp(t)
+	input := strings.NewReader("\nall-projects\ndone\ns3-existing\nwork\n2\nedit\ndiscovery\nno\nstart\ndone\n")
+	var out bytes.Buffer
+	if code := Run([]string{"setup"}, input, &out, &out, f.env); code != 0 {
+		t.Fatalf("exit %d\n%s", code, &out)
+	}
+	if strings.Contains(out.String(), "Automatic capture is on") || !setupContainsText(out.String(), "Setup complete · Codex hook capture is configured") || !strings.Contains(out.String(), "/hooks") {
+		t.Fatal(out.String())
+	}
 }

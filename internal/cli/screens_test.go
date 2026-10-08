@@ -85,7 +85,7 @@ type screen struct {
 var screens = []screen{
 	{
 		name:    "setup-codex-all-projects-interactive",
-		answers: []string{"", "all-projects", "s3-existing", "work", "2", ""},
+		answers: []string{"", "all-projects", "done", "s3-existing", "work", "2", ""},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.withApps(t, "codex")
@@ -117,7 +117,7 @@ var screens = []screen{
 		// A first run on a Mac with all three apps, from inside a Git
 		// repository, through to the next steps.
 		name:    "setup-fresh-apps-git-cwd",
-		answers: []string{"", "included-projects", "s3-existing", "work", "2", ""},
+		answers: []string{"", "included-projects", "", "s3-existing", "work", "2", ""},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.withApps(t, "codex", "claude", "cursor")
@@ -139,7 +139,7 @@ var screens = []screen{
 		// Outside a repository, setup offers the projects the apps'
 		// history mentions, up to the storage question.
 		name:    "setup-recent-projects",
-		answers: []string{"", "1 2", ""},
+		answers: []string{"", "specific", "3", ""},
 		exit:    1,
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
@@ -153,7 +153,7 @@ var screens = []screen{
 		// Inside a repository, the recent-projects list starts with it,
 		// included, and each project's session count.
 		name:    "setup-recent-projects-git-cwd",
-		answers: []string{"n", "", "3", ""},
+		answers: []string{"", "specific", "3", ""},
 		exit:    1,
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
@@ -168,7 +168,7 @@ var screens = []screen{
 	{
 		// Leaving every project out asks again; a includes them all.
 		name:    "setup-recent-projects-none-left",
-		answers: []string{"n", "", "1", "", "a", ""},
+		answers: []string{"", "specific", "1 2", "", "a", ""},
 		exit:    1,
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
@@ -180,7 +180,7 @@ var screens = []screen{
 	{
 		// A setup left after its first step offers to continue.
 		name:    "setup-resume-menu",
-		answers: []string{"1", "s3-existing", "work", "2", "3"},
+		answers: []string{"1", "s3-existing", "work", "2", "q"},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.withApps(t, "codex", "claude")
@@ -193,7 +193,7 @@ var screens = []screen{
 		// the one named like agent-archive*, and uses that bucket's own
 		// region rather than the profile's.
 		name:    "setup-s3-bucket-list",
-		answers: []string{"y", "n", "n", "included-projects", "", "s3", "e", "", "", "3"},
+		answers: []string{"y", "n", "n", "included-projects", "", "s3", "e", "", "", "q"},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.inWebApp(t)
@@ -207,7 +207,7 @@ var screens = []screen{
 		// S3 refuses both lookups, so setup says why and asks for the
 		// bucket and region, turning away a path typed as the region.
 		name:    "setup-s3-bucket-typed",
-		answers: []string{"y", "n", "n", "included-projects", "", "s3-existing", "work", "team-archive", "~/code/api", "us-east-1", "3"},
+		answers: []string{"y", "n", "n", "included-projects", "", "s3-existing", "work", "team-archive", "~/code/api", "us-east-1", "q"},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.inWebApp(t)
@@ -241,7 +241,7 @@ var screens = []screen{
 		// Setup on an installed Mac asks what to change; this run leaves
 		// at the review.
 		name:    "setup-reconfigure-menu",
-		answers: []string{"3", "30", "3"},
+		answers: []string{"3", "30", "q"},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.installed(t)
@@ -260,7 +260,7 @@ var screens = []screen{
 		// Changing only storage on an installed Mac: its headings do not
 		// count steps. This run leaves at the review.
 		name:    "setup-reconfigure-storage",
-		answers: []string{"2", "", "3"},
+		answers: []string{"2", "", "q"},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.installed(t)
@@ -291,7 +291,7 @@ var screens = []screen{
 		// says so and asks for the region. The check passes; this run
 		// leaves at the review.
 		name:    "setup-storage-failure-continue",
-		answers: []string{"1", "s3-existing", "", "", "eu-west-1", "3"},
+		answers: []string{"1", "s3-existing", "", "", "eu-west-1", "q"},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.inWebApp(t)
@@ -362,7 +362,7 @@ var screens = []screen{
 		// The review before a first setup commits, to a bucket that blocks
 		// public access, cancelled there.
 		name:    "setup-review-fresh",
-		answers: []string{"y", "included-projects", "s3-existing", "work", "2", "3"},
+		answers: []string{"y", "included-projects", "", "s3-existing", "work", "2", "q"},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.withApps(t, "codex", "claude")
@@ -374,7 +374,7 @@ var screens = []screen{
 		// The review before a first setup to Cloudflare R2, whose keys
 		// cannot read public-access settings, cancelled there.
 		name:    "setup-review-fresh-r2",
-		answers: []string{"", "r2-existing", "0123456789abcdef0123456789abcdef", "team-archive", "ACCESSKEYID", "SECRET", "3"},
+		answers: []string{"", "", "r2-existing", "0123456789abcdef0123456789abcdef", "team-archive", "ACCESSKEYID", "SECRET", "q"},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.withApps(t, "claude")
@@ -385,7 +385,7 @@ var screens = []screen{
 		// The review when the bucket allows public access, cancelled
 		// there.
 		name:    "setup-review-public-bucket",
-		answers: []string{"", "s3-existing", "work", "2", "3"},
+		answers: []string{"", "", "s3-existing", "work", "2", "q"},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.withApps(t, "claude")
@@ -397,7 +397,7 @@ var screens = []screen{
 		// Reconfiguring from a shell whose CODEX_HOME differs from when
 		// setup ran: the review warns that the hooks move, and stops there.
 		name:    "setup-review-hooks-move",
-		answers: []string{"3", "90", "3"},
+		answers: []string{"3", "90", "q"},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.installed(t)
@@ -410,7 +410,7 @@ var screens = []screen{
 		// The review of a reconfiguration that changes apps, projects and
 		// retention, saved.
 		name:    "setup-review-reconfigure-changes",
-		answers: []string{"4", "y", "y", "~/src/api", "", "", "2", "5", "30", ""},
+		answers: []string{"4", "y", "y", "p", "~/src/api", "", "", "edit", "retention", "30", ""},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.installed(t)
@@ -431,7 +431,7 @@ var screens = []screen{
 		// A first setup whose project has past sessions offers to import
 		// them, and imports them.
 		name:    "setup-import-offer",
-		answers: []string{"", "s3-existing", "work", "2", "", ""},
+		answers: []string{"", "", "s3-existing", "work", "2", "", ""},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.withApps(t, "claude")
@@ -547,7 +547,7 @@ var screens = []screen{
 
 // storageFailureAnswers set up Codex in ~/src/web-app with S3 storage, and
 // stop at the storage check's failure menu.
-var storageFailureAnswers = []string{"y", "n", "n", "included-projects", "", "s3-existing", "work", "2", "4"}
+var storageFailureAnswers = []string{"y", "n", "n", "included-projects", "", "s3-existing", "work", "2", "q"}
 
 // failUploads makes the bucket refuse every upload with err.
 func failUploads(err error) func(*testing.T, *screenFixture) {
@@ -746,7 +746,7 @@ var setupKeyPattern = regexp.MustCompile(`\.setup-test/[0-9a-f]+\.json`)
 func (f *screenFixture) normalize(s string) string {
 	s = strings.ReplaceAll(s, f.userHome, screenHome)
 	s = strings.ReplaceAll(s, f.root, "")
-	return setupKeyPattern.ReplaceAllString(s, ".setup-test/KEY.json")
+	return trimScreenLineEnds(setupKeyPattern.ReplaceAllString(s, ".setup-test/KEY.json"))
 }
 
 // screenOutput is stdout and stderr together, a color terminal or not.
@@ -757,12 +757,18 @@ type screenOutput struct {
 
 func (o *screenOutput) colorTerminal() bool { return o.color }
 
+// Screen transcripts model static terminal history with explicit dimensions.
+func (o *screenOutput) promptCapabilities() promptCapabilities {
+	return promptCapabilities{Color: o.color, InputTerminal: true, OutputTerminal: true, SharedTerminal: true, Width: 80, Height: 24}
+}
+
 // echoAnswers hands setup one answer per read and echoes it to the screen,
 // as a terminal shows what the user typed after the prompt.
 type echoAnswers struct {
 	answers []string
 	next    int
 	echo    *screenOutput
+	hidden  bool
 }
 
 func (e *echoAnswers) Read(p []byte) (int, error) {
@@ -774,6 +780,20 @@ func (e *echoAnswers) Read(p []byte) (int, error) {
 		return 0, errors.New("screen answer longer than the read buffer")
 	}
 	e.next++
-	e.echo.WriteString(line)
+	if !e.hidden {
+		e.echo.WriteString(line)
+	}
 	return copy(p, line), nil
+}
+
+func (e *echoAnswers) hidePromptEcho() func() { e.hidden = true; return func() { e.hidden = false } }
+
+// trimScreenLineEnds records visible cells rather than cursor padding after a
+// hidden or redirected answer. Keep the live cursor's trailing space in output.
+func trimScreenLineEnds(text string) string {
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		lines[i] = strings.TrimRight(line, " \t")
+	}
+	return strings.Join(lines, "\n")
 }

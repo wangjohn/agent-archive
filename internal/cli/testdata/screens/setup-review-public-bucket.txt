@@ -6,55 +6,86 @@ Choose Cloudflare R2 or Amazon S3 for private archive storage. Setup will guide 
 
 Step 1 of 3 · Choose what to capture
 
-Archive Claude Code sessions in ~/src/web-app? [Y/n] 
+? Capture sessions from Claude Code?
 
-Looking for your other projects...
-On the review screen: Edit a setting adds projects, drops apps, and changes how long sessions are kept.
+  1) Yes (default)
+  2) No
+
+› Choose [1]:
+✓ Capture sessions from Claude Code Yes
+
+? Which projects?
+
+  Found 1 projects:
+  1) ~/src/web-app · this folder
+
+  1) All 1 found projects (default)
+  2) Choose specific projects
+
+  [p] Add a project path
+  [r] Retry search
+
+› Choose [1]:
+✓ Projects All 1 found projects
 
 Step 2 of 3 · Connect storage
 
-Where should your archive live?
-  1) Cloudflare R2
+? Where should your archive live?
+
+  1) Cloudflare R2 (default)
   2) Amazon S3
-[h] Setup instructions
-Choose [1]: s3-existing
 
-AWS profile: work
+  [h] Setup instructions
 
-Which bucket should sessions be stored in?
+› Choose [1]: s3-existing
+✓ Provider Amazon S3
+
+? AWS profile
+
+  [:back] Back to storage options
+
+› Answer: work
+✓ AWS profile work
+
+? Which bucket should sessions be stored in?
+
   1) photos
   2) team-archive
-Enter 1-2, or another bucket name: 2
+  Enter a number or bucket name.
+  [:back] Back to storage options
+
+› Choose: 2
+✓ team-archive
 
 Bucket team-archive is in us-east-1; using that region.
 
 Checking your storage connection…
 ✓ Connected to your storage.
 
-Step 3 of 3 · Ready to start
+Step 3 of 3 · Review and start
+  Apps      Claude Code
+  Projects  ~/src/web-app
+  Skills    Metadata, including user folders
+  Storage   s3://team-archive/agent-archive/
+  Keep for  90 days
+  ✓ Storage connected
+  ✗ Bucket is public · a bucket policy allows public access
+    Fix its access before archiving:
+    https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
+  ! History import is separate.
+  ! Sensitive text may remain after filtering.
 
-  Apps       Claude Code 2.1.90
-  Projects   ~/src/web-app
-  Skills     metadata  User skill roots outside selected projects may be scanned; change with Edit a setting
-  Storage    s3://team-archive/agent-archive/  us-east-1 · profile work
-  Keep for   90 days
+? Fix the blocking checks first.
 
-  ✓ Storage connected       write, read, list, delete
-  ✗ Bucket is public        a bucket policy allows public access
-    Fix its access before archiving: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
-  ✓ Hook file is valid      ~/.claude/settings.json
-
-  Edit a setting adds projects, drops apps, and changes how long sessions are kept.
-  Filtering is best effort; sensitive text may remain in archived sessions.
-  What leaves your machine: https://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md
-  · Machine name: unnamed (random ID suffix after save). Choose Name this machine to set a label; no hostname is read.
-
-Fix what is marked ✗ above first.
-  1) Check again
+  1) Check again (default)
   2) Edit a setting
-  3) Cancel (your setup draft is kept)
-  4) Name this machine (optional)
-Enter 1-4 [1]: 3
+
+  [d] Full settings and privacy
+  [q] Cancel; keep draft
+  [m] Name this machine
+
+› Choose [1]: q
+✓ Cancel; keep draft
 
 Cancelled. Active settings are unchanged; your setup draft is saved.
 [exit 0]

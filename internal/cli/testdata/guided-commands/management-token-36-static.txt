@@ -1,0 +1,17 @@
+
+? Cloudflare API token (hidden;
+  Enter to choose another option)
+
+  Create an account-owned Cloudflare
+  API token. Creation/revocation
+  needs Account API Tokens Write;
+  verification needs Read or Write.
+  Guided setup also needs Workers R2
+  Storage Write. Do not enter an R2
+  access key. The token stays in
+  memory.
+  https://dash.cloudflare.com/?to=%2F%3Aaccount%2Fapi-tokens
+
+> Credential:
+OK Credential received
+

@@ -1,0 +1,70 @@
+$ agent-archive recover PREVIOUS_ID
+Transcript recovery
+
+Session
+PREVIOUS_ID
+cannot prove that the current
+transcript extends its retained
+history.
+
+Consequences
+
+Recovery preserves its archived
+history, feedback and handoffs under
+PREVIOUS_ID,
+freezes further native capture
+there, and starts a new linked
+archive ID from the current filtered
+transcript. Missing earlier records
+remain a capture gap.
+Each generation expires
+independently under normal
+retention. Existing subagents keep
+their original identities and
+parent; new subagents use the active
+generation. Imported generations
+remain in their original undo batch.
+The new generation is queued locally
+for normal sync. Recovery
+permanently requires a
+generation-aware writer; older
+binaries will refuse this data
+directory.
+
+To start this generation, run agent-archive recover PREVIOUS_ID --confirm.
+[exit 0]
+$ agent-archive recover PREVIOUS_ID --confirm
+Transcript recovery
+
+Session
+PREVIOUS_ID
+cannot prove that the current
+transcript extends its retained
+history.
+
+Consequences
+
+Recovery preserves its archived
+history, feedback and handoffs under
+PREVIOUS_ID,
+freezes further native capture
+there, and starts a new linked
+archive ID from the current filtered
+transcript. Missing earlier records
+remain a capture gap.
+Each generation expires
+independently under normal
+retention. Existing subagents keep
+their original identities and
+parent; new subagents use the active
+generation. Imported generations
+remain in their original undo batch.
+The new generation is queued locally
+for normal sync. Recovery
+permanently requires a
+generation-aware writer; older
+binaries will refuse this data
+directory.
+
+Queued new generation MACHINE_ID, linked to PREVIOUS_ID. Future hooks route to the new ID. Run agent-archive sync to publish it.
+[exit 0]

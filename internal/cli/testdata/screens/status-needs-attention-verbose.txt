@@ -6,18 +6,22 @@ Agent Archive  ● Needs attention
     To change credentials, run agent-archive setup and choose storage.
 
 Capture
-  ✓ Codex   discovery: no supported task observed in last scan; included projects   1 session · 1 archived (1 verified)
-    · Last discovery attempt just now; 1 registered → 0 queued → 1 published → 1 read-back verified
+  ✓ Codex   discovery: no supported task observed in last scan; included projects
+    1 session · 1 archived (1 verified)
+    · Last discovery attempt just now; 1 registered → 0 queued → 1 published → 1
+      read-back verified
     · 1 session archived, verified just now
   · Identity recovery: complete
   · Projects: ~/src/web-app
   · Skill evidence: metadata
 
 Storage
-  ! s3://team-archive/agent-archive/   refused access on the last pass · uploaded just now
+  ! s3://team-archive/agent-archive/
+    refused access on the last pass · uploaded just now
   ✓ Background collector on            last scan just now
   ! Bucket privacy not verified        this storage can't be inspected
-    Check public access: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
+    Check public access:
+    https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
   ✗ Storage refused access
   · Last upload: just now · 0 pending
 

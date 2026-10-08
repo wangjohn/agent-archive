@@ -1,0 +1,23 @@
+
+? Where should your archive live?
+
+  Choose storage for sessions from ~/src/長い-project-path. Credentials stay private.
+
+  1) Cloudflare R2
+  2) Amazon S3 (default)
+
+  [h] Setup instructions
+
+› Choose [2]:
+✓ Provider Amazon S3
+
+? AWS profile
+
+› Profile [work]:
+✓ Profile work
+
+? Secret access key (hidden)
+
+› Credential:
+✓ Credential received
+

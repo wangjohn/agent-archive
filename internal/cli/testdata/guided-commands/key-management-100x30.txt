@@ -1,0 +1,17 @@
+
+? Create and commit a dedicated key? The shared provider key stays valid for other users
+
+  1) Yes
+  2) No (default)
+
+› Choose [2]:
+\e[6A\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[6A✓ Create and commit a dedicated key No
+
+? Delete this exact verified key set? Sessions remain; other recipients may lose access
+
+  1) Yes
+  2) No (default)
+
+› Choose [2]:
+\e[6A\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[6A✓ Delete this exact verified key set No
+

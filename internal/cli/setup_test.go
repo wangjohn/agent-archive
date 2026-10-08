@@ -374,10 +374,10 @@ func TestPromptsRetryInvalidValuesAndDeduplicatePaths(t *testing.T) {
 	t.Parallel()
 	var out bytes.Buffer
 	p := newPrompter(strings.NewReader("maybe\ny\n0\n-1\n30\n"), &out)
-	if yes, err := p.yesNo("Enable?", false); err != nil || !yes {
+	if yes, err := p.guidedYesNo("Enable?"); err != nil || !yes {
 		t.Fatal(err)
 	}
-	if n, err := p.retentionDays(90); err != nil || n != 30 {
+	if n, err := p.guidedRetention(90); err != nil || n != 30 {
 		t.Fatal(n, err)
 	}
 	root := t.TempDir()

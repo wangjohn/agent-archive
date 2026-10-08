@@ -12,6 +12,7 @@ moving a proposal.
 
 | Proposal | Status |
 | --- | --- |
+| [Setup and CLI experience](setup-and-cli-ux.md) | Accepted design and implementation plan; shared rendering implemented; selector and flow migrations pending. |
 | [Native session names](native-session-names.md) | Partially implemented; Claude native titles and prompt cleanup in PR A; external Codex names and rename refresh pending PR B. |
 | [Release remediation](release-remediation.md) | Implementation and release-gate record; disposable provider and per-app acceptance remain open. |
 | [Cloud capture](cloud-capture.md) | Proposed; not implemented or scheduled. |
