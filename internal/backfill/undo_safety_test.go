@@ -29,6 +29,9 @@ type undoFixture struct {
 func newUndoFixture(t *testing.T) *undoFixture {
 	t.Helper()
 	home := t.TempDir()
+	if err := os.Chmod(home, 0700); err != nil {
+		t.Fatal(err)
+	}
 	store, err := state.Open(home)
 	if err != nil {
 		t.Fatal(err)

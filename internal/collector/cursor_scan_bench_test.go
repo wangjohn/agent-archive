@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
@@ -15,7 +14,7 @@ import (
 // Sequential: the synthetic database owns the process snapshot-directory seam.
 func BenchmarkScanChangedCursorChats(b *testing.B) {
 	db := newCursorDB(b, true)
-	local, err := state.Open(b.TempDir())
+	local, err := openTestStore(b.TempDir())
 	if err != nil {
 		b.Fatal(err)
 	}

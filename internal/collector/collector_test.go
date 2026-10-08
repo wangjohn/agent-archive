@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -45,7 +46,7 @@ func registration(t *testing.T, transcriptPath string) archive.SessionRegistrati
 
 func newTestStore(t *testing.T) *state.Store {
 	t.Helper()
-	store, err := state.Open(t.TempDir())
+	store, err := openTestStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -322,7 +323,7 @@ func TestRunSurvivesRestartAcrossRateLimitedPass(t *testing.T) {
 	store := storagetest.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 
-	local1, err := state.Open(root)
+	local1, err := openTestStore(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -342,7 +343,7 @@ func TestRunSurvivesRestartAcrossRateLimitedPass(t *testing.T) {
 
 	// Simulate a process restart: a fresh Store handle over the same
 	// root directory, as a newly started collector process would construct.
-	local2, err := state.Open(root)
+	local2, err := openTestStore(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -365,7 +366,7 @@ func TestRunRetriesPersistedBytesAndDoesNotAcknowledgeNewerRequest(t *testing.T)
 	home := t.TempDir()
 	dir := t.TempDir()
 	path := writeTranscript(t, dir, "codex.jsonl", codexTranscript)
-	local1, err := state.Open(home)
+	local1, err := openTestStore(home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -403,7 +404,7 @@ func TestRunRetriesPersistedBytesAndDoesNotAcknowledgeNewerRequest(t *testing.T)
 		t.Fatal(err)
 	}
 	store.failMetadata = false
-	local2, err := state.Open(home)
+	local2, err := openTestStore(home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1265,7 +1266,7 @@ func TestRunComposesWithLocalLock(t *testing.T) {
 		t.Fatalf("expected a second collector run to be excluded, got %v", err)
 	}
 
-	localStore, err := state.Open(home)
+	localStore, err := openTestStore(home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1303,7 +1304,7 @@ func TestEnsureArchiveSessionIDPersistsAndReuses(t *testing.T) {
 func TestArchiveSessionIDRejectsPathLikeInputSafely(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
-	local, err := state.Open(home)
+	local, err := openTestStore(home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1501,4 +1502,22 @@ func TestRecordSupersededMovesRepeatedKeyToEnd(t *testing.T) {
 	if !ledger[1].SupersededAt.Equal(t0.Add(2 * time.Hour)) {
 		t.Fatalf("re-superseded key must refresh SupersededAt: %#v", ledger[1])
 	}
+}
+
+func openTestStore(home string) (*state.Store, error) {
+	if err := os.Chmod(home, 0700); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	store, err := state.Open(home)
+	if err != nil {
+		return nil, err
+	}
+	_, found, err := config.Load(home)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		err = config.Save(home, config.Config{MachineID: "synthetic"})
+	}
+	return store, err
 }

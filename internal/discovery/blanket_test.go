@@ -38,6 +38,7 @@ func TestBlanketUnknownPhysicalProjectsPublishAndReadBackWithoutConfigGrowth(t *
 				t.Fatal(beforeErr)
 			}
 			beforeCfg.CodexHistoryProtection = true
+			beforeCfg.DurableStorageProtection = true
 			before, _ := json.Marshal(beforeCfg)
 			want := map[string]bool{}
 			for i := range 4 {

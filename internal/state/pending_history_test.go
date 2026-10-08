@@ -3,6 +3,7 @@ package state
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -13,7 +14,7 @@ import (
 
 func TestUnknownPendingHistoryRemainsUntouched(t *testing.T) {
 	home := t.TempDir()
-	s, err := Open(home)
+	s, err := openTestStore(home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +33,7 @@ func TestUnknownPendingHistoryRemainsUntouched(t *testing.T) {
 }
 
 func TestStagedHistorySourceIsBoundedAndChecksumNamed(t *testing.T) {
-	s, err := Open(t.TempDir())
+	s, err := openTestStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,16 +54,13 @@ func TestStagedHistorySourceIsBoundedAndChecksumNamed(t *testing.T) {
 	if _, err := s.ReadPendingSource("session", stage); err == nil {
 		t.Fatal("stage escape accepted")
 	}
-	if err := s.RemovePending("session"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(filepath.Join(s.home, "sessions", "session", "pending-sources")); !os.IsNotExist(err) {
-		t.Fatalf("stages were not removed: %v", err)
+	if err := s.RemovePending("session"); !errors.Is(err, ErrDurableStorageRecovery) {
+		t.Fatalf("source-only cleanup: %v", err)
 	}
 }
 
 func TestStageCleanupFailureLeavesJournalAndRetries(t *testing.T) {
-	s, err := Open(t.TempDir())
+	s, err := openTestStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,52 +94,23 @@ func TestStageCleanupFailureLeavesJournalAndRetries(t *testing.T) {
 	}
 }
 
-func TestAbandonedStageSweepIsBoundedAndRefusesUnsafeTypes(t *testing.T) {
-	s, err := Open(t.TempDir())
+func TestAbandonedStageSweepRequiresDescriptor(t *testing.T) {
+	s, err := openTestStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	dir := filepath.Join(s.home, "sessions", "session", "pending-sources")
-	if err := os.MkdirAll(dir, 0700); err != nil {
+	if err = os.MkdirAll(dir, 0700); err != nil {
 		t.Fatal(err)
 	}
-	for i := range pendingStageCleanupBatch + 1 {
-		sum := sha256.Sum256([]byte{byte(i)})
-		if err := os.WriteFile(filepath.Join(dir, hex.EncodeToString(sum[:])+".gz"), []byte("synthetic"), 0600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := s.SweepPendingSources("session"); err == nil {
-		t.Fatal("unbounded sweep")
-	}
-	entries, err := os.ReadDir(dir)
-	if err != nil || len(entries) != 1 {
-		t.Fatal("incorrect bounded remainder", len(entries), err)
-	}
-	if err := s.SweepPendingSources("session"); err != nil {
+	path := filepath.Join(dir, ".pending-123456")
+	if err = os.WriteFile(path, []byte("synthetic interrupted stage"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(t.TempDir(), dir); err != nil {
-		t.Fatal(err)
+	if err = s.SweepPendingSources("session"); !errors.Is(err, ErrDurableStorageRecovery) {
+		t.Fatalf("sweep: %v", err)
 	}
-	if err := s.SweepPendingSources("session"); err == nil {
-		t.Fatal("symlink stage directory accepted")
-	}
-}
-
-func TestAbandonedStageTempSweepsUnderCollectorOwnership(t *testing.T) {
-	s, err := Open(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(s.home, "sessions", "session", "pending-sources", ".pending-123456")
-	if err := local.WriteBytes(path, []byte("synthetic interrupted stage")); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.SweepPendingSources("session"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Fatal(err)
+	if _, err = os.Stat(path); err != nil {
+		t.Fatal("orphan evidence lost", err)
 	}
 }

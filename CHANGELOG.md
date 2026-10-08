@@ -96,6 +96,10 @@ follow [Semantic Versioning](https://semver.org/).
   and protect every qualified history import from older writers. Discovery
   stops rereading decisively rejected tasks until their native source changes.
   Undo retention warnings count independent native children with resolved parents.
+- Pending publication and historical source staging share a bounded durable
+  storage budget. Interrupted or unregistered source stages remain visible as
+  recovery work; automatic cleanup retains original evidence. A sticky storage
+  writer fence makes older writers refuse these protected configurations.
 
 - Codex current-history validation uses the remaining bounded pass allowance
   for private SQLite queries, avoiding spurious retries after a scheduling delay

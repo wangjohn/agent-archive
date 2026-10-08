@@ -20,7 +20,7 @@ import (
 func BenchmarkScanSettledRegistrations(b *testing.B) {
 	for _, sessions := range []int{1000, 10000} {
 		b.Run(fmt.Sprintf("sessions-%d", sessions), func(b *testing.B) {
-			local, err := state.Open(b.TempDir())
+			local, err := openTestStore(b.TempDir())
 			if err != nil {
 				b.Fatal(err)
 			}

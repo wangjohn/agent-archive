@@ -223,7 +223,7 @@ func TestCursorSQLiteMetadataRegeneration(t *testing.T) {
 // lastUpdatedAt; a chat Cursor deleted is ErrNoTranscript. Not parallel: it
 // checks the snapshot folder is empty after the read.
 func TestCursorSQLiteReadLocalBundle(t *testing.T) {
-	home := t.TempDir()
+	home := newTestStore(t).Home()
 	db := newCursorDB(t, true)
 	db.chatSaying("chat", 1767225700000, "hand this off", "b1")
 	reg := cursorRegistration("session", "chat")

@@ -35,6 +35,9 @@ func fixture(tb testing.TB) (*state.Store, config.Config, time.Time, string) {
 		return resolved
 	}
 	home, project, codex := canonical(tb.TempDir()), canonical(tb.TempDir()), canonical(tb.TempDir())
+	if err := os.Chmod(home, 0700); err != nil {
+		tb.Fatal(err)
+	}
 	at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
 	store, err := state.Open(home)
 	if err != nil {

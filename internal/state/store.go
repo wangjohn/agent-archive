@@ -24,6 +24,8 @@ package state
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -37,6 +39,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/sourceidentity"
 	"github.com/wangjohn/agent-archive/internal/trace"
@@ -49,9 +52,10 @@ import (
 // never stores credentials or a second copy of conversation content beyond
 // what the published source bundle itself already contains.
 type Store struct {
-	resourceBudget   *agentapi.NativeReadBudget
-	resourceContext  context.Context
-	resourceReleases *[]func()
+	durableInspection *durableInspectionCache
+	resourceBudget    *agentapi.NativeReadBudget
+	resourceContext   context.Context
+	resourceReleases  *[]func()
 	// indexSnapshots uses logical packed authority for qualified-index writes.
 	indexSnapshots bool
 	// onPackedEnumeration observes collector-only physical-index directory probes.
@@ -83,7 +87,9 @@ type Store struct {
 // home without creating any of its directories, for commands that only read
 // it (status, handoff, backfill planning). A missing directory reads as
 // nothing recorded.
-func OpenReadOnly(home string) *Store { return &Store{home: home} }
+func OpenReadOnly(home string) *Store {
+	return &Store{home: home, durableInspection: &durableInspectionCache{}}
+}
 
 // Open creates (if needed) the local store's directory layout under
 // home — ordinarily the result of local.Home() — and returns a handle to it.
@@ -97,7 +103,7 @@ func Open(home string) (*Store, error) {
 			return nil, fmt.Errorf("create local store directory %q: %w", dir, err)
 		}
 	}
-	return &Store{home: home}, nil
+	return &Store{home: home, durableInspection: &durableInspectionCache{}}, nil
 }
 
 // Home returns the data directory the store keeps its files in.
@@ -117,7 +123,7 @@ var lazyStoreDirs = []string{generationHeadsDir, generationNodesDir, generationR
 // its list against this one, so a new directory cannot be left behind.
 func OwnedEntries() []string {
 	entries := append(append([]string{}, storeDirs...), lazyStoreDirs...)
-	return append(entries, "status.json", storageClockFile, sessionIndexMarkerFile, sessionMembershipFile, sessionMembershipLock, sessionRecoveryCursorFile)
+	return append(entries, "status.json", storageClockFile, sessionIndexMarkerFile, sessionMembershipFile, sessionMembershipLock, sessionRecoveryCursorFile, "temporary-quota")
 }
 
 func safeFileComponent(value string) bool {
@@ -779,6 +785,42 @@ func (s *Store) pendingPath(id string) string {
 	return filepath.Join(s.home, "pending", id+".json")
 }
 
+// validateComplete is the supported transaction structure shared by writes
+// and protected reads. History validation keeps its separate budget ownership.
+func (pending PendingPublication) validateComplete() error {
+	if len(pending.SourceBytes) > maxPendingHistoryBytes {
+		return ErrDurableStorageCapacity
+	}
+	if pending.SourceKey == "" || pending.MetadataKey == "" || pending.SourceSHA256 == "" || len(pending.MetadataBytes) == 0 || (len(pending.SourceBytes) == 0 && (!pending.MetadataOnly || pending.SourceSize <= 0)) {
+		return errors.New("pending publication is incomplete")
+	}
+	return nil
+}
+
+// validateReadablePending applies the existing publication checksum and JSON
+// preconditions without deriving new ownership or remote-source authority.
+func (s *Store) validateReadablePending(pending PendingPublication) error {
+	if err := pending.validateComplete(); err != nil {
+		return err
+	}
+	if !pending.CarriesNoSource() {
+		sum := sha256.Sum256(pending.SourceBytes)
+		if !strings.EqualFold(hex.EncodeToString(sum[:]), strings.TrimSpace(pending.SourceSHA256)) {
+			return errors.New("pending source checksum does not match its persisted bytes")
+		}
+	}
+	scratch, closeScratch := s.WithReadBudget(s.durableContext(), s.resourceBudget)
+	defer closeScratch()
+	var metadata archive.Metadata
+	if err := scratch.unmarshalOwned(pending.MetadataBytes, &metadata); err != nil {
+		return err
+	}
+	if pending.History == nil {
+		return archive.CheckHistoryMutation(pending.Bundle, metadata)
+	}
+	return nil
+}
+
 // SavePending durably records a session's publication transaction before its
 // first remote write. It refuses an incomplete one: every retry must upload
 // exactly the same bytes under exactly the same keys.
@@ -786,37 +828,72 @@ func (s *Store) SavePending(id string, pending PendingPublication) error {
 	if !safeFileComponent(id) {
 		return errors.New("archive session ID is not a safe file name component")
 	}
-	if pending.SourceKey == "" || pending.MetadataKey == "" || pending.SourceSHA256 == "" || len(pending.MetadataBytes) == 0 || (len(pending.SourceBytes) == 0 && (!pending.MetadataOnly || pending.SourceSize <= 0)) {
-		return errors.New("pending publication is incomplete")
+	if err := pending.validateComplete(); err != nil {
+		return err
 	}
 	if err := pending.ValidateHistoryBudgeted(id, s.resourceBudget); err != nil {
 		return err
 	}
-	return s.writeCompact(s.pendingPath(id), pending)
+	return config.WithDurableStorage(s.home, func(g config.DurableStorageGuard) error {
+		return s.savePendingGuard(s.durableContext(), g, id, pending)
+	})
 }
 
 // LoadPending returns a session's outstanding publication transaction, if
 // any. Decoding it reads the whole compressed source; HasPending answers
 // whether one exists without that cost.
 //
-// In a collector pass, a pending publication that no longer decodes is moved
-// aside (the error wraps ErrQuarantined, once) and the session carries on as
-// if it had none; see quarantineInPass.
+// A supported legacy collector pass may quarantine damaged ordinary state.
+// Protected state stays present and returns ErrDurableStorageRecovery instead.
 func (s *Store) LoadPending(id string) (PendingPublication, bool, error) {
 	if !safeFileComponent(id) {
 		return PendingPublication{}, false, errors.New("archive session ID is not a safe file name component")
 	}
+	protected, probeErr := s.protectedStorage(id)
+	if probeErr != nil {
+		return PendingPublication{}, true, errors.Join(ErrDurableStorageRecovery, probeErr)
+	}
+	cfg, cfgErr := s.inspectDurableReadRoots()
+	if cfgErr != nil {
+		return PendingPublication{}, true, errors.Join(ErrDurableStorageRecovery, cfgErr)
+	}
+	if evidence, e := s.hasPublicationEvidence(id); e != nil || evidence {
+		return PendingPublication{}, true, errors.Join(ErrDurableStorageRecovery, e)
+	}
+	protected = protected || cfg.DurableStorageProtection
 	if err := s.checkPendingHistoryVersion(id); err != nil {
-		return PendingPublication{}, false, err
+		return PendingPublication{}, true, err
 	}
 	var pending PendingPublication
-	found, err := s.readOwned(s.pendingPath(id), &pending)
+	var found bool
+	var err error
+	if protected {
+		err = s.readBudgeted(s.pendingPath(id), &pending, true)
+		if errors.Is(err, os.ErrNotExist) {
+			owed, e := s.protectedStorage(id)
+			if owed || e != nil {
+				return PendingPublication{}, true, errors.Join(ErrDurableStorageRecovery, e)
+			}
+			return PendingPublication{}, false, nil
+		}
+		found = true
+	} else {
+		found, err = s.readOwned(s.pendingPath(id), &pending)
+	}
 	if err != nil {
-		return PendingPublication{}, false, fmt.Errorf("read pending publication %q: %w", id, s.afterLoss(id, err))
+		return PendingPublication{}, protected || cfg.DurableStorageProtection || errors.Is(err, ErrDurableStorageRecovery), fmt.Errorf("read pending publication %q: %w", id, errors.Join(ErrDurableStorageRecovery, err))
 	}
 	if found {
+		if protected {
+			if err := s.validateReadablePending(pending); err != nil {
+				return PendingPublication{}, true, errors.Join(ErrDurableStorageRecovery, err)
+			}
+		}
 		if err := pending.ValidateHistoryBudgeted(id, s.resourceBudget); err != nil {
-			return PendingPublication{}, false, err
+			if protected {
+				err = errors.Join(ErrDurableStorageRecovery, err)
+			}
+			return PendingPublication{}, true, err
 		}
 	}
 	return pending, found, nil
@@ -837,18 +914,36 @@ func (s *Store) afterLoss(id string, err error) error {
 // without decoding it. The pending file carries the compressed source bytes,
 // so a stat is the only way to ask this question cheaply enough to ask it for
 // every registered session on every pass.
-func (s *Store) HasPending(id string) (bool, error) {
+func (s *Store) HasPending(id string) (owed bool, err error) {
 	if !safeFileComponent(id) {
 		return false, errors.New("archive session ID is not a safe file name component")
 	}
-	_, err := os.Stat(s.pendingPath(id))
+	home, err := local.OpenRootedHome(s.home)
 	if errors.Is(err, os.ErrNotExist) {
 		return false, nil
 	}
 	if err != nil {
-		return false, fmt.Errorf("stat pending publication %q: %w", id, err)
+		return true, err
 	}
-	return true, nil
+	defer func() {
+		err = errors.Join(err, home.Close())
+		if err != nil {
+			owed = true
+		}
+	}()
+	info, err := home.Root.Lstat(filepath.Join("pending", id+".json"))
+	if err == nil {
+		if !info.Mode().IsRegular() {
+			return true, ErrDurableStorageRecovery
+		}
+		return true, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return true, err
+	}
+	history, herr := rootHasEntries(home.Root, filepath.Join("sessions", id, "pending-sources"))
+	evidence, eerr := rootHasEntries(home.Root, filepath.Join("publication-evidence", id))
+	return history || evidence || herr != nil || eerr != nil, errors.Join(herr, eerr)
 }
 
 // RemovePending discards a session's publication transaction once it has
@@ -857,19 +952,37 @@ func (s *Store) RemovePending(id string) error {
 	if !safeFileComponent(id) {
 		return errors.New("archive session ID is not a safe file name component")
 	}
+	if _, err := os.Lstat(s.pendingPath(id)); errors.Is(err, os.ErrNotExist) {
+		if owed, e := s.protectedStorage(id); owed || e != nil {
+			return errors.Join(ErrDurableStorageRecovery, e)
+		}
+		return nil
+	} else if err != nil {
+		return err
+	}
 	// Keep the journal until its private cleanup succeeds. After a crash, final
 	// remote bytes can restore any stage already removed by this cleanup.
 	if err := s.removePendingSources(id, nil); err != nil {
 		return err
 	}
-	err := os.Remove(s.pendingPath(id))
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("remove pending publication %q: %w", id, err)
+	home, err := local.OpenRootedHome(s.home)
+	if err != nil {
+		return err
 	}
-	if err == nil {
-		return syncPendingDirectory(filepath.Dir(s.pendingPath(id)))
+	defer func() { _ = home.Close() }()
+	dir, err := privateDirectory(home.Root, "pending", false)
+	if err != nil {
+		return err
 	}
-	return nil
+	defer func() { _ = dir.Close() }()
+	if err = dir.Remove(id + ".json"); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	d, err := dir.Open(".")
+	if err != nil {
+		return err
+	}
+	return errors.Join(d.Sync(), d.Close())
 }
 
 // Status summarizes the collector's local state for a future `status`

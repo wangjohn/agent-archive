@@ -770,6 +770,10 @@ func (p UndoPlan) Remove(ctx context.Context, store *state.Store, bucket storage
 	result := UndoResult{Failed: map[string]error{}}
 	for _, s := range p.Sessions {
 		reg := s.Registration
+		if err := store.CheckDurableSessionRead(reg.ArchiveSessionID); err != nil {
+			result.Failed[reg.ArchiveSessionID] = fmt.Errorf("recover local publication before undo: %w", err)
+			continue
+		}
 		if s.InCurrentDestination {
 			if err := retention.DeleteWholeSession(ctx, bucket, reg.Harness.Name, reg.ArchiveSessionID); err != nil {
 				result.Failed[reg.ArchiveSessionID] = fmt.Errorf("delete from the bucket: %w", err)

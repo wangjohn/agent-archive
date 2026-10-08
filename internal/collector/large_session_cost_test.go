@@ -173,7 +173,7 @@ func TestLargeGrowingSessionPassesStayFast(t *testing.T) {
 		records, timed = 15000, true
 	}
 	home := t.TempDir()
-	local, err := state.Open(home)
+	local, err := openTestStore(home)
 	if err != nil {
 		t.Fatal(err)
 	}

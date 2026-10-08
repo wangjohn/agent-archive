@@ -220,9 +220,21 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	if opts.MachineID == "" {
 		return Result{}, errors.New("machine ID is required")
 	}
+	durableObligations, durableErr := local.DurableStorageObligations()
+	if durableErr != nil {
+		return Result{Errors: map[string]error{"durable-storage": durableErr}}, durableErr
+	}
+	for _, obligation := range durableObligations {
+		if obligation.SessionID == "" {
+			return Result{Errors: map[string]error{"durable-storage": state.ErrDurableStorageRecovery}}, state.ErrDurableStorageRecovery
+		}
+	}
 	recoveryLocal, closeRecovery := local.WithReadBudget(ctx, (&sessionScan{opts: opts}).readBudget())
-	generationRecoveryErr := recoveryLocal.ResumeGenerationRecoveries(ctx)
-	if generationRecoveryErr != nil && (!errors.Is(generationRecoveryErr, agentapi.ErrReadBudget) || errors.Is(generationRecoveryErr, context.Canceled) || errors.Is(generationRecoveryErr, context.DeadlineExceeded)) {
+	var generationRecoveryErr error
+	if ctx.Err() == nil {
+		generationRecoveryErr = recoveryLocal.ResumeGenerationRecoveries(ctx)
+	}
+	if generationRecoveryStopsPass(generationRecoveryErr) {
 		closeRecovery()
 		return Result{}, generationRecoveryErr
 	}
@@ -248,16 +260,24 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	if sweeper, ok := opts.Sources.(agentapi.SourceSweeper); ok {
 		sweeper.SweepSources()
 	}
+	// Establish one lazy source scope before child admission borrows its ledger.
+	closeCursorPass := openCursorPass(nil, &opts)
+	defer func() {
+		if err := closeCursorPass(); err != nil {
+			runErr = errors.Join(runErr, err)
+		}
+	}()
 	subagents := materializeSubagentCandidates(ctx, local, opts, now)
 	opts.repoKeys = newRepoKeyCache(opts.RepoKey)
 	p := &pass{
-		ctx:              ctx,
-		local:            local,
-		remote:           store,
-		opts:             opts,
-		now:              now,
-		result:           Result{Errors: subagents.errors, WaitingSubagents: subagents.waiting, RejectedSubagents: subagents.rejected},
-		expiredSubagents: subagents.expired,
+		ctx:                ctx,
+		local:              local,
+		remote:             store,
+		opts:               opts,
+		now:                now,
+		durableObligations: durableObligations,
+		result:             Result{Errors: subagents.errors, WaitingSubagents: subagents.waiting, RejectedSubagents: subagents.rejected},
+		expiredSubagents:   subagents.expired,
 	}
 	defer p.releaseLabelResources()
 	if generationRecoveryErr != nil {
@@ -282,14 +302,6 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 		}
 
 	}
-	// Construct the lazy source scope before labels borrow retained publications,
-	// so optional providers also share the default pass ledger with native work.
-	closeCursorPass := openCursorPass(p.registrations, &p.opts)
-	defer func() {
-		if err := closeCursorPass(); err != nil {
-			runErr = errors.Join(runErr, err)
-		}
-	}()
 	p.observeLabels(ctx)
 	p.repairListingIndex()
 	orderOldestRequestsFirst(p.registrations, p.requests)
@@ -307,6 +319,11 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 		p.scan(reg)
 	}
 	return p.result, p.saveStatus()
+}
+
+// Cancellation remains fatal even when a refusal also identifies owed work.
+func generationRecoveryStopsPass(err error) bool {
+	return err != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || (!errors.Is(err, state.ErrDurableStorageRecovery) && !errors.Is(err, agentapi.ErrReadBudget)))
 }
 
 // pass is one Run: its inputs, what it has found so far, and its result.
@@ -337,8 +354,10 @@ type pass struct {
 	pending int
 	// expiredSubagents lists the subagents this pass stopped waiting for
 	// (see state.Status.ExpiredSubagents).
-	expiredSubagents []state.ExpiredSubagent
-	result           Result
+	expiredSubagents   []state.ExpiredSubagent
+	result             Result
+	durableObligations []state.DurableStorageObligation
+	durableCounted     map[string]bool
 }
 
 // loadWork lists the registered sessions and their pending requests. One
@@ -364,6 +383,30 @@ func (p *pass) loadWork() error {
 	for id, issue := range registrationIssues {
 		addError(p.result.Errors, id, issue)
 		registered[id] = !errors.Is(issue, state.ErrQuarantined)
+	}
+	p.durableCounted = map[string]bool{}
+	obligations := p.durableObligations
+	orphaned := map[string]bool{}
+	for _, obligation := range obligations {
+		id := obligation.SessionID
+		if id == "" {
+			addError(p.result.Errors, "durable-storage", state.ErrDurableStorageRecovery)
+			continue
+		}
+		if registered[id] && obligation.Namespace == state.GenerationRecoveryStorage && !orphaned[id] {
+			if err := checkDurableSessionRead(p.ctx, p.local, id, p.opts); err != nil {
+				orphaned[id] = true
+				p.pending++
+				p.durableCounted[id] = true
+				p.unreadable[id] = true
+				addError(p.result.Errors, id, err)
+			}
+		}
+		if !registered[id] && !orphaned[id] {
+			orphaned[id] = true
+			p.pending++
+			addError(p.result.Errors, id, state.ErrDurableStorageRecovery)
+		}
 	}
 	// Lock files of sessions and candidates that are gone go now, while the
 	// registrations just listed say which those are.
@@ -402,7 +445,7 @@ func (p *pass) loadWork() error {
 // work (a request) is left for the next pass.
 func (p *pass) leaveForNextPass(rest []archive.SessionRegistration) {
 	for _, reg := range rest {
-		if p.requests[reg.ArchiveSessionID].Token != "" && (p.opts.AcceptSession == nil || p.opts.AcceptSession(reg)) {
+		if !p.durableCounted[reg.ArchiveSessionID] && p.requests[reg.ArchiveSessionID].Token != "" && (p.opts.AcceptSession == nil || p.opts.AcceptSession(reg)) {
 			p.pending++
 		}
 	}
@@ -426,7 +469,9 @@ func (p *pass) scan(reg archive.SessionRegistration) {
 	id := reg.ArchiveSessionID
 	p.result.Scanned++
 	if p.unreadable[id] {
-		p.pending++
+		if !p.durableCounted[id] {
+			p.pending++
+		}
 		p.opts.progress(id, false)
 		return
 	}
