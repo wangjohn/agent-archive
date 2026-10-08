@@ -13,20 +13,33 @@ import (
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
+type configObservationCase string
+
+const (
+	observationSupported    configObservationCase = "supported"
+	observationLegacyFloor  configObservationCase = "legacy-five-to-seven"
+	observationFuture       configObservationCase = "future"
+	observationCorrupt      configObservationCase = "corrupt"
+	observationFutureRead   configObservationCase = "future-read"
+	observationCorruptRead  configObservationCase = "corrupt-read"
+	observationMissing      configObservationCase = "missing"
+	observationDirectory    configObservationCase = "directory"
+	observationReadError    configObservationCase = "read-error"
+	observationUnsafeHome   configObservationCase = "unsafe-home"
+	observationReplacedHome configObservationCase = "replaced-home"
+)
+
 func TestRootedConfigReadObservationClassification(t *testing.T) {
-	for _, kind := range []string{"supported", "legacy-five-to-seven", "future", "corrupt", "future-read", "corrupt-read", "missing", "directory", "read-error", "unsafe-home", "replaced-home"} {
-		t.Run(kind, func(t *testing.T) {
+	for _, kind := range []configObservationCase{observationSupported, observationLegacyFloor, observationFuture, observationCorrupt, observationFutureRead, observationCorruptRead, observationMissing, observationDirectory, observationReadError, observationUnsafeHome, observationReplacedHome} {
+		t.Run(string(kind), func(t *testing.T) {
 			home := durableTestHome(t)
-			initial := Config{MachineID: "synthetic"}
-			if kind == "legacy-five-to-seven" {
-				initial.GenerationProtection, initial.CodexHistoryProtection = true, true
-			}
+			initial := Config{MachineID: "synthetic", GenerationProtection: kind == observationLegacyFloor, CodexHistoryProtection: kind == observationLegacyFloor}
 			if err := Save(home, initial); err != nil {
 				t.Fatal(err)
 			}
-			if kind == "future-read" || kind == "corrupt-read" {
+			if kind == observationFutureRead || kind == observationCorruptRead {
 				raw := []byte(`{"schema_version":{"version":8,"writer":"publication-composition-v8"},"publication_composition_protection":true}`)
-				if kind == "corrupt-read" {
+				if kind == observationCorruptRead {
 					raw = []byte("{")
 				}
 				if err := os.WriteFile(filepath.Join(home, "config.json"), raw, 0600); err != nil {
@@ -37,7 +50,11 @@ func TestRootedConfigReadObservationClassification(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer held.Close()
+			defer func() {
+				if err := held.Close(); err != nil {
+					t.Error(err)
+				}
+			}()
 			before, err := held.Root.Lstat("config.json")
 			if err != nil {
 				t.Fatal(err)
@@ -48,35 +65,35 @@ func TestRootedConfigReadObservationClassification(t *testing.T) {
 			}
 			var readErr error
 			switch kind {
-			case "supported", "future-read", "corrupt-read":
+			case observationSupported, observationFutureRead, observationCorruptRead:
 				err = local.RootedWrite(held.Root, "config.json", Config{MachineID: "replacement"})
-			case "legacy-five-to-seven":
+			case observationLegacyFloor:
 				initial.DurableStorageProtection = true
 				err = local.RootedWrite(held.Root, "config.json", initial)
-			case "future", "corrupt":
+			case observationFuture, observationCorrupt:
 				raw := []byte(`{"schema_version":{"version":8,"writer":"publication-composition-v8"},"publication_composition_protection":true}`)
-				if kind == "corrupt" {
+				if kind == observationCorrupt {
 					raw = []byte("{")
 				}
 				err = os.WriteFile(filepath.Join(home, "replacement"), raw, 0600)
 				if err == nil {
 					err = os.Rename(filepath.Join(home, "replacement"), filepath.Join(home, "config.json"))
 				}
-			case "missing", "directory", "read-error":
+			case observationMissing, observationDirectory, observationReadError:
 				err = held.Root.Remove("config.json")
-				if err == nil && kind == "directory" {
+				if err == nil && kind == observationDirectory {
 					err = held.Root.Mkdir("config.json", 0700)
 				}
-				if err == nil && kind == "read-error" {
+				if err == nil && kind == observationReadError {
 					_, readErr = held.Root.ReadFile("config.json")
 					if !errors.Is(readErr, os.ErrNotExist) {
 						t.Fatalf("expected actual failed read: %v", readErr)
 					}
 					err = local.RootedWrite(held.Root, "config.json", Config{MachineID: "replacement"})
 				}
-			case "unsafe-home":
+			case observationUnsafeHome:
 				err = os.Chmod(home, 0755)
-			case "replaced-home":
+			case observationReplacedHome:
 				err = os.Rename(home, home+"-old")
 				if err == nil {
 					t.Cleanup(func() { _ = os.Remove(home); _ = os.Rename(home+"-old", home) })
@@ -87,17 +104,17 @@ func TestRootedConfigReadObservationClassification(t *testing.T) {
 				t.Fatal(err)
 			}
 			observation := rootedConfigReadUnchanged(held, before, raw, readErr)
-			changed := kind == "supported" || kind == "legacy-five-to-seven" || kind == "future" || kind == "corrupt"
+			changed := kind == observationSupported || kind == observationLegacyFloor || kind == observationFuture || kind == observationCorrupt
 			if observation == nil || errors.Is(observation, errRootedConfigObservationChanged) != changed {
 				t.Fatalf("observation classification: %v", observation)
 			}
 			if changed {
 				cfg, present, err := loadDurableStoragePreflight(held, time.Now().Add(time.Second))
-				if kind == "supported" || kind == "legacy-five-to-seven" {
+				if kind == observationSupported || kind == observationLegacyFloor {
 					if err != nil || !present {
 						t.Fatalf("supported replacement: %v", err)
 					}
-					if kind == "legacy-five-to-seven" && (cfg.SchemaVersion != 7 || !cfg.DurableStorageProtection || !cfg.GenerationProtection || !cfg.CodexHistoryProtection) {
+					if kind == observationLegacyFloor && (cfg.SchemaVersion != 7 || !cfg.DurableStorageProtection || !cfg.GenerationProtection || !cfg.CodexHistoryProtection) {
 						t.Fatal("replacement lost actual protected floor")
 					}
 				} else if err == nil || errors.Is(err, errRootedConfigObservationChanged) {
@@ -120,7 +137,11 @@ func TestDurablePreflightExpiredDeadlineAllocatesNothing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer held.Close()
+	defer func() {
+		if err := held.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	before, err := held.Root.ReadFile("config.json")
 	if err != nil {
 		t.Fatal(err)
