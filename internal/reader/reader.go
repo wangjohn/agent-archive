@@ -138,6 +138,8 @@ const listConcurrency = 8
 // ListOptions tunes ListMetadataWithOptions. The zero value reads every
 // matching sidecar from the store.
 type ListOptions struct {
+	includeRootChildren bool
+
 	// ScopeMatch tests only identity summaries before body selection.
 	ScopeMatch func(archive.Metadata) bool
 
