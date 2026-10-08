@@ -99,7 +99,7 @@ func (s *sessionScan) maintainFrozen() (sessionOutcome, error) {
 	if err != nil {
 		return outcomeSkipped, err
 	}
-	if pending, found, err := s.local.LoadPending(s.id()); err != nil {
+	if pending, found, err := s.local.LoadPublicationPending(s.id()); err != nil {
 		return outcomeSkipped, err
 	} else if found {
 		if pending.History != nil {
@@ -252,6 +252,16 @@ func generationRecoveryBuilder(ctx context.Context, owner *sessionScan, filtered
 		}
 		pending := state.PendingPublication{History: history, SkillEvidence: string(opts.skillEvidence()), Bundle: bundle, SourceKey: rendered.source.Key, SourceSHA256: rendered.source.SHA256, SourceBytes: rendered.sourceBytes, MetadataKey: rendered.metadataKey, MetadataBytes: rendered.metadata, ReadyAt: at, Attempted: true}
 		if err := pending.ValidateHistoryBudgeted(id, owner.readBudget()); err != nil {
+			return latest, state.PendingPublication{}, err
+		}
+		preparationScan := *owner
+		preparationScan.reg = latest
+		policy, err := preparationScan.publicationPolicy(bundle)
+		if err != nil {
+			return latest, state.PendingPublication{}, err
+		}
+		pending, err = state.PreparePublicationV2(pending, state.PublicationPredecessor{State: state.PredecessorAbsent}, latest.DestinationID, preparationScan.publicationAdmission(), policy, state.PublicationCapture)
+		if err != nil {
 			return latest, state.PendingPublication{}, err
 		}
 		returned = true

@@ -520,3 +520,8 @@ func TestBlockedSessionWithoutPublicationSkipsRegeneration(t *testing.T) {
 		t.Fatalf("blocked session without a publication was not skipped cleanly: %#v %v gets=%d", result, err, remote.gets)
 	}
 }
+
+func (s *countedGets) GetVersionedLimited(ctx context.Context, key string, limit int64) ([]byte, string, error) {
+	s.gets++
+	return s.MemoryStore.GetVersionedLimited(ctx, key, limit)
+}

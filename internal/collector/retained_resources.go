@@ -2,11 +2,8 @@ package collector
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
 
@@ -63,7 +60,7 @@ func (s *sessionScan) historyGet(key string, limit int64) ([]byte, error) {
 	b := s.readBudget()
 	// Sidecars are mutable: stat provides a bounded allocation ceiling, never
 	// authority. Exact bytes/schema/predecessor checks still run after GET.
-	if statter, ok := s.remote.(storage.ObjectStatter); ok && strings.HasSuffix(key, "/metadata.json") {
+	if statter, ok := s.publicationRemote().(storage.ObjectStatter); ok && strings.HasSuffix(key, "/metadata.json") {
 		info, err := statter.Stat(s.ctx, key)
 		if err != nil && !errors.Is(err, storage.ErrNotFound) {
 			return nil, err
@@ -83,7 +80,7 @@ func (s *sessionScan) historyGet(key string, limit int64) ([]byte, error) {
 	if !b.Reserve(limit) {
 		return nil, errRetainedBudget
 	}
-	data, err := historyLimitedGet(s.ctx, s.remote, key, limit)
+	data, err := historyLimitedGet(s.ctx, s.publicationRemote(), key, limit)
 	if err != nil {
 		b.Release(limit)
 		return nil, err
@@ -133,152 +130,25 @@ func (s *sessionScan) decodeRevision(metadata archive.Metadata, revision string,
 // coexist with accumulated encoded output, the safe encoder buffer and decoded
 // output. Heap object headers and allocator capacity are measured separately.
 func (s *sessionScan) refilterRetained(adapter archive.Adapter, bundle archive.SourceBundle) (archive.SourceBundle, error) {
-	if s.reg.Harness.Name != archive.HarnessCodex {
-		return refilterBundle(s.ctx, s.reg, adapter, bundle)
-	}
-	b := s.readBudget()
-	const preflightScratch = 32 << 10
-	if !b.Reserve(preflightScratch) {
+	filter, ok := adapter.(agentapi.TranscriptFilter)
+	if !ok {
 		return archive.SourceBundle{}, errRetainedBudget
 	}
-	largest := int64(0)
-	var sizingErr error
-	for _, record := range bundle.NativeRecords {
-		n, err := jsonwire.Bound(s.ctx, record, b.Available())
-		if err != nil {
-			sizingErr = err
-			break
-		}
-		largest = max(largest, n)
-	}
-	b.Release(preflightScratch)
-	if sizingErr != nil {
-		return archive.SourceBundle{}, errors.Join(errRetainedBudget, sizingErr)
-	}
-	scanner := int64(64 << 10)
-	for scanner < largest+1 && scanner < int64(archive.MaxRecordBytes+1) {
-		scanner = min(scanner*2, int64(archive.MaxRecordBytes+1))
-	}
-	// Three distinct row owners, plus the scanner, are temporary. Check additions
-	// against available capacity before forming the sum.
-	if largest > (b.Available()-scanner)/3 {
-		return archive.SourceBundle{}, errRetainedBudget
-	}
-	scratch := largest + largest + largest + scanner
-	if !b.Reserve(scratch) {
-		return archive.SourceBundle{}, errRetainedBudget
-	}
-	defer b.Release(scratch)
-	if leased, ok := adapter.(agentapi.LeasedTranscriptRefilter); ok {
-		mark := len(s.retainedReleases)
-		filtered, release, err := leased.RefilterLeased(s.ctx, bundle, s.reg.SessionStartedAt, b)
-		if err != nil {
-			return archive.SourceBundle{}, err
-		}
+	out, release, err := agentapi.RefilterRetainedSource(s.ctx, s.reg, filter, bundle, s.readBudget())
+	if err == nil {
 		s.retainedReleases = append(s.retainedReleases, release)
-		out, err := s.newSourceBundle(s.reg, adapter, filtered, bundle.Capture.CapturedAt, bundle.SupplementalEvidence)
-		if err != nil {
-			s.releaseRetainedAfter(mark)
-			return archive.SourceBundle{}, err
-		}
-		out.Capture.Harness = bundle.Capture.Harness
-		out.Capture.Gaps = mergeCaptureGaps(bundle.Capture.Gaps, out.Capture.Gaps)
-		if err := out.ValidateHistory(); err != nil {
-			return archive.SourceBundle{}, err
-		}
-		// Ordinary retained filtering also finishes encoded-row consumption once
-		// the independently decoded bundle and auxiliary envelope are available.
-		read := sourceRead{filtered: filtered, filterLease: &mark}
-		return s.finishNativeFilter(&read, out)
 	}
-	capBytes := min(int64(32<<20), max(int64(0), (b.Available()-(64<<10))/2))
-	if capBytes <= 0 {
-		return archive.SourceBundle{}, errRetainedBudget
-	}
-	// Accumulated records and decoded output each have an independently
-	// enforced ceiling. The codec borrows encoder scratch per safe row,
-	// leaving headroom rather than reserving a whole second output for it.
-
-	if !b.Reserve(capBytes) {
-		return archive.SourceBundle{}, errRetainedBudget
-	}
-	defer b.Release(capBytes)
-	if !b.Reserve(capBytes) {
-		return archive.SourceBundle{}, errRetainedBudget
-	}
-	out, err := refilterBundleBounded(s.ctx, s.reg, adapter, bundle, agentapi.ReadLimits{Records: archive.MaxHistoryRecords, FilteredBytes: capBytes, ReadBudget: b})
-	if err != nil {
-		b.Release(capBytes)
-		return archive.SourceBundle{}, errors.Join(errRetainedBudget, err)
-	}
-	n := int64(out.Capture.Boundary.RetainedBytes)
-	if n < 0 || n > capBytes {
-		b.Release(capBytes)
-		return archive.SourceBundle{}, errRetainedBudget
-	}
-	b.Release(capBytes - n)
-	s.retainedReleases = append(s.retainedReleases, func() { b.Release(n) })
-	return out, nil
+	return out, err
 }
 
 // compressSource keeps the canonical codec and charges output before each
 // append. Line encoding has two owners: json.Marshal's encoder and result.
 func (s *sessionScan) compressSource(bundle archive.SourceBundle) (archive.CompressedSource, error) {
-	if bundle.SchemaVersion != archive.SourceSchemaVersion && bundle.SchemaVersion != archive.HistorySourceSchemaVersion {
-		return archive.CompressedSource{}, fmt.Errorf("unsupported source schema version %d", bundle.SchemaVersion)
+	packed, release, err := agentapi.CompressRetainedSource(s.ctx, bundle, s.readBudget())
+	if err == nil {
+		s.retainedReleases = append(s.retainedReleases, release)
 	}
-	if err := bundle.ValidateHistory(); err != nil {
-		return archive.CompressedSource{}, err
-	}
-	b := s.readBudget()
-	// Gzip/flate uses a 64KiB window, bounded hash/token tables and block writer.
-	// One MiB covers their logical fixed scratch for the supported Go toolchain;
-	// allocator headers and pooled capacity are measured separately.
-	const compressorScratch = 1 << 20
-	const preflightScratch = 32 << 10
-	if !b.Reserve(preflightScratch) {
-		return archive.CompressedSource{}, errRetainedBudget
-	}
-	largest, err := archive.SourceEncodingLineBound(s.ctx, bundle, b.Available())
-	b.Release(preflightScratch)
-	if err != nil {
-		return archive.CompressedSource{}, errors.Join(errRetainedBudget, err)
-	}
-	if largest > (b.Available()-compressorScratch)/2 {
-		return archive.CompressedSource{}, errRetainedBudget
-	}
-	scratch := largest + largest + compressorScratch
-	if !b.Reserve(scratch) {
-		return archive.CompressedSource{}, errRetainedBudget
-	}
-	defer b.Release(scratch)
-	mark := len(s.retainedReleases)
-	output := &retainedOutput{scan: s}
-	if err := archive.CompressSource(output, bundle); err != nil {
-		s.releaseRetainedAfter(mark)
-		return archive.CompressedSource{}, err
-	}
-	data := output.Bytes()
-	sum := sha256.Sum256(data)
-	return archive.CompressedSource{Bytes: data, SHA256: hex.EncodeToString(sum[:])}, nil
-}
-
-type retainedOutput struct {
-	bytes.Buffer
-	scan *sessionScan
-}
-
-func (w *retainedOutput) Write(data []byte) (int, error) {
-	if err := w.scan.ctx.Err(); err != nil {
-		return 0, err
-	}
-	if int64(len(data)) > historyCompressedLimit-int64(w.Len()) {
-		return 0, errRetainedBudget
-	}
-	if err := w.scan.retainCharge(int64(len(data))); err != nil {
-		return 0, err
-	}
-	return w.Buffer.Write(data)
+	return packed, err
 }
 
 func (s *sessionScan) marshalRetained(value any) ([]byte, error) {
@@ -394,24 +264,11 @@ func (s *sessionScan) chooseRefreshSource(bundle archive.SourceBundle, uploaded 
 // detachRetainedEnvelope gives a returned filtered bundle its own small envelope
 // before an input scope ends. Native maps retain their existing decoded lease.
 func (s *sessionScan) detachRetainedEnvelope(bundle archive.SourceBundle) (archive.SourceBundle, error) {
-	envelope := bundle
-	envelope.NativeRecords = nil
-	envelope.NativeText = nil
-	envelope.Ordinals = nil
-	encodedIndex := len(s.retainedReleases)
-	encoded, err := s.marshalRetained(envelope)
-	if err != nil {
-		return archive.SourceBundle{}, err
+	detached, release, err := agentapi.DetachRetainedEnvelope(s.ctx, bundle, s.readBudget())
+	if err == nil {
+		s.retainedReleases = append(s.retainedReleases, release)
 	}
-	var detached archive.SourceBundle
-	if err := s.unmarshalRetained(encoded, &detached); err != nil {
-		return archive.SourceBundle{}, err
-	}
-	s.releaseRetainedIndex(encodedIndex)
-	detached.NativeRecords = bundle.NativeRecords
-	detached.NativeText = bundle.NativeText
-	detached.Ordinals = bundle.Ordinals
-	return detached, nil
+	return detached, err
 }
 
 // keepRetainedFrom releases input/scratch owners while promoting only returned

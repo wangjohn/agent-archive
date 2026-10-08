@@ -44,7 +44,7 @@ func preservePublication(t *testing.T, p *PendingPublication, prior PendingPubli
 	if err := json.Unmarshal(p.MetadataBytes, &m); err != nil {
 		t.Fatal(err)
 	}
-	m.History.Preserved = append(m.History.Preserved, archive.RevisionReference{RevisionID: revision, CapturedAt: prior.Bundle.Capture.CapturedAt, Source: prior.SourceReference()})
+	m.History.Preserved = append(m.History.Preserved, archive.RevisionReference{RevisionID: revision, CapturedAt: prior.Bundle.Capture.CapturedAt, Source: prior.SourceReference(), FilterVersion: prior.Bundle.Capture.FilterVersion, SourceSchemaVersion: prior.Bundle.SchemaVersion})
 	var err error
 	p.MetadataBytes, err = json.Marshal(m)
 	if err != nil {
@@ -58,14 +58,12 @@ func TestPublicationJournalRetainsCompleteSelectionAcrossRestart(t *testing.T) {
 	old := publicationFixture(t, publicationThread, at)
 	next := publicationFixture(t, "22222222-2222-4222-8222-222222222222", at.Add(time.Hour))
 	preservePublication(t, &next, old, publicationThread)
-	pending, err := PreparePublication(next, PublicationPredecessor{State: PredecessorPresent, Body: old.MetadataBytes, Bundle: old.Bundle}, "destination", "admission", "policy", PublicationCapture)
+	next.History = &PendingHistory{Version: 1, ExpectedMetadataSHA256: publicationSHA256(old.MetadataBytes)}
+	pending, err := PreparePublicationV2(next, PublicationPredecessor{State: PredecessorPresent, Body: old.MetadataBytes, Bundle: old.Bundle}, "destination", "admission", "policy", PublicationCapture)
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, err := Open(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := newTestStore(t)
 	if err := store.SavePending(next.Bundle.ArchiveSessionID, pending); err != nil {
 		t.Fatal(err)
 	}

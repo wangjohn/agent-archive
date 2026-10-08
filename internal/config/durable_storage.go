@@ -57,7 +57,28 @@ func (g DurableStorageGuard) RootedHome(home string) (*local.RootedHome, error) 
 // WithDurableStorage saves the sticky writer fence before any new
 // publication obligation. It holds hooks.lock, so nested callers pass its guard
 // to private write helpers instead of reacquiring the lock.
-func WithDurableStorage(home string, write func(DurableStorageGuard) error) (err error) {
+func WithDurableStorage(home string, write func(DurableStorageGuard) error) error {
+	return withPublicationStorage(home, false, write)
+}
+
+// PublicationCompositionGuard requires the durably saved composition floor.
+// Its storage witness borrows the same held root and lock scope.
+type PublicationCompositionGuard struct{ storage DurableStorageGuard }
+
+// Storage derives the subordinate witness without acquiring another lock.
+func (g PublicationCompositionGuard) Storage(home string) (DurableStorageGuard, error) {
+	if err := g.storage.CheckHome(home); err != nil {
+		return DurableStorageGuard{}, err
+	}
+	return g.storage, nil
+}
+
+// WithPublicationComposition persists protocol2 protection before allocation.
+func WithPublicationComposition(home string, write func(PublicationCompositionGuard) error) error {
+	return withPublicationStorage(home, true, func(g DurableStorageGuard) error { return write(PublicationCompositionGuard{storage: g}) })
+}
+
+func withPublicationStorage(home string, composition bool, write func(DurableStorageGuard) error) (err error) {
 	held, err := local.OpenRootedHome(home)
 	if err != nil {
 		return err
@@ -93,7 +114,10 @@ func WithDurableStorage(home string, write func(DurableStorageGuard) error) (err
 	if err = rootedConfigUnchanged(held, configBefore); err != nil {
 		return err
 	}
-	if !cfg.DurableStorageProtection {
+	if !cfg.DurableStorageProtection || (composition && !cfg.PublicationCompositionProtection) {
+		if composition {
+			cfg.PublicationCompositionProtection = true
+		}
 		cfg.DurableStorageProtection = true
 		if err = prepareDiscoveryConfig(&cfg); err != nil {
 			return err
@@ -109,7 +133,7 @@ func WithDurableStorage(home string, write func(DurableStorageGuard) error) (err
 			return err
 		}
 		verified, present, e := LoadRooted(held)
-		if e != nil || !present || !verified.DurableStorageProtection || verified.SchemaVersion != 7 {
+		if e != nil || !present || !verified.DurableStorageProtection || (verified.SchemaVersion != 7 && verified.SchemaVersion != 8) || (composition && !verified.PublicationCompositionProtection) {
 			return errors.Join(errors.New("durable storage protection was not persisted"), e)
 		}
 	}

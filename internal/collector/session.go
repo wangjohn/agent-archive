@@ -59,16 +59,17 @@ import (
 // saves it through this one copy rather than decoding published/<id>.json
 // again (it holds whole source bundles).
 type sessionScan struct {
-	parser         agentapi.TranscriptParser
-	parserResolved bool
-	ctx            context.Context
-	local          *state.Store
-	remote         storage.ObjectStore
-	opts           Options
-	now            time.Time
-	reg            archive.SessionRegistration
-	req            state.Request
-	published      *state.Published
+	publicationAttempt *publicationAttempt
+	parser             agentapi.TranscriptParser
+	parserResolved     bool
+	ctx                context.Context
+	local              *state.Store
+	remote             storage.ObjectStore
+	opts               Options
+	now                time.Time
+	reg                archive.SessionRegistration
+	req                state.Request
+	published          *state.Published
 	// readyAt is when a publication the scan left waiting for the upload
 	// interval (outcomeRateLimited) becomes due.
 	readyAt time.Time
@@ -90,6 +91,7 @@ type sessionScan struct {
 	// gap it is, with this candidate cached as the state it was reached at.
 	retainedBudget   *agentapi.NativeReadBudget
 	retainedReleases []func()
+	priorBinding     *archive.CodexSourceBinding
 	revisions        *revisionPlan
 	rewritten        *archive.SourceBundle
 }
@@ -106,7 +108,7 @@ type filteredSource struct {
 func (s *sessionScan) warn(err error) { s.warnings = append(s.warnings, err) }
 
 func newSessionScan(ctx context.Context, local *state.Store, remote storage.ObjectStore, reg archive.SessionRegistration, req state.Request, published *state.Published, now time.Time, opts Options) *sessionScan {
-	scan := &sessionScan{ctx: ctx, local: local, remote: remote, opts: opts, now: now, reg: reg, req: req, published: published}
+	scan := &sessionScan{ctx: ctx, local: local, remote: remote, opts: opts, now: now, reg: reg, req: req, published: published, priorBinding: reg.CodexBinding}
 	scan.opts.retainedOwner = scan
 	return scan
 }
@@ -197,7 +199,7 @@ func (s *sessionScan) run() (sessionOutcome, error) {
 func (s *sessionScan) resume() (outcome sessionOutcome, handled bool, err error) {
 	// A publication that may already have reached storage is immutable local
 	// work. Retry its exact bytes before considering later transcript changes.
-	pending, havePending, err := s.local.LoadPending(s.id())
+	pending, havePending, err := s.local.LoadPublicationPending(s.id())
 	if err != nil {
 		return outcomeSkipped, true, err
 	}
@@ -649,7 +651,7 @@ func (s *sessionScan) publish(read sourceRead, candidate archive.SourceBundle) (
 			return outcomeSkipped, err
 		}
 	}
-	if err := s.local.SavePending(s.id(), pending); err != nil {
+	if err := s.savePending(&pending); err != nil {
 		return outcomeSkipped, fmt.Errorf("persist pending publication: %w", err)
 	}
 	if pending.History != nil {

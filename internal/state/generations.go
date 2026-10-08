@@ -113,8 +113,11 @@ func (s *Store) BeginGenerationRecovery(id string, at time.Time, build func(arch
 		return "", errors.New("valid session ID and recovery time required")
 	}
 	var nextID string
-	err := config.WithDurableStorage(s.home, func(g config.DurableStorageGuard) error {
-		var e error
+	err := config.WithPublicationComposition(s.home, func(composition config.PublicationCompositionGuard) error {
+		g, e := composition.Storage(s.home)
+		if e != nil {
+			return e
+		}
 		nextID, e = s.beginGenerationRecoveryGuard(g, id, at, build)
 		return e
 	})
@@ -152,7 +155,8 @@ func (s *Store) beginGenerationRecoveryGuard(g config.DurableStorageGuard, id st
 	}
 	request := Request{ArchiveSessionID: next, Token: token, Reasons: []string{"generation-recovery"}, RequestedAt: at}
 	pending.RequestToken = token
-	r := generationRecovery{Version: 1, Key: key, Previous: id, Next: next, Registration: &reg, Pending: &pending, Request: &request}
+	wirePending := publicationWire(pending)
+	r := generationRecovery{Version: 1, Key: key, Previous: id, Next: next, Registration: &reg, Pending: &wirePending, Request: &request}
 	if err := s.writeDurableGuard(s.generationReadContext(), g, filepath.Join(generationRecoveryDir, id+".json"), r); err != nil {
 		return "", err
 	}
@@ -181,6 +185,15 @@ func validateGenerationSuccessor(old, reg archive.SessionRegistration, pending P
 func validateGenerationPublication(reg archive.SessionRegistration, pending PendingPublication, budget *agentapi.NativeReadBudget, ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
+	}
+	if pending.JournalVersion == 2 {
+		if err := pending.ValidatePublication(); err != nil {
+			return err
+		}
+		if len(pending.Sources) == 0 || pending.Sources[0].Payload.Kind != "inline" {
+			return ErrDurableStorageRecovery
+		}
+		pending.SourceBytes = pending.Sources[0].Payload.Inline
 	}
 	if err := validateGenerationHistory(reg, pending, budget); err != nil {
 		return err
@@ -326,7 +339,11 @@ func (s *Store) resumeGenerationRecoveryFile(ctx context.Context, id string, bud
 	// Only routing status was consumed. End this independent full view before
 	// rereading the locked journal that authorizes the actual replay.
 	closeScope()
-	return config.WithDurableStorage(s.home, func(g config.DurableStorageGuard) error {
+	return config.WithPublicationComposition(s.home, func(composition config.PublicationCompositionGuard) error {
+		g, e := composition.Storage(s.home)
+		if e != nil {
+			return e
+		}
 		resumed, closeResume := s.WithReadBudget(ctx, budget)
 		defer closeResume()
 		return resumed.resumeGenerationRecovery(g, ctx, id)
@@ -515,6 +532,10 @@ func (s *Store) activateGenerationRecovery(ctx context.Context, g config.Durable
 	r.Registration = nil
 	r.Pending = nil
 	r.Request = nil
+	if r.Pending != nil {
+		wire := publicationWire(*r.Pending)
+		r.Pending = &wire
+	}
 	if err := s.writeDurableGuard(ctx, g, filepath.Join(generationRecoveryDir, r.Previous+".json"), r); err != nil {
 		return err
 	}

@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agents/codex"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
@@ -353,6 +354,9 @@ func TestRunAcknowledgedAllRefPrivacyPublishesTogetherWithoutNativeReads(t *test
 			t.Fatal(err)
 		}
 		b.Capture.FilterVersion = "14"
+		for _, record := range b.NativeRecords {
+			record["api_key"] = "sk-abcdefghijklmnopqrstuv"
+		}
 		packed, err := archive.BuildCompressedSource(b)
 		if err != nil {
 			t.Fatal(err)
@@ -377,6 +381,7 @@ func TestRunAcknowledgedAllRefPrivacyPublishesTogetherWithoutNativeReads(t *test
 			}
 		}
 	}
+	m.Title = "sk-abcdefghijklmnopqrstuv"
 	raw, err := json.Marshal(m)
 	if err != nil {
 		t.Fatal(err)
@@ -433,8 +438,33 @@ func TestRunAcknowledgedAllRefPrivacyPublishesTogetherWithoutNativeReads(t *test
 					t.Fatal(err)
 				}
 				b, err := decodeHistoryStage(t.Context(), m, p, ref, data)
+				encoded, encodeErr := json.Marshal(b.NativeRecords)
+				if encodeErr != nil || bytes.Contains(encoded, []byte("sk-abcdefghijklmnopqrstuv")) {
+					t.Fatal("stricter source retained secret marker", encodeErr)
+				}
 				if err != nil || b.Capture.FilterVersion != archive.FilterVersion || !b.Capture.CapturedAt.Equal(scan.now) {
 					t.Fatal("partial refilter or changed capture", err)
+				}
+			}
+			privateRaw, err := os.ReadFile(publishedPath(scan.local, scan.id()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var private struct {
+				Preparation *struct {
+					OriginMetadata          []byte `json:"origin_metadata"`
+					PrivacyPreviousMetadata []byte `json:"privacy_previous_metadata"`
+					Migration               *struct {
+						PreviousMetadata []byte `json:"previous_metadata"`
+					} `json:"migration"`
+				} `json:"preparation"`
+			}
+			if err = json.Unmarshal(privateRaw, &private); err != nil {
+				t.Fatal(err)
+			}
+			if private.Preparation != nil {
+				if bytes.Contains(private.Preparation.OriginMetadata, []byte("sk-abcdefghijklmnopqrstuv")) || bytes.Contains(private.Preparation.PrivacyPreviousMetadata, []byte("sk-abcdefghijklmnopqrstuv")) || private.Preparation.Migration != nil && bytes.Contains(private.Preparation.Migration.PreviousMetadata, []byte("sk-abcdefghijklmnopqrstuv")) {
+					t.Fatal("successful privacy successor retained private prior metadata secret")
 				}
 			}
 			if _, found, err := scan.local.LoadPending(scan.id()); err != nil || found {
@@ -469,6 +499,14 @@ func (s *privacyPutStore) Put(ctx context.Context, key string, data []byte) erro
 
 func (s *privacyPutStore) GetLimited(ctx context.Context, key string, limit int64) ([]byte, error) {
 	return s.ObjectStore.(storage.LimitedGetter).GetLimited(ctx, key, limit)
+}
+
+func (s *privacyPutStore) GetVersionedLimited(ctx context.Context, key string, limit int64) ([]byte, string, error) {
+	getter, ok := s.ObjectStore.(storage.LimitedVersionedGetter)
+	if !ok {
+		return nil, "", storage.ErrVersionedReadUnavailable
+	}
+	return getter.GetVersionedLimited(ctx, key, limit)
 }
 
 func TestCommittedHistoryMaintenanceObligationSurvivesMissingOriginalRestart(t *testing.T) {
@@ -636,5 +674,220 @@ func TestRunCommittedStrongerHistoryAcknowledgesExactAndQueuesWithoutNative(t *t
 	request, found, err := scan.local.LoadRequest(scan.id())
 	if err != nil || !found || request.Token != newer.Token {
 		t.Fatal("newer token lost", err)
+	}
+}
+
+func TestPreparedHistoryDerivationUsesFrozenNextTimeAfterRestart(t *testing.T) {
+	scan, p := privacyJournal(t)
+	defer scan.releaseRetained()
+	var metadata archive.Metadata
+	if err := json.Unmarshal(p.MetadataBytes, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	frozen := metadata.MetadataDerivedAt
+	if frozen.IsZero() {
+		t.Fatal("fixture has no frozen derivation time")
+	}
+	if err := scan.derivePreparedHistory(&p, metadata); err != nil {
+		t.Fatal(err)
+	}
+	first := bytes.Clone(p.MetadataBytes)
+	scan.now = scan.now.Add(72 * time.Hour)
+	if err := os.RemoveAll(scan.reg.ProjectRoot); err != nil {
+		t.Fatal(err)
+	}
+	if err := scan.derivePreparedHistory(&p, metadata); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(first, p.MetadataBytes) {
+		t.Fatal("resumed wall clock changed selecting metadata")
+	}
+	var resumed archive.Metadata
+	if err := json.Unmarshal(p.MetadataBytes, &resumed); err != nil || !resumed.MetadataDerivedAt.Equal(frozen) {
+		t.Fatal("frozen NEXT derivation time lost", err)
+	}
+	metadata.MetadataDerivedAt = time.Time{}
+	if err := scan.derivePreparedHistory(&p, metadata); err == nil {
+		t.Fatal("missing frozen time manufactured a new authority")
+	}
+}
+
+func TestPublicationPrivacyFactoryOwnsExactTransformAndLease(t *testing.T) {
+	scan, p := privacyJournal(t)
+	defer scan.releaseRetained()
+	var origin archive.Metadata
+	if err := json.Unmarshal(p.MetadataBytes, &origin); err != nil {
+		t.Fatal(err)
+	}
+	original := p.Bundle
+	original.Capture.FilterVersion = "14"
+	for _, record := range original.NativeRecords {
+		record["api_key"] = "sk-abcdefghijklmnopqrstuv"
+	}
+	packed, err := archive.BuildCompressedSource(original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := archive.SourceObjectKey(original, packed.SHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := archive.SourceReference{Key: key, SHA256: packed.SHA256, CompressedBytes: len(packed.Bytes)}
+	origin.SourceBundle, origin.FilterVersion = ref, "14"
+	body, err := json.Marshal(origin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := state.PreparationInput{Reference: ref, Selection: state.PublicationSelection{Role: "current", RevisionID: origin.History.CurrentRevision, CapturedAt: original.Capture.CapturedAt, SourceSchemaVersion: original.SchemaVersion}, FilterVersion: "14", AdapterVersion: original.Capture.AdapterVersion, SkillPolicy: "body"}
+	adapter, err := sourceAdapter(scan.opts.Sources, scan.reg.Harness.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldPolicy := state.PublicationPolicy{FilterVersion: "14", AdapterVersion: original.Capture.AdapterVersion, SkillEvidence: config.SkillEvidenceBody}
+	nextPolicy := state.PublicationPolicy{FilterVersion: archive.FilterVersion, AdapterVersion: adapter.Version(), SkillEvidence: config.SkillEvidenceNone}
+	frozen := state.PublicationContext{DestinationID: scan.reg.DestinationID, AdmissionContext: scan.publicationAdmission()}
+	budget := agentapi.NewNativeReadBudget(128 << 20)
+	if !budget.Reserve(int64(len(packed.Bytes))) {
+		t.Fatal("fixture source loan")
+	}
+	hooks := []archive.SupplementalEvidence{{Kind: archive.EvidenceKindExplicitFeedback, Provenance: "synthetic-hook", ObservedAt: scan.now, Payload: map[string]any{"text": "combined hook sk-abcdefghijklmnopqrstuv"}}}
+	hookBody, err := json.Marshal(hooks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !budget.Reserve(int64(len(hookBody))) {
+		t.Fatal("observation fixture loan")
+	}
+	defer budget.Release(int64(len(hookBody)))
+	candidate := state.PendingPublication{Bundle: original, MetadataBytes: body, MetadataKey: p.MetadataKey, SourceKey: ref.Key, SourceSHA256: ref.SHA256, SourceBytes: packed.Bytes, SkillEvidence: "body", History: &state.PendingHistory{Version: 1, Preparing: true}}
+	if err := state.FreezePublicationHookObservations(t.Context(), &candidate, hookBody, frozen.DestinationID, frozen.AdmissionContext, nextPolicy.Context(), budget); err != nil {
+		t.Fatal(err)
+	}
+	candidate, err = state.PreparePublicationV2(candidate, state.PublicationPredecessor{State: state.PredecessorAbsent}, frozen.DestinationID, frozen.AdmissionContext, nextPolicy.Context(), state.PublicationPrivacyRewrite)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input.HookObservations = candidate.Preparation.Inputs[0].HookObservations
+	before := budget.Available()
+	out, encoded, next, proof, release, err := state.RefilterPublicationInput(t.Context(), scan.reg, adapter, origin, body, input, 0, packed.Bytes, frozen, oldPolicy, nextPolicy, config.SkillEvidenceBody, budget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(out)
+	if err != nil || bytes.Contains(raw, []byte("sk-abcdefghijklmnopqrstuv")) {
+		t.Fatal("actual filter failed", err)
+	}
+	if next.SHA256 != encoded.SHA256 || next.CompressedBytes != len(encoded.Bytes) || next == ref {
+		t.Fatal("canonical output not bound")
+	}
+	receiptRelease, recordErr := p.RecordPrivacyOutput(proof)
+	if recordErr != nil {
+		err = recordErr
+		t.Fatal(err)
+	}
+	defer receiptRelease()
+	if budget.Available() >= before {
+		t.Fatal("factory output uncharged")
+	}
+	release()
+	release()
+	if budget.Available() >= before {
+		t.Fatal("persisted receipt ownership ended with factory output")
+	}
+	receiptRelease()
+	receiptRelease()
+	if budget.Available() != before {
+		t.Fatal("factory lease not released exactly once", budget.Available(), before)
+	}
+	canceled, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, _, _, _, _, err = state.RefilterPublicationInput(canceled, scan.reg, adapter, origin, body, input, 0, packed.Bytes, frozen, oldPolicy, nextPolicy, config.SkillEvidenceBody, budget); !errors.Is(err, context.Canceled) {
+		t.Fatal("cancellation ignored", err)
+	}
+	if _, _, _, _, _, err = state.RefilterPublicationInput(t.Context(), scan.reg, adapter, origin, body, input, 0, packed.Bytes, frozen, oldPolicy, nextPolicy, config.SkillEvidenceBody, agentapi.NewNativeReadBudget(32<<10)); !errors.Is(err, agentapi.ErrReadBudget) {
+		t.Fatal("lease pressure ignored", err)
+	}
+	corrupted := bytes.Clone(packed.Bytes)
+	corrupted[0] ^= 1
+	if _, _, _, _, _, err = state.RefilterPublicationInput(t.Context(), scan.reg, adapter, origin, body, input, 0, corrupted, frozen, oldPolicy, nextPolicy, config.SkillEvidenceBody, budget); err == nil {
+		t.Fatal("foreign original bytes accepted")
+	}
+	for _, mutate := range []func(*state.PublicationHookObservations){
+		func(h *state.PublicationHookObservations) { h.Body = bytes.Clone(h.Body); h.Body[0] ^= 1 },
+		func(h *state.PublicationHookObservations) { h.Facts.RevisionID = "foreign" },
+		func(h *state.PublicationHookObservations) { h.Facts.CapturedAt = h.Facts.CapturedAt.Add(time.Second) },
+		func(h *state.PublicationHookObservations) { h.Facts.AdmissionContext = "foreign" },
+	} {
+		wrong := input
+		h := *input.HookObservations
+		mutate(&h)
+		wrong.HookObservations = &h
+		available := budget.Available()
+		if _, _, _, _, _, err := state.RefilterPublicationInput(t.Context(), scan.reg, adapter, origin, body, wrong, 0, packed.Bytes, frozen, oldPolicy, nextPolicy, config.SkillEvidenceBody, budget); !errors.Is(err, state.ErrDurableStorageRecovery) {
+			t.Fatal("wrong frozen observation accepted", err)
+		}
+		if budget.Available() != available {
+			t.Fatal("rejected observation leaked loan")
+		}
+	}
+	budget.Release(int64(len(packed.Bytes)))
+}
+
+func TestPublicationPrivacySettlementMintBudgetRefusalRetainsFullPending(t *testing.T) {
+	scan, original := privacyJournal(t)
+	defer scan.releaseRetained()
+	scan.opts.SkillEvidence = config.SkillEvidenceNone
+	p, err := scan.stricterHistorySuccessor(original, false)
+	if err != nil || p.ValidatePublication() != nil || p.Commit == nil || p.Commit.Purpose != state.PublicationPrivacyRewrite {
+		t.Fatal("actual ready privacy transaction missing", err)
+	}
+	if err = scan.local.SavePending(scan.id(), p); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(scan.local.Home(), "pending", scan.id()+".json")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The same validation loan succeeds first; mint then needs independently
+	// owned projection facts while that loan is still held. Leave one byte
+	// less than that overlap, rather than merely failing the entry decoder.
+	metadataBytes := len(p.MetadataBytes) + len(p.Preparation.OriginMetadata) + len(p.Preparation.PrivacyPreviousMetadata)
+	if p.Preparation.Migration != nil {
+		metadataBytes += len(p.Preparation.Migration.PreviousMetadata)
+	}
+	facts := len(p.Sources) + len(p.Progress.Outputs) + len(p.Preparation.Inputs)
+	validationLoan := int64(8*metadataBytes + (facts+1)*(16<<10))
+	projectionFacts := int64(len(p.Preparation.Inputs)+1) * (16 << 10)
+	for _, canceled := range []bool{false, true} {
+		ctx, cancel := context.WithCancel(t.Context())
+		budget := agentapi.NewNativeReadBudget(validationLoan + projectionFacts - 1)
+		local, closeScope := scan.local.WithReadBudget(ctx, budget)
+		published, err := local.LoadPublishedState(scan.id())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if canceled {
+			cancel()
+		}
+		err = published.SaveCommittedPublication(p, scan.now)
+		if canceled && !errors.Is(err, context.Canceled) || !canceled && !errors.Is(err, agentapi.ErrReadBudget) {
+			t.Fatal("mint failed with wrong refusal", canceled, err)
+		}
+		if published.Found() {
+			t.Fatal("failed mint partially selected publication")
+		}
+		after, err := os.ReadFile(path)
+		if err != nil || !bytes.Equal(before, after) {
+			t.Fatal("full pending changed on failed mint", err)
+		}
+		if _, err := os.Stat(publishedPath(scan.local, scan.id())); !errors.Is(err, os.ErrNotExist) {
+			t.Fatal("failed mint installed published control", err)
+		}
+		closeScope()
+		cancel()
+		if used, _ := budget.Charged(); used != 0 {
+			t.Fatal("mint ownership leaked", used)
+		}
 	}
 }

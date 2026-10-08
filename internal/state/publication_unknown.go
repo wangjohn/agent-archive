@@ -1,47 +1,207 @@
 package state
 
-import "encoding/json"
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"github.com/wangjohn/agent-archive/internal/archive"
+	"io"
+	"reflect"
+)
 
-// Future publication fields cannot become a legacy ready transaction simply
-// because a configuration is missing or damaged. Reject them in the existing
-// decode, without another body read or a second selecting schema.
-type unsupportedPublicationField struct{}
-
-func (*unsupportedPublicationField) UnmarshalJSON([]byte) error { return ErrDurableStorageRecovery }
-
-type unsupportedPendingFields struct {
-	Commit         unsupportedPublicationField `json:"commit"`
-	Sources        unsupportedPublicationField `json:"sources"`
-	JournalVersion unsupportedPublicationField `json:"journal_version"`
-	Phase          unsupportedPublicationField `json:"phase"`
-	Preparation    unsupportedPublicationField `json:"preparation"`
-	Progress       unsupportedPublicationField `json:"progress"`
-	Cleanup        unsupportedPublicationField `json:"cleanup"`
-	AdmissionStage unsupportedPublicationField `json:"admission_stage"`
+// Closed protocols never let future authority fall through to a legacy record.
+func closedPublicationDecode(data []byte, dst any, fields ...map[string]bool) error {
+	if err := uniquePublicationJSON(json.NewDecoder(bytes.NewReader(data)), 0, fields...); err != nil {
+		return errors.Join(ErrDurableStorageRecovery, err)
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(dst); err != nil {
+		return errors.Join(ErrDurableStorageRecovery, err)
+	}
+	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
+		return ErrDurableStorageRecovery
+	}
+	return nil
 }
 
-type unsupportedPublishedFields struct {
-	PublicationVersion unsupportedPublicationField `json:"publication_version"`
-	Commit             unsupportedPublicationField `json:"commit"`
-	Sources            unsupportedPublicationField `json:"sources"`
-	PredecessorUnknown unsupportedPublicationField `json:"predecessor_unknown"`
-}
-
-// UnmarshalJSON refuses foreign publication authority before legacy fallback.
 func (p *PendingPublication) UnmarshalJSON(data []byte) error {
 	type pendingJSON PendingPublication
-	wire := struct {
-		*pendingJSON
-		unsupportedPendingFields
-	}{pendingJSON: (*pendingJSON)(p)}
-	return json.Unmarshal(data, &wire)
+	var decoded pendingJSON
+	if err := closedPublicationDecode(data, &decoded); err != nil {
+		return err
+	}
+	*p = PendingPublication(decoded)
+	if p.JournalVersion == 2 {
+		if len(p.SourceBytes) != 0 {
+			return ErrDurableStorageRecovery
+		}
+		if len(p.Sources) > 0 && p.Sources[0].Payload.Kind == "inline" {
+			p.SourceBytes = p.Sources[0].Payload.Inline
+		}
+		if err := p.validatePublicationEnvelope(); err != nil {
+			return errors.Join(ErrDurableStorageRecovery, err)
+		}
+	} else if p.JournalVersion != 0 || p.Phase != "" || p.Preparation != nil || p.Progress != nil || p.Cleanup != nil || p.Commit != nil && p.Commit.Version != 1 {
+		return ErrDurableStorageRecovery
+	}
+	return nil
 }
 
 func (p *publishedState) UnmarshalJSON(data []byte) error {
 	type publishedJSON publishedState
-	wire := struct {
-		*publishedJSON
-		unsupportedPublishedFields
-	}{publishedJSON: (*publishedJSON)(p)}
-	return json.Unmarshal(data, &wire)
+	var decoded publishedJSON
+	fields := make(map[string]bool)
+	if err := closedPublicationDecode(data, &decoded, fields); err != nil {
+		return err
+	}
+	*p = publishedState(decoded)
+	if p.PublicationVersion == 2 {
+		return p.validateSelectingPublished()
+	}
+	// Claimed authority cannot disappear through null/empty JSON values. A
+	// complete legacy Commit1 is the only supported legacy selecting variant.
+	if fields["commit"] || fields["sources"] || fields["predecessor_unknown"] {
+		if p.Commit == nil || p.Commit.Version != 1 || len(p.Sources) == 0 || p.PredecessorUnknown {
+			return ErrDurableStorageRecovery
+		}
+		bundle, _, found := p.resolveLastPublished()
+		if !found || len(p.MetadataBytes) == 0 {
+			return ErrDurableStorageRecovery
+		}
+		active := p.Sources[0]
+		var metadata archive.Metadata
+		if err := json.Unmarshal(p.MetadataBytes, &metadata); err != nil {
+			return errors.Join(ErrDurableStorageRecovery, err)
+		}
+		key, err := archive.MetadataObjectKey(metadata.Harness.Name, metadata.SessionID)
+		if err != nil {
+			return errors.Join(ErrDurableStorageRecovery, err)
+		}
+		sources := make([]PublicationSource, len(p.Sources))
+		for i, ref := range p.Sources {
+			sources[i].Reference = ref
+		}
+		pending := PendingPublication{MetadataKey: key, Commit: p.Commit, Sources: sources, Bundle: bundle, SourceKey: active.Key, SourceSHA256: active.SHA256, SourceSize: active.CompressedBytes, MetadataOnly: true, MetadataBytes: p.MetadataBytes}
+		if err := pending.validateReadyPublication(); err != nil {
+			return errors.Join(ErrDurableStorageRecovery, err)
+		}
+	}
+	if p.PublicationVersion != 0 || p.SettledPrivacy != nil || p.Preparation != nil || len(p.Payloads) != 0 || p.Cleanup != nil || p.Commit != nil && p.Commit.Version != 1 {
+		return ErrDurableStorageRecovery
+	}
+	return nil
+}
+
+func (p publishedState) validateSelectingPublished() error {
+	derived := p.summary()
+	if p.Summary == nil || !reflect.DeepEqual(*p.Summary, derived) {
+		return ErrDurableStorageRecovery
+	}
+	if p.PublicationVersion != 2 || p.Commit == nil || p.Commit.Version != 2 || p.Commit.PayloadSetSHA256 != payloadSetSHA(p.Payloads) || p.Commit.MetadataSHA256 != publicationSHA256(p.MetadataBytes) || p.Commit.PrivacySHA256 != privacyReceiptsSHA(p.PrivacyReceipts) {
+		return ErrDurableStorageRecovery
+	}
+	if (p.Preparation == nil) == (p.SettledPrivacy == nil) {
+		return ErrDurableStorageRecovery
+	}
+	if p.SettledPrivacy != nil {
+		if err := p.SettledPrivacy.validate(p); err != nil {
+			return err
+		}
+	} else {
+		if p.Commit.SettledPrivacySHA256 != "" || p.Commit.PreparationSHA256 != p.Preparation.SHA256 || p.Preparation.SHA256 != preparationSHA(*p.Preparation) {
+			return ErrDurableStorageRecovery
+		}
+		if err := p.Preparation.validate(); err != nil {
+			return err
+		}
+		if p.Preparation.Migration != nil && p.Preparation.Migration.NextMetadataSHA256 != publicationSHA256(p.MetadataBytes) {
+			return ErrDurableStorageRecovery
+		}
+		if p.Commit.Purpose == PublicationPrivacyRewrite {
+			if err := validatePrivacyCorrespondence(*p.Preparation, p.Payloads, p.PrivacyReceipts, p.MetadataBytes, privacyPreviousBody(*p.Preparation)); err != nil {
+				return err
+			}
+		} else if len(p.PrivacyReceipts) > 0 {
+			return ErrDurableStorageRecovery
+		}
+	}
+	// The selecting bundle survives cache/block candidates in LastPublished.
+	bundle, _, found := p.resolveLastPublished()
+	if !found {
+		return ErrDurableStorageRecovery
+	}
+	if len(p.Payloads) == 0 {
+		return ErrDurableStorageRecovery
+	}
+	current := p.Payloads[0].Reference
+	commit := *p.Commit
+	commit.SettledPrivacySHA256 = ""
+	pending := PendingPublication{JournalVersion: 2, Commit: &commit, Sources: p.Payloads, Bundle: bundle, SourceKey: current.Key, SourceSHA256: current.SHA256, SourceSize: current.CompressedBytes, MetadataOnly: true, MetadataBytes: p.MetadataBytes}
+	// Published validation uses private Commit2+payload witnesses without a mutable preparation cursor.
+	pending.SourceBytes = p.Payloads[0].Payload.Inline
+	var metadata struct {
+		SessionID string `json:"session_id"`
+		Harness   struct {
+			Name string `json:"name"`
+		} `json:"harness"`
+	}
+	if err := json.Unmarshal(p.MetadataBytes, &metadata); err != nil {
+		return err
+	}
+	key, err := archive.MetadataObjectKey(metadata.Harness.Name, metadata.SessionID)
+	if err != nil {
+		return err
+	}
+	pending.MetadataKey = key
+	if err := pending.validateReadyPublication(); err != nil {
+		return errors.Join(ErrDurableStorageRecovery, err)
+	}
+	return nil
+}
+
+// uniquePublicationJSON rejects duplicate authority keys before typed decoding.
+func uniquePublicationJSON(d *json.Decoder, depth int, topFields ...map[string]bool) error {
+	if depth > 128 {
+		return ErrDurableStorageRecovery
+	}
+	token, err := d.Token()
+	if err != nil {
+		return err
+	}
+	delimiter, ok := token.(json.Delim)
+	if !ok {
+		return nil
+	}
+	switch delimiter {
+	case '{':
+		keys := make(map[string]bool)
+		for d.More() {
+			key, err := d.Token()
+			if err != nil {
+				return err
+			}
+			name, ok := key.(string)
+			if !ok || keys[name] {
+				return ErrDurableStorageRecovery
+			}
+			keys[name] = true
+			if depth == 0 && len(topFields) > 0 {
+				topFields[0][name] = true
+			}
+			if err = uniquePublicationJSON(d, depth+1); err != nil {
+				return err
+			}
+		}
+	case '[':
+		for d.More() {
+			if err = uniquePublicationJSON(d, depth+1); err != nil {
+				return err
+			}
+		}
+	default:
+		return ErrDurableStorageRecovery
+	}
+	_, err = d.Token()
+	return err
 }

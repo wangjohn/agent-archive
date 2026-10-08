@@ -1,6 +1,7 @@
 package collector
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -17,6 +18,34 @@ import (
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
+// injectPublishedMetadata preserves the leading protocol/summary and frozen
+// selecting proof while injecting the exact unsafe body a reader must refuse.
+// Production CacheMetadata cannot persist this deliberately invalid selection.
+func injectPublishedMetadata(t *testing.T, local *state.Store, id string, previous, next []byte) {
+	t.Helper()
+	path := publishedPath(local, id)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldToken, err := json.Marshal(previous)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newToken, err := json.Marshal(next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldField := append([]byte(`"metadata_bytes":`), oldToken...)
+	newField := append([]byte(`"metadata_bytes":`), newToken...)
+	if bytes.Count(raw, oldField) != 1 {
+		t.Fatal("unsafe fixture did not find exact selecting metadata field")
+	}
+	if err := os.WriteFile(path, bytes.Replace(raw, oldField, newField, 1), 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 const grownTranscript = codexTranscript + "\n" + `{"type":"response_item","id":"m2","payload":{"type":"message","role":"assistant","content":"more"}}` + "\n"
 
 // editPublishedState rewrites session-1's published state as raw JSON, to
@@ -32,9 +61,12 @@ func editPublishedState(t *testing.T, local *state.Store, edit func(state map[st
 	if err := json.Unmarshal(data, &state); err != nil {
 		t.Fatal(err)
 	}
-	// These fixtures model legacy published files, which had no source-set identity.
-	delete(state, "commit")
-	delete(state, "sources")
+	// These fixtures model legacy published files, which had neither the new
+	// selecting source-set identity nor a version-2 preparation projection.
+	// Malformed version-2 controls are injected directly by their own tests.
+	for _, field := range []string{"publication_version", "commit", "sources", "predecessor_unknown", "preparation", "payloads", "privacy_receipts", "settled_privacy", "cleanup"} {
+		delete(state, field)
+	}
 	edit(state)
 	if data, err = json.Marshal(state); err != nil {
 		t.Fatal(err)

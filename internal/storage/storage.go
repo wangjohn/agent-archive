@@ -252,6 +252,12 @@ type VersionedGetter interface {
 	GetVersioned(context.Context, string) ([]byte, string, error)
 }
 
+// LimitedVersionedGetter returns one response's bytes and opaque validator under
+// a caller allocation bound. No separate HEAD can supply that validator.
+type LimitedVersionedGetter interface {
+	GetVersionedLimited(context.Context, string, int64) ([]byte, string, error)
+}
+
 // ObjectStatter is implemented by stores that can describe an object without
 // downloading it. Stat returns ErrNotFound for a missing object.
 type ObjectStatter interface {

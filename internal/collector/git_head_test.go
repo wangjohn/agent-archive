@@ -413,3 +413,10 @@ func TestStopCommitIsNotHiddenByARememberedFailure(t *testing.T) {
 		t.Error("a moved commit is hidden behind the remembered failure")
 	}
 }
+
+func (s *failingMetadataGets) GetVersionedLimited(ctx context.Context, key string, limit int64) ([]byte, string, error) {
+	if s.failing && strings.HasSuffix(key, "/metadata.json") {
+		return nil, "", errors.New("storage unavailable")
+	}
+	return s.MemoryStore.GetVersionedLimited(ctx, key, limit)
+}

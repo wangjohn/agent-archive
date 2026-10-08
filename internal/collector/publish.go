@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -74,7 +75,21 @@ func (s *sessionScan) block(reason state.BlockedReason, candidate *archive.Sourc
 // source in the ledger, the new published state, the covered request, and
 // finally the removal of the pending file.
 func (s *sessionScan) publishPending(pending state.PendingPublication) (sessionOutcome, error) {
-	if err := s.checkHistoryPublication(pending); err != nil {
+	endAttempt, attemptErr := s.beginPublicationAttempt()
+	if attemptErr != nil {
+		return outcomeSkipped, attemptErr
+	}
+	defer endAttempt()
+	if pending.History != nil && pending.History.Preparing {
+		return outcomeSkipped, archive.ErrHistoryMutationPending
+	}
+	if err := s.checkHistoryPublicationLocal(pending); err != nil {
+		return outcomeSkipped, err
+	}
+	if err := s.sealPending(&pending); err != nil {
+		return outcomeSkipped, err
+	}
+	if err := s.checkHistoryPublicationLocal(pending); err != nil {
 		return outcomeSkipped, err
 	}
 	if !pending.CarriesNoSource() && !storage.VerifySHA256(pending.SourceBytes, pending.SourceSHA256) {
@@ -89,36 +104,89 @@ func (s *sessionScan) publishPending(pending state.PendingPublication) (sessionO
 			return outcomeSkipped, fmt.Errorf("mark pending publication attempted: %w", err)
 		}
 	}
-	if pending.History != nil {
-		committed, err := s.checkFrozenHistoryMetadata(pending)
-		if err != nil {
-			return outcomeSkipped, err
+	readback, err := s.upload(pending)
+	if err != nil {
+		return outcomeSkipped, err
+	}
+	body, etag, err := readback.Consume(pending.MetadataKey, pending.MetadataBytes)
+	if err != nil {
+		return outcomeSkipped, err
+	}
+	if pending.History == nil {
+		frame := s.publicationAttempt
+		frame.verifiedCommit = nil
+		if frame.resolvedCommit == nil || *frame.resolvedCommit != *pending.Commit || frame.resolvedKey != pending.MetadataKey {
+			return outcomeSkipped, state.ErrDurableStorageRecovery
 		}
-		if !committed {
-			if err := s.recoverHistoryStages(pending); err != nil {
+		for i := range pending.Sources {
+			if !frame.resolved[i] {
+				return outcomeSkipped, state.ErrDurableStorageRecovery
+			}
+		}
+		for _, source := range pending.Sources {
+			if err := s.verifyHistorySource(s.ctx, source.Reference.Key, source.Reference.SHA256, source.Reference.CompressedBytes); err != nil {
 				return outcomeSkipped, err
 			}
 		}
-	}
-	if err := s.upload(pending); err != nil {
-		return outcomeSkipped, err
+		commit := *pending.Commit
+		frame.verifiedCommit = &commit
+		frame.verifiedKey = pending.MetadataKey
 	}
 	if pending.History != nil {
-		if err := s.verifyHistoryReadback(pending); err != nil {
+		metadata, err := s.frozenHistoryMetadata(pending)
+		if err != nil {
+			return outcomeSkipped, err
+		}
+		if err = s.verifyHistoryReferences(pending, metadata); err != nil {
 			return outcomeSkipped, err
 		}
 	}
-	return s.acknowledgePublication(pending, false)
+	return s.acknowledgePublicationReadback(pending, false, body, etag)
+
 }
 
 // acknowledgePublication follows verified exact readback. A committed privacy
 // retry keeps its journal until the all-reference successor replaces it durably.
 func (s *sessionScan) acknowledgePublication(pending state.PendingPublication, keepPending bool) (sessionOutcome, error) {
-	if err := listingindex.PublishRevision(s.ctx, s.remote, pending.MetadataKey, pending.MetadataBytes); err != nil {
-		s.warn(fmt.Errorf("listing maintenance pending: %w", err))
-	} else if err := s.local.RemoveListingRepair(s.id()); err != nil {
-		s.warn(err)
+	endAttempt, attemptErr := s.beginPublicationAttempt()
+	if attemptErr != nil {
+		return outcomeSkipped, attemptErr
 	}
+	defer endAttempt()
+	body, etag, err := storage.ReadPublicationMetadataRevision(s.ctx, publicationTransactionStore{ObjectStore: s.publicationRemote(), scan: s, pending: &pending}, pending.MetadataKey, int64(len(pending.MetadataBytes)))
+	if err != nil {
+		return outcomeSkipped, err
+	}
+	if pending.Commit == nil || storage.SHA256Hex(body) != pending.Commit.MetadataSHA256 {
+		return outcomeSkipped, storage.ErrPublicationConflict
+	}
+	return s.acknowledgePublicationReadback(pending, keepPending, body, etag)
+}
+
+func (s *sessionScan) acknowledgePublicationReadback(pending state.PendingPublication, keepPending bool, body []byte, etag string) (sessionOutcome, error) {
+	endAttempt, attemptErr := s.beginPublicationAttempt()
+	if attemptErr != nil {
+		return outcomeSkipped, attemptErr
+	}
+	defer endAttempt()
+	if pending.Commit == nil || storage.SHA256Hex(body) != pending.Commit.MetadataSHA256 {
+		return outcomeSkipped, storage.ErrPublicationConflict
+	}
+	var listingErr error
+	if etag == "" {
+		listingErr = storage.ErrVersionedReadUnavailable
+	} else {
+		revision, err := listingindex.NewRevision(pending.MetadataKey, body, etag)
+		if err != nil {
+			listingErr = err
+		} else {
+			listingErr = listingindex.RepairRevision(s.ctx, s.publicationRemote(), revision)
+		}
+	}
+	if listingErr != nil {
+		s.warn(fmt.Errorf("listing maintenance pending: %w", listingErr))
+	}
+
 	// The object this publication replaced is the one recorded when it was
 	// uploaded, never one rebuilt from its bundle now (see
 	// state.Published.LastPublishedSource). If it is unknown, only state from
@@ -161,15 +229,31 @@ func (s *sessionScan) acknowledgePublication(pending state.PendingPublication, k
 			s.warn(fmt.Errorf("record superseded source for cleanup: %w", err))
 		}
 	}
-	var saveErr error
-	if pending.MetadataOnly {
-		saveErr = s.published.SaveRepublishedMetadata(pending, s.now)
-	} else {
-		saveErr = s.published.SavePublication(pending.Bundle, s.now, pending.SourceReference(), pending.MetadataBytes)
+	closing, err := s.closePublicationReadback(pending)
+	if err != nil {
+		return outcomeSkipped, err
 	}
-	if err := saveErr; err != nil {
+	if keepPending {
+		err = closing.consumeBaselineOwed(s, pending)
+	} else {
+		err = closing.consume(s, pending)
+	}
+	if err != nil {
+		return outcomeSkipped, err
+	}
+
+	if err := s.published.SaveCommittedPublication(pending, s.now); err != nil {
 		return outcomeSkipped, fmt.Errorf("update published cache: %w", err)
 	}
+	// C may have indexed the exact response before a competing writer changes
+	// metadata. Keep its repair obligation until D and the full local save have
+	// both succeeded; neither a closing conflict nor a failed save settles it.
+	if listingErr == nil {
+		if err := s.local.RemoveListingRepair(s.id()); err != nil {
+			s.warn(err)
+		}
+	}
+
 	if pending.History != nil && pending.ScanSignature != nil && !keepPending {
 		proof := *pending.ScanSignature
 		summary := s.published.Summary()
@@ -185,12 +269,15 @@ func (s *sessionScan) acknowledgePublication(pending state.PendingPublication, k
 	if err := s.local.RemoveRefreshSkip(s.id()); err != nil {
 		return outcomeSkipped, err
 	}
-	if pending.RequestToken != "" {
+	if pending.RequestToken != "" && !keepPending {
 		if _, err := s.local.CompleteRequest(s.id(), pending.RequestToken); err != nil {
 			return outcomeSkipped, fmt.Errorf("complete published request: %w", err)
 		}
 	}
 	if !keepPending {
+		if err := s.local.SettlePublicationMigration(s.id(), pending); err != nil {
+			return outcomeSkipped, err
+		}
 		if err := s.local.RemovePending(s.id()); err != nil {
 			return outcomeSkipped, err
 		}
@@ -199,77 +286,93 @@ func (s *sessionScan) acknowledgePublication(pending state.PendingPublication, k
 }
 
 // upload writes a pending publication to storage.
-func (s *sessionScan) upload(pending state.PendingPublication) error {
+func (s *sessionScan) upload(pending state.PendingPublication) (*storage.ValidatedPublicationReadback, error) {
 	if err := s.local.SaveListingRepair(s.id(), state.ListingRepair{MetadataKey: pending.MetadataKey, DestinationID: s.reg.DestinationID}); err != nil {
-		return fmt.Errorf("journal listing repair: %w", err)
+		return nil, fmt.Errorf("journal listing repair: %w", err)
 	}
-	if pending.History != nil {
-		committed, err := s.checkFrozenHistoryMetadata(pending)
-		if err != nil {
-			return err
-		}
-		if committed {
-			return s.verifyHistoryReadback(pending)
-		}
-		if !pending.CarriesNoSource() {
-			if err := s.ensureHistorySource(pending.SourceKey, pending.SourceSHA256, pending.SourceBytes); err != nil {
-				return err
-			}
-		}
-		for _, stage := range pending.History.Sources {
-			mark := len(s.retainedReleases)
-			if !pending.CarriesNoSource() && stage.Reference == pending.SourceReference() {
-				continue
-			}
-			data, err := s.historyStage(stage)
-			if err != nil {
-				return err
-			}
-			if err := s.ensureHistorySource(stage.Reference.Key, stage.Reference.SHA256, data); err != nil {
-				return err
-			}
-			s.releaseRetainedAfter(mark)
-		}
-		var m archive.Metadata
-		if err := s.unmarshalRetained(pending.MetadataBytes, &m); err != nil {
-			return err
-		}
-		if err := s.verifyHistoryReferences(pending, m); err != nil {
-			return err
-		}
-		if err := s.checkHistoryPublication(pending); err != nil {
-			return err
-		}
-		if committed, err := s.checkFrozenHistoryMetadata(pending); err != nil {
-			return err
-		} else if committed {
-			return s.verifyHistoryReadback(pending)
-		}
-		return s.remote.Put(s.ctx, pending.MetadataKey, pending.MetadataBytes)
+	if err := pending.ValidatePublication(); err != nil {
+		return nil, err
+	}
+	var metadata archive.Metadata
+	if err := s.unmarshalRetained(pending.MetadataBytes, &metadata); err != nil {
+		return nil, err
 	}
 	sources := make([]storage.SourcePublication, len(pending.Sources))
 	for i, source := range pending.Sources {
-		payload := source.Bytes
-		if i == 0 {
-			payload = pending.SourceBytes
-		}
-		sources[i] = storage.SourcePublication{Key: source.Reference.Key, SHA256: source.Reference.SHA256, Size: source.Reference.CompressedBytes, Bytes: payload}
+		sources[i] = storage.SourcePublication{Key: source.Reference.Key, SHA256: source.Reference.SHA256, Size: source.Reference.CompressedBytes}
 	}
 	prior := storage.MetadataPredecessor{Known: pending.Commit.Predecessor != state.PredecessorUnknown, Exists: pending.Commit.Predecessor == state.PredecessorPresent, SHA256: pending.Commit.PredecessorSHA256}
-	return storage.PutSourceSetThenMetadata(s.ctx, s.remote, sources, pending.MetadataKey, pending.MetadataBytes, prior, s.opts.Retry)
+	frame := s.publicationAttempt
+	if frame == nil || len(pending.Sources) > 65 {
+		return nil, state.ErrDurableStorageRecovery
+	}
+	commit := *pending.Commit
+	frame.resolvedCommit = &commit
+	frame.resolvedKey = pending.MetadataKey
+	frame.resolved = [65]bool{}
+	resolver := func(ctx context.Context, index int) ([]byte, func(), error) {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
+		source := pending.Sources[index]
+		mark := len(s.retainedReleases)
+		release := func() { s.releaseRetainedAfter(mark) }
+		var data []byte
+		var err error
+		switch source.Payload.Kind {
+		case "inline":
+			data = source.Payload.Inline
+		case "remote":
+			data, err = s.historyGet(source.Reference.Key, int64(source.Reference.CompressedBytes))
+		case "history-stage":
+			stage := state.PendingSource{Reference: source.Reference, Name: source.Reference.SHA256 + ".gz"}
+			data, err = s.historyStage(stage)
+			if errors.Is(err, os.ErrNotExist) {
+				data, err = s.historyGet(source.Reference.Key, int64(source.Reference.CompressedBytes))
+				if err == nil {
+					_, err = s.local.StagePublicationSource(s.id(), source.Reference, data)
+				}
+			}
+		default:
+			err = errors.New("publication payload is unavailable")
+		}
+		if err != nil {
+			release()
+			return nil, nil, err
+		}
+		if len(data) != source.Reference.CompressedBytes || !storage.VerifySHA256(data, source.Reference.SHA256) {
+			release()
+			return nil, nil, storage.ErrChecksumMismatch
+		}
+		if index == 0 {
+			_, err = s.decodeReferenced(metadata, data)
+		} else {
+			_, err = s.decodeRevision(metadata, source.Selection.RevisionID, data)
+		}
+		if err != nil {
+			release()
+			return nil, nil, err
+		}
+		frame.resolved[index] = true
+		if source.Payload.Kind == "remote" {
+			data = nil
+		} // Exact read proof never supplies rewrite bytes.
+		return data, release, nil
+	}
+	return storage.PutResolvedSourceSetThenMetadataReadback(s.ctx, publicationTransactionStore{ObjectStore: s.publicationRemote(), scan: s, pending: &pending}, sources, pending.MetadataKey, pending.MetadataBytes, prior, s.opts.Retry, resolver, s.verifyHistorySource)
 }
 
 // ensureHistorySource reuses exact immutable remote bytes on an interrupted
 // source-first attempt. Typed all-reference verification still precedes metadata.
 func (s *sessionScan) ensureHistorySource(key, sha string, data []byte) error {
-	return storage.PutVerifiedSource(s.ctx, s.remote, key, sha, data, s.opts.Retry, s.verifyHistorySource)
+	return storage.PutVerifiedSource(s.ctx, s.publicationRemote(), key, sha, data, s.opts.Retry, s.verifyHistorySource)
 }
 
 // verifyHistorySource keeps HEAD checksum verification cheap. Older/multipart
 // objects without a digest need an exact-size charged read. Its bytes end before
 // retrying or moving to a sibling reference.
 func (s *sessionScan) verifyHistorySource(ctx context.Context, key, sha string, size int) error {
-	if statter, ok := s.remote.(storage.ObjectStatter); ok {
+	if statter, ok := s.publicationRemote().(storage.ObjectStatter); ok {
 		info, err := statter.Stat(ctx, key)
 		if err != nil {
 			return err
@@ -296,24 +399,50 @@ func (s *sessionScan) verifyHistorySource(ctx context.Context, key, sha string, 
 // sealPending upgrades legacy replay only from retained local committed evidence.
 func (s *sessionScan) sealPending(p *state.PendingPublication) error {
 	policy, err := s.publicationPolicy(p.Bundle)
+	if p.History != nil && p.History.Preparing {
+		adapter, e := sourceAdapter(s.opts.Sources, s.reg.Harness.Name)
+		if e != nil {
+			return e
+		}
+		if p.History.FilterVersion != archive.FilterVersion || p.History.AdapterVersion != adapter.Version() || pendingSkillMode(p.SkillEvidence) != s.opts.skillEvidence() {
+			return errors.New("preparation policy no longer current")
+		}
+		policy = storage.SHA256Hex([]byte(archive.FilterVersion + "\x00" + adapter.Version() + "\x00" + string(s.opts.skillEvidence())))
+		err = nil
+	}
 	if err != nil {
 		return err
 	}
-	if p.Commit != nil {
+	if p.JournalVersion == 2 && p.Commit != nil {
 		if p.Commit.DestinationID != s.reg.DestinationID || p.Commit.PolicyContext != policy || p.Commit.AdmissionContext != s.publicationAdmission() {
 			return errors.New("publication destination, admission or filter policy changed; retain pending evidence and reconcile")
 		}
 		return p.ValidatePublication()
 	}
 	prior := s.published.PublicationPredecessor()
-	if err := s.bindPublicationContinuity(&prior, *p); err != nil {
-		return err
-	}
 	purpose := state.PublicationCapture
+	if p.Preparation != nil {
+		purpose = p.Preparation.Purpose
+	} else if p.History != nil && p.History.Preparing {
+		for _, input := range p.History.Inputs {
+			if input.FilterVersion != archive.FilterVersion {
+				purpose = state.PublicationPrivacyRewrite
+				break
+			}
+		}
+		if p.Bundle.Capture.FilterVersion != archive.FilterVersion || p.Bundle.Capture.AdapterVersion != p.History.AdapterVersion {
+			purpose = state.PublicationPrivacyRewrite
+		}
+	}
+	if purpose != state.PublicationPrivacyRewrite {
+		if err := s.bindPublicationContinuity(&prior, *p); err != nil {
+			return err
+		}
+	}
 	if p.MetadataOnly {
 		purpose = state.PublicationMetadata
 	}
-	sealed, err := state.PreparePublication(*p, prior, s.reg.DestinationID, s.publicationAdmission(), policy, purpose)
+	sealed, err := state.PreparePublicationV2(*p, prior, s.reg.DestinationID, s.publicationAdmission(), policy, purpose)
 	if err != nil {
 		return fmt.Errorf("prepare publication: %w", err)
 	}
@@ -326,10 +455,14 @@ func (s *sessionScan) sealPending(p *state.PendingPublication) error {
 }
 
 func (s *sessionScan) savePending(p *state.PendingPublication) error {
-	if p.Commit == nil {
-		return s.sealPending(p)
+	ready := p.JournalVersion == 2 && p.Commit != nil
+	if err := s.sealPending(p); err != nil {
+		return err
 	}
-	return s.local.SavePending(s.id(), *p)
+	if ready {
+		return s.local.SavePending(s.id(), *p)
+	}
+	return nil
 }
 
 func (s *sessionScan) publicationPolicy(bundle archive.SourceBundle) (string, error) {

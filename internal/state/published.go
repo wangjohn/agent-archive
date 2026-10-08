@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/config"
 )
 
 // CacheStatus distinguishes why a bundle sits in the local published cache,
@@ -77,19 +78,26 @@ func (r BlockedReason) Recoverable() bool { return r == BlockedReasonTranscriptM
 // when that happened, and why the bundle is in the state it's in. It is the
 // JSON of published/<id>.json.
 type publishedState struct {
+	settlePrivacy      bool
+	PublicationVersion int `json:"publication_version,omitempty"`
 	// Summary restates, ahead of everything else in the file, the few facts
 	// a caller that is not scanning the session needs (see
 	// LoadPublishedSummary), so they can be read without decoding the source
 	// bundles that follow. write keeps it in step; state written before it
 	// existed has none and is decoded in full instead.
-	Summary            *PublishedSummary         `json:"summary,omitempty"`
-	Commit             *PublicationCommit        `json:"commit,omitempty"`
-	Sources            []archive.SourceReference `json:"sources,omitempty"`
-	PredecessorUnknown bool                      `json:"predecessor_unknown,omitempty"`
-	MetadataBytes      []byte                    `json:"metadata_bytes,omitempty"`
-	Bundle             archive.SourceBundle      `json:"bundle"`
-	PublishedAt        time.Time                 `json:"published_at"`
-	Status             CacheStatus               `json:"status"`
+	Summary            *PublishedSummary          `json:"summary,omitempty"`
+	PrivacyReceipts    []PrivacySource            `json:"privacy_receipts,omitempty"`
+	SettledPrivacy     *SettledPrivacyPreparation `json:"settled_privacy,omitempty"`
+	Preparation        *PreparationAuthority      `json:"preparation,omitempty"`
+	Payloads           []PublicationSource        `json:"payloads,omitempty"`
+	Cleanup            *CleanupProgress           `json:"cleanup,omitempty"`
+	Commit             *PublicationCommit         `json:"commit,omitempty"`
+	Sources            []archive.SourceReference  `json:"sources,omitempty"`
+	PredecessorUnknown bool                       `json:"predecessor_unknown,omitempty"`
+	MetadataBytes      []byte                     `json:"metadata_bytes,omitempty"`
+	Bundle             archive.SourceBundle       `json:"bundle"`
+	PublishedAt        time.Time                  `json:"published_at"`
+	Status             CacheStatus                `json:"status"`
 	// BlockedReason is set only while Status is CacheStatusBlocked.
 	BlockedReason BlockedReason `json:"blocked_reason,omitempty"`
 	// PreBlockStatus is the status a recoverable block replaced, so clearing
@@ -361,7 +369,7 @@ func (p publishedState) next(bundle archive.SourceBundle, publishedAt time.Time,
 	if len(metadata) == 0 {
 		metadata = p.MetadataBytes
 	}
-	next := publishedState{Commit: commit, Sources: sources, PredecessorUnknown: p.PredecessorUnknown, Bundle: bundle, PublishedAt: publishedAt, Status: status, BlockedReason: reason, PreBlockStatus: preBlock, DeferredHookEvidence: held, LastPublished: last, MetadataBytes: metadata}
+	next := publishedState{PublicationVersion: p.PublicationVersion, PrivacyReceipts: p.PrivacyReceipts, SettledPrivacy: p.SettledPrivacy, Preparation: p.Preparation, Payloads: p.Payloads, Cleanup: p.Cleanup, Commit: commit, Sources: sources, PredecessorUnknown: p.PredecessorUnknown, Bundle: bundle, PublishedAt: publishedAt, Status: status, BlockedReason: reason, PreBlockStatus: preBlock, DeferredHookEvidence: held, LastPublished: last, MetadataBytes: metadata}
 	if p.AgeFrom != nil && p.AgeFrom.For.Equal(next.captureAge(bundle, metadata)) {
 		next.AgeFrom = p.AgeFrom
 	}
@@ -431,7 +439,29 @@ func (p *Published) write(next publishedState) error {
 		return err
 	}
 	next.Summary = &summary
-	if err := p.store.writeCompact(p.store.publishedPath(p.id), next); err != nil {
+	var writeErr error
+	if next.PublicationVersion == 2 {
+		if err := p.store.validateSelectingPublishedBudgeted(next); err != nil {
+			return err
+		}
+		writeErr = config.WithPublicationComposition(p.store.home, func(g config.PublicationCompositionGuard) error {
+			storage, err := g.Storage(p.store.home)
+			if err != nil {
+				return err
+			}
+			if next.settlePrivacy && next.Preparation != nil && next.Commit != nil && next.Commit.Purpose == PublicationPrivacyRewrite {
+				var e error
+				next, e = p.store.mintSettledPrivacy(next)
+				if e != nil {
+					return e
+				}
+			}
+			return p.store.writeDurableGuard(p.store.durableContext(), storage, filepath.Join("published", p.id+".json"), next)
+		})
+	} else {
+		writeErr = p.store.writeCompact(p.store.publishedPath(p.id), next)
+	}
+	if err := writeErr; err != nil {
 		return err
 	}
 	p.state, p.found = next, true
@@ -506,6 +536,10 @@ func (s *Store) LoadPublishedSummary(archiveSessionID string) (summary Published
 // an older file without one, or anything unexpected, all of which the
 // caller answers with a full decode.
 func readLeadingSummary(reader io.Reader) (summary PublishedSummary, ok bool, err error) {
+	return readLeadingSummaryProtocol(reader, false)
+}
+
+func readLeadingSummaryProtocol(reader io.Reader, composition bool) (summary PublishedSummary, ok bool, err error) {
 	decoder := json.NewDecoder(bufio.NewReaderSize(reader, 4096))
 	if token, err := decoder.Token(); err != nil || token != json.Delim('{') {
 		return summary, false, errors.Join(io.ErrUnexpectedEOF, err)
@@ -515,7 +549,14 @@ func readLeadingSummary(reader io.Reader) (summary PublishedSummary, ok bool, er
 		return summary, false, err
 	}
 	if key == "publication_version" {
-		return summary, false, ErrDurableStorageRecovery
+		var version int
+		if err := decoder.Decode(&version); err != nil || version != 2 || !composition {
+			return summary, false, ErrDurableStorageRecovery
+		}
+		key, err = decoder.Token()
+		if err != nil {
+			return summary, false, err
+		}
 	}
 	if key != "summary" {
 		return summary, false, nil
@@ -716,6 +757,12 @@ func (p *Published) CacheMetadata(metadata []byte) error {
 		return fmt.Errorf("read published state %q: %w", p.id, os.ErrNotExist)
 	}
 	if bytes.Equal(p.state.MetadataBytes, metadata) {
+		return nil
+	}
+	// A fetched remote legacy body cannot supply the lost durable predecessor.
+	// The caller can derive from its borrowed response during this pass, while
+	// the durable cache remains unknown across restart.
+	if p.state.PublicationVersion == 0 && p.state.Commit == nil && len(p.state.MetadataBytes) == 0 && len(metadata) > 0 {
 		return nil
 	}
 	next := p.state

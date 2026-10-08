@@ -22,7 +22,8 @@ const (
 	// PublicationCapture publishes a validated selected source snapshot.
 	PublicationCapture PublicationPurpose = "capture"
 	// PublicationMetadata refreshes metadata over unchanged retained sources.
-	PublicationMetadata PublicationPurpose = "metadata"
+	PublicationMetadata       PublicationPurpose = "metadata"
+	PublicationPrivacyRewrite PublicationPurpose = "privacy-rewrite"
 )
 
 // PredecessorState distinguishes absent metadata from unavailable evidence.
@@ -59,20 +60,26 @@ type PublicationContinuity struct {
 // at a time and release only after local commit and covered request completion.
 type PublicationSource struct {
 	Reference archive.SourceReference `json:"reference"`
+	Selection PublicationSelection    `json:"selection,omitempty"`
+	Payload   PublicationPayload      `json:"payload,omitempty"`
 	Bytes     []byte                  `json:"bytes,omitempty"`
 }
 
 // PublicationCommit binds replay to the complete source set and admitted context.
 type PublicationCommit struct {
-	Version           int                `json:"version"`
-	MetadataSHA256    string             `json:"metadata_sha256"`
-	SourceSetSHA256   string             `json:"source_set_sha256"`
-	Predecessor       PredecessorState   `json:"predecessor"`
-	PredecessorSHA256 string             `json:"predecessor_sha256,omitempty"`
-	DestinationID     string             `json:"destination_id,omitempty"`
-	AdmissionContext  string             `json:"admission_context,omitempty"`
-	PolicyContext     string             `json:"policy_context"`
-	Purpose           PublicationPurpose `json:"purpose"`
+	SettledPrivacySHA256 string             `json:"settled_privacy_sha256,omitempty"`
+	PrivacySHA256        string             `json:"privacy_sha256,omitempty"`
+	PayloadSetSHA256     string             `json:"payload_set_sha256,omitempty"`
+	PreparationSHA256    string             `json:"preparation_sha256,omitempty"`
+	Version              int                `json:"version"`
+	MetadataSHA256       string             `json:"metadata_sha256"`
+	SourceSetSHA256      string             `json:"source_set_sha256"`
+	Predecessor          PredecessorState   `json:"predecessor"`
+	PredecessorSHA256    string             `json:"predecessor_sha256,omitempty"`
+	DestinationID        string             `json:"destination_id,omitempty"`
+	AdmissionContext     string             `json:"admission_context,omitempty"`
+	PolicyContext        string             `json:"policy_context"`
+	Purpose              PublicationPurpose `json:"purpose"`
 }
 
 func publicationSHA256(data []byte) string {
@@ -144,11 +151,23 @@ func (p PendingPublication) validatePublicationPredecessor(prior PublicationPred
 		if previous.SessionID != next.SessionID || previous.NativeSessionID != next.NativeSessionID || previous.ProjectID != next.ProjectID || previous.MachineID != next.MachineID {
 			return errors.New("publication cannot change committed ownership")
 		}
+		if purpose == PublicationPrivacyRewrite {
+			if p.Preparation == nil {
+				return ErrDurableStorageRecovery
+			}
+			return validatePrivacyCorrespondence(*p.Preparation, p.Sources, p.privacyReceipts(), p.MetadataBytes, prior.Body)
+		}
 		if previous.History != nil && next.History != nil && previous.History.CurrentRevision == next.History.CurrentRevision && previous.SourceBundle != next.SourceBundle {
 			proof := prior.SameRevisionContinuity
 			if proof == nil || proof.PreviousSourceSHA256 != previous.SourceBundle.SHA256 || proof.NextSourceSHA256 != next.SourceBundle.SHA256 {
 				return errors.New("same revision update requires provider-approved continuity; retry selection validation")
 			}
+		}
+		if previous.History == nil && next.History != nil && p.Preparation != nil && p.Preparation.Migration != nil {
+			if err := p.Preparation.Migration.validate(previous, next, prior.Body, p.MetadataBytes, destination, admission, policy); err != nil {
+				return err
+			}
+			return nil
 		}
 		if err := archive.ValidateRevisionTransition(previous, next, prior.Bundle, p.Bundle); err != nil {
 			return err
@@ -165,8 +184,15 @@ func (p PendingPublication) validatePublicationPredecessor(prior PublicationPred
 
 // ValidatePublication checks every local replay payload and exact metadata binding.
 func (p PendingPublication) ValidatePublication() error {
+	if p.JournalVersion == 2 {
+		return p.validatePublicationEnvelope()
+	}
+	return p.validateReadyPublication()
+}
+
+func (p PendingPublication) validateReadyPublication() error {
 	c := p.Commit
-	if c == nil || c.Version != 1 || (c.Purpose != PublicationCapture && c.Purpose != PublicationMetadata) {
+	if c == nil || (c.Version != 1 && c.Version != 2) || (c.Purpose != PublicationCapture && c.Purpose != PublicationMetadata && c.Purpose != PublicationPrivacyRewrite) {
 		return errors.New("pending source-set journal is incomplete")
 	}
 	if c.Predecessor != PredecessorAbsent && c.Predecessor != PredecessorPresent && c.Predecessor != PredecessorUnknown {
@@ -184,6 +210,33 @@ func (p PendingPublication) ValidatePublication() error {
 	}
 	if err := p.validatePublicationOwnership(refs[0]); err != nil {
 		return err
+	}
+	if p.JournalVersion == 2 {
+		var metadata archive.Metadata
+		if err := json.Unmarshal(p.MetadataBytes, &metadata); err != nil {
+			return err
+		}
+		total := 0
+		expected, err := selectedPublicationSources(p, c.DestinationID, c.AdmissionContext)
+		if err != nil {
+			return err
+		}
+		for i, source := range p.Sources {
+			if source.Selection != expected[i].Selection {
+				return ErrDurableStorageRecovery
+			}
+			if source.Reference != refs[i] || len(source.Bytes) != 0 {
+				return ErrDurableStorageRecovery
+			}
+			if err := validatePublicationPayload(source, metadata, c.DestinationID, c.AdmissionContext); err != nil {
+				return err
+			}
+			total += len(source.Payload.Inline)
+		}
+		if total > MaxPublicationReplayBytes {
+			return ErrDurableStorageCapacity
+		}
+		return nil
 	}
 	return p.validatePublicationPayloads(refs)
 }
@@ -305,6 +358,15 @@ func attachPublication(next publishedState, pending PendingPublication) (publish
 	}
 	commit := *pending.Commit
 	next.Commit = &commit
+	if commit.Version == 2 {
+		next.PublicationVersion = 2
+		next.PrivacyReceipts = pending.privacyReceipts()
+		next.Preparation = pending.Preparation
+		next.SettledPrivacy = nil
+		next.settlePrivacy = pending.History == nil || !pending.History.MaintenanceOwed
+		next.Payloads = pending.Sources
+		next.Cleanup = pending.Cleanup
+	}
 	next.PredecessorUnknown = false
 	next.Sources = make([]archive.SourceReference, len(pending.Sources))
 	for i, source := range pending.Sources {

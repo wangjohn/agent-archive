@@ -77,6 +77,16 @@ func (p PendingPublication) ValidateHistoryBudgeted(id string, budget *agentapi.
 		return nil
 	}
 	n := int64(len(p.MetadataBytes))
+	if p.Preparation != nil {
+		for _, input := range p.Preparation.Inputs {
+			if h := input.HookObservations; h != nil {
+				if len(h.Body) > 32<<20 {
+					return ErrDurableStorageCapacity
+				}
+				n += 8 * int64(len(h.Body))
+			}
+		}
+	}
 	if !budget.Reserve(n) {
 		return errStateBudget
 	}
@@ -89,7 +99,7 @@ func (p PendingPublication) ValidateHistory(id string) error {
 	if p.History == nil {
 		return nil
 	}
-	if p.History.Version != pendingHistoryVersion {
+	if p.History.Version != pendingHistoryVersion && !(p.JournalVersion == 2 && p.History.Version == 2) {
 		return errors.Join(ErrDurableStorageRecovery, errors.New("pending history requires a newer writer"))
 	}
 	if err := validatePredecessorSHA(p.History.ExpectedMetadataSHA256); err != nil {
@@ -154,7 +164,7 @@ func (s *Store) checkPendingHistoryVersion(id string) error {
 		} `json:"history"`
 	}
 	if err := s.readBudgeted(s.pendingPath(id), &header, false); err == nil {
-		if header.History != nil && header.History.Version != pendingHistoryVersion {
+		if header.History != nil && header.History.Version != pendingHistoryVersion && header.History.Version != 2 {
 			return errors.Join(ErrDurableStorageRecovery, errors.New("pending history requires a newer writer"))
 		}
 	}
@@ -186,6 +196,24 @@ func (s *Store) StagePendingSource(id string, ref archive.SourceReference, data 
 		return PendingSource{}, err
 	}
 	return PendingSource{Reference: ref, Name: name}, nil
+}
+
+// StagePublicationSource freezes a protocol2 input after the composition floor.
+func (s *Store) StagePublicationSource(id string, ref archive.SourceReference, data []byte) (PendingSource, error) {
+	if err := validatePendingHistorySource(id, ref.SHA256+".gz"); err != nil {
+		return PendingSource{}, err
+	}
+	if len(data) != ref.CompressedBytes || len(data) > maxPendingHistoryBytes || publicationSHA256(data) != ref.SHA256 {
+		return PendingSource{}, ErrDurableStorageRecovery
+	}
+	err := config.WithPublicationComposition(s.home, func(g config.PublicationCompositionGuard) error {
+		storage, e := g.Storage(s.home)
+		if e != nil {
+			return e
+		}
+		return s.stagePendingSourceGuard(storage, id, ref, data)
+	})
+	return PendingSource{Reference: ref, Name: ref.SHA256 + ".gz"}, err
 }
 
 // ReadPendingSource reads only the journal's bounded private checksum stage.

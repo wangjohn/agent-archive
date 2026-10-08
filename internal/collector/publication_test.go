@@ -7,11 +7,13 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/listingindex"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -131,15 +133,17 @@ func TestPublicationLocalCommitFailureReplaysExactBytesAfterNativeDeletion(t *te
 	if err != nil || result.Errors[reg.ArchiveSessionID] == nil || len(result.Published) != 0 {
 		t.Fatal(result, err)
 	}
-	pending, found, err := local.LoadPending(reg.ArchiveSessionID)
+	// The injected non-file published obstruction is itself a census refusal.
+	// Remove that disposable fault before asking the owner to decode replay.
+	if err := os.Remove(remote.publishedPath); err != nil {
+		t.Fatal(err)
+	}
+	pending, found, err := local.LoadPublicationPending(reg.ArchiveSessionID)
 	if err != nil || !found {
 		t.Fatal(found, err)
 	}
 	if _, found, err := local.LoadRequest(reg.ArchiveSessionID); err != nil || !found {
 		t.Fatal("request completed before local commit", found, err)
-	}
-	if err := os.Remove(remote.publishedPath); err != nil {
-		t.Fatal(err)
 	}
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
@@ -181,6 +185,10 @@ func TestPublicationLegacyRemoteCacheKeepsUnknownPredecessor(t *testing.T) {
 		t.Fatal(err)
 	}
 	editPublishedState(t, local, func(raw map[string]any) { delete(raw, "metadata_bytes") })
+	legacy, err := local.LoadPublishedState(reg.ArchiveSessionID)
+	if err != nil || legacy.PublicationPredecessor().State != state.PredecessorUnknown {
+		t.Fatal("legacy fixture lacks unknown predecessor", err)
+	}
 	stopAtNewCommit(t, local, reg, at.Add(time.Minute))
 	at = at.Add(time.Hour)
 	result, err := Run(t.Context(), local, remote, opts)
@@ -319,6 +327,14 @@ func TestPublicationMalformedJournalBlocksScanAndRemainsOutstanding(t *testing.T
 }
 
 func TestPublicationLostPublishedCacheCannotGuessPredecessor(t *testing.T) {
+	for _, atomic := range []bool{false, true} {
+		t.Run(map[bool]string{false: "in-place", true: "atomic-replacement"}[atomic], func(t *testing.T) {
+			testPublicationLostPublishedCache(t, atomic)
+		})
+	}
+}
+
+func testPublicationLostPublishedCache(t *testing.T, atomic bool) {
 	local := newTestStore(t)
 	reg := registration(t, writeTranscript(t, t.TempDir(), "synthetic.jsonl", codexTranscript))
 	if err := local.SaveRegistration(reg); err != nil {
@@ -332,31 +348,68 @@ func TestPublicationLostPublishedCacheCannotGuessPredecessor(t *testing.T) {
 		t.Fatal(result, err)
 	}
 	path := filepath.Join(local.Home(), "published", reg.ArchiveSessionID+".json")
-	if err := os.WriteFile(path, []byte(`{"bundle":{"sche`), 0600); err != nil {
+	corrupt := []byte(`{"bundle":{"sche`)
+	writePath := path
+	if atomic {
+		writePath = path + ".fixture"
+	}
+	if err := os.WriteFile(writePath, corrupt, 0600); err != nil {
 		t.Fatal(err)
 	}
+	if atomic {
+		if err := os.Rename(writePath, path); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err := local.SaveRequest(reg.ArchiveSessionID, "stop", at); err != nil {
+		t.Fatal(err)
+	}
+	requestPath := filepath.Join(local.Home(), "requests", reg.ArchiveSessionID+".json")
+	requestBefore, err := os.ReadFile(requestPath)
+	if err != nil {
 		t.Fatal(err)
 	}
 	key := fetchMetadata(t, remote, "codex", reg.ArchiveSessionID).SourceBundle.Key
 	before := fetchMetadata(t, remote, "codex", reg.ArchiveSessionID)
 	remote.takePuts()
-	for range 3 {
+	for pass := range 3 {
 		at = at.Add(time.Hour)
 		result, err := Run(t.Context(), local, remote, opts)
-		if err != nil || result.Errors[reg.ArchiveSessionID] == nil || len(result.Published) != 0 {
-			t.Fatal("lost exact predecessor guessed from remote", result, err)
+		if pass > 0 {
+			if !errors.Is(err, state.ErrDurableStorageRecovery) || !errors.Is(result.Errors["durable-storage"], state.ErrDurableStorageRecovery) || len(result.Published) != 0 {
+				t.Fatal("lost predecessor census did not refuse", result, err)
+			}
+		} else if err != nil || !errors.Is(result.Errors[reg.ArchiveSessionID], state.ErrQuarantined) || len(result.Published) != 0 {
+			t.Fatal("in-place corruption was not refused at session decode", result, err)
+		}
+		retainedPath := path
+		{
+			quarantined := local.QuarantinedFiles()
+			if len(quarantined) != 1 {
+				t.Fatal("corrupt selecting bytes lost during quarantine", quarantined)
+			}
+			retainedPath = filepath.Join(local.Home(), quarantined[0])
+		}
+		retained, readErr := os.ReadFile(retainedPath)
+		if readErr != nil || string(retained) != string(corrupt) {
+			t.Fatal("corrupt selecting evidence changed", readErr)
+		}
+		requestAfter, readErr := os.ReadFile(requestPath)
+		if readErr != nil || string(requestBefore) != string(requestAfter) {
+			t.Fatal("before-discovery refusal changed owed request", readErr)
+		}
+		if puts := remote.takePuts(); puts != 0 {
+			t.Fatal("lost predecessor census performed remote writes", puts)
 		}
 	}
 	after := fetchMetadata(t, remote, "codex", reg.ArchiveSessionID)
 	if after.SourceBundle.Key != key || !after.MetadataDerivedAt.Equal(before.MetadataDerivedAt) {
 		t.Fatal("lost predecessor replaced authoritative metadata")
 	}
-	if len(local.QuarantinedFiles()) != 1 {
-		t.Fatal("damaged published evidence not retained")
-	}
-	if _, found, err := local.LoadPending(reg.ArchiveSessionID); err != nil || !found {
-		t.Fatal("replacement evidence not pending", found, err)
+	// The approved published census precedes session scanning. It keeps the
+	// original corrupt body in place and cannot allocate replacement evidence.
+	if _, err := os.Stat(filepath.Join(local.Home(), "pending", reg.ArchiveSessionID+".json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("replacement evidence allocated despite unknown predecessor", err)
 	}
 }
 
@@ -382,12 +435,35 @@ func TestPublicationNewRequestCannotReplaceObsoletePendingEvidence(t *testing.T)
 			switch mode {
 			case publicationAdapterChange, publicationFilterChange:
 				// Legacy unattempted journals must also survive policy changes.
+				pending.JournalVersion, pending.Phase = 0, ""
 				pending.Commit = nil
 				pending.Sources = nil
+				pending.Preparation, pending.Progress, pending.Cleanup = nil, nil, nil
 				if mode == publicationAdapterChange {
 					pending.Bundle.Capture.AdapterVersion = "obsolete"
 				} else {
 					pending.Bundle.Capture.FilterVersion = "obsolete"
+				}
+				// Produce actual matching legacy source/metadata bytes rather than
+				// relabeling a current sealed body with an obsolete capture policy.
+				packed, buildErr := archive.BuildCompressedSource(pending.Bundle)
+				if buildErr != nil {
+					t.Fatal(buildErr)
+				}
+				key, buildErr := archive.SourceObjectKey(pending.Bundle, packed.SHA256)
+				if buildErr != nil {
+					t.Fatal(buildErr)
+				}
+				pending.SourceKey, pending.SourceSHA256, pending.SourceSize, pending.SourceBytes = key, packed.SHA256, len(packed.Bytes), packed.Bytes
+				var metadata archive.Metadata
+				if err := json.Unmarshal(pending.MetadataBytes, &metadata); err != nil {
+					t.Fatal(err)
+				}
+				metadata.SourceBundle = pending.SourceReference()
+				metadata.FilterVersion, metadata.Adapter.Version = pending.Bundle.Capture.FilterVersion, pending.Bundle.Capture.AdapterVersion
+				pending.MetadataBytes, err = json.Marshal(metadata)
+				if err != nil {
+					t.Fatal(err)
 				}
 			case publicationDestinationChange:
 				reg.DestinationID = "changed-destination"
@@ -428,6 +504,8 @@ type winnerAfterUploadStore struct {
 	metadataKey   string
 	readsAfterPut int
 	winner        []byte
+	cHash         string
+	cETag         string
 }
 
 func (s *winnerAfterUploadStore) Put(ctx context.Context, key string, body []byte) error {
@@ -473,8 +551,17 @@ func TestPublicationChangedWinnerIsNotIndexedWithoutSourceVerification(t *testin
 		t.Fatal(result)
 	}
 	hints, err := remote.List(t.Context(), listingindex.V3Prefix)
-	if err != nil || len(hints) != 0 {
-		t.Fatal("unverified winner indexed", hints, err)
+	if err != nil || len(hints) != 1 || remote.cHash == "" || remote.cETag == "" {
+		t.Fatal("exact C listing missing", hints, err)
+	}
+	for _, hint := range hints {
+		revision, err := listingindex.ParseRevision(hint.Key)
+		if err != nil || revision.Hash != remote.cHash || revision.ETag != remote.cETag || revision.Hash == storage.SHA256Hex(remote.winner) {
+			t.Fatal("unverified winner indexed instead of exact C response", revision, err)
+		}
+	}
+	if pending, found, err := local.LoadPublicationPending("session-1"); err != nil || !found || pending.Commit == nil || pending.Commit.MetadataSHA256 != remote.cHash {
+		t.Fatal("D conflict lost selecting pending", found, err)
 	}
 	repairs, err := local.ListingRepairs(32)
 	if err != nil || len(repairs) != 1 {
@@ -621,9 +708,13 @@ func TestPublicationRecoveryMetadataReadsUseAllocationBound(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := published.SaveCommittedPublication(pending, at); err != nil {
-		t.Fatal(err)
+		t.Fatal("fixture selecting save", pending.JournalVersion, pending.Phase, pending.ValidatePublication(), err)
 	}
-	if err := published.CacheMetadata(nil); err != nil {
+	// Model an actual legacy missing-body cache. A selecting protocol-2 writer
+	// correctly refuses deleting the body bound by its existing commit.
+	editPublishedState(t, local, func(raw map[string]any) { delete(raw, "metadata_bytes") })
+	published, err = local.LoadPublishedState(reg.ArchiveSessionID)
+	if err != nil {
 		t.Fatal(err)
 	}
 	bounded := &oversizedPublicationStore{MemoryStore: storagetest.NewMemoryStore()}
@@ -637,4 +728,211 @@ func TestPublicationRecoveryMetadataReadsUseAllocationBound(t *testing.T) {
 	if bounded.unlimitedReads != 0 || bounded.limitedReads != 2 {
 		t.Fatal("recovery bypassed metadata allocation bound", bounded.unlimitedReads, bounded.limitedReads)
 	}
+}
+
+func (s *winnerAfterUploadStore) GetVersionedLimited(ctx context.Context, key string, limit int64) ([]byte, string, error) {
+	if key == s.metadataKey && s.readsAfterPut > 0 {
+		s.readsAfterPut++
+		if s.readsAfterPut == 3 {
+			body, err := s.MemoryStore.GetLimited(ctx, key, limit)
+			if err != nil {
+				return nil, "", err
+			}
+			var m archive.Metadata
+			if err := json.Unmarshal(body, &m); err != nil {
+				return nil, "", err
+			}
+			m.SourceBundle.SHA256 = storage.SHA256Hex([]byte("missing authoritative source"))
+			m.SourceBundle.Key = "sessions/claude/session-1/source." + m.SourceBundle.SHA256 + ".jsonl.gz"
+			s.winner, err = json.Marshal(m)
+			if err != nil {
+				return nil, "", err
+			}
+			if err := s.MemoryStore.Put(ctx, key, s.winner); err != nil {
+				return nil, "", err
+			}
+		}
+	}
+	body, etag, err := s.MemoryStore.GetVersionedLimited(ctx, key, limit)
+	if key == s.metadataKey && s.readsAfterPut == 2 && err == nil {
+		s.cHash, s.cETag = storage.SHA256Hex(body), etag
+	}
+	return body, etag, err
+}
+
+func TestPublicationClosingProofRefusesChangedFrameBeforeLocalSave(t *testing.T) {
+	for _, change := range []string{"single-use", "different-selection", "destination", "policy", "cancel", "new-attempt"} {
+		t.Run(change, func(t *testing.T) {
+			scan, pending := privacyJournal(t)
+			defer scan.releaseRetained()
+			endAttempt, attemptErr := scan.beginPublicationAttempt()
+			if attemptErr != nil {
+				t.Fatal(attemptErr)
+			}
+			defer endAttempt()
+			if err := scan.remote.Put(t.Context(), pending.MetadataKey, pending.MetadataBytes); err != nil {
+				t.Fatal(err)
+			}
+			for _, stage := range pending.History.Sources {
+				raw, err := scan.local.ReadPendingSource(scan.id(), stage)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := scan.publicationRemote().Put(t.Context(), stage.Reference.Key, raw); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := scan.closePublicationReadback(pending); !errors.Is(err, state.ErrDurableStorageRecovery) {
+				t.Fatal("closing proof minted before actual full typed verification", err)
+			}
+			metadata, err := scan.frozenHistoryMetadata(pending)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := scan.verifyHistoryReferences(pending, metadata); err != nil {
+				t.Fatal(err)
+			}
+			proof, err := scan.closePublicationReadback(pending)
+			if err != nil {
+				t.Fatal(err)
+			}
+			switch change {
+			case "single-use":
+				if err = proof.consume(scan, pending); err != nil {
+					t.Fatal(err)
+				}
+			case "different-selection":
+				commit := *pending.Commit
+				commit.MetadataSHA256 = storage.SHA256Hex([]byte("different selection in same session"))
+				pending.Commit = &commit
+			case "destination":
+				scan.reg.DestinationID = "foreign-destination-after-D"
+			case "policy":
+				scan.opts.SkillEvidence = config.SkillEvidenceNone
+			case "cancel":
+				ctx, cancel := context.WithCancel(scan.ctx)
+				cancel()
+				scan.ctx = ctx
+			case "new-attempt":
+				endAttempt()
+				scan.remote = storagetest.NewMemoryStore()
+				endNew, attemptErr := scan.beginPublicationAttempt()
+				if attemptErr != nil {
+					t.Fatal(attemptErr)
+				}
+				defer endNew()
+			}
+			if err = proof.consume(scan, pending); err == nil {
+				t.Fatal("D proof acknowledged a changed frame", change)
+			}
+			if scan.published.Found() {
+				t.Fatal("proof refusal selected local authority")
+			}
+		})
+	}
+}
+
+type winnerDuringListingStore struct {
+	*storagetest.MemoryStore
+	metadataKey string
+	winner      []byte
+	changed     bool
+}
+
+func (s *winnerDuringListingStore) Put(ctx context.Context, key string, body []byte) error {
+	if err := s.MemoryStore.Put(ctx, key, body); err != nil {
+		return err
+	}
+	if !strings.HasPrefix(key, listingindex.V3Prefix) || s.changed {
+		return nil
+	}
+	s.changed = true
+	raw, err := s.MemoryStore.GetLimited(ctx, s.metadataKey, 32<<20)
+	if err != nil {
+		return err
+	}
+	var m archive.Metadata
+	if err = json.Unmarshal(raw, &m); err != nil {
+		return err
+	}
+	m.SourceBundle.SHA256 = storage.SHA256Hex([]byte("missing winner during listing"))
+	m.SourceBundle.Key = "sessions/claude/session-1/source." + m.SourceBundle.SHA256 + ".jsonl.gz"
+	s.winner, err = json.Marshal(m)
+	if err != nil {
+		return err
+	}
+	return s.MemoryStore.Put(ctx, s.metadataKey, s.winner)
+}
+
+func TestPublicationWinnerDuringListingRetainsClosingObligations(t *testing.T) {
+	local := newTestStore(t)
+	claudeSession(t, local, claudePromptLine+"\n")
+	remote := &winnerDuringListingStore{MemoryStore: storagetest.NewMemoryStore(), metadataKey: "sessions/claude/session-1/metadata.json"}
+	result := runAt(t, local, remote, time.Date(2026, 10, 6, 0, 0, 0, 0, time.UTC))
+	if !remote.changed || !errors.Is(result.Errors["session-1"], storage.ErrPublicationConflict) || len(result.Published) != 0 {
+		t.Fatal("D did not close after listing mutation", result)
+	}
+	pending, found, err := local.LoadPublicationPending("session-1")
+	if err != nil || !found || pending.Commit == nil {
+		t.Fatal("pending lost after listing mutation", found, err)
+	}
+	repairs, err := local.ListingRepairs(32)
+	if err != nil || len(repairs) != 1 {
+		t.Fatal("listing obligation lost before D", repairs, err)
+	}
+	hints, err := remote.List(t.Context(), listingindex.V3Prefix)
+	if err != nil || len(hints) != 1 {
+		t.Fatal(hints, err)
+	}
+	revision, err := listingindex.ParseRevision(hints[0].Key)
+	if err != nil || revision.Hash != pending.Commit.MetadataSHA256 || revision.Hash == storage.SHA256Hex(remote.winner) {
+		t.Fatal("foreign unverified listing winner indexed", revision, err)
+	}
+	if published, err := local.LoadPublishedState("session-1"); err != nil || published.Found() {
+		t.Fatal("closing conflict selected local authority", err)
+	}
+}
+
+func TestPublicationAttemptKeepsActualProviderAcrossAmbientReplacement(t *testing.T) {
+	scan, pending := privacyJournal(t)
+	defer scan.releaseRetained()
+	if err := scan.remote.Put(t.Context(), pending.MetadataKey, pending.MetadataBytes); err != nil {
+		t.Fatal(err)
+	}
+	scan.remote = nonComparablePublicationStore{MemoryStore: scan.remote.(*storagetest.MemoryStore), opaque: map[string]string{"fixture": "valid"}}
+	endAttempt, attemptErr := scan.beginPublicationAttempt()
+	if attemptErr != nil {
+		t.Fatal(attemptErr)
+	}
+	defer endAttempt()
+	// Valid non-comparable wrapper fields do not affect private frame identity.
+	scan.remote = storagetest.NewMemoryStore()
+	for _, stage := range pending.History.Sources {
+		raw, err := scan.local.ReadPendingSource(scan.id(), stage)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := scan.publicationRemote().Put(t.Context(), stage.Reference.Key, raw); err != nil {
+			t.Fatal(err)
+		}
+	}
+	metadata, err := scan.frozenHistoryMetadata(pending)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := scan.verifyHistoryReferences(pending, metadata); err != nil {
+		t.Fatal(err)
+	}
+	proof, err := scan.closePublicationReadback(pending)
+	if err != nil {
+		t.Fatal("attempt silently retargeted to ambient provider", err)
+	}
+	if err = proof.consume(scan, pending); err != nil {
+		t.Fatal(err)
+	}
+}
+
+type nonComparablePublicationStore struct {
+	*storagetest.MemoryStore
+	opaque map[string]string
 }

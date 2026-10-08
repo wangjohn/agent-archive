@@ -32,27 +32,64 @@ type MetadataPredecessor struct {
 // At most 65 references and 128 MiB per object are checked sequentially; total
 // referenced bytes may be larger. A completed uncertain Put replays idempotently.
 func PutSourceSetThenMetadata(ctx context.Context, store ObjectStore, sources []SourcePublication, key string, metadata []byte, prior MetadataPredecessor, retry RetryPolicy) error {
+	return PutResolvedSourceSetThenMetadata(ctx, store, sources, key, metadata, prior, retry, nil, nil)
+}
+
+// SourceResolver borrows exactly one bounded replay payload. Release ends memory
+// ownership only; durable evidence remains until the local selecting commit.
+type SourceResolver func(context.Context, int) ([]byte, func(), error)
+
+// SourceVerifier validates exact remote bytes under the caller's shared ledger.
+type SourceVerifier func(context.Context, string, string, int) error
+
+// PutResolvedSourceSetThenMetadata resolves one payload at a time and shares
+// the same predecessor/readback protocol as inline publication.
+func PutResolvedSourceSetThenMetadata(ctx context.Context, store ObjectStore, sources []SourcePublication, key string, metadata []byte, prior MetadataPredecessor, retry RetryPolicy, resolve SourceResolver, verify SourceVerifier) error {
+	_, err := PutResolvedSourceSetThenMetadataReadback(ctx, store, sources, key, metadata, prior, retry, resolve, verify)
+	return err
+}
+
+// ValidatedPublicationReadback is phase C, produced only by an actual bounded
+// exact readback. It is consumed once inside the transaction frame.
+type ValidatedPublicationReadback struct {
+	key      string
+	sha      string
+	body     []byte
+	etag     string
+	consumed bool
+}
+
+func (r *ValidatedPublicationReadback) Consume(key string, metadata []byte) ([]byte, string, error) {
+	if r == nil || r.consumed || r.key != key || r.sha != SHA256Hex(metadata) || len(r.body) != len(metadata) || SHA256Hex(r.body) != r.sha {
+		return nil, "", ErrPublicationConflict
+	}
+	r.consumed = true
+	return r.body, r.etag, nil
+}
+
+func PutResolvedSourceSetThenMetadataReadback(ctx context.Context, store ObjectStore, sources []SourcePublication, key string, metadata []byte, prior MetadataPredecessor, retry RetryPolicy, resolve SourceResolver, verify SourceVerifier) (*ValidatedPublicationReadback, error) {
 	if len(sources) == 0 || len(sources) > 65 || key == "" || len(metadata) == 0 || len(metadata) > 32<<20 {
-		return errors.New("publication source set or metadata exceeds bounds")
+		return nil, errors.New("publication source set or metadata exceeds bounds")
 	}
 	seen := map[string]bool{}
 	for _, source := range sources {
 		if source.Key == "" || source.Key == key || seen[source.Key] || source.Size <= 0 || source.Size > 128<<20 || len(source.SHA256) != 64 {
-			return errors.New("invalid publication source bounds")
+			return nil, errors.New("invalid publication source bounds")
 		}
 		if len(source.Bytes) > 0 && (len(source.Bytes) != source.Size || !VerifySHA256(source.Bytes, source.SHA256)) {
-			return ErrChecksumMismatch
+			return nil, ErrChecksumMismatch
 		}
 		seen[source.Key] = true
 	}
 	next := SHA256Hex(metadata)
 	if _, err := publicationPosition(ctx, store, key, next, prior); err != nil {
-		return err
+		return nil, err
 	}
-	if err := VerifySourceSet(ctx, store, sources, retry); err != nil {
-		return err
+	if err := verifyResolvedSourceSet(ctx, store, sources, retry, resolve, verify); err != nil {
+		return nil, err
 	}
-	return retry.run(ctx, func() error {
+	var receipt *ValidatedPublicationReadback
+	err := retry.run(ctx, func() error {
 		completed, err := publicationPosition(ctx, store, key, next, prior)
 		if err != nil {
 			return err
@@ -62,15 +99,20 @@ func PutSourceSetThenMetadata(ctx context.Context, store ObjectStore, sources []
 				return err
 			}
 		}
-		body, err := ReadPublicationMetadata(ctx, store, key)
+		body, etag, err := ReadPublicationMetadataRevision(ctx, store, key, int64(len(metadata)))
 		if err != nil {
+			if errors.Is(err, ErrObjectTooLarge) {
+				return errors.Join(ErrChecksumMismatch, err)
+			}
 			return err
 		}
 		if len(body) != len(metadata) || SHA256Hex(body) != next {
 			return fmt.Errorf("verify committed metadata: %w", ErrChecksumMismatch)
 		}
+		receipt = &ValidatedPublicationReadback{key: key, sha: next, body: body, etag: etag}
 		return nil
 	})
+	return receipt, err
 }
 
 // ReadPublicationMetadata bounds authoritative publication readback to 32 MiB.
@@ -92,10 +134,21 @@ func ReadPublicationMetadata(ctx context.Context, store ObjectStore, key string)
 	return body, err
 }
 
+// PublicationPositionValidator applies an owning reader's typed history/owner
+// gate to the ACTUAL position response before source/metadata side effects.
+type PublicationPositionValidator interface {
+	ValidatePublicationPosition(context.Context, string, []byte) error
+}
+
 func publicationPosition(ctx context.Context, store ObjectStore, key, next string, prior MetadataPredecessor) (bool, error) {
 	body, err := ReadPublicationMetadata(ctx, store, key)
 	if errors.Is(err, ErrNotFound) {
 		if prior.Known && !prior.Exists {
+			if checker, ok := store.(PublicationPositionValidator); ok {
+				if err := checker.ValidatePublicationPosition(ctx, key, nil); err != nil {
+					return false, err
+				}
+			}
 			return false, nil
 		}
 		return false, ErrPublicationConflict
@@ -105,9 +158,19 @@ func publicationPosition(ctx context.Context, store ObjectStore, key, next strin
 	}
 	digest := SHA256Hex(body)
 	if digest == next {
+		if checker, ok := store.(PublicationPositionValidator); ok {
+			if err := checker.ValidatePublicationPosition(ctx, key, body); err != nil {
+				return false, err
+			}
+		}
 		return true, nil
 	}
 	if prior.Known && prior.Exists && prior.SHA256 == digest {
+		if checker, ok := store.(PublicationPositionValidator); ok {
+			if err := checker.ValidatePublicationPosition(ctx, key, body); err != nil {
+				return false, err
+			}
+		}
 		return false, nil
 	}
 	return false, ErrPublicationConflict
@@ -132,11 +195,15 @@ func publishExactSource(ctx context.Context, store ObjectStore, source SourcePub
 // A mismatching existing object is never overwritten. Each object gets one
 // bounded retry allowance, independently of the later metadata allowance.
 func VerifySourceSet(ctx context.Context, store ObjectStore, sources []SourcePublication, retry RetryPolicy) error {
+	return verifyResolvedSourceSet(ctx, store, sources, retry, nil, nil)
+}
+
+func verifyResolvedSourceSet(ctx context.Context, store ObjectStore, sources []SourcePublication, retry RetryPolicy, resolve SourceResolver, verify SourceVerifier) error {
 	if len(sources) == 0 || len(sources) > 65 {
 		return errors.New("source-set reference count exceeds bounds")
 	}
 	seen := map[string]bool{}
-	for _, source := range sources {
+	for i, source := range sources {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -147,9 +214,71 @@ func VerifySourceSet(ctx context.Context, store ObjectStore, sources []SourcePub
 		if len(source.Bytes) > 0 && (len(source.Bytes) != source.Size || !VerifySHA256(source.Bytes, source.SHA256)) {
 			return ErrChecksumMismatch
 		}
-		if err := retry.run(ctx, func() error { return publishExactSource(ctx, store, source) }); err != nil {
+		var release func()
+		if resolve != nil {
+			data, close, err := resolve(ctx, i)
+			if err != nil {
+				return err
+			}
+			source.Bytes, release = data, close
+		}
+		operation := func() error {
+			if verify == nil {
+				return publishExactSource(ctx, store, source)
+			}
+			err := verify(ctx, source.Key, source.SHA256, source.Size)
+			if err == nil || !errors.Is(err, ErrNotFound) || len(source.Bytes) == 0 {
+				return err
+			}
+			if err := store.Put(ctx, source.Key, source.Bytes); err != nil {
+				return err
+			}
+			return verify(ctx, source.Key, source.SHA256, source.Size)
+		}
+		err := retry.run(ctx, operation)
+		if release != nil {
+			release()
+		}
+		if err != nil {
 			return fmt.Errorf("verify publication source %q: %w", source.Key, err)
 		}
 	}
 	return nil
+}
+
+// ErrVersionedReadUnavailable leaves listing repair owed without an unbounded
+// versioned fallback or a fabricated validator from a later HEAD.
+var ErrVersionedReadUnavailable = errors.New("bounded response metadata validator unavailable")
+
+func ReadPublicationMetadataRevision(ctx context.Context, store ObjectStore, key string, limit int64) ([]byte, string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, "", err
+	}
+	if limit <= 0 || limit > 32<<20 {
+		return nil, "", ErrObjectTooLarge
+	}
+	if getter, ok := store.(LimitedVersionedGetter); ok {
+		body, etag, err := getter.GetVersionedLimited(ctx, key, limit)
+		if !errors.Is(err, ErrVersionedReadUnavailable) {
+			if err == nil && int64(len(body)) > limit {
+				return nil, "", ErrObjectTooLarge
+			}
+			if err == nil && ctx.Err() != nil {
+				return nil, "", ctx.Err()
+			}
+			return body, etag, err
+		}
+	}
+	getter, ok := store.(LimitedGetter)
+	if !ok {
+		return nil, "", ErrVersionedReadUnavailable
+	}
+	body, err := getter.GetLimited(ctx, key, limit)
+	if err == nil && int64(len(body)) > limit {
+		return nil, "", ErrObjectTooLarge
+	}
+	if err == nil && ctx.Err() != nil {
+		return nil, "", ctx.Err()
+	}
+	return body, "", err
 }

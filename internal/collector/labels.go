@@ -164,9 +164,6 @@ func (p *pass) prepareLabelRequests(ctx context.Context, providers map[string]ag
 		reg := eligible[id]
 		entry := cache.Entries[id]
 		cache.Cursor = id
-		if entry.NextAt.After(p.now) {
-			continue
-		}
 		checksum, stamp, err := p.local.LabelRevision(id)
 		if err != nil {
 			if errors.Is(err, state.ErrDurableStorageRecovery) {
@@ -178,11 +175,14 @@ func (p *pass) prepareLabelRequests(ctx context.Context, providers map[string]ag
 		provider := providers[reg.Harness.Name]
 		interpretation := "generic-label-context-v1"
 		if builder, ok := provider.(agentapi.LabelContextProvider); ok {
-			interpretation = builder.LabelContextVersion()
+			interpretation = builder.LabelContextVersion() + "/publication-codec2"
 		}
 		revision := sha256.Sum256([]byte(interpretation + "/" + archive.FilterVersion + "/" + p.opts.parserVersionFor(reg.Harness.Name)))
 		contract := hex.EncodeToString(revision[:])
 		validContext := entry.Context.Contract == contract && entry.Context.NativeID == reg.NativeSessionID && stamp == entry.SourceStamp && (checksum == "" || checksum == entry.SourceChecksum)
+		if validContext && entry.NextAt.After(p.now) {
+			continue
+		}
 		if !validContext {
 			published, n, err := p.labelLocal.LoadLabelPublication(id, (16<<20)-p.labelBytes)
 			p.labelBytes += n
@@ -193,6 +193,8 @@ func (p *pass) prepareLabelRequests(ctx context.Context, providers map[string]ag
 				if errors.Is(err, state.ErrDurableStorageRecovery) {
 					addError(p.result.Errors, id, err)
 					p.unreadable[id] = true
+					delete(cache.Entries, id)
+					delete(p.opts.labels, id)
 				}
 				continue
 			}
@@ -226,9 +228,12 @@ func (p *pass) prepareLabelRequests(ctx context.Context, providers map[string]ag
 				}
 			}
 		}
-		requests = append(requests, agentapi.LabelRequest{Registration: reg, Context: entry.Context})
 		entry.Scope = labelScope(reg, p.opts.LabelEnvironment, p.opts.MachineID)
 		cache.Entries[id] = entry
+		if entry.NextAt.After(p.now) {
+			continue
+		}
+		requests = append(requests, agentapi.LabelRequest{Registration: reg, Context: entry.Context})
 	}
 	return requests
 }

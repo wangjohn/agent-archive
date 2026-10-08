@@ -277,3 +277,10 @@ func TestNativeHistoryAliasesRemainChargedAfterProviderClose(t *testing.T) {
 		t.Fatal("history alias scope leaked", used)
 	}
 }
+
+func (s *noChecksumHistoryStore) GetVersionedLimited(ctx context.Context, key string, limit int64) ([]byte, string, error) {
+	if strings.Contains(key, "/source.") {
+		s.sourceLimitedGets++
+	}
+	return s.MemoryStore.GetVersionedLimited(ctx, key, limit)
+}

@@ -170,6 +170,14 @@ func (s *oversizedHistoryStore) Get(context.Context, string) ([]byte, error) {
 	panic("unbounded history GET")
 }
 
+func (s *oversizedHistoryStore) GetVersionedLimited(ctx context.Context, key string, limit int64) ([]byte, string, error) {
+	if key == s.oversizedKey {
+		s.seenLimit = limit
+		return nil, "", storage.ErrObjectTooLarge
+	}
+	return s.MemoryStore.GetVersionedLimited(ctx, key, limit)
+}
+
 func TestOversizedHistoryMetadataAndRemoteStageLeaveFrozenWorkUntouched(t *testing.T) {
 	t.Parallel()
 	scan, pending, cloud, old := frozenHistoryFixture(t)

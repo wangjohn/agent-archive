@@ -216,7 +216,7 @@ func TestRunHistoryPublicationReopensAtEveryRemoteBoundary(t *testing.T) {
 func TestRunCommittedHistoryRetryDoesNotRequireRemovedPrivateStages(t *testing.T) {
 	scan, p := privacyJournal(t)
 	cloud := scan.remote.(*storagetest.MemoryStore)
-	if err := scan.upload(p); err != nil {
+	if _, err := scan.upload(p); err != nil {
 		t.Fatal(err)
 	}
 	for _, stage := range p.History.Sources {
@@ -244,8 +244,10 @@ func TestRunCommittedHistoryCleanupFailuresRetainRetry(t *testing.T) {
 	for _, point := range []pointVariant0{pointRetiredLedger0, pointCache0, pointRequest0, pointPrivateStages0, pointSignature0} {
 		t.Run(string(point), func(t *testing.T) {
 			scan, p := privacyJournal(t)
+			// The retired obligation comes from an actual typed privacy
+			// successor of an exact acknowledged historical selecting manifest.
 			older := p.Bundle
-			older.Capture.CapturedAt = older.Capture.CapturedAt.Add(-time.Hour)
+			older.Capture.FilterVersion = "14"
 			packed, err := archive.BuildCompressedSource(older)
 			if err != nil {
 				t.Fatal(err)
@@ -255,7 +257,53 @@ func TestRunCommittedHistoryCleanupFailuresRetainRetry(t *testing.T) {
 				t.Fatal(err)
 			}
 			retired := archive.SourceReference{Key: key, SHA256: packed.SHA256, CompressedBytes: len(packed.Bytes)}
-			p.History.Retired = []state.RetiredSource{{Reference: retired, RetiredAt: scan.now, PrivacySensitive: true}}
+			var previous archive.Metadata
+			if err := json.Unmarshal(p.MetadataBytes, &previous); err != nil {
+				t.Fatal(err)
+			}
+			previous.SourceBundle, previous.FilterVersion = retired, "14"
+			previousBody, err := json.Marshal(previous)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := scan.remote.Put(t.Context(), key, packed.Bytes); err != nil {
+				t.Fatal(err)
+			}
+			if err := scan.remote.Put(t.Context(), p.MetadataKey, previousBody); err != nil {
+				t.Fatal(err)
+			}
+			// Acknowledged selection requires all physical sources, including
+			// the preserved inputs previously held only in this private fixture.
+			for _, input := range p.History.Inputs {
+				if input.RevisionID == previous.History.CurrentRevision {
+					continue
+				}
+				raw, err := scan.readRetainedInputBytes(input.Reference)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := scan.remote.Put(t.Context(), input.Reference.Key, raw); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := scan.published.SavePublication(older, scan.now, retired, previousBody); err != nil {
+				t.Fatal(err)
+			}
+			if err := scan.local.RemovePending(scan.id()); err != nil {
+				t.Fatal(err)
+			}
+			p, err = scan.freezeRetainedMaintenance(previous, older, older.Capture.AdapterVersion)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for p.History.Preparing {
+				if err := scan.advanceHistoryPreparation(&p); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if len(p.History.Retired) != 1 || p.History.Retired[0].Reference != retired || !p.History.Retired[0].PrivacySensitive {
+				t.Fatal("actual privacy retirement proof missing", p.History.Retired)
+			}
 			if err := scan.local.SaveRequest(scan.id(), "stop", scan.now); err != nil {
 				t.Fatal(err)
 			}
@@ -286,6 +334,9 @@ func TestRunCommittedHistoryCleanupFailuresRetainRetry(t *testing.T) {
 					path = filepath.Join(scan.local.Home(), "superseded", scan.id()+".json")
 				case pointCache0:
 					path = publishedPath(scan.local, scan.id())
+					if err := os.Remove(path); err != nil {
+						t.Fatal(err)
+					}
 				case pointRequest0:
 					path = filepath.Join(scan.local.Home(), "requests", scan.id()+".json")
 					if err := os.Remove(path); err != nil {
@@ -304,7 +355,11 @@ func TestRunCommittedHistoryCleanupFailuresRetainRetry(t *testing.T) {
 			if len(result.Errors) == 0 || len(result.Published) != 0 {
 				t.Fatal("cleanup failure falsely completed", result)
 			}
-			if _, found, err := scan.local.LoadPending(scan.id()); err != nil || !found {
+			if point == pointCache0 {
+				if _, err := os.Stat(filepath.Join(scan.local.Home(), "pending", scan.id()+".json")); err != nil {
+					t.Fatal("cleanup retry bytes lost", err)
+				}
+			} else if _, found, err := scan.local.LoadPublicationPending(scan.id()); err != nil || !found {
 				t.Fatal("cleanup retry lost", err)
 			}
 			if err := os.Remove(path); err != nil {
@@ -778,4 +833,11 @@ func TestRunHistoryPreservesIndependentProducerVersions(t *testing.T) {
 		}
 	}
 
+}
+
+func (s *historyCrashStore) GetVersionedLimited(ctx context.Context, key string, limit int64) ([]byte, string, error) {
+	if s.boundary(key) {
+		return nil, "", errors.New("synthetic bounded read interruption")
+	}
+	return s.MemoryStore.GetVersionedLimited(ctx, key, limit)
 }

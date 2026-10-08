@@ -104,8 +104,8 @@ func regenerateMetadata(s *sessionScan) (outcome sessionOutcome, handled bool, e
 		// against. The next content change publishes current metadata.
 		return outcomeSkipped, false, nil
 	}
-	// Cache before any early return below, so a legacy publication is
-	// migrated exactly once rather than re-read on every scan.
+	// Cache only an already-owned selecting body. A legacy missing predecessor
+	// remains unknown; this pass borrows last.encoded and a retry reads it again.
 	if err := s.published.CacheMetadata(last.encoded); err != nil {
 		return outcomeSkipped, false, err
 	}

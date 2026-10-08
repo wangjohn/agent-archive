@@ -201,3 +201,66 @@ func TestSourceSetVerifiedPredecessorAndCancellation(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+type publicationPositionChangeStore struct {
+	*storagetest.MemoryStore
+	metadataKey  string
+	winner       []byte
+	metadataPuts int
+	changed      bool
+}
+
+func (s *publicationPositionChangeStore) Put(ctx context.Context, key string, body []byte) error {
+	if key == s.metadataKey {
+		s.metadataPuts++
+	}
+	if err := s.MemoryStore.Put(ctx, key, body); err != nil {
+		return err
+	}
+	if key != s.metadataKey && !s.changed {
+		s.changed = true
+		return s.MemoryStore.Put(ctx, s.metadataKey, s.winner)
+	}
+	return nil
+}
+
+func TestSourceSetFreshPositionAfterSourceEffectsPreservesWinner(t *testing.T) {
+	key := "sessions/codex/s/metadata.json"
+	old := []byte("previous exact body")
+	remote := &publicationPositionChangeStore{MemoryStore: storagetest.NewMemoryStore(), metadataKey: key, winner: []byte("foreign winner during source upload")}
+	if err := remote.MemoryStore.Put(t.Context(), key, old); err != nil {
+		t.Fatal(err)
+	}
+	prior := storage.MetadataPredecessor{Known: true, Exists: true, SHA256: storage.SHA256Hex(old)}
+	err := storage.PutSourceSetThenMetadata(t.Context(), remote, sourceSetFixture(), key, []byte("next"), prior, storage.RetryPolicy{MaxAttempts: 1})
+	if !errors.Is(err, storage.ErrPublicationConflict) || !remote.changed || remote.metadataPuts != 0 {
+		t.Fatal("B reused stale A across source effects", err, remote.changed, remote.metadataPuts)
+	}
+	actual, err := remote.MemoryStore.GetLimited(t.Context(), key, 32<<20)
+	if err != nil || string(actual) != string(remote.winner) {
+		t.Fatal("winner overwritten", err)
+	}
+}
+
+func TestPublicationReadbackSingleConsumeBindsExactBodyAndValidator(t *testing.T) {
+	remote := storagetest.NewMemoryStore()
+	key, body := "sessions/codex/s/metadata.json", []byte("exact next body")
+	receipt, err := storage.PutResolvedSourceSetThenMetadataReadback(t.Context(), remote, sourceSetFixture(), key, body, storage.MetadataPredecessor{Known: true}, storage.RetryPolicy{MaxAttempts: 1}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := receipt.Consume(key, []byte("different")); !errors.Is(err, storage.ErrPublicationConflict) {
+		t.Fatal("wrong body consumed C", err)
+	}
+	actual, validator, err := receipt.Consume(key, body)
+	if err != nil || string(actual) != string(body) || validator == "" {
+		t.Fatal("actual C response unavailable", err)
+	}
+	_, expectedValidator, err := remote.GetVersionedLimited(t.Context(), key, int64(len(body)))
+	if err != nil || validator != expectedValidator {
+		t.Fatal("validator belongs to another response", err)
+	}
+	if _, _, err := receipt.Consume(key, body); !errors.Is(err, storage.ErrPublicationConflict) {
+		t.Fatal("C consumed twice", err)
+	}
+}
