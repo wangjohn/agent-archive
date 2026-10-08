@@ -3,7 +3,9 @@ package reader
 import (
 	"context"
 	"errors"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/wangjohn/agent-archive/internal/catalog"
@@ -151,9 +153,16 @@ func TestRemoteCatalogRefusesUnrelatedBodyCacheBeforeWork(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c, err := OpenSessionCatalog(t.Context(), bound, remote, ListOptions{Cache: other}); err == nil {
+	measured := storagetest.NewMeasuredStore(remote, 0)
+	if c, err := OpenSessionCatalog(t.Context(), bound, measured, ListOptions{Cache: other}); err == nil {
 		_ = c.Close()
 		t.Fatal("unrelated cache accepted")
+	}
+	if counts := measured.Metrics(); counts.Gets != 0 || counts.Lists != 0 || counts.Puts != 0 {
+		t.Fatal("cache mismatch touched provider", counts)
+	}
+	if _, err = os.Stat(filepath.Join(filepath.Dir(bound.dir), "catalog")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("cache mismatch created index", err)
 	}
 	entries, err := os.ReadDir(other.dir)
 	if err != nil || len(entries) != 0 {

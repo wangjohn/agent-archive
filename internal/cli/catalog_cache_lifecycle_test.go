@@ -107,6 +107,7 @@ func TestRealCLITextAndBrowserMaintainBoundedCacheAndEvictDeletion(t *testing.T)
 	if _, err = os.Stat(bodyDir); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("text route retained proven deleted body", err)
 	}
+	t.Logf("text maintained=%d browser maintained=%d canonical LIST=%d", first, second, measured.Metrics().Lists)
 	if measured.Metrics().Lists != 0 {
 		t.Fatal("remote deletion used canonical listing", measured.Metrics())
 	}
