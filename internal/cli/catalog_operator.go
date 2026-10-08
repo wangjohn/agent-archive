@@ -27,11 +27,11 @@ const (
 // runCatalogOperator is the explicit provider-evidence and fenced maintenance
 // entry point. It never migrates, activates, or qualifies a destination.
 func runCatalogOperator(args []string, stdout, stderr io.Writer, env Env) int {
-	if len(args) == 0 {
+	if len(args) < 1 {
 		terminal.Println(stderr, "agent-archive: _catalog: choose probe, collect, recover, or recover-seal")
 		return 2
 	}
-	action := catalogOperatorAction(args[0])
+	action, options := catalogOperatorAction(args[0]), args[1:]
 	if action != catalogProbe && action != catalogCollect && action != catalogRecover && action != catalogRecoverSeal {
 		terminal.Println(stderr, "agent-archive: _catalog: unknown action")
 		return 2
@@ -54,7 +54,7 @@ func runCatalogOperator(args []string, stdout, stderr io.Writer, env Env) int {
 	case catalogCollect:
 		// Collection accepts no command options.
 	}
-	if err := fs.Parse(args[1:]); err != nil || fs.NArg() != 0 {
+	if err := fs.Parse(options); err != nil || fs.NArg() != 0 {
 		return 2
 	}
 	if (action == catalogRecover || action == catalogRecoverSeal) && owner == "" {

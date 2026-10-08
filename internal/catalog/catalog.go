@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -377,7 +378,7 @@ func (w *Writer) Commit(ctx context.Context, m CatalogMutation) (string, error) 
 	var refs []ObjectRef
 	if frozen.Next != nil {
 		refs = append(refs, frozen.Next.Metadata)
-		sources, e := frozen.Next.Summary.SourceReferences()
+		sources, e := canonicalSourceReferences(frozen.Next.Summary)
 		if e != nil {
 			return "", e
 		}
@@ -591,7 +592,7 @@ func (w *Writer) verifyEntry(ctx context.Context, key string, entry *CatalogEntr
 	if string(expected) != string(actual) {
 		return errors.New("catalog summary does not match immutable metadata")
 	}
-	refs, err := metadata.SourceReferences()
+	refs, err := canonicalSourceReferences(metadata)
 	if err != nil {
 		return err
 	}
@@ -659,4 +660,24 @@ func (h *CatalogHead) observeVersion(v storage.CatalogObjectVersion) error {
 	h.PublicationWitness = witness
 	h.CommittedAt = witness.LastModified
 	return nil
+}
+
+// Validate the entire frozen reference set before source reads or admission.
+// Ordinary legacy reference permissiveness never grants catalog authority.
+func canonicalSourceReferences(metadata archive.Metadata) ([]archive.SourceReference, error) {
+	canonical, err := archive.MetadataObjectKey(metadata.Harness.Name, metadata.SessionID)
+	if err != nil {
+		return nil, err
+	}
+	refs, err := metadata.SourceReferences()
+	if err != nil {
+		return nil, err
+	}
+	for _, ref := range refs {
+		digest, e := hex.DecodeString(ref.SHA256)
+		if e != nil || len(digest) != 32 || ref.SHA256 != hex.EncodeToString(digest) || ref.Key != strings.TrimSuffix(canonical, "metadata.json")+"source."+ref.SHA256+".jsonl.gz" {
+			return nil, errors.New("catalog source reference does not belong to canonical session")
+		}
+	}
+	return refs, nil
 }

@@ -213,7 +213,7 @@ func (m *Migration) copyMetadata(ctx context.Context, obj storage.Object) error 
 	if err != nil || key != obj.Key {
 		return errors.New("source metadata identity mismatch")
 	}
-	refs, err := metadata.SourceReferences()
+	refs, err := canonicalSourceReferences(metadata)
 	if err != nil {
 		return err
 	}

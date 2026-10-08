@@ -295,7 +295,7 @@ func publicationAdmission(raw []byte) ([]ObjectRef, string, error) {
 	if err := json.Unmarshal(raw, &entry.Summary); err != nil {
 		return nil, "", err
 	}
-	sources, err := entry.Summary.SourceReferences()
+	sources, err := canonicalSourceReferences(entry.Summary)
 	if err != nil {
 		return nil, "", err
 	}
