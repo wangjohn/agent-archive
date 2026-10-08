@@ -458,7 +458,7 @@ func (p *pass) fail(id string, err error) {
 // changed, otherwise scan it (sessionScan.run) and account for the outcome.
 func (p *pass) scan(ctx context.Context, reg archive.SessionRegistration) {
 	priorLocal := p.local
-	scopedLocal, closeLocal := p.local.WithReadBudget(p.ctx, (&sessionScan{opts: p.opts}).readBudget())
+	scopedLocal, closeLocal := p.local.WithReadBudget(ctx, (&sessionScan{opts: p.opts}).readBudget())
 	p.local = scopedLocal
 	defer func() { closeLocal(); p.local = priorLocal }()
 	id := reg.ArchiveSessionID
@@ -493,7 +493,7 @@ func (p *pass) scan(ctx context.Context, reg archive.SessionRegistration) {
 		addError(p.result.Errors, id, err)
 		p.pending++
 	}
-	scan := newSessionScan(p.ctx, p.local, p.remote, reg, req, published, p.now, p.opts)
+	scan := newSessionScan(ctx, p.local, p.remote, reg, req, published, p.now, p.opts)
 	defer scan.releaseRetained()
 	outcome, err := scan.run(ctx)
 	for _, warning := range scan.warnings {

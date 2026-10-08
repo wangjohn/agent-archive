@@ -71,7 +71,8 @@ func (s *sessionScan) block(reason state.BlockedReason, candidate *archive.Sourc
 // metadata (or, for a metadata-only publication that carries no source
 // bytes, a check of the recorded source then metadata), the superseded
 // source in the ledger, the new published state, the covered request, and
-// finally the removal of the pending file.
+// finally the removal of the pending file. ctx must be the original scan
+// context; admission derives an invocation context for this serial lifecycle.
 func (s *sessionScan) publishPending(ctx context.Context, pending state.PendingPublication) (sessionOutcome, error) {
 	if remote, ok := s.remote.(storage.CatalogPublisher); ok && remote.CatalogMetadataAuthority() {
 		if pending.Catalog == nil {
@@ -93,8 +94,9 @@ func (s *sessionScan) publishPending(ctx context.Context, pending state.PendingP
 		if err != nil {
 			return outcomeSkipped, err
 		}
-		originalCtx := s.ctx
-		s.ctx = admittedCtx
+		originalCtx := ctx
+		ctx = admittedCtx
+		s.ctx = ctx
 		defer func() { remote.EndPublicationAttempt(pending.Catalog.ID); s.ctx = originalCtx }()
 	}
 

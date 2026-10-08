@@ -239,10 +239,12 @@ func TestPublicationBoundsAndCoordinatorMutationRefuseBeforeWrite(t *testing.T) 
 	if _, err = store.BeginPublication(t.Context(), "oversized", make([]byte, 32<<20+1)); !errors.Is(err, storage.ErrObjectTooLarge) {
 		t.Fatal(err)
 	}
-	if err = store.Writer.Coordinator().change(t.Context(), func(state *admissions) error { state.Mode = "invalid"; return nil }); err == nil {
+	if err = store.Writer.Coordinator().change(t.Context(), func(state *admissions) error { state.Mode = invalidAdmissionMode; return nil }); err == nil {
 		t.Fatal("invalid custom descriptor persisted")
 	}
 	if raw.writes[CoordinatorKey] != 0 {
 		t.Fatal("invalid descriptor wrote coordinator")
 	}
 }
+
+const invalidAdmissionMode admissionMode = "invalid"

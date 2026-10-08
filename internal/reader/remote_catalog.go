@@ -235,27 +235,8 @@ func (c *SQLiteSessionCatalog) RefreshRemote(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if delta.Rebuild {
-		if _, err = tx.ExecContext(ctx, "DELETE FROM sessions"); err != nil {
-			return err
-		}
-	}
-	for _, key := range delta.Removed {
-		if _, err = tx.ExecContext(ctx, "DELETE FROM sessions WHERE key=?", key); err != nil {
-			return err
-		}
-	}
-	for _, row := range delta.Changed {
-		summary := summarize(row.Entry.Summary)
-		data, e := json.Marshal(summary)
-		if e != nil {
-			return e
-		}
-		m := summary.Metadata()
-		record := catalogRecord{key: row.Key, etag: row.Entry.Revision, hash: row.Entry.Metadata.SHA256, capture: catalogTime(m.CapturedAt), activity: catalogTime(listingindex.ActivityTime(m)), summary: data, search: catalogSearch(summary), lowerID: strings.ToLower(m.SessionID), unlabeled: m.ProjectName == ""}
-		if _, err = tx.ExecContext(ctx, "INSERT OR REPLACE INTO sessions VALUES(?,?,?,?,?,?,?,?,?,?)", record.key, record.etag, record.hash, record.capture, record.activity, record.summary, record.search, record.lowerID, record.unlabeled, catalogRecordChecksum(record)); err != nil {
-			return err
-		}
+	if err = applyRemoteDelta(ctx, tx, delta); err != nil {
+		return err
 	}
 	raw, err = json.Marshal(delta.Next)
 	if err != nil {
@@ -462,4 +443,32 @@ func catalogCountInt(count uint64) (int, error) {
 		return 0, errors.New("catalog count exceeds local integer capacity")
 	}
 	return int(count), nil
+}
+
+func applyRemoteDelta(ctx context.Context, tx *sql.Tx, delta catalog.Delta) error {
+	var err error
+	if delta.Rebuild {
+		if _, err = tx.ExecContext(ctx, "DELETE FROM sessions"); err != nil {
+			return err
+		}
+	}
+	for _, key := range delta.Removed {
+		if _, err = tx.ExecContext(ctx, "DELETE FROM sessions WHERE key=?", key); err != nil {
+			return err
+		}
+	}
+	for _, row := range delta.Changed {
+		summary := summarize(row.Entry.Summary)
+		data, e := json.Marshal(summary)
+		if e != nil {
+			return e
+		}
+		m := summary.Metadata()
+		record := catalogRecord{key: row.Key, etag: row.Entry.Revision, hash: row.Entry.Metadata.SHA256, capture: catalogTime(m.CapturedAt), activity: catalogTime(listingindex.ActivityTime(m)), summary: data, search: catalogSearch(summary), lowerID: strings.ToLower(m.SessionID), unlabeled: m.ProjectName == ""}
+		if _, err = tx.ExecContext(ctx, "INSERT OR REPLACE INTO sessions VALUES(?,?,?,?,?,?,?,?,?,?)", record.key, record.etag, record.hash, record.capture, record.activity, record.summary, record.search, record.lowerID, record.unlabeled, catalogRecordChecksum(record)); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }

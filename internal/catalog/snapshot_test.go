@@ -3,7 +3,6 @@ package catalog
 import (
 	"context"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -770,8 +769,4 @@ func TestNodeCountRejectsOverflowBeforeAggregateReuse(t *testing.T) {
 	if _, err = decodeNode(raw); err == nil {
 		t.Fatal("wrapped aggregate accepted")
 	}
-}
-
-func fixtureProjectPrefix(project string) string {
-	return "project/" + hex.EncodeToString([]byte(project)) + "/"
 }

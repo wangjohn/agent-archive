@@ -13,6 +13,8 @@ import (
 
 type gcTestScenario string
 
+type gcClockMode string
+
 const (
 	gcTestBeforeLease      gcTestScenario = "before-lease"
 	gcTestAfterLease       gcTestScenario = "after-lease"
@@ -23,9 +25,10 @@ const (
 	gcTestInventory        gcTestScenario = "inventory"
 	gcTestReleasedBytes    gcTestScenario = "released-bytes"
 	gcTestForeignHead      gcTestScenario = "foreign-head"
-	gcTestUncertain        gcTestScenario = "uncertain"
-	gcTestRegressing       gcTestScenario = "regressing"
-	gcTestPrecision        gcTestScenario = "precision"
+	gcTestUnknownField     gcTestScenario = "unknown-field"
+	gcTestUncertain        gcClockMode    = "uncertain"
+	gcTestRegressing       gcClockMode    = "regressing"
+	gcTestPrecision        gcClockMode    = "precision"
 )
 
 type gcCrashStore struct {
@@ -178,7 +181,7 @@ func TestUnleasedSealRecoveryRequiresExactOwnerGeneration(t *testing.T) {
 }
 
 func TestGCRecoveryRefusesForeignHeadAndDamagedDescriptor(t *testing.T) {
-	for _, damage := range []gcTestScenario{gcTestForeignHead, gcTestGeneration, gcTestInventory, gcTestReleasedBytes, "unknown-field"} {
+	for _, damage := range []gcTestScenario{gcTestForeignHead, gcTestGeneration, gcTestInventory, gcTestReleasedBytes, gcTestUnknownField} {
 		t.Run(string(damage), func(t *testing.T) {
 			raw := &gcCrashStore{qualifiedStore: &qualifiedStore{storagetest.NewMemoryStore()}}
 			w, err := New(raw)
@@ -212,19 +215,20 @@ func TestGCRecoveryRefusesForeignHeadAndDamagedDescriptor(t *testing.T) {
 					t.Fatal(err)
 				}
 			} else {
-				switch damage {
-				case gcTestGeneration:
+				if damage == gcTestGeneration {
 					state.Generation++
-				case gcTestInventory:
+				}
+				if damage == gcTestInventory {
 					state.GCLink.Inventory = append(state.GCLink.Inventory, m.Next.Metadata)
-				case gcTestReleasedBytes:
+				}
+				if damage == gcTestReleasedBytes {
 					state.GCLink.ReleasedHead = []byte(`{"foreign":true}`)
 				}
 				body, err := json.Marshal(state)
 				if err != nil {
 					t.Fatal(err)
 				}
-				if damage == "unknown-field" {
+				if damage == gcTestUnknownField {
 					var fields map[string]any
 					if err = json.Unmarshal(body, &fields); err != nil {
 						t.Fatal(err)
@@ -255,7 +259,7 @@ func TestGCRecoveryRefusesForeignHeadAndDamagedDescriptor(t *testing.T) {
 }
 
 func TestCoordinatorMaintenanceClockRefusalPerformsNoWrites(t *testing.T) {
-	for _, mode := range []gcTestScenario{gcTestUncertain, gcTestRegressing, gcTestPrecision} {
+	for _, mode := range []gcClockMode{gcTestUncertain, gcTestRegressing, gcTestPrecision} {
 		t.Run(string(mode), func(t *testing.T) {
 			raw := &clockFixture{qualifiedStore: &qualifiedStore{storagetest.NewMemoryStore()}}
 			w, err := New(raw)

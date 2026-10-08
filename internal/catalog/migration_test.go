@@ -77,7 +77,7 @@ func TestMigrationResumesBoundedCheckpointsPreservesRetentionAndRollback(t *test
 			break
 		}
 	}
-	if restarted.State.Phase != "verified" || restarted.State.Copied != 80 {
+	if restarted.State.Phase != MigrationVerified || restarted.State.Copied != 80 {
 		t.Fatal(restarted.State)
 	}
 	if err = restarted.Activate(t.Context()); err != nil {
@@ -223,7 +223,7 @@ func TestMigrationCheckpointCASRejectsConcurrentStaleRunner(t *testing.T) {
 	if _, err = first.Step(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	stale.State.Phase = "verifying"
+	stale.State.Phase = MigrationVerifying
 	if err = stale.save(t.Context()); err == nil {
 		t.Fatal("stale checkpoint overwritten")
 	}

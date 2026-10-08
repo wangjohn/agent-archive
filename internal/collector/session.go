@@ -174,7 +174,7 @@ func (s *sessionScan) run(ctx context.Context) (sessionOutcome, error) {
 	if settled, err := s.compare(read, &candidate); settled || err != nil {
 		return outcomeSkipped, err
 	}
-	candidate, blocked, err := s.guard(s.ctx, read, candidate, supplemental)
+	candidate, blocked, err := s.guard(ctx, read, candidate, supplemental)
 	if blocked || err != nil {
 		return outcomeSkipped, err
 	}

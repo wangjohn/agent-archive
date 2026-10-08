@@ -203,12 +203,14 @@ func fixtureRemoteParent(i int) string {
 	}
 	return ""
 }
+
 func fixtureRemoteReplay(i int) *archive.Replay {
 	if i%7 == 0 {
 		return &archive.Replay{}
 	}
 	return nil
 }
+
 func TestCatalogCountIntRejectsOverflow(t *testing.T) {
 	if _, err := catalogCountInt(^uint64(0)); err == nil {
 		t.Fatal("count wrapped local integer")
@@ -238,13 +240,25 @@ func TestRemoteAuthenticatedCountOverflowRefusesSelection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if head.Epoch != head.PublicationEpoch || head.GCLease != "" {
+		t.Fatal("fixture is not a fresh publication state")
+	}
+	// Normal writer CAS also leaves this empty; the provider's new exact
+	// body/version response supplies its publication witness when observed.
+	head.PublicationWitness = catalog.HeadWitness{}
+	head.CommittedAt = time.Time{}
 	encoded, err := json.Marshal(head)
 	if err != nil {
 		t.Fatal(err)
 	}
 	provider := remote.ObjectStore.(storage.ConditionalPutter)
-	if _, err = provider.PutConditional(t.Context(), catalog.HeadKey, encoded, storage.PutCondition{MatchETag: etag}); err != nil {
+	nextETag, err := provider.PutConditional(t.Context(), catalog.HeadKey, encoded, storage.PutCondition{MatchETag: etag})
+	if err != nil {
 		t.Fatal(err)
+	}
+	observed, observedETag, err := remote.Writer.Head(t.Context())
+	if err != nil || observedETag != nextETag || nextETag == etag || observed.PublicationWitness.ETag != nextETag || observed.Capture != head.Capture {
+		t.Fatal("fresh provider publication was not authenticated", err)
 	}
 	snapshot, err := catalog.OpenSnapshot(t.Context(), remote, nil)
 	if err != nil {
