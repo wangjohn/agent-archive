@@ -19,6 +19,14 @@ type cacheFailureStore struct {
 	listError error
 }
 
+type cacheDiscoveryFailure string
+
+const (
+	cacheBodyError           cacheDiscoveryFailure = "body error"
+	cacheBodyCancellation    cacheDiscoveryFailure = "body cancellation"
+	cacheIncompleteDiscovery cacheDiscoveryFailure = "incomplete discovery"
+)
+
 func (s cacheFailureStore) Get(ctx context.Context, key string) ([]byte, error) {
 	if s.beforeGet != nil {
 		s.beforeGet()
@@ -35,8 +43,8 @@ func (s cacheFailureStore) List(ctx context.Context, prefix string) ([]storage.O
 }
 
 func TestCacheDeletionEvictionUsesCompleteHeadersDespiteBodyFailure(t *testing.T) {
-	for _, failure := range []string{"body error", "body cancellation", "incomplete discovery"} {
-		t.Run(failure, func(t *testing.T) {
+	for _, failure := range []cacheDiscoveryFailure{cacheBodyError, cacheBodyCancellation, cacheIncompleteDiscovery} {
+		t.Run(string(failure), func(t *testing.T) {
 			store := newCountingStore()
 			cache, err := OpenMetadataCache(t.TempDir())
 			if err != nil {
@@ -59,12 +67,12 @@ func TestCacheDeletionEvictionUsesCompleteHeadersDespiteBodyFailure(t *testing.T
 			failing := cacheFailureStore{ObjectStore: store}
 			wantError := outage
 			switch failure {
-			case "body error":
+			case cacheBodyError:
 				store.failGet[live] = outage
-			case "body cancellation":
+			case cacheBodyCancellation:
 				failing.beforeGet = cancel
 				wantError = context.Canceled
-			case "incomplete discovery":
+			case cacheIncompleteDiscovery:
 				failing.listError = outage
 			}
 			if _, err := ListMetadataWithOptions(ctx, failing, "sessions", Filter{Harness: "codex"}, opts); !errors.Is(err, wantError) {
@@ -72,7 +80,7 @@ func TestCacheDeletionEvictionUsesCompleteHeadersDespiteBodyFailure(t *testing.T
 			}
 			dir, _ := cache.keyDir(deleted)
 			_, err = os.Stat(dir)
-			if failure == "incomplete discovery" {
+			if failure == cacheIncompleteDiscovery {
 				if err != nil {
 					t.Fatalf("failed discovery evicted an unproven deletion: %v", err)
 				}
