@@ -5,6 +5,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/trace"
 	"io"
 )
 
@@ -48,6 +49,8 @@ func catalogCandidateSessions(ctx context.Context, env metadataCacheDependencies
 	if cache == nil {
 		return nil, false, false, nil
 	}
+	span := trace.Start("list metadata")
+	defer span.End()
 	readOpts := reader.ListOptions{Cache: cache, Skipped: warnSkippedSidecar(stderr, command), BodyRead: catalogBodyObserver(env)}
 	catalog, err := reader.OpenSessionCatalog(ctx, cache, store, readOpts)
 	if err != nil {
