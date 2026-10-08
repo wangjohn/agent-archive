@@ -68,7 +68,7 @@ func TestPagedArchiveChoicesIncludeOlderSearchAndChildren(t *testing.T) {
 // BenchmarkCatalogBrowserFirstFrame compares complete synthetic list frames.
 // Cold includes the first summary build; warm includes fresh canonical headers.
 func BenchmarkCatalogBrowserFirstFrame(b *testing.B) {
-	for _, state := range []string{"cold", "warm", "exhaustive"} {
+	for _, state := range []string{"cold", "warm", "exhaustive-warm"} {
 		b.Run(state, func(b *testing.B) {
 			b.StopTimer()
 			mem := storagetest.NewMemoryStore()
@@ -78,6 +78,17 @@ func BenchmarkCatalogBrowserFirstFrame(b *testing.B) {
 			if state == "warm" {
 				if code := Run([]string{"list", "--all-projects", "--limit", "0"}, nil, io.Discard, io.Discard, env); code != 0 {
 					b.Fatal("warmup failed")
+				}
+			}
+
+			if state == "exhaustive-warm" {
+				// Warm the body cache, then make only the disposable catalog unavailable
+				// to exercise the existing exhaustive browser with cached body decoding.
+				if code := Run([]string{"list", "--all-projects", "--json", "--limit", "0"}, nil, io.Discard, io.Discard, env); code != 0 {
+					b.Fatal("body warmup failed")
+				}
+				if err := os.WriteFile(filepath.Join(home, "cache", "catalog"), []byte("unavailable catalog fixture"), 0600); err != nil {
+					b.Fatal(err)
 				}
 			}
 			var first time.Duration
@@ -94,9 +105,6 @@ func BenchmarkCatalogBrowserFirstFrame(b *testing.B) {
 				env.TerminalSize = func(io.Writer) (int, int, bool) { return 80, 24, true }
 				env.openKeys = func(io.Reader) (keyTerminal, bool) { return newFakeKeys("q"), true }
 				args := []string{"list", "--all-projects"}
-				if state == "exhaustive" {
-					args = append(args, "--no-cache")
-				}
 				b.StartTimer()
 				out.start = time.Now()
 				code := Run(args, in, out, io.Discard, env)

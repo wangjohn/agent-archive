@@ -56,3 +56,18 @@ func catalogSessions(env metadataCacheDependencies, store storage.ObjectStore, o
 	}
 	return filterListOrigin(sessions, opts.imported, opts.hookCaptured), true, nil
 }
+
+// readListCandidates retains selected reads for simple bounded listings and
+// uses the summary catalog where exhaustive metadata used to be necessary.
+func readListCandidates(env metadataCacheDependencies, store storage.ObjectStore, opts listOptions, limit int, readOpts reader.ListOptions, full bool, stderr io.Writer) (reader.RecentResult, bool, error) {
+	complex := opts.filter.Model != "" || opts.filter.Skill != "" || opts.filter.SkillSHA256 != "" || opts.filter.RequireCompleteCoverage
+	if !opts.jsonOut && (full || complex) {
+		// Complete summaries preserve child hints, scope tiers and ambiguity.
+		sessions, used, err := catalogSessions(env, store, opts, stderr, "list", nil)
+		if used {
+			return reader.RecentResult{Sessions: sessions, Complete: true, TotalMatched: len(sessions)}, true, err
+		}
+	}
+	listed, err := reader.ListRecent(context.Background(), store, archiveSessionsPrefix, opts.filter, limit, readOpts)
+	return listed, full, err
+}

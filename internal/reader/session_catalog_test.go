@@ -480,3 +480,48 @@ func TestSessionCatalogProjectionStoresOnlySearchFields(t *testing.T) {
 		t.Fatal("lost published search fields")
 	}
 }
+
+// A command must not borrow another handle's authority after its own discovery.
+func TestSessionCatalogFirstQueryBindsRefreshedGeneration(t *testing.T) {
+	ctx := context.Background()
+	store := newCountingStore()
+	cache, err := OpenMetadataCache(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	putSession(t, store, "codex", fmt.Sprintf("%032x", 1), baseTime)
+	first, err := OpenSessionCatalog(ctx, cache, store, ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Close()
+	other, err := OpenSessionCatalog(ctx, cache, store, ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.Close()
+	h, err := DiscoverCatalogHeaders(ctx, store, ListOptions{Cache: cache})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = first.Refresh(ctx, h); err != nil {
+		t.Fatal(err)
+	}
+	unready, err := other.Query(ctx, CatalogQuery{})
+	if err != nil || unready.Complete || unready.Total != 0 {
+		t.Fatalf("unrefreshed view=%+v err=%v", unready, err)
+	}
+	if err = other.Refresh(ctx, HeaderSnapshot{CanonicalComplete: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = first.Query(ctx, CatalogQuery{}); !errors.Is(err, ErrStaleCatalogCursor) {
+		t.Fatalf("first query accepted replaced generation: %v", err)
+	}
+	if err = first.Refresh(ctx, h); err != nil {
+		t.Fatal(err)
+	}
+	page, err := first.Query(ctx, CatalogQuery{})
+	if err != nil || !page.Complete || page.Total != 1 {
+		t.Fatalf("refreshed view=%+v err=%v", page, err)
+	}
+}
