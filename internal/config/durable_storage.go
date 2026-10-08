@@ -22,6 +22,8 @@ type durableStorageScope struct {
 // configuration and held home. It expires when its lock scope ends.
 type DurableStorageGuard struct{ scope *durableStorageScope }
 
+var errRootedConfigObservationChanged = errors.New("rooted configuration changed while reading")
+
 // CheckHome verifies that this live scope belongs to the named archive home.
 func (g DurableStorageGuard) CheckHome(home string) error {
 	if g.scope == nil || !g.scope.active.Load() {
@@ -63,11 +65,16 @@ func WithDurableStorage(home string, write func(DurableStorageGuard) error) (err
 	defer func() { err = errors.Join(err, held.Close()) }()
 	// Reject unsupported/missing current config before creating even a lock file.
 	// The protected config is loaded again under hooks; this preflight grants no witness.
-	_, present, err := LoadRooted(held)
+	deadline := time.Now().Add(time.Second)
+	_, present, err := loadDurableStoragePreflight(held, deadline)
 	if err != nil || !present {
 		return errors.Join(errors.New("durable storage requires an existing supported configuration"), err)
 	}
-	unlock, err := local.RootedLockWait(held, "hooks.lock", time.Second)
+	remaining := time.Until(deadline)
+	if remaining <= 0 {
+		return local.ErrBusy
+	}
+	unlock, err := local.RootedLockWait(held, "hooks.lock", remaining)
 	if err != nil {
 		return err
 	}
@@ -126,6 +133,30 @@ func WithDurableStorage(home string, write func(DurableStorageGuard) error) (err
 	return write(DurableStorageGuard{scope: scope})
 }
 
+func loadDurableStoragePreflight(home *local.RootedHome, deadline time.Time) (Config, bool, error) {
+	var changed error
+	for {
+		if !time.Now().Before(deadline) {
+			if changed != nil {
+				return Config{}, false, changed
+			}
+			return Config{}, false, local.ErrBusy
+		}
+		cfg, found, err := LoadRooted(home)
+		if !errors.Is(err, errRootedConfigObservationChanged) {
+			return cfg, found, err
+		}
+		// Another writer may atomically install the floor before hooks is held.
+		// Only that observation race can retry; every attempt validates the
+		// current home and complete config before any lock allocation.
+		changed = err
+		remaining := time.Until(deadline)
+		if remaining > 0 {
+			time.Sleep(min(10*time.Millisecond, remaining))
+		}
+	}
+}
+
 // LoadRooted reads the current configuration through a caller-held archive home.
 // It uses Load's decoder and validation without creating or changing a floor.
 func LoadRooted(home *local.RootedHome) (cfg Config, found bool, err error) {
@@ -140,12 +171,28 @@ func LoadRooted(home *local.RootedHome) (cfg Config, found bool, err error) {
 		return Config{}, false, errors.Join(errors.New("rooted configuration must be a regular file"), err)
 	}
 	raw, readErr := home.Root.ReadFile("config.json")
-	after, err := home.Root.Lstat("config.json")
-	if err != nil || !os.SameFile(before, after) || before.Size() != after.Size() || !before.ModTime().Equal(after.ModTime()) {
-		return Config{}, false, errors.Join(errors.New("rooted configuration changed while reading"), err)
+	if err := rootedConfigReadUnchanged(home, before, readErr); err != nil {
+		return Config{}, false, err
 	}
 	cfg, found, _, err = decodeLoadedConfig(raw, readErr, filepath.Join(home.Root.Name(), "config.json"), agentmeta.Builtins())
 	return cfg, found, errors.Join(err, home.Check())
+}
+
+func rootedConfigReadUnchanged(home *local.RootedHome, before os.FileInfo, readErr error) error {
+	if err := home.Check(); err != nil {
+		return errors.Join(err, readErr)
+	}
+	after, err := home.Root.Lstat("config.json")
+	if err != nil || !after.Mode().IsRegular() {
+		return errors.Join(errors.New("rooted configuration unavailable after reading"), readErr, err)
+	}
+	if !os.SameFile(before, after) || before.Size() != after.Size() || !before.ModTime().Equal(after.ModTime()) {
+		if readErr != nil {
+			return errors.Join(errors.New("rooted configuration read failed during change"), readErr)
+		}
+		return errRootedConfigObservationChanged
+	}
+	return nil
 }
 
 func rootedConfigUnchanged(home *local.RootedHome, before os.FileInfo) error {
