@@ -119,38 +119,48 @@ func TestSettledCodexNamePublicationAndArchiveOnlyRead(t *testing.T) {
 	if target.ArchiveSessionID == "" {
 		t.Fatal("missing UUID-matched registration")
 	}
-	// Exercise the indexed CLI readers while both names are still equal. A
-	// fresh reader home has no local registrations to hide a coalesced index.
+	// Exercise bounded indexed and uncapped CLI reads while both names are
+	// still equal. A fresh reader home cannot hide a coalesced index.
 	readerHome := t.TempDir()
 	must(t, config.Save(readerHome, cfg))
 	env.Home = func() (string, error) { return readerHome, nil }
+	var commandStderr string
 	run := func(args ...string) string {
 		t.Helper()
 		var out, stderr bytes.Buffer
 		if code := Run(args, nil, &out, &stderr, env); code != 0 {
 			t.Fatalf("%v exit %d: %s", args, code, &stderr)
 		}
+		commandStderr = stderr.String()
 		return out.String()
 	}
-	var baseline listDocument
-	must(t, json.Unmarshal([]byte(run("list", "--harness", "codex", "--all-projects", "--json", "--limit", "0")), &baseline))
-	if len(baseline.Sessions) != len(ids) || baseline.Returned != len(ids) || !baseline.TotalMatchedKnown || baseline.TotalMatched == nil || *baseline.TotalMatched != len(ids) || baseline.Truncated {
-		t.Fatalf("same-name list lost a session: %+v", baseline)
-	}
-	seen := make(map[string]bool)
-	for _, row := range baseline.Sessions {
-		matched := false
-		for i, id := range ids {
-			for _, reg := range regs {
-				if reg.NativeSessionID == id && row.SessionID == reg.ArchiveSessionID {
-					matched = row.NativeSessionID == id && row.Name == "Shared synthetic name" && row.Title == prompts[i]
+	for _, limit := range []string{"2", "0"} {
+		indexedBodies := 0
+		env.observeListBody = func(string, bool) { indexedBodies++ }
+		var baseline listDocument
+		must(t, json.Unmarshal([]byte(run("list", "--harness", "codex", "--all-projects", "--json", "--limit", limit)), &baseline))
+		env.observeListBody = nil
+		if limit == "2" && (commandStderr != "" || indexedBodies != len(ids)) {
+			t.Fatalf("same-name indexed list did not verify both bodies: bodies=%d stderr=%s", indexedBodies, commandStderr)
+		}
+		if len(baseline.Sessions) != len(ids) || baseline.Returned != len(ids) || !baseline.TotalMatchedKnown || baseline.TotalMatched == nil || *baseline.TotalMatched != len(ids) || baseline.Truncated {
+			t.Fatalf("same-name list lost a session: %+v", baseline)
+		}
+		seen := make(map[string]bool)
+		for _, row := range baseline.Sessions {
+			matched := false
+			for i, id := range ids {
+				for _, reg := range regs {
+					if reg.NativeSessionID == id && row.SessionID == reg.ArchiveSessionID {
+						matched = row.NativeSessionID == id && row.Name == "Shared synthetic name" && row.Title == prompts[i]
+					}
 				}
 			}
+			if !matched || seen[row.SessionID] {
+				t.Fatalf("same-name list mismatched or repeated identity: %+v", row)
+			}
+			seen[row.SessionID] = true
 		}
-		if !matched || seen[row.SessionID] {
-			t.Fatalf("same-name list mismatched or repeated identity: %+v", row)
-		}
-		seen[row.SessionID] = true
 	}
 	for i, id := range ids {
 		for _, reg := range regs {
