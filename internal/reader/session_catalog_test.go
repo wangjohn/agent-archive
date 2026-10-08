@@ -2,6 +2,7 @@ package reader
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -252,7 +253,7 @@ func TestSessionCatalogTypedFiltersEqualExhaustiveOracle(t *testing.T) {
 		if e != nil {
 			t.Fatal(e)
 		}
-		if _, e = c.db.ExecContext(ctx, "INSERT INTO sessions VALUES(?,?,?,?,?,?,?,?,?)", s.SessionID, "etag", "hash", catalogTime(s.CapturedAt), catalogTime(s.CapturedAt), data, catalogSearch(s), strings.ToLower(s.SessionID), s.ProjectName == ""); e != nil {
+		if _, e = c.db.ExecContext(ctx, "INSERT INTO sessions VALUES(?,?,?,?,?,?,?,?,?,?)", s.SessionID, "etag", "hash", catalogTime(s.CapturedAt), catalogTime(s.CapturedAt), data, catalogSearch(s), strings.ToLower(s.SessionID), s.ProjectName == "", catalogRecordChecksum(catalogRecord{key: s.SessionID, etag: "etag", hash: "hash", capture: catalogTime(s.CapturedAt), activity: catalogTime(s.CapturedAt), summary: data, search: catalogSearch(s), lowerID: strings.ToLower(s.SessionID), unlabeled: s.ProjectName == ""})); e != nil {
 			t.Fatal(e)
 		}
 	}
@@ -408,14 +409,14 @@ func TestSessionCatalogWordsAreUnicodeAndLabelSafeCandidates(t *testing.T) {
 		if e != nil {
 			t.Fatal(e)
 		}
-		if _, e = c.db.ExecContext(ctx, "INSERT INTO sessions VALUES(?,?,?,?,?,?,?,?,?)", s.SessionID, "etag", "hash", catalogTime(baseTime), catalogTime(baseTime), data, catalogSearch(s), strings.ToLower(s.SessionID), s.ProjectName == ""); e != nil {
+		if _, e = c.db.ExecContext(ctx, "INSERT INTO sessions VALUES(?,?,?,?,?,?,?,?,?,?)", s.SessionID, "etag", "hash", catalogTime(baseTime), catalogTime(baseTime), data, catalogSearch(s), strings.ToLower(s.SessionID), s.ProjectName == "", catalogRecordChecksum(catalogRecord{key: s.SessionID, etag: "etag", hash: "hash", capture: catalogTime(baseTime), activity: catalogTime(baseTime), summary: data, search: catalogSearch(s), lowerID: strings.ToLower(s.SessionID), unlabeled: s.ProjectName == ""})); e != nil {
 			t.Fatal(e)
 		}
 	}
 	for _, tc := range []struct {
 		word string
 		want []string
-	}{{"école", []string{"abcd123456", "unlabeled"}}, {"abcd1234", []string{"abcd123456", "unlabeled"}}, {"#21", []string{"212abcdef", "unlabeled"}}, {"212", []string{"212abcdef", "unlabeled"}}, {"configured label", []string{"unlabeled"}}} {
+	}{{"école", []string{"abcd123456", "unlabeled"}}, {"abcd1234", []string{"abcd123456", "unlabeled"}}, {"#21", []string{"212abcdef", "unlabeled"}}, {"#0021", []string{"212abcdef", "unlabeled"}}, {"000021", []string{"212abcdef", "unlabeled"}}, {"212", []string{"212abcdef", "unlabeled"}}, {"configured label", []string{"unlabeled"}}} {
 		p, e := c.Query(ctx, CatalogQuery{Words: []string{tc.word}})
 		if e != nil {
 			t.Fatal(e)
@@ -523,5 +524,134 @@ func TestSessionCatalogFirstQueryBindsRefreshedGeneration(t *testing.T) {
 	page, err := first.Query(ctx, CatalogQuery{})
 	if err != nil || !page.Complete || page.Total != 1 {
 		t.Fatalf("refreshed view=%+v err=%v", page, err)
+	}
+}
+
+func TestSessionCatalogLegacyRowsReloadBeforeCompleteness(t *testing.T) {
+	ctx := t.Context()
+	store := newCountingStore()
+	key := putSession(t, store, "codex", fmt.Sprintf("%032x", 1), baseTime)
+	home := t.TempDir()
+	cache, err := OpenMetadataCache(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(home, "cache", "catalog")
+	if err = os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(dir, "sessions.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.ExecContext(ctx, `CREATE TABLE sessions (key TEXT PRIMARY KEY, etag TEXT NOT NULL, hash TEXT NOT NULL, capture TEXT NOT NULL, activity TEXT NOT NULL, summary BLOB NOT NULL, search TEXT NOT NULL, lowerid TEXT NOT NULL, unlabeled INTEGER NOT NULL)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	headers, err := DiscoverCatalogHeaders(ctx, store, ListOptions{Cache: cache})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var etag string
+	for _, obj := range headers.Canonical {
+		if obj.Key == key {
+			etag = obj.ETag
+		}
+	}
+	_, err = db.ExecContext(ctx, "INSERT INTO sessions VALUES(?,?,?,?,?,?,?,?,?)", key, etag, "bodyhash", catalogTime(baseTime), catalogTime(baseTime), []byte(`{"SessionID":"untrusted legacy identity"}`), "wrong", "wrong", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reads := 0
+	catalog, err := OpenSessionCatalog(ctx, cache, store, ListOptions{BodyRead: func(string, bool) { reads++ }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = catalog.Close() }()
+	page, err := catalog.Query(ctx, CatalogQuery{})
+	if err != nil || page.Complete || page.Total != 0 {
+		t.Fatalf("legacy authority leaked: %+v %v", page, err)
+	}
+	if err = catalog.Refresh(ctx, headers); err != nil {
+		t.Fatal(err)
+	}
+	page, err = catalog.Query(ctx, CatalogQuery{})
+	if err != nil || !page.Complete || reads != 1 || len(page.Rows) != 1 || page.Rows[0].Summary.SessionID != fmt.Sprintf("%032x", 1) {
+		t.Fatalf("legacy reload: %+v reads=%d err=%v", page, reads, err)
+	}
+}
+
+func TestSessionCatalogRejectsSummaryDamageAfterRefresh(t *testing.T) {
+	ctx := t.Context()
+	store := newCountingStore()
+	putSession(t, store, "codex", fmt.Sprintf("%032x", 1), baseTime)
+	cache, err := OpenMetadataCache(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := OpenSessionCatalog(ctx, cache, store, ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = catalog.Close() }()
+	headers, err := DiscoverCatalogHeaders(ctx, store, ListOptions{Cache: cache})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = catalog.Refresh(ctx, headers); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = catalog.db.ExecContext(ctx, "UPDATE sessions SET summary=?", []byte(`{"SessionID":"altered"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = catalog.Query(ctx, CatalogQuery{}); err == nil {
+		t.Fatal("accepted damaged projection")
+	}
+	if err = catalog.Refresh(ctx, headers); err != nil {
+		t.Fatal(err)
+	}
+	page, err := catalog.Query(ctx, CatalogQuery{})
+	if err != nil || len(page.Rows) != 1 || page.Rows[0].Summary.SessionID != fmt.Sprintf("%032x", 1) {
+		t.Fatalf("repair=%+v err=%v", page, err)
+	}
+}
+
+func TestSessionCatalogRefreshRepairsDerivedSelectionColumns(t *testing.T) {
+	ctx := t.Context()
+	store := newCountingStore()
+	putSession(t, store, "codex", fmt.Sprintf("%032x", 1), baseTime)
+	cache, err := OpenMetadataCache(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := OpenSessionCatalog(ctx, cache, store, ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = catalog.Close() }()
+	headers, err := DiscoverCatalogHeaders(ctx, store, ListOptions{Cache: cache})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = catalog.Refresh(ctx, headers); err != nil {
+		t.Fatal(err)
+	}
+	query := CatalogQuery{Metadata: MetadataQuery{Filter: Filter{From: baseTime}}, Words: []string{"configured label"}}
+	before, err := catalog.Query(ctx, query)
+	if err != nil || len(before.Rows) != 1 {
+		t.Fatalf("fixture %+v err=%v", before, err)
+	}
+	if _, err = catalog.db.ExecContext(ctx, "UPDATE sessions SET capture='1900',activity='1900',search='missing',lowerid='wrong',unlabeled=0"); err != nil {
+		t.Fatal(err)
+	}
+	if err = catalog.Refresh(ctx, headers); err != nil {
+		t.Fatal(err)
+	}
+	after, err := catalog.Query(ctx, query)
+	if err != nil || !reflect.DeepEqual(before.Rows, after.Rows) {
+		t.Fatalf("derived damage hid canonical row: %+v err=%v", after, err)
 	}
 }
