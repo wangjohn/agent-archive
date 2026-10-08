@@ -1391,9 +1391,18 @@ func TestMetadataPhysicalIdentityConflictsLeaveIncompleteInventory(t *testing.T)
 	}
 }
 
+type metadataRootScenario string
+
+const (
+	metadataRootRetarget       metadataRootScenario = "retarget"
+	metadataRootCollapse       metadataRootScenario = "collapse"
+	metadataRootUnchangedAlias metadataRootScenario = "unchanged-alias"
+	metadataRootDuplicateAlias metadataRootScenario = "duplicate-alias"
+)
+
 func TestMetadataConstructorRootsRemainCoherentBeforeLazyAcquisition(t *testing.T) {
-	for _, scenario := range []string{"retarget", "collapse", "unchanged-alias", "duplicate-alias"} {
-		t.Run(scenario, func(t *testing.T) {
+	for _, scenario := range []metadataRootScenario{metadataRootRetarget, metadataRootCollapse, metadataRootUnchangedAlias, metadataRootDuplicateAlias} {
+		t.Run(string(scenario), func(t *testing.T) {
 			fixtureLookup, ids, rootB := metadataFixture(t, 1)
 			store := fixtureLookup.store
 			if err := fixtureLookup.CloseReadOnly(); err != nil {
@@ -1405,7 +1414,7 @@ func TestMetadataConstructorRootsRemainCoherentBeforeLazyAcquisition(t *testing.
 			rootA := t.TempDir()
 			alias := filepath.Join(t.TempDir(), "home")
 			initial := rootB
-			changed := scenario == "retarget" || scenario == "collapse"
+			changed := scenario == metadataRootRetarget || scenario == metadataRootCollapse
 			if changed {
 				initial = rootA
 			}
@@ -1413,7 +1422,7 @@ func TestMetadataConstructorRootsRemainCoherentBeforeLazyAcquisition(t *testing.
 				t.Fatal(err)
 			}
 			homes := []string{alias}
-			if scenario == "collapse" || scenario == "duplicate-alias" {
+			if scenario == metadataRootCollapse || scenario == metadataRootDuplicateAlias {
 				homes = append(homes, rootB)
 			}
 			lookup, err := NewCodexRolloutLookup(t.Context(), store, homes)
