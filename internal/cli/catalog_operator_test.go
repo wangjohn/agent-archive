@@ -190,11 +190,11 @@ func TestCatalogMaintenanceRequiresCoordinatorAndExactRecoveryOwner(t *testing.T
 	if run("recover", "--owner", "wrong") == 0 {
 		t.Fatal("wrong recovery owner admitted")
 	}
-	if run("recover", "--owner", h.GCLease) != 0 {
-		t.Fatal("exact observed owner could not recover")
+	if run("recover", "--owner", h.GCLease) == 0 {
+		t.Fatal("exact owner discarded incomplete protected inventory")
 	}
 	after, _, err := remote.Writer.Head(t.Context())
-	if err != nil || after.GCLease != "" || after.Epoch == h.Epoch {
-		t.Fatal("recovery did not release exact lease", err)
+	if err != nil || after.GCLease != h.GCLease || after.Epoch != h.Epoch {
+		t.Fatal("recovery released incomplete inventory lease", err)
 	}
 }

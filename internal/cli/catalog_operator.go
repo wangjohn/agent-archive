@@ -18,20 +18,21 @@ import (
 type catalogOperatorAction string
 
 const (
-	catalogProbe   catalogOperatorAction = "probe"
-	catalogCollect catalogOperatorAction = "collect"
-	catalogRecover catalogOperatorAction = "recover"
+	catalogProbe       catalogOperatorAction = "probe"
+	catalogCollect     catalogOperatorAction = "collect"
+	catalogRecover     catalogOperatorAction = "recover"
+	catalogRecoverSeal catalogOperatorAction = "recover-seal"
 )
 
 // runCatalogOperator is the explicit provider-evidence and fenced maintenance
 // entry point. It never migrates, activates, or qualifies a destination.
 func runCatalogOperator(args []string, stdout, stderr io.Writer, env Env) int {
 	if len(args) == 0 {
-		terminal.Println(stderr, "agent-archive: _catalog: choose probe, collect, or recover")
+		terminal.Println(stderr, "agent-archive: _catalog: choose probe, collect, recover, or recover-seal")
 		return 2
 	}
 	action := catalogOperatorAction(args[0])
-	if action != catalogProbe && action != catalogCollect && action != catalogRecover {
+	if action != catalogProbe && action != catalogCollect && action != catalogRecover && action != catalogRecoverSeal {
 		terminal.Println(stderr, "agent-archive: _catalog: unknown action")
 		return 2
 	}
@@ -39,11 +40,15 @@ func runCatalogOperator(args []string, stdout, stderr io.Writer, env Env) int {
 	fs.SetOutput(stderr)
 	var bucket, prefix, owner string
 	var isolated bool
+	var generation uint64
 	switch action {
 	case catalogProbe:
 		fs.StringVar(&bucket, "bucket", "", "explicit isolated target bucket")
 		fs.StringVar(&prefix, "prefix", "", "explicit .catalog-qualification/<name>/ target prefix")
 		fs.BoolVar(&isolated, "isolated", false, "confirm this target is reserved for synthetic qualification observations")
+	case catalogRecoverSeal:
+		fs.Uint64Var(&generation, "generation", 0, "exact observed coordinator seal generation")
+		fs.StringVar(&owner, "owner", "", "exact observed unleased seal owner")
 	case catalogRecover:
 		fs.StringVar(&owner, "owner", "", "exact observed GC lease owner")
 	case catalogCollect:
@@ -52,8 +57,11 @@ func runCatalogOperator(args []string, stdout, stderr io.Writer, env Env) int {
 	if err := fs.Parse(args[1:]); err != nil || fs.NArg() != 0 {
 		return 2
 	}
-	if action == catalogRecover && owner == "" {
+	if (action == catalogRecover || action == catalogRecoverSeal) && owner == "" {
 		return catalogOperatorError(stderr, errors.New("exact observed GC lease owner is required"))
+	}
+	if action == catalogRecoverSeal && generation == 0 {
+		return catalogOperatorError(stderr, errors.New("exact observed seal generation is required"))
 	}
 	home, err := env.readHome()
 	if err != nil {
@@ -94,7 +102,19 @@ func runCatalogOperator(args []string, stdout, stderr io.Writer, env Env) int {
 	if !ok {
 		return catalogOperatorError(stderr, errors.New("catalog maintenance requires qualified catalog authority"))
 	}
-	barrier, err := adapter.CatalogBarrier(ctx)
+	if action == catalogRecoverSeal {
+		if err = adapter.Writer.Coordinator().RecoverUnleasedSeal(ctx, owner, generation); err != nil {
+			return catalogOperatorError(stderr, err)
+		}
+		terminal.Println(stdout, "Exact drained unleased seal recovered.")
+		return 0
+	}
+	var barrier catalog.Barrier
+	if action == catalogRecover {
+		barrier, err = adapter.CatalogRecoveryBarrier(ctx, owner)
+	} else {
+		barrier, err = adapter.CatalogBarrier(ctx)
+	}
 	if err != nil {
 		return catalogOperatorError(stderr, err)
 	}

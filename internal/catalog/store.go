@@ -32,6 +32,12 @@ func Wrap(store storage.ObjectStore) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
+	if w.readOnly {
+		return nil, ErrReadOnly
+	}
+	if wrapped, ok := store.(*Store); ok {
+		return wrapped, nil
+	}
 	return &Store{ObjectStore: store, Writer: w}, nil
 }
 
@@ -242,7 +248,11 @@ func (s *Store) CatalogBarrier(ctx context.Context) (Barrier, error) {
 		CatalogBarrier(context.Context) (Barrier, error)
 	})
 	if !ok {
-		return nil, errors.New("complete catalog destination coordinator is required")
+		owner, err := s.Writer.Coordinator().Seal(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return s.Writer.Coordinator().HeldBarrier(owner), nil
 	}
 	barrier, err := provider.CatalogBarrier(ctx)
 	if err != nil {
@@ -279,11 +289,8 @@ func (s *Store) CatalogAtomicQualification() error {
 	return s.ObjectStore.(storage.AtomicCatalogProvider).CatalogAtomicQualification()
 }
 
-// PutConditional is restricted to internal catalog protocol objects. Ordinary
-// publication must use the admitted source and frozen commit APIs.
-func (s *Store) PutConditional(ctx context.Context, key string, raw []byte, condition storage.PutCondition) (string, error) {
-	if !strings.HasPrefix(key, "catalog-v4/") {
-		return "", errors.New("catalog conditional write outside protocol")
-	}
-	return s.Writer.conditional.PutConditional(ctx, key, raw, condition)
+// PutConditional refuses adapter writes that bypass publication admission.
+// Protocol internals hold exact ownership on the qualified raw writer.
+func (*Store) PutConditional(context.Context, string, []byte, storage.PutCondition) (string, error) {
+	return "", ErrAdmissionClosed
 }

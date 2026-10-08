@@ -35,7 +35,9 @@ type gcLink struct {
 
 func headHash(h CatalogHead) string { raw, _ := json.Marshal(h); return storage.SHA256Hex(raw) }
 func inventoryHash(refs []ObjectRef) string {
-	raw, _ := json.Marshal(refs)
+	canonical := make([]ObjectRef, len(refs))
+	copy(canonical, refs)
+	raw, _ := json.Marshal(canonical)
 	return storage.SHA256Hex(raw)
 }
 
@@ -149,6 +151,7 @@ type recoveryCoordinator struct {
 	writer     *Writer
 	owner      string
 	generation uint64
+	external   Barrier
 }
 
 func (b recoveryCoordinator) Hold(ctx context.Context) ([]ObjectRef, func(), error) {
@@ -158,6 +161,20 @@ func (b recoveryCoordinator) Hold(ctx context.Context) ([]ObjectRef, func(), err
 	}
 	if state.Generation != b.generation {
 		return nil, nil, ErrConflict
+	}
+	if b.external != nil {
+		refs, release, err := b.external.Hold(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+		if release == nil {
+			return nil, nil, ErrAdmissionClosed
+		}
+		if inventoryHash(refs) != inventoryHash(state.GCLink.Inventory) {
+			release()
+			return nil, nil, ErrConflict
+		}
+		return refs, release, nil
 	}
 	return append([]ObjectRef(nil), state.GCLink.Inventory...), func() {}, nil
 }
@@ -172,10 +189,25 @@ func (s *Store) CatalogRecoveryBarrier(ctx context.Context, owner string) (Barri
 		}
 		return nil, err
 	}
-	return recoveryCoordinator{s.Writer, owner, state.Generation}, nil
+	var external Barrier
+	if provider, ok := s.ObjectStore.(interface {
+		CatalogBarrier(context.Context) (Barrier, error)
+	}); ok {
+		external, err = provider.CatalogBarrier(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if external == nil {
+			return nil, ErrAdmissionClosed
+		}
+	}
+	return recoveryCoordinator{writer: s.Writer, owner: owner, generation: state.Generation, external: external}, nil
 }
 
 func (w *Writer) recoverLinkedGC(ctx context.Context, owner string) error {
+	if w.readOnly {
+		return ErrReadOnly
+	}
 	state, err := w.gcState(ctx, owner)
 	if err != nil {
 		if completed := w.completedGC(ctx, owner); completed == nil {

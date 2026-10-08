@@ -11,6 +11,9 @@ type writeAuthority struct {
 // Private helpers still check actual durable lifecycle or migration ownership;
 // a private function name never grants permission through a sealed destination.
 func (w *Writer) checkWriteAuthority(ctx context.Context) error {
+	if w.readOnly {
+		return ErrReadOnly
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}

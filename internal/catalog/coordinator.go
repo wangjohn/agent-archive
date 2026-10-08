@@ -57,6 +57,9 @@ func (c *Coordinator) read(ctx context.Context) (admissions, string, error) {
 }
 
 func (c *Coordinator) change(ctx context.Context, fn func(*admissions) error) error {
+	if c.writer.readOnly {
+		return ErrReadOnly
+	}
 	for range 64 {
 		state, etag, err := c.read(ctx)
 		if err != nil {
@@ -342,16 +345,6 @@ func (c *Coordinator) Deactivate(ctx context.Context, owner string) error {
 		state.Mode = "rollback"
 		return nil
 	})
-}
-
-// CatalogBarrier seals the durable destination admission authority. Hold must
-// observe every registered lifecycle drained; crashed owners never age out.
-func (s *Store) CatalogBarrier(ctx context.Context) (Barrier, error) {
-	owner, err := s.Writer.Coordinator().Seal(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return s.Writer.Coordinator().HeldBarrier(owner), nil
 }
 
 func (c *Coordinator) releaseHeld(ctx context.Context, owner, hold string) error {

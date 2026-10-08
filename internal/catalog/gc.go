@@ -22,6 +22,9 @@ type Barrier interface {
 // leaves the lease closed; only RecoverGC under the same global barrier can
 // release it. GC never interprets timeout or age as lease ownership.
 func (w *Writer) Collect(ctx context.Context, barrier Barrier) error {
+	if w.readOnly {
+		return ErrReadOnly
+	}
 	if _, recovery := barrier.(completedCoordinator); recovery {
 		return errors.New("completed recovery barrier cannot collect")
 	}
@@ -109,6 +112,9 @@ func (w *Writer) Collect(ctx context.Context, barrier Barrier) error {
 }
 
 func (w *Writer) acquireGC(ctx context.Context, h CatalogHead, etag string, clock storage.CatalogTime, inventory []ObjectRef) (CatalogHead, string, error) {
+	if w.readOnly {
+		return h, "", ErrReadOnly
+	}
 	if h.GCLease != "" {
 		return h, "", errors.New("catalog GC lease requires explicit recovery")
 	}
@@ -202,6 +208,9 @@ func (w *Writer) markRetained(ctx context.Context, h CatalogHead, clock storage.
 }
 
 func (w *Writer) removeUnreachable(ctx context.Context, live map[string]bool, h CatalogHead, etag string) error {
+	if w.readOnly {
+		return ErrReadOnly
+	}
 	var candidates []storage.Object
 	for _, prefix := range []string{"catalog-v4/", "sessions/"} {
 		objects, err := w.store.List(ctx, prefix)
@@ -229,6 +238,9 @@ func (w *Writer) removeUnreachable(ctx context.Context, live map[string]bool, h 
 }
 
 func (w *Writer) releaseGC(ctx context.Context, h CatalogHead, etag string) error {
+	if w.readOnly {
+		return ErrReadOnly
+	}
 	owner := h.GCLease
 	raw, err := w.bindGCRelease(ctx, h, owner)
 	if err != nil {
@@ -312,6 +324,9 @@ func leafSessionKey(e *CatalogEntry) string {
 // RecoverGC requires the exact observed owner and a freshly held global
 // barrier. It only releases the fence; a subsequent Collect rebuilds inventory.
 func (w *Writer) RecoverGC(ctx context.Context, barrier Barrier, owner string) error {
+	if w.readOnly {
+		return ErrReadOnly
+	}
 	if barrier == nil || owner == "" {
 		return errors.New("GC recovery ownership required")
 	}
@@ -327,6 +342,9 @@ func (w *Writer) RecoverGC(ctx context.Context, barrier Barrier, owner string) e
 }
 
 func (w *Writer) gcHead(ctx context.Context) (CatalogHead, string, error) {
+	if w.readOnly {
+		return CatalogHead{}, "", ErrReadOnly
+	}
 	h, etag, err := w.Head(ctx)
 	if err != nil || etag != "" {
 		return h, etag, err

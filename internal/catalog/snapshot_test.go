@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -578,5 +579,70 @@ func TestReadViewRejectsBodyThatCompletesAfterLifetime(t *testing.T) {
 	expiring.onBody = func() { view.mu.Lock(); view.started = time.Now().Add(-SnapshotLifetime); view.mu.Unlock() }
 	if _, err = store.Get(ctx, m.SessionKey); !errors.Is(err, ErrStaleCursor) {
 		t.Fatal("expired in-flight body accepted", err)
+	}
+}
+
+func TestPublicAdapterCASAndReadonlyMeasuredWriterRefuseMutation(t *testing.T) {
+	w, raw := fixture(t)
+	m := mutation(t, w, "readonly")
+	if _, err := w.Commit(t.Context(), m); err != nil {
+		t.Fatal(err)
+	}
+	activateFixture(t, w)
+	store, err := Wrap(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exact, err := New(store)
+	if err != nil || exact != store.Writer {
+		t.Fatal("adapter writer binding", err)
+	}
+	before, err := raw.List(t.Context(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.PutConditional(t.Context(), CoordinatorKey, []byte("bypass"), storage.PutCondition{}); !errors.Is(err, ErrAdmissionClosed) {
+		t.Fatal("public CAS bypass", err)
+	}
+	measured := storagetest.NewMeasuredStore(store, 0)
+	readonly, err := New(measured)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !readonly.readOnly || readonly.conditional != nil {
+		t.Fatal("wrapper reconstructed writer authority")
+	}
+	if _, err = Wrap(measured); !errors.Is(err, ErrReadOnly) {
+		t.Fatal("wrapper regained publication", err)
+	}
+	checks := []func() error{
+		func() error { _, e := readonly.PutImmutable(t.Context(), KindMetadata, []byte("bypass")); return e },
+		func() error { _, e := readonly.Commit(t.Context(), m); return e },
+		func() error { return readonly.Collect(t.Context(), heldBarrier{}) },
+		func() error { return readonly.RecoverGC(t.Context(), heldBarrier{}, "owner") },
+		func() error { _, e := readonly.Coordinator().Seal(t.Context()); return e },
+	}
+	for _, check := range checks {
+		if err = check(); !errors.Is(err, ErrReadOnly) {
+			t.Fatal("read-only mutation result", err)
+		}
+	}
+	after, err := raw.List(t.Context(), "")
+	if err != nil || !reflect.DeepEqual(before, after) {
+		t.Fatal("refused mutation wrote objects", err)
+	}
+	snapshot, err := OpenSnapshot(t.Context(), measured, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, err := snapshot.Find(t.Context(), m.SessionKey)
+	if err != nil || entry == nil {
+		t.Fatal("measured snapshot lost reads", err)
+	}
+	if _, err = snapshot.ReadMetadata(t.Context(), *entry); err != nil {
+		t.Fatal(err)
+	}
+	if metrics := measured.Metrics(); metrics.Lists != 0 || metrics.Gets == 0 {
+		t.Fatal("snapshot metrics", metrics)
 	}
 }

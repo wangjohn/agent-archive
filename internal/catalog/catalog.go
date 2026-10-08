@@ -142,10 +142,20 @@ type Writer struct {
 	versioned   storage.CatalogVersionedGetter
 	clock       storage.CatalogClock
 	conditional storage.ConditionalPutter
+	readOnly    bool
 }
+
+// ErrReadOnly refuses mutation through a reader authority wrapper.
+var ErrReadOnly = errors.New("catalog authority wrapper is read-only")
 
 // New requires qualified atomic writes and bounded versioned reads.
 func New(store storage.ObjectStore) (*Writer, error) {
+	if wrapped, ok := store.(*Store); ok {
+		if wrapped.Writer == nil || wrapped.Writer.store != wrapped.ObjectStore || wrapped.Writer.conditional == nil {
+			return nil, ErrAdmissionClosed
+		}
+		return wrapped.Writer, nil
+	}
 	qualified, ok := store.(storage.AtomicCatalogProvider)
 	if !ok {
 		return nil, storage.ErrAtomicCatalogUnqualified
@@ -169,7 +179,12 @@ func New(store storage.ObjectStore) (*Writer, error) {
 	if !ok {
 		return nil, errors.New("catalog requires qualified provider clock")
 	}
-	return &Writer{store: store, bounded: bounded, versioned: versioned, conditional: conditional, clock: clock}, nil
+	readOnly := false
+	if authority, ok := store.(interface{ CatalogMetadataAuthority() bool }); ok && authority.CatalogMetadataAuthority() {
+		readOnly = true
+		conditional = nil
+	}
+	return &Writer{store: store, bounded: bounded, versioned: versioned, conditional: conditional, clock: clock, readOnly: readOnly}, nil
 }
 
 // NewMutationID creates a fresh publication and revision identity.
@@ -194,6 +209,9 @@ func (w *Writer) putJSON(ctx context.Context, kind ImmutableKind, value any, lim
 
 // PutImmutable creates exact content-addressed objects without replacement.
 func (w *Writer) PutImmutable(ctx context.Context, kind ImmutableKind, b []byte) (ObjectRef, error) {
+	if w.readOnly {
+		return ObjectRef{}, ErrReadOnly
+	}
 	id, err := NewMutationID()
 	if err != nil {
 		return ObjectRef{}, err
@@ -349,6 +367,9 @@ func allOrderKeys(key string, e *CatalogEntry) [][]string {
 // Commit rebases only across other sessions. Every acknowledged mutation has
 // a durable receipt; an ambiguous response never licenses a blind overwrite.
 func (w *Writer) Commit(ctx context.Context, m CatalogMutation) (string, error) {
+	if w.readOnly {
+		return "", ErrReadOnly
+	}
 	frozen, digest, err := freezeMutation(m)
 	if err != nil {
 		return "", err
