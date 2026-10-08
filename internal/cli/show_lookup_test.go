@@ -139,3 +139,59 @@ func TestWarmShowProjectionLoadsAuthoritativeJSONAndTranscript(t *testing.T) {
 		}
 	}
 }
+
+func TestColdAndWarmShowCandidatesReadSelectedBodyOnce(t *testing.T) {
+	env, mem, id := publishedFixture(t)
+	key := "sessions/codex/" + id + "/metadata.json"
+	raw, err := mem.Get(t.Context(), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var metadata archive.Metadata
+	if err = json.Unmarshal(raw, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	metadata.Title = "Unique body provenance"
+	metadata.PullRequests = []archive.PullRequestLink{{Number: 9133}}
+	raw, err = json.Marshal(metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = mem.Put(t.Context(), key, raw); err != nil {
+		t.Fatal(err)
+	}
+	recorder := &recordingStore{ObjectStore: mem}
+	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return recorder, nil }
+	home, err := env.Home()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, flags := range [][]string{{"--json"}, {"--transcript", "--no-pager"}} {
+		var want, wantErr bytes.Buffer
+		if code := Run(append([]string{"show", id}, flags...), nil, &want, &wantErr, env); code != 0 {
+			t.Fatal(code, wantErr.String())
+		}
+		for _, query := range []string{id[:8], "unique body provenance", "#9133"} {
+			if err = os.RemoveAll(filepath.Join(home, "cache")); err != nil {
+				t.Fatal(err)
+			}
+			for _, temperature := range []string{"cold", "warm"} {
+				recorder.take()
+				var got, stderr bytes.Buffer
+				if code := Run(append([]string{"show", query}, flags...), nil, &got, &stderr, env); code != 0 || got.String() != want.String() || stderr.String() != wantErr.String() {
+					t.Fatalf("%s %s %v: code=%d got=%s error=%s", temperature, query, flags, code, got.String(), stderr.String())
+				}
+				_, gets := recorder.take()
+				selectedReads := 0
+				for _, gotKey := range gets {
+					if gotKey == key {
+						selectedReads++
+					}
+				}
+				if selectedReads != 1 {
+					t.Fatalf("%s %s %v selected=%d gets=%v", temperature, query, flags, selectedReads, gets)
+				}
+			}
+		}
+	}
+}

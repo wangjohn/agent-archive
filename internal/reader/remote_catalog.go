@@ -342,6 +342,7 @@ func (c *SQLiteSessionCatalog) RefreshRemote(ctx context.Context) error {
 			}
 		}
 	}
+	c.remoteSnapshot = snapshot
 	c.viewEpoch, c.viewGeneration, c.viewReady = epoch, generation, true
 	return nil
 }

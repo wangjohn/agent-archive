@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/catalog"
 	"github.com/wangjohn/agent-archive/internal/listingindex"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -128,6 +129,7 @@ type SQLiteSessionCatalog struct {
 	viewEpoch      string
 	viewGeneration int64
 	viewReady      bool
+	remoteSnapshot *catalog.Snapshot
 }
 
 // OpenSessionCatalog opens a disposable private SQLite index. Each connection

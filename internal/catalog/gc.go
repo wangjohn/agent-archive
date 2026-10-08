@@ -76,9 +76,23 @@ func (w *Writer) Collect(ctx context.Context, barrier Barrier) error {
 	if err != nil {
 		return err
 	}
-	h, etag, err := w.gcHead(ctx, authorizeBootstrap)
+	bootstrapped := false
+	checkedBootstrap := func(ctx context.Context, writer *Writer) error {
+		if err := authorizeBootstrap(ctx, writer); err != nil {
+			return err
+		}
+		bootstrapped = true
+		return nil
+	}
+	h, etag, err := w.gcHead(ctx, checkedBootstrap)
 	if err != nil {
 		return err
+	}
+	if bootstrapped {
+		clock, err = w.preflightClock(ctx)
+		if err != nil {
+			return err
+		}
 	}
 	h, leaseETag, err := w.acquireGC(ctx, h, etag, clock, protected)
 	if err != nil {

@@ -65,12 +65,14 @@ func resolveShowQuery(ctx context.Context, store storage.ObjectStore, env showQu
 	}
 	// Keep complete summaries for child counts, scope tiers and ambiguity.
 	stopSearch := startActivity(stdout, "Finding sessions…")
-	sessions, fullBodies, err := readShowCandidates(ctx, store, env, harness, query, stderr)
+	candidates, err := readShowCandidates(ctx, store, env, harness, query, stderr)
 	stopSearch()
+	defer candidates.close()
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: show: %v\n", err)
 		return showLookup{}, 1
 	}
+	sessions := candidates.sessions
 	sortByActivity(sessions)
 	// Search every listed sidecar — do not apply list's --limit window, or
 	// older title matches would be silently invisible.
@@ -93,7 +95,12 @@ func resolveShowQuery(ctx context.Context, store storage.ObjectStore, env showQu
 		terminal.Printf(stderr, "agent-archive: show: no archived session %q (see `agent-archive list`)\n", archive.DisplayLine(query))
 		return showLookup{}, 1
 	case 1:
-		return showCandidateLookup(matches[0], fullBodies), 0
+		lookup, err := candidates.lookup(ctx, matches[0])
+		if err != nil {
+			terminal.Printf(stderr, "agent-archive: show: %v\n", err)
+			return showLookup{}, 1
+		}
+		return lookup, 0
 	}
 	format := listFormatOptions{Now: env.now(), Projects: cfgProjects, Children: childCounts(sessions)}
 	if !browseInteractive(env, stdin, stdout) {
@@ -127,7 +134,12 @@ func resolveShowQuery(ctx context.Context, store storage.ObjectStore, env showQu
 	}
 	for _, metadata := range matches {
 		if metadata.SessionID == row.SessionID && metadata.Harness.Name == row.HarnessKey {
-			return showCandidateLookup(metadata, fullBodies), 0
+			lookup, err := candidates.lookup(ctx, metadata)
+			if err != nil {
+				terminal.Printf(stderr, "agent-archive: show: %v\n", err)
+				return showLookup{}, 1
+			}
+			return lookup, 0
 		}
 	}
 	return showLookup{SessionID: row.SessionID, Harness: row.HarnessKey}, 0
@@ -137,14 +149,6 @@ func resolveShowQuery(ctx context.Context, store storage.ObjectStore, env showQu
 // character boundary.
 func shortSessionID(id string) string {
 	return archive.TruncateUTF8(id, minShortSessionID)
-}
-
-// showCandidateLookup retains metadata only when discovery verified the full body.
-func showCandidateLookup(metadata archive.Metadata, fullBody bool) showLookup {
-	if fullBody {
-		return showMetadataLookup(metadata)
-	}
-	return showLookup{SessionID: metadata.SessionID, Harness: metadata.Harness.Name}
 }
 
 func showMetadataLookup(metadata archive.Metadata) showLookup {
