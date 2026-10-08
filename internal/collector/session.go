@@ -217,6 +217,9 @@ func (s *sessionScan) resume() (outcome sessionOutcome, handled bool, err error)
 		return outcome, true, err
 	}
 	if pendingSkillMode(pending.SkillEvidence) != s.opts.skillEvidence() {
+		if pending.Catalog != nil {
+			return outcomeSkipped, true, state.ErrCatalogJournalFrozen
+		}
 		// An older pending file may contain broader evidence. Discard it
 		// before any retry; the next scan rebuilds under the active policy.
 		if err := s.local.RemovePending(s.id()); err != nil {
@@ -225,6 +228,9 @@ func (s *sessionScan) resume() (outcome sessionOutcome, handled bool, err error)
 		return outcomeSkipped, false, nil
 	}
 	if !pending.Attempted && s.req.Token != "" && s.req.Token != pending.RequestToken {
+		if pending.Catalog != nil {
+			return outcomeSkipped, true, state.ErrCatalogJournalFrozen
+		}
 		// A stop/end request is a natural debounce flush. A merely rate-limited,
 		// never-attempted candidate can be safely replaced by a richer one;
 		// deferred lifecycle evidence enriches it without changing when it
@@ -236,6 +242,9 @@ func (s *sessionScan) resume() (outcome sessionOutcome, handled bool, err error)
 	// publicationReadyAt); it is capped durably, since a cap recomputed from
 	// each pass's now would keep moving away.
 	if latest := s.now.Add(s.opts.minUploadInterval()); pending.ReadyAt.After(latest) {
+		if pending.Catalog != nil {
+			return outcomeSkipped, true, state.ErrCatalogJournalFrozen
+		}
 		pending.ReadyAt = latest
 		if err := s.local.SavePending(s.id(), pending); err != nil {
 			return outcomeSkipped, true, fmt.Errorf("cap pending publication time: %w", err)

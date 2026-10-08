@@ -139,6 +139,9 @@ func (s *sessionScan) resumeHistory(ctx context.Context, p state.PendingPublicat
 		return outcomeSkipped, archive.ErrHistoryMutationPending
 	}
 	if latest := s.now.Add(s.opts.minUploadInterval()); p.ReadyAt.After(latest) {
+		if p.Catalog != nil {
+			return outcomeSkipped, state.ErrCatalogJournalFrozen
+		}
 		p.ReadyAt = latest
 		if err := s.local.SavePending(s.id(), p); err != nil {
 			return outcomeSkipped, err

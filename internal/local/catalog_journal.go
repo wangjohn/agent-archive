@@ -160,3 +160,22 @@ func (g *CollectorGuard) JournalRemovals() ([]CatalogJournal, error) {
 	}
 	return result, nil
 }
+
+// HoldJournalRemoval verifies the exact durable pre-unlink completion record
+// under the actual held originating guard. The returned operation must remain
+// held through cleanup, pending unlink and fsync; missing pending grants nothing.
+func (g *CollectorGuard) HoldJournalRemoval(j CatalogJournal) (func(), error) {
+	if err := j.Validate(); err != nil {
+		return nil, err
+	}
+	done, err := g.BeginOperation(j.Origin)
+	if err != nil {
+		return nil, err
+	}
+	var recorded CatalogJournal
+	if err = readGuardRecord(g.completionPath(j.SessionID), &recorded); err != nil || recorded != j {
+		done()
+		return nil, errors.New("catalog pre-removal record differs")
+	}
+	return done, nil
+}

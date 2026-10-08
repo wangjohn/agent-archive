@@ -16,6 +16,9 @@ import (
 // resumeStricterHistory resolves exact remote status before preparing any
 // replacement. Unknown status keeps the attempted descriptor and its evidence.
 func (s *sessionScan) resumeStricterHistory(p state.PendingPublication) (sessionOutcome, error) {
+	if p.Catalog != nil {
+		return outcomeSkipped, state.ErrCatalogJournalFrozen
+	}
 	committed, err := s.checkFrozenHistoryMetadata(p)
 	if err != nil {
 		return outcomeSkipped, err

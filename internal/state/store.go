@@ -964,6 +964,16 @@ func (s *Store) RemovePending(id string) error {
 	if !safeFileComponent(id) {
 		return errors.New("archive session ID is not a safe file name component")
 	}
+	if err := s.checkCatalogPendingRemoval(id); err != nil {
+		return err
+	}
+	return s.removePending(id)
+}
+
+func (s *Store) removePending(id string) error {
+	if !safeFileComponent(id) {
+		return errors.New("archive session ID is not a safe file name component")
+	}
 	if _, err := os.Lstat(s.pendingPath(id)); errors.Is(err, os.ErrNotExist) {
 		if owed, e := s.protectedStorage(id); owed || e != nil {
 			return errors.Join(ErrDurableStorageRecovery, e)

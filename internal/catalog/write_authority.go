@@ -28,6 +28,9 @@ func (w *Writer) checkWriteAuthority(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if state.Intent != nil {
+		return ErrAdmissionClosed
+	}
 	if authority.seal != "" {
 		if state.Seal != authority.seal || state.Hold != "" || len(state.Owners) != 0 {
 			return ErrAdmissionClosed

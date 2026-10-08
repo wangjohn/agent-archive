@@ -34,6 +34,7 @@ const (
 )
 
 type admissions struct {
+	Intent     *migrationIntent     `json:"migration_intent,omitempty"`
 	Protocol   uint64               `json:"protocol"`
 	Mode       admissionMode        `json:"mode"`
 	Proof      string               `json:"proof"`
@@ -79,6 +80,12 @@ func (c *Coordinator) change(ctx context.Context, fn func(*admissions) error) er
 		state, etag, err := c.read(ctx)
 		if err != nil {
 			return err
+		}
+		if state.Intent != nil {
+			authority, ok := ctx.Value(migrationIntentKey{}).(migrationIntentAuthority)
+			if !ok || authority.writer != c.writer || authority.digest != intentDigest(state.Intent) {
+				return ErrAdmissionClosed
+			}
 		}
 		if err = fn(&state); err != nil {
 			return err
@@ -392,13 +399,24 @@ func (c *Coordinator) Active(ctx context.Context) error {
 
 // Deactivate closes reader activation while the migration owner holds writers.
 func (c *Coordinator) Deactivate(ctx context.Context, owner string) error {
-	return c.change(ctx, func(state *admissions) error {
+	transition := func(state *admissions) error {
 		if state.Seal != owner || len(state.Owners) != 0 || state.Hold != "" {
 			return ErrAdmissionClosed
 		}
 		state.Mode = admissionRollback
 		return nil
-	})
+	}
+	if authority, ok := ctx.Value(migrationIntentKey{}).(migrationIntentAuthority); ok {
+		state, _, err := c.read(ctx)
+		if err != nil {
+			return err
+		}
+		if authority.writer != c.writer || state.Intent == nil || authority.digest != intentDigest(state.Intent) {
+			return ErrAdmissionClosed
+		}
+		return c.changeIntent(ctx, state.Intent, transition)
+	}
+	return c.change(ctx, transition)
 }
 
 func (c *Coordinator) releaseHeld(ctx context.Context, owner, hold string) error {

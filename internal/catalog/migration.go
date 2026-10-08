@@ -40,11 +40,13 @@ type MigrationPhase string
 
 // Supported migration checkpoint phases.
 const (
-	MigrationCopying   MigrationPhase = "copying"
-	MigrationVerifying MigrationPhase = "verifying"
-	MigrationVerified  MigrationPhase = "verified"
-	MigrationActive    MigrationPhase = "active"
-	MigrationRollback  MigrationPhase = "rollback"
+	MigrationInitializing      MigrationPhase = "initializing"
+	MigrationRollbackPreparing MigrationPhase = "rollback-preparing"
+	MigrationCopying           MigrationPhase = "copying"
+	MigrationVerifying         MigrationPhase = "verifying"
+	MigrationVerified          MigrationPhase = "verified"
+	MigrationActive            MigrationPhase = "active"
+	MigrationRollback          MigrationPhase = "rollback"
 )
 
 // CatalogMigration resumes bounded source pages under exact global ownership.
@@ -75,6 +77,7 @@ type Migration struct {
 	State          CatalogMigration
 	writer         *Writer
 	checkpointETag string
+	intent         *migrationIntent
 }
 
 func destinationIdentity(cfg destination.Config) string { return config.DestinationID(cfg) }
@@ -154,10 +157,27 @@ func OpenMigration(ctx context.Context, source, target storage.ObjectStore, sour
 		}
 		m.State = state
 		m.checkpointETag = checkpointVersion.ETag
+		if err = m.resumeIntent(ctx, proof); err != nil {
+			return nil, err
+		}
+		if m.intent != nil && m.intent.Kind == migrationInitialize {
+			if err = m.resumeInitialization(ctx); err != nil {
+				return nil, err
+			}
+		}
 		return m, nil
 	}
 	if !errors.Is(err, storage.ErrNotFound) {
 		return nil, err
+	}
+	if err = m.resumeIntent(ctx, proof); err != nil {
+		return nil, err
+	}
+	if m.intent != nil {
+		if err = m.resumeInitialization(ctx); err != nil {
+			return nil, err
+		}
+		return m, nil
 	}
 	// Never claim mixed namespace completeness, even before sealing or copying.
 	objects, err := target.List(ctx, "")
@@ -167,19 +187,19 @@ func OpenMigration(ctx context.Context, source, target storage.ObjectStore, sour
 	if len(objects) != 0 {
 		return nil, errors.New("catalog migration destination must be empty and isolated")
 	}
-	owner, err := w.Coordinator().Seal(ctx)
-	if err != nil {
-		return nil, err
-	}
 	id, err := NewMutationID()
 	if err != nil {
 		return nil, err
 	}
-	m.State.Owner = owner
-	m.State.ID = id
-	m.State.Proof = proof.ID
-	m.State.Phase = MigrationCopying
-	if err = m.save(ctx); err != nil {
+	owner, err := NewMutationID()
+	if err != nil {
+		return nil, err
+	}
+	m.State.Owner, m.State.ID, m.State.Proof, m.State.Phase = owner, id, proof.ID, MigrationInitializing
+	if err = m.beginIntent(ctx, migrationInitialize); err != nil {
+		return nil, err
+	}
+	if err = m.resumeInitialization(ctx); err != nil {
 		return nil, err
 	}
 	return m, nil
@@ -190,7 +210,11 @@ func (m *Migration) save(ctx context.Context) error {
 		return err
 	}
 	ctx = m.authorityContext(ctx)
-	if err := m.writer.checkWriteAuthority(ctx); err != nil {
+	if m.intent != nil {
+		if err := m.checkIntentCheckpoint(ctx); err != nil {
+			return err
+		}
+	} else if err := m.writer.checkWriteAuthority(ctx); err != nil {
 		return err
 	}
 	raw, err := json.Marshal(m.State)
@@ -504,32 +528,53 @@ func (m *Migration) FinishActivation(ctx context.Context) error {
 // read-only, so rollback cannot discard newer publications or reenable legacy
 // writes. Configuration rollback is allowed only under this exact-root gate.
 func (m *Migration) Rollback(ctx context.Context) error {
-	if m.State.Phase != MigrationActive {
+	proof, err := m.proof(ctx)
+	if err != nil || proof.ID != m.State.Proof {
+		return errors.Join(ErrAdmissionClosed, err)
+	}
+	if m.State.Phase == MigrationRollback {
+		state, _, err := m.writer.Coordinator().read(ctx)
+		if err != nil {
+			return err
+		}
+		if state.Mode != admissionRollback || state.Proof != m.State.Proof || state.Seal != m.State.Owner || state.Hold != "" || state.GCLink != nil || len(state.Owners) != 0 || state.Intent != nil {
+			return ErrAdmissionClosed
+		}
+		return m.unchangedHead(ctx)
+	}
+	if m.State.Phase != MigrationActive && m.State.Phase != MigrationRollbackPreparing {
 		return errors.New("only active migration can roll back")
 	}
-	owner, err := m.writer.Coordinator().Seal(ctx)
-	if err != nil {
+	if m.intent == nil {
+		owner, err := NewMutationID()
+		if err != nil {
+			return err
+		}
+		m.State.Owner, m.State.Phase = owner, MigrationRollbackPreparing
+		if err = m.beginIntent(ctx, migrationRollbackIntent); err != nil {
+			return err
+		}
+	}
+	if m.intent.Kind != migrationRollbackIntent {
+		return ErrAdmissionClosed
+	}
+	if err = m.sealIntent(ctx); err != nil {
 		return err
 	}
-	m.State.Owner = owner
 	if err = m.save(ctx); err != nil {
 		return err
 	}
-	head, etag, err := m.writer.Head(ctx)
-	if err != nil {
+	if err = m.unchangedHead(ctx); err != nil {
 		return err
 	}
-	if head.Identity != m.State.VerifiedRoot || etag != m.State.ExpectedHead {
-		return errors.New("catalog changed since activation; rollback would lose publications")
-	}
-	if _, err = m.proof(ctx); err != nil {
-		return err
-	}
-	if err = m.writer.Coordinator().Deactivate(ctx, owner); err != nil {
+	if err = m.writer.Coordinator().Deactivate(m.intentContext(ctx), m.State.Owner); err != nil {
 		return err
 	}
 	m.State.Phase = MigrationRollback
-	return m.save(ctx)
+	if err = m.save(ctx); err != nil {
+		return err
+	}
+	return m.clearIntent(ctx)
 }
 
 // MigrationCheckpoint reads the original source/config identity when activation
@@ -566,8 +611,8 @@ func (state CatalogMigration) validate() error {
 		return invalid
 	}
 	switch state.Phase {
-	case MigrationCopying:
-	case MigrationVerifying, MigrationVerified, MigrationActive, MigrationRollback:
+	case MigrationInitializing, MigrationCopying:
+	case MigrationVerifying, MigrationVerified, MigrationActive, MigrationRollbackPreparing, MigrationRollback:
 		if state.Cursor != "" || state.ExpectedHead == "" {
 			return invalid
 		}

@@ -50,6 +50,9 @@ func (state admissions) validate() error {
 	if receipt := state.GCReceipt; receipt != nil && (!exactHex(receipt.Owner, 24) || !exactHex(receipt.ReleasedSHA256, 32)) {
 		return errCoordinatorDescriptor
 	}
+	if err := state.Intent.validate(state); err != nil {
+		return err
+	}
 	if state.GCLink == nil {
 		return nil
 	}

@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -130,7 +131,7 @@ func TestJournalAdmissionFreshStoreSealedResumeAndStaleInvocation(t *testing.T) 
 	if _, err = guard.ProveJournalRemoval(j); err == nil {
 		t.Fatal("receipt acknowledged before pending unlink")
 	}
-	if err = localStore.RemovePending("journal"); err != nil {
+	if err = localStore.RemoveCatalogPending("journal", j, guard); err != nil {
 		t.Fatal(err)
 	}
 	proof, err := guard.ProveJournalRemoval(j)
@@ -200,12 +201,18 @@ func TestJournalAdmissionVerifiesPersistedAuthorityBeforeCoordinatorWrite(t *tes
 			body := pending.MetadataBytes
 			switch kind {
 			case "missing":
-				if err = localStore.RemovePending(j.SessionID); err != nil {
+				// Explicit private corruption fixture; public removal must refuse.
+				if err = os.Remove(filepath.Join(localStore.Home(), "pending", j.SessionID+".json")); err != nil {
 					t.Fatal(err)
 				}
 			case "changed":
 				pending.MetadataBytes = append(append([]byte(nil), pending.MetadataBytes...), ' ')
-				if err = localStore.SavePending(j.SessionID, pending); err != nil {
+				encoded, encodeErr := json.Marshal(pending)
+				if encodeErr != nil {
+					t.Fatal(encodeErr)
+				}
+				// Explicit private damage fixture bypasses the new public save fence.
+				if err = os.WriteFile(filepath.Join(localStore.Home(), "pending", j.SessionID+".json"), encoded, 0600); err != nil {
 					t.Fatal(err)
 				}
 			case "raw-mismatch":

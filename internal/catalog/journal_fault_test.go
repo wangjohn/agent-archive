@@ -113,7 +113,7 @@ func TestJournalDurableAdmissionCompletionAndRemovalLostAcknowledgments(t *testi
 			if err = guard.RecordJournalRemoval(j); err != nil {
 				t.Fatal(err)
 			}
-			if err = localStore.RemovePending("journal"); err != nil {
+			if err = localStore.RemoveCatalogPending("journal", j, guard); err != nil {
 				t.Fatal(err)
 			}
 			proof, err := guard.ProveJournalRemoval(j)

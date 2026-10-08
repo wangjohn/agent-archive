@@ -65,7 +65,7 @@ func (s *sessionScan) removeCompletedCatalogJournal(pending state.PendingPublica
 	if err := s.opts.CollectorGuard.RecordJournalRemoval(j); err != nil {
 		return err
 	}
-	if err := s.local.RemovePending(s.id()); err != nil {
+	if err := s.local.RemoveCatalogPending(s.id(), j, s.opts.CollectorGuard); err != nil {
 		return err
 	}
 	return acknowledgeCatalogRemoval(s.ctx, s.remote, s.opts.CollectorGuard, j)
@@ -106,7 +106,7 @@ func recoverCatalogRemovals(ctx context.Context, localStore *state.Store, remote
 			if pending.Catalog == nil || pending.Catalog.Recovery == nil || *pending.Catalog.Recovery != j || localStore.VerifyCatalogJournal(j.SessionID, pending, opts.CollectorGuard, opts.CatalogDestination) != nil {
 				return state.ErrDurableStorageRecovery
 			}
-			if err = localStore.RemovePending(j.SessionID); err != nil {
+			if err = localStore.RemoveCatalogPending(j.SessionID, j, opts.CollectorGuard); err != nil {
 				return err
 			}
 		}

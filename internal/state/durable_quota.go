@@ -338,6 +338,12 @@ func (w *boundedDurableWriter) Write(p []byte) (int, error) {
 }
 
 func (s *Store) savePendingGuard(ctx context.Context, g config.DurableStorageGuard, id string, p PendingPublication) error {
+	if err := g.CheckHome(s.home); err != nil {
+		return err
+	}
+	if err := s.checkCatalogPendingSave(id, p); err != nil {
+		return err
+	}
 	if len(p.SourceBytes) > maxPendingHistoryBytes {
 		return ErrDurableStorageCapacity
 	}

@@ -111,3 +111,20 @@ pending unlink. Receipt acknowledgment requires that exact record and completed
 unlink; missing files alone prove nothing. Completion replay has no write authority.
 Unresolved receipts are never evicted to make room. Direct unfinished owners with
 no originating journal remain conservatively fenced for operator recovery.
+
+Migration initialization and rollback durably bind their chosen owner and exact
+source/destination/proof/head descriptor before sealing. Rerunning reconciles
+only that recorded intent, including an interrupted first checkpoint; unrelated
+coordinators and mixed objects refuse. Rollback retains its writer seal and
+read-only mode. A completed unchanged-root rollback can finish local configuration
+restoration again after a local save failure.
+
+An admitted collector journal remains immutable. Missing/corrupt recorded source
+bytes retain the journal and owner; restoring verified bytes permits exact guarded
+retry. A later privacy/skill/filter policy, replacement request or clock cap that
+would change the frozen digest refuses with the original journal intact. Those
+policy conflicts intentionally remain operator-fenced until a supported exact
+owner disposition exists; collection never republishes broader evidence just to
+clear an owner. Only positively completed work with its originating held guard
+and durable exact completion tombstone can be unlinked. Legacy replacement and
+source-unavailable skip behavior remain available to legacy journals.
