@@ -38,7 +38,8 @@ follow [Semantic Versioning](https://semver.org/).
   slices with live native-current checks. Pending-history diagnostics preserve
   the original refusal; ordinary capture keeps its requested lookup lane.
   Conflicting logical or pagination identities for one physical rollout leave
-  the inventory incomplete, including UUID spelling variants.
+  the inventory incomplete, including UUID spelling variants. Lazy acquisition
+  also refuses aliases whose canonical roots changed since owner construction.
 
 - Pairing, handoff, standalone history import and undo, uninstall and purge
   use grouped questions and safe completion receipts. Secondary actions use

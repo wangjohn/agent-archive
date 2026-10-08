@@ -335,6 +335,7 @@ func (m *metadataInventory) start(ctx context.Context) error {
 	if len(m.owner.homes) > 16 {
 		return metadataLimit()
 	}
+	uniqueRoots := 0
 	for _, home := range m.owner.homes {
 		if !filepath.IsAbs(home) || len(home) > 4096 {
 			return metadataUnavailable()
@@ -349,6 +350,10 @@ func (m *metadataInventory) start(ctx context.Context) error {
 		if err != nil || statErr != nil || !info.IsDir() {
 			return metadataUnavailable()
 		}
+		// Census and targeted current queries share the constructor-approved set.
+		if !slices.Contains(m.owner.roots, path) {
+			return metadataChanged()
+		}
 		if !m.reserve(int64(len(home) + len(path) + 512)) {
 			return metadataLimit()
 		}
@@ -357,9 +362,13 @@ func (m *metadataInventory) start(ctx context.Context) error {
 		if duplicate {
 			continue
 		} // Retain every spelling fence, enumerate each physical root once.
+		uniqueRoots++
 		for _, store := range (codexAdapter{}).InitialDirectories() {
 			m.queue = append(m.queue, directory{Root: path, Path: store})
 		}
+	}
+	if uniqueRoots != len(m.owner.roots) {
+		return metadataChanged()
 	}
 	return nil
 }

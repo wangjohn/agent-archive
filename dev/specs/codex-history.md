@@ -44,7 +44,10 @@ subdirectories and unrelated entries and retain a separate18432-entry traversal
 ceiling. Aliases of one canonical home share acquisition while every approved
 home spelling remains fenced.
 
-The full view enumerates approved active and archived stores with the same
+The full view binds lazy acquisition to the owner's constructor-approved
+canonical root set and fences every supplied alias spelling. A changed or
+collapsed root set leaves incomplete evidence before native acquisition.
+It enumerates approved active and archived stores with the same
 bounded directory adapter. Each header is acquired on one confined descriptor
 using one-byte ReadAt requests through the first newline, at most64KiB including
 that delimiter. A resumable step performs at most1024 reads and100ms of work,

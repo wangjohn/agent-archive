@@ -737,7 +737,22 @@ func TestMetadataStableFactsConflictAndMultipleHomes(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(other, "sessions", name), raw, 0600); err != nil {
 				t.Fatal(err)
 			}
-			lookup.homes = append(lookup.homes, other)
+			store := lookup.store
+			if err := lookup.CloseReadOnly(); err != nil {
+				t.Fatal(err)
+			}
+			lookup, err = NewCodexRolloutLookup(t.Context(), store, []string{root, other})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if err := lookup.CloseReadOnly(); err != nil {
+					t.Error(err)
+				}
+				if used, _ := lookup.readBudget.Charged(); used != 0 {
+					t.Error("multiple-home cleanup charge", used)
+				}
+			})
 			view := lookup.MetadataInventory().(*metadataInventory)
 			slice, err := view.BeginValidationSlice(t.Context(), agentapi.CodexValidationLimits{})
 			if err != nil {
@@ -1371,6 +1386,98 @@ func TestMetadataPhysicalIdentityConflictsLeaveIncompleteInventory(t *testing.T)
 			}
 			if used, _ := lookup.readBudget.Charged(); used != 0 {
 				t.Fatal("physical identity cleanup charge", used)
+			}
+		})
+	}
+}
+
+func TestMetadataConstructorRootsRemainCoherentBeforeLazyAcquisition(t *testing.T) {
+	for _, scenario := range []string{"retarget", "collapse", "unchanged-alias", "duplicate-alias"} {
+		t.Run(scenario, func(t *testing.T) {
+			fixtureLookup, ids, rootB := metadataFixture(t, 1)
+			store := fixtureLookup.store
+			if err := fixtureLookup.CloseReadOnly(); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(rootB, "sessions", "nested", "rollout-2026-10-01T12-00-00-"+ids[0]+".jsonl")
+			db := hintDatabase(t, rootB, true)
+			addHint(t, db, ids[0], path, time.Now())
+			rootA := t.TempDir()
+			alias := filepath.Join(t.TempDir(), "home")
+			initial := rootB
+			changed := scenario == "retarget" || scenario == "collapse"
+			if changed {
+				initial = rootA
+			}
+			if err := os.Symlink(initial, alias); err != nil {
+				t.Fatal(err)
+			}
+			homes := []string{alias}
+			if scenario == "collapse" || scenario == "duplicate-alias" {
+				homes = append(homes, rootB)
+			}
+			lookup, err := NewCodexRolloutLookup(t.Context(), store, homes)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if err := lookup.CloseReadOnly(); err != nil {
+					t.Error(err)
+				}
+				if used, _ := lookup.readBudget.Charged(); used != 0 {
+					t.Error("root coherence cleanup charge", used)
+				}
+			})
+			if lookup.metadata != nil || lookup.queries != 0 {
+				t.Fatal("constructor acquired metadata or SQL")
+			}
+			if changed {
+				if err := os.Remove(alias); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(rootB, alias); err != nil {
+					t.Fatal(err)
+				}
+			}
+			view := lookup.MetadataInventory().(*metadataInventory)
+			slice, err := view.BeginValidationSlice(t.Context(), agentapi.CodexValidationLimits{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = slice.Close() }()
+			set, err := slice.Thread(t.Context(), ids[0])
+			if changed {
+				if agentapi.Failure(err) != agentapi.Changed || set.Complete || set.Current != nil || set.Revision != "" || len(set.Candidates) != 0 || view.complete || view.cursor != nil {
+					t.Fatalf("constructor/acquisition root split returned authority: %+v %v", set, err)
+				}
+				if view.counts.physical != 0 || view.counts.requested != 0 || lookup.queries != 0 {
+					t.Fatal("changed root acquired native evidence", view.counts, lookup.queries)
+				}
+				before := view.counts
+				if refs, err := slice.Rollout(t.Context(), ids[0]); agentapi.Failure(err) != agentapi.Changed || len(refs) != 0 || view.counts != before {
+					t.Fatal("changed root failure reacquired refs", refs, err)
+				}
+				cancelled, cancel := context.WithCancel(t.Context())
+				cancel()
+				if _, err := slice.Thread(cancelled, ids[0]); !errors.Is(err, context.Canceled) {
+					t.Fatal("changed root hid cancellation", err)
+				}
+			} else {
+				if err != nil || !set.Complete || set.Current == nil || set.Current.Path != path || len(set.Candidates) != 1 || view.counts.physical != 1 {
+					t.Fatal("coherent alias lost current selection", set, err, view.counts)
+				}
+				if err := slice.Check(t.Context(), ids[0], set.Revision); err != nil {
+					t.Fatal("coherent current revision rejected", err)
+				}
+			}
+			if err := slice.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if err := lookup.CloseReadOnly(); err != nil {
+				t.Fatal(err)
+			}
+			if used, _ := lookup.readBudget.Charged(); used != 0 {
+				t.Fatal("root coherence leaked charge", used)
 			}
 		})
 	}
