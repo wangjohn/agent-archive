@@ -73,7 +73,7 @@ func (b *sessionBrowser) run(ctx context.Context, choices *scopeChoices) error {
 			return err
 		}
 		stop := startActivity(b.stdout, "Loading session…")
-		viewCtx := catalog.WithReadView(ctx)
+		viewCtx := catalog.NewReadView(ctx)
 		view, err := readSessionView(viewCtx, b.store, row.HarnessKey, row.SessionID)
 		stop()
 		if err != nil {

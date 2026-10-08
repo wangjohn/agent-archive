@@ -52,3 +52,18 @@ recorded lease/inventory/head witness and only releases proven ownership.
 `_catalog recover-seal --owner OWNER --generation GENERATION` is the separate
 explicit recovery for a drained, unheld seal that never acquired a GC link.
 Neither path accepts timeout, force or incomplete inventory as proof.
+
+`catalog.WithReadView` preserves an existing request. Interactive browsers call
+`catalog.NewReadView` for each newly selected session; this preserves cancellation
+and deadlines while capturing a new head. It cannot extend an older view or its
+cursors. Within one selection, metadata, linked children and transcript source
+resolution share the captured root.
+
+Show candidate projections carry explicit body provenance. A selected projection
+loads authoritative immutable metadata. When this request already verified that
+body during local summary hydration, `ReadCachedMetadata` may reuse only the
+selected cached body after checking the bound complete generation, persisted row
+tuple, exact revision, content hash and decoded identity. Missing or damaged body
+cache entries fall back to the pinned immutable read; stale generation or damaged
+row authority fails closed. Candidate bookkeeping retains verified keys rather
+than every full body.

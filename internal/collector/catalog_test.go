@@ -2,6 +2,7 @@ package collector
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -91,8 +92,16 @@ func TestCollectorCatalogRetryFreezesMutationBeforeUpload(t *testing.T) {
 		t.Fatal("catalog metadata unavailable", err)
 	}
 	loaded, _, err := config.Load(local.Home())
-	if err != nil || !loaded.DurableStorageProtection || loaded.SchemaVersion != 8 {
+	if err != nil || !loaded.DurableStorageProtection || loaded.SchemaVersion != 9 {
 		t.Fatal("durable catalog writer fence missing", err)
+	}
+	rawConfig, err := json.Marshal(loaded)
+	if err != nil || !strings.Contains(string(rawConfig), `"writer":"catalog-v4-v9"`) {
+		t.Fatal("missing exact forward catalog writer marker", err)
+	}
+	var roundTrip config.Config
+	if err = json.Unmarshal(rawConfig, &roundTrip); err != nil || roundTrip.SchemaVersion != 9 || !roundTrip.DurableStorageProtection {
+		t.Fatal("catalog writer roundtrip", err)
 	}
 }
 

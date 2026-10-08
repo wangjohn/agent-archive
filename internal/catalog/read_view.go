@@ -26,6 +26,12 @@ func WithReadView(ctx context.Context) context.Context {
 	if _, ok := ctx.Value(readViewKey{}).(*readView); ok {
 		return ctx
 	}
+	return NewReadView(ctx)
+}
+
+// NewReadView starts a fresh request while preserving the parent's cancellation
+// and deadline. An earlier view and its cursors retain their original lifetime.
+func NewReadView(ctx context.Context) context.Context {
 	return context.WithValue(ctx, readViewKey{}, &readView{started: time.Now()})
 }
 

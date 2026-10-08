@@ -654,3 +654,105 @@ func TestPublicAdapterCASAndReadonlyMeasuredWriterRefuseMutation(t *testing.T) {
 		t.Fatal("snapshot metrics", metrics)
 	}
 }
+
+func TestNewReadViewRefreshesWrappedExpiredRequest(t *testing.T) {
+	w, raw := fixture(t)
+	m := mutation(t, w, "browser-refresh")
+	revision, err := w.Commit(t.Context(), m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	activateFixture(t, w)
+	store, err := Wrap(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	old := WithReadView(parent)
+	before, _, err := store.GetVersioned(old, m.SessionKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated := mutation(t, w, "browser-refresh")
+	updated.ID, updated.ExpectedRevision = "browser-new-root", revision
+	updated.Next.Summary.ProjectID = "new-project"
+	updated = replaceFixtureBody(t, w, updated)
+	if _, err = w.Commit(t.Context(), updated); err != nil {
+		t.Fatal(err)
+	}
+	view := old.Value(readViewKey{}).(*readView)
+	view.mu.Lock()
+	view.started = time.Now().Add(-SnapshotLifetime)
+	view.mu.Unlock()
+	fresh := NewReadView(old)
+	after, _, err := store.GetVersioned(fresh, m.SessionKey)
+	if err != nil || string(before) == string(after) {
+		t.Fatal("new selection retained expired root", err)
+	}
+	if WithReadView(fresh) != fresh {
+		t.Fatal("within-selection view replaced")
+	}
+	if _, err = store.Get(old, m.SessionKey); !errors.Is(err, ErrStaleCursor) {
+		t.Fatal("old view lifetime reset", err)
+	}
+	cancel()
+	if _, err = store.Get(NewReadView(old), m.SessionKey); !errors.Is(err, context.Canceled) {
+		t.Fatal("parent cancellation lost", err)
+	}
+	deadline, stop := context.WithDeadline(t.Context(), time.Now().Add(time.Minute))
+	defer stop()
+	want, _ := deadline.Deadline()
+	got, ok := NewReadView(WithReadView(deadline)).Deadline()
+	if !ok || !got.Equal(want) {
+		t.Fatal("parent deadline lost")
+	}
+}
+
+func TestConcurrentChildCommitsRebaseParentCounters(t *testing.T) {
+	w, raw := fixture(t)
+	parent := mutation(t, w, "concurrent-parent")
+	if _, err := w.Commit(t.Context(), parent); err != nil {
+		t.Fatal(err)
+	}
+	children := make([]CatalogMutation, 2)
+	for i := range children {
+		child := mutation(t, w, fmt.Sprintf("concurrent-child-%d", i))
+		child.Next.Summary.ParentSessionID = parent.Next.Summary.SessionID
+		children[i] = replaceFixtureBody(t, w, child)
+	}
+	start := make(chan struct{})
+	errors := make(chan error, len(children))
+	for _, child := range children {
+		go func(m CatalogMutation) { <-start; _, err := w.Commit(t.Context(), m); errors <- err }(child)
+	}
+	close(start)
+	for range children {
+		if err := <-errors; err != nil {
+			t.Fatal(err)
+		}
+	}
+	entry, revision, err := w.Find(t.Context(), parent.SessionKey)
+	if err != nil || entry == nil || entry.OrdinaryChildren != 2 || entry.ReplayChildren != 0 {
+		t.Fatalf("parent counters=%+v err=%v", entry, err)
+	}
+	for _, child := range children {
+		if _, err = w.Commit(t.Context(), child); err != nil {
+			t.Fatal("receipt retry", err)
+		}
+	}
+	after, afterRevision, err := w.Find(t.Context(), parent.SessionKey)
+	if err != nil || after.OrdinaryChildren != 2 || afterRevision != revision || after.Metadata != entry.Metadata {
+		t.Fatal("receipt retry altered body/count authority", err)
+	}
+	activateFixture(t, w)
+	s, err := OpenSnapshot(t.Context(), raw, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prefix := ChildPrefix(parent.Next.Summary.Harness.Name, parent.Next.Summary.SessionID, false)
+	count, err := s.Count(t.Context(), Query{Index: ProjectIndex, Lower: prefix + "0", Upper: prefix + ":"})
+	if err != nil || count != after.OrdinaryChildren {
+		t.Fatal("counter differs from complete indexed child oracle", count, err)
+	}
+}
