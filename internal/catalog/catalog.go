@@ -47,6 +47,28 @@ type ObjectRef struct {
 	SHA256 string `json:"SHA256"`
 }
 
+func (ref ObjectRef) validate() error {
+	if ref.Key == "" && ref.SHA256 == "" {
+		return nil
+	}
+	if ref.Key == "" || len(ref.SHA256) != 64 {
+		return errors.New("incomplete catalog object reference")
+	}
+	if _, err := hex.DecodeString(ref.SHA256); err != nil {
+		return errors.New("invalid catalog object checksum")
+	}
+	return nil
+}
+
+func (h *CatalogHead) validateReferences() error {
+	for _, ref := range []ObjectRef{h.Identity, h.Capture, h.Activity, h.Project, h.Receipts, h.Previous} {
+		if err := ref.validate(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // CatalogHead atomically commits all indexes and mutation receipts.
 //
 //revive:disable-next-line:exported -- Keep the accepted protocol API name.
@@ -212,6 +234,9 @@ func (w *Writer) readHead(ctx context.Context) (CatalogHead, storage.CatalogObje
 	}
 	if h.Schema != 4 || h.Generation == 0 || h.Epoch == "" || h.PublicationEpoch == "" || etag == "" {
 		return h, storage.CatalogObjectVersion{}, errors.New("invalid catalog head")
+	}
+	if err = h.validateReferences(); err != nil {
+		return h, storage.CatalogObjectVersion{}, err
 	}
 	if err = h.observeVersion(version); err != nil {
 		return h, storage.CatalogObjectVersion{}, err
@@ -432,15 +457,22 @@ func (w *Writer) verifyEntry(ctx context.Context, key string, entry *CatalogEntr
 			if e != nil {
 				return e
 			}
+			if info.Size != int64(ref.CompressedBytes) {
+				return storage.ErrChecksumMismatch
+			}
 			if info.SHA256 != "" {
-				if info.SHA256 != ref.SHA256 || info.Size != int64(ref.CompressedBytes) {
+				if info.SHA256 != ref.SHA256 {
 					return storage.ErrChecksumMismatch
 				}
 				continue
 			}
 		}
-		if _, err = w.readRef(ctx, ObjectRef{ref.Key, ref.SHA256}, int64(ref.CompressedBytes)); err != nil {
+		var source []byte
+		if source, err = w.readRef(ctx, ObjectRef{ref.Key, ref.SHA256}, int64(ref.CompressedBytes)); err != nil {
 			return err
+		}
+		if len(source) != ref.CompressedBytes {
+			return storage.ErrChecksumMismatch
 		}
 	}
 	return nil

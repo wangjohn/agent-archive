@@ -32,6 +32,9 @@ type node struct {
 
 func (w *Writer) readNode(ctx context.Context, ref ObjectRef) (node, error) {
 	var n node
+	if err := ref.validate(); err != nil {
+		return n, err
+	}
 	if ref.Key == "" {
 		return n, nil
 	}
@@ -165,6 +168,12 @@ func (w *Writer) update(ctx context.Context, ref ObjectRef, key string, value an
 }
 
 func (w *Writer) readRef(ctx context.Context, ref ObjectRef, limit int64) ([]byte, error) {
+	if err := ref.validate(); err != nil {
+		return nil, err
+	}
+	if ref.Key == "" {
+		return nil, errors.New("catalog object reference required")
+	}
 	raw, err := w.bounded.GetLimited(ctx, ref.Key, limit)
 	if err != nil {
 		return nil, err

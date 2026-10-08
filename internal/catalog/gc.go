@@ -51,13 +51,16 @@ func (w *Writer) Collect(ctx context.Context, barrier Barrier) error {
 	// Any incomplete inventory retains the durable lease. It never expires
 	// into permission and requires explicit owner recovery under the barrier.
 	live := map[string]bool{HeadKey: true}
+	// Keep traversal evidence separate from protected membership, and share it
+	// across snapshots so immutable subtrees are verified only once per GC.
+	visited := make(map[string]bool)
 	if err = w.markProtected(ctx, protected, live); err != nil {
 		return err
 	}
-	if err = w.markHead(ctx, h, live); err != nil {
+	if err = w.markHead(ctx, h, live, visited); err != nil {
 		return err
 	}
-	if err = w.markRetained(ctx, h, clock, live); err != nil {
+	if err = w.markRetained(ctx, h, clock, live, visited); err != nil {
 		return err
 	}
 	if err = w.removeUnreachable(ctx, live); err != nil {
@@ -121,7 +124,7 @@ func (w *Writer) markProtected(ctx context.Context, protected []ObjectRef, live 
 	return nil
 }
 
-func (w *Writer) markRetained(ctx context.Context, h CatalogHead, clock storage.CatalogTime, live map[string]bool) error {
+func (w *Writer) markRetained(ctx context.Context, h CatalogHead, clock storage.CatalogTime, live, visited map[string]bool) error {
 	if h.PublicationWitness.LastModified.After(clock.Latest) {
 		return errors.New("catalog provider publication time is ahead of qualified clock")
 	}
@@ -146,7 +149,7 @@ func (w *Writer) markRetained(ctx context.Context, h CatalogHead, clock storage.
 		if old.Schema != 4 || old.PublicationWitness.LastModified.After(successorTime) {
 			return errors.New("invalid retained head or regressed provider clock")
 		}
-		if err = w.markHead(ctx, old, live); err != nil {
+		if err = w.markHead(ctx, old, live, visited); err != nil {
 			return err
 		}
 		previous = old.Previous
@@ -195,29 +198,33 @@ func (w *Writer) releaseGC(ctx context.Context, h CatalogHead, etag string) erro
 	return err
 }
 
-func (w *Writer) markHead(ctx context.Context, h CatalogHead, live map[string]bool) error {
+func (w *Writer) markHead(ctx context.Context, h CatalogHead, live, visited map[string]bool) error {
+	if err := h.validateReferences(); err != nil {
+		return err
+	}
 	for _, root := range []ObjectRef{h.Identity, h.Capture, h.Activity, h.Project, h.Receipts} {
-		if err := w.markTree(ctx, root, live, 0); err != nil {
+		if err := w.markTree(ctx, root, live, visited, 0); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (w *Writer) markTree(ctx context.Context, ref ObjectRef, live map[string]bool, depth int) error {
-	if ref.Key == "" || live[ref.Key] {
+func (w *Writer) markTree(ctx context.Context, ref ObjectRef, live, visited map[string]bool, depth int) error {
+	if ref.Key == "" || visited[ref.Key] {
 		return nil
 	}
 	if depth >= maxDepth {
 		return errors.New("GC tree depth exceeded")
 	}
 	live[ref.Key] = true
+	visited[ref.Key] = true
 	n, err := w.readNode(ctx, ref)
 	if err != nil {
 		return err
 	}
 	for _, child := range n.Children {
-		if err = w.markTree(ctx, child.Ref, live, depth+1); err != nil {
+		if err = w.markTree(ctx, child.Ref, live, visited, depth+1); err != nil {
 			return err
 		}
 	}
