@@ -2,7 +2,9 @@ package reader
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 	"os"
 	"path/filepath"
@@ -191,4 +193,88 @@ func TestRemoteCatalogRefusesUnrelatedBodyCacheBeforeWork(t *testing.T) {
 		t.Fatal("legacy cache arrangement changed", err)
 	}
 	_ = c.Close()
+}
+
+func TestRemoteCompleteRefreshRetriesSkippedEvictionAndPreservesRecreatedLiveKey(t *testing.T) {
+	for _, recreate := range []bool{false, true} {
+		t.Run(map[bool]string{false: "same-root-retry", true: "recreated-live"}[recreate], func(t *testing.T) {
+			remote, legacy := remoteReaderFixture(t, 8)
+			cache, err := OpenMetadataCache(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			c, err := OpenSessionCatalog(t.Context(), cache, remote, ListOptions{Cache: cache})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = c.Close() }()
+			if err = c.RefreshRemote(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			page, err := c.Query(t.Context(), CatalogQuery{})
+			if err != nil || len(page.Rows) == 0 {
+				t.Fatal(err)
+			}
+			row := page.Rows[0]
+			raw, err := legacy.Get(t.Context(), row.Key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cache.putVerified(row.Key, row.ETag, raw)
+			dir, _ := cache.keyDir(row.Key)
+			if err = remote.DeleteSession(t.Context(), row.Key); err != nil {
+				t.Fatal(err)
+			}
+			if err = os.Chmod(dir, 0500); err != nil {
+				t.Fatal(err)
+			}
+			if err = c.RefreshRemote(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if _, err = os.Stat(dir); err != nil {
+				t.Fatal("unsafe directory should be left untouched", err)
+			}
+			page, err = c.Query(t.Context(), CatalogQuery{})
+			if err != nil || page.Total != 7 {
+				t.Fatal("SQL deletion not committed", page.Total, err)
+			}
+			root, generation := c.remoteSnapshot.Root(), c.viewGeneration
+			if err = os.Chmod(dir, 0700); err != nil {
+				t.Fatal(err)
+			}
+			if recreate {
+				var metadata archive.Metadata
+				if err = json.Unmarshal(raw, &metadata); err != nil {
+					t.Fatal(err)
+				}
+				ref, err := remote.Writer.PutImmutable(t.Context(), catalog.KindMetadata, raw)
+				if err != nil {
+					t.Fatal(err)
+				}
+				_, revision, err := remote.Writer.Find(t.Context(), row.Key)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err = remote.Writer.Commit(t.Context(), catalog.CatalogMutation{ID: "private-recreated-cache", SessionKey: row.Key, ExpectedRevision: revision, Next: &catalog.CatalogEntry{Metadata: ref, Summary: metadata}}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err = c.RefreshRemote(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			_, err = os.Stat(dir)
+			if recreate {
+				if err != nil {
+					t.Fatal("recreated live cache deleted by old absence", err)
+				}
+			} else {
+				if !errors.Is(err, os.ErrNotExist) {
+					t.Fatal("same-root proof failed to retry cache eviction", err)
+				}
+				if c.remoteSnapshot.Root() != root || c.viewGeneration != generation {
+					t.Fatal("retry did not use unchanged-root empty delta")
+				}
+			}
+		})
+	}
 }

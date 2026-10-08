@@ -138,5 +138,8 @@ an earlier cursor even when the root is unchanged.
 
 Remote summary reconciliation runs the existing bounded64-directory cache
 maintenance once per cache. Only a committed, complete verified delta or rebuild
-can remove body cache directories: exact removed keys for a delta, or absence from
-the complete rebuilt identity universe. Selected ranges never prove deletion.
+can remove body cache directories: absence from the complete current identity universe. Each complete-summary
+refresh inventories cache directory names in O(N), then retries best-effort
+removal only for known keys absent from its verified complete universe. This
+retries interrupted cleanup without adding a journal. Bounded list selection is
+unchanged; selected ranges never prove deletion.

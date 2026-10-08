@@ -204,6 +204,7 @@ func (c *SQLiteSessionCatalog) RefreshRemote(ctx context.Context) error {
 	reused := 0
 	defer func() { span.Count("from catalog", reused); span.End() }()
 	c.opts.Cache.maintain(ctx)
+	knownBodies := c.opts.Cache.keys("sessions/")
 	c.viewMu.Lock()
 	defer c.viewMu.Unlock()
 	snapshot, err := catalog.OpenSnapshot(ctx, c.store, nil)
@@ -306,24 +307,26 @@ func (c *SQLiteSessionCatalog) RefreshRemote(ctx context.Context) error {
 	if err = snapshot.ValidateRead(ctx); err != nil {
 		return err
 	}
-	c.evictRemoteBodies(delta)
+	c.evictRemoteBodies(knownBodies, delta, cachedKeys)
 	c.remoteBinding = binding
 	c.remoteSnapshot = snapshot
 	c.viewEpoch, c.viewGeneration, c.viewReady = epoch, generation, true
 	return nil
 }
 
-// evictRemoteBodies consumes only a committed complete reconciliation proof.
-// Candidate ranges never authorize absence, and unrelated cache prefixes remain.
-func (c *SQLiteSessionCatalog) evictRemoteBodies(delta catalog.Delta) {
-	if !delta.Rebuild {
-		c.opts.Cache.evictUnlisted(delta.Removed, nil)
-		return
+// evictRemoteBodies consumes the complete committed reconciliation universe.
+// Repeated proofs retry best-effort deletion; candidates never prove absence.
+// Known keys were inventoried before the proof, leaving later unknown writes alone.
+func (c *SQLiteSessionCatalog) evictRemoteBodies(known []string, delta catalog.Delta, keys map[string]bool) {
+	if delta.Rebuild {
+		keys = make(map[string]bool, len(delta.Changed))
+		for _, row := range delta.Changed {
+			keys[row.Key] = true
+		}
 	}
-	known := c.opts.Cache.keys("sessions/")
-	live := make([]storage.Object, 0, len(delta.Changed))
-	for _, row := range delta.Changed {
-		live = append(live, storage.Object{Key: row.Key})
+	live := make([]storage.Object, 0, len(keys))
+	for key := range keys {
+		live = append(live, storage.Object{Key: key})
 	}
 	c.opts.Cache.evictUnlisted(known, live)
 }
