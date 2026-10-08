@@ -422,7 +422,8 @@ func TestGCRacesDelayedCASAndStagedSource(t *testing.T) {
 	if _, err = s.Get(t.Context(), m.Next.Summary.SourceBundle.Key); err != nil {
 		t.Fatal("active writer source collected", err)
 	}
-	late := mutation(t, w, "late")
+	late := m
+	late.ID = "late-admission"
 	if _, err = w.Commit(t.Context(), late); !errors.Is(err, ErrAdmissionClosed) {
 		t.Fatal("post-seal writer admitted", err)
 	}

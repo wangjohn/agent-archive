@@ -47,7 +47,13 @@ func (s *Store) Get(ctx context.Context, key string) ([]byte, error) {
 // GetLimited preserves bounded allocation for metadata and source reads.
 func (s *Store) GetLimited(ctx context.Context, key string, limit int64) ([]byte, error) {
 	if !metadataKey(key) {
-		return s.Writer.bounded.GetLimited(ctx, key, limit)
+		if _, ok := ctx.Value(readViewKey{}).(*readView); ok {
+			if _, err := OpenSnapshot(ctx, s, nil); err != nil {
+				return nil, err
+			}
+		}
+		raw, err := s.Writer.bounded.GetLimited(ctx, key, limit)
+		return raw, s.checkReadView(ctx, err)
 	}
 	entry, _, err := s.findForRead(ctx, key)
 	if err != nil {
@@ -69,7 +75,7 @@ func (s *Store) GetVersioned(ctx context.Context, key string) ([]byte, string, e
 func (s *Store) GetLimitedVersioned(ctx context.Context, key string, limit int64) ([]byte, string, error) {
 	if !metadataKey(key) {
 		raw, v, err := s.Writer.versioned.GetCatalogVersion(ctx, key, limit)
-		return raw, v.ETag, err
+		return raw, v.ETag, s.checkReadView(ctx, err)
 	}
 	entry, revision, err := s.findForRead(ctx, key)
 	if err != nil {

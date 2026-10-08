@@ -1,10 +1,12 @@
 package catalog
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -155,6 +157,7 @@ func TestSnapshotMissingCorruptAndCandidateFailClosed(t *testing.T) {
 
 func TestCoordinatorDrainsGloballyAndNeverTimesOut(t *testing.T) {
 	w, store := fixture(t)
+	m := mutation(t, w, "blocked")
 	c := w.Coordinator()
 	if err := c.Admit(t.Context(), "remote machine/history", "digest", nil); err != nil {
 		t.Fatal(err)
@@ -186,13 +189,15 @@ func TestCoordinatorDrainsGloballyAndNeverTimesOut(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := mutation(t, w, "blocked")
 	if _, err = w.Commit(t.Context(), m); !errors.Is(err, ErrAdmissionClosed) {
 		t.Fatal("direct commit crossed global seal", err)
 	}
 	remote, err := Wrap(store)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if _, err = w.PutImmutable(t.Context(), KindMetadata, []byte("unbound")); !errors.Is(err, ErrAdmissionClosed) {
+		t.Fatal("immutable staging crossed seal", err)
 	}
 	if err = remote.Put(t.Context(), "sessions/claude/blocked/source", []byte("bytes")); !errors.Is(err, ErrAdmissionClosed) {
 		t.Fatal("source crossed seal", err)
@@ -541,4 +546,37 @@ func TestPendingClaimDrainsFrozenSourceAndHistoryAfterSeal(t *testing.T) {
 		t.Fatal("drained lifecycle refused", err)
 	}
 	release()
+}
+
+type expireOnBodyStore struct {
+	*qualifiedStore
+	onBody func()
+}
+
+func (s *expireOnBodyStore) GetLimited(ctx context.Context, key string, limit int64) ([]byte, error) {
+	raw, err := s.qualifiedStore.GetLimited(ctx, key, limit)
+	if strings.HasPrefix(key, "catalog-v4/metadata/") && s.onBody != nil {
+		s.onBody()
+	}
+	return raw, err
+}
+
+func TestReadViewRejectsBodyThatCompletesAfterLifetime(t *testing.T) {
+	w, raw := fixture(t)
+	m := mutation(t, w, "expires-in-read")
+	if _, err := w.Commit(t.Context(), m); err != nil {
+		t.Fatal(err)
+	}
+	activateFixture(t, w)
+	expiring := &expireOnBodyStore{qualifiedStore: raw}
+	store, err := Wrap(expiring)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := WithReadView(t.Context())
+	view := ctx.Value(readViewKey{}).(*readView)
+	expiring.onBody = func() { view.mu.Lock(); view.started = time.Now().Add(-SnapshotLifetime); view.mu.Unlock() }
+	if _, err = store.Get(ctx, m.SessionKey); !errors.Is(err, ErrStaleCursor) {
+		t.Fatal("expired in-flight body accepted", err)
+	}
 }

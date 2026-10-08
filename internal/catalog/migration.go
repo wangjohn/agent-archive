@@ -225,7 +225,8 @@ func (m *Migration) copyMetadata(ctx context.Context, obj storage.Object) error 
 			}
 		}
 	}
-	ref, err := m.writer.PutImmutable(ctx, KindMetadata, raw)
+	ctx = context.WithValue(ctx, writeAuthorityKey{}, writeAuthority{writer: m.writer, seal: m.State.Owner})
+	ref, err := m.writer.putImmutableAdmitted(ctx, KindMetadata, raw)
 	if err != nil {
 		return err
 	}

@@ -82,7 +82,8 @@ func (s publicationStore) putClaimedMetadata(ctx context.Context, key string, ra
 	if claim.id != s.id || storage.SHA256Hex(raw) != claim.digest {
 		return ErrMutationReuse
 	}
-	entry.Metadata, err = s.Writer.PutImmutable(ctx, KindMetadata, raw)
+	ctx = context.WithValue(ctx, writeAuthorityKey{}, writeAuthority{writer: s.Writer, owner: claim.owner, digest: claim.digest})
+	entry.Metadata, err = s.Writer.putImmutableAdmitted(ctx, KindMetadata, raw)
 	if err != nil {
 		return err
 	}

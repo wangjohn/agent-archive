@@ -188,11 +188,30 @@ func (w *Writer) putJSON(ctx context.Context, kind ImmutableKind, value any, lim
 	if len(b) > limit {
 		return ObjectRef{}, storage.ErrObjectTooLarge
 	}
-	return w.PutImmutable(ctx, kind, b)
+	return w.putImmutableAdmitted(ctx, kind, b)
 }
 
 // PutImmutable creates exact content-addressed objects without replacement.
 func (w *Writer) PutImmutable(ctx context.Context, kind ImmutableKind, b []byte) (ObjectRef, error) {
+	id, err := NewMutationID()
+	if err != nil {
+		return ObjectRef{}, err
+	}
+	digest := storage.SHA256Hex(b)
+	owner := "immutable/" + id
+	if err = w.Coordinator().Admit(ctx, owner, digest, nil); err != nil {
+		return ObjectRef{}, err
+	}
+	admitted := context.WithValue(ctx, writeAuthorityKey{}, writeAuthority{writer: w, owner: owner, digest: digest})
+	ref, err := w.putImmutableAdmitted(admitted, kind, b)
+	completeErr := w.Coordinator().Complete(context.WithoutCancel(ctx), owner, digest)
+	return ref, errors.Join(err, completeErr)
+}
+
+func (w *Writer) putImmutableAdmitted(ctx context.Context, kind ImmutableKind, b []byte) (ObjectRef, error) {
+	if err := w.checkWriteAuthority(ctx); err != nil {
+		return ObjectRef{}, err
+	}
 	sum := storage.SHA256Hex(b)
 	key := "catalog-v4/" + string(kind) + "/" + sum + ".json"
 	if kind != KindNodes && kind != KindMetadata && kind != KindHeads {
@@ -353,7 +372,8 @@ func (w *Writer) Commit(ctx context.Context, m CatalogMutation) (string, error) 
 	if err = c.Admit(ctx, owner, digest, refs); err != nil {
 		return "", err
 	}
-	revision, err := w.commitAdmitted(ctx, frozen)
+	admitted := context.WithValue(ctx, writeAuthorityKey{}, writeAuthority{writer: w, owner: owner, digest: digest})
+	revision, err := w.commitAdmitted(admitted, frozen)
 	if errors.Is(err, ErrCommitUnknown) {
 		return revision, err
 	}
@@ -362,6 +382,9 @@ func (w *Writer) Commit(ctx context.Context, m CatalogMutation) (string, error) 
 }
 
 func (w *Writer) commitAdmitted(ctx context.Context, m CatalogMutation) (string, error) {
+	if err := w.checkWriteAuthority(ctx); err != nil {
+		return "", err
+	}
 	m, digest, err := freezeMutation(m)
 	if err != nil {
 		return "", err
@@ -391,6 +414,9 @@ func (w *Writer) commitAdmitted(ctx context.Context, m CatalogMutation) (string,
 		}
 		raw, err := json.Marshal(next)
 		if err != nil {
+			return "", err
+		}
+		if err := w.checkWriteAuthority(ctx); err != nil {
 			return "", err
 		}
 		_, putErr := w.conditional.PutConditional(ctx, HeadKey, raw, storage.PutCondition{MatchETag: etag, CreateOnly: etag == ""})
