@@ -1,6 +1,7 @@
 package state
 
 import (
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -24,7 +25,7 @@ func TestDurableSessionReadLocatorBoundary(t *testing.T) {
 		}
 	}
 	for _, id := range []string{"", "..", "a/b", "a\\b", "a\x00b", "a\nb", "a\x1bb", "a\x7fb", "a\u0085b", strings.Repeat("a", 251), strings.Repeat("λ", 126)} {
-		if err := store.CheckDurableSessionRead(id); err != ErrDurableStorageRecovery {
+		if err := store.CheckDurableSessionRead(id); !errors.Is(err, ErrDurableStorageRecovery) || err.Error() != ErrDurableStorageRecovery.Error() {
 			t.Fatalf("invalid locator length %d disclosed detail: %v", len(id), err)
 		}
 	}

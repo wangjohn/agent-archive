@@ -294,7 +294,7 @@ func TestLocalBundleMalformedLocatorRefusesBeforeNative(t *testing.T) {
 	for _, id := range []string{"abc\n\x1b[2Jrun-this" + strings.Repeat("y", 10_000), strings.Repeat("λ", 126)} {
 		reg := archive.SessionRegistration{ArchiveSessionID: id, Harness: archive.Harness{Name: "codex"}, TranscriptPath: "/synthetic/never-open"}
 		bundle, err := ReadLocalBundle(context.Background(), t.TempDir(), reg, time.Now(), "", refuseNativeSources{t})
-		if err != state.ErrDurableStorageRecovery || bundle.ArchiveSessionID != "" {
+		if !errors.Is(err, state.ErrDurableStorageRecovery) || err.Error() != state.ErrDurableStorageRecovery.Error() || bundle.ArchiveSessionID != "" {
 			t.Fatalf("malformed locator read authority: %v %+v", err, bundle)
 		}
 	}
