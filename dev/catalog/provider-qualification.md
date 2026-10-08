@@ -17,6 +17,14 @@ request identifiers, repetition counts, outcomes and uncertainty. Never include
 credentials, transcripts or production object names. A single passing run is
 not enough evidence of provider semantics.
 
+The hidden operator route is `agent-archive _catalog probe --bucket <bucket>
+--prefix .catalog-qualification/<name>/ --isolated`. Both target values are
+required, and the target must be disjoint from the configured archive namespace.
+An archive configured at the bucket root requires a different target bucket.
+The command uses the configured credentials only for that explicit synthetic
+target, never changes configuration, and reports an atomic observation rather
+than granting release qualification or activating catalog-v4.
+
 Qualification also requires an exact bounded GET returning the head body,
 ETag and provider LastModified from the same object version, a reviewed
 timestamp precision bound, and conservative provider clock bounds. The
@@ -75,3 +83,11 @@ attempt. A crashed GC lease never expires into permission. `RecoverGC` requires
 the exact observed owner and the complete global barrier, releases only the
 lease, and leaves a later collection to rebuild inventory. Production must not
 invoke GC without that qualified coordinator.
+
+`agent-archive _catalog collect` and `agent-archive _catalog recover --owner
+<exact-observed-lease-owner>` are the narrow maintenance routes. They require a
+qualified catalog adapter and its `CatalogBarrier(context.Context)` capability,
+supplied by the real destination coordinator. Missing or nil coordinator evidence
+fails before any head or source write. The current provider refusal remains in
+place before credential access, including the R2 Keychain. Recovery releases
+only the exact observed durable owner under a newly held complete barrier.

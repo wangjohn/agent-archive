@@ -235,6 +235,25 @@ func (s *Store) DeleteSession(ctx context.Context, key string) error {
 // CatalogMetadataAuthority reports that canonical metadata resolves via head.
 func (s *Store) CatalogMetadataAuthority() bool { return true }
 
+// CatalogBarrier obtains the underlying destination coordinator's complete
+// global writer/history/pending barrier. A missing coordinator never grants GC.
+func (s *Store) CatalogBarrier(ctx context.Context) (Barrier, error) {
+	provider, ok := s.ObjectStore.(interface {
+		CatalogBarrier(context.Context) (Barrier, error)
+	})
+	if !ok {
+		return nil, errors.New("complete catalog destination coordinator is required")
+	}
+	barrier, err := provider.CatalogBarrier(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if barrier == nil {
+		return nil, errors.New("complete catalog destination coordinator is required")
+	}
+	return barrier, nil
+}
+
 // FreezeCatalogMutation observes the current revision before durable journaling.
 func (s *Store) FreezeCatalogMutation(ctx context.Context, key string) (string, string, error) {
 	_, revision, err := s.Writer.Find(ctx, key)

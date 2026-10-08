@@ -498,8 +498,8 @@ var (
 // small so CLI setup can perform its synthetic round trip without knowing SDK
 // credential details.
 func NewConfiguredStore(ctx context.Context, cfg credentials.Config, keychain credentials.CredentialStore) (*S3Store, error) {
-	if cfg.EffectiveArchiveFormat() != destination.FormatLegacy {
-		return nil, ErrAtomicCatalogUnqualified
+	if err := CheckConfiguredArchiveFormat(cfg); err != nil {
+		return nil, err
 	}
 	var awsCfg aws.Config
 	var endpoint string
@@ -521,6 +521,16 @@ func NewConfiguredStore(ctx context.Context, cfg credentials.Config, keychain cr
 	}
 	client := NewClient(awsCfg, endpoint, true, 3)
 	return NewS3Store(S3StoreOptions{Provider: cfg.Provider, Client: client, Bucket: cfg.Bucket, Prefix: cfg.Prefix})
+}
+
+// CheckConfiguredArchiveFormat refuses unqualified formats before credentials
+// are opened. Reviewed provider qualification must update this admission gate
+// as well as the exact constructed provider's CatalogAtomicQualification.
+func CheckConfiguredArchiveFormat(cfg credentials.Config) error {
+	if cfg.EffectiveArchiveFormat() != destination.FormatLegacy {
+		return ErrAtomicCatalogUnqualified
+	}
+	return nil
 }
 
 // ListBucketNames returns the names of every bucket the client's
