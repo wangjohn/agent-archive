@@ -160,10 +160,9 @@ func runStatsCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 	// JSON and the web page keep the engine's default lists, the top few by
 	// spend or use, unless --json --all asks for every row.
 	textPage := !*jsonOut && !htmlFlags.html
-	computeOpts := stats.Options{
+	computed, prepared := computeStats(sessions, stats.Options{
 		Now: now, Days: windowDays, Location: loc, PriceTable: table, By: grouping, AllRows: textPage || *all, MCPServerNames: cfg.MCPServerNames,
-	}
-	computed, prepared := computeStats(sessions, computeOpts, screen)
+	}, screen)
 	filters := statsFiltersOf(opts)
 	if *jsonOut {
 		return printJSON(stdout, stderr, statsDocument{
