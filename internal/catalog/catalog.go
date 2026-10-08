@@ -83,13 +83,14 @@ type CatalogHead struct {
 	Project    ObjectRef `json:"Project"`
 	// Receipts are committed with the roots, so a retry can prove its prior
 	// commit even when a newer publication replaced the same session.
-	Receipts           ObjectRef   `json:"Receipts"`
-	Previous           ObjectRef   `json:"Previous"`
-	CommittedAt        time.Time   `json:"CommittedAt"`
-	GCLease            string      `json:"GCLease"`
-	PublicationEpoch   string      `json:"PublicationEpoch"`
-	PublicationWitness HeadWitness `json:"PublicationWitness"`
-	PredecessorWitness HeadWitness `json:"PredecessorWitness"`
+	Receipts           ObjectRef            `json:"Receipts"`
+	Previous           ObjectRef            `json:"Previous"`
+	CommittedAt        time.Time            `json:"CommittedAt"`
+	GCCoordinator      gcCoordinatorWitness `json:"GCCoordinator"`
+	GCLease            string               `json:"GCLease"`
+	PublicationEpoch   string               `json:"PublicationEpoch"`
+	PublicationWitness HeadWitness          `json:"PublicationWitness"`
+	PredecessorWitness HeadWitness          `json:"PredecessorWitness"`
 }
 
 // HeadWitness preserves the original provider publication version through leases.

@@ -74,6 +74,11 @@ func (s *Store) GetVersioned(ctx context.Context, key string) ([]byte, string, e
 // GetLimitedVersioned preserves a bounded body and exact revision.
 func (s *Store) GetLimitedVersioned(ctx context.Context, key string, limit int64) ([]byte, string, error) {
 	if !metadataKey(key) {
+		if _, ok := ctx.Value(readViewKey{}).(*readView); ok {
+			if _, err := OpenSnapshot(ctx, s, nil); err != nil {
+				return nil, "", err
+			}
+		}
 		raw, v, err := s.Writer.versioned.GetCatalogVersion(ctx, key, limit)
 		return raw, v.ETag, s.checkReadView(ctx, err)
 	}

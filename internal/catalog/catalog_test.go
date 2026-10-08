@@ -296,15 +296,16 @@ func TestGCLeaseCrashRecoveryAndNoHeadABA(t *testing.T) {
 	if err != nil || h.GCLease == "" {
 		t.Fatal("failure released lease", err)
 	}
-	other := mutation(t, w, "blocked")
+	other := m
+	other.ID = "blocked"
 	if _, err = w.Commit(t.Context(), other); err == nil {
 		t.Fatal("commit crossed GC lease")
 	}
 	if err = w.RecoverGC(t.Context(), heldBarrier{}, "wrong-owner"); !errors.Is(err, ErrConflict) {
 		t.Fatal(err)
 	}
-	if err = w.RecoverGC(t.Context(), heldBarrier{}, h.GCLease); err != nil {
-		t.Fatal(err)
+	if err = w.RecoverGC(t.Context(), heldBarrier{}, h.GCLease); err == nil {
+		t.Fatal("recovery discarded incomplete protected inventory")
 	}
 	_, after, err := w.Head(t.Context())
 	if err != nil || after == before {

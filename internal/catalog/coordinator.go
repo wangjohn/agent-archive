@@ -28,6 +28,8 @@ type admissions struct {
 	Generation uint64               `json:"generation"`
 	Seal       string               `json:"seal"`
 	Hold       string               `json:"hold"`
+	GCReceipt  *gcCompletion        `json:"gc_receipt,omitempty"`
+	GCLink     *gcLink              `json:"gc_link,omitempty"`
 	Owners     map[string]admission `json:"owners"`
 }
 
@@ -181,7 +183,7 @@ func (c *Coordinator) Release(ctx context.Context, owner string) error {
 		return ErrAdmissionClosed
 	}
 	return c.change(ctx, func(state *admissions) error {
-		if state.Seal != owner || len(state.Owners) != 0 || state.Hold != "" {
+		if state.Seal != owner || len(state.Owners) != 0 || state.Hold != "" || state.GCLink != nil {
 			return ErrAdmissionClosed
 		}
 		state.Seal = ""
@@ -342,26 +344,6 @@ func (c *Coordinator) Deactivate(ctx context.Context, owner string) error {
 	})
 }
 
-// EndPublicationAttempt releases only the invocation's local execution claim.
-// The durable pending admission remains until full lifecycle acknowledgement.
-// Another in-process retry may then resume; another process remains refused.
-func (s *Store) EndPublicationAttempt(id string) {
-	s.pendingMu.Lock()
-	defer s.pendingMu.Unlock()
-	delete(s.running, id)
-}
-
-func (c *Coordinator) releaseHeld(ctx context.Context, owner, hold string) error {
-	return c.change(ctx, func(state *admissions) error {
-		if state.Seal != owner || state.Hold != hold || hold == "" || len(state.Owners) != 0 {
-			return ErrAdmissionClosed
-		}
-		state.Hold = ""
-		state.Seal = ""
-		return nil
-	})
-}
-
 // CatalogBarrier seals the durable destination admission authority. Hold must
 // observe every registered lifecycle drained; crashed owners never age out.
 func (s *Store) CatalogBarrier(ctx context.Context) (Barrier, error) {
@@ -370,4 +352,15 @@ func (s *Store) CatalogBarrier(ctx context.Context) (Barrier, error) {
 		return nil, err
 	}
 	return s.Writer.Coordinator().HeldBarrier(owner), nil
+}
+
+func (c *Coordinator) releaseHeld(ctx context.Context, owner, hold string) error {
+	return c.change(ctx, func(state *admissions) error {
+		if state.Seal != owner || state.Hold != hold || hold == "" || len(state.Owners) != 0 || state.GCLink != nil {
+			return ErrAdmissionClosed
+		}
+		state.Hold = ""
+		state.Seal = ""
+		return nil
+	})
 }

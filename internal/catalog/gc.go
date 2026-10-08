@@ -22,6 +22,12 @@ type Barrier interface {
 // leaves the lease closed; only RecoverGC under the same global barrier can
 // release it. GC never interprets timeout or age as lease ownership.
 func (w *Writer) Collect(ctx context.Context, barrier Barrier) error {
+	if _, recovery := barrier.(completedCoordinator); recovery {
+		return errors.New("completed recovery barrier cannot collect")
+	}
+	if _, recovery := barrier.(recoveryCoordinator); recovery {
+		return errors.New("recovery barrier cannot collect")
+	}
 	if barrier == nil {
 		return errors.New("complete writer barrier is required")
 	}
@@ -70,7 +76,7 @@ func (w *Writer) Collect(ctx context.Context, barrier Barrier) error {
 	if err != nil {
 		return err
 	}
-	h, leaseETag, err := w.acquireGC(ctx, h, etag, clock)
+	h, leaseETag, err := w.acquireGC(ctx, h, etag, clock, protected)
 	if err != nil {
 		return err
 	}
@@ -89,17 +95,20 @@ func (w *Writer) Collect(ctx context.Context, barrier Barrier) error {
 	if err = w.markRetained(ctx, h, clock, live, visited); err != nil {
 		return err
 	}
-	if err = w.removeUnreachable(ctx, live); err != nil {
+	if err = w.verifyGCSweep(ctx, h, leaseETag); err != nil {
+		return err
+	}
+	if err = w.removeUnreachable(ctx, live, h, leaseETag); err != nil {
 		return err
 	}
 	if err = w.releaseGC(ctx, h, leaseETag); err != nil {
 		return err
 	}
-	ownRelease()
+	_ = ownRelease // linked release already settled this exact durable hold.
 	return nil
 }
 
-func (w *Writer) acquireGC(ctx context.Context, h CatalogHead, etag string, clock storage.CatalogTime) (CatalogHead, string, error) {
+func (w *Writer) acquireGC(ctx context.Context, h CatalogHead, etag string, clock storage.CatalogTime, inventory []ObjectRef) (CatalogHead, string, error) {
 	if h.GCLease != "" {
 		return h, "", errors.New("catalog GC lease requires explicit recovery")
 	}
@@ -107,9 +116,13 @@ func (w *Writer) acquireGC(ctx context.Context, h CatalogHead, etag string, cloc
 	if err != nil {
 		return h, "", err
 	}
+	prior := h
 	h.GCLease = owner
 	h.Epoch = owner
 	h.Generation++
+	if err = w.bindGCLease(ctx, prior, etag, &h, inventory); err != nil {
+		return h, "", err
+	}
 	raw, err := json.Marshal(h)
 	if err != nil {
 		return h, "", err
@@ -188,7 +201,7 @@ func (w *Writer) markRetained(ctx context.Context, h CatalogHead, clock storage.
 	return nil
 }
 
-func (w *Writer) removeUnreachable(ctx context.Context, live map[string]bool) error {
+func (w *Writer) removeUnreachable(ctx context.Context, live map[string]bool, h CatalogHead, etag string) error {
 	var candidates []storage.Object
 	for _, prefix := range []string{"catalog-v4/", "sessions/"} {
 		objects, err := w.store.List(ctx, prefix)
@@ -204,6 +217,9 @@ func (w *Writer) removeUnreachable(ctx context.Context, live map[string]bool) er
 	}
 	for _, obj := range candidates {
 		if !live[obj.Key] && !coordinatorObject(obj.Key) {
+			if err := w.verifyGCSweep(ctx, h, etag); err != nil {
+				return err
+			}
 			if err := w.store.Delete(ctx, obj.Key); err != nil {
 				return err
 			}
@@ -213,19 +229,16 @@ func (w *Writer) removeUnreachable(ctx context.Context, live map[string]bool) er
 }
 
 func (w *Writer) releaseGC(ctx context.Context, h CatalogHead, etag string) error {
-	h.GCLease = ""
-	id, err := NewMutationID()
-	if err != nil {
-		return err
-	}
-	h.Epoch = id
-	h.Generation++
-	raw, err := json.Marshal(h)
+	owner := h.GCLease
+	raw, err := w.bindGCRelease(ctx, h, owner)
 	if err != nil {
 		return err
 	}
 	_, err = w.conditional.PutConditional(ctx, HeadKey, raw, storage.PutCondition{MatchETag: etag})
-	return err
+	if err != nil {
+		return errors.Join(ErrCommitUnknown, err)
+	}
+	return w.finishGCRelease(ctx, owner)
 }
 
 func (w *Writer) markHead(ctx context.Context, h CatalogHead, live, visited map[string]bool) error {
@@ -310,27 +323,7 @@ func (w *Writer) RecoverGC(ctx context.Context, barrier Barrier, owner string) e
 		return errors.New("writer barrier not held")
 	}
 	defer release()
-	h, etag, err := w.Head(ctx)
-	if err != nil {
-		return err
-	}
-	if h.GCLease != owner {
-		return ErrConflict
-	}
-	if err = w.releaseGC(ctx, h, etag); err != nil {
-		return err
-	}
-	coordinated, _, err := w.Coordinator().read(ctx)
-	if err != nil {
-		return err
-	}
-	if coordinated.Hold != "" {
-		return w.Coordinator().releaseHeld(ctx, coordinated.Seal, coordinated.Hold)
-	}
-	if coordinated.Seal != "" {
-		return w.Coordinator().Release(ctx, coordinated.Seal)
-	}
-	return nil
+	return w.recoverLinkedGC(ctx, owner)
 }
 
 func (w *Writer) gcHead(ctx context.Context) (CatalogHead, string, error) {
