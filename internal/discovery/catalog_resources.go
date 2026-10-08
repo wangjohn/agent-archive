@@ -8,7 +8,7 @@ import (
 	"os"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
-	"github.com/wangjohn/agent-archive/internal/jsonwire"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
@@ -85,7 +85,7 @@ func (l *CodexRolloutLookup) writeCatalog(ctx context.Context, path string, c ca
 	if !l.readBudget.Reserve(countScratch) {
 		return errCatalogBudget
 	}
-	n, err := jsonwire.Bound(ctx, c, l.readBudget.Available()-1)
+	n, err := agentmeta.JSONWireBound(ctx, c, l.readBudget.Available()-1)
 	l.readBudget.Release(countScratch)
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -108,7 +108,7 @@ func (l *CodexRolloutLookup) retainObservation(ctx context.Context, entry cached
 	if !l.readBudget.Reserve(countScratch) {
 		return false
 	}
-	n, err := jsonwire.Bound(ctx, entry, l.readBudget.Available())
+	n, err := agentmeta.JSONWireBound(ctx, entry, l.readBudget.Available())
 	l.readBudget.Release(countScratch)
 	return err == nil && l.reserveCatalog(n)
 }

@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/jsonwire"
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
@@ -110,7 +110,7 @@ func (s *Store) writeCompact(path string, value any) error {
 	if !s.resourceBudget.Reserve(scratch) {
 		return errStateBudget
 	}
-	n, err := jsonwire.Bound(s.resourceContext, value, s.resourceBudget.Available()-1)
+	n, err := agentmeta.JSONWireBound(s.resourceContext, value, s.resourceBudget.Available()-1)
 	s.resourceBudget.Release(scratch)
 	if err != nil {
 		return errors.Join(errStateBudget, err)
@@ -166,7 +166,7 @@ func (s *Store) summaryBudgeted(p publishedState) (PublishedSummary, error) {
 			return PublishedSummary{}, errStateBudget
 		}
 		ctx := s.resourceContext
-		size, err := jsonwire.Bound(ctx, struct {
+		size, err := agentmeta.JSONWireBound(ctx, struct {
 			Active     archive.SourceReference  `json:"active"`
 			CapturedAt time.Time                `json:"captured_at"`
 			History    *archive.RevisionHistory `json:"history,omitempty"`

@@ -18,7 +18,6 @@ const (
 	modulePrefix    = "github.com/wangjohn/agent-archive/internal/"
 	archivePath     = "github.com/wangjohn/agent-archive/internal/archive"
 	identityPath    = "github.com/wangjohn/agent-archive/internal/agentmeta"
-	wirePath        = "github.com/wangjohn/agent-archive/internal/jsonwire"
 )
 
 // The engine is pure: it takes session metadata and options and returns
@@ -34,11 +33,10 @@ func TestStatsImportBoundary(t *testing.T) {
 		"os", "os/exec", "os/signal", "io/ioutil", "io/fs", "path/filepath", "net", "net/http", "math/rand", "math/rand/v2",
 		"golang.org/x/term",
 		identityPath,
-		wirePath,
 	)
 	for _, path := range all {
-		if strings.HasPrefix(path, modulePrefix) && path != archivePath && path != identityPath && path != wirePath {
-			t.Errorf("internal/stats reaches %s; only internal/archive and its pure agentmeta/jsonwire dependencies are allowed", path)
+		if strings.HasPrefix(path, modulePrefix) && path != archivePath && path != identityPath {
+			t.Errorf("internal/stats reaches %s; only internal/archive and its pure agentmeta dependency are allowed", path)
 		}
 	}
 	importgraph.Forbid(t, "internal/stats (transitively)", all, "net/http", "os/exec")

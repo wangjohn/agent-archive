@@ -159,16 +159,25 @@ func privacyPublicationVerified(home string, cfg config.Config, store *state.Sto
 	if err != nil || record.Outcome != verificationOutcomeVerified || record.VerifiedAt.IsZero() || record.ConfigurationID != sessionVerificationConfigurationID(cfg, reg) || record.SourceSHA256 != current.SourceBundle.SHA256 {
 		return false
 	}
-	if current.History != nil {
+	published, err := store.LoadPublishedState(reg.ArchiveSessionID)
+	if err != nil {
+		return false
+	}
+	var expectedMetadata archive.Metadata
+	if raw := published.Metadata(); len(raw) != 0 {
+		if json.Unmarshal(raw, &expectedMetadata) != nil {
+			return false
+		}
+	}
+	if (current.History == nil) != (expectedMetadata.History == nil) {
+		return false
+	}
+	if current.History != nil || expectedMetadata.History != nil {
 		set, err := current.SourceSetDigest()
 		raw, marshalErr := json.Marshal(current)
 		if err != nil || marshalErr != nil || record.SourceSetDigest != set || record.MetadataDigest != storage.SHA256Hex(raw) {
 			return false
 		}
-	}
-	published, err := store.LoadPublishedState(reg.ArchiveSessionID)
-	if err != nil {
-		return false
 	}
 	_, publishedAt, found := published.LastPublished()
 	reference, recorded := published.LastPublishedSource()
@@ -400,11 +409,16 @@ func verifyPublication(ctx context.Context, cfg config.Config, remote storage.Ob
 	if metadata.MachineID != cfg.MachineID {
 		return "", fmt.Errorf("%w: metadata ownership does not match this machine", errVerificationMismatch)
 	}
-	if metadata.History != nil {
-		var expectedMetadata archive.Metadata
-		if err := json.Unmarshal(published.Metadata(), &expectedMetadata); err != nil {
+	var expectedMetadata archive.Metadata
+	if raw := published.Metadata(); len(raw) != 0 {
+		if err := json.Unmarshal(raw, &expectedMetadata); err != nil {
 			return "", err
 		}
+	}
+	if (metadata.History == nil) != (expectedMetadata.History == nil) {
+		return "", fmt.Errorf("%w: remote history presence differs from the local publication", errVerificationMismatch)
+	}
+	if metadata.History != nil || expectedMetadata.History != nil {
 		expectedDigest, err := expectedMetadata.SourceSetDigest()
 		if err != nil {
 			return "", err

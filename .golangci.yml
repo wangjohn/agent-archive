@@ -135,7 +135,6 @@ linters:
         identity-is-standard-library-only:
           files:
             - "**/internal/agentmeta/*.go"
-            - "**/internal/jsonwire/*.go"
             - "!$test"
           list-mode: strict
           allow:
