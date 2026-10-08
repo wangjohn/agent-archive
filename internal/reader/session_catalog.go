@@ -423,22 +423,9 @@ func (c *SQLiteSessionCatalog) Query(ctx context.Context, q CatalogQuery) (Catal
 	if err = tx.QueryRowContext(ctx, "SELECT generation,epoch,complete FROM catalog_state WHERE id=1").Scan(&generation, &epoch, &complete); err != nil {
 		return CatalogPage{}, err
 	}
-	binding, _ := json.Marshal(struct {
-		Metadata MetadataQuery
-		Words    []string
-	}{q.Metadata, q.Words})
-	digest := sha256.Sum256(binding)
-	token := epoch + ":" + strconv.FormatInt(generation, 10) + ":" + hex.EncodeToString(digest[:]) + ":"
-	offset := 0
-	if q.Cursor != "" {
-		raw, e := base64.RawURLEncoding.DecodeString(q.Cursor)
-		if e != nil || !strings.HasPrefix(string(raw), token) {
-			return CatalogPage{}, ErrStaleCatalogCursor
-		}
-		offset, e = strconv.Atoi(strings.TrimPrefix(string(raw), token))
-		if e != nil || offset < 0 {
-			return CatalogPage{}, ErrStaleCatalogCursor
-		}
+	offset, token, err := catalogCursor(q, epoch, generation)
+	if err != nil {
+		return CatalogPage{}, err
 	}
 	order := "capture DESC,key"
 	if q.Metadata.Order == ActivityOrder {
@@ -508,6 +495,30 @@ func (c *SQLiteSessionCatalog) Query(ctx context.Context, q CatalogQuery) (Catal
 		return CatalogPage{}, err
 	}
 	return page, tx.Commit()
+}
+
+func catalogCursor(q CatalogQuery, epoch string, generation int64) (int, string, error) {
+	binding, err := json.Marshal(struct {
+		Metadata MetadataQuery
+		Words    []string
+	}{q.Metadata, q.Words})
+	if err != nil {
+		return 0, "", err
+	}
+	digest := sha256.Sum256(binding)
+	token := epoch + ":" + strconv.FormatInt(generation, 10) + ":" + hex.EncodeToString(digest[:]) + ":"
+	if q.Cursor == "" {
+		return 0, token, nil
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(q.Cursor)
+	if err != nil || !strings.HasPrefix(string(raw), token) {
+		return 0, "", ErrStaleCatalogCursor
+	}
+	offset, err := strconv.Atoi(strings.TrimPrefix(string(raw), token))
+	if err != nil || offset < 0 {
+		return 0, "", ErrStaleCatalogCursor
+	}
+	return offset, token, nil
 }
 
 func catalogWhere(q MetadataQuery) (string, []any) {
