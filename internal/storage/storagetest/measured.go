@@ -261,3 +261,12 @@ func (s *MeasuredStore) EndPublicationAttempt(id string) {
 		lifecycle.EndPublicationAttempt(id)
 	}
 }
+
+// CatalogReadScope forwards an actual opaque catalog authority key. An absent
+// capability returns empty so callers conservatively bind this wrapper itself.
+func (s *MeasuredStore) CatalogReadScope() string {
+	if authority, ok := s.base().(interface{ CatalogReadScope() string }); ok {
+		return authority.CatalogReadScope()
+	}
+	return ""
+}

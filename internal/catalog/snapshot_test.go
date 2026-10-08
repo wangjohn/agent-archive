@@ -631,16 +631,24 @@ func TestPublicAdapterCASAndReadonlyMeasuredWriterRefuseMutation(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(before, after) {
 		t.Fatal("refused mutation wrote objects", err)
 	}
-	snapshot, err := OpenSnapshot(t.Context(), measured, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	ctx := WithReadView(t.Context())
+	snapshot, err := OpenSnapshot(ctx, measured, nil)
 	entry, err := snapshot.Find(t.Context(), m.SessionKey)
 	if err != nil || entry == nil {
 		t.Fatal("measured snapshot lost reads", err)
 	}
 	if _, err = snapshot.ReadMetadata(t.Context(), *entry); err != nil {
 		t.Fatal(err)
+	}
+	if _, err = measured.Get(ctx, m.SessionKey); err != nil {
+		t.Fatal("measured view did not forward to same Store", err)
+	}
+	other, err := Wrap(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = other.Get(ctx, m.SessionKey); err == nil {
+		t.Fatal("distinct authority shared read view")
 	}
 	if metrics := measured.Metrics(); metrics.Lists != 0 || metrics.Gets == 0 {
 		t.Fatal("snapshot metrics", metrics)

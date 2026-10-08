@@ -24,6 +24,7 @@ type Store struct {
 	running   map[string]bool
 	claims    map[string]*publicationClaim
 	owners    map[string]string
+	readScope string
 }
 
 // Wrap installs catalog metadata authority over a qualified object store.
@@ -38,7 +39,11 @@ func Wrap(store storage.ObjectStore) (*Store, error) {
 	if wrapped, ok := store.(*Store); ok {
 		return wrapped, nil
 	}
-	return &Store{ObjectStore: store, Writer: w}, nil
+	scope, err := NewMutationID()
+	if err != nil {
+		return nil, err
+	}
+	return &Store{ObjectStore: store, Writer: w, readScope: scope}, nil
 }
 
 func metadataKey(key string) bool {
@@ -294,3 +299,7 @@ func (s *Store) CatalogAtomicQualification() error {
 func (*Store) PutConditional(context.Context, string, []byte, storage.PutCondition) (string, error) {
 	return "", ErrAdmissionClosed
 }
+
+// CatalogReadScope identifies this destination authority without exposing
+// credentials or object paths. Wrappers forward the same opaque instance key.
+func (s *Store) CatalogReadScope() string { return s.readScope }

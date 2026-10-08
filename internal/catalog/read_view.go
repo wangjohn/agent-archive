@@ -32,13 +32,15 @@ func WithReadView(ctx context.Context) context.Context {
 func (v *readView) capture(ctx context.Context, store storage.ObjectStore, cache *NodeCache) (*Snapshot, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	// A wrapper and its underlying authority identify the same destination.
-	// Distinct clients conservatively refuse sharing instead of guessing that
-	// two provider configurations or credentials describe the same archive.
-	if wrapped, ok := store.(*Store); ok {
-		store = wrapped.ObjectStore
+	// Qualified wrappers forward their authority's opaque destination key.
+	// Missing capabilities conservatively bind to this exact client instance.
+	scope := ""
+	if authority, ok := store.(interface{ CatalogReadScope() string }); ok {
+		scope = authority.CatalogReadScope()
 	}
-	scope := fmt.Sprintf("%T/%p", store, store)
+	if scope == "" {
+		scope = fmt.Sprintf("%T/%p", store, store)
+	}
 	if v.scope != "" && v.scope != scope {
 		return nil, errors.New("catalog read view belongs to another destination")
 	}
