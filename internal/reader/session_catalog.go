@@ -22,6 +22,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/listingindex"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/trace"
 	"modernc.org/sqlite"
 )
 
@@ -255,11 +256,26 @@ func (c *SQLiteSessionCatalog) Close() error { return c.db.Close() }
 // DiscoverCatalogHeaders always discovers the full canonical scope so a
 // narrowed query cannot evict other projects or harnesses from the local index.
 func DiscoverCatalogHeaders(ctx context.Context, store storage.ObjectStore, opts ListOptions) (HeaderSnapshot, error) {
+	span := trace.Start("read metadata headers")
+	defer span.End()
 	opts.Cache.maintain(ctx)
+	scan := span.Child("scan cache")
 	known := opts.Cache.keys("sessions/")
+	scan.Count("cached keys", len(known))
+	scan.End()
 	objects, err := listObjects(ctx, store, "sessions/", known)
 	if err != nil {
 		return HeaderSnapshot{}, err
+	}
+	if span != nil {
+		span.Count("keys", len(objects))
+		sidecars := 0
+		for _, object := range objects {
+			if isMetadataKey(object.Key) {
+				sidecars++
+			}
+		}
+		span.Count("sidecars", sidecars)
 	}
 	opts.Cache.evictUnlisted(known, objects)
 	return HeaderSnapshot{CanonicalComplete: true, Canonical: objects, knownCanonical: known}, nil
@@ -276,6 +292,12 @@ func ListMetadataFromSnapshot(ctx context.Context, store storage.ObjectStore, sn
 
 // Refresh atomically reconciles changed/deleted canonical revisions.
 func (c *SQLiteSessionCatalog) Refresh(ctx context.Context, snapshot HeaderSnapshot) error {
+	span := trace.Start("refresh session catalog")
+	reused := 0
+	defer func() {
+		span.Count("from catalog", reused)
+		span.End()
+	}()
 	if !snapshot.CanonicalComplete {
 		return errors.New("session catalog requires complete canonical discovery")
 	}
@@ -325,6 +347,8 @@ func (c *SQLiteSessionCatalog) Refresh(ctx context.Context, snapshot HeaderSnaps
 		seen[obj.Key] = true
 		if obj.ETag == "" || prior[obj.Key] != obj.ETag || !validSummary[obj.Key] {
 			pending = append(pending, obj)
+		} else {
+			reused++
 		}
 	}
 	loaded, err := c.readChanges(ctx, pending, snapshot.Revisions)
@@ -376,9 +400,32 @@ func (c *SQLiteSessionCatalog) Refresh(ctx context.Context, snapshot HeaderSnaps
 // readChanges overlaps independent cold/changed reads while keeping observers
 // and errors in canonical selection order. Every worker joins before rollback.
 func (c *SQLiteSessionCatalog) readChanges(ctx context.Context, objects []storage.Object, revisions map[RevisionID]listingindex.Revision) ([]CatalogRow, error) {
+	span := trace.Start("read sidecars")
+	span.Count("sidecars", len(objects))
 	results := make([]CatalogRow, len(objects))
 	errs := make([]error, len(objects))
 	cached := make([]bool, len(objects))
+	// Workers have joined before this accounting runs. Count only successfully
+	// verified bodies, separately from summaries reused without a body decode.
+	defer func() {
+		if span == nil {
+			return
+		}
+		cacheHits, downloaded := 0, 0
+		for i, row := range results {
+			if row.Key == "" {
+				continue
+			}
+			if cached[i] {
+				cacheHits++
+			} else {
+				downloaded++
+			}
+		}
+		span.Count("from cache", cacheHits)
+		span.Count("downloaded", downloaded)
+		span.End()
+	}()
 	next := 0
 	completed := make(chan struct{}, len(objects))
 	failed := false
@@ -489,6 +536,8 @@ func (c *SQLiteSessionCatalog) readRevision(ctx context.Context, obj storage.Obj
 // Query returns candidates from this handle's last successful refresh.
 // Another handle replacing that generation requires refreshing this view.
 func (c *SQLiteSessionCatalog) Query(ctx context.Context, q CatalogQuery) (CatalogPage, error) {
+	span := trace.Start("query session catalog")
+	defer span.End()
 	c.viewMu.RLock()
 	defer c.viewMu.RUnlock()
 	if !c.viewReady {
@@ -587,6 +636,7 @@ func (c *SQLiteSessionCatalog) Query(ctx context.Context, q CatalogQuery) (Catal
 	if err = rows.Close(); err != nil {
 		return CatalogPage{}, err
 	}
+	span.Count("summaries", len(page.Rows))
 	return page, tx.Commit()
 }
 
