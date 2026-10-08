@@ -9,7 +9,6 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/listingindex"
 	"github.com/wangjohn/agent-archive/internal/reader"
-	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
@@ -47,7 +46,7 @@ func TestListingRepairFailureDoesNotLoseCapture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	reopened, err := state.Open(local.Home())
+	reopened, err := openTestStore(local.Home())
 	if err != nil {
 		t.Fatal(err)
 	}

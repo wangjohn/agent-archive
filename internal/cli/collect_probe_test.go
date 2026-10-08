@@ -64,6 +64,7 @@ func requireRelativeKey(key string) error {
 func TestScheduledProbeContinuesToPublication(t *testing.T) {
 	t.Parallel()
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
+	must(t, os.Chmod(home, 0700))
 	at := time.Now().UTC()
 	cfg := config.Config{MachineID: "machine", Storage: credentialsTestConfig(), Harnesses: []string{"codex"}, Archive: archive.Config{Enabled: true, Projects: []archive.ProjectActivation{{Root: project, Included: true, ActivatedAt: at.Add(-time.Hour)}}}}
 	if err := config.Save(home, cfg); err != nil {
@@ -166,6 +167,7 @@ func (s privacyUpdateStore) InspectPrivacy(context.Context) storage.PrivacyRepor
 func TestScheduledPrivacyInspectionSerializesConfigurationWriters(t *testing.T) {
 	t.Parallel()
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
+	must(t, os.Chmod(home, 0700))
 	at := time.Now().UTC()
 	cfg := config.Config{MachineID: "machine", Storage: credentialsTestConfig(), Harnesses: []string{"codex"}, SkillEvidence: config.SkillEvidenceNone, Discovery: &config.DiscoveryConfig{Enabled: true, CodexHomes: []string{t.TempDir()}}, Archive: archive.Config{Enabled: true, Projects: []archive.ProjectActivation{{Root: project, Included: true, ActivatedAt: at.Add(-time.Hour)}, {Root: filepath.Join(project, "excluded"), Included: false}}}}
 	must(t, config.ReconcileDiscovery(&cfg, config.Config{}, at))

@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -15,6 +14,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
@@ -27,7 +27,7 @@ const pendingStageCleanupBatch = 2*archive.MaxHistorySpans + 3
 
 var stagedSourceName = regexp.MustCompile(`^[0-9a-f]{64}\.gz$`)
 
-var stagedTempName = regexp.MustCompile(`^\.pending-[0-9]+$`)
+var stagedTempName = regexp.MustCompile(`^\.pending-([0-9]+|[0-9a-f]{32})$`)
 
 // PendingHistory freezes one complete reference-set replacement. Source payloads
 // are staged individually before this descriptor, outside the journal JSON.
@@ -90,7 +90,7 @@ func (p PendingPublication) ValidateHistory(id string) error {
 		return nil
 	}
 	if p.History.Version != pendingHistoryVersion {
-		return errors.New("pending history requires a newer writer")
+		return errors.Join(ErrDurableStorageRecovery, errors.New("pending history requires a newer writer"))
 	}
 	if err := validatePredecessorSHA(p.History.ExpectedMetadataSHA256); err != nil {
 		return err
@@ -155,18 +155,18 @@ func (s *Store) checkPendingHistoryVersion(id string) error {
 	}
 	if err := s.readBudgeted(s.pendingPath(id), &header, false); err == nil {
 		if header.History != nil && header.History.Version != pendingHistoryVersion {
-			return errors.New("pending history requires a newer writer")
+			return errors.Join(ErrDurableStorageRecovery, errors.New("pending history requires a newer writer"))
 		}
 	}
-	// Ordinary damage follows the established quarantine policy in readOwned.
+	// Protected damage is classified by LoadPending without discarding evidence.
 	return nil
 }
 
-func (s *Store) stagePath(id, name string) (string, error) {
+func validatePendingHistorySource(id, name string) error {
 	if !safeFileComponent(id) || !stagedSourceName.MatchString(name) {
-		return "", errors.New("invalid history stage identity")
+		return errors.New("invalid history stage identity")
 	}
-	return filepath.Join(s.home, "sessions", id, "pending-sources", name), nil
+	return nil
 }
 
 // StagePendingSource durably freezes bytes before the journal references them.
@@ -176,21 +176,13 @@ func (s *Store) StagePendingSource(id string, ref archive.SourceReference, data 
 		return PendingSource{}, errors.New("invalid staged source size")
 	}
 	name := ref.SHA256 + ".gz"
-	path, err := s.stagePath(id, name)
+	err := validatePendingHistorySource(id, name)
 	if err != nil {
 		return PendingSource{}, err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		return PendingSource{}, err
-	}
-	info, err := os.Lstat(filepath.Dir(path))
-	if err != nil {
-		return PendingSource{}, err
-	}
-	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0077 != 0 {
-		return PendingSource{}, errors.New("unsafe history stage directory")
-	}
-	if err := local.WriteBytes(path, data); err != nil {
+	if err := config.WithDurableStorage(s.home, func(g config.DurableStorageGuard) error {
+		return s.stagePendingSourceGuard(g, id, ref, data)
+	}); err != nil {
 		return PendingSource{}, err
 	}
 	return PendingSource{Reference: ref, Name: name}, nil
@@ -198,18 +190,28 @@ func (s *Store) StagePendingSource(id string, ref archive.SourceReference, data 
 
 // ReadPendingSource reads only the journal's bounded private checksum stage.
 func (s *Store) ReadPendingSource(id string, stage PendingSource) ([]byte, error) {
-	path, err := s.stagePath(id, stage.Name)
+	err := validatePendingHistorySource(id, stage.Name)
 	if err != nil {
 		return nil, err
 	}
-	info, err := os.Lstat(path)
+	home, err := local.OpenRootedHome(s.home)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = home.Close() }()
+	dir, err := privateDirectory(home.Root, filepath.Join("sessions", id, "pending-sources"), false)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = dir.Close() }()
+	info, err := dir.Lstat(stage.Name)
 	if err != nil {
 		return nil, err
 	}
 	if !info.Mode().IsRegular() || info.Size() != int64(stage.Reference.CompressedBytes) || info.Size() > maxPendingHistoryBytes {
-		return nil, fmt.Errorf("invalid history stage size or type")
+		return nil, errors.New("invalid history stage size or type")
 	}
-	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	f, err := dir.OpenFile(stage.Name, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -218,6 +220,7 @@ func (s *Store) ReadPendingSource(id string, stage PendingSource) ([]byte, error
 	if err != nil || !os.SameFile(info, opened) {
 		return nil, errors.New("history stage changed while opening")
 	}
+
 	data, err := io.ReadAll(io.LimitReader(f, int64(stage.Reference.CompressedBytes)+1))
 	if err != nil {
 		return nil, err
@@ -275,6 +278,9 @@ func (p PendingPublication) validateHistoryInputs(m archive.Metadata) error {
 // collector ownership. Unknown/damaged journals fail closed; every live stage
 // and original preparation input remains protected.
 func (s *Store) SweepPendingSources(id string) error {
+	if owed, err := s.hasPublicationEvidence(id); err != nil || owed {
+		return errors.Join(ErrDurableStorageRecovery, err)
+	}
 	pending, found, err := s.LoadPending(id)
 	if err != nil {
 		return err
@@ -292,29 +298,31 @@ func (s *Store) SweepPendingSources(id string) error {
 }
 
 func (s *Store) removePendingSources(id string, protected map[string]bool) error {
+	if owed, err := s.hasPublicationEvidence(id); err != nil || owed {
+		return errors.Join(ErrDurableStorageRecovery, err)
+	}
 	if !safeFileComponent(id) {
 		return errors.New("invalid history stage identity")
 	}
-	dir := filepath.Join(s.home, "sessions", id, "pending-sources")
-	info, err := os.Lstat(dir)
+	home, err := local.OpenRootedHome(s.home)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = home.Close() }()
+	dir, err := privateDirectory(home.Root, filepath.Join("sessions", id, "pending-sources"), false)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0077 != 0 {
-		return errors.New("unsafe history stage directory")
-	}
-	f, err := os.OpenFile(dir, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	defer func() { _ = dir.Close() }()
+	f, err := dir.Open(".")
 	if err != nil {
 		return err
 	}
 	defer func() { _ = f.Close() }()
-	opened, err := f.Stat()
-	if err != nil || !os.SameFile(info, opened) {
-		return errors.New("history stage directory changed while opening")
-	}
+
 	// Read at most one bounded batch, including the sentinel. No recursive removal.
 	entries, err := f.ReadDir(pendingStageCleanupBatch)
 	if err != nil && !errors.Is(err, io.EOF) {
@@ -327,15 +335,14 @@ func (s *Store) removePendingSources(id string, protected map[string]bool) error
 		if protected[entry.Name()] {
 			continue
 		}
-		path := filepath.Join(dir, entry.Name())
-		info, err := os.Lstat(path)
+		info, err := dir.Lstat(entry.Name())
 		if err != nil {
 			return err
 		}
 		if !info.Mode().IsRegular() {
 			return errors.New("unsafe history stage type")
 		}
-		if err := os.Remove(path); err != nil {
+		if err := dir.Remove(entry.Name()); err != nil {
 			return err
 		}
 	}
@@ -348,19 +355,19 @@ func (s *Store) removePendingSources(id string, protected map[string]bool) error
 		return errors.New("history stage cleanup remains pending")
 	}
 	if len(protected) == 0 {
-		if err := os.Remove(dir); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err := home.Root.Remove(filepath.Join("sessions", id, "pending-sources")); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
-		return syncPendingDirectory(filepath.Dir(dir))
+		parent, err := privateDirectory(home.Root, filepath.Join("sessions", id), false)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = parent.Close() }()
+		d, err := parent.Open(".")
+		if err != nil {
+			return err
+		}
+		return errors.Join(d.Sync(), d.Close())
 	}
 	return nil
-}
-
-func syncPendingDirectory(path string) error {
-	dir, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = dir.Close() }()
-	return dir.Sync()
 }

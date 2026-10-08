@@ -51,7 +51,7 @@ func TestForgetIdleSessionKeepsASessionWithAPendingPublication(t *testing.T) {
 	if err := local.SaveRegistration(reg); err != nil {
 		t.Fatal(err)
 	}
-	if err := local.SavePending(reg.ArchiveSessionID, PendingPublication{SourceKey: "k", MetadataKey: "m", SourceSHA256: "s", SourceBytes: []byte{1}, MetadataBytes: []byte{1}}); err != nil {
+	if err := local.SavePending(reg.ArchiveSessionID, PendingPublication{SourceKey: "k", MetadataKey: "m", SourceSHA256: durableRef([]byte{1}).SHA256, SourceBytes: []byte{1}, MetadataBytes: []byte(`{}`)}); err != nil {
 		t.Fatal(err)
 	}
 	if forgotten, err := local.ForgetIdleSession(reg.ArchiveSessionID, agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(reg.Harness.Name)), NativeID: reg.NativeSessionID}, true, nil); err != nil || forgotten {
