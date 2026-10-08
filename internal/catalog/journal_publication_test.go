@@ -3,6 +3,7 @@ package catalog
 import (
 	"context"
 	"errors"
+	"os"
 	"testing"
 
 	"github.com/wangjohn/agent-archive/internal/config"
@@ -25,6 +26,9 @@ func journalFixture(t *testing.T) (*Store, *qualifiedStore, *state.Store, state.
 		t.Fatal(err)
 	}
 	home := t.TempDir()
+	if err = os.Chmod(home, 0700); err != nil {
+		t.Fatal(err)
+	}
 	localStore, err := state.Open(home)
 	if err != nil {
 		t.Fatal(err)
