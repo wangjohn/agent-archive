@@ -304,8 +304,13 @@ func (s *Store) CheckDurableSessionRead(id string) (err error) {
 		return ErrDurableStorageRecovery
 	}
 	if history || present {
-		pending, readable, readErr := s.LoadPending(id)
-		if readErr != nil || !readable || history && pending.History == nil {
+		// This guard discards the validated transaction; its decoded inputs
+		// must not accumulate on the caller's existing ledger.
+		scratch, closeScratch := s.WithReadBudget(s.durableContext(), s.resourceBudget)
+		pending, readable, readErr := scratch.LoadPending(id)
+		missingHistory := history && pending.History == nil
+		closeScratch()
+		if readErr != nil || !readable || missingHistory {
 			return errors.Join(ErrDurableStorageRecovery, readErr)
 		}
 	}

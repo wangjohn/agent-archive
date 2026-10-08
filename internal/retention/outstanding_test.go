@@ -69,7 +69,7 @@ func TestExpiryDefersOnlyForUndeliveredEvidence(t *testing.T) {
 				}
 				bundle, _, _ := published.LastPublished()
 				if err := local.SavePending("s1", state.PendingPublication{
-					Bundle: bundle, SourceKey: "k", MetadataKey: "m", SourceSHA256: "s", SourceBytes: []byte{1}, MetadataBytes: []byte{1},
+					Bundle: bundle, SourceKey: "k", MetadataKey: "m", SourceSHA256: "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a", SourceBytes: []byte{1}, MetadataBytes: []byte(`{}`),
 				}); err != nil {
 					t.Fatal(err)
 				}
@@ -191,7 +191,7 @@ func TestExpiryDeferralMatchesTheRuleBeforeOutstanding(t *testing.T) {
 					}
 					if upload {
 						if err := local.SavePending("s1", state.PendingPublication{
-							Bundle: bundle, SourceKey: "k", MetadataKey: "m", SourceSHA256: "s", SourceBytes: []byte{1}, MetadataBytes: []byte{1},
+							Bundle: bundle, SourceKey: "k", MetadataKey: "m", SourceSHA256: "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a", SourceBytes: []byte{1}, MetadataBytes: []byte(`{}`),
 						}); err != nil {
 							t.Fatal(err)
 						}

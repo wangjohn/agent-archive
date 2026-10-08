@@ -42,12 +42,17 @@ const (
 type durableSessionMode string
 
 const (
-	durableSessionModeSourceOnly     durableSessionMode = "source-only"
-	durableSessionModeOpaque         durableSessionMode = "opaque"
-	durableSessionModeMissingPending durableSessionMode = "missing-pending"
-	durableSessionModeMissingSource  durableSessionMode = "missing-source"
-	durableSessionModeCorruptPending durableSessionMode = "corrupt-pending"
-	durableSessionModeCanceled       durableSessionMode = "canceled"
+	durableSessionModeSourceOnly        durableSessionMode = "source-only"
+	durableSessionModeOpaque            durableSessionMode = "opaque"
+	durableSessionModeMissingPending    durableSessionMode = "missing-pending"
+	durableSessionModeMissingSource     durableSessionMode = "missing-source"
+	durableSessionModeCorruptPending    durableSessionMode = "corrupt-pending"
+	durableSessionModeCanceled          durableSessionMode = "canceled"
+	durableSessionModeEmptyPending      durableSessionMode = "empty-pending"
+	durableSessionModeNullPending       durableSessionMode = "null-pending"
+	durableSessionModeIncompletePending durableSessionMode = "incomplete-pending"
+	durableSessionModeChecksumPending   durableSessionMode = "checksum-pending"
+	durableSessionModeMetadataPending   durableSessionMode = "metadata-pending"
 )
 
 func (s refuseNativeSources) LookupSources(string) (agentapi.SourceProvider, agentapi.TranscriptFilter, bool) {
