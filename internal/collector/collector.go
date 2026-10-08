@@ -719,6 +719,14 @@ func (p *pass) repairListingIndex() {
 		if p.opts.AcceptSession != nil && !p.opts.AcceptSession(reg) {
 			continue
 		}
+		if remote, ok := p.remote.(storage.CatalogPublisher); ok && remote.CatalogMetadataAuthority() {
+			// Catalog indexes commit together with metadata in the head. A
+			// crash journal cannot authorize auxiliary legacy publication.
+			if err := p.local.RemoveListingRepair(id); err != nil {
+				p.result.Errors["listing-maintenance"] = err
+			}
+			continue
+		}
 		getter, ok := p.remote.(storage.VersionedGetter)
 		if !ok {
 			continue

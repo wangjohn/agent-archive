@@ -576,6 +576,10 @@ func (w *Writer) updateOrders(ctx context.Context, h *CatalogHead, key string, o
 }
 
 func (w *Writer) verifyEntry(ctx context.Context, key string, entry *CatalogEntry) error {
+	digest, err := hex.DecodeString(entry.Metadata.SHA256)
+	if err != nil || len(digest) != 32 || entry.Metadata.SHA256 != hex.EncodeToString(digest) || entry.Metadata.Key != "catalog-v4/metadata/"+entry.Metadata.SHA256+".json" {
+		return errors.New("catalog metadata requires its immutable checksum key")
+	}
 	raw, err := w.readRef(ctx, entry.Metadata, 32<<20)
 	if err != nil {
 		return err
