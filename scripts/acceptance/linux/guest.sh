@@ -105,7 +105,10 @@ as_ada bash -c '
 # and not in place.
 CURSOR_DB=$XDG_CONFIG/Cursor/User/globalStorage/state.vscdb
 CHAT=c0ffee00-0000-4000-8000-000000000001
-as_ada mkdir -p "$(dirname "$CURSOR_DB")" $XDG_CONFIG/Cursor/User/workspaceStorage/ws1 "$XDG_CACHE" /home/ada/.cursor
+as_ada mkdir -p "$(dirname "$CURSOR_DB")" $XDG_CONFIG/Cursor/User/workspaceStorage/ws1 /home/ada/.cursor
+# sudo's umask may allow group writes; the synthetic cache home must be private.
+install -d -o ada -g ada -m 0700 "$XDG_CACHE"
+echo "   guest umask: $(umask); cache home: $(stat -c '%a %U:%G' "$XDG_CACHE")"
 CREATED_MS=$(($(date +%s) * 1000 - 3600000))
 cat >/tmp/cursor-chat.sql <<EOF
 PRAGMA journal_mode=WAL;
@@ -167,7 +170,7 @@ send Stop ',"stop_hook_active":false'
 send SessionEnd ',"reason":"other"'
 EOF
 HOOKED=$(date +%s)
-check_out "status counts the session the hooks registered" 'Claude Code.* hooks on +1 session' aa_xdg status
+check_out "status counts the session the hooks registered" 'Claude Code.* hooks installed +1 session' aa_xdg status
 echo "   (not running sync: the timer's collector must publish it)"
 wait_for "the timer-started collector published the session (list shows it)" 240 bash -c 'sudo -u ada -H env '"${ADA_ENV[*]}"' agent-archive list | grep -q "file the bugs"'
 check_out "list shows the session" 'file the bugs and run the tests.*claude.*widget' aa list
@@ -191,7 +194,7 @@ check "nothing was made in the default cache directory" test ! -e /home/ada/.cac
 # backfill uploads what it imports, so this is normally there at once; the wait
 # covers an upload left for the collector.
 wait_for "the imported Cursor chat is in the bucket (list shows it)" 240 bash -c 'sudo -u ada -H env '"${ADA_ENV[*]}"' agent-archive list --harness cursor | grep -q "synthetic cursor question"'
-check_out "status shows the imported Cursor chat, uploaded, collector on" 'Cursor +hooks on +no sessions yet .* 1 imported' aa_xdg status
+check_out "status shows the imported Cursor chat, uploaded, collector on" 'Cursor +hooks installed +no sessions yet .* 1 imported' aa_xdg status
 pkill -u ada sqlite3 || true
 
 echo "== 5. the shell's XDG directories drifting from the collector's"
