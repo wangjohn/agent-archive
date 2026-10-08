@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
@@ -53,8 +54,8 @@ func TestPagedArchiveChoicesIncludeOlderSearchAndChildren(t *testing.T) {
 		t.Fatal("initial page")
 	}
 	universe := choices.shown().search()
-	rows, _ := filterRows(universe, parseSessionQuery("needle"))
-	if len(rows) != 2 {
+	rows, matched := filterRows(universe, parseSessionQuery("needle"))
+	if len(rows) != 3 || matched != 2 {
 		t.Fatalf("global search=%+v", rows)
 	}
 	more, err := choices.loadOlder.Load()
@@ -87,7 +88,7 @@ func BenchmarkCatalogBrowserFirstFrame(b *testing.B) {
 					}
 				}
 				in := strings.NewReader("")
-				out := &benchmarkScreen{}
+				out := &catalogBenchmarkFrame{}
 				env.IsTerminal = func(stream any) bool { return stream == any(in) || stream == any(out) }
 				env.TerminalSize = func(io.Writer) (int, int, bool) { return 80, 24, true }
 				env.openKeys = func(io.Reader) (keyTerminal, bool) { return newFakeKeys("q"), true }
@@ -108,3 +109,44 @@ func BenchmarkCatalogBrowserFirstFrame(b *testing.B) {
 		})
 	}
 }
+
+func TestCatalogWarmListSearchDecodesNoMetadataBodies(t *testing.T) {
+	env, _, id := publishedFixture(t)
+	reads := 0
+	env.observeListBody = func(string, bool) { reads++ }
+	var cold, warm bytes.Buffer
+	var stderr bytes.Buffer
+	args := []string{"list", id[:8], "--all-projects"}
+	if code := Run(args, nil, &cold, &stderr, env); code != 0 {
+		t.Fatalf("cold=%d %s", code, stderr.String())
+	}
+	if reads != 1 {
+		t.Fatalf("cold bodies=%d", reads)
+	}
+	reads = 0
+	stderr.Reset()
+	if code := Run(args, nil, &warm, &stderr, env); code != 0 {
+		t.Fatalf("warm=%d %s", code, stderr.String())
+	}
+	if reads != 0 {
+		t.Fatalf("warm decoded=%d bodies", reads)
+	}
+	if cold.String() != warm.String() {
+		t.Fatal("warm search changed output")
+	}
+}
+
+// The key picker writes the completed table/footer/prompt in one frame. A
+// spinner or alternate-screen control sequence cannot mark it usable.
+type catalogBenchmarkFrame struct {
+	start time.Time
+	first time.Duration
+}
+
+func (s *catalogBenchmarkFrame) Write(p []byte) (int, error) {
+	if s.first == 0 && bytes.Contains(p, []byte("Enter number (or unique short SESSION_ID)")) {
+		s.first = time.Since(s.start)
+	}
+	return len(p), nil
+}
+func (*catalogBenchmarkFrame) colorTerminal() bool { return false }

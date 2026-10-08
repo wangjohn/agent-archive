@@ -107,6 +107,26 @@ func TestSessionCatalogRefreshPagesAndWarmBodies(t *testing.T) {
 	if err != nil || p.Total != 30 {
 		t.Fatalf("deleted total=%d err=%v", p.Total, err)
 	}
+	q.Cursor = p.Next
+	putSession(t, store, "codex", all[1].Summary.SessionID, baseTime.Add(2*time.Hour))
+	h, err = DiscoverCatalogHeaders(ctx, store, ListOptions{Cache: cache})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = c.Refresh(ctx, h); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = c.Query(ctx, q); !errors.Is(err, ErrStaleCatalogCursor) {
+		t.Fatalf("changed cursor=%v", err)
+	}
+	q.Cursor = ""
+	p, err = c.Query(ctx, q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Total != 30 || p.Rows[0].Summary.SessionID != all[1].Summary.SessionID || p.Rows[0].ETag == all[1].ETag || p.Rows[0].Hash == all[1].Hash {
+		t.Fatal("changed revision did not reconcile")
+	}
 }
 
 func TestSessionCatalogCancellationConcurrentAndPrivacy(t *testing.T) {
@@ -210,6 +230,9 @@ func TestSessionCatalogTypedFiltersEqualExhaustiveOracle(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer c.Close()
+	if err = c.Refresh(ctx, HeaderSnapshot{CanonicalComplete: true}); err != nil {
+		t.Fatal(err)
+	}
 	summaries := []SearchSummary{
 		{SessionID: "one", Harness: archive.Harness{Name: "codex"}, CapturedAt: baseTime, ParentSessionID: "parent", Replay: &archive.Replay{}, Models: []archive.ModelSummary{{Attributes: map[string]string{"gen_ai.request.model": "gpt-test"}}}, SkillsUsed: []archive.SkillUse{{Name: "used", SHA256: "abc"}}},
 		{SessionID: "two", Harness: archive.Harness{Name: "claude"}, CapturedAt: baseTime.Add(time.Nanosecond), Parser: archive.ParserInfo{Status: archive.ParserStatusComplete}, SkillsAvailable: []archive.SkillSnapshot{{Name: "available", SHA256: "def"}}},
@@ -220,7 +243,7 @@ func TestSessionCatalogTypedFiltersEqualExhaustiveOracle(t *testing.T) {
 		if e != nil {
 			t.Fatal(e)
 		}
-		if _, e = c.db.ExecContext(ctx, "INSERT INTO sessions VALUES(?,?,?,?,?,?)", s.SessionID, "etag", "hash", catalogTime(s.CapturedAt), catalogTime(s.CapturedAt), data); e != nil {
+		if _, e = c.db.ExecContext(ctx, "INSERT INTO sessions VALUES(?,?,?,?,?,?,?,?,?)", s.SessionID, "etag", "hash", catalogTime(s.CapturedAt), catalogTime(s.CapturedAt), data, catalogSearch(s), strings.ToLower(s.SessionID), s.ProjectName == ""); e != nil {
 			t.Fatal(e)
 		}
 	}
@@ -353,5 +376,81 @@ func TestSessionCatalogRejectsRevisionRaceAndBadHash(t *testing.T) {
 	p, err := c.Query(ctx, CatalogQuery{})
 	if err != nil || p.Total != 0 {
 		t.Fatalf("race committed=%+v err=%v", p, err)
+	}
+}
+
+func TestSessionCatalogWordsAreUnicodeAndLabelSafeCandidates(t *testing.T) {
+	ctx := context.Background()
+	cache, err := OpenMetadataCache(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := OpenSessionCatalog(ctx, cache, newCountingStore(), ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	if err = c.Refresh(ctx, HeaderSnapshot{CanonicalComplete: true}); err != nil {
+		t.Fatal(err)
+	}
+	summaries := []SearchSummary{{SessionID: "abcd123456", Name: "ÉCOLE", ProjectName: "published"}, {SessionID: "212abcdef", Title: "different", ProjectName: "published", PullRequests: []archive.PullRequestLink{{Number: 21}}}, {SessionID: "unlabeled", Name: "different"}}
+	for _, s := range summaries {
+		data, e := json.Marshal(s)
+		if e != nil {
+			t.Fatal(e)
+		}
+		if _, e = c.db.ExecContext(ctx, "INSERT INTO sessions VALUES(?,?,?,?,?,?,?,?,?)", s.SessionID, "etag", "hash", catalogTime(baseTime), catalogTime(baseTime), data, catalogSearch(s), strings.ToLower(s.SessionID), s.ProjectName == ""); e != nil {
+			t.Fatal(e)
+		}
+	}
+	for _, tc := range []struct {
+		word string
+		want []string
+	}{{"école", []string{"abcd123456", "unlabeled"}}, {"abcd1234", []string{"abcd123456", "unlabeled"}}, {"#21", []string{"212abcdef", "unlabeled"}}, {"212", []string{"212abcdef", "unlabeled"}}, {"configured label", []string{"unlabeled"}}} {
+		p, e := c.Query(ctx, CatalogQuery{Words: []string{tc.word}})
+		if e != nil {
+			t.Fatal(e)
+		}
+		var ids []string
+		for _, r := range p.Rows {
+			ids = append(ids, r.Summary.SessionID)
+		}
+		if !reflect.DeepEqual(ids, tc.want) {
+			t.Fatalf("word=%q got=%v want=%v", tc.word, ids, tc.want)
+		}
+	}
+}
+
+func TestSessionCatalogRejectsPartialCanonicalSnapshots(t *testing.T) {
+	ctx := context.Background()
+	store := newCountingStore()
+	putSession(t, store, "codex", fmt.Sprintf("%032x", 1), baseTime)
+	cache, err := OpenMetadataCache(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := OpenSessionCatalog(ctx, cache, store, ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	h, err := DiscoverCatalogHeaders(ctx, store, ListOptions{Cache: cache})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !h.CanonicalComplete {
+		t.Fatal("discovery omitted proof")
+	}
+	if err = c.Refresh(ctx, h); err != nil {
+		t.Fatal(err)
+	}
+	for _, partial := range []HeaderSnapshot{{}, {Canonical: h.Canonical}} {
+		if err = c.Refresh(ctx, partial); err == nil {
+			t.Fatal("accepted unproven canonical snapshot")
+		}
+	}
+	p, err := c.Query(ctx, CatalogQuery{})
+	if err != nil || p.Total != 1 || !p.Complete {
+		t.Fatalf("partial snapshot altered catalog=%+v err=%v", p, err)
 	}
 }

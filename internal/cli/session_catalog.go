@@ -11,7 +11,7 @@ import (
 // catalogSessions supplies the existing CLI matcher with typed projections.
 // Paging happens after the final matcher, so exact IDs, configured labels and
 // scope fallback cannot be lost to a reader-side candidate limit.
-func catalogSessions(env metadataCacheDependencies, store storage.ObjectStore, opts listOptions, stderr io.Writer, command string) ([]archive.Metadata, bool, error) {
+func catalogSessions(env metadataCacheDependencies, store storage.ObjectStore, opts listOptions, stderr io.Writer, command string, words []string) ([]archive.Metadata, bool, error) {
 	cache := listCache(env, opts.noCache)
 	if cache == nil {
 		return nil, false, nil
@@ -31,9 +31,11 @@ func catalogSessions(env metadataCacheDependencies, store storage.ObjectStore, o
 		return nil, true, err
 	}
 	if err = catalog.Refresh(ctx, headers); err != nil {
-		return nil, false, nil
+		sessions, fallbackErr := reader.ListMetadataFromSnapshot(ctx, store, headers, opts.filter, readOpts)
+		sortByActivity(sessions)
+		return filterListOrigin(sessions, opts.imported, opts.hookCaptured), true, fallbackErr
 	}
-	query := reader.CatalogQuery{Metadata: reader.MetadataQuery{Filter: opts.filter, Order: reader.ActivityOrder}}
+	query := reader.CatalogQuery{Words: words, Metadata: reader.MetadataQuery{Filter: opts.filter, Order: reader.ActivityOrder}}
 	var sessions []archive.Metadata
 	for {
 		page, e := catalog.Query(ctx, query)

@@ -18,8 +18,12 @@ type RevisionID struct {
 // listing, including objects without summaries; it is never cached as existence
 // authority for another query.
 type HeaderSnapshot struct {
-	Canonical []storage.Object
-	Revisions map[RevisionID]listingindex.Revision
+	// CanonicalComplete proves Canonical came from one successful complete
+	// discovery, independently of auxiliary revision coverage. Partial deltas
+	// must not claim this proof or reconcile deletion in a local catalog.
+	CanonicalComplete bool
+	Canonical         []storage.Object
+	Revisions         map[RevisionID]listingindex.Revision
 
 	incompleteReason string
 	knownCanonical   []string
@@ -40,6 +44,7 @@ func discoverHeaders(ctx context.Context, store storage.ObjectStore, prefix stri
 		return HeaderSnapshot{}, err
 	}
 	snapshot := headerSnapshotFromGroups(groups)
+	snapshot.CanonicalComplete = canonicalComplete
 	snapshot.knownCanonical = known
 	return snapshot, nil
 }

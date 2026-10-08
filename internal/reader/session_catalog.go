@@ -78,12 +78,12 @@ type SessionCatalog interface {
 	Query(context.Context, CatalogQuery) (CatalogPage, error)
 }
 
-// CatalogQuery selects a safe summary candidate set. Words bind the cursor;
-// callers apply their text matcher before limiting final matches.
+// CatalogQuery selects a safe summary candidate set. Words also bind the
+// cursor; callers apply their text matcher before limiting final matches.
 type CatalogQuery struct {
 	Metadata MetadataQuery
-	// Words bind the cursor but do not prune candidates: CLI Unicode, exact ID,
-	// PR and configured project label rules remain the final authority.
+	// Words select a safe candidate superset. CLI Unicode, exact ID, PR and
+	// configured project label rules remain the final authority.
 	Words  []string
 	Cursor string
 }
@@ -166,9 +166,9 @@ func openSessionCatalog(ctx context.Context, cache *MetadataCache, store storage
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	_, err = db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS catalog_state (id INTEGER PRIMARY KEY CHECK(id=1), generation INTEGER NOT NULL, epoch TEXT NOT NULL); CREATE TABLE IF NOT EXISTS sessions (key TEXT PRIMARY KEY, etag TEXT NOT NULL, hash TEXT NOT NULL, capture TEXT NOT NULL, activity TEXT NOT NULL, summary BLOB NOT NULL)`)
+	_, err = db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS catalog_state (id INTEGER PRIMARY KEY CHECK(id=1), generation INTEGER NOT NULL, epoch TEXT NOT NULL, complete INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS sessions (key TEXT PRIMARY KEY, etag TEXT NOT NULL, hash TEXT NOT NULL, capture TEXT NOT NULL, activity TEXT NOT NULL, summary BLOB NOT NULL, search TEXT NOT NULL, lowerid TEXT NOT NULL, unlabeled INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS sessions_capture ON sessions(capture DESC,key); CREATE INDEX IF NOT EXISTS sessions_activity ON sessions(activity DESC,capture DESC,key)`)
 	if err == nil {
-		_, err = db.ExecContext(ctx, "INSERT OR IGNORE INTO catalog_state VALUES(1,0,?)", rand.Text())
+		_, err = db.ExecContext(ctx, "INSERT OR IGNORE INTO catalog_state VALUES(1,0,?,0)", rand.Text())
 	}
 	if err != nil {
 		db.Close()
@@ -202,11 +202,23 @@ func DiscoverCatalogHeaders(ctx context.Context, store storage.ObjectStore, opts
 		return HeaderSnapshot{}, err
 	}
 	opts.Cache.evictUnlisted(known, objects)
-	return HeaderSnapshot{Canonical: objects, knownCanonical: known}, nil
+	return HeaderSnapshot{CanonicalComplete: true, Canonical: objects, knownCanonical: known}, nil
+}
+
+// ListMetadataFromSnapshot reuses a catalog discovery when an unverifiable or
+// unsupported summary requires the established exhaustive metadata fallback.
+func ListMetadataFromSnapshot(ctx context.Context, store storage.ObjectStore, snapshot HeaderSnapshot, filter Filter, opts ListOptions) ([]archive.Metadata, error) {
+	if !snapshot.CanonicalComplete {
+		return nil, errors.New("metadata fallback requires complete canonical discovery")
+	}
+	return listMetadataFromHeaders(ctx, store, filter, opts, snapshot.Canonical, snapshot.knownCanonical)
 }
 
 // Refresh atomically reconciles changed/deleted canonical revisions.
 func (c *SQLiteSessionCatalog) Refresh(ctx context.Context, snapshot HeaderSnapshot) error {
+	if !snapshot.CanonicalComplete {
+		return errors.New("session catalog requires complete canonical discovery")
+	}
 	tx, err := c.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -260,7 +272,7 @@ func (c *SQLiteSessionCatalog) Refresh(ctx context.Context, snapshot HeaderSnaps
 			return e
 		}
 		m := row.Summary.Metadata()
-		if _, err = tx.ExecContext(ctx, "INSERT OR REPLACE INTO sessions VALUES(?,?,?,?,?,?)", row.Key, row.ETag, row.Hash, catalogTime(m.CapturedAt), catalogTime(listingindex.ActivityTime(m)), data); err != nil {
+		if _, err = tx.ExecContext(ctx, "INSERT OR REPLACE INTO sessions VALUES(?,?,?,?,?,?,?,?,?)", row.Key, row.ETag, row.Hash, catalogTime(m.CapturedAt), catalogTime(listingindex.ActivityTime(m)), data, catalogSearch(row.Summary), strings.ToLower(m.SessionID), m.ProjectName == ""); err != nil {
 			return err
 		}
 	}
@@ -273,7 +285,12 @@ func (c *SQLiteSessionCatalog) Refresh(ctx context.Context, snapshot HeaderSnaps
 		}
 	}
 	if changed {
-		if _, err = tx.ExecContext(ctx, "UPDATE catalog_state SET generation=generation+1 WHERE id=1"); err != nil {
+		if _, err = tx.ExecContext(ctx, "UPDATE catalog_state SET generation=generation+1,complete=1 WHERE id=1"); err != nil {
+			return err
+		}
+	}
+	if !changed {
+		if _, err = tx.ExecContext(ctx, "UPDATE catalog_state SET complete=1 WHERE id=1"); err != nil {
 			return err
 		}
 	}
@@ -402,7 +419,8 @@ func (c *SQLiteSessionCatalog) Query(ctx context.Context, q CatalogQuery) (Catal
 	defer tx.Rollback()
 	var generation int64
 	var epoch string
-	if err = tx.QueryRowContext(ctx, "SELECT generation,epoch FROM catalog_state WHERE id=1").Scan(&generation, &epoch); err != nil {
+	var complete bool
+	if err = tx.QueryRowContext(ctx, "SELECT generation,epoch,complete FROM catalog_state WHERE id=1").Scan(&generation, &epoch, &complete); err != nil {
 		return CatalogPage{}, err
 	}
 	binding, _ := json.Marshal(struct {
@@ -429,8 +447,13 @@ func (c *SQLiteSessionCatalog) Query(ctx context.Context, q CatalogQuery) (Catal
 	// SQL predicates are exact for these typed fields. Text stays a candidate
 	// superset; Go's Unicode matcher and query-time labels decide final matches.
 	where, args := catalogWhere(q.Metadata)
+	for _, word := range q.Words {
+		word = strings.ToLower(word)
+		where += " AND (instr(search,?) > 0 OR instr(lowerid,?) = 1 OR unlabeled = 1)"
+		args = append(args, word, word)
+	}
 	complex := q.Metadata.Filter.Model != "" || q.Metadata.Filter.Skill != "" || q.Metadata.Filter.SkillSHA256 != "" || q.Metadata.Filter.RequireCompleteCoverage
-	page := CatalogPage{Complete: true}
+	page := CatalogPage{Complete: complete}
 	statement := "SELECT key,etag,hash,summary FROM sessions" + where + " ORDER BY " + order
 	if !complex {
 		if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM sessions"+where, args...).Scan(&page.Total); err != nil {
@@ -511,4 +534,20 @@ func catalogWhere(q MetadataQuery) (string, []any) {
 		clauses = append(clauses, "json_type(summary,'$.Replay') = 'object'")
 	}
 	return " WHERE " + strings.Join(clauses, " AND "), args
+}
+
+// catalogSearch folds with Go, matching the CLI's Unicode semantics rather
+// than SQLite's ASCII-only lower(). Published-name gaps are never excluded by
+// word predicates because their configured project label exists only at query.
+func catalogSearch(s SearchSummary) string {
+	texts := []string{s.Name, s.Title, s.Branch, s.ProjectName, s.Harness.Name}
+	for _, pr := range s.PullRequests {
+		texts = append(texts, strconv.Itoa(pr.Number), "#"+strconv.Itoa(pr.Number))
+	}
+	for _, event := range s.GitActivity {
+		if event.Kind == archive.GitEventPRCreated {
+			texts = append(texts, strconv.Itoa(event.PRNumber), "#"+strconv.Itoa(event.PRNumber))
+		}
+	}
+	return strings.ToLower(strings.Join(texts, "\x00"))
 }

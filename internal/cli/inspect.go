@@ -143,8 +143,12 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	}
 	var listed reader.RecentResult
 	var catalogUsed bool
-	if !opts.jsonOut && full {
-		listed.Sessions, catalogUsed, err = catalogSessions(env, store, opts, stderr, "list")
+	if !opts.jsonOut && (full || opts.filter.Model != "" || opts.filter.Skill != "" || opts.filter.SkillSHA256 != "" || opts.filter.RequireCompleteCoverage) {
+		words := q.words
+		if browsing {
+			words = nil
+		}
+		listed.Sessions, catalogUsed, err = catalogSessions(env, store, opts, stderr, "list", words)
 	}
 	if catalogUsed {
 		full = true

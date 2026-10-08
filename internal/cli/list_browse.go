@@ -902,7 +902,7 @@ func loadSessionsForBrowse(env metadataCacheDependencies, store storage.ObjectSt
 	// Handoff needs complete bodies for its source/replay policy; the session
 	// browser hydrates the chosen body when details open.
 	if command == "show" || command == "list" {
-		if sessions, used, err := catalogSessions(env, store, opts, stderr, command); used {
+		if sessions, used, err := catalogSessions(env, store, opts, stderr, command, nil); used {
 			return sessions, err
 		}
 	}
