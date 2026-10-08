@@ -254,6 +254,8 @@ func CatalogSummaries(ctx context.Context, store storage.ObjectStore, filter Fil
 // roots rebuild the complete summary universe. It never asserts canonical LIST
 // completeness for a subset of remote leaves.
 func (c *SQLiteSessionCatalog) RefreshRemote(ctx context.Context) error {
+	c.viewMu.Lock()
+	defer c.viewMu.Unlock()
 	snapshot, err := catalog.OpenSnapshot(ctx, c.store, nil)
 	if err != nil {
 		return err
@@ -319,7 +321,16 @@ func (c *SQLiteSessionCatalog) RefreshRemote(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return tx.Commit()
+	var epoch string
+	var generation int64
+	if err = tx.QueryRowContext(ctx, "SELECT epoch,generation FROM catalog_state WHERE id=1").Scan(&epoch, &generation); err != nil {
+		return err
+	}
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	c.viewEpoch, c.viewGeneration, c.viewReady = epoch, generation, true
+	return nil
 }
 
 func canonicalCatalogPrefix(prefix string) string {

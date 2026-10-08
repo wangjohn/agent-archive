@@ -12,16 +12,20 @@ import (
 // Paging happens after the final matcher, so exact IDs, configured labels and
 // scope fallback cannot be lost to a reader-side candidate limit.
 func catalogSessions(env metadataCacheDependencies, store storage.ObjectStore, opts listOptions, stderr io.Writer, command string, words []string) ([]archive.Metadata, bool, error) {
+	return catalogSessionsInContext(context.Background(), env, store, opts, stderr, command, words)
+}
+
+func catalogSessionsInContext(ctx context.Context, env metadataCacheDependencies, store storage.ObjectStore, opts listOptions, stderr io.Writer, command string, words []string) ([]archive.Metadata, bool, error) {
 	if reader.CatalogAuthority(store) {
 		cache := listCache(env, opts.noCache)
 		if cache != nil {
-			c, err := reader.OpenSessionCatalog(context.Background(), cache, store, reader.ListOptions{Cache: cache})
+			c, err := reader.OpenSessionCatalog(ctx, cache, store, reader.ListOptions{Cache: cache})
 			if err == nil {
 				defer c.Close()
-				if err = c.RefreshRemote(context.Background()); err != nil {
+				if err = c.RefreshRemote(ctx); err != nil {
 					return nil, true, err
 				}
-				page, e := c.Query(context.Background(), reader.CatalogQuery{Words: words, Metadata: reader.MetadataQuery{Filter: opts.filter, Order: reader.ActivityOrder}})
+				page, e := c.Query(ctx, reader.CatalogQuery{Words: words, Metadata: reader.MetadataQuery{Filter: opts.filter, Order: reader.ActivityOrder}})
 				if e == nil {
 					var sessions []archive.Metadata
 					for _, row := range page.Rows {
@@ -31,14 +35,14 @@ func catalogSessions(env metadataCacheDependencies, store storage.ObjectStore, o
 				}
 			}
 		}
-		sessions, err := reader.CatalogSummaries(context.Background(), store, opts.filter)
+		sessions, err := reader.CatalogSummaries(ctx, store, opts.filter)
 		return filterListOrigin(sessions, opts.imported, opts.hookCaptured), true, err
 	}
+
 	cache := listCache(env, opts.noCache)
 	if cache == nil {
 		return nil, false, nil
 	}
-	ctx := context.Background()
 	readOpts := reader.ListOptions{Cache: cache, Skipped: warnSkippedSidecar(stderr, command)}
 	if observer, ok := env.(interface{ listBodyObserver() func(string, bool) }); ok {
 		readOpts.BodyRead = observer.listBodyObserver()
@@ -77,4 +81,34 @@ func catalogSessions(env metadataCacheDependencies, store storage.ObjectStore, o
 		query.Cursor = page.Next
 	}
 	return filterListOrigin(sessions, opts.imported, opts.hookCaptured), true, nil
+}
+
+// readListCandidates retains selected reads for simple bounded listings and
+// uses the summary catalog where exhaustive metadata used to be necessary.
+func readListCandidates(env metadataCacheDependencies, store storage.ObjectStore, opts listOptions, limit int, readOpts reader.ListOptions, full bool, stderr io.Writer) (reader.RecentResult, bool, error) {
+	complex := opts.filter.Model != "" || opts.filter.Skill != "" || opts.filter.SkillSHA256 != "" || opts.filter.RequireCompleteCoverage
+	if !opts.jsonOut && (full || complex) {
+		// Complete summaries preserve child hints, scope tiers and ambiguity.
+		sessions, used, err := catalogSessions(env, store, opts, stderr, "list", nil)
+		if used {
+			return reader.RecentResult{Sessions: sessions, Complete: true, TotalMatched: len(sessions)}, true, err
+		}
+	}
+	listed, err := reader.ListRecent(context.Background(), store, archiveSessionsPrefix, opts.filter, limit, readOpts)
+	return listed, full, err
+}
+
+// readShowCandidates returns search projections only. The resolver returns an
+// identity, and its caller reads the selected full metadata before rendering.
+func readShowCandidates(ctx context.Context, store storage.ObjectStore, env metadataCacheDependencies, harness, query string, stderr io.Writer) ([]archive.Metadata, error) {
+	opts := listOptions{filter: reader.Filter{Harness: harness}}
+	sessions, used, err := catalogSessionsInContext(ctx, env, store, opts, stderr, "show", nil)
+	if used {
+		return sessions, err
+	}
+	readOpts := reader.ListOptions{Cache: listCache(env, false), Skipped: warnSkippedSidecar(stderr, "show")}
+	if observer, ok := env.(interface{ listBodyObserver() func(string, bool) }); ok {
+		readOpts.BodyRead = observer.listBodyObserver()
+	}
+	return reader.FindMetadataPrefix(ctx, store, archiveSessionsPrefix, query, opts.filter, readOpts, func(archive.Metadata) bool { return true })
 }

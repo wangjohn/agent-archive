@@ -108,9 +108,13 @@ var ErrStaleCatalogCursor = errors.New("sessions changed; refresh the view")
 
 // SQLiteSessionCatalog retains summaries only; bodies stay in MetadataCache.
 type SQLiteSessionCatalog struct {
-	db    *sql.DB
-	store storage.ObjectStore
-	opts  ListOptions
+	db             *sql.DB
+	store          storage.ObjectStore
+	opts           ListOptions
+	viewMu         sync.RWMutex
+	viewEpoch      string
+	viewGeneration int64
+	viewReady      bool
 }
 
 // OpenSessionCatalog opens a disposable private SQLite index. Each connection
@@ -131,7 +135,7 @@ func openSessionCatalog(ctx context.Context, cache *MetadataCache, store storage
 	if err != nil || !info.IsDir() {
 		return nil, errors.New("catalog requires a real directory")
 	}
-	if err = os.Chmod(dir, 0700); err != nil {
+	if err = os.Chmod(dir, 0700); err != nil { //nolint:gosec // A private directory requires owner traversal; files use 0600.
 		return nil, err
 	}
 	if !repair {
@@ -223,11 +227,13 @@ func (c *SQLiteSessionCatalog) Refresh(ctx context.Context, snapshot HeaderSnaps
 	if !snapshot.CanonicalComplete {
 		return errors.New("session catalog requires complete canonical discovery")
 	}
+	c.viewMu.Lock()
+	defer c.viewMu.Unlock()
 	tx, err := c.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	// Acquire the SQLite writer before reading validators, preventing a stale
 	// comparison from overwriting another connection's completed refresh.
 	if _, err = tx.ExecContext(ctx, "UPDATE catalog_state SET generation=generation WHERE id=1"); err != nil {
@@ -298,7 +304,16 @@ func (c *SQLiteSessionCatalog) Refresh(ctx context.Context, snapshot HeaderSnaps
 			return err
 		}
 	}
-	return tx.Commit()
+	var epoch string
+	var generation int64
+	if err = tx.QueryRowContext(ctx, "SELECT epoch,generation FROM catalog_state WHERE id=1").Scan(&epoch, &generation); err != nil {
+		return err
+	}
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	c.viewEpoch, c.viewGeneration, c.viewReady = epoch, generation, true
+	return nil
 }
 
 // readChanges overlaps independent cold/changed reads while keeping observers
@@ -414,18 +429,27 @@ func (c *SQLiteSessionCatalog) readRevision(ctx context.Context, obj storage.Obj
 	return m, storage.SHA256Hex(data), cached, nil
 }
 
-// Query returns summary candidates from one database generation.
+// Query returns candidates from this handle's last successful refresh.
+// Another handle replacing that generation requires refreshing this view.
 func (c *SQLiteSessionCatalog) Query(ctx context.Context, q CatalogQuery) (CatalogPage, error) {
+	c.viewMu.RLock()
+	defer c.viewMu.RUnlock()
+	if !c.viewReady {
+		return CatalogPage{}, ctx.Err()
+	}
 	tx, err := c.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return CatalogPage{}, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	var generation int64
 	var epoch string
 	var complete bool
 	if err = tx.QueryRowContext(ctx, "SELECT generation,epoch,complete FROM catalog_state WHERE id=1").Scan(&generation, &epoch, &complete); err != nil {
 		return CatalogPage{}, err
+	}
+	if epoch != c.viewEpoch || generation != c.viewGeneration {
+		return CatalogPage{}, ErrStaleCatalogCursor
 	}
 	offset, token, err := catalogCursor(q, epoch, generation)
 	if err != nil {
@@ -443,9 +467,9 @@ func (c *SQLiteSessionCatalog) Query(ctx context.Context, q CatalogQuery) (Catal
 		where += " AND (instr(search,?) > 0 OR instr(lowerid,?) = 1 OR unlabeled = 1)"
 		args = append(args, word, word)
 	}
-	complex := q.Metadata.Filter.Model != "" || q.Metadata.Filter.Skill != "" || q.Metadata.Filter.SkillSHA256 != "" || q.Metadata.Filter.RequireCompleteCoverage
+	complex := catalogRequiresSummaryFilter(q.Metadata.Filter)
 	page := CatalogPage{Complete: complete}
-	statement := "SELECT key,etag,hash,summary FROM sessions" + where + " ORDER BY " + order
+	statement := "SELECT key,etag,hash,summary FROM sessions" + where + " ORDER BY " + order //nolint:gosec // SQL fragments are fixed predicates/orders; every input is bound.
 	if !complex {
 		if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM sessions"+where, args...).Scan(&page.Total); err != nil {
 			return CatalogPage{}, err
@@ -565,4 +589,10 @@ func catalogSearch(s SearchSummary) string {
 		}
 	}
 	return strings.ToLower(strings.Join(texts, "\x00"))
+}
+
+// catalogRequiresSummaryFilter identifies predicates that must be checked on
+// every candidate before counting and paging the final typed result.
+func catalogRequiresSummaryFilter(f Filter) bool {
+	return f.Model != "" || f.Skill != "" || f.SkillSHA256 != "" || f.RequireCompleteCoverage
 }

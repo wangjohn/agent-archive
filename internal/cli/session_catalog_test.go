@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"database/sql"
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/reader"
+	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 	"io"
 	"os"
@@ -68,7 +70,7 @@ func TestPagedArchiveChoicesIncludeOlderSearchAndChildren(t *testing.T) {
 // BenchmarkCatalogBrowserFirstFrame compares complete synthetic list frames.
 // Cold includes the first summary build; warm includes fresh canonical headers.
 func BenchmarkCatalogBrowserFirstFrame(b *testing.B) {
-	for _, state := range []string{"cold", "warm", "exhaustive"} {
+	for _, state := range []string{"cold", "warm", "exhaustive-warm"} {
 		b.Run(state, func(b *testing.B) {
 			b.StopTimer()
 			mem := storagetest.NewMemoryStore()
@@ -78,6 +80,17 @@ func BenchmarkCatalogBrowserFirstFrame(b *testing.B) {
 			if state == "warm" {
 				if code := Run([]string{"list", "--all-projects", "--limit", "0"}, nil, io.Discard, io.Discard, env); code != 0 {
 					b.Fatal("warmup failed")
+				}
+			}
+
+			if state == "exhaustive-warm" {
+				// Warm the body cache, then make only the disposable catalog unavailable
+				// to exercise the existing exhaustive browser with cached body decoding.
+				if code := Run([]string{"list", "--all-projects", "--json", "--limit", "0"}, nil, io.Discard, io.Discard, env); code != 0 {
+					b.Fatal("body warmup failed")
+				}
+				if err := os.WriteFile(filepath.Join(home, "cache", "catalog"), []byte("unavailable catalog fixture"), 0600); err != nil {
+					b.Fatal(err)
 				}
 			}
 			var first time.Duration
@@ -94,9 +107,6 @@ func BenchmarkCatalogBrowserFirstFrame(b *testing.B) {
 				env.TerminalSize = func(io.Writer) (int, int, bool) { return 80, 24, true }
 				env.openKeys = func(io.Reader) (keyTerminal, bool) { return newFakeKeys("q"), true }
 				args := []string{"list", "--all-projects"}
-				if state == "exhaustive" {
-					args = append(args, "--no-cache")
-				}
 				b.StartTimer()
 				out.start = time.Now()
 				code := Run(args, in, out, io.Discard, env)
@@ -193,5 +203,71 @@ func TestCatalogDamagedSummaryFallsBackToCurrentArchive(t *testing.T) {
 	}
 	if before.String() != after.String() {
 		t.Fatal("damaged catalog hid current sessions")
+	}
+}
+
+func TestCatalogWarmShowQueryReadsOnlySelectedBodyAndMatchesFallback(t *testing.T) {
+	a := newScopedArchive(t)
+	a.add(t, "mine0001", "Unique title ÉCOLE shared marker", a.label, linked(701))
+	a.add(t, "mine0002", "Another scoped task", a.label)
+	a.add(t, "bill0001", "Shared marker outside", "billing")
+	a.add(t, "child001", "Child needle", a.label, subagentOf("mine0001"))
+	a.add(t, "replay01", "Replay hidden title", a.label, func(m *archive.Metadata) { m.Replay = &archive.Replay{RunID: "private-replay-run"} })
+	measured := storagetest.NewMeasuredStore(a.mem, 0)
+	a.env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return measured, nil }
+	decoded := 0
+	a.env.observeListBody = func(string, bool) { decoded++ }
+	if _, _, code := a.runList(t, "--all-projects", "--limit", "0"); code != 0 {
+		t.Fatal("catalog warmup failed")
+	}
+	home, err := a.env.Home()
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalogPath := filepath.Join(home, "cache", "catalog")
+	for _, tc := range []struct {
+		query    string
+		code     int
+		gets     int64
+		contains string
+	}{
+		{"école", 0, 1, "mine0001"},
+		{"#701", 0, 1, "mine0001"},
+		{"mine000", 1, 0, "matches 2"},
+		{"shared marker", 0, 1, "mine0001"},
+		{"child needle", 0, 1, "child001"},
+		{"replay01", 0, 1, "private-replay-run"},
+		{"replay hidden", 1, 0, "no archived session"},
+		// Full-ID lookup keeps the existing direct harness/key probes.
+		{a.id, 0, 4, a.id},
+	} {
+		t.Run(tc.query, func(t *testing.T) {
+			decoded = 0
+			measured.Reset()
+			out, stderr, code := a.runShow(t, tc.query, "--json")
+			if code != tc.code || !strings.Contains(out+stderr, tc.contains) {
+				t.Fatalf("code=%d out=%s stderr=%s", code, out, stderr)
+			}
+			if decoded != 0 || measured.Metrics().Gets != tc.gets {
+				t.Fatalf("warm decoded=%d metrics=%+v", decoded, measured.Metrics())
+			}
+			// Preserve the warmed body cache while exercising verified exhaustive fallback.
+			if err = os.Rename(catalogPath, catalogPath+".fixture"); err != nil {
+				t.Fatal(err)
+			}
+			if err = os.WriteFile(catalogPath, []byte("catalog unavailable"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			fallbackOut, fallbackErr, fallbackCode := a.runShow(t, tc.query, "--json")
+			if err = os.Remove(catalogPath); err != nil {
+				t.Fatal(err)
+			}
+			if err = os.Rename(catalogPath+".fixture", catalogPath); err != nil {
+				t.Fatal(err)
+			}
+			if fallbackCode != code || fallbackOut != out || fallbackErr != stderr {
+				t.Fatalf("fallback differs: code=%d out=%s stderr=%s", fallbackCode, fallbackOut, fallbackErr)
+			}
+		})
 	}
 }
