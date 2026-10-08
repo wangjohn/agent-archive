@@ -27,19 +27,19 @@ func (h *projectHeap) keep(row Project, limit int) {
 	h.down()
 }
 
-func (h projectHeap) down() {
+func (h *projectHeap) down() {
 	for parent := 0; ; {
 		child := parent*2 + 1
-		if child >= len(h) {
+		if child >= len(*h) {
 			return
 		}
-		if right := child + 1; right < len(h) && projectBefore(h[child], h[right]) {
+		if right := child + 1; right < len(*h) && projectBefore((*h)[child], (*h)[right]) {
 			child = right
 		}
-		if !projectBefore(h[parent], h[child]) {
+		if !projectBefore((*h)[parent], (*h)[child]) {
 			return
 		}
-		h[parent], h[child] = h[child], h[parent]
+		(*h)[parent], (*h)[child] = (*h)[child], (*h)[parent]
 		parent = child
 	}
 }
