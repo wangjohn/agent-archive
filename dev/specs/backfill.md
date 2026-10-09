@@ -1182,7 +1182,11 @@ and cached prefix metadata is validated before a resumed sweep. Unavailable
 entries cannot certify uniqueness. Backfill's proposed roots are the only
 exception: a proposed root whose completed, within-budget lookup found a
 checkout top level and an origin value that yields no repository key is
-non-owning; a failed origin read is unknown, not keyless. It cannot match a
+non-owning; a failed origin read is unknown, not keyless. Every
+`remote.origin.url` value is read (`git config --get` reports only the last):
+the checkout is keyless only when no value yields a key; a value that yields
+one is the checkout's key wherever it appears; values that yield different
+keys leave the identity unknown, neither keyless nor matched. It cannot match a
 recorded key, so a match elsewhere stays unique among the identifiable roots.
 It has no dependency stamps, so every admission slice observes it again
 (sharing the coalesced semantic sweep) and requires the same keyless top level
