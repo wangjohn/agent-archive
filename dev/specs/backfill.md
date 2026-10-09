@@ -184,6 +184,8 @@ writes nothing; the storage check writes a test object), then
 `transcripts_unreadable`),
 `cursor_database_newer_format`, `cursor_subagents_not_imported`,
 `subagents_skipped`, `unreadable_folders`, and `unreadable_stores`.
+Plans whose recovery evidence was incomplete also include optional
+`recovery_evidence_gaps` (see [Recorded project recovery](#recorded-project-recovery)).
 
 Plans with diagnostic details also include optional `diagnostics` (bounded
 aggregate records with the winning primary `skip`, typed `detail`, `action`,
@@ -556,6 +558,13 @@ matching rule wins.
    origin read failed, or whose observation exhausted its budget, still blocks, and every configured root
    keeps the strict rule ([Recorded project recovery](#recorded-project-recovery)).
    Exact mappings continue to require configured targets.
+   A Cursor database chat with no folder evidence at all (no folder, no
+   workspace reference, no message folder; for example a subagent composer)
+   is a non-witness, not incomplete evidence: it names no root, so it cannot
+   hide a clone. A chat whose workspace reference cannot be read, whose
+   `workspaceIdentifier` is present in any shape this release cannot resolve
+   to a local folder (a remote URI, an unknown shape), or whose messages name
+   several folders, still makes the inventory incomplete.
    The plan displays selected proposed roots as projects it will add through the
    ordinary batch/config transaction. Hidden roots remain recovery evidence
    without becoming new capture roots. Evidence Context/digest binds the union;
@@ -1173,7 +1182,11 @@ and cached prefix metadata is validated before a resumed sweep. Unavailable
 entries cannot certify uniqueness. Backfill's proposed roots are the only
 exception: a proposed root whose completed, within-budget lookup found a
 checkout top level and an origin value that yields no repository key is
-non-owning; a failed origin read is unknown, not keyless. It cannot match a
+non-owning; a failed origin read is unknown, not keyless. Every
+`remote.origin.url` value is read (`git config --get` reports only the last):
+the checkout is keyless only when no value yields a key; a value that yields
+one is the checkout's key wherever it appears; values that yield different
+keys leave the identity unknown, neither keyless nor matched. It cannot match a
 recorded key, so a match elsewhere stays unique among the identifiable roots.
 It has no dependency stamps, so every admission slice observes it again
 (sharing the coalesced semantic sweep) and requires the same keyless top level
@@ -1185,6 +1198,67 @@ match the recorded key even if configured. Bounded Git config origin names ident
 metadata dependencies; no partial Git configuration parser interprets remotes.
 Source and Git reads run outside admission locks. Under-lock scope digests and
 permission generations reject configuration changes.
+
+Backfill's uniqueness proof is over the clone roots its evidence names: the
+configured roots plus the live repository roots of every observed session, from
+every app, before output filters. Evidence that could name a root but was not
+observed (an unreadable store or folder, a session whose folder is unknown or
+unreadable, a changed native inventory, an unavailable or unsettled Cursor
+database, an exhausted budget, more than 1,024 distinct witness roots) is a
+recorded gap. Evidence that names no root (a Cursor chat with no folder,
+workspace reference or message folder) cannot be a clone and is not a gap. Gaps are kept as a finite set of (app, cause)
+values and isolated by app: a gap blocks recorded-key recovery only for the
+sessions of the app whose evidence is missing, and a gap that cannot be
+attributed to one app (a changed native inventory, the 1,024-root bound, an
+unreadable folder of unknown app) blocks every app. A gap in another app's
+evidence does not block. This holds with or without `--harness`: an app the
+filter leaves out still contributes the witnesses it observed (they can make a
+recovery ambiguous or name its destination), and its gaps block only its own
+sessions, which the filter hides anyway.
+
+Admitting past another app's gap is safe within the documented residuals. The
+proof was never a census of every clone on disk: a clone no agent ever ran in
+is already invisible, and another app's gap widens that set only by clones
+known solely to that app's sessions. Configured roots, including exclusions,
+are enumerated by repository lookups independent of every app store, so no gap
+can hide capture policy, and a clone nested in an excluded root resolves to
+that root and is never a witness. The only wrong outcome is recovering a
+session into one included checkout of its own repository, configured or
+proposed, when it actually ran in a second, unconfigured clone known only to
+the app with the gap, instead of leaving it unresolved. It is never an
+excluded root, a root inside one, or a root no witness could propose; it is
+the same residual as a keyless clone and a
+`url.insteadOf` origin. The plan reports it: `recovery_evidence_gaps` in JSON
+(each `app`, `cause`, and the `blocked` and `recovered_without` session counts
+by app) and a "Project recovery evidence" note in text. An app's own gaps
+still block its sessions as defense in depth. Witnesses from an incomplete
+Cursor database epoch remain clone evidence but cannot propose a destination,
+because they cannot be renewed; such an epoch needs no renewal at admission.
+A complete epoch that changes between the plan and confirmation (its settled
+stamps differ, or a renewed read of an unsettled database differs) is isolated
+the same way at admission. It blocks Cursor's own recoveries, recoveries of
+unknown app, and any recovery whose destination rests on Cursor database
+evidence: an unconfigured destination with no current witness from another
+source that could propose it on its own. It does not block another app's
+recovery into a configured root or into a destination that current evidence
+from another source can propose. Such a proof used Cursor's chats only as
+possible clones, and a change can at most remove one (the proof stays
+unique) or add one (a second checkout known only to Cursor, the residual
+above).
+A native transcript that was only appended to after its header was read (same
+file, same mode, larger size) keeps its own `source_changed` skip but stays
+clone evidence that cannot propose a destination, and further appends renew
+it; a truncation, replacement or other rewrite is still a gap. Header facts
+come from leading complete records, so an append cannot change them. An
+in-place rewrite that grows the file is indistinguishable from an append by
+file metadata; that is the accepted residual of the rule. The candidate
+diagnostic names the highest-priority blocking cause instead of
+`project_inventory_unavailable`: `project_budget_exhausted`,
+`project_witness_limit` (retrying cannot help; an exact `--map-project`
+can), `native_store_unreadable`, `cursor_database_unavailable`,
+`native_inventory_changed`, `cursor_chat_folder_unavailable`, then
+`session_folder_unknown`. Exact mappings and configured-path ownership do not
+depend on the witness inventory.
 
 `--map-project OLD_CWD=CONFIGURED_ROOT` is exact and invocation-local, with at
 most 128 mappings and 4,096 bytes per absolute path. The first equals sign is
