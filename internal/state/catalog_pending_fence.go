@@ -28,14 +28,17 @@ func recoveredCatalogJournal(p PendingPublication) bool {
 }
 
 func (s *Store) checkCatalogPendingSave(ctx context.Context, id string, next PendingPublication) error {
-	old, found, err := s.catalogPendingForFence(id)
+	// Fence-owned decoded views must end after their exact comparisons.
+	scratch, closeScratch := s.WithReadBudget(ctx, s.resourceBudget)
+	defer closeScratch()
+	old, found, err := scratch.catalogPendingForFence(id)
 	if err != nil {
 		return errors.Join(ErrCatalogJournalFrozen, err)
 	}
 	if !found || !recoveredCatalogJournal(old) {
 		if recoveredCatalogJournal(next) {
 			j := next.Catalog.Recovery
-			digest, err := s.catalogJournalDigest(ctx, id, next)
+			digest, err := scratch.catalogJournalDigest(ctx, id, next)
 			if j.Validate() != nil || j.SessionID != id || j.MutationID != next.Catalog.ID || j.ExpectedRevision != next.Catalog.ExpectedRevision || err != nil || digest != j.SHA256 {
 				return errors.Join(ErrCatalogJournalFrozen, err)
 			}
@@ -45,11 +48,11 @@ func (s *Store) checkCatalogPendingSave(ctx context.Context, id string, next Pen
 	if !recoveredCatalogJournal(next) || *old.Catalog.Recovery != *next.Catalog.Recovery {
 		return ErrCatalogJournalFrozen
 	}
-	before, err := s.catalogJournalDigest(ctx, id, old)
+	before, err := scratch.catalogJournalDigest(ctx, id, old)
 	if err != nil || before != old.Catalog.Recovery.SHA256 {
 		return errors.Join(ErrCatalogJournalFrozen, err)
 	}
-	after, err := s.catalogJournalDigest(ctx, id, next)
+	after, err := scratch.catalogJournalDigest(ctx, id, next)
 	if err != nil || after != before {
 		return errors.Join(ErrCatalogJournalFrozen, err)
 	}
@@ -73,11 +76,13 @@ func (s *Store) RemoveCatalogPending(id string, j local.CatalogJournal, guard *l
 	if err != nil || resolveErr != nil || home != expected {
 		return errors.Join(ErrCatalogJournalFrozen, err, resolveErr)
 	}
-	pending, found, err := s.catalogPendingForFence(id)
+	scratch, closeScratch := s.WithReadBudget(s.durableContext(), s.resourceBudget)
+	defer closeScratch()
+	pending, found, err := scratch.catalogPendingForFence(id)
 	if err != nil || !found || !recoveredCatalogJournal(pending) || *pending.Catalog.Recovery != j {
 		return errors.Join(ErrCatalogJournalFrozen, err)
 	}
-	if err = s.verifyCatalogJournalRemoval(id, pending, j); err != nil {
+	if err = scratch.verifyCatalogJournalRemoval(id, pending, j); err != nil {
 		return err
 	}
 	return s.removePending(id)
@@ -92,7 +97,9 @@ func (s *Store) verifyCatalogJournalRemoval(id string, pending PendingPublicatio
 }
 
 func (s *Store) checkCatalogPendingRemoval(id string) error {
-	pending, found, err := s.catalogPendingForFence(id)
+	scratch, closeScratch := s.WithReadBudget(s.durableContext(), s.resourceBudget)
+	defer closeScratch()
+	pending, found, err := scratch.catalogPendingForFence(id)
 	if err != nil {
 		return errors.Join(ErrDurableStorageRecovery, err)
 	}
