@@ -202,12 +202,14 @@ func RenderText(w io.Writer, p Plan) {
 	if len(projects) == 0 {
 		terminal.Println(w, "Nothing to import.")
 		renderSkipped(w, p)
+		renderRecoveryEvidenceGaps(w, p)
 		return
 	}
 	renderPlanIntro(w, p)
 	renderProjectTable(w, p, projects)
 	renderPlanTotals(w, p, projects)
 	renderSkipped(w, p)
+	renderRecoveryEvidenceGaps(w, p)
 	renderPlanNextSteps(w, p, projects)
 }
 
@@ -714,14 +716,17 @@ func FormatSize(n int64) string {
 
 // planJSON is `backfill --dry-run --json`.
 type planJSON struct {
-	Diagnostics      []DiagnosticSummary  `json:"diagnostics,omitempty"`
-	Inventory        *InventoryAccounting `json:"inventory,omitempty"`
-	Destination      Destination          `json:"destination"`
-	Filters          filtersJSON          `json:"filters"`
-	Projects         []projectJSON        `json:"projects"`
-	Skipped          map[SkipReason]int   `json:"skipped"`
-	AppsWithoutHooks []string             `json:"apps_without_hooks"`
-	RetentionDays    int                  `json:"retention_days"`
+	Diagnostics []DiagnosticSummary `json:"diagnostics,omitempty"`
+	// RecoveryEvidenceGaps names, per app and cause, the incomplete recovery
+	// evidence that blocked sessions or that sessions were recovered without.
+	RecoveryEvidenceGaps []RecoveryEvidenceGap `json:"recovery_evidence_gaps,omitempty"`
+	Inventory            *InventoryAccounting  `json:"inventory,omitempty"`
+	Destination          Destination           `json:"destination"`
+	Filters              filtersJSON           `json:"filters"`
+	Projects             []projectJSON         `json:"projects"`
+	Skipped              map[SkipReason]int    `json:"skipped"`
+	AppsWithoutHooks     []string              `json:"apps_without_hooks"`
+	RetentionDays        int                   `json:"retention_days"`
 	// ExpiresOn is empty when retention is off.
 	ExpiresOn string `json:"expires_on"`
 	// StorageChecked is always false. This JSON is printed only by a dry
@@ -798,12 +803,13 @@ func RenderJSON(w io.Writer, p Plan) error {
 			Since: p.Filters.Since, Until: p.Filters.Until,
 			IncludeHome: p.Filters.IncludeHome, IncludeTemp: p.Filters.IncludeTemp, IncludeRemoved: p.Filters.IncludeRemoved,
 		},
-		Projects:         []projectJSON{},
-		Skipped:          p.Skipped(),
-		Diagnostics:      p.Diagnostics(),
-		AppsWithoutHooks: p.AppsWithoutHooks(),
-		RetentionDays:    p.RetentionDays,
-		StorageChecked:   false,
+		Projects:             []projectJSON{},
+		Skipped:              p.Skipped(),
+		Diagnostics:          p.Diagnostics(),
+		RecoveryEvidenceGaps: p.RecoveryEvidenceGaps,
+		AppsWithoutHooks:     p.AppsWithoutHooks(),
+		RetentionDays:        p.RetentionDays,
+		StorageChecked:       false,
 		// False when Cursor's database could not be read; see
 		// CursorDatabaseReaderFor.
 		CursorDatabaseChecked:         p.CursorDatabaseChecked,

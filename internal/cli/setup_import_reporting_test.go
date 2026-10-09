@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -23,7 +24,7 @@ import (
 // nil-error Gone outcome. Setup must report it even when no session registers.
 func TestSetupImportReportsNilErrorSkips(t *testing.T) {
 	for _, remaining := range []int{0, 1, 2} {
-		t.Run(fmt.Sprint(remaining), func(t *testing.T) {
+		t.Run(strconv.Itoa(remaining), func(t *testing.T) {
 			f := newScreenFixture(t)
 			f.withApps(t, "claude")
 			f.inWebApp(t)
@@ -127,7 +128,7 @@ func TestSetupAllProjectsHistoryRemedyPreservesScope(t *testing.T) {
 // checks that the total does not use only RegistrationResult.Sessions.
 func TestSetupImportReportsIndependentNativeChildren(t *testing.T) {
 	for _, mixed := range []bool{false, true} {
-		t.Run(fmt.Sprint(mixed), func(t *testing.T) {
+		t.Run(strconv.FormatBool(mixed), func(t *testing.T) {
 			canonical := func() string { p, err := filepath.EvalSymlinks(t.TempDir()); must(t, err); return p }
 			home, userHome, project := canonical(), canonical(), canonical()
 			at := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)

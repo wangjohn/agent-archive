@@ -12,6 +12,7 @@ import (
 // Keep terminal widths, erase sequences and golden expectations unchanged.
 func shortDisplayFixtureDir(t *testing.T) string {
 	t.Helper()
+	//lint:ignore usetesting Short private paths preserve terminal wrapping; t.Cleanup removes this owned root.
 	dir, err := os.MkdirTemp("/tmp", "agent-ui-")
 	if err != nil {
 		t.Fatal(err)
