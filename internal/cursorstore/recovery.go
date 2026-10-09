@@ -29,6 +29,13 @@ func ReadRecovery(ctx context.Context, path string, budget agentapi.RecoveryRead
 		return err
 	}
 	if src.live {
+		if !src.emptyWAL {
+			return NotChecked(Locked)
+		}
+		// Reserve both observations before opening or reading the -shm.
+		if err := budget.Charge(0, 2*shmHeaderSize); err != nil {
+			return err
+		}
 		settled, ok := src.settled()
 		if !ok {
 			// Frames in the -wal are only safely read through Cursor's

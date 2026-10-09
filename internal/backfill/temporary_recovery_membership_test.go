@@ -60,7 +60,7 @@ func TestTemporaryCloneRemainsRecordedRecoveryMembership(t *testing.T) {
 				tr.write(filepath.Join("home", codexFile(cloneID)), codexTranscript(cloneID, cloneID, clone, fixedNow.Add(-time.Hour)))
 				observedClone := false
 				observer := gitremote.IdentityObserver{Run: func(ctx context.Context, dir string, args ...string) ([]byte, error) {
-					if identity == temporaryRecoveryFailedOrigin && dir == clone && len(args) == 5 && args[2] == "config" && args[3] == "--get" && args[4] == "remote.origin.url" {
+					if identity == temporaryRecoveryFailedOrigin && dir == clone && len(args) == 6 && args[2] == "config" && args[3] == "-z" && args[4] == "--get-all" && args[5] == "remote.origin.url" {
 						return nil, errors.New("synthetic origin read failure")
 					}
 					return gitremote.ExecRunner(ctx, dir, args...)
