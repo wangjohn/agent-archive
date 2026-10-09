@@ -268,14 +268,11 @@ func TestRecoveryAppendDuringDiscoveryKeepsOtherRecoveries(t *testing.T) {
 			if c := candidate(t, p, id); c.Skip != SkipSourceChanged || c.ProjectRoot != "" {
 				t.Fatalf("changed session: %+v", c)
 			}
-			if kind != appendRewrite && hasRecoveryGap(p, "", CauseNativeInventoryChanged) {
-				// The appended file must not be a witness gap of its own app.
-				if hasRecoveryGap(p, "codex", CauseNativeInventoryChanged) {
-					t.Fatalf("append recorded as a witness gap: %+v", p.RecoveryEvidenceGaps)
-				}
-				// Until the native inventory stops stamping transcript sizes
-				// (PR #394), the append also changes that unattributed inventory.
-				t.Skip("native inventory still invalidated by transcript appends")
+			// An append is neither a witness gap of its own app nor, since the
+			// native inventory lets owned transcripts grow (PR #394), a change
+			// to the unattributed inventory.
+			if kind != appendRewrite && (hasRecoveryGap(p, "codex", CauseNativeInventoryChanged) || hasRecoveryGap(p, "", CauseNativeInventoryChanged)) {
+				t.Fatalf("append recorded as a witness gap: %+v", p.RecoveryEvidenceGaps)
 			}
 			c := candidate(t, p, goneID)
 			switch kind {
