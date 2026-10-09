@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/backfill"
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
@@ -32,17 +33,27 @@ func TestSetupImportGivesUpOnABusyCollector(t *testing.T) {
 	f := newImportOfferFixture(t)
 	asked := holdCollectorAtImport(t, f)
 	out := f.runSetup(t, "", setupYesArgs...)
-	if len(*asked) != 1 || (*asked)[0] != setupImportCollectorWait || setupImportCollectorWait > 20*time.Second {
-		t.Fatalf("setup waited %v for the collector, want %v (at most 20s)", *asked, setupImportCollectorWait)
+	// Long enough to outlast a short pass the reloaded job starts, short
+	// enough not to hold setup for minutes.
+	if len(*asked) != 1 || (*asked)[0] != setupImportCollectorWait || setupImportCollectorWait < 10*time.Second || setupImportCollectorWait > 20*time.Second {
+		t.Fatalf("setup waited %v for the collector, want %v (10s to 20s)", *asked, setupImportCollectorWait)
 	}
 	want := "Recent sessions were not imported: a collector pass is still running. Run agent-archive backfill --since 7d to retry.\n"
 	if !strings.Contains(out, want) || strings.Count(out, "retry") != 1 || strings.Contains(out, "run backfill again") || strings.Contains(out, "Imported") {
 		t.Fatalf("output:\n%s", out)
 	}
 	assertSetupKept(t, f)
-	if ids := importedSessions(t, f.home); len(ids) != 0 {
-		t.Fatalf("imported %v", ids)
+	// Nothing was started: no import record, and setup.lock is free.
+	batches, err := backfill.LoadBatches(f.home)
+	must(t, err)
+	if len(batches) != 0 {
+		t.Fatalf("import records left: %+v", batches)
 	}
+	release, err := local.NamedLock(f.home, "setup.lock")
+	if err != nil {
+		t.Fatalf("setup.lock still held: %v", err)
+	}
+	release()
 }
 
 // backfill keeps its long wait for a running collector pass.

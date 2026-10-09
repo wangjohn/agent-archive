@@ -576,9 +576,10 @@ from loading its own job into your real launchd or systemd user manager: stub
 ## After setup
 
 After "Setup complete", setup says, with one line per app, what it needs and
-which sessions it captures from now on. Sessions already open are not lost:
-setup imports them ([below](#sessions-from-the-last-7-days)), and the
-collector keeps them current.
+which sessions it captures from now on. A session already open in an
+included project, started in the last 7 days, is not lost: setup imports it
+([below](#sessions-from-the-last-7-days)), and the collector keeps it
+current.
 
 - **Codex:** automatic discovery captures supported tasks that start within the
   reviewed Codex scope: an included project in included-project mode, or any
@@ -602,7 +603,8 @@ runs.
 Hooks and discovery need a provable fresh start, so they admit only sessions
 that start after setup in an included project. In Codex and Claude Code,
 `/clear` also starts one; in Cursor, only a new chat does. Sessions that
-started before setup are covered by its import instead. Setup finishes
+started before setup are covered by its import instead, within its limits
+below. Setup finishes
 without waiting for either. Check progress with:
 
 ```sh
