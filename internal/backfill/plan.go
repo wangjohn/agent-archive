@@ -187,6 +187,17 @@ func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg con
 		return Plan{}, err
 	}
 
+	if env.PrepareCodexProof != nil {
+		var ids []string
+		for _, w := range items {
+			if w.t.harness == harnessCodex && (w.c.NativeChild || w.c.RelatedHistory) && w.c.NativeSessionID != "" {
+				ids = append(ids, w.c.NativeSessionID)
+			}
+		}
+		if err := env.PrepareCodexProof(ctx, ids); err != nil {
+			return Plan{}, err
+		}
+	}
 	projectFilter := make([]string, 0, len(filters.Projects))
 	for _, p := range filters.Projects {
 		if abs, err := filepath.Abs(p); err == nil {
@@ -275,8 +286,8 @@ func preparePlanWork(ctx context.Context, env Environment, cfg config.Config, fi
 	var err error
 	inventory := newRecoverySourceInventory(env)
 	unread, err = enumerateDiscovery(ctx, inventory.environment(), agentapi.DiscoveryImport, func(c agentapi.DiscoveryCandidate) error {
-		t := &transcript{harness: harness(c.Session.Agent), path: c.Source.Path, size: c.Bytes, nativeID: c.Session.NativeID, cwd: c.Header.Directory, repoKey: c.Header.RepoKey, metaStart: c.Header.StartedAt, identityMismatch: c.Header.IdentityMismatch, capturePending: c.Header.CapturePending != "", cursorSlug: c.WorkspaceKey, sourcePriority: c.SourcePriority, sourceInfo: c.SourceInfo}
-		w := &work{t: t, c: Candidate{Harness: string(c.Session.Agent), TranscriptPath: t.path, SourceKind: c.Source.Kind, SourceKey: c.Source.Key, Bytes: t.size, NativeSessionID: t.nativeID}, unsafe: c.IdentityError != nil}
+		t := &transcript{harness: harness(c.Session.Agent), path: c.Source.Path, size: c.Bytes, nativeID: c.Session.NativeID, cwd: c.Header.Directory, repoKey: c.Header.RepoKey, metaStart: c.Header.StartedAt, identityMismatch: c.Header.IdentityMismatch, capturePending: c.Header.CapturePending != "" && env.CodexRollouts == nil, cursorSlug: c.WorkspaceKey, sourcePriority: c.SourcePriority, sourceInfo: c.SourceInfo}
+		w := &work{t: t, c: importNativeCandidate(c, t), unsafe: c.IdentityError != nil}
 		w.checkSource(env)
 		items = append(items, w)
 		return nil
@@ -665,7 +676,8 @@ func runAdapter(ctx context.Context, env Environment, w *work) {
 		freshStart = created.UTC()
 		w.c.StartedAt, w.c.StartedAtSource = freshStart, archive.StartedAtSourceFileCreated
 	}
-	filtered, _, err := collector.FilterSource(ctx, string(w.t.harness), agentapi.SourceRef{Kind: w.c.SourceKind, Path: w.t.path, Key: w.c.SourceKey}, freshStart, env.Sources)
+	filtered, release, err := filterImportSource(ctx, env, w, freshStart)
+	defer release()
 	if err != nil {
 		if fatalSourceFailure(err) {
 			w.sourceErr = err
@@ -677,7 +689,7 @@ func runAdapter(ctx context.Context, env Environment, w *work) {
 			w.vanished = true
 		case agentapi.HasFailure(err, agentapi.Changed):
 			w.sourceChanged = true
-		case errors.Is(err, archive.ErrRelatedHistory):
+		case errors.Is(err, archive.ErrRelatedHistory) || agentapi.HasFailure(err, agentapi.Unavailable) || agentapi.HasFailure(err, agentapi.Limit):
 			w.t.capturePending = true
 		case errors.Is(err, archive.ErrRecordTooLarge) || (statErr == nil && info.Size() > collector.DefaultMaxRawTranscriptBytes):
 			// One record over the limit, or a file that grew past it since
@@ -834,4 +846,27 @@ func (b *byteBudget) release(n int64) {
 	b.used -= n
 	b.mu.Unlock()
 	b.available.Broadcast()
+}
+
+type codexStoreDirectory string
+
+const (
+	codexSessionsDirectory codexStoreDirectory = "sessions"
+	codexArchivedDirectory codexStoreDirectory = "archived_sessions"
+)
+
+// importNativeCandidate retains scheduling identity without granting admission.
+func importNativeCandidate(source agentapi.DiscoveryCandidate, t *transcript) Candidate {
+	home, key := "", source.Source.Key
+	var child, related bool
+	var parent, root string
+	if id := source.Header.CodexIdentity; id != nil {
+		child, related = id.Child, id.ForkID != "" || id.HistoryBase != nil || id.RolloutID != id.ThreadID
+		parent, root = id.ParentID, id.RootID
+		home, key = source.Root, id.ThreadID
+		if base := codexStoreDirectory(filepath.Base(home)); base == codexSessionsDirectory || base == codexArchivedDirectory {
+			home = filepath.Dir(home)
+		}
+	}
+	return Candidate{Harness: string(source.Session.Agent), TranscriptPath: t.path, SourceKind: source.Source.Kind, SourceKey: key, Bytes: t.size, NativeSessionID: t.nativeID, NativeChild: child, RelatedHistory: related, ParentNativeID: parent, RootNativeID: root, NativeHome: home}
 }
