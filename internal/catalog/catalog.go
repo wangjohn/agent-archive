@@ -346,7 +346,7 @@ func orderKeys(key string, e *CatalogEntry) []string {
 func allOrderKeys(key string, e *CatalogEntry) [][]string {
 	keys := orderKeys(key, e)
 	result := [][]string{{keys[0]}, {keys[1]}, {keys[2]}}
-	if e.Summary.ParentSessionID == "" {
+	if !e.Summary.IsChild() {
 		prefix := OrderPrefix(e.Summary.Replay != nil)
 		for i, k := range keys {
 			result[i] = append(result[i], prefix+k)
@@ -359,8 +359,10 @@ func allOrderKeys(key string, e *CatalogEntry) [][]string {
 		for i, k := range keys {
 			result[i] = append(result[i], "!children/"+kind+k)
 		}
-		prefix := ChildPrefix(e.Summary.Harness.Name, e.Summary.ParentSessionID, e.Summary.Replay != nil)
-		result[2] = append(result[2], prefix+keys[0])
+		if e.Summary.ParentSessionID != "" {
+			prefix := ChildPrefix(e.Summary.Harness.Name, e.Summary.ParentSessionID, e.Summary.Replay != nil)
+			result[2] = append(result[2], prefix+keys[0])
+		}
 	}
 	return result
 }

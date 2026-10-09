@@ -73,7 +73,7 @@ func rootCatalogFields(row catalog.Row) (string, string, time.Time) {
 
 func rootCatalogRevision(row catalog.Row) listingindex.Revision {
 	m := row.Entry.Summary
-	return listingindex.Revision{MetadataKey: row.Key, ETag: row.Entry.Revision, Hash: row.Entry.Metadata.SHA256, CapturedAt: m.CapturedAt, Activity: listingindex.ActivityTime(m), Parent: m.ParentSessionID, Replay: m.IsReplay(), ProjectID: m.ProjectID, RepoKey: m.RepoKey}
+	return listingindex.Revision{MetadataKey: row.Key, ETag: row.Entry.Revision, Hash: row.Entry.Metadata.SHA256, CapturedAt: m.CapturedAt, Activity: listingindex.ActivityTime(m), Parent: m.ParentSessionID, NativeChild: m.NativeChild, Replay: m.IsReplay(), ProjectID: m.ProjectID, RepoKey: m.RepoKey}
 }
 
 func selectRootCatalogRows(rows []catalog.Row, q MetadataQuery, opts ListOptions) ([]catalog.Row, RecentResult, error) {
@@ -171,7 +171,7 @@ func reusableRootCatalog(ctx context.Context, snapshot *catalog.Snapshot, store 
 	for _, row := range page.Rows {
 		m := row.Summary.Metadata()
 		objects = append(objects, storage.Object{Key: row.Key, ETag: row.ETag})
-		revisions[RevisionID{Key: row.Key, ETag: row.ETag}] = listingindex.Revision{MetadataKey: row.Key, ETag: row.ETag, Hash: row.Hash, CapturedAt: m.CapturedAt, Activity: listingindex.ActivityTime(m), Parent: m.ParentSessionID, Replay: m.IsReplay(), ProjectID: m.ProjectID, RepoKey: m.RepoKey}
+		revisions[RevisionID{Key: row.Key, ETag: row.ETag}] = listingindex.Revision{MetadataKey: row.Key, ETag: row.ETag, Hash: row.Hash, CapturedAt: m.CapturedAt, Activity: listingindex.ActivityTime(m), Parent: m.ParentSessionID, NativeChild: m.NativeChild, Replay: m.IsReplay(), ProjectID: m.ProjectID, RepoKey: m.RepoKey}
 	}
 	filter := q.Filter
 	filter.From, filter.To = time.Time{}, time.Time{}

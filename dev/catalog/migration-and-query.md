@@ -163,3 +163,14 @@ selection. Thus a stats-only workload may receive no SQL benefit. Selected bodie
 retain exact revision/hash verification, eight-worker loading and the original
 request lifetime. Safe title text longer than the supported catalog identity key
 is searched directly instead of being probed as an impossible exact ID.
+
+Native-child ownership is independent of whether a conversation parent has been
+resolved. Catalog root ranges exclude both positive native children and linked
+children; global child ranges include either form. Parent-specific counters and
+indexes require a nonempty resolved parent and retain the harness-plus-parent
+identity rule. Strict overflow envelopes preserve the native-child discriminator
+and validate it against the immutable full metadata. An unresolved child is an
+independent date seed for stats, never an inferred descendant of an unknown
+parent. Earlier source bundles may lack the optional native-child marker even
+when metadata now records native ownership; existing exact source identity,
+parent and reference verification still governs those supported legacy sources.

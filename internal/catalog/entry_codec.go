@@ -27,7 +27,7 @@ func indexProjection(m archive.Metadata) archive.Metadata {
 	if m.Replay != nil {
 		replay = &archive.Replay{}
 	}
-	p := archive.Metadata{Replay: replay, Origin: origin, StartedAt: started, SchemaVersion: m.SchemaVersion, SessionID: m.SessionID, Harness: archive.Harness{Name: m.Harness.Name}, ProjectID: m.ProjectID, CapturedAt: m.CapturedAt, EndedAt: m.EndedAt, ParentSessionID: m.ParentSessionID}
+	p := archive.Metadata{Replay: replay, Origin: origin, StartedAt: started, SchemaVersion: m.SchemaVersion, SessionID: m.SessionID, Harness: archive.Harness{Name: m.Harness.Name}, ProjectID: m.ProjectID, CapturedAt: m.CapturedAt, EndedAt: m.EndedAt, ParentSessionID: m.ParentSessionID, NativeChild: m.NativeChild}
 	return p
 }
 

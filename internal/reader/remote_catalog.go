@@ -163,7 +163,7 @@ func selectCatalogMetadata(ctx context.Context, store storage.ObjectStore, prefi
 		}
 		m := row.Entry.Summary
 		objects = append(objects, storage.Object{Key: row.Key, ETag: row.Entry.Revision})
-		revisions[RevisionID{row.Key, row.Entry.Revision}] = listingindex.Revision{MetadataKey: row.Key, ETag: row.Entry.Revision, Hash: row.Entry.Metadata.SHA256, CapturedAt: m.CapturedAt, Activity: listingindex.ActivityTime(m), Parent: m.ParentSessionID, Replay: m.Replay != nil, ProjectID: m.ProjectID, RepoKey: m.RepoKey}
+		revisions[RevisionID{row.Key, row.Entry.Revision}] = listingindex.Revision{MetadataKey: row.Key, ETag: row.Entry.Revision, Hash: row.Entry.Metadata.SHA256, CapturedAt: m.CapturedAt, Activity: listingindex.ActivityTime(m), Parent: m.ParentSessionID, NativeChild: m.NativeChild, Replay: m.Replay != nil, ProjectID: m.ProjectID, RepoKey: m.RepoKey}
 		byKey[row.Key] = row
 	}
 	selected, result, err := selectListingRevisions(objects, revisions, f, q.Limit, opts)
