@@ -325,3 +325,52 @@ func TestCatalogWordCandidatesContainFinalMatcherMatches(t *testing.T) {
 		})
 	}
 }
+
+func TestCatalogNativeChildListBrowseSearchAndSelectedBody(t *testing.T) {
+	t.Parallel()
+	a := newScopedArchive(t)
+	// The real published source retains its old absent/false ownership marker.
+	// Positive metadata ownership remains authoritative for list/search grouping.
+	a.add(t, a.id, "Native orphan shared marker", a.label, func(m *archive.Metadata) {
+		m.NativeChild = true
+		m.ParentSessionID = ""
+		m.CapturedAt = a.base.CapturedAt
+	})
+	a.add(t, "root0001", "Root shared marker", a.label)
+	for range 2 {
+		out, stderr, code := a.runList(t, "--limit", "0", "--all-projects")
+		if code != 0 || stderr != "" || strings.Contains(out, "Native orphan") || !strings.Contains(out, "Root shared marker") {
+			t.Errorf("list code=%d stderr=%s out=%s", code, stderr, out)
+		}
+
+		out, stderr, code = a.runList(t, "Native orphan", "--all-projects")
+		if code != 0 || stderr != "" || !strings.Contains(out, "Native orphan") || !strings.Contains(out, "pending") {
+			t.Errorf("child search display code=%d stderr=%s out=%s", code, stderr, out)
+		}
+		out, stderr, code = a.runShow(t, "shared marker", "--json")
+		if code != 0 || stderr != "" || !strings.Contains(out, "root0001") {
+			t.Errorf("search tier code=%d stderr=%s out=%s", code, stderr, out)
+		}
+		out, stderr, code = a.runShow(t, "Native orphan", "--json")
+		if code != 0 || stderr != "" || !strings.Contains(out, `"native_child": true`) || !strings.Contains(out, `"source_bundle"`) {
+			t.Errorf("selected body code=%d stderr=%s out=%s", code, stderr, out)
+		}
+		out, stderr, code = a.runShow(t, "Native orphan", "--transcript")
+		if code != 0 || stderr != "" || out == "" {
+			t.Errorf("legacy source marker code=%d stderr=%s out=%s", code, stderr, out)
+		}
+		for _, command := range []string{"list", "show"} {
+			stdin := strings.NewReader("q\n")
+			var stdout, errOut bytes.Buffer
+			env := a.env
+			env.IsTerminal = func(stream any) bool { return stream == any(stdin) || stream == any(&stdout) }
+			args := []string{command}
+			if command == "list" {
+				args = append(args, "--limit", "0")
+			}
+			if code := Run(args, stdin, &stdout, &errOut, env); code != 0 || errOut.Len() != 0 || strings.Contains(stdout.String(), "Native orphan") || !strings.Contains(stdout.String(), "Root shared marker") {
+				t.Errorf("browser %s code=%d stderr=%s out=%s", command, code, errOut.String(), stdout.String())
+			}
+		}
+	}
+}
