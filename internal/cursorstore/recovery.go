@@ -36,6 +36,10 @@ func ReadRecovery(ctx context.Context, path string, budget agentapi.RecoveryRead
 			// for: immutable would ignore them.
 			return NotChecked(Locked)
 		}
+		// settled and the post-read check each read the -shm header.
+		if err := budget.Charge(0, 2*shmHeaderSize); err != nil {
+			return err
+		}
 		src = settled
 	}
 	return readInPlace(ctx, src, Options{}, func(ctx context.Context, db *sql.DB) error {
