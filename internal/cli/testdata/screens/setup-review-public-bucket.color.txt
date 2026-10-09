@@ -72,7 +72,7 @@ Checking your storage connection…
   ✗ Bucket is public · a bucket policy allows public access
     Fix its access before archiving:
     https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
-  \e[33m!\e[0m History import is separate.
+  \e[33m!\e[0m Setup imports the last 7 days of included projects; older history is separate.
   \e[33m!\e[0m Sensitive text may remain after filtering.
 
 ? Fix the blocking checks first.

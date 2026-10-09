@@ -769,24 +769,24 @@ func reviewAndCommitSetup(p *prompter, draft *setupDraft, save func() error, hom
 	if err = applySetup(home, userHome, exe, existing, &draft.Config, draft.StopImported, env); err != nil {
 		return false, err
 	}
-	return true, finishSetup(p, errOut, home, draft.Config, existing.Paused, discoveries, discoveredAt, setupFinish{env: env, userHome: userHome, offerImport: true, skills: skills})
+	return true, finishSetup(p, errOut, home, draft.Config, existing.Paused, discoveries, discoveredAt, setupFinish{env: env, userHome: userHome, interactive: true, skills: skills})
 }
 
 // setupFinish is what finishSetup needs beyond the committed
-// configuration: the machine it runs on, and whether it may ask to import past
-// sessions (interactive setup) or only point at backfill (setup --yes).
+// configuration: the machine it runs on, and whether it may ask a last
+// question (interactive setup) or not (setup --yes).
 type setupFinish struct {
 	env         Env
 	userHome    string
-	offerImport bool
+	interactive bool
 	// skills is what setup removed and left alone of the agent skills, when
 	// they are turned off.
 	skills skillOptOut
 }
 
 // finishSetup follows a committed setup: it records the apps' versions,
-// removes the saved draft, drops diagnostics of excluded projects, offers to
-// import the chosen projects' past sessions, and says what to do next.
+// removes the saved draft, drops diagnostics of excluded projects, imports
+// the chosen projects' sessions of the last 7 days, and says what to do next.
 func finishSetup(p *prompter, errOut io.Writer, home string, cfg config.Config, paused bool, discoveries map[string]applicationDiscovery, discoveredAt time.Time, finish setupFinish) error {
 	if err := reconcileCommittedGuidedSlot(home); err != nil {
 		terminal.Println(errOut, "Guided key ledger commit pending; configuration is saved.")
@@ -819,16 +819,17 @@ func finishSetup(p *prompter, errOut io.Writer, home string, cfg config.Config, 
 	if err := publishMachineAfterSetup(home, finish.env); err != nil {
 		p.warn("Machine registration pending; capture is configured and the collector will retry.")
 	}
-	printAgentSkills(p, cfg, finish.userHome, claudeConfigDir(finish.env.installedHookFiles(finish.userHome, cfg)), finish.env.installation(home, finish.userHome).commandDataHome(), finish.skills, finish.env.agentRegistry())
-	printNextSteps(p, cfg, paused, !finish.offerImport)
-	// The import is offered last, once the person knows how to see capture
-	// working, so it is a choice about history and not a step of setup. A
-	// paused machine imports nothing (backfill refuses too); resume says so.
-	if finish.offerImport && !paused {
-		offerSetupImport(p, errOut, home, finish.userHome, finish.env)
+	// The sessions of the last 7 days, the one setup runs from among them,
+	// are imported without a question: automatic capture admits only
+	// sessions that start after setup. A paused machine imports nothing
+	// (backfill refuses too); resume says so.
+	if !paused {
+		importRecentSessions(p, errOut, home, finish.userHome, finish.env)
 	}
+	printAgentSkills(p, cfg, finish.userHome, claudeConfigDir(finish.env.installedHookFiles(finish.userHome, cfg)), finish.env.installation(home, finish.userHome).commandDataHome(), finish.skills, finish.env.agentRegistry())
+	printNextSteps(p, cfg, paused)
 	p.note("Another machine: agent-archive machines pair")
-	if finish.offerImport {
+	if finish.interactive {
 		choice, e := p.guidedChoice(promptModel{Question: "More next steps?", Default: "done", Primary: []option{{"done", "Finish setup"}}, Secondary: []actionOption{{"details", "d", "Machine transfer details"}}})
 		if e == nil && choice == "details" {
 			printAnotherMachine(p, cfg, finish.userHome, finish.env)
@@ -1082,24 +1083,25 @@ func runStorageCheck(p *prompter, cfg *config.Config, env Env) error {
 	return nil
 }
 
-// hookNextStep says what each app needs before it captures: Codex asks to
-// review new hooks in /hooks, while Claude Code and Cursor read them when a
-// session starts.
+// hookNextStep says what each app needs before its hooks capture, and which
+// sessions they capture: Codex asks to review new hooks in /hooks, while
+// Claude Code and Cursor read them when a session starts. It does not say
+// that sessions already open are left out: setup imports those
+// (importRecentSessions), and the collector keeps them current.
 // Codex and Claude Code prove a fresh start with SessionStart's source,
 // which /clear sets too; Cursor proves it from the transcript, so only a new
 // chat counts there. What the user types is in backquotes, painted as a
 // command when printed.
 var hookNextStep = map[string]string{
-	"codex":  "Codex: run `/hooks` and approve the archive hooks, then start a new session (or `/clear`).",
-	"claude": "Claude Code: nothing to approve; start a new session (or `/clear`).",
-	"cursor": "Cursor: nothing to approve; start a new Agent chat.",
+	"codex":  "Codex: run `/hooks` and approve the archive hooks; they capture sessions that start after that (or after `/clear`).",
+	"claude": "Claude Code: nothing to approve; hooks capture sessions that start from now on (or after `/clear`).",
+	"cursor": "Cursor: nothing to approve; hooks capture Agent chats that start from now on.",
 }
 
 // printNextSteps ends a committed setup with one line per app on what to do
-// next. Capture needs a proven fresh start (provesFreshSessionStart), so it
-// says that sessions already open are not captured. setup --yes asks
-// nothing, so it points at backfill for past sessions instead.
-func printNextSteps(p *prompter, cfg config.Config, paused, unattended bool) {
+// next, then how to check progress. Sessions already open in included
+// projects need no step: setup imported them (importRecentSessions).
+func printNextSteps(p *prompter, cfg config.Config, paused bool) {
 	if paused {
 		p.renderer().block("Next: run " + p.style.cmd("agent-archive resume") + " when you’re ready to start archiving.\n")
 	} else {
@@ -1110,7 +1112,7 @@ func printNextSteps(p *prompter, cfg config.Config, paused, unattended bool) {
 				if cfg.EffectiveCodexCaptureScope() == config.CodexAllProjects {
 					location = "any non-excluded current or future project"
 				}
-				terminal.Println(p.out, p.style.hang("  ", "Codex: start a supported new task in "+location+"; automatic discovery does not require hook approval."))
+				terminal.Println(p.out, p.style.hang("  ", "Codex: automatic discovery captures supported tasks that start from now on in "+location+"; no hook approval needed."))
 				terminal.Println(p.out, p.style.hang("  ", "Optional hook capture: "+paintCommands(p.style, hookNextStep[app])))
 				continue
 			}
@@ -1119,15 +1121,13 @@ func printNextSteps(p *prompter, cfg config.Config, paused, unattended bool) {
 			}
 		}
 		if containsString(cfg.Harnesses, "codex") && cfg.EffectiveCodexCaptureScope() == config.CodexAllProjects {
-			terminal.Println(p.out, "Sessions already open are not captured. Start a supported new Codex task in any non-excluded project.")
+			// The discovery line above names the scope; hook capture's does not.
+			if cfg.Discovery == nil || !cfg.Discovery.Enabled {
+				terminal.Println(p.out, "Codex hooks capture supported tasks in any non-excluded project.")
+			}
 			if len(cfg.Harnesses) > 1 {
 				terminal.Println(p.out, "Other apps still require an included project.")
 			}
-		} else {
-			terminal.Println(p.out, "Sessions already open are not captured. Start a new one in an included project.")
-		}
-		if unattended {
-			terminal.Println(p.out, "Import sessions from before setup with "+p.style.cmd("agent-archive backfill")+".")
 		}
 		terminal.Println(p.out, "Check progress with "+p.style.cmd("agent-archive status")+".")
 	}
@@ -1358,8 +1358,9 @@ func offerFirstCapture(available []string, p *prompter, cfg *config.Config, dete
 // line to print: it is the home folder or a folder that holds it (a dotfiles
 // checkout, or a stray .git above it), or a temporary folder or a folder that
 // holds one. Setup then asks for the projects and pre-selects none. A
-// repository inside a temporary folder is an ordinary project, as backfill
-// treats it: only the folder itself is too broad.
+// repository inside a temporary folder is offered: setup running there is
+// the person's own choice, unlike backfill, which treats such a repository
+// as temporary. Only the folder itself is too broad.
 func currentProject(env Env, userHome string) (current, refused string) {
 	dir, err := os.Getwd()
 	if env.WorkingDir != nil {

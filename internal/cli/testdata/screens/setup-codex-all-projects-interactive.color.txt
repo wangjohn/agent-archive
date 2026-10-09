@@ -78,7 +78,7 @@ Checking your storage connection…
   ! Bucket privacy unknown · public-access settings could not be read
     Make sure public access is off:
     https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
-  \e[33m!\e[0m History import is separate.
+  \e[33m!\e[0m Setup imports the last 7 days of included projects; older history is separate.
   \e[33m!\e[0m Sensitive text may remain after filtering.
 
   \e[33m!\e[0m Codex scope expands to all current and future projects (Codex only).
@@ -102,11 +102,10 @@ Installed the agent-archive skill, which lets your agents look up and pull in pa
 To remove the agent skills and keep them off, run \e[36magent-archive setup --no-skills\e[0m.
 
 \e[1mNext, in each app\e[0m
-  Codex: start a supported new task in any non-excluded current or future
-  project; automatic discovery does not require hook approval.
-  Optional hook capture: Codex: run \e[36m/hooks\e[0m and approve the archive hooks, then
-  start a new session (or \e[36m/clear\e[0m).
-Sessions already open are not captured. Start a supported new Codex task in any non-excluded project.
+  Codex: automatic discovery captures supported tasks that start from now on in
+  any non-excluded current or future project; no hook approval needed.
+  Optional hook capture: Codex: run \e[36m/hooks\e[0m and approve the archive hooks; they
+  capture sessions that start after that (or after \e[36m/clear\e[0m).
 Check progress with \e[36magent-archive status\e[0m.
   \e[2m·\e[0m Another machine: agent-archive machines pair
 

@@ -428,9 +428,9 @@ var screens = []screen{
 		},
 	},
 	{
-		// A first setup whose project has past sessions offers to import
-		// them, and imports them.
-		name:    "setup-import-offer",
+		// A first setup whose project has past sessions imports those of
+		// the last 7 days without asking, and names the older ones.
+		name:    "setup-recent-import",
 		answers: []string{"", "", "s3-existing", "work", "2", "", ""},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
@@ -438,6 +438,7 @@ var screens = []screen{
 			f.inWebApp(t)
 			f.pastSession(t, "one", "src/web-app", screenNow.Add(-72*time.Hour))
 			f.pastSession(t, "two", "src/web-app", screenNow.Add(-2*time.Hour))
+			f.pastSession(t, "old", "src/web-app", screenNow.Add(-9*24*time.Hour))
 		},
 	},
 	{
@@ -616,6 +617,9 @@ func newScreenFixture(t *testing.T) *screenFixture {
 	tempDir := filepath.Join(root, "tmp")
 	must(t, os.MkdirAll(tempDir, 0o700))
 	env.TempDir = func() string { return tempDir }
+	// Backfill and setup's project list skip that folder alone, not the test
+	// run's temporary folder that holds the fixture's repositories.
+	env.BackfillTempDirs = []string{tempDir}
 	f := &screenFixture{root: root, userHome: userHome, home: home, env: env, bucket: storagetest.NewMemoryStore()}
 	f.env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return f.bucket, nil }
 	// The profile setup is given can list two buckets; team-archive is in
