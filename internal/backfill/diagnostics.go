@@ -61,9 +61,10 @@ var diagnosticDescriptions = map[DiagnosticDetail]diagnosticDescription{
 	// sessions' evidence, not configured repository evidence, is what could
 	// not be observed (see recoveryGaps).
 	CauseCursorDatabaseUnavailable:   {ActionRetry, "Recovery was blocked because Cursor's chat database could not be fully read, so a Cursor chat may name another clone of this repository; retry when Cursor is idle."},
-	CauseCursorChatFolderUnavailable: {ActionReviewSource, "Recovery was blocked because a Cursor chat's workspace folder could not be read, so it may be another clone of this repository; check Cursor's workspaceStorage, then retry."},
+	CauseCursorChatFolderUnavailable: {ActionReviewSource, "Recovery was blocked because a Cursor chat's workspace folder could not be determined, so it may be another clone of this repository; check Cursor's workspaceStorage, then retry."},
 	CauseNativeInventoryChanged:      {ActionRetry, "Recovery was blocked because session files changed while planning; retry after the agents are idle."},
 	CauseNativeStoreUnreadable:       {ActionReviewSource, "Recovery was blocked because an agent's session store could not be fully listed, so an unseen session may name another clone of this repository; check its access, then retry."},
+	CauseWitnessLimit:                {ActionReviewMapping, "Recovery was blocked because sessions name more repository checkouts than backfill compares (1,024), so retrying will not help; review an exact --map-project assignment."},
 	CauseSessionFolderUnknown:        {ActionReviewSource, "Recovery was blocked because another session's folder could not be determined, so it may be another clone of this repository; review that session's source."},
 }
 
@@ -75,6 +76,9 @@ const (
 	CauseNativeInventoryChanged      DiagnosticDetail = "native_inventory_changed"
 	CauseNativeStoreUnreadable       DiagnosticDetail = "native_store_unreadable"
 	CauseSessionFolderUnknown        DiagnosticDetail = "session_folder_unknown"
+	// CauseWitnessLimit is the fixed limit on distinct witness roots. It is not
+	// a budget: retrying observes the same roots.
+	CauseWitnessLimit DiagnosticDetail = "project_witness_limit"
 	// CauseRecoveryBudget reuses the budget outcome's detail and text.
 	CauseRecoveryBudget = DiagnosticDetail(sourcefacts.RecoveryBudgetExhausted)
 )

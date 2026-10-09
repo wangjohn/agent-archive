@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -214,5 +216,33 @@ func TestRecoveryGapDiagnosticsRenderInTextAndJSON(t *testing.T) {
 	// A cause never replaces a decided outcome other than inventory.
 	if d := candidateDiagnostic(SkipWorktreeUnresolved, sourcefacts.RecoveryAmbiguous, CauseNativeStoreUnreadable); string(d.Detail) != string(sourcefacts.RecoveryAmbiguous) {
 		t.Fatal(d)
+	}
+}
+
+// More distinct witness roots than the inventory compares is a fixed limit,
+// not an exhausted budget: the outcome stays inventory-unavailable, as before
+// gaps were named, and the diagnostic does not advise a retry.
+func TestRecoveryWitnessRootLimitIsNotABudget(t *testing.T) {
+	tr, env, cfg, _, _ := firstRunRecoveryFixture(t, false)
+	gone := tr.path("home/.codex/worktrees/deleted/repo")
+	key := archive.RepoKey("https://example.test/acme/repo")
+	base := t.TempDir()
+	items := make([]*work, 0, 1025)
+	for i := range 1025 {
+		root := filepath.Join(base, strconv.Itoa(i))
+		if err := os.Mkdir(root, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		items = append(items, &work{t: &transcript{harness: harnessCodex}, res: resolution{root: root, kind: ProjectKindRepository}})
+	}
+	r := newResolver(env, cfg, Filters{})
+	prepareRecoveryInventory(t.Context(), r, items, unreadable{}, nil)
+	res := r.resolveEvidence(t.Context(), gone, key)
+	if res.outcome != sourcefacts.RecoveryInventoryUnavailable || res.cause != CauseWitnessLimit {
+		t.Fatalf("got %q/%q", res.outcome, res.cause)
+	}
+	d := candidateDiagnostic(res.skip, res.outcome, res.cause)
+	if d == nil || d.Detail != CauseWitnessLimit || d.Action == ActionRetry {
+		t.Fatalf("diagnostic %+v", d)
 	}
 }

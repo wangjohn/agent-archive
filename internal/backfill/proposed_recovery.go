@@ -108,6 +108,7 @@ type recoveryGaps map[recoveryGap]bool
 // carries. Budget comes first because it also selects the budget outcome.
 var recoveryGapCauses = []DiagnosticDetail{
 	CauseRecoveryBudget,
+	CauseWitnessLimit,
 	CauseNativeStoreUnreadable,
 	CauseCursorDatabaseUnavailable,
 	CauseNativeInventoryChanged,
@@ -216,7 +217,7 @@ func recoveryWitnessInventory(ctx context.Context, r *resolver, items []*work) (
 		// Pending or oversized sources can establish clone uncertainty, but cannot
 		// authorize a new destination on their own.
 		if _, existing := observed[w.res.root]; !existing && len(observed) >= 1024 {
-			gaps.add("", CauseRecoveryBudget)
+			gaps.add("", CauseWitnessLimit)
 			continue
 		}
 		eligible := !w.t.capturePending && !w.tooLarge

@@ -1173,14 +1173,15 @@ configured roots plus the live repository roots of every observed session, from
 every app, before output filters. Evidence that could name a root but was not
 observed (an unreadable store or folder, a session whose folder is unknown or
 unreadable, a changed native inventory, an unavailable or unsettled Cursor
-database, an exhausted budget) is a recorded gap. Any gap makes recorded-key
+database, an exhausted budget, more than 1,024 distinct witness roots) is a
+recorded gap. Any gap makes recorded-key
 recovery unavailable for the plan, because the missing evidence could be a
 second clone with the same key. Evidence that names no root (a Cursor chat
 with no folder, workspace reference or message folder) cannot be such a clone
 and is not a gap. Gaps are kept as a finite set of (app, cause) values, and
 the plan's diagnostic names the highest-priority cause instead of
 `project_inventory_unavailable`: `project_budget_exhausted`,
-`native_store_unreadable`, `cursor_database_unavailable`,
+`project_witness_limit`, `native_store_unreadable`, `cursor_database_unavailable`,
 `native_inventory_changed`, `cursor_chat_folder_unavailable`, then
 `session_folder_unknown`. Exact mappings and configured-path ownership do not
 depend on the witness inventory.
