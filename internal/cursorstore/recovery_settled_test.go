@@ -139,6 +139,28 @@ func TestRecoverySettledReadInvalidatedByChange(t *testing.T) {
 				t.Fatal("the rewrite changed more than the modification time")
 			}
 		}},
+		// A coarse timestamp (one kernel tick) can leave even the
+		// modification time as it was: only the -shm's wal-index header
+		// shows the write and the checkpoint.
+		"same-size write checkpointed within one timestamp tick": {change: func(t *testing.T, w *writer, path string) {
+			t.Helper()
+			info, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			w.put(map[string]string{"bubbleId:c:b1": bubble("FIRST")})
+			w.do(writerCommand{Op: writerCheckpoint})
+			if err := os.Chtimes(path, info.ModTime(), info.ModTime()); err != nil {
+				t.Fatal(err)
+			}
+			after, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !after.ModTime().Equal(info.ModTime()) || after.Size() != info.Size() || !emptyFile(path+"-wal") {
+				t.Fatal("the rewrite left more than the -shm changed")
+			}
+		}},
 		"-shm removed": {killed: true, change: func(t *testing.T, _ *writer, path string) {
 			t.Helper()
 			if err := os.Remove(path + "-shm"); err != nil {
