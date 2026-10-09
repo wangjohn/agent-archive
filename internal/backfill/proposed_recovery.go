@@ -3,6 +3,7 @@ package backfill
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"path/filepath"
 	"slices"
 
@@ -105,7 +106,7 @@ func recoveryWitnessInventory(ctx context.Context, r *resolver, items []*work) (
 			incomplete = true
 			continue
 		}
-		if w.res.skip != "" || w.res.kind != ProjectKindRepository || !r.env.exists(w.res.root) || configured[r.env.resolved(w.res.root)] {
+		if !r.recoveryRepositoryWitness(w.res) || !r.env.exists(w.res.root) || configured[r.env.resolved(w.res.root)] {
 			continue
 		}
 		// Pending or oversized sources can establish clone uncertainty, but cannot
@@ -114,7 +115,7 @@ func recoveryWitnessInventory(ctx context.Context, r *resolver, items []*work) (
 			incomplete = true
 			continue
 		}
-		eligible := !w.t.capturePending && !w.tooLarge
+		eligible := w.res.skip == "" && !w.t.capturePending && !w.tooLarge
 		observed[w.res.root] = observed[w.res.root] || eligible
 		witnesses[w.res.root] = append(witnesses[w.res.root], w)
 	}
@@ -122,6 +123,24 @@ func recoveryWitnessInventory(ctx context.Context, r *resolver, items []*work) (
 		projects = append(projects, archive.ProjectActivation{Root: root, ProjectID: archive.ProjectID(root), Included: eligible})
 	}
 	return projects, witnesses, incomplete
+}
+
+// recoveryRepositoryWitness keeps observed checkout membership separate from
+// capture eligibility. A temporary clone cannot authorize capture by default,
+// but its identity can still make a recorded-key match ambiguous or unavailable.
+// Plain temporary folders are not checkout evidence.
+func (r *resolver) recoveryRepositoryWitness(res resolution) bool {
+	if res.kind == ProjectKindRepository {
+		return res.skip == ""
+	}
+	if res.kind != ProjectKindTemporary || (res.skip != "" && res.skip != SkipTemporaryDirectory) {
+		return false
+	}
+	// A present dangling marker or an unreadable locator is uncertainty, not
+	// proof that the temporary root is an ordinary folder. Let identity lookup
+	// retain its unavailable answer in the membership inventory.
+	_, err := r.env.lstat(filepath.Join(res.root, ".git"))
+	return !errors.Is(err, fs.ErrNotExist)
 }
 
 func recoveryWitnessesCurrent(ctx context.Context, r *resolver, witnesses map[string][]*work, selectedRoots map[string]bool) bool {

@@ -77,6 +77,12 @@ func TestRecoverySourceInventoryToleratesOwnedAppendsOnly(t *testing.T) {
 		{name: "unchanged", mutate: func(*testing.T, *tree, string) {}, current: true},
 		{name: "owned append", mutate: grow, current: true},
 		{name: "unowned append", unowned: true, mutate: grow},
+		{name: "owned growing header rewrite", mutate: func(t *testing.T, _ *tree, file string) {
+			t.Helper()
+			if err := os.WriteFile(file, []byte(`{"cwd":"/different-longer-clone"}`+"\n"+`{"more":1}`+"\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}},
 		{name: "added transcript", mutate: func(_ *testing.T, tr *tree, _ string) { tr.write("home/store/added.jsonl", header) }},
 		{name: "removed transcript", mutate: func(t *testing.T, _ *tree, file string) {
 			t.Helper()
@@ -129,6 +135,10 @@ func TestRecoverySourceInventoryToleratesOwnedAppendsOnly(t *testing.T) {
 			tr := newTree(t)
 			dir := tr.mkdir("home/store")
 			file := tr.write("home/store/source.jsonl", header)
+			// Establish the intended pre-mutation mode regardless of the process umask.
+			if err := os.Chmod(file, 0o644); err != nil {
+				t.Fatal(err)
+			}
 			inv := newRecoverySourceInventory(tr.env())
 			seen := inv.environment()
 			if _, err := seen.ReadDir(dir); err != nil {
@@ -139,6 +149,16 @@ func TestRecoverySourceInventoryToleratesOwnedAppendsOnly(t *testing.T) {
 				t.Fatal(err)
 			}
 			if !tc.unowned {
+				f, err := seen.open(file)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := io.Copy(io.Discard, f); err != nil {
+					t.Fatal(err)
+				}
+				if err := f.Close(); err != nil {
+					t.Fatal(err)
+				}
 				inv.ownContent(file, info)
 			}
 			tc.mutate(t, tr, file)
