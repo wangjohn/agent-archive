@@ -97,7 +97,7 @@ func currentHandoffSession(env currentSessionDependencies, home string, opts han
 }
 
 func topLevelRegistration(reg archive.SessionRegistration) bool {
-	return reg.ParentSessionID == "" && reg.SubagentID == ""
+	return !reg.IsChild() && reg.SubagentID == ""
 }
 
 // selectHandoffSession is handoff's one-shot picker. It lists this machine's

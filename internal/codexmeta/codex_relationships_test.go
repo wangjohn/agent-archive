@@ -121,3 +121,16 @@ func BenchmarkCodexIdentity(b *testing.B) {
 		})
 	}
 }
+
+func TestForkOwnershipDoesNotFollowRootAliasWithoutChildMarkers(t *testing.T) {
+	base := CodexMeta{ID: thread, SessionID: root, Cwd: "/synthetic", Source: json.RawMessage(`"cli"`), Originator: "new-client", Version: "dev", ForkedFrom: json.RawMessage(`"` + root + `"`)}
+	facts, outcome := base.Identity("rollout-" + thread + ".jsonl")
+	if outcome != "" || facts.Child || facts.ForkID != root || facts.RootID != root {
+		t.Fatalf("independent fork converted to child: %+v %s", facts, outcome)
+	}
+	base.Source = json.RawMessage(`{"subagent":{"thread_spawn":{"parent_thread_id":"` + root + `","depth":1}}}`)
+	facts, outcome = base.Identity("rollout-" + thread + ".jsonl")
+	if outcome != "" || !facts.Child || facts.ParentID != root || facts.ForkID != root {
+		t.Fatalf("native child lost ownership due fork dependency: %+v %s", facts, outcome)
+	}
+}

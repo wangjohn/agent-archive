@@ -133,8 +133,15 @@ func (s *sessionScan) decodeRevision(metadata archive.Metadata, revision string,
 // coexist with accumulated encoded output, the safe encoder buffer and decoded
 // output. Heap object headers and allocator capacity are measured separately.
 func (s *sessionScan) refilterRetained(adapter archive.Adapter, bundle archive.SourceBundle) (archive.SourceBundle, error) {
-	if s.reg.Harness.Name != archive.HarnessCodex {
-		return refilterBundle(s.ctx, s.reg, adapter, bundle)
+	return s.refilterRetainedFor(s.reg, adapter, bundle)
+}
+
+func (s *sessionScan) refilterRetainedFor(reg archive.SessionRegistration, adapter archive.Adapter, bundle archive.SourceBundle) (archive.SourceBundle, error) {
+	if !retainedParentMatches(reg, bundle) {
+		return archive.SourceBundle{}, errors.New("retained refilter parent identity mismatch")
+	}
+	if reg.Harness.Name != archive.HarnessCodex {
+		return refilterBundle(s.ctx, reg, adapter, bundle)
 	}
 	b := s.readBudget()
 	const preflightScratch = 32 << 10
@@ -171,18 +178,22 @@ func (s *sessionScan) refilterRetained(adapter archive.Adapter, bundle archive.S
 	defer b.Release(scratch)
 	if leased, ok := adapter.(agentapi.LeasedTranscriptRefilter); ok {
 		mark := len(s.retainedReleases)
-		filtered, release, err := leased.RefilterLeased(s.ctx, bundle, s.reg.SessionStartedAt, b)
+		filtered, release, err := leased.RefilterLeased(s.ctx, bundle, reg.SessionStartedAt, b)
 		if err != nil {
 			return archive.SourceBundle{}, err
 		}
 		s.retainedReleases = append(s.retainedReleases, release)
-		out, err := s.newSourceBundle(s.reg, adapter, filtered, bundle.Capture.CapturedAt, bundle.SupplementalEvidence)
+		out, err := s.newSourceBundle(reg, adapter, filtered, bundle.Capture.CapturedAt, bundle.SupplementalEvidence)
 		if err != nil {
 			s.releaseRetainedAfter(mark)
 			return archive.SourceBundle{}, err
 		}
 		out.Capture.Harness = bundle.Capture.Harness
-		out.Capture.Gaps = mergeCaptureGaps(bundle.Capture.Gaps, out.Capture.Gaps)
+		originalGaps := bundle.Capture.Gaps
+		if nativeParentResolved(reg, bundle) {
+			originalGaps = withoutNativeParentPendingGap(originalGaps)
+		}
+		out.Capture.Gaps = mergeCaptureGaps(originalGaps, out.Capture.Gaps)
 		if err := out.ValidateHistory(); err != nil {
 			return archive.SourceBundle{}, err
 		}
@@ -206,7 +217,7 @@ func (s *sessionScan) refilterRetained(adapter archive.Adapter, bundle archive.S
 	if !b.Reserve(capBytes) {
 		return archive.SourceBundle{}, errRetainedBudget
 	}
-	out, err := refilterBundleBounded(s.ctx, s.reg, adapter, bundle, agentapi.ReadLimits{Records: archive.MaxHistoryRecords, FilteredBytes: capBytes, ReadBudget: b})
+	out, err := refilterBundleBounded(s.ctx, reg, adapter, bundle, agentapi.ReadLimits{Records: archive.MaxHistoryRecords, FilteredBytes: capBytes, ReadBudget: b})
 	if err != nil {
 		b.Release(capBytes)
 		return archive.SourceBundle{}, errors.Join(errRetainedBudget, err)

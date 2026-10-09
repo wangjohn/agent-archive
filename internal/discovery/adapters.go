@@ -41,6 +41,11 @@ type Candidate struct {
 	ProducerSource     string
 	FormatProfile      sourcefacts.CodexProfile
 	Execution          string
+	Binding            *archive.CodexSourceBinding
+	SnapshotProven     bool
+	NativeChild        bool
+	RootNativeID       string
+	OwnStart           *uint64
 	ParentNativeID     string
 	ForkNativeID       string
 }
@@ -49,10 +54,12 @@ type Candidate struct {
 type Outcome string
 
 const (
-	outcomeUsable      Outcome = "native_format"
-	outcomeIncomplete  Outcome = "incomplete_metadata"
-	outcomeUnavailable Outcome = "source_unavailable"
-	outcomeChanged     Outcome = "source_changed"
+	outcomeUsable          Outcome = "native_format"
+	outcomeOwnTaskRejected Outcome = "own_task_rejected"
+	outcomeIncomplete      Outcome = "incomplete_metadata"
+	outcomeRelatedHistory  Outcome = Outcome(codexmeta.RelatedHistoryPending)
+	outcomeUnavailable     Outcome = "source_unavailable"
+	outcomeChanged         Outcome = "source_changed"
 )
 
 // Observation is one bounded metadata probe and its typed outcome.
@@ -189,6 +196,12 @@ func (a codexAdapter) Inspect(ctx context.Context, source SourceDescriptor) Obse
 	h := sourcefacts.ReadHeader(ctx, source.Root, source.Locator)
 	o := Observation{SourceInfo: h.SourceInfo, Outcome: Outcome(h.Outcome), Bytes: h.Bytes, Identity: h.Identity, NativeCreatedAt: h.NativeCreatedAt, NativeReadBytes: h.NativeReadBytes, NativeReadOperations: h.NativeReadOperations}
 	if o.Outcome != outcomeUsable {
+		if h.FormatFacts != nil && h.Identity != nil {
+			h.Meta = *h.FormatFacts
+			h.Started = h.NativeCreatedAt
+			h.Profile = sourcefacts.CodexFormatProfile(h.Meta)
+			o.Candidate = candidateFromHeader(h, source)
+		}
 		return o
 	}
 	o.Candidate = candidateFromHeader(h, source)
@@ -197,8 +210,20 @@ func (a codexAdapter) Inspect(ctx context.Context, source SourceDescriptor) Obse
 
 func candidateFromHeader(h sourcefacts.Header, source SourceDescriptor) Candidate {
 	var producerSource string
-	_ = json.Unmarshal(h.Meta.Source, &producerSource)
-	return Candidate{Agent: "codex", NativeSessionID: h.Meta.ID, Source: source, StartedAt: h.Started, FirstTaskAt: h.FirstTaskAt, StartEvidence: "native_start", WorkingDirectory: h.Meta.Cwd, RecordedRepoKey: archive.RepoKey(h.Meta.Git.RepositoryURL), HarnessVersion: h.Meta.Version, ProducerOriginator: h.Meta.Originator, ProducerSource: producerSource, FormatProfile: h.Profile, Execution: "native"}
+	if json.Unmarshal(h.Meta.Source, &producerSource) != nil {
+		producerSource = string(h.Meta.Source)
+	}
+	var child bool
+	var root, parent, fork string
+	var own *uint64
+	if h.Identity != nil {
+		child = h.Identity.Child
+		root, parent, fork = h.Identity.RootID, h.Identity.ParentID, h.Identity.ForkID
+		own = h.Identity.SubagentOrdinal
+	}
+	c := nativeHeaderCandidate(h, source, producerSource, child, root, parent, fork, own)
+
+	return c
 }
 
 func (codexAdapter) PriorityDirectories(now time.Time) []string {
@@ -218,5 +243,12 @@ func (a codexAdapter) Supported(c Candidate) bool {
 		supported = sourcefacts.SupportedCodexProducer
 	}
 	source, _ := json.Marshal(c.ProducerSource)
-	return supported(sourcefacts.CodexMeta{Version: c.HarnessVersion, Originator: c.ProducerOriginator, Source: source})
+	if strings.HasPrefix(c.ProducerSource, "{") {
+		source = json.RawMessage(c.ProducerSource)
+	}
+	return supported(sourcefacts.CodexMeta{ID: c.NativeSessionID, SessionID: c.RootNativeID, Version: c.HarnessVersion, Originator: c.ProducerOriginator, Source: source})
+}
+
+func nativeHeaderCandidate(h sourcefacts.Header, source SourceDescriptor, producerSource string, child bool, root, parent, fork string, own *uint64) Candidate {
+	return Candidate{Agent: "codex", NativeSessionID: h.Meta.ID, Source: source, StartedAt: h.Started, FirstTaskAt: h.FirstTaskAt, StartEvidence: "native_start", WorkingDirectory: h.Meta.Cwd, RecordedRepoKey: archive.RepoKey(h.Meta.Git.RepositoryURL), HarnessVersion: h.Meta.Version, ProducerOriginator: h.Meta.Originator, ProducerSource: producerSource, FormatProfile: h.Profile, Execution: "native", NativeChild: child, RootNativeID: root, ParentNativeID: parent, ForkNativeID: fork, OwnStart: own}
 }

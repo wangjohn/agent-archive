@@ -18,7 +18,7 @@ import (
 // The caller closes the returned data lease
 // after the preview and any returned publication have finished their consumers.
 func PrepareGenerationRecovery(ctx context.Context, reg archive.SessionRegistration, at time.Time, opts Options) (builder func(archive.SessionRegistration, string) (archive.SessionRegistration, state.PendingPublication, error), release func(), resultErr error) {
-	if reg.ParentSessionID != "" || !reg.ReadsTranscriptFile() {
+	if reg.IsChild() || !reg.ReadsTranscriptFile() {
 		return nil, func() {}, errors.New("recovery supports top-level transcript files only; start a fresh parent session for subagent recovery")
 	}
 	semantics, err := sourceSemantics(opts.Sources, reg)
