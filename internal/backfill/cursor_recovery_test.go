@@ -119,11 +119,6 @@ func TestFirstRunRecoveryCursorDatabaseUnavailableOrMalformed(t *testing.T) {
 				}
 			}
 			env.CursorRecoveryDatabase = boundedTestRecoveryReader(env.CursorDatabase)
-			p := plan(t, env, nil, cfg, Filters{Harnesses: []string{"codex"}})
-			c := candidate(t, p, goneID)
-			if c.ProjectResolution != nil || c.Skip == "" {
-				t.Fatal(c)
-			}
 			want := map[cursorUnavailableEvidenceCase]DiagnosticDetail{
 				cursorEvidenceLocked:      CauseCursorDatabaseUnavailable,
 				cursorEvidenceUnknown:     CauseCursorDatabaseUnavailable,
@@ -132,8 +127,25 @@ func TestFirstRunRecoveryCursorDatabaseUnavailableOrMalformed(t *testing.T) {
 				cursorEvidenceUnknownRoot: CauseCursorChatFolderUnavailable,
 				cursorEvidenceRows:        CauseRecoveryBudget,
 			}[kind]
-			if c.Diagnostic == nil || c.Diagnostic.Detail != want {
-				t.Fatalf("diagnostic %+v, want %s", c.Diagnostic, want)
+			// A Cursor gap blocks only Cursor's own recoveries. The Codex
+			// session recovers into the root a Codex session witnessed, filtered
+			// or not, and the plan names the Cursor gap it was recovered without.
+			runs := []Filters{{Harnesses: []string{"codex"}}, {}}
+			if kind == cursorEvidenceError {
+				runs = runs[:1] // An unfiltered plan reads the database for import and fails.
+			}
+			for _, filters := range runs {
+				p := plan(t, env, nil, cfg, filters)
+				c := candidate(t, p, goneID)
+				if c.Skip != "" || c.ProjectRoot != root || c.ProjectResolution == nil {
+					t.Fatalf("Cursor gap blocked Codex recovery: %+v %+v", c, c.Diagnostic)
+				}
+				if err := p.CheckRecovery(t.Context()); err != nil {
+					t.Fatal(err)
+				}
+				if !recoveredWithout(p) || !hasRecoveryGap(p, "cursor", want) {
+					t.Fatalf("Cursor gap not reported: %+v, want %s", p.RecoveryEvidenceGaps, want)
+				}
 			}
 			if kind == cursorEvidenceRows {
 				epoch, err := readCursorRecoveryEpoch(t.Context(), env, newResolver(env, cfg, Filters{}), unreadable{})
@@ -311,8 +323,10 @@ func TestFirstRunRecoveryCursorDatabaseMissingBoundedCapabilityDoesNotFallback(t
 	calls := 0
 	env.CursorDatabase = fakeCursorDatabase([]CursorDatabaseChat{{ID: "live", Folder: root}}, map[string]cursorstore.Composer{"live": syntheticChat("live", nil, "hi")}, nil, &calls)
 	p := plan(t, env, nil, cfg, Filters{Harnesses: []string{"codex"}})
-	if c := candidate(t, p, goneID); c.ProjectResolution != nil || c.Skip == "" {
-		t.Fatal(c)
+	// Without the bounded reader the database is a Cursor gap: it does not
+	// block the Codex session, whose destination a Codex session witnessed.
+	if c := candidate(t, p, goneID); c.Skip != "" || c.ProjectRoot != root || !recoveredWithout(p) {
+		t.Fatal(c, p.RecoveryEvidenceGaps)
 	}
 	if calls != 0 {
 		t.Fatal("unbounded evidence fallback", calls)

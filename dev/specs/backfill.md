@@ -184,6 +184,8 @@ writes nothing; the storage check writes a test object), then
 `transcripts_unreadable`),
 `cursor_database_newer_format`, `cursor_subagents_not_imported`,
 `subagents_skipped`, `unreadable_folders`, and `unreadable_stores`.
+Plans whose recovery evidence was incomplete also include optional
+`recovery_evidence_gaps` (see [Recorded project recovery](#recorded-project-recovery)).
 
 Plans with diagnostic details also include optional `diagnostics` (bounded
 aggregate records with the winning primary `skip`, typed `detail`, `action`,
@@ -1174,14 +1176,43 @@ every app, before output filters. Evidence that could name a root but was not
 observed (an unreadable store or folder, a session whose folder is unknown or
 unreadable, a changed native inventory, an unavailable or unsettled Cursor
 database, an exhausted budget, more than 1,024 distinct witness roots) is a
-recorded gap. Any gap makes recorded-key
-recovery unavailable for the plan, because the missing evidence could be a
-second clone with the same key. Evidence that names no root (a Cursor chat
-with no folder, workspace reference or message folder) cannot be such a clone
-and is not a gap. Gaps are kept as a finite set of (app, cause) values, and
-the plan's diagnostic names the highest-priority cause instead of
+recorded gap. Evidence that names no root (a Cursor chat with no folder,
+workspace reference or message folder) cannot be a clone and is not a gap. Gaps are kept as a finite set of (app, cause)
+values and isolated by app: a gap blocks recorded-key recovery only for the
+sessions of the app whose evidence is missing, and a gap that cannot be
+attributed to one app (a changed native inventory, the 1,024-root bound, an
+unreadable folder of unknown app) blocks every app. A gap in another app's
+evidence does not block. This holds with or without `--harness`: an app the
+filter leaves out still contributes the witnesses it observed (they can make a
+recovery ambiguous or name its destination), and its gaps block only its own
+sessions, which the filter hides anyway.
+
+Admitting past another app's gap is safe within the documented residuals. The
+proof was never a census of every clone on disk: a clone no agent ever ran in
+is already invisible, and another app's gap widens that set only by clones
+known solely to that app's sessions. Configured roots, including exclusions,
+are enumerated by repository lookups independent of every app store, so no gap
+can hide capture policy, and a clone nested in an excluded root resolves to
+that root and is never a witness. The only wrong outcome is recovering a
+session into one unconfigured checkout of its own repository instead of
+leaving it unresolved, the same residual as a keyless clone and a
+`url.insteadOf` origin. The plan reports it: `recovery_evidence_gaps` in JSON
+(each `app`, `cause`, and the `blocked` and `recovered_without` session counts
+by app) and a "Project recovery evidence" note in text. An app's own gaps
+still block its sessions as defense in depth. Witnesses from an incomplete
+Cursor database epoch remain clone evidence but cannot propose a destination,
+because they cannot be renewed; such an epoch needs no renewal at admission.
+A native transcript that was only appended to after its header was read (same
+file, same mode, larger size) keeps its own `source_changed` skip but stays
+clone evidence that cannot propose a destination, and further appends renew
+it; a truncation, replacement or other rewrite is still a gap. Header facts
+come from leading complete records, so an append cannot change them. An
+in-place rewrite that grows the file is indistinguishable from an append by
+file metadata; that is the accepted residual of the rule. The candidate
+diagnostic names the highest-priority blocking cause instead of
 `project_inventory_unavailable`: `project_budget_exhausted`,
-`project_witness_limit`, `native_store_unreadable`, `cursor_database_unavailable`,
+`project_witness_limit` (retrying cannot help; an exact `--map-project`
+can), `native_store_unreadable`, `cursor_database_unavailable`,
 `native_inventory_changed`, `cursor_chat_folder_unavailable`, then
 `session_folder_unknown`. Exact mappings and configured-path ownership do not
 depend on the witness inventory.

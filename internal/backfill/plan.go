@@ -55,6 +55,9 @@ type Plan struct {
 	// Importing the rest is still allowed; a run after the permissions are
 	// fixed imports what was missed.
 	UnreadableStores []string
+	// RecoveryEvidenceGaps are the apps whose recovery witness evidence was
+	// incomplete, with the sessions each blocked or was recovered without.
+	RecoveryEvidenceGaps []RecoveryEvidenceGap
 
 	// resolvedHome is Home with symlinks resolved; roots are resolved paths.
 	resolvedHome string
@@ -119,6 +122,13 @@ type work struct {
 	workspaceCurrent func(context.Context) bool
 	proposedWitness  bool
 	validated        bool
+	// sourceRewritten is set when a change to the source was not a pure
+	// append (see appendedOnly); appendWitness is an appended source's header
+	// resolution, kept only as recovery evidence. evidenceOnly marks a witness
+	// that can make a recovery ambiguous but cannot propose a destination.
+	sourceRewritten bool
+	appendWitness   *resolution
+	evidenceOnly    bool
 }
 
 // subagentWork is one subagent transcript of an imported parent.
@@ -247,6 +257,8 @@ func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg con
 		projectFilter:     projectFilter,
 		codexArchivedOnly: unread.codexArchivedOnly,
 		cursorIncomplete:  unread.cursorIncomplete,
+		// Decisions are final here; database-only chats never use recorded recovery.
+		RecoveryEvidenceGaps: summarizeRecoveryGaps(r.recoveryGaps, items),
 	}
 
 	if err := planCursorDatabase(ctx, env, state, r, projectFilter, since, until, workers, &plan); err != nil {
@@ -315,6 +327,13 @@ func preparePlanWork(ctx context.Context, env Environment, cfg config.Config, fi
 		// A settled rewrite during discovery or Git lookup cannot become a new
 		// baseline for attribution from the earlier header.
 		w.checkSource(env)
+		if w.appendedOnly() {
+			// The session itself stays source_changed; its unchanged header
+			// remains clone evidence for other sessions (appendWitness).
+			res := r.resolve(w.t.cwd)
+			w.appendWitness = &res
+			continue
+		}
 		if w.sourceChanged || w.vanished {
 			continue
 		}
@@ -344,7 +363,7 @@ func preparePlanWork(ctx context.Context, env Environment, cfg config.Config, fi
 		if w.sourceChanged || w.vanished {
 			continue
 		}
-		w.res = r.resolveEvidence(ctx, w.t.cwd, w.t.repoKey)
+		w.res = r.resolveSessionEvidence(ctx, w.t.harness, w.t.cwd, w.t.repoKey)
 		w.checkSource(env)
 		if w.t.sourceInfo != nil && w.res.current != nil {
 			base := w.res.current
@@ -622,7 +641,10 @@ func (w *work) checkSource(env Environment) {
 	if err == nil && current.Size() > collector.DefaultMaxRawTranscriptBytes {
 		w.tooLarge = true
 	}
-	w.sourceChanged = w.sourceChanged || !w.matchesSource(current, err)
+	if !w.matchesSource(current, err) {
+		w.sourceChanged = true
+		w.sourceRewritten = w.sourceRewritten || !appendedSource(w.t.sourceInfo, current, err)
+	}
 }
 
 // sourceCurrent compares with the observation that produced the native header.

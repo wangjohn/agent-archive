@@ -66,8 +66,13 @@ func TestFirstRunRecoveryFolderlessCursorChatsAreNotWitnesses(t *testing.T) {
 				}
 				return
 			}
-			if c.ProjectResolution != nil || c.Skip != SkipWorktreeUnresolved || c.Diagnostic == nil || c.Diagnostic.Detail != CauseCursorChatFolderUnavailable {
-				t.Fatalf("unreadable workspace certified uniqueness: %+v %+v", c, c.Diagnostic)
+			// The unreadable workspace is a Cursor gap: the Codex session still
+			// recovers, and the plan names the gap it was recovered without.
+			if c.Skip != "" || c.ProjectRoot != root || c.ProjectResolution == nil {
+				t.Fatalf("Cursor gap blocked Codex recovery: %+v %+v", c, c.Diagnostic)
+			}
+			if !recoveredWithout(p) || !hasRecoveryGap(p, "cursor", CauseCursorChatFolderUnavailable) {
+				t.Fatalf("%+v", p.RecoveryEvidenceGaps)
 			}
 		})
 	}
@@ -108,7 +113,11 @@ func TestRecoveryWitnessGapsNameTheirCause(t *testing.T) {
 		gap  bool
 	}{
 		"usable":                {file(func(*work) {}), "", false},
-		"changed":               {file(func(w *work) { w.sourceChanged = true }), CauseNativeInventoryChanged, true},
+		"changed":               {file(func(w *work) { w.sourceChanged, w.sourceRewritten = true, true }), CauseNativeInventoryChanged, true},
+		"appended":              {file(func(w *work) { w.sourceChanged = true }), "", false},
+		"appended unknown":      {file(func(w *work) { w.sourceChanged, w.res = true, resolution{skip: SkipProjectUnknown} }), CauseNativeInventoryChanged, true},
+		"appended mismatch":     {file(func(w *work) { w.sourceChanged, w.t.identityMismatch = true, true }), CauseNativeInventoryChanged, true},
+		"database appended":     {database(func(w *work) { w.sourceChanged = true }), CauseCursorDatabaseUnavailable, true},
 		"vanished":              {file(func(w *work) { w.vanished = true }), CauseNativeInventoryChanged, true},
 		"unsafe":                {file(func(w *work) { w.unsafe = true }), CauseSessionFolderUnknown, true},
 		"mismatch":              {file(func(w *work) { w.t.identityMismatch = true }), CauseSessionFolderUnknown, true},

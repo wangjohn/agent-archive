@@ -13,13 +13,14 @@ import (
 
 // prepareRecoveryInventory separates observed repository membership from
 // committed capture policy. Discovery has finished; output filters have not run.
+// Gaps stay per app: each session's recorded recovery is blocked only by the
+// gaps that can affect it (see recoveryGaps.blocking).
 func prepareRecoveryInventory(ctx context.Context, r *resolver, items []*work, unread unreadable, dbGaps recoveryGaps) {
+	items = recoveryEvidenceItems(items)
 	projects, witnesses, gaps := recoveryWitnessInventory(ctx, r, items)
 	gaps.merge(dbGaps)
 	gaps.addUnreadable(unread)
-	cause := gaps.cause()
-	incomplete := cause != ""
-	r.recoveryInventoryCause = cause
+	r.recoveryGaps = gaps
 	selectedRoots := map[string]bool{}
 	r.requireWitnessFormats = func(root string) {
 		selectedRoots[root] = true
@@ -29,7 +30,7 @@ func prepareRecoveryInventory(ctx context.Context, r *resolver, items []*work, u
 	}
 	r.proposedRootEligible = func(root string) bool {
 		for _, w := range witnesses[root] {
-			if w.validated && w.importable() && !w.vanished {
+			if w.validated && w.importable() && !w.vanished && !w.evidenceOnly {
 				return true
 			}
 		}
@@ -51,22 +52,16 @@ func prepareRecoveryInventory(ctx context.Context, r *resolver, items []*work, u
 		}
 		return validation.current
 	}
-	lookup := r.env.RepositoryIdentity
-	if incomplete {
-		lookup = func(context.Context, string) sourcefacts.RepositoryIdentity {
-			return sourcefacts.RepositoryIdentity{BudgetExhausted: cause == CauseRecoveryBudget}
-		}
-	}
 	r.mappingRecovery = r.recovery
-	r.recovery = sourcefacts.NewRecoveryResolver(projects, r.filters.ProjectMappings, r.env.resolved, lookup, nil)
-	if !incomplete {
-		// A proposed root whose checkout has no repository key cannot own a
-		// recorded key; it must not block recovery into configured projects.
-		r.recovery.Proposed = proposedRoots(r, projects)
-	}
+	r.recovery = sourcefacts.NewRecoveryResolver(projects, r.filters.ProjectMappings, r.env.resolved, r.env.RepositoryIdentity, nil)
+	// A proposed root whose checkout has no repository key cannot own a
+	// recorded key; it must not block recovery into configured projects.
+	r.recovery.Proposed = proposedRoots(r, projects)
 	r.recovery.MaxOperations = 1024
 	r.recovery.Validate = r.env.RepositoryIdentityCurrent
 	r.recovery.ResetValidationContext(ctx)
+	r.gapProjects = projects
+	r.gapRecovery = map[bool]*sourcefacts.RecoveryResolver{}
 	// Ordinary path ownership still uses committed r.cfg exclusively.
 	r.cache = map[string]resolution{}
 }
@@ -99,9 +94,9 @@ type recoveryGap struct {
 	Cause DiagnosticDetail
 }
 
-// recoveryGaps is the bounded set of witness evidence gaps for one plan. Any
-// gap makes recorded-key recovery unavailable: missing evidence could name a
-// second clone holding the same recorded repository key.
+// recoveryGaps is the bounded set of witness evidence gaps for one plan:
+// missing evidence could name a second clone holding the same recorded
+// repository key. Which sessions a gap blocks is per app (see blocking).
 type recoveryGaps map[recoveryGap]bool
 
 // recoveryGapCauses orders causes for the single diagnostic a candidate
@@ -161,6 +156,10 @@ func (g *recoveryGaps) cause() DiagnosticDetail {
 func witnessGap(w *work) (cause DiagnosticDetail, ok bool) {
 	database := w.c.SourceKind == archive.SourceKindCursorSQLite
 	switch {
+	case w.appendedOnly() && !database && !w.unsafe && !w.t.identityMismatch && w.res.skip != SkipProjectUnknown:
+		// A pure append cannot change header facts; the file stays clone
+		// evidence (non-eligible) instead of hiding every app's recoveries.
+		return "", false
 	case w.vanished || w.sourceChanged:
 		if database {
 			return CauseCursorDatabaseUnavailable, true
@@ -220,7 +219,9 @@ func recoveryWitnessInventory(ctx context.Context, r *resolver, items []*work) (
 			gaps.add("", CauseWitnessLimit)
 			continue
 		}
-		eligible := !w.t.capturePending && !w.tooLarge
+		// Appended sources and an incomplete source's witnesses count as
+		// possible clones but cannot propose a destination.
+		eligible := !w.t.capturePending && !w.tooLarge && !w.sourceChanged && !w.evidenceOnly
 		observed[w.res.root] = observed[w.res.root] || eligible
 		witnesses[w.res.root] = append(witnesses[w.res.root], w)
 	}
@@ -255,7 +256,7 @@ func recoveryWitnessesCurrent(ctx context.Context, r *resolver, witnesses map[st
 					continue
 				}
 			}
-			if (w.c.SourceKind == archive.SourceKindCursorSQLite || w.sourceCurrent(r.env)) && (w.workspaceCurrent == nil || w.workspaceCurrent(ctx)) {
+			if (w.c.SourceKind == archive.SourceKindCursorSQLite || w.sourceCurrent(r.env) || w.stillAppendedOnly(r.env)) && (w.workspaceCurrent == nil || w.workspaceCurrent(ctx)) {
 				found = true
 				break
 			}
