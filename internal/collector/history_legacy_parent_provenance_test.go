@@ -9,12 +9,20 @@ import (
 	"github.com/wangjohn/agent-archive/internal/state"
 )
 
+type legacyMissingProvenance string
+
+const (
+	legacyMissingFilter legacyMissingProvenance = "filter"
+	legacyMissingSchema legacyMissingProvenance = "schema"
+	legacyMissingBoth   legacyMissingProvenance = "both"
+)
+
 func TestLegacyPreservedProvenanceUsesOriginalParent(t *testing.T) {
-	for _, missing := range []string{"filter", "schema", "both"} {
+	for _, missing := range []legacyMissingProvenance{legacyMissingFilter, legacyMissingSchema, legacyMissingBoth} {
 		for _, originalParent := range []string{"", "conflicting-known-parent"} {
-			name := missing + "/unresolved"
+			name := string(missing) + "/unresolved"
 			if originalParent != "" {
-				name = missing + "/known-conflict"
+				name = string(missing) + "/known-conflict"
 			}
 			t.Run(name, func(t *testing.T) {
 				scan, p := privacyJournal(t)
@@ -49,13 +57,15 @@ func TestLegacyPreservedProvenanceUsesOriginalParent(t *testing.T) {
 				}
 				final.ParentSessionID, final.NativeChild = "qualified-late-parent", true
 				scan.reg.ParentSessionID, scan.reg.NativeChild = final.ParentSessionID, true
-				revision := archive.RevisionReference{RevisionID: input.RevisionID, CapturedAt: original.Capture.CapturedAt, Source: ref, FilterVersion: original.Capture.FilterVersion, SourceSchemaVersion: original.SchemaVersion}
-				if missing == "filter" || missing == "both" {
-					revision.FilterVersion = ""
+				filterVersion := original.Capture.FilterVersion
+				sourceSchemaVersion := original.SchemaVersion
+				if missing == legacyMissingFilter || missing == legacyMissingBoth {
+					filterVersion = ""
 				}
-				if missing == "schema" || missing == "both" {
-					revision.SourceSchemaVersion = 0
+				if missing == legacyMissingSchema || missing == legacyMissingBoth {
+					sourceSchemaVersion = 0
 				}
+				revision := archive.RevisionReference{RevisionID: input.RevisionID, CapturedAt: original.Capture.CapturedAt, Source: ref, FilterVersion: filterVersion, SourceSchemaVersion: sourceSchemaVersion}
 				final.History.Preserved = []archive.RevisionReference{revision}
 				scan.revisions = &revisionPlan{Preserved: final.History.Preserved}
 				history := &state.PendingHistory{Version: 1}
