@@ -678,3 +678,99 @@ func TestSessionCatalogRefreshRepairsDerivedSelectionColumns(t *testing.T) {
 		t.Fatalf("derived damage hid canonical row: %+v err=%v", after, err)
 	}
 }
+
+// Date seeds retain transitive old descendants through the shared reader policy.
+func TestSessionCatalogRootChildrenDatesPagingAndFilters(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	store := newCountingStore()
+	rootID, childID, grandID := fmt.Sprintf("%032x", 1), fmt.Sprintf("%032x", 2), fmt.Sprintf("%032x", 3)
+	for i, age := range []time.Duration{0, -24 * time.Hour, -48 * time.Hour, -72 * time.Hour} {
+		id := fmt.Sprintf("%032x", i+1)
+		key := putSession(t, store, "codex", id, baseTime.Add(age))
+		data, err := store.Get(ctx, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var m archive.Metadata
+		if err = json.Unmarshal(data, &m); err != nil {
+			t.Fatal(err)
+		}
+		switch i {
+		case 1:
+			m.ParentSessionID = rootID
+		case 2:
+			m.ParentSessionID = childID
+		}
+		m.Models = []archive.ModelSummary{{Attributes: map[string]string{"gen_ai.request.model": "kept"}}}
+		if i == 2 {
+			m.Models[0].Attributes["gen_ai.request.model"] = "other"
+		}
+		data, err = json.Marshal(m)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = store.Put(ctx, key, data); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cache, err := OpenMetadataCache(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := OpenSessionCatalog(ctx, cache, store, ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+	headers, err := DiscoverCatalogHeaders(ctx, store, ListOptions{Cache: cache})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = c.Refresh(ctx, headers); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name  string
+		query MetadataQuery
+		want  []string
+	}{
+		{"ordinary dates", MetadataQuery{Filter: Filter{From: baseTime, To: baseTime}}, []string{rootID}},
+		{"descendants", MetadataQuery{Filter: Filter{From: baseTime, To: baseTime}, IncludeRootChildren: true}, []string{rootID, childID, grandID}},
+		{"model", MetadataQuery{Filter: Filter{From: baseTime, To: baseTime, Model: "kept"}, IncludeRootChildren: true}, []string{rootID, childID}},
+		{"harness", MetadataQuery{Filter: Filter{From: baseTime, Harness: "missing"}, IncludeRootChildren: true}, nil},
+		{"future", MetadataQuery{Filter: Filter{From: baseTime.Add(time.Hour)}, IncludeRootChildren: true}, nil},
+		{"top level", MetadataQuery{Filter: Filter{From: baseTime}, TopLevelOnly: true, IncludeRootChildren: true}, []string{rootID}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			q := CatalogQuery{Metadata: MetadataQuery{Filter: tc.query.Filter, Limit: 1, Order: tc.query.Order, TopLevelOnly: tc.query.TopLevelOnly, IncludeRootChildren: tc.query.IncludeRootChildren}}
+			var got []string
+			for {
+				page, e := c.Query(ctx, q)
+				if e != nil {
+					t.Fatal(e)
+				}
+				if !page.Complete || page.Total != len(tc.want) {
+					t.Fatalf("page=%+v want=%v", page, tc.want)
+				}
+				for _, row := range page.Rows {
+					got = append(got, row.Summary.SessionID)
+				}
+				if page.Next == "" {
+					break
+				}
+				changed := q
+				changed.Cursor = page.Next
+				changed.Metadata.IncludeRootChildren = !changed.Metadata.IncludeRootChildren
+				if _, e = c.Query(ctx, changed); !errors.Is(e, ErrStaleCatalogCursor) {
+					t.Fatalf("flag cursor=%v", e)
+				}
+				q.Cursor = page.Next
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("got=%v want=%v", got, tc.want)
+			}
+		})
+	}
+}

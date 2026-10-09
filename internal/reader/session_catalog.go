@@ -591,7 +591,7 @@ func (c *SQLiteSessionCatalog) Query(ctx context.Context, q CatalogQuery) (Catal
 		args = append(args, word, word, catalogPRCandidate(word))
 	}
 	where = clauses.String()
-	needsSummaryFilter := catalogRequiresSummaryFilter(q.Metadata.Filter)
+	needsSummaryFilter := q.Metadata.IncludeRootChildren || catalogRequiresSummaryFilter(q.Metadata.Filter)
 	page := CatalogPage{Complete: complete}
 	statement := "SELECT key,etag,hash,capture,activity,summary,search,lowerid,unlabeled,summary_hash FROM sessions" + where + " ORDER BY " + order //nolint:gosec // SQL fragments are fixed predicates/orders; every input is bound.
 	if !needsSummaryFilter {
@@ -613,31 +613,7 @@ func (c *SQLiteSessionCatalog) Query(ctx context.Context, q CatalogQuery) (Catal
 		return CatalogPage{}, err
 	}
 	defer func() { _ = rows.Close() }()
-	limit := q.Metadata.Limit
-	for rows.Next() {
-		var record catalogRecord
-		if err = record.scan(rows); err != nil {
-			return CatalogPage{}, err
-		}
-		if !record.valid() {
-			return CatalogPage{}, errors.New("invalid session catalog summary checksum")
-		}
-		row := CatalogRow{Key: record.key, ETag: record.etag, Hash: record.hash}
-		if err = json.Unmarshal(record.summary, &row.Summary); err != nil {
-			return CatalogPage{}, fmt.Errorf("invalid session catalog: %w", err)
-		}
-		m := row.Summary.Metadata()
-		if !matches(m, q.Metadata.Filter) || q.Metadata.TopLevelOnly && m.ParentSessionID != "" {
-			continue
-		}
-		if needsSummaryFilter {
-			page.Total++
-		}
-		if !needsSummaryFilter || page.Total > offset && (limit <= 0 || len(page.Rows) < limit) {
-			page.Rows = append(page.Rows, row)
-		}
-	}
-	if err = rows.Err(); err != nil {
+	if err = fillCatalogPage(rows, q, offset, needsSummaryFilter, &page); err != nil {
 		return CatalogPage{}, err
 	}
 	if offset > page.Total {
@@ -651,6 +627,61 @@ func (c *SQLiteSessionCatalog) Query(ctx context.Context, q CatalogQuery) (Catal
 	}
 	span.Count("summaries", len(page.Rows))
 	return page, tx.Commit()
+}
+
+// fillCatalogPage validates candidates before applying final typed filtering.
+// Root-child queries require the complete non-date inventory before trimming.
+func fillCatalogPage(rows *sql.Rows, q CatalogQuery, offset int, filterSummaries bool, page *CatalogPage) error {
+	filter := q.Metadata.Filter
+	if q.Metadata.IncludeRootChildren {
+		filter.From, filter.To = time.Time{}, time.Time{}
+	}
+	var candidates []CatalogRow
+	limit := q.Metadata.Limit
+	for rows.Next() {
+		var record catalogRecord
+		if err := record.scan(rows); err != nil {
+			return err
+		}
+		if !record.valid() {
+			return errors.New("invalid session catalog summary checksum")
+		}
+		row := CatalogRow{Key: record.key, ETag: record.etag, Hash: record.hash}
+		if err := json.Unmarshal(record.summary, &row.Summary); err != nil {
+			return fmt.Errorf("invalid session catalog: %w", err)
+		}
+		m := row.Summary.Metadata()
+		if !matches(m, filter) || q.Metadata.TopLevelOnly && m.ParentSessionID != "" {
+			continue
+		}
+		if q.Metadata.IncludeRootChildren {
+			candidates = append(candidates, row)
+			continue
+		}
+		if filterSummaries {
+			page.Total++
+		}
+		if !filterSummaries || page.Total > offset && (limit <= 0 || len(page.Rows) < limit) {
+			page.Rows = append(page.Rows, row)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if q.Metadata.IncludeRootChildren {
+		candidates = SelectRootChildren(candidates, q.Metadata.Filter, func(row CatalogRow) (string, string, time.Time) {
+			return row.Summary.SessionID, row.Summary.ParentSessionID, row.Summary.CapturedAt
+		})
+		page.Total = len(candidates)
+		if offset <= page.Total {
+			end := page.Total
+			if limit > 0 {
+				end = offset + min(limit, page.Total-offset)
+			}
+			page.Rows = candidates[offset:end]
+		}
+	}
+	return nil
 }
 
 func catalogCursor(q CatalogQuery, epoch string, generation int64) (int, string, error) {
@@ -685,10 +716,10 @@ func catalogWhere(q MetadataQuery) (string, []any) {
 	if f.Harness != "" {
 		add("json_extract(summary,'$.Harness.name') = ?", f.Harness)
 	}
-	if !f.From.IsZero() {
+	if !q.IncludeRootChildren && !f.From.IsZero() {
 		add("capture >= ?", catalogTime(f.From))
 	}
-	if !f.To.IsZero() {
+	if !q.IncludeRootChildren && !f.To.IsZero() {
 		add("capture <= ?", catalogTime(f.To))
 	}
 	if q.TopLevelOnly {
