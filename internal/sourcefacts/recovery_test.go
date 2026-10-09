@@ -563,10 +563,18 @@ func TestRecoveryKeylessProposedRootIsNonOwning(t *testing.T) {
 			if !r.CurrentSlice(proof) {
 				t.Fatal("unchanged keyless proposed root rejected")
 			}
-			fresh = RepositoryIdentity{Root: "/proposed", Key: key, Known: true}
-			r.ResetValidationContext(t.Context())
-			if r.CurrentSlice(proof) {
-				t.Fatal("proposed root that gained the recorded key kept the unique match")
+			for name, changed := range map[string]RepositoryIdentity{
+				"gained the recorded key": {Root: "/proposed", Key: key, Known: true},
+				"moved its top level":     {Root: "/elsewhere"},
+				"changed observer scope":  {Root: "/proposed", ObservationScope: "other"},
+				"became unobservable":     {},
+				"exhausted its budget":    {Root: "/proposed", BudgetExhausted: true},
+			} {
+				fresh = changed
+				r.ResetValidationContext(t.Context())
+				if r.CurrentSlice(proof) {
+					t.Fatalf("proposed root that %s kept the unique match", name)
+				}
 			}
 		})
 	}
