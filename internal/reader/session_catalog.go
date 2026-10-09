@@ -39,6 +39,7 @@ type SearchSummary struct {
 	Name            string                    `json:"Name"`
 	Title           string                    `json:"Title"`
 	Branch          string                    `json:"Branch"`
+	NativeChild     bool                      `json:"NativeChild"`
 	ParentSessionID string                    `json:"ParentSessionID"`
 	StartedAt       time.Time                 `json:"StartedAt"`
 	CapturedAt      time.Time                 `json:"CapturedAt"`
@@ -58,7 +59,7 @@ type SearchSummary struct {
 
 // Metadata returns the search/display projection, never a complete body.
 func (s SearchSummary) Metadata() archive.Metadata {
-	return archive.Metadata{SessionID: s.SessionID, NativeSessionID: s.NativeSessionID, MachineID: s.MachineID, ProjectID: s.ProjectID, ProjectName: s.ProjectName, RepoKey: s.RepoKey, Name: s.Name, Title: s.Title, Branch: s.Branch, ParentSessionID: s.ParentSessionID, StartedAt: s.StartedAt, CapturedAt: s.CapturedAt, EndedAt: s.EndedAt, Harness: s.Harness, Parser: s.Parser, Origin: s.Origin, Replay: s.Replay, Models: s.Models, SkillsAvailable: s.SkillsAvailable, SkillsUsed: s.SkillsUsed, SkillDetection: s.SkillDetection, CaptureGaps: s.CaptureGaps, PullRequests: s.PullRequests, GitActivity: s.GitActivity}
+	return archive.Metadata{SessionID: s.SessionID, NativeSessionID: s.NativeSessionID, MachineID: s.MachineID, ProjectID: s.ProjectID, ProjectName: s.ProjectName, RepoKey: s.RepoKey, Name: s.Name, Title: s.Title, Branch: s.Branch, NativeChild: s.NativeChild, ParentSessionID: s.ParentSessionID, StartedAt: s.StartedAt, CapturedAt: s.CapturedAt, EndedAt: s.EndedAt, Harness: s.Harness, Parser: s.Parser, Origin: s.Origin, Replay: s.Replay, Models: s.Models, SkillsAvailable: s.SkillsAvailable, SkillsUsed: s.SkillsUsed, SkillDetection: s.SkillDetection, CaptureGaps: s.CaptureGaps, PullRequests: s.PullRequests, GitActivity: s.GitActivity}
 }
 
 func summarize(m archive.Metadata) SearchSummary {
@@ -81,7 +82,7 @@ func summarize(m archive.Metadata) SearchSummary {
 	if m.Replay != nil {
 		replay = &archive.Replay{}
 	}
-	return SearchSummary{SessionID: m.SessionID, NativeSessionID: m.NativeSessionID, MachineID: m.MachineID, ProjectID: m.ProjectID, ProjectName: m.ProjectName, RepoKey: m.RepoKey, Name: m.Name, Title: m.Title, Branch: m.Branch, ParentSessionID: m.ParentSessionID, StartedAt: m.StartedAt, CapturedAt: m.CapturedAt, EndedAt: m.EndedAt, Harness: m.Harness, Parser: m.Parser, Origin: m.Origin, Replay: replay, Models: m.Models, SkillsAvailable: m.SkillsAvailable, SkillsUsed: m.SkillsUsed, SkillDetection: m.SkillDetection, CaptureGaps: gaps, PullRequests: prs, GitActivity: events}
+	return SearchSummary{SessionID: m.SessionID, NativeSessionID: m.NativeSessionID, MachineID: m.MachineID, ProjectID: m.ProjectID, ProjectName: m.ProjectName, RepoKey: m.RepoKey, Name: m.Name, Title: m.Title, Branch: m.Branch, NativeChild: m.NativeChild, ParentSessionID: m.ParentSessionID, StartedAt: m.StartedAt, CapturedAt: m.CapturedAt, EndedAt: m.EndedAt, Harness: m.Harness, Parser: m.Parser, Origin: m.Origin, Replay: replay, Models: m.Models, SkillsAvailable: m.SkillsAvailable, SkillsUsed: m.SkillsUsed, SkillDetection: m.SkillDetection, CaptureGaps: gaps, PullRequests: prs, GitActivity: events}
 }
 
 // SessionCatalog indexes summaries after a fresh complete canonical discovery.
@@ -659,7 +660,7 @@ func fillCatalogPage(rows *sql.Rows, q CatalogQuery, offset int, filterSummaries
 			return fmt.Errorf("invalid session catalog: %w", err)
 		}
 		m := row.Summary.Metadata()
-		if !matches(m, filter) || q.Metadata.TopLevelOnly && m.ParentSessionID != "" {
+		if !matches(m, filter) || q.Metadata.TopLevelOnly && m.IsChild() {
 			continue
 		}
 		if q.Metadata.IncludeRootChildren {
@@ -770,7 +771,7 @@ func catalogWhere(q MetadataQuery) (string, []any) {
 		add("capture <= ?", catalogTime(f.To))
 	}
 	if q.TopLevelOnly {
-		clauses = append(clauses, "json_extract(summary,'$.ParentSessionID') = ''")
+		clauses = append(clauses, "json_extract(summary,'$.ParentSessionID') = '' AND coalesce(json_extract(summary,'$.NativeChild'),0) = 0")
 	}
 	if f.Replays == ReplaysHidden {
 		clauses = append(clauses, "json_type(summary,'$.Replay') = 'null'")
@@ -845,11 +846,15 @@ func (r *catalogRecord) scan(row interface{ Scan(...any) error }) error {
 	return row.Scan(&r.key, &r.etag, &r.hash, &r.capture, &r.activity, &r.summary, &r.search, &r.lowerID, &r.unlabeled, &r.checksum)
 }
 
+// catalogRecordFormat versions the disposable projection. Earlier checksummed
+// rows omitted native child ownership and must reload from complete headers.
+const catalogRecordFormat = "session-catalog-native-child-v1"
+
 // catalogRecordChecksum uses length-prefix framing to keep tuple boundaries
 // unambiguous. It hashes raw summary bytes without decoding every warm row.
 func catalogRecordChecksum(r catalogRecord) string {
-	buffer := make([]byte, 0, len(r.key)+len(r.etag)+len(r.hash)+len(r.capture)+len(r.activity)+len(r.summary)+len(r.search)+len(r.lowerID)+81)
-	for _, field := range []string{r.key, r.etag, r.hash, r.capture, r.activity, r.search, r.lowerID} {
+	buffer := make([]byte, 0, len(r.key)+len(r.etag)+len(r.hash)+len(r.capture)+len(r.activity)+len(r.summary)+len(r.search)+len(r.lowerID)+len(catalogRecordFormat)+82)
+	for _, field := range []string{catalogRecordFormat, r.key, r.etag, r.hash, r.capture, r.activity, r.search, r.lowerID} {
 		buffer = binary.AppendUvarint(buffer, uint64(len(field)))
 		buffer = append(buffer, field...)
 	}

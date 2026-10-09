@@ -3,11 +3,13 @@ package reader
 import (
 	"context"
 	"database/sql"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/listingindex"
+	"github.com/wangjohn/agent-archive/internal/storage"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -772,5 +774,191 @@ func TestSessionCatalogRootChildrenDatesPagingAndFilters(t *testing.T) {
 				t.Fatalf("got=%v want=%v", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestSessionCatalogKeepsUnresolvedNativeChildOwnership(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	store := newCountingStore()
+	childID := fmt.Sprintf("%032x", 1)
+	key := putSession(t, store, "codex", childID, baseTime.Add(time.Hour))
+	body, err := store.Get(ctx, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m archive.Metadata
+	if err = json.Unmarshal(body, &m); err != nil {
+		t.Fatal(err)
+	}
+	m.NativeChild = true
+	body, err = json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = store.Put(ctx, key, body); err != nil {
+		t.Fatal(err)
+	}
+	rootID := fmt.Sprintf("%032x", 2)
+	putSession(t, store, "codex", rootID, baseTime)
+	cache, err := OpenMetadataCache(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := OpenSessionCatalog(ctx, cache, store, ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = c.Close() }()
+	for range 2 {
+		headers, e := DiscoverCatalogHeaders(ctx, store, ListOptions{Cache: cache})
+		if e != nil {
+			t.Fatal(e)
+		}
+		if e = c.Refresh(ctx, headers); e != nil {
+			t.Fatal(e)
+		}
+		all, e := c.Query(ctx, CatalogQuery{})
+		if e != nil || len(all.Rows) != 2 {
+			t.Fatalf("all=%+v err=%v", all, e)
+		}
+		projected := all.Rows[0].Summary.Metadata()
+		if !projected.IsChild() || projected.ParentSessionID != "" {
+			t.Errorf("unresolved child ownership lost: %+v", projected)
+		}
+		for _, query := range []MetadataQuery{{TopLevelOnly: true, Limit: 1}, {TopLevelOnly: true, Limit: 1, IncludeRootChildren: true, Filter: Filter{From: baseTime}}} {
+			page, e := c.Query(ctx, CatalogQuery{Metadata: query})
+			if e != nil || page.Total != 1 || len(page.Rows) != 1 || page.Rows[0].Summary.SessionID != rootID || page.Next != "" {
+				t.Errorf("top-level=%+v err=%v", page, e)
+			}
+		}
+	}
+	m.ParentSessionID = rootID
+	body, err = json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = store.Put(ctx, key, body); err != nil {
+		t.Fatal(err)
+	}
+	headers, err := DiscoverCatalogHeaders(ctx, store, ListOptions{Cache: cache})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = c.Refresh(ctx, headers); err != nil {
+		t.Fatal(err)
+	}
+	page, err := c.Query(ctx, CatalogQuery{})
+	if err != nil || len(page.Rows) != 2 {
+		t.Fatalf("linked page=%+v err=%v", page, err)
+	}
+	linked := page.Rows[0].Summary.Metadata()
+	if !linked.NativeChild || linked.ParentSessionID != rootID {
+		t.Errorf("linked ownership=%+v", linked)
+	}
+	top, err := c.Query(ctx, CatalogQuery{Metadata: MetadataQuery{TopLevelOnly: true, Limit: 1}})
+	if err != nil || top.Total != 1 || top.Rows[0].Summary.SessionID != rootID {
+		t.Errorf("linked top=%+v err=%v", top, err)
+	}
+}
+
+// Persist the prior checksum format literally; calling the production helper
+// here would silently upgrade the fixture along with the implementation.
+func priorCatalogChecksum(r catalogRecord) string {
+	var data []byte
+	for _, field := range []string{r.key, r.etag, r.hash, r.capture, r.activity, r.search, r.lowerID} {
+		data = binary.AppendUvarint(data, uint64(len(field)))
+		data = append(data, field...)
+	}
+	data = binary.AppendUvarint(data, uint64(len(r.summary)))
+	data = append(data, r.summary...)
+	if r.unlabeled {
+		data = append(data, 1)
+	} else {
+		data = append(data, 0)
+	}
+	return storage.SHA256Hex(data)
+}
+
+func TestSessionCatalogReloadsPriorOwnershipProjection(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	store := newCountingStore()
+	key := putSession(t, store, "codex", fmt.Sprintf("%032x", 1), baseTime)
+	body, err := store.Get(ctx, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m archive.Metadata
+	if err = json.Unmarshal(body, &m); err != nil {
+		t.Fatal(err)
+	}
+	m.NativeChild = true
+	body, err = json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = store.Put(ctx, key, body); err != nil {
+		t.Fatal(err)
+	}
+	putSession(t, store, "codex", fmt.Sprintf("%032x", 2), baseTime.Add(-time.Hour))
+	cache, err := OpenMetadataCache(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	reads := 0
+	c, err := OpenSessionCatalog(ctx, cache, store, ListOptions{BodyRead: func(string, bool) { reads++ }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = c.Close() }()
+	headers, err := DiscoverCatalogHeaders(ctx, store, ListOptions{Cache: cache})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = c.Refresh(ctx, headers); err != nil {
+		t.Fatal(err)
+	}
+	first, err := c.Query(ctx, CatalogQuery{Metadata: MetadataQuery{Limit: 1}})
+	if err != nil || first.Next == "" {
+		t.Fatalf("page=%+v err=%v", first, err)
+	}
+	var record catalogRecord
+	if err = record.scan(c.db.QueryRowContext(ctx, "SELECT key,etag,hash,capture,activity,summary,search,lowerid,unlabeled,summary_hash FROM sessions WHERE key=?", key)); err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]any
+	if err = json.Unmarshal(record.summary, &fields); err != nil {
+		t.Fatal(err)
+	}
+	delete(fields, "NativeChild")
+	record.summary, err = json.Marshal(fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = c.db.ExecContext(ctx, "UPDATE sessions SET summary=?,summary_hash=? WHERE key=?", record.summary, priorCatalogChecksum(record), key); err != nil {
+		t.Fatal(err)
+	}
+	reads = 0
+	if err = c.Refresh(ctx, HeaderSnapshot{}); err == nil {
+		t.Fatal("upgraded without complete canonical authority")
+	}
+	if err = c.Refresh(ctx, headers); err != nil {
+		t.Fatal(err)
+	}
+	page, err := c.Query(ctx, CatalogQuery{})
+	if err != nil || len(page.Rows) != 2 {
+		t.Fatalf("page=%+v err=%v", page, err)
+	}
+	projected := page.Rows[0].Summary.Metadata()
+	if !projected.IsChild() || reads != 1 {
+		t.Errorf("prior tuple was not reloaded: child=%t bodies=%d", projected.IsChild(), reads)
+	}
+	if _, err = c.Query(ctx, CatalogQuery{Metadata: MetadataQuery{Limit: 1}, Cursor: first.Next}); !errors.Is(err, ErrStaleCatalogCursor) {
+		t.Errorf("upgrade cursor=%v", err)
+	}
+	reads = 0
+	if err = c.Refresh(ctx, headers); err != nil || reads != 0 {
+		t.Fatalf("warm refresh err=%v bodies=%d", err, reads)
 	}
 }
