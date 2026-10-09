@@ -72,15 +72,15 @@ const (
 // says what to do with sessions a replay tool ran; its zero value includes
 // them, so only a caller that asks hides them.
 type Filter struct {
-	Harness                 string
-	Model                   string
-	Skill                   string
-	SkillSHA256             string
-	From                    time.Time
-	To                      time.Time
-	RequireCompleteCoverage bool
-	SkillUsage              SkillUsage
-	Replays                 ReplayFilter
+	Harness                 string       `json:"Harness"`
+	Model                   string       `json:"Model"`
+	Skill                   string       `json:"Skill"`
+	SkillSHA256             string       `json:"SkillSHA256"`
+	From                    time.Time    `json:"From"`
+	To                      time.Time    `json:"To"`
+	RequireCompleteCoverage bool         `json:"RequireCompleteCoverage"`
+	SkillUsage              SkillUsage   `json:"SkillUsage"`
+	Replays                 ReplayFilter `json:"Replays"`
 }
 
 // ReplayFilter selects by whether a session is a replay (archive.Replay).
@@ -185,7 +185,7 @@ type ListOptions struct {
 // a sequential read would. A listing split into ranges fails with the error
 // of the first range to fail, which need not be the lowest in key order.
 func ListMetadataWithOptions(ctx context.Context, store storage.ObjectStore, prefix string, filter Filter, options ListOptions) ([]archive.Metadata, error) {
-	options.Cache.maintain(ctx, 64)
+	options.Cache.maintain(ctx)
 	span := trace.Start("list metadata")
 	defer span.End()
 	listPrefix := listPrefixFor(prefix, filter.Harness)

@@ -182,6 +182,13 @@ session passes `--all-projects`. See [JSON output](../reference/json-output.md).
 
 ## Browsing on a terminal
 
+The list and bare-show browsers offer **Older sessions** when the initial table
+is limited. Press `o` to extend it by another batch. Search checks older
+sessions and subagents as well as the rows on screen; `a` changes the project
+scope. Repeated searches reuse private local summaries, while each command
+checks the archive for changed and deleted sessions. `--no-cache` bypasses
+local cached data.
+
 When stdin and stdout are both terminals, `list` and bare `show` open a
 session browser on the terminal's alternate screen, so the list and a
 session's summary replace each other instead of piling up:

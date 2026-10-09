@@ -68,13 +68,9 @@ func resolveShowQuery(ctx context.Context, store storage.ObjectStore, env showQu
 		terminal.Printf(stderr, "agent-archive: show: %v\n", err)
 		return showLookup{}, 1
 	}
-	// Keep the complete inventory for child counts and scope fallback. Titles
-	// and PR numbers are absent from canonical headers, so text completeness
-	// still requires all bodies until the search catalog is available.
+	// Keep complete summaries for child counts, scope tiers and ambiguity.
 	stopSearch := startActivity(stdout, "Finding sessions…")
-	sessions, err := reader.FindMetadataPrefix(ctx, store, archiveSessionsPrefix, query, reader.Filter{Harness: harness}, reader.ListOptions{
-		Cache: listCache(env, false), Skipped: warnSkippedSidecar(stderr, "show"),
-	}, func(archive.Metadata) bool { return true })
+	sessions, err := readShowCandidates(ctx, store, env, harness, query, stderr)
 	stopSearch()
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: show: %v\n", err)

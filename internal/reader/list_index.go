@@ -58,14 +58,14 @@ const (
 // MetadataQuery selects metadata from fresh headers before downloading bodies.
 // A nonpositive Limit selects every matching session.
 type MetadataQuery struct {
-	Filter       Filter
-	Limit        int
-	Order        QueryOrder
-	TopLevelOnly bool
+	Filter       Filter     `json:"Filter"`
+	Limit        int        `json:"Limit"`
+	Order        QueryOrder `json:"Order"`
+	TopLevelOnly bool       `json:"TopLevelOnly"`
 	// IncludeRootChildren retains descendants of date-matched sessions even
 	// outside the capture bounds. Other predicates still apply to each member.
 	// Stats uses this to keep complete root accounting; ancestors are not added.
-	IncludeRootChildren bool
+	IncludeRootChildren bool `json:"IncludeRootChildren"`
 }
 
 // SelectMetadata proves discovery coverage and supports unlimited date queries.
@@ -75,7 +75,7 @@ func SelectMetadata(ctx context.Context, store storage.ObjectStore, prefix strin
 	opts.ActivityOrder, opts.TopLevelOnly = query.Order == ActivityOrder, query.TopLevelOnly
 	opts.includeRootChildren = query.IncludeRootChildren
 	var snapshot *HeaderSnapshot
-	opts.Cache.maintain(ctx, 64)
+	opts.Cache.maintain(ctx)
 	fallback := func(reason string) (RecentResult, error) {
 		if opts.CompatibilityScan != nil {
 			opts.CompatibilityScan(reason)
