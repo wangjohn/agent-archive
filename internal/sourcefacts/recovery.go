@@ -384,11 +384,16 @@ func safeRepositoryIdentity(id RepositoryIdentity) RepositoryIdentity {
 // Semantic evidence gets one bounded second sweep; stale evidence stays pending.
 // A failure that is not budget exhaustion makes the next Recover revalidate
 // the inventory prefix, so later candidates are not planned on stale entries.
+// Only this check's own exhaustion counts: an allowance exhausted earlier in
+// the slice must not hide a change this check did observe.
 func (r *RecoveryResolver) Current(proof archive.ProjectResolution) bool {
+	exhausted := r.MetadataExhausted
+	r.MetadataExhausted = false
 	current := r.current(proof)
 	if !current && !r.MetadataExhausted {
 		r.prefixValidated = 0
 	}
+	r.MetadataExhausted = r.MetadataExhausted || exhausted
 	return current
 }
 

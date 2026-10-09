@@ -122,3 +122,42 @@ func TestRecoveryPlanningStillCatchesRepositoryChanges(t *testing.T) {
 		t.Fatal("validated prefix rechecked", outcome, lookups-before, r.MetadataOperations-spent)
 	}
 }
+
+// An allowance exhausted earlier in the slice (for example by the semantic
+// sweep) must not hide a change a later Current does observe: the next
+// candidate is not planned on the stale prefix. A Current that fails only for
+// its own budget keeps the validated prefix, so later candidates still plan.
+func TestRecoveryEarlierExhaustionDoesNotHideObservedChange(t *testing.T) {
+	key := archive.RepoKey("https://example.test/acme/repo")
+	lookups := 0
+	projects, lookup := stampedInventory(key, 2, &lookups)
+	stale := ""
+	r := NewRecoveryResolver(projects, nil, filepath.Clean, lookup, nil)
+	r.Validate = func(id RepositoryIdentity) bool { return id.Root != stale }
+	r.ResetValidationContext(t.Context())
+	proof, outcome := r.Recover(t.Context(), "/deleted/a", key)
+	if outcome != "" {
+		t.Fatal(outcome)
+	}
+	r.MetadataExhausted = true
+	stale = projects[3].Root
+	if r.Current(proof) || !r.MetadataExhausted {
+		t.Fatal("changed configured repository current, or exhaustion forgotten")
+	}
+	if _, outcome := r.Recover(t.Context(), "/deleted/b", key); outcome == "" {
+		t.Fatal("candidate planned on a prefix a failed Current showed stale")
+	}
+
+	stale = ""
+	r.ResetValidationContext(t.Context())
+	if _, outcome := r.Recover(t.Context(), "/deleted/c", key); outcome != "" {
+		t.Fatal(outcome)
+	}
+	r.MetadataOperations = r.metadataLimit()
+	if r.Current(proof) || !r.MetadataExhausted {
+		t.Fatal("Current beyond the allowance")
+	}
+	if _, outcome := r.Recover(t.Context(), "/deleted/d", key); outcome != "" {
+		t.Fatal("budget-only Current failure discarded the validated prefix", outcome)
+	}
+}
