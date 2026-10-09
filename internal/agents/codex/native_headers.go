@@ -69,11 +69,18 @@ func (NativeHeaders) InspectHeader(r agentapi.NativeHeaderRequest) (agentapi.Nat
 		// Import has older producer/start compatibility than automatic discovery,
 		// but neither may flatten a known child, fork, or physical history link.
 		if outcome == "" {
+			h.CodexIdentity = &facts
 			switch {
 			case facts.Child:
-				h.CapturePending = "child_history_pending"
+				// Import reads self-contained child histories through the native provider.
+				// Parent links are resolved separately from the child admission.
+				if r.Purpose != agentapi.DiscoveryImport || facts.HistoryBase != nil || !strings.EqualFold(facts.RolloutID, facts.ThreadID) {
+					h.CapturePending = "child_history_pending"
+				}
 			case facts.ForkID != "":
-				h.CapturePending = "fork_history_pending"
+				if r.Purpose != agentapi.DiscoveryImport || facts.HistoryBase != nil || !strings.EqualFold(facts.RolloutID, facts.ThreadID) {
+					h.CapturePending = "fork_history_pending"
+				}
 			case facts.HistoryBase != nil || !strings.EqualFold(facts.RolloutID, facts.ThreadID):
 				h.CapturePending = "related_history_pending"
 			}

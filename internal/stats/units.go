@@ -212,7 +212,7 @@ func (u *unit) finish(loc *time.Location, prices priceIndex) {
 	captured := root.CapturedAt.In(loc)
 	u.day = dayNumber(civilOf(captured))
 	u.month = captured.Year()*12 + int(captured.Month()) - 1
-	u.orphan = root.ParentSessionID != ""
+	u.orphan = root.IsChild()
 	u.lacksParser014 = !parserAtLeast(root.Parser.Version, 0, 14, 0)
 	if root.Counts.Turns != nil {
 		turns := value(root.Counts.Turns)
