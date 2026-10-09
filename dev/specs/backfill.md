@@ -1223,8 +1223,11 @@ known solely to that app's sessions. Configured roots, including exclusions,
 are enumerated by repository lookups independent of every app store, so no gap
 can hide capture policy, and a clone nested in an excluded root resolves to
 that root and is never a witness. The only wrong outcome is recovering a
-session into one unconfigured checkout of its own repository instead of
-leaving it unresolved, the same residual as a keyless clone and a
+session into one included checkout of its own repository, configured or
+proposed, when it actually ran in a second, unconfigured clone known only to
+the app with the gap, instead of leaving it unresolved. It is never an
+excluded root, a root inside one, or a root no witness could propose; it is
+the same residual as a keyless clone and a
 `url.insteadOf` origin. The plan reports it: `recovery_evidence_gaps` in JSON
 (each `app`, `cause`, and the `blocked` and `recovered_without` session counts
 by app) and a "Project recovery evidence" note in text. An app's own gaps
@@ -1237,10 +1240,11 @@ the same way at admission. It blocks Cursor's own recoveries, recoveries of
 unknown app, and any recovery whose destination rests on Cursor database
 evidence: an unconfigured destination with no current witness from another
 source that could propose it on its own. It does not block another app's
-recovery into a configured root or into a destination that app's own evidence
-proposes. Such a proof used Cursor's chats only as possible clones, and a
-change can at most remove one (the proof stays unique) or add one (a second
-checkout known only to Cursor, the residual above).
+recovery into a configured root or into a destination that current evidence
+from another source can propose. Such a proof used Cursor's chats only as
+possible clones, and a change can at most remove one (the proof stays
+unique) or add one (a second checkout known only to Cursor, the residual
+above).
 A native transcript that was only appended to after its header was read (same
 file, same mode, larger size) keeps its own `source_changed` skip but stays
 clone evidence that cannot propose a destination, and further appends renew

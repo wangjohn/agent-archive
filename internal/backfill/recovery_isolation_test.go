@@ -27,8 +27,10 @@ func recoveredWithout(p Plan) bool {
 	return false
 }
 
-// detailAmbiguous is the diagnostic an ambiguous recovery carries.
-const detailAmbiguous = DiagnosticDetail(sourcefacts.RecoveryAmbiguous)
+// resolveEvidence resolves a session of unknown app: every gap applies.
+func (r *resolver) resolveEvidence(ctx context.Context, cwd, key string) resolution {
+	return r.resolveSessionEvidence(ctx, "", cwd, key)
+}
 
 type appendDuringDiscovery string
 
@@ -187,7 +189,7 @@ func TestRecoveryCompetingCloneInOtherAppStillBlocks(t *testing.T) {
 			for _, filters := range []Filters{{Harnesses: []string{"codex"}}, {}} {
 				p := plan(t, env, nil, cfg, filters)
 				c := candidate(t, p, goneID)
-				if c.ProjectResolution != nil || c.Skip != SkipWorktreeUnresolved || c.Diagnostic == nil || c.Diagnostic.Detail != detailAmbiguous {
+				if c.ProjectResolution != nil || c.Skip != SkipWorktreeUnresolved || c.Diagnostic == nil || c.Diagnostic.Detail != DetailRecoveryAmbiguous {
 					t.Fatalf("Cursor-observed clone did not keep recovery ambiguous: %+v %+v", c, c.Diagnostic)
 				}
 			}
@@ -268,14 +270,11 @@ func TestRecoveryAppendDuringDiscoveryKeepsOtherRecoveries(t *testing.T) {
 			if c := candidate(t, p, id); c.Skip != SkipSourceChanged || c.ProjectRoot != "" {
 				t.Fatalf("changed session: %+v", c)
 			}
-			if kind != appendRewrite && hasRecoveryGap(p, "", CauseNativeInventoryChanged) {
-				// The appended file must not be a witness gap of its own app.
-				if hasRecoveryGap(p, "codex", CauseNativeInventoryChanged) {
-					t.Fatalf("append recorded as a witness gap: %+v", p.RecoveryEvidenceGaps)
-				}
-				// Until the native inventory stops stamping transcript sizes
-				// (PR #394), the append also changes that unattributed inventory.
-				t.Skip("native inventory still invalidated by transcript appends")
+			// An append is neither a witness gap of its own app nor, since the
+			// native inventory lets owned transcripts grow (PR #394), a change
+			// to the unattributed inventory.
+			if kind != appendRewrite && (hasRecoveryGap(p, "codex", CauseNativeInventoryChanged) || hasRecoveryGap(p, "", CauseNativeInventoryChanged)) {
+				t.Fatalf("append recorded as a witness gap: %+v", p.RecoveryEvidenceGaps)
 			}
 			c := candidate(t, p, goneID)
 			switch kind {
@@ -308,7 +307,7 @@ func TestRecoveryAppendDuringDiscoveryKeepsOtherRecoveries(t *testing.T) {
 					t.Fatalf("rewrite certified uniqueness: %+v %+v", c, c.Diagnostic)
 				}
 			case appendCloneRoot:
-				if c.ProjectResolution != nil || c.Diagnostic == nil || c.Diagnostic.Detail != detailAmbiguous {
+				if c.ProjectResolution != nil || c.Diagnostic == nil || c.Diagnostic.Detail != DetailRecoveryAmbiguous {
 					t.Fatalf("appended clone lost: %+v %+v", c, c.Diagnostic)
 				}
 			}
@@ -443,5 +442,66 @@ func TestCheckSourceSeparatesAppendsFromRewrites(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Once a check observed a rewrite, regrowing past the header observation does
+// not make the source an append again.
+func TestCheckSourceRewriteStaysRewrite(t *testing.T) {
+	tr := newTree(t)
+	path := tr.write("home/source.jsonl", "a\nb\n")
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := &work{t: &transcript{path: path, sourceInfo: info}}
+	tr.write("home/source.jsonl", "x\n")
+	w.checkSource(tr.env())
+	tr.write("home/source.jsonl", "x\ny\nz\n")
+	w.checkSource(tr.env())
+	if w.appendedOnly() {
+		t.Fatal("regrown rewrite classified as an append")
+	}
+}
+
+// An appended witness that is a root's only evidence renews at admission while
+// it keeps growing in place, and not after a truncation.
+func TestAppendedWitnessRenewsAtAdmission(t *testing.T) {
+	tr := newTree(t)
+	root := tr.repo("home/other")
+	path := tr.write("home/source.jsonl", "a\n")
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := tr.env()
+	r := newResolver(env, config.Config{}, Filters{})
+	w := &work{t: &transcript{harness: harnessCodex, path: path, sourceInfo: info, cwd: root}, res: r.resolve(root)}
+	tr.write("home/source.jsonl", "a\nb\n")
+	w.checkSource(env)
+	if !w.appendedOnly() {
+		t.Fatal("append not observed")
+	}
+	witnesses := map[string][]*work{w.res.root: {w}}
+	tr.write("home/source.jsonl", "a\nb\nc\n")
+	if current, _ := recoveryWitnessesCurrent(t.Context(), r, witnesses, map[string]bool{}, true); !current {
+		t.Fatal("further append invalidated the appended witness")
+	}
+	tr.write("home/source.jsonl", "a\n")
+	if current, _ := recoveryWitnessesCurrent(t.Context(), r, witnesses, map[string]bool{}, true); current {
+		t.Fatal("truncated witness renewed")
+	}
+}
+
+// A blocking gap fails closed even before the inventory prepared its resolvers.
+func TestRecoveryForFailsClosedWithoutPreparedInventory(t *testing.T) {
+	r := newResolver(newTree(t).env(), config.Config{}, Filters{})
+	r.recoveryGaps = recoveryGaps{{Agent: string(harnessCodex), Cause: CauseNativeStoreUnreadable}: true}
+	recovery, gap := r.recoveryFor(t.Context(), harnessCodex)
+	if gap == nil || recovery == r.recovery {
+		t.Fatalf("blocked app got the shared resolver: %+v", gap)
+	}
+	if recovery, gap := r.recoveryFor(t.Context(), harnessClaude); gap != nil || recovery != r.recovery {
+		t.Fatalf("unblocked app: %+v", gap)
 	}
 }

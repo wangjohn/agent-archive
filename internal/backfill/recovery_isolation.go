@@ -75,8 +75,12 @@ func (g recoveryGap) blockedOutcome() sourcefacts.RecoveryOutcome {
 // before; only recorded-key recovery reports the gap.
 func (r *resolver) recoveryFor(ctx context.Context, h harness) (*sourcefacts.RecoveryResolver, *recoveryGap) {
 	gap, blocked := r.recoveryGaps.blocking(h)
-	if !blocked || r.gapRecovery == nil {
+	if !blocked {
 		return r.recovery, nil
+	}
+	if r.gapRecovery == nil {
+		// Fail closed even before the inventory prepared the cache.
+		r.gapRecovery = map[bool]*sourcefacts.RecoveryResolver{}
 	}
 	budget := gap.Cause == CauseRecoveryBudget
 	recovery := r.gapRecovery[budget]
