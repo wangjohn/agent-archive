@@ -99,6 +99,54 @@ func TestRecoveryRefusesWALFrames(t *testing.T) {
 	}
 }
 
+// TestRecoveryRefusesSettledWithoutShmHeader: a settled read compares the
+// -shm's wal-index header before and after, so an empty -wal beside a -shm
+// whose header cannot be read (shorter than the header, or not a regular
+// file) is Locked rather than read without that comparison.
+func TestRecoveryRefusesSettledWithoutShmHeader(t *testing.T) {
+	for name, replace := range map[string]func(t *testing.T, shm string){
+		"short -shm": func(t *testing.T, shm string) {
+			t.Helper()
+			if err := os.Truncate(shm, shmHeaderSize-1); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"-shm is a link": func(t *testing.T, shm string) {
+			t.Helper()
+			target := filepath.Join(t.TempDir(), "shm")
+			data, err := os.ReadFile(shm)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(target, data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Remove(shm); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, shm); err != nil {
+				t.Fatal(err)
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := StateDatabase(t.TempDir())
+			settledWriter(t, path, true)
+			replace(t, path+"-shm")
+			dir := filepath.Dir(path)
+			before := snapshotDir(t, dir)
+			err := ReadRecovery(t.Context(), path, &recoveryTestBudget{rows: 100, bytes: 1 << 20}, func(context.Context, *sql.DB) error {
+				t.Fatal("read a settled database without its -shm header")
+				return nil
+			})
+			if err == nil || ReasonOf(err) != Locked {
+				t.Fatal(err)
+			}
+			assertUnchanged(t, dir, before)
+		})
+	}
+}
+
 // TestRecoverySettledReadInvalidatedByChange: a settled read that sees
 // Cursor write, checkpoint, or change its side files while it reads is
 // ChangedDuringRead, not a result.
