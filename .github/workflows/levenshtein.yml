@@ -40,7 +40,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: wangjohn/levenshtein
-          ref: b8b8ee429de80d44c00ae7c8020662de89f927c6
+          ref: e1bd27001c6c3d328ab0794861670a671d79ede9
           path: levenshtein
           persist-credentials: false
       - name: Set up Go for the Levenshtein launcher
