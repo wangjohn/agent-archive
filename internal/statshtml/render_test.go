@@ -407,7 +407,7 @@ func TestRendererImportBoundary(t *testing.T) {
 	importgraph.Forbid(t, "internal/statshtml", direct,
 		"os", "os/exec", "io/ioutil", "io/fs", "path/filepath", "net", "net/http", "math/rand", "math/rand/v2",
 		"golang.org/x/term", "text/template", "unsafe",
-		"github.com/wangjohn/agent-archive/internal/agentmeta", "github.com/wangjohn/agent-archive/internal/jsonwire", "github.com/wangjohn/agent-archive/internal/codexmeta")
+		"github.com/wangjohn/agent-archive/internal/agentmeta", "github.com/wangjohn/agent-archive/internal/codexmeta")
 	importgraph.Forbid(t, "internal/statshtml (transitively)", all, "net/http", "os/exec")
 	for _, path := range all {
 		if strings.HasPrefix(path, "github.com/wangjohn/agent-archive/internal/") &&
@@ -415,9 +415,8 @@ func TestRendererImportBoundary(t *testing.T) {
 			path != "github.com/wangjohn/agent-archive/internal/stats" &&
 			path != "github.com/wangjohn/agent-archive/internal/agentmeta" &&
 			path != "github.com/wangjohn/agent-archive/internal/codexmeta" &&
-			path != "github.com/wangjohn/agent-archive/internal/jsonwire" &&
 			path != "github.com/wangjohn/agent-archive/internal/statsfmt" {
-			t.Errorf("internal/statshtml reaches %s; only internal/stats, internal/statsfmt, internal/archive and its pure agentmeta/jsonwire/codexmeta dependencies are allowed", path)
+			t.Errorf("internal/statshtml reaches %s; only internal/stats, internal/statsfmt, internal/archive and its pure agentmeta/codexmeta dependencies are allowed", path)
 		}
 	}
 }

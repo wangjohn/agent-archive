@@ -7,8 +7,8 @@ import (
 	"strings"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/jsonwire"
 )
 
 // nativeScannerCharge counts bounded framing in the already admitted snapshot.
@@ -80,7 +80,7 @@ func (r *leasedHistoryInput) Next(ctx context.Context) (agentapi.NativeRecord, b
 	if err != nil || !more || row.Kind != agentapi.CodexHistoryHeader || row.History == nil {
 		return row, more, err
 	}
-	n, err := jsonwire.Bound(ctx, row.History, r.budget.Available())
+	n, err := agentmeta.JSONWireBound(ctx, row.History, r.budget.Available())
 	if err != nil {
 		return agentapi.NativeRecord{}, false, errors.Join(errFilterBudget, err)
 	}
