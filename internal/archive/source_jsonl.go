@@ -57,6 +57,7 @@ type SourceHeader struct {
 	ProjectID            string                   `json:"project_id"`
 	Capture              SourceCapture            `json:"capture"`
 	PreviousGenerationID string                   `json:"previous_generation_id,omitempty"`
+	NativeChild          bool                     `json:"native_child,omitempty"`
 	ParentSessionID      string                   `json:"parent_session_id,omitempty"`
 	LinkedSessions       []LinkedSessionReference `json:"linked_sessions,omitempty"`
 	Counts               SourceCounts             `json:"counts"`
@@ -143,7 +144,7 @@ func sourceHeader(bundle SourceBundle) SourceHeader {
 		History: bundle.History,
 		Kind:    SourceLineHeader, SchemaVersion: bundle.SchemaVersion,
 		ArchiveSessionID: bundle.ArchiveSessionID, NativeSessionID: bundle.NativeSessionID, ProjectID: bundle.ProjectID,
-		Capture: bundle.Capture, PreviousGenerationID: bundle.PreviousGenerationID, ParentSessionID: bundle.ParentSessionID, LinkedSessions: bundle.LinkedSessions,
+		Capture: bundle.Capture, PreviousGenerationID: bundle.PreviousGenerationID, NativeChild: bundle.NativeChild, ParentSessionID: bundle.ParentSessionID, LinkedSessions: bundle.LinkedSessions,
 		Counts: SourceCounts{NativeRecords: len(bundle.NativeRecords), NativeText: len(bundle.NativeText), SupplementalEvidence: len(bundle.SupplementalEvidence)},
 	}
 }
@@ -475,7 +476,7 @@ func ReadSourceBundle(compressed io.Reader, options DecodeOptions) (SourceBundle
 			h := line.Header
 			bundle = SourceBundle{
 				History: h.History, SchemaVersion: h.SchemaVersion, ArchiveSessionID: h.ArchiveSessionID, NativeSessionID: h.NativeSessionID,
-				ProjectID: h.ProjectID, Capture: h.Capture, PreviousGenerationID: h.PreviousGenerationID, ParentSessionID: h.ParentSessionID, LinkedSessions: h.LinkedSessions,
+				ProjectID: h.ProjectID, Capture: h.Capture, PreviousGenerationID: h.PreviousGenerationID, NativeChild: h.NativeChild, ParentSessionID: h.ParentSessionID, LinkedSessions: h.LinkedSessions,
 				NativeRecords: make([]map[string]any, 0, min(h.Counts.NativeRecords, 1<<16)),
 			}
 		case SourceLineNativeRecord:

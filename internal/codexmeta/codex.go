@@ -147,10 +147,20 @@ func (m CodexMeta) Classification() Outcome {
 	if facts.HistoryBase != nil {
 		return RelatedHistoryPending
 	}
+	return m.FormatOutcome()
+}
+
+// FormatOutcome validates a native execution format independently of relationships
+// and consent. Complete readers still validate all physical dependencies.
+func (m CodexMeta) FormatOutcome() Outcome {
+	facts, outcome := m.Relationships()
+	if outcome != "" {
+		return outcome
+	}
 	if present(m.ThreadSource) {
 		var thread string
 		_ = json.Unmarshal(m.ThreadSource, &thread)
-		if thread != "user" {
+		if thread != "user" && (thread != "subagent" || !facts.Child) {
 			return UnsupportedExecution
 		}
 	}
@@ -184,7 +194,31 @@ func ValidCodexVersion(version string) bool {
 // it does not establish local originating execution or producer support.
 func (m CodexMeta) LocalExecutionSource() bool {
 	var source string
-	return json.Unmarshal(m.Source, &source) == nil && ValidCodexExecutionSource(source)
+	if json.Unmarshal(m.Source, &source) == nil {
+		return ValidCodexExecutionSource(source)
+	}
+	facts, outcome := m.Relationships()
+	if outcome != "" || !facts.Child {
+		return false
+	}
+	var object map[string]json.RawMessage
+	if json.Unmarshal(m.Source, &object) != nil {
+		return false
+	}
+	sub, ok := object["subagent"]
+	if !ok {
+		return false
+	}
+	var kind codexSubagentKind
+	if json.Unmarshal(sub, &kind) == nil {
+		return kind == subagentReview || kind == subagentCompact || kind == subagentMemory
+	}
+	var child map[string]json.RawMessage
+	if json.Unmarshal(sub, &child) != nil {
+		return false
+	}
+	_, ok = child["thread_spawn"]
+	return ok
 }
 
 // ValidCodexExecutionSource recognizes supported local source format tags.
@@ -252,4 +286,39 @@ func FirstTaskAt(line []byte) time.Time {
 		return time.Time{}
 	}
 	return taskStartedAt(r.Payload.StartedAt)
+}
+
+// ExecutionSourceFacts projects only known execution-format fields. Unknown
+// additive metadata never enters a catalog or durable producer-source binding.
+// The result describes a recorded native shape, never originating permission.
+func (m CodexMeta) ExecutionSourceFacts() (json.RawMessage, bool) {
+	if !m.LocalExecutionSource() {
+		return nil, false
+	}
+	var scalar string
+	if json.Unmarshal(m.Source, &scalar) == nil {
+		raw, err := json.Marshal(scalar)
+		return raw, err == nil
+	}
+	var object map[string]json.RawMessage
+	if json.Unmarshal(m.Source, &object) != nil {
+		return nil, false
+	}
+	sub := object["subagent"]
+	var kind string
+	if json.Unmarshal(sub, &kind) == nil {
+		raw, err := json.Marshal(map[string]string{"subagent": kind})
+		return raw, err == nil
+	}
+	var child struct {
+		Spawn struct {
+			Parent string `json:"parent_thread_id"`
+			Depth  int32  `json:"depth"`
+		} `json:"thread_spawn"`
+	}
+	if json.Unmarshal(sub, &child) != nil {
+		return nil, false
+	}
+	raw, err := json.Marshal(map[string]any{"subagent": map[string]any{"thread_spawn": map[string]any{"parent_thread_id": child.Spawn.Parent, "depth": child.Spawn.Depth}}})
+	return raw, err == nil
 }

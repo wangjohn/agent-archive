@@ -27,8 +27,10 @@ const (
 type Header struct {
 	SourceInfo os.FileInfo `json:"-"`
 	// Identity survives understood history-pending outcomes as lookup evidence only.
-	Identity             *codexmeta.CodexIdentity
-	NativeCreatedAt      time.Time
+	Identity        *codexmeta.CodexIdentity
+	NativeCreatedAt time.Time
+	// FormatFacts are bounded metadata-only observations, never task evidence or permission.
+	FormatFacts          *CodexMeta
 	Meta                 CodexMeta
 	Started              time.Time
 	FirstTaskAt          time.Time
@@ -148,19 +150,35 @@ func ReadCodexHeader(reader io.Reader, path string) (h Header) {
 				h.Identity = &identity
 				h.NativeCreatedAt = start
 			}
-			if outcome := meta.CaptureOutcome(path); outcome != codexmeta.NativeFormat {
+			if identityOutcome != "" {
+				h.Outcome = string(identityOutcome)
+				return h
+			}
+			h.Profile = CodexFormatProfile(meta)
+			if outcome := meta.FormatOutcome(); outcome != codexmeta.NativeFormat {
 				h.Outcome = string(outcome)
 				return h
 			}
+			facts := h.Meta
+			h.FormatFacts = &facts
 			continue
 		}
+		// Raw physical ordinals include every record, even records privacy later drops.
+		// An absent boundary excludes nothing; explicit zero is preserved.
+		if beforeOwnBoundary(h.Identity, uint64(i)) {
+			continue
+		}
+		if needsRelatedReader(h.Identity) {
+			h.Outcome = "related_history_pending"
+			return h
+		}
+
 		if seen, native := NativeFirstTask(line); seen {
 			h.FirstTaskAt = FirstTaskAt(line)
 			if !native || h.FirstTaskAt.Before(h.Started.Add(-time.Second)) {
 				h.Outcome = "inherited_history"
 			} else {
 				h.Outcome = "native_format"
-				h.Profile = CodexFormatProfile(h.Meta)
 			}
 			return h
 		}
@@ -169,22 +187,29 @@ func ReadCodexHeader(reader io.Reader, path string) (h Header) {
 }
 
 func safeMeta(m CodexMeta) CodexMeta {
-	var source string
-	if json.Unmarshal(m.Source, &source) == nil && m.LocalExecutionSource() {
-		m.Source, _ = json.Marshal(source)
+	if source, known := m.ExecutionSourceFacts(); known {
+		m.Source = source
 	} else {
 		m.Source = nil
 	}
-	flag := func(raw json.RawMessage) json.RawMessage {
-		if present(raw) {
-			return json.RawMessage("true")
-		}
-		return nil
-	}
-	m.ForkedFrom = flag(m.ForkedFrom)
-	m.ForkOrdinal = flag(m.ForkOrdinal)
-	m.Parent = flag(m.Parent)
-	m.HistoryBase = flag(m.HistoryBase)
-	m.SubagentOrdinal = flag(m.SubagentOrdinal)
+
+	// Relationships live in the separately validated typed identity. Format
+	// projections must not substitute booleans for native relationship fields.
+	m.ForkedFrom, m.ForkOrdinal, m.Parent, m.HistoryBase, m.SubagentOrdinal = nil, nil, nil, nil, nil
 	return m
+}
+
+func beforeOwnBoundary(identity *codexmeta.CodexIdentity, ordinal uint64) bool {
+	if identity == nil {
+		return false
+	}
+	own := identity.SubagentOrdinal
+	if fork := identity.ForkOrdinal; fork != nil && (own == nil || *fork > *own) {
+		own = fork
+	}
+	return own != nil && ordinal < *own
+}
+
+func needsRelatedReader(identity *codexmeta.CodexIdentity) bool {
+	return identity != nil && (identity.HistoryBase != nil || identity.RolloutID != identity.ThreadID)
 }

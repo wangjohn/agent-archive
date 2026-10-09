@@ -42,7 +42,7 @@ func TestCopiedNativeSourcesUseOriginalCreationConsent(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(root, "sessions", name), raw, 0600); err != nil {
 				t.Fatal(err)
 			}
-			h, err := run(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(2 * time.Minute) }}, syntheticSupport)
+			h, err := run(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(2 * time.Minute) }}, syntheticSupport)
 			want := 0
 			if recent {
 				want = 1
@@ -65,7 +65,7 @@ func TestUnknownDiscoveryIdentityRequiresCensusBeforeAllocation(t *testing.T) {
 	t.Parallel()
 	store, cfg, at, root := fixture(t)
 	native := writeRollout(t, root, cfg.Archive.Projects[0].Root, at.Add(time.Minute), 1, "sessions")
-	options := Options{Now: func() time.Time { return at.Add(2 * time.Minute) }}
+	options := Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(2 * time.Minute) }}
 	adapters := []SourceAdapter{codexAdapter{supported: syntheticSupport}}
 	h, err := runWithAdapters(context.Background(), store, cfg, options, adapters)
 	if err != nil || h.Registered != 0 || h.Outcomes["admission_retry"] == 0 {
@@ -91,7 +91,7 @@ func TestDiscoveryBothIndexLossRecoversExistingIdentity(t *testing.T) {
 	t.Parallel()
 	store, cfg, at, root := fixture(t)
 	native := writeRollout(t, root, cfg.Archive.Projects[0].Root, at.Add(time.Minute), 1, "sessions")
-	options := Options{Now: func() time.Time { return at.Add(2 * time.Minute) }}
+	options := Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(2 * time.Minute) }}
 	if _, err := run(context.Background(), store, cfg, options, syntheticSupport); err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +174,7 @@ func TestPausedContinuationCannotReplaceRegisteredLocator(t *testing.T) {
 	t.Parallel()
 	store, cfg, at, root := fixture(t)
 	writeRollout(t, root, cfg.Archive.Projects[0].Root, at.Add(time.Minute), 1, "sessions")
-	if _, err := run(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(2 * time.Minute) }}, syntheticSupport); err != nil {
+	if _, err := run(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(2 * time.Minute) }}, syntheticSupport); err != nil {
 		t.Fatal(err)
 	}
 	regs, err := store.LoadRegistrations()
@@ -218,7 +218,7 @@ func TestDiscoveryCannotSupplyUnconfinedLocatorToPathlessHook(t *testing.T) {
 		t.Fatalf("pathless hook fixture: %#v %v", regs, err)
 	}
 	before := regs[0]
-	h, err := runWithAdapters(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(2 * time.Minute) }}, []SourceAdapter{codexAdapter{supported: syntheticSupport}})
+	h, err := runWithAdapters(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(2 * time.Minute) }}, []SourceAdapter{codexAdapter{supported: syntheticSupport}})
 	if err != nil || h.Registered != 0 {
 		t.Fatalf("continuation scan: %#v %v", h, err)
 	}
