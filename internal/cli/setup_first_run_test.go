@@ -86,6 +86,7 @@ func TestSetupListsRecentProjectsAfterTheCurrentRepository(t *testing.T) {
 			writeClaudeSession(t, userHome, "one", other, now.Add(-time.Hour))
 			writeClaudeSession(t, userHome, "two", other, now.Add(-2*time.Hour))
 			env := setupTestEnv(t, home, userHome, newFakeKeychain(), now)
+			env.BackfillTempDirs = []string{}
 			env.WorkingDir = func() (string, error) { return current, nil }
 			answers := []string{"n", "y", "n", "specific", "2", ""}
 			if add {

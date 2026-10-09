@@ -616,6 +616,9 @@ func newScreenFixture(t *testing.T) *screenFixture {
 	tempDir := filepath.Join(root, "tmp")
 	must(t, os.MkdirAll(tempDir, 0o700))
 	env.TempDir = func() string { return tempDir }
+	// Backfill and setup's project list skip that folder alone, not the test
+	// run's temporary folder that holds the fixture's repositories.
+	env.BackfillTempDirs = []string{tempDir}
 	f := &screenFixture{root: root, userHome: userHome, home: home, env: env, bucket: storagetest.NewMemoryStore()}
 	f.env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return f.bucket, nil }
 	// The profile setup is given can list two buckets; team-archive is in
