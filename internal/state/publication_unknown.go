@@ -16,6 +16,16 @@ import (
 func closedPublicationDecode(data []byte, dst any, fields ...map[string]bool) error {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	if err := uniquePublicationJSON(decoder, 0, reflect.TypeOf(dst), fields...); err != nil {
+		// Direct budgeted entrypoints do not receive Unmarshal's outer syntax
+		// preflight. A semantic refusal can precede later malformed bytes. Recover
+		// the same stdlib syntax error without decoding an authority object.
+		var ignored struct{}
+		if syntaxErr := json.Unmarshal(data, &ignored); syntaxErr != nil {
+			var syntax *json.SyntaxError
+			if errors.As(syntaxErr, &syntax) {
+				err = syntaxErr
+			}
+		}
 		return errors.Join(ErrDurableStorageRecovery, err)
 	}
 	// Preserve trailing-data refusal before typed decoding, including its

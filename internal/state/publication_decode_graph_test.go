@@ -111,3 +111,54 @@ func TestPublicationClosedDecodeNestedAndOpaqueShapes(t *testing.T) {
 		}
 	}
 }
+
+func TestPublicationClosedDecodePreservesTruncationClassification(t *testing.T) {
+	for _, raw := range []string{"", " ", "{", `{"bundle":{"sche`} {
+		var p publishedState
+		err := decodePublishedState([]byte(raw), &p, t.Context(), nil)
+		var syntax *json.SyntaxError
+		if !errors.Is(err, ErrDurableStorageRecovery) || !errors.As(err, &syntax) {
+			t.Fatalf("truncated bytes lost original syntax classification: %q: %v", raw, err)
+		}
+	}
+	for _, raw := range []string{`{} {}`, `{} garbage`} {
+		var p publishedState
+		err := decodePublishedState([]byte(raw), &p, t.Context(), nil)
+		var syntax *json.SyntaxError
+		if !errors.Is(err, ErrDurableStorageRecovery) || errors.As(err, &syntax) {
+			t.Fatalf("valid leading value trailing refusal changed classification: %q: %v", raw, err)
+		}
+	}
+}
+
+func TestPublicationClosedDecodeSyntaxPrecedesSemanticRefusal(t *testing.T) {
+	for _, tc := range []struct {
+		body      string
+		malformed bool
+	}{
+		{`{"future":null}`, false},
+		{`{"bundle":{},"bundle":{}}`, false},
+		{`{"future":null,`, true},
+		{`{"future":null,"bundle":{"sche`, true},
+		{`{"bundle":{},"bundle":{"sche`, true},
+	} {
+		var p publishedState
+		err := decodePublishedState([]byte(tc.body), &p, t.Context(), nil)
+		var syntax *json.SyntaxError
+		if !errors.Is(err, ErrDurableStorageRecovery) || errors.As(err, &syntax) != tc.malformed {
+			t.Fatalf("wrong semantic/syntax disposition: %q: %v", tc.body, err)
+		}
+	}
+	for _, malformed := range []bool{false, true} {
+		body := strings.Repeat("[", 130) + "null" + strings.Repeat("]", 130)
+		if malformed {
+			body = body[:len(body)-1]
+		}
+		var raw json.RawMessage
+		err := closedPublicationDecode([]byte(body), &raw)
+		var syntax *json.SyntaxError
+		if !errors.Is(err, ErrDurableStorageRecovery) || errors.As(err, &syntax) != malformed {
+			t.Fatalf("wrong depth/syntax disposition: %v: %v", malformed, err)
+		}
+	}
+}
