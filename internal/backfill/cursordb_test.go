@@ -750,6 +750,57 @@ func TestCursorDatabaseReaderStaleSideFiles(t *testing.T) {
 	assertUnchanged(t, dir, before)
 }
 
+// TestCursorRecoveryReaderSettledSideFiles: the -wal and -shm a quit Cursor
+// left behind after checkpointing everything (the -wal empty) don't make the
+// recovery inventory locked: the catalog and each chat are read, and nothing
+// beside the database changes. Frames left in the -wal still lock it.
+func TestCursorRecoveryReaderSettledSideFiles(t *testing.T) {
+	t.Parallel()
+	for _, frames := range []bool{false, true} {
+		t.Run(fmt.Sprintf("frames=%v", frames), func(t *testing.T) {
+			t.Parallel()
+			env := newTree(t).env()
+			path := env.cursorStateDatabase()
+			w := startCursorWriter(t, path, true)
+			w.do("full:a", "checkpoint")
+			if frames {
+				w.do("full:b")
+			}
+			w.kill()
+			dir := filepath.Dir(path)
+			before := snapshotDir(t, dir)
+			if _, ok := before["state.vscdb-shm"]; !ok {
+				t.Fatal("the killed writer left no -shm file")
+			}
+			if wal, ok := before["state.vscdb-wal"]; !ok || (wal.size == 0) == frames {
+				t.Fatalf("-wal %+v present %v", wal, ok)
+			}
+			res, err := CursorRecoveryDatabaseReaderFor(env)(t.Context(), cursorRecoveryRows, cursorRecoveryBytes)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if frames {
+				if res.Checked || res.Reason != CursorUncheckedLocked {
+					t.Fatalf("checked %v, reason %q", res.Checked, res.Reason)
+				}
+				assertUnchanged(t, dir, before)
+				return
+			}
+			if !res.Checked || !reflect.DeepEqual(chatIDs(res), []string{"a"}) {
+				t.Fatalf("%+v", res)
+			}
+			c, snap, err := res.ReadRecoverySnapshot(t.Context(), "a", &cursorRecoveryReadBudget{remaining: cursorRecoveryBytes, rows: cursorRecoveryRecords})
+			if err != nil || len(c.Composer) == 0 || len(c.Bubbles) != 2 {
+				t.Fatal(c, err)
+			}
+			if err := errors.Join(snap.Close(), res.Close()); err != nil {
+				t.Fatal(err)
+			}
+			assertUnchanged(t, dir, before)
+		})
+	}
+}
+
 // TestCursorDatabaseReaderJournal: a rollback-journal database with a write
 // in progress, and the hot journal a killed writer leaves, are not checked.
 func TestCursorDatabaseReaderJournal(t *testing.T) {
