@@ -535,7 +535,15 @@ matching rule wins.
    stale evidence. Neither planning nor automatic discovery uses uncommitted
    proposed roots as capture authorization.
 4. **Repository.** If walking up finds a `.git` directory, use its parent.
-   The walk stops at home.
+   The walk stops at home. A repository inside a temporary directory (rule
+   6), reached directly or through one of its worktrees, is not a project:
+   the session is temporary under rule 6. Such repositories are mostly
+   throwaway clones an agent made, say to review a pull request, and adding
+   one would capture every later session there. A configured project still
+   owns it (rule 2), and a worktree in a temporary directory of a repository
+   elsewhere still folds into that repository (rule 3). A temporary
+   directory that holds home (a container or sandbox whose `HOME` is under
+   `/tmp`) does not make the repositories in home temporary.
 5. **Desktop app workspaces.** Anything under
    `~/Library/Application Support/Claude/scratch-workspaces/` (Claude desktop
    scratch chats) or `~/Documents/Codex/` (Codex desktop's dated workspaces,
@@ -550,9 +558,12 @@ matching rule wins.
    configured project is already in Documents is the folder's own symlink
    resolved, as before.
 6. **Temporary directories.** `/tmp`, `/private/tmp`, `/var/folders`, and
-   `$TMPDIR` are skipped with `temporary_directory`. With `--include-temp`,
-   each directory becomes its own project. These sessions are mostly tool
-   runs whose folders are gone.
+   `$TMPDIR` are skipped with `temporary_directory`, under both their given
+   and symlink-resolved spellings (`/tmp` is `/private/tmp` on macOS), and so
+   is a repository in one (rule 4). With `--include-temp`, each session's
+   directory becomes its own project, except that a repository in one
+   becomes one project at its root, which its worktrees join wherever they
+   are. These sessions are mostly tool runs whose folders are gone.
 7. **Home and above.** Home is skipped with `home_directory`. With
    `--include-home`, it becomes a project, and unless home is already
    included, the plan warns that it will then capture every future session

@@ -50,7 +50,9 @@ may have made; a copy a killed backfill leaves is removed by the next
   afterwards. Their subagent chats are not imported yet; the plan says how
   many there are.
 - Sessions run from your home directory or a temporary directory are skipped
-  unless you pass `--include-home` or `--include-temp`.
+  unless you pass `--include-home` or `--include-temp`. A Git repository in a
+  temporary directory, such as a throwaway clone an agent made to review a
+  pull request, counts as temporary too.
 - A plain folder that isn't a repository (say `~/code`, where you once ran an
   agent) becomes a project that captures new sessions anywhere under it
   that no nearer project owns; the plan says so under its row. Repositories

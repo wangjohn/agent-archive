@@ -1358,8 +1358,9 @@ func offerFirstCapture(available []string, p *prompter, cfg *config.Config, dete
 // line to print: it is the home folder or a folder that holds it (a dotfiles
 // checkout, or a stray .git above it), or a temporary folder or a folder that
 // holds one. Setup then asks for the projects and pre-selects none. A
-// repository inside a temporary folder is an ordinary project, as backfill
-// treats it: only the folder itself is too broad.
+// repository inside a temporary folder is offered: setup running there is
+// the person's own choice, unlike backfill, which treats such a repository
+// as temporary. Only the folder itself is too broad.
 func currentProject(env Env, userHome string) (current, refused string) {
 	dir, err := os.Getwd()
 	if env.WorkingDir != nil {
