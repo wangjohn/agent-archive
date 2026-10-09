@@ -1,7 +1,7 @@
 # agent-archive
 
 [![Test](https://github.com/wangjohn/agent-archive/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/wangjohn/agent-archive/actions/workflows/test.yml)
-[![Go 1.27](https://img.shields.io/badge/go-1.27.1-00ADD8?logo=go)](go.mod)
+[![Go 1.27](https://img.shields.io/badge/go-1.27.2-00ADD8?logo=go)](go.mod)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 A lightweight CLI that captures Claude Code, Codex, and Cursor sessions and stores them in cloud storage (S3 or R2).
