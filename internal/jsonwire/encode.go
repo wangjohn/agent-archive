@@ -179,7 +179,7 @@ func (e *streamEncoder) escaped(s string, emit func(string) error) error {
 				size = n
 				part = s[i : i+n]
 				if r == utf8.RuneError && n == 1 {
-					part = "\\ufffd"
+					part = "�"
 				}
 				if r == '\u2028' {
 					part = "\\u2028"
