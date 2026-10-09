@@ -1,6 +1,7 @@
 # CLI performance implementation plan
 
-Status: proposed. Baseline: main at `a21bc752`, 2026-10-07.
+Status: proposed. Initial benchmark production baseline: main at
+`d914dfb2391dd5f8b18b2d182b17bf6f4269e256`, 2026-10-07.
 Cover all five areas from the performance review: concurrent
 reads, listing and cache cost, query selection, bounded discovery, and stats
 computation. Preserve output, search rules, retention, and source verification.

@@ -27,8 +27,10 @@ outside timed/allocation measurements.
 Reader and command scale operations include opening the metadata cache. Reader
 cases additionally report `cacheOpen-ns/op`; their total includes that span.
 Command cases call `Run` with injected `Env` and include flags, config loading,
-store opening, cache work, discovery, downloads and JSON rendering to a discard
-writer. They exclude OS process execution, credential lookup and real network
+store opening, cache work, discovery, downloads and JSON rendering to a buffer. After stopping the timer, command cases
+validate that same JSON document against the expected count, identity order,
+revision, and complete match count. Validation does not issue another read or
+warm the cache. They exclude OS process execution, credential lookup and real network
 transport. Limits select by capture time; limit 0 exercises exhaustive fallback.
 
 `MeasuredStore` retains versioned GET, bounded GET, paged/ranged LIST and Stat
@@ -83,3 +85,12 @@ latency, first-screen and command-read cases. This closes the matrix execution
 coverage gap. Unrelated CPU race tests and temporary cleanup overlapped that
 run, so its wall times still carry an external-contention limitation. They do
 not establish idle-host, live-provider or real-terminal acceptance.
+
+Command result validation adds measured buffer writes and allocations to the
+harness. Freeze this updated harness on both the production baseline and the
+optimization candidate before comparing them; earlier discard-writer timings
+are not equivalent. Preserve exact production commits/trees, harness/source and
+fixture hashes, toolchain/build settings and every raw sample. The initial
+production baseline above is historical provenance, not a claim that prior
+samples used the current toolchain or repaired harness. Controlled matched
+measurements of the repaired harness remain pending.

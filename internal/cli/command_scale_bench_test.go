@@ -23,7 +23,7 @@ import (
 )
 
 // BenchmarkCommandScale measures Run: config/startup, cache, discovery, selected
-// metadata and rendering. It discards output; benchmark reports contain no data.
+// metadata and rendering. It validates captured JSON after timing; benchmark reports contain no data.
 func BenchmarkCommandScale(b *testing.B) {
 	for _, c := range storagetest.ScaleCases() {
 		b.Run(c.Name(), func(b *testing.B) { benchmarkListCase(b, c) })
@@ -37,7 +37,7 @@ func BenchmarkCommandLatency(b *testing.B) {
 	}
 }
 
-func benchmarkEnv(b *testing.B, home string, store storage.ObjectStore) Env {
+func benchmarkEnv(b testing.TB, home string, store storage.ObjectStore) Env {
 	b.Helper()
 	cfg := config.Config{MachineID: "bench", Storage: credentialsTestConfig(), Archive: archive.Config{SchemaVersion: 1, MachineID: "bench", Enabled: true}}
 	if err := config.Save(home, cfg); err != nil {
@@ -77,14 +77,46 @@ func benchmarkListCase(b *testing.B, c storagetest.BenchCase) {
 		if c.CacheState == "changed" {
 			storagetest.SeedArchive(b, mem, c.Sessions, 1)
 		}
+		var output bytes.Buffer
 		b.StartTimer()
-		code := Run(args, nil, io.Discard, io.Discard, env)
+		code := Run(args, nil, &output, io.Discard, env)
 		b.StopTimer()
-		if code != 0 {
-			b.Fatalf("synthetic list exit %d", code)
+		if err := validateBenchmarkList(code, output.Bytes(), c); err != nil {
+			b.Fatal(err)
 		}
 	}
 	storagetest.ReportReadMetrics(b, store.Metrics())
+}
+
+// validateBenchmarkList checks the same invocation whose work was measured.
+// Decode and validation run after StopTimer, without another cache-warming read.
+func validateBenchmarkList(code int, output []byte, c storagetest.BenchCase) error {
+	if code != 0 {
+		return fmt.Errorf("synthetic list exit %d", code)
+	}
+	var doc listDocument
+	if err := json.Unmarshal(output, &doc); err != nil {
+		return fmt.Errorf("synthetic list JSON: %w", err)
+	}
+	want := c.Sessions
+	if c.Limit > 0 {
+		want = min(want, c.Limit)
+	}
+	if doc.Version != listSchemaVersion || doc.Limit != c.Limit || doc.Returned != want || len(doc.Sessions) != want || !doc.TotalMatchedKnown || doc.TotalMatched == nil || *doc.TotalMatched != c.Sessions || doc.Truncated != (want < c.Sessions) {
+		return errors.New("incomplete synthetic command listing")
+	}
+	generation := 0
+	if c.CacheState == "changed" {
+		generation = 1
+	}
+	for i, m := range doc.Sessions {
+		identity := c.Sessions - i
+		id := fmt.Sprintf("%08x%024x", identity, identity)
+		if m.SessionID != id || m.NativeSessionID != id || m.Harness.Name != "codex" || m.Title != fmt.Sprintf("synthetic-%d", generation) || !m.CapturedAt.Equal(storagetest.BenchmarkTime.Add(time.Duration(identity-1)*time.Second)) {
+			return errors.New("incorrect synthetic command listing order or revision")
+		}
+	}
+	return nil
 }
 
 // BenchmarkUsableTerminalScreen measures the first complete interactive stats
@@ -264,5 +296,102 @@ func seedBenchmarkStats(b *testing.B, mem *storagetest.MemoryStore, count int) {
 		if err = listingindex.PutRevision(ctx, mem, revision); err != nil {
 			b.Fatal(err)
 		}
+	}
+}
+
+// This is an actual command check, not another timed benchmark operation.
+// A successful exhaustive command can skip damaged sidecars: that partial
+// output must never be accepted as a cheaper complete benchmark result.
+func TestBenchmarkCommandOutputRequiresCompleteSyntheticListing(t *testing.T) {
+	for _, state := range []string{"cold", "warm", "changed"} {
+		for _, limit := range []int{1, 50, 0} {
+			t.Run(fmt.Sprintf("%s/%d", state, limit), func(t *testing.T) {
+				c := storagetest.BenchCase{Sessions: 3, Limit: limit, CacheState: state}
+				mem := storagetest.NewMemoryStore()
+				storagetest.SeedArchive(t, mem, c.Sessions, 0)
+				env := benchmarkEnv(t, t.TempDir(), mem)
+				args := []string{"list", "--all-projects", "--json", "--limit", strconv.Itoa(limit)}
+				if state != "cold" {
+					if code := Run(args, nil, io.Discard, io.Discard, env); code != 0 {
+						t.Fatalf("warmup exit %d", code)
+					}
+				}
+				if state == "changed" {
+					storagetest.SeedArchive(t, mem, c.Sessions, 1)
+				}
+				var output bytes.Buffer
+				code := Run(args, nil, &output, io.Discard, env)
+				if err := validateBenchmarkList(code, output.Bytes(), c); err != nil {
+					t.Fatal(err)
+				}
+			})
+		}
+	}
+	t.Run("successful-partial-command", func(t *testing.T) {
+		mem := storagetest.NewMemoryStore()
+		storagetest.SeedArchive(t, mem, 3, 0)
+		key, err := archive.MetadataObjectKey("codex", "00000003000000000000000000000003")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := mem.Put(t.Context(), key, []byte("{invalid")); err != nil {
+			t.Fatal(err)
+		}
+		env := benchmarkEnv(t, t.TempDir(), mem)
+		var output, diagnostics bytes.Buffer
+		code := Run([]string{"list", "--all-projects", "--json", "--limit", "0"}, nil, &output, &diagnostics, env)
+		var doc listDocument
+		if err := json.Unmarshal(output.Bytes(), &doc); err != nil {
+			t.Fatal(err)
+		}
+		if code != 0 || len(doc.Sessions) != 2 || diagnostics.Len() == 0 {
+			t.Fatalf("partial command control: exit=%d returned=%d diagnostic-bytes=%d", code, len(doc.Sessions), diagnostics.Len())
+		}
+		c := storagetest.BenchCase{Sessions: 3, Limit: 0, CacheState: "cold"}
+		if err := validateBenchmarkList(code, output.Bytes(), c); err == nil {
+			t.Fatal("benchmark accepted successful partial listing")
+		}
+	})
+}
+
+func TestBenchmarkListRejectsIncorrectSuccessfulDocuments(t *testing.T) {
+	mem := storagetest.NewMemoryStore()
+	storagetest.SeedArchive(t, mem, 3, 0)
+	env := benchmarkEnv(t, t.TempDir(), mem)
+	var output bytes.Buffer
+	code := Run([]string{"list", "--all-projects", "--json", "--limit", "0"}, nil, &output, io.Discard, env)
+	c := storagetest.BenchCase{Sessions: 3, Limit: 0, CacheState: "cold"}
+	if err := validateBenchmarkList(code, output.Bytes(), c); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name   string
+		mutate func(*listDocument)
+	}{
+		{"omitted", func(doc *listDocument) { doc.Sessions = doc.Sessions[:2] }},
+		{"returned-count", func(doc *listDocument) { doc.Returned = 2 }},
+		{"unknown-total", func(doc *listDocument) { doc.TotalMatchedKnown = false }},
+		{"wrong-total", func(doc *listDocument) {
+			total := 2
+			doc.TotalMatched = &total
+		}},
+		{"reordered", func(doc *listDocument) { doc.Sessions[0], doc.Sessions[1] = doc.Sessions[1], doc.Sessions[0] }},
+		{"wrong-identity", func(doc *listDocument) { doc.Sessions[0].NativeSessionID = "other" }},
+		{"stale-revision", func(doc *listDocument) { doc.Sessions[0].Title = "synthetic-1" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var doc listDocument
+			if err := json.Unmarshal(output.Bytes(), &doc); err != nil {
+				t.Fatal(err)
+			}
+			tc.mutate(&doc)
+			data, err := json.Marshal(doc)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := validateBenchmarkList(0, data, c); err == nil {
+				t.Fatal("benchmark accepted incorrect successful document")
+			}
+		})
 	}
 }
