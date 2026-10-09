@@ -526,8 +526,12 @@ matching rule wins.
    their transcripts, and header facts come from complete leading records that
    an append cannot change; a header no complete record decided already keeps
    recovery unavailable. The owning session's own source observation still
-   skips it as `source_changed` and still governs its witness renewal. Paths no
-   session owns keep the full size and modification-time comparison.
+   skips it as `source_changed` and still governs its witness renewal, but
+   that check only runs for imported sessions' sources and for the witness a
+   recovery relies on: a same-inode rewrite that grows any other owned
+   transcript is not detected. Agents append rather than rewrite in place, so
+   this limit is accepted. Paths no session owns keep the full size and
+   modification-time comparison.
    Known plain-folder and absent-cwd ownership is also renewed, so a newly
    created checkout cannot evade clone evidence. This is an observation boundary,
    not an atomic filesystem snapshot.

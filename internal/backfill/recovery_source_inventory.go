@@ -16,8 +16,11 @@ import (
 // append to their transcripts, and every header fact comes from a complete
 // leading record that an append cannot change. A header that no complete record
 // decided (no cwd yet, no session_meta) already leaves recovery unavailable for
-// the plan. That item's own source check (checkSource, sourceCurrent) remains
-// responsible for its content. Added, removed or replaced paths, mode changes,
+// the plan. An owned file's content is only rechecked where its own source
+// check (checkSource, sourceCurrent) runs: for an imported session's source and
+// for the witness a recovery relies on. A same-inode rewrite that grows another
+// owned transcript is therefore not caught here; agents append rather than
+// rewrite, so that limit is accepted. Added, removed or replaced paths, mode changes,
 // truncation and same-size rewrites still change the inventory, as does any
 // change to a path no work item owns. These are practical observations, with
 // the same timestamp-restoration limit as the existing native file checks, not
