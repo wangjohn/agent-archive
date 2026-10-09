@@ -45,6 +45,8 @@ func TestTemporaryCloneRemainsRecordedRecoveryMembership(t *testing.T) {
 					cloneRemote = "https://example.test/acme/other"
 				case temporaryRecoveryKeyless:
 					cloneRemote = tr.path("local-origin")
+				case temporaryRecoverySameKey, temporaryRecoveryFailedOrigin, temporaryRecoveryDanglingMarker, temporaryRecoveryPlainFolder:
+					// These cases retain the original remote.
 				}
 				if identity == temporaryRecoveryDanglingMarker {
 					if err := os.Symlink(filepath.Join(clone, "missing-git"), filepath.Join(clone, ".git")); err != nil {
