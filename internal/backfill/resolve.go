@@ -319,7 +319,7 @@ func (r *resolver) isWorkspaceFolder(resolved string) bool {
 func (r *resolver) temporaryRepository(repo string) bool {
 	inHome := local.PathWithin(repo, r.home) || local.PathWithin(repo, r.homeRaw)
 	for _, temp := range r.temps {
-		if local.PathWithin(repo, temp) && !(inHome && r.homeOrAbove(temp)) {
+		if local.PathWithin(repo, temp) && (!inHome || !r.homeOrAbove(temp)) {
 			return true
 		}
 	}
