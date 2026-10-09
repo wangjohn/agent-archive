@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"testing"
 	"time"
 
@@ -110,7 +111,7 @@ func TestRemoteRootChildrenUsesFullAuthorityAndLazyEmptyWindow(t *testing.T) {
 
 func TestRemoteRootChildrenReusesOnlyCompleteSameRootSQL(t *testing.T) {
 	for _, count := range []int{128, 512} {
-		t.Run(fmt.Sprint(count), func(t *testing.T) {
+		t.Run(strconv.Itoa(count), func(t *testing.T) {
 			remote, legacy, cutoff := rootRemoteFixture(t, count)
 			measured := storagetest.NewMeasuredStore(remote, 0)
 			cache, err := OpenMetadataCache(t.TempDir())

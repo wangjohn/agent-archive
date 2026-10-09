@@ -241,6 +241,17 @@ func openExistingRootCatalog(ctx context.Context, store storage.ObjectStore, opt
 		_ = db.Close()
 		return nil, ctx.Err()
 	}
+	defer func() { _ = rows.Close() }()
+	if rows.Next() {
+		_ = db.Close()
+		return nil, ctx.Err()
+	}
+	if err = rows.Err(); err != nil {
+		_ = db.Close()
+		// A failed local schema probe cannot authorize reuse. Cancellation
+		// remains an error; unavailable cache state uses lazy selection.
+		return nil, ctx.Err()
+	}
 	if err = rows.Close(); err != nil {
 		_ = db.Close()
 		return nil, err

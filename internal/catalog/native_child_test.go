@@ -6,6 +6,16 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 )
 
+type nativeChildTransition string
+
+const (
+	nativeChildUnresolved nativeChildTransition = "unresolved"
+	nativeChildLinked     nativeChildTransition = "linked"
+	nativeChildUnlinked   nativeChildTransition = "unlinked"
+	nativeChildReplay     nativeChildTransition = "replay"
+	nativeChildDeleted    nativeChildTransition = "deleted"
+)
+
 func TestNativeChildOverflowCountsFollowResolvedParentOnly(t *testing.T) {
 	writer, raw := fixture(t)
 	parent := mutation(t, writer, "native-parent")
@@ -21,17 +31,17 @@ func TestNativeChildOverflowCountsFollowResolvedParentOnly(t *testing.T) {
 	}
 	child.ExpectedRevision = revision
 	activateFixture(t, writer)
-	for _, stage := range []string{"unresolved", "linked", "unlinked", "replay", "deleted"} {
-		if stage != "unresolved" {
-			child.ID = "native-transition/" + stage
+	for _, stage := range []nativeChildTransition{nativeChildUnresolved, nativeChildLinked, nativeChildUnlinked, nativeChildReplay, nativeChildDeleted} {
+		if stage != nativeChildUnresolved {
+			child.ID = "native-transition/" + string(stage)
 			switch stage {
-			case "linked":
+			case nativeChildLinked:
 				child.Next.Summary.ParentSessionID = parent.Next.Summary.SessionID
-			case "unlinked":
+			case nativeChildUnlinked:
 				child.Next.Summary.ParentSessionID = ""
-			case "replay":
+			case nativeChildReplay:
 				child.Next.Summary.Replay = &archive.Replay{}
-			case "deleted":
+			case nativeChildDeleted:
 				child.Next = nil
 			}
 			if child.Next != nil {
@@ -61,10 +71,10 @@ func TestNativeChildOverflowCountsFollowResolvedParentOnly(t *testing.T) {
 			}
 			expected := uint64(1)
 			kind := "ordinary/"
-			if stage == "replay" {
+			if stage == nativeChildReplay {
 				kind = "replay/"
 			}
-			if stage == "deleted" {
+			if stage == nativeChildDeleted {
 				expected = 0
 			}
 			if countRange(index, "!children/"+kind) != expected {
@@ -79,13 +89,13 @@ func TestNativeChildOverflowCountsFollowResolvedParentOnly(t *testing.T) {
 			t.Fatal(stage, err)
 		}
 		expected := uint64(0)
-		if stage == "linked" {
+		if stage == nativeChildLinked {
 			expected = 1
 		}
 		if entry.OrdinaryChildren != expected || entry.ReplayChildren != 0 {
 			t.Fatal(stage, "parent counter differs", entry.OrdinaryChildren, entry.ReplayChildren)
 		}
-		if stage == "deleted" {
+		if stage == nativeChildDeleted {
 			continue
 		}
 		entry, err = snapshot.Find(t.Context(), child.SessionKey)
