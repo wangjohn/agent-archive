@@ -967,9 +967,13 @@ func bindingFacts(f *rolloutFile, home string, own *uint64) (archive.CodexSource
 		return archive.CodexSourceBinding{}, sourceFailure(agentapi.Unavailable, "native creation evidence unavailable")
 	}
 	var source string
-	if json.Unmarshal(f.meta.Source, &source) != nil && len(f.meta.Source) > 0 {
+	rawSource := f.meta.Source
+	if projected, known := f.meta.ExecutionSourceFacts(); known {
+		rawSource = projected
+	}
+	if json.Unmarshal(rawSource, &source) != nil && len(rawSource) > 0 {
 		var value any
-		if err := json.Unmarshal(f.meta.Source, &value); err != nil {
+		if err := json.Unmarshal(rawSource, &value); err != nil {
 			return archive.CodexSourceBinding{}, err
 		}
 		encoded, err := json.Marshal(value)
@@ -979,7 +983,7 @@ func bindingFacts(f *rolloutFile, home string, own *uint64) (archive.CodexSource
 		source = string(encoded)
 	}
 	root := f.identity.RootID
-	if root == "" && !f.identity.Child {
+	if root == "" && !f.identity.Child && f.identity.ForkID == "" {
 		root = f.identity.ThreadID
 	}
 	facts := archive.CodexSourceBinding{Version: 1, Child: f.identity.Child, NativeThreadID: f.identity.ThreadID, NativeCreatedAt: created, Cwd: f.meta.Cwd, SelectedCwd: f.meta.Cwd, ProducerSource: source, PhysicalProducerVersion: f.meta.Version, PhysicalProducerOriginator: f.meta.Originator, RootID: root, ParentID: f.identity.ParentID, OwnStart: own, PhysicalRolloutID: f.identity.RolloutID, Path: f.ref.Path, Home: home}

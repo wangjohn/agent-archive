@@ -85,16 +85,12 @@ func TestCodexSubagentPathDoesNotEnableTranscriptCapture(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("parent request found=%t err=%v", found, err)
 	}
-	childID := ""
 	for _, evidence := range request.HookEvidence {
-		if evidence.Kind == archive.EvidenceKindLinkedSession && evidence.Payload["status"] == string(archive.LinkedSessionUnavailable) {
-			childID, _ = evidence.Payload["archive_session_id"].(string)
+		if evidence.Kind == archive.EvidenceKindLinkedSession {
+			t.Fatal("unverified Codex stop synthesized a child archive identity")
 		}
 	}
-	if childID == "" {
-		t.Fatalf("missing unavailable link: %+v", request.HookEvidence)
-	}
-	if _, found, err := store.LoadRegistration(childID); err != nil || found {
-		t.Fatalf("unsupported child registration found=%t err=%v", found, err)
+	if _, found, err := store.ArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.Codex, NativeID: "parent-native:subagent:agent-1"}); err != nil || found {
+		t.Fatalf("composite native identity allocated: found=%v err=%v", found, err)
 	}
 }

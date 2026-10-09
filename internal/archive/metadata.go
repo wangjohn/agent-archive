@@ -152,8 +152,8 @@ func baseMetadata(bundle SourceBundle, machineID string, startedAt, derivedAt ti
 		SemanticConventions: &SemanticConventionsInfo{Name: "OpenTelemetry GenAI semantic conventions", Revision: OpenTelemetryGenAIRevision},
 		SkillDetection:      SkillDetectionUnavailable,
 		CaptureGaps:         append([]CaptureGap(nil), bundle.Capture.Gaps...), SourceBundle: reference,
-		ParentSessionID: bundle.ParentSessionID,
-		LinkedSessions:  append([]LinkedSessionReference(nil), bundle.LinkedSessions...),
+		NativeChild: bundle.NativeChild, ParentSessionID: bundle.ParentSessionID,
+		LinkedSessions: append([]LinkedSessionReference(nil), bundle.LinkedSessions...),
 	}
 	return m
 }
