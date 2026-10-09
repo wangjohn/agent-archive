@@ -7,16 +7,22 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/backfill"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/discovery"
 	"github.com/wangjohn/agent-archive/internal/state"
 )
 
 // buildBackfillPlan owns the same trusted lookup used by continuous capture.
 func buildBackfillPlan(ctx context.Context, env Env, home, userHome string, cfg config.Config, filters backfill.Filters) (plan backfill.Plan, err error) {
-	lookup, _, err := passCodexRollouts(ctx, state.OpenReadOnly(home), cfg, env)
+	return buildBackfillPlanWithLookup(ctx, env, home, userHome, cfg, filters, passCodexRollouts)
+}
+
+// buildBackfillPlanWithLookup keeps preview resource ownership around every exit.
+func buildBackfillPlanWithLookup(ctx context.Context, env Env, home, userHome string, cfg config.Config, filters backfill.Filters, openLookup func(context.Context, *state.Store, config.Config, Env) (*discovery.CodexRolloutLookup, []string, error)) (plan backfill.Plan, err error) {
+	lookup, _, err := openLookup(ctx, state.OpenReadOnly(home), cfg, env)
 	if err != nil {
 		return plan, err
 	}
-	defer func() { err = errors.Join(err, lookup.Close()) }()
+	defer func() { err = errors.Join(err, lookup.CloseReadOnly()) }()
 	native := env.backfillEnvironment(userHome, cfg)
 	native.CodexRollouts = lookup
 	native.PrepareCodexProof = func(ctx context.Context, ids []string) error {
