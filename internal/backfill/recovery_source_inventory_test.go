@@ -64,7 +64,10 @@ func appendRecord(t *testing.T, path, record string) {
 // may grow in place, while every other membership change still invalidates.
 func TestRecoverySourceInventoryToleratesOwnedAppendsOnly(t *testing.T) {
 	const header = `{"cwd":"/work"}` + "\n"
-	grow := func(t *testing.T, _ *tree, file string) { appendRecord(t, file, `{"more":1}`+"\n") }
+	grow := func(t *testing.T, _ *tree, file string) {
+		t.Helper()
+		appendRecord(t, file, `{"more":1}`+"\n")
+	}
 	for _, tc := range []struct {
 		name    string
 		unowned bool
@@ -76,11 +79,13 @@ func TestRecoverySourceInventoryToleratesOwnedAppendsOnly(t *testing.T) {
 		{name: "unowned append", unowned: true, mutate: grow},
 		{name: "added transcript", mutate: func(_ *testing.T, tr *tree, _ string) { tr.write("home/store/added.jsonl", header) }},
 		{name: "removed transcript", mutate: func(t *testing.T, _ *tree, file string) {
+			t.Helper()
 			if err := os.Remove(file); err != nil {
 				t.Fatal(err)
 			}
 		}},
 		{name: "replaced transcript", mutate: func(t *testing.T, tr *tree, file string) {
+			t.Helper()
 			// A larger file under a new inode is a replacement, not an append.
 			next := tr.write("home/next.jsonl", header+`{"more":1}`+"\n")
 			if err := os.Rename(next, file); err != nil {
@@ -88,6 +93,7 @@ func TestRecoverySourceInventoryToleratesOwnedAppendsOnly(t *testing.T) {
 			}
 		}},
 		{name: "replaced transcript, directory time restored", mutate: func(t *testing.T, tr *tree, file string) {
+			t.Helper()
 			dir, err := os.Lstat(filepath.Dir(file))
 			if err != nil {
 				t.Fatal(err)
@@ -101,16 +107,19 @@ func TestRecoverySourceInventoryToleratesOwnedAppendsOnly(t *testing.T) {
 			}
 		}},
 		{name: "truncated transcript", mutate: func(t *testing.T, _ *tree, file string) {
+			t.Helper()
 			if err := os.Truncate(file, 1); err != nil {
 				t.Fatal(err)
 			}
 		}},
 		{name: "same-size rewrite", mutate: func(t *testing.T, _ *tree, file string) {
+			t.Helper()
 			if err := os.Chtimes(file, time.Now(), time.Now().Add(time.Hour)); err != nil {
 				t.Fatal(err)
 			}
 		}},
 		{name: "mode change", mutate: func(t *testing.T, _ *tree, file string) {
+			t.Helper()
 			if err := os.Chmod(file, 0o600); err != nil {
 				t.Fatal(err)
 			}
