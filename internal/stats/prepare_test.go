@@ -53,6 +53,59 @@ func TestPreparedMatchesOriginalAccountingAcrossWindows(t *testing.T) {
 	}
 }
 
+func TestPreparedNativeChildAccountingAcrossWindows(t *testing.T) {
+	root := meta("root", "codex", prepareNow, modelTokens("gpt-5", 100, 50, 0, 0))
+	unknownParent := meta("unknown-parent", "codex", prepareNow, modelTokens("gpt-5", 20, 10, 0, 0))
+	unknownParent.NativeChild = true
+	missingParent := unknownParent
+	missingParent.SessionID = "missing-parent"
+	missingParent.ParentSessionID = "absent"
+	resolved := unknownParent
+	resolved.SessionID = "resolved"
+	resolved.ParentSessionID = root.SessionID
+	// A child's capture time must not move its accounting out of its root's window.
+	resolved.CapturedAt = prepareNow.AddDate(0, 0, -40)
+	for _, tc := range []struct {
+		name     string
+		sessions []archive.Metadata
+		orphans  int
+		children int
+	}{
+		{name: "ordinary root", sessions: []archive.Metadata{root}},
+		{name: "unknown parent", sessions: []archive.Metadata{unknownParent}, orphans: 1},
+		{name: "missing parent", sessions: []archive.Metadata{missingParent}, orphans: 1},
+		{name: "resolved parent", sessions: []archive.Metadata{root, resolved}, children: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := Prepare(tc.sessions, PrepareOptions{Location: newYork})
+			shuffled := slices.Clone(tc.sessions)
+			slices.Reverse(shuffled)
+			q := Prepare(shuffled, PrepareOptions{Location: newYork})
+			for _, days := range []int{1, 7, 30, 1} {
+				opts := Options{Now: prepareNow, Days: days, Location: newYork, AllRows: true}
+				want := legacyCompute(tc.sessions, opts)
+				for _, result := range []struct {
+					name  string
+					stats Stats
+				}{
+					{"oracle", want},
+					{"one-shot", Compute(tc.sessions, opts)},
+					{"prepared", p.Compute(opts)},
+					{"shuffled", q.Compute(opts)},
+				} {
+					cov := result.stats.Coverage
+					if cov.Sessions != 1 || cov.OrphanSubagents != tc.orphans || cov.SubagentSessions != tc.children {
+						t.Fatalf("%s/%d days: unexpected coverage %+v", result.name, days, cov)
+					}
+					if statsJSON(t, result.stats) != statsJSON(t, want) {
+						t.Fatalf("%s/%d days differs from current accounting oracle", result.name, days)
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestPreparedOwnsInputsAndResults(t *testing.T) {
 	sessions, _ := randomArchive(rand.New(rand.NewPCG(7, 7)), 80)
 	sessions = append(sessions, meta("highlight", "claude", prepareNow, modelTokens("claude-opus-5-5", 1_000_000, 1_000_000, 0, 0), messages(2), compactions(1), skill("demo:skill"), mcp("demo-server", 3)))
