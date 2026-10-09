@@ -136,6 +136,7 @@ func (s *sessionScan) stricterHistorySuccessor(p state.PendingPublication, commi
 		return state.PendingPublication{}, errors.New("stricter successor exceeds input limit")
 	}
 	next := p
+	next.Catalog = nil
 	// A retained policy successor did not consume native input under this
 	// policy. Preserve its pending native-read obligation, never a settled proof.
 	next.ScanSignature = nil

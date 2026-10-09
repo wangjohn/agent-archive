@@ -11,9 +11,11 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/catalog"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
+	"github.com/wangjohn/agent-archive/internal/destination"
 	"github.com/wangjohn/agent-archive/internal/discovery"
 	"github.com/wangjohn/agent-archive/internal/evidence"
 	"github.com/wangjohn/agent-archive/internal/gitremote"
@@ -513,6 +515,9 @@ func openConfiguredStore(cfg config.Config, credentialStore func() (credentials.
 }
 
 func openConfiguredStoreContext(ctx context.Context, cfg config.Config, credentialStore func() (credentials.CredentialStore, error)) (storage.ObjectStore, error) {
+	if err := storage.CheckConfiguredArchiveFormat(cfg.Storage); err != nil {
+		return nil, err
+	}
 	var store credentials.CredentialStore
 	// Spelled as storage.NewConfiguredStore reads it.
 	if strings.EqualFold(strings.TrimSpace(cfg.Storage.Provider), credentials.ProviderR2) {
@@ -521,7 +526,22 @@ func openConfiguredStoreContext(ctx context.Context, cfg config.Config, credenti
 			return nil, storageOpenError(credentialOS, err)
 		}
 	}
-	return storage.NewConfiguredStore(ctx, cfg.Storage, store)
+	remote, err := storage.NewConfiguredStore(ctx, cfg.Storage, store)
+	if err != nil {
+		return nil, err
+	}
+	return configuredArchiveStore(cfg.Storage.EffectiveArchiveFormat(), remote)
+}
+
+func configuredArchiveStore(format destination.ArchiveFormat, remote storage.ObjectStore) (storage.ObjectStore, error) {
+	switch format {
+	case destination.FormatLegacy:
+		return remote, nil
+	case destination.FormatCatalogV4:
+		return catalog.Wrap(remote)
+	default:
+		return nil, storage.ErrAtomicCatalogUnqualified
+	}
 }
 
 // skillObserver shares bounded observations within a pass: user-scope skill

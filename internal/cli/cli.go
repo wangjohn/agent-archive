@@ -623,6 +623,8 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 		return runHookCommand(args[1:], stdin, stderr, env)
 	case "_collect":
 		return runCollectCommand(args[1:], stdout, stderr, env)
+	case "_catalog":
+		return runCatalogOperator(args[1:], stdout, stderr, env)
 	case "machines":
 		return runMachinesWithInput(args[1:], stdin, stdout, stderr, env)
 	case "status":
