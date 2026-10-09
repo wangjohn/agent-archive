@@ -71,12 +71,15 @@ type RecoveryResolver struct {
 	Validate    func(RepositoryIdentity) bool
 	// Proposed names inventory roots that are not committed configuration
 	// (backfill's prospective roots). See nonOwning.
-	Proposed             map[string]bool
-	rawResolve           func(string) string
-	pathContext          string
-	mappedIdentities     map[string]RepositoryIdentity
-	MetadataOperations   int
-	MetadataExhausted    bool
+	Proposed           map[string]bool
+	rawResolve         func(string) string
+	pathContext        string
+	mappedIdentities   map[string]RepositoryIdentity
+	MetadataOperations int
+	MetadataExhausted  bool
+	// prefixValidated counts leading inventory entries already shown current
+	// (or freshly observed) in this validation slice; see prepareInventory.
+	prefixValidated      int
 	sliceValidated       map[string]bool
 	observationContext   context.Context
 	semanticValidated    bool
@@ -291,9 +294,13 @@ func (r *RecoveryResolver) prepareInventory(ctx context.Context) RecoveryOutcome
 		return RecoveryInventoryUnavailable
 	}
 	inv := r.Inventory
+	// Entries validated or observed earlier in this slice are not charged
+	// again: the metadata allowance holds one prefix validation per slice, not
+	// one per candidate. Admission (Current) still rechecks every entry, and a
+	// failed Current clears this mark so the next candidate revalidates.
 	if r.Validate != nil {
-		for i, id := range inv.Entries {
-			if id.Known && !r.identityCurrent(id) {
+		for i := r.prefixValidated; i < len(inv.Entries); i++ {
+			if id := inv.Entries[i]; id.Known && !r.identityCurrent(id) {
 				if r.MetadataExhausted {
 					return RecoveryBudgetExhausted
 				}
@@ -319,6 +326,7 @@ func (r *RecoveryResolver) prepareInventory(ctx context.Context) RecoveryOutcome
 		inv.Entries = append(inv.Entries, id)
 		inv.Cursor++
 	}
+	r.prefixValidated = len(inv.Entries)
 	if r.digest == "" {
 		b, _ := json.Marshal(inv)
 		sum := sha256.Sum256(b)
@@ -374,7 +382,22 @@ func safeRepositoryIdentity(id RepositoryIdentity) RepositoryIdentity {
 
 // Current rechecks content-free proof dependencies outside admission locks.
 // Semantic evidence gets one bounded second sweep; stale evidence stays pending.
+// A failure that is not budget exhaustion makes the next Recover revalidate
+// the inventory prefix, so later candidates are not planned on stale entries.
+// Only this check's own exhaustion counts: an allowance exhausted earlier in
+// the slice must not hide a change this check did observe.
 func (r *RecoveryResolver) Current(proof archive.ProjectResolution) bool {
+	exhausted := r.MetadataExhausted
+	r.MetadataExhausted = false
+	current := r.current(proof)
+	if !current && !r.MetadataExhausted {
+		r.prefixValidated = 0
+	}
+	r.MetadataExhausted = r.MetadataExhausted || exhausted
+	return current
+}
+
+func (r *RecoveryResolver) current(proof archive.ProjectResolution) bool {
 	if proof.ValidationMethod == "semantic" && (r.observationContext == nil || r.observationContext.Err() != nil) {
 		r.MetadataExhausted = true
 		return false
@@ -441,6 +464,7 @@ func (r *RecoveryResolver) metadataLimit() int {
 func (r *RecoveryResolver) ResetValidation() {
 	r.MetadataOperations = 0
 	r.MetadataExhausted = false
+	r.prefixValidated = 0
 	r.sliceValidated = nil
 	r.semanticValidated = false
 	r.semanticChecked = false

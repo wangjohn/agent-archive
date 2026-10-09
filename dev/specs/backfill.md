@@ -1329,6 +1329,13 @@ project resolution: at most `max(1024, 2 * configured_roots * 129)` dependency
 rechecks and canonical-path resolver invocations per discovery pass (at most
 1024 roots). Two maximum-sized inventories leave room to validate a resumed
 prefix and admit a recovered source. Further candidates remain retryable.
+Planning validates the inventory prefix once per allowance, not once per
+candidate: later candidates reuse entries already validated or observed in
+the same pass, so the prefix costs at most `128 * configured_roots` rechecks
+however many sessions are planned. A failed freshness check, or a new
+allowance, makes the next candidate revalidate the prefix; admission still
+rechecks every entry. A recovery limit that remains is reported without a
+promise that retrying clears it.
 `repository_metadata_operations` reports those invocation units; a canonical
 path invocation may perform multiple filesystem probes. Import resets this
 allowance per short hold, with one common inventory check for its candidates.
