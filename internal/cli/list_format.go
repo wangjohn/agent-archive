@@ -129,6 +129,9 @@ func formatSessionRows(sessions []archive.Metadata, opts listFormatOptions) []li
 			title = archive.DisplayLine(display)
 		}
 		parent := ""
+		if m.NativeChild && m.ParentSessionID == "" {
+			parent = "pending"
+		}
 		if m.ParentSessionID != "" {
 			parent = archive.DisplayLine(shortSessionID(m.ParentSessionID))
 		}
