@@ -121,11 +121,11 @@ const (
 
 func (s *sessionScan) id() string { return s.reg.ArchiveSessionID }
 
-func (s *sessionScan) run() (sessionOutcome, error) {
+func (s *sessionScan) run(ctx context.Context) (sessionOutcome, error) {
 	if err := s.prepareRetainedOwnership(); err != nil {
 		return outcomeSkipped, err
 	}
-	if outcome, handled, err := s.prepareRetainedHistoryWork(); handled || err != nil {
+	if outcome, handled, err := s.prepareRetainedHistoryWork(ctx); handled || err != nil {
 		return outcome, err
 	}
 	if err := s.checkRetainedHistory(); err != nil {
@@ -174,7 +174,7 @@ func (s *sessionScan) run() (sessionOutcome, error) {
 	if settled, err := s.compare(read, &candidate); settled || err != nil {
 		return outcomeSkipped, err
 	}
-	candidate, blocked, err := s.guard(s.ctx, read, candidate, supplemental)
+	candidate, blocked, err := s.guard(ctx, read, candidate, supplemental)
 	if blocked || err != nil {
 		return outcomeSkipped, err
 	}
@@ -213,10 +213,13 @@ func (s *sessionScan) resume() (outcome sessionOutcome, handled bool, err error)
 		return regenerateMetadata(s)
 	}
 	if pending.History != nil {
-		outcome, err := s.resumeHistory(pending)
+		outcome, err := s.resumeHistory(s.ctx, pending)
 		return outcome, true, err
 	}
 	if pendingSkillMode(pending.SkillEvidence) != s.opts.skillEvidence() {
+		if pending.Catalog != nil {
+			return outcomeSkipped, true, state.ErrCatalogJournalFrozen
+		}
 		// An older pending file may contain broader evidence. Discard it
 		// before any retry; the next scan rebuilds under the active policy.
 		if err := s.local.RemovePending(s.id()); err != nil {
@@ -225,6 +228,9 @@ func (s *sessionScan) resume() (outcome sessionOutcome, handled bool, err error)
 		return outcomeSkipped, false, nil
 	}
 	if !pending.Attempted && s.req.Token != "" && s.req.Token != pending.RequestToken {
+		if pending.Catalog != nil {
+			return outcomeSkipped, true, state.ErrCatalogJournalFrozen
+		}
 		// A stop/end request is a natural debounce flush. A merely rate-limited,
 		// never-attempted candidate can be safely replaced by a richer one;
 		// deferred lifecycle evidence enriches it without changing when it
@@ -236,6 +242,9 @@ func (s *sessionScan) resume() (outcome sessionOutcome, handled bool, err error)
 	// publicationReadyAt); it is capped durably, since a cap recomputed from
 	// each pass's now would keep moving away.
 	if latest := s.now.Add(s.opts.minUploadInterval()); pending.ReadyAt.After(latest) {
+		if pending.Catalog != nil {
+			return outcomeSkipped, true, state.ErrCatalogJournalFrozen
+		}
 		pending.ReadyAt = latest
 		if err := s.local.SavePending(s.id(), pending); err != nil {
 			return outcomeSkipped, true, fmt.Errorf("cap pending publication time: %w", err)
@@ -245,7 +254,7 @@ func (s *sessionScan) resume() (outcome sessionOutcome, handled bool, err error)
 		s.readyAt = pending.ReadyAt
 		return outcomeRateLimited, true, nil
 	}
-	outcome, err = s.publishPending(pending)
+	outcome, err = s.publishPending(s.ctx, pending)
 	return outcome, true, err
 }
 
@@ -654,7 +663,7 @@ func (s *sessionScan) publish(read sourceRead, candidate archive.SourceBundle) (
 		return outcomeSkipped, fmt.Errorf("persist pending publication: %w", err)
 	}
 	if pending.History != nil {
-		outcome, err := s.resumeHistory(pending)
+		outcome, err := s.resumeHistory(s.ctx, pending)
 		if err != nil || outcome != outcomePublished {
 			return outcome, err
 		}
@@ -667,7 +676,7 @@ func (s *sessionScan) publish(read sourceRead, candidate archive.SourceBundle) (
 		s.readyAt = readyAt
 		return outcomeRateLimited, nil
 	}
-	outcome, err := s.publishPending(pending)
+	outcome, err := s.publishPending(s.ctx, pending)
 	if err != nil || outcome != outcomePublished {
 		return outcome, err
 	}

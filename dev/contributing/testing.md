@@ -90,11 +90,16 @@ it is blocked (`TestHookRegistersOnTimeWhenTheRepoKeyLookupHangs`).
 
 The `verify` job (`levenshtein.yml`) runs the shared checks from
 [wangjohn/levenshtein](https://github.com/wangjohn/levenshtein) at the
-commit that workflow pins, in a Linux container: Go lint (staticcheck and
-more) and vet, HTTP and SQL rules, `go.mod` hygiene, `govulncheck`,
-`actionlint`, and `zizmor` for the workflows. `levenshtein.json` picks the
-checks. Run the same thing from a sibling checkout of Levenshtein at the
-pinned commit (it needs Docker):
+commit that workflow pins: Go lint (staticcheck and more) and vet, HTTP and
+SQL rules, `go.mod` hygiene, `actionlint`, and `zizmor` run in its pinned
+Linux container. Only `govulncheck` uses the native `release-go` environment
+on the Linux runner, with the Go 1.27.2 release compiler installed from
+`app/go.mod` and checked exactly by the workflow. This scans the standard
+library shipped in release builds rather than the shared container's older
+compiler. The shared scanner version and rules remain pinned; vulnerability
+results are never cached. `levenshtein.json` keeps all eight checks enabled.
+Run the same thing from a sibling checkout of Levenshtein at the pinned
+commit (it needs Docker and Go 1.27.2 on PATH for the native scan):
 
 ```sh
 ../levenshtein/verify pre-merge --source .

@@ -169,7 +169,7 @@ func TestJournalSaveFailureRetainsVisibleSourceOnlyRecovery(t *testing.T) {
 	if err := os.MkdirAll(journal, 0700); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := scan.run(); err == nil {
+	if _, err := scan.run(scan.ctx); err == nil {
 		t.Fatal("journal failure ignored")
 	}
 	dir := filepath.Join(scan.local.Home(), "sessions", scan.id(), "pending-sources")
@@ -232,7 +232,7 @@ func TestJournalSaveFailureRetainsVisibleSourceOnlyRecovery(t *testing.T) {
 
 func TestMissingFrozenInputCannotUseChangedNativeBytes(t *testing.T) {
 	scan, _ := reconciliationFixture(t)
-	if _, err := scan.run(); !errors.Is(err, archive.ErrHistoryMutationPending) {
+	if _, err := scan.run(scan.ctx); !errors.Is(err, archive.ErrHistoryMutationPending) {
 		t.Fatal(err)
 	}
 	p, found, err := scan.local.LoadPending(scan.id())

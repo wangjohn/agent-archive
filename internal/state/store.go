@@ -743,7 +743,16 @@ func (s *Store) CompleteRequest(archiveSessionID, coveredToken string) (bool, er
 // and metadata bytes are persisted together before the first remote write, so
 // every retry uses the same hash and timestamps even after process restart.
 // Bundle remains available for change detection and future parser-only rebuilds.
+// CatalogPublication freezes the remote transaction before source upload.
+type CatalogPublication struct {
+	Protocol         uint64                `json:"protocol"`
+	ID               string                `json:"id"`
+	ExpectedRevision string                `json:"expected_revision"`
+	Recovery         *local.CatalogJournal `json:"recovery,omitempty"`
+}
+
 type PendingPublication struct {
+	Catalog *CatalogPublication `json:"commit,omitempty"`
 	// ScanSignature freezes the consumed native observation for resumed history
 	// acknowledgement. It never licenses newer input or a privacy successor.
 	ScanSignature *ScanSignature       `json:"scan_signature,omitempty"`
@@ -788,6 +797,9 @@ func (s *Store) pendingPath(id string) string {
 // validateComplete is the supported transaction structure shared by writes
 // and protected reads. History validation keeps its separate budget ownership.
 func (pending PendingPublication) validateComplete() error {
+	if pending.Catalog != nil && (pending.Catalog.ID == "" || len(pending.Catalog.ID) > 128 || len(pending.Catalog.ExpectedRevision) > 128) {
+		return errors.New("invalid catalog publication")
+	}
 	if len(pending.SourceBytes) > maxPendingHistoryBytes {
 		return ErrDurableStorageCapacity
 	}
@@ -800,6 +812,13 @@ func (pending PendingPublication) validateComplete() error {
 // validateReadablePending applies the existing publication checksum and JSON
 // preconditions without deriving new ownership or remote-source authority.
 func (s *Store) validateReadablePending(pending PendingPublication) error {
+	return s.validateReadablePendingContext(s.durableContext(), pending)
+}
+
+func (s *Store) validateReadablePendingContext(ctx context.Context, pending PendingPublication) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := pending.validateComplete(); err != nil {
 		return err
 	}
@@ -809,7 +828,7 @@ func (s *Store) validateReadablePending(pending PendingPublication) error {
 			return errors.New("pending source checksum does not match its persisted bytes")
 		}
 	}
-	scratch, closeScratch := s.WithReadBudget(s.durableContext(), s.resourceBudget)
+	scratch, closeScratch := s.WithReadBudget(ctx, s.resourceBudget)
 	defer closeScratch()
 	var metadata archive.Metadata
 	if err := scratch.unmarshalOwned(pending.MetadataBytes, &metadata); err != nil {
@@ -949,6 +968,16 @@ func (s *Store) HasPending(id string) (owed bool, err error) {
 // RemovePending discards a session's publication transaction once it has
 // been published and acknowledged locally. A missing one is not an error.
 func (s *Store) RemovePending(id string) error {
+	if !safeFileComponent(id) {
+		return errors.New("archive session ID is not a safe file name component")
+	}
+	if err := s.checkCatalogPendingRemoval(id); err != nil {
+		return err
+	}
+	return s.removePending(id)
+}
+
+func (s *Store) removePending(id string) error {
 	if !safeFileComponent(id) {
 		return errors.New("archive session ID is not a safe file name component")
 	}

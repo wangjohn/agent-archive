@@ -25,6 +25,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/listingindex"
+	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
@@ -33,7 +34,12 @@ import (
 // local.Lock(home) around Run; Run itself does not acquire it, so it stays
 // simple to call directly from tests.
 type Options struct {
-	labelReadObserver func(int64)
+	// CollectorGuard enables origin-proved catalog journal recovery. Direct
+	// callers without the actual flock retain the existing non-recovery path.
+	CollectorGuard *local.CollectorGuard
+	// CatalogDestination is the configured credential-free namespace identity.
+	CatalogDestination string
+	labelReadObserver  func(int64)
 	// Labels supplies optional bounded native metadata for existing retained sessions.
 	Labels           agentapi.LabelsLookup
 	LabelEnvironment agentapi.LabelEnvironment
@@ -220,6 +226,9 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	if opts.MachineID == "" {
 		return Result{}, errors.New("machine ID is required")
 	}
+	if err := recoverCatalogRemovals(ctx, local, store, opts); err != nil {
+		return Result{}, err
+	}
 	durableObligations, durableErr := local.DurableStorageObligations()
 	if durableErr != nil {
 		return Result{Errors: map[string]error{"durable-storage": durableErr}}, durableErr
@@ -316,7 +325,7 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 		if p.opts.AcceptSession != nil && !p.opts.AcceptSession(reg) {
 			continue
 		}
-		p.scan(reg)
+		p.scan(ctx, reg)
 	}
 	return p.result, p.saveStatus()
 }
@@ -461,9 +470,9 @@ func (p *pass) fail(id string, err error) {
 
 // scan gives one session its turn in the pass: skip it if nothing about it
 // changed, otherwise scan it (sessionScan.run) and account for the outcome.
-func (p *pass) scan(reg archive.SessionRegistration) {
+func (p *pass) scan(ctx context.Context, reg archive.SessionRegistration) {
 	priorLocal := p.local
-	scopedLocal, closeLocal := p.local.WithReadBudget(p.ctx, (&sessionScan{opts: p.opts}).readBudget())
+	scopedLocal, closeLocal := p.local.WithReadBudget(ctx, (&sessionScan{opts: p.opts}).readBudget())
 	p.local = scopedLocal
 	defer func() { closeLocal(); p.local = priorLocal }()
 	id := reg.ArchiveSessionID
@@ -498,9 +507,9 @@ func (p *pass) scan(reg archive.SessionRegistration) {
 		addError(p.result.Errors, id, err)
 		p.pending++
 	}
-	scan := newSessionScan(p.ctx, p.local, p.remote, reg, req, published, p.now, p.opts)
+	scan := newSessionScan(ctx, p.local, p.remote, reg, req, published, p.now, p.opts)
 	defer scan.releaseRetained()
-	outcome, err := scan.run()
+	outcome, err := scan.run(ctx)
 	for _, warning := range scan.warnings {
 		addError(p.result.Errors, id, warning)
 	}
@@ -714,6 +723,14 @@ func (p *pass) repairListingIndex() {
 			continue
 		}
 		if p.opts.AcceptSession != nil && !p.opts.AcceptSession(reg) {
+			continue
+		}
+		if remote, ok := p.remote.(storage.CatalogPublisher); ok && remote.CatalogMetadataAuthority() {
+			// Catalog indexes commit together with metadata in the head. A
+			// crash journal cannot authorize auxiliary legacy publication.
+			if err := p.local.RemoveListingRepair(id); err != nil {
+				p.result.Errors["listing-maintenance"] = err
+			}
 			continue
 		}
 		getter, ok := p.remote.(storage.VersionedGetter)

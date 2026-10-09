@@ -87,6 +87,7 @@ var commandGuides = map[string]string{
 	"show":             "[Inspect the archive](../guides/list-and-show.md)",
 	"stats":            "[See your usage](../guides/stats.md); `--json` in [JSON output](json-output.md)",
 	"feedback":         "[Feedback](../guides/list-and-show.md#feedback)",
+	"migrate":          "[Migrate the archive](../guides/catalog-migration.md)",
 	"backfill":         "[Import existing sessions](../guides/backfill.md)",
 	"backfill history": "[Import existing sessions](../guides/backfill.md)",
 	"backfill undo":    "[Undo an import](../guides/backfill.md#undo)",
