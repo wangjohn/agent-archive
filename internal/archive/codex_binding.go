@@ -1,8 +1,11 @@
 package archive
 
 import (
+	"encoding/json"
 	"errors"
+	"github.com/wangjohn/agent-archive/internal/codexmeta"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -48,5 +51,30 @@ func (b *CodexSourceBinding) PreservesFacts(previous *CodexSourceBinding) bool {
 	if previous == nil {
 		return true
 	}
-	return (previous.FirstNativeTaskAt.IsZero() || b.FirstNativeTaskAt.Equal(previous.FirstNativeTaskAt) && b.FirstNativeTaskID == previous.FirstNativeTaskID) && b.Child == previous.Child && b.NativeThreadID == previous.NativeThreadID && b.NativeCreatedAt.Equal(previous.NativeCreatedAt) && b.Cwd == previous.Cwd && b.ProducerSource == previous.ProducerSource && (previous.RootID == "" || b.RootID == previous.RootID) && (previous.ParentID == "" || b.ParentID == previous.ParentID) && (previous.OwnStart == nil || b.OwnStart != nil && *b.OwnStart == *previous.OwnStart) && (previous.Home == "" || b.Home == previous.Home)
+	return (previous.FirstNativeTaskAt.IsZero() || b.FirstNativeTaskAt.Equal(previous.FirstNativeTaskAt) && b.FirstNativeTaskID == previous.FirstNativeTaskID) && b.Child == previous.Child && b.NativeThreadID == previous.NativeThreadID && b.NativeCreatedAt.Equal(previous.NativeCreatedAt) && b.Cwd == previous.Cwd && bindingProducerSourcesEqual(b, previous) && (previous.RootID == "" || b.RootID == previous.RootID) && (previous.ParentID == "" || b.ParentID == previous.ParentID) && (previous.OwnStart == nil || b.OwnStart != nil && *b.OwnStart == *previous.OwnStart) && (previous.Home == "" || b.Home == previous.Home)
+}
+
+func bindingProducerSourcesEqual(current, previous *CodexSourceBinding) bool {
+	if current.ProducerSource == previous.ProducerSource {
+		return true
+	}
+	return bindingProducerFacts(current) == bindingProducerFacts(previous)
+}
+
+func bindingProducerFacts(binding *CodexSourceBinding) string {
+	raw := json.RawMessage(binding.ProducerSource)
+	if !strings.HasPrefix(binding.ProducerSource, "{") {
+		raw, _ = json.Marshal(binding.ProducerSource)
+	}
+	meta := codexmeta.CodexMeta{ID: binding.NativeThreadID, SessionID: binding.RootID, Source: raw}
+	if projected, known := meta.ExecutionSourceFacts(); known {
+		return string(projected)
+	}
+	return binding.ProducerSource
+}
+
+// RequiresOwnTask identifies independent child or fork ownership.
+// A physical revision of an ordinary thread does not establish a new owner.
+func (b *CodexSourceBinding) RequiresOwnTask() bool {
+	return b != nil && (b.Child || b.OwnStart != nil)
 }

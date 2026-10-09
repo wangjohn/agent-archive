@@ -152,6 +152,12 @@ func jsonEncodingsEqual(a, b any) (bool, error) {
 // must not restart the parent's retention clock (retention.go measures from
 // Capture.CapturedAt).
 func bundleChangeIsLinkOnly(a, b archive.SourceBundle) (bool, error) {
+	// Resolving a native child's archive parent carries no new own activity.
+	if a.NativeChild && b.NativeChild && (a.ParentSessionID == b.ParentSessionID || a.ParentSessionID == "" && b.ParentSessionID != "") {
+		a.ParentSessionID, b.ParentSessionID = "", ""
+		a.Capture.Gaps = withoutNativeParentPendingGap(a.Capture.Gaps)
+		b.Capture.Gaps = withoutNativeParentPendingGap(b.Capture.Gaps)
+	}
 	a.LinkedSessions, b.LinkedSessions = nil, nil
 	a.SupplementalEvidence = withoutLinkedSessionEvidence(a.SupplementalEvidence)
 	b.SupplementalEvidence = withoutLinkedSessionEvidence(b.SupplementalEvidence)
@@ -187,6 +193,16 @@ func mergeSupplementalEvidence(existing []archive.SupplementalEvidence, groups .
 	out := existing
 	for _, additions := range groups {
 		out = archive.MergeSupplementalEvidence(out, additions)
+	}
+	return out
+}
+
+func withoutNativeParentPendingGap(gaps []archive.CaptureGap) []archive.CaptureGap {
+	out := make([]archive.CaptureGap, 0, len(gaps))
+	for _, gap := range gaps {
+		if gap.Code != "native_parent_link_pending" {
+			out = append(out, gap)
+		}
 	}
 	return out
 }

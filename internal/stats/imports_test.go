@@ -18,6 +18,7 @@ const (
 	modulePrefix    = "github.com/wangjohn/agent-archive/internal/"
 	archivePath     = "github.com/wangjohn/agent-archive/internal/archive"
 	identityPath    = "github.com/wangjohn/agent-archive/internal/agentmeta"
+	codexFactsPath  = "github.com/wangjohn/agent-archive/internal/codexmeta"
 	wirePath        = "github.com/wangjohn/agent-archive/internal/jsonwire"
 )
 
@@ -35,10 +36,11 @@ func TestStatsImportBoundary(t *testing.T) {
 		"golang.org/x/term",
 		identityPath,
 		wirePath,
+		codexFactsPath,
 	)
 	for _, path := range all {
-		if strings.HasPrefix(path, modulePrefix) && path != archivePath && path != identityPath && path != wirePath {
-			t.Errorf("internal/stats reaches %s; only internal/archive and its pure agentmeta/jsonwire dependencies are allowed", path)
+		if strings.HasPrefix(path, modulePrefix) && path != archivePath && path != identityPath && path != wirePath && path != codexFactsPath {
+			t.Errorf("internal/stats reaches %s; only internal/archive and its pure agentmeta/jsonwire/codexmeta dependencies are allowed", path)
 		}
 	}
 	importgraph.Forbid(t, "internal/stats (transitively)", all, "net/http", "os/exec")

@@ -2,6 +2,7 @@ package backfill
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
@@ -276,7 +277,7 @@ func loadUndoSessions(env Environment, store *state.Store, cfg config.Config, b 
 			parents = append(parents, s)
 		}
 	}
-	return slices.Concat(children, parents), nil
+	return orderUndoChildrenFirst(slices.Concat(children, parents))
 }
 
 // undoAppsToRemove is the configuration decision after session selection.
@@ -372,7 +373,7 @@ func keptOutToRemove(env Environment, cfg config.Config, regs []archive.SessionR
 	return out
 }
 
-// retentionDeletes counts the sessions (not subagents) in cfg's destination,
+// retentionDeletes counts independent owners in cfg's destination,
 // other than those undo removes, that retention of r.From days deletes and
 // retention of r.To days does not: those restoring r.From costs. A session
 // ages as retention ages it: from its last capture, or its admission when it
@@ -390,7 +391,7 @@ func retentionDeletes(store *state.Store, cfg config.Config, regs []archive.Sess
 	from, to := time.Duration(r.From)*24*time.Hour, time.Duration(r.To)*24*time.Hour
 	n := 0
 	for _, reg := range regs {
-		if reg.ParentSessionID != "" || removed[reg.ArchiveSessionID] || !cfg.InCurrentDestination(reg) {
+		if !independentImportOwner(reg) || removed[reg.ArchiveSessionID] || !cfg.InCurrentDestination(reg) {
 			continue
 		}
 		ageFrom := reg.Admitted()
@@ -420,7 +421,7 @@ func retentionDeletes(store *state.Store, cfg config.Config, regs []archive.Sess
 func sessionsOutsideBatch(regs []archive.SessionRegistration, b Batch) int {
 	n := 0
 	for _, reg := range regs {
-		if !reg.InBatch(b.ID) || reg.ParentSessionID != "" || reg.AdmittedAt.IsZero() {
+		if !reg.InBatch(b.ID) || !independentImportOwner(reg) || reg.AdmittedAt.IsZero() {
 			continue
 		}
 		if reg.AdmittedAt.Before(b.StartedAt) || b.CompletedAt != nil && reg.AdmittedAt.After(*b.CompletedAt) {
@@ -466,7 +467,7 @@ func undoProjects(cfg config.Config, regs []archive.SessionRegistration, batches
 		candidate := slices.Contains(b.ProjectsAdded, project.ProjectID)
 		var from []string
 		if !candidate && slices.ContainsFunc(regs, func(reg archive.SessionRegistration) bool {
-			return reg.InBatch(b.ID) && reg.ParentSessionID == "" && inside(reg, project)
+			return reg.InBatch(b.ID) && independentImportOwner(reg) && inside(reg, project)
 		}) {
 			// b takes the project over from each earlier undo that kept it
 			// for b: one that names b among the imports it kept it for, or,
@@ -500,7 +501,7 @@ func undoProjects(cfg config.Config, regs []archive.SessionRegistration, batches
 		}
 		kept := KeptProject{Project: project}
 		for _, reg := range regs {
-			if reg.Imported() && !reg.ImportBatch.IsZero() && !reg.InBatch(b.ID) && reg.ParentSessionID == "" && inside(reg, project) {
+			if reg.Imported() && !reg.ImportBatch.IsZero() && !reg.InBatch(b.ID) && independentImportOwner(reg) && inside(reg, project) {
 				kept.Sessions++
 				kept.Imports = addUnique(kept.Imports, reg.ImportBatch.Recorded())
 			}
@@ -632,7 +633,7 @@ type UndoCounts struct {
 func (p UndoPlan) Counts() UndoCounts {
 	var c UndoCounts
 	for _, s := range p.Sessions {
-		parent := s.Registration.ParentSessionID == ""
+		parent := !s.Registration.IsChild()
 		if parent {
 			c.Sessions++
 			if s.Resumed {
@@ -1039,4 +1040,62 @@ func themIt(n int) string {
 		return "it"
 	}
 	return "them"
+}
+
+// Delete descendants before selected ancestors. Only exact batch membership
+// supplied by selection participates; external parents are never pulled in.
+func orderUndoChildrenFirst(sessions []UndoSession) ([]UndoSession, error) {
+	index := make(map[string]int, len(sessions))
+	for i, s := range sessions {
+		index[s.Registration.ArchiveSessionID] = i
+	}
+	depth := map[string]int{}
+	visiting := map[string]bool{}
+	var walk func(string, int) (int, error)
+	walk = func(id string, level int) (int, error) {
+		if level > 64 || visiting[id] {
+			return 0, errors.New("invalid nested child relationship")
+		}
+		if d, ok := depth[id]; ok {
+			return d, nil
+		}
+		i, found := index[id]
+		if !found {
+			return 0, nil
+		}
+		visiting[id] = true
+		reg := sessions[i].Registration
+		d := 0
+		if reg.IsChild() {
+			d = 1
+		}
+		if _, found := index[reg.ParentSessionID]; found {
+			parent, err := walk(reg.ParentSessionID, level+1)
+			if err != nil {
+				return 0, err
+			}
+			d = parent + 1
+		}
+		if d > 64 {
+			return 0, errors.New("invalid nested child relationship")
+		}
+		delete(visiting, id)
+		depth[id] = d
+		return d, nil
+	}
+	for id := range index {
+		if _, err := walk(id, 0); err != nil {
+			return nil, err
+		}
+	}
+	slices.SortStableFunc(sessions, func(a, b UndoSession) int {
+		return depth[b.Registration.ArchiveSessionID] - depth[a.Registration.ArchiveSessionID]
+	})
+	return sessions, nil
+}
+
+// Native Codex children own their import permission and project responsibility.
+// Other subagents continue to follow their imported parent.
+func independentImportOwner(reg archive.SessionRegistration) bool {
+	return reg.NativeChild || reg.ParentSessionID == ""
 }

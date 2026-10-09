@@ -246,3 +246,57 @@ func TestRevisionWriterRefusesOversizedIdentityComponents(t *testing.T) {
 		t.Fatalf("oversized identity: %v", err)
 	}
 }
+
+// Unresolved native children must stay children through the segmented summary,
+// including canonical validation and cleanup on component-limited object stores.
+func TestSegmentedRevisionKeepsNativeChildOwnership(t *testing.T) {
+	t.Parallel()
+	key, data := revisionMetadata(t)
+	var metadata archive.Metadata
+	if err := json.Unmarshal(data, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	metadata.NativeChild = true
+	data, err := json.Marshal(metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &componentLimitedStore{storagetest.NewMemoryStore()}
+	if err := store.Put(t.Context(), key, data); err != nil {
+		t.Fatal(err)
+	}
+	if err := listingindex.PublishRevision(t.Context(), store, key, data); err != nil {
+		t.Fatal(err)
+	}
+	hints, err := store.List(t.Context(), listingindex.V3Prefix)
+	if err != nil || len(hints) != 1 {
+		t.Fatal(hints, err)
+	}
+	parsed, err := listingindex.ParseRevision(hints[0].Key)
+	if err != nil || !parsed.NativeChild || parsed.Parent != "" {
+		t.Fatal("native child ownership lost in segmented summary", parsed, err)
+	}
+	for component := range strings.SplitSeq(hints[0].Key, "/") {
+		if len(component) > 255 {
+			t.Fatal("component too large")
+		}
+	}
+	if err := parsed.ValidateMetadata(data); err != nil {
+		t.Fatal(err)
+	}
+	metadata.NativeChild = false
+	changed, err := json.Marshal(metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := parsed.ValidateMetadata(changed); err == nil {
+		t.Fatal("changed child identity accepted")
+	}
+	if err := listingindex.DeleteSession(t.Context(), store, "codex", "session"); err != nil {
+		t.Fatal(err)
+	}
+	hints, err = store.List(t.Context(), listingindex.V3Prefix)
+	if err != nil || len(hints) != 0 {
+		t.Fatal("native child listing cleanup failed", hints, err)
+	}
+}

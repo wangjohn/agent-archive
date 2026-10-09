@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"github.com/wangjohn/agent-archive/internal/agents/builtin"
 	"github.com/wangjohn/agent-archive/internal/state"
 
 	"github.com/wangjohn/agent-archive/internal/testutil/recoverytest"
@@ -30,7 +31,7 @@ func TestScannerRejectsImportedFirstTaskDespiteLaterNativeResume(t *testing.T) {
 	if err := os.WriteFile(path, raw, 0600); err != nil {
 		t.Fatal(err)
 	}
-	h, err := run(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(2 * time.Minute) }}, syntheticSupport)
+	h, err := run(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(2 * time.Minute) }}, syntheticSupport)
 	if err != nil || h.Registered != 0 || h.Outcomes["inherited_history"] == 0 {
 		t.Fatalf("imported first turn admitted: %#v %v", h, err)
 	}
@@ -78,7 +79,7 @@ func TestScannerAcceptsPaginatedNativeWorktreeForConfiguredMain(t *testing.T) {
 	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0600); err != nil {
 		t.Fatal(err)
 	}
-	h, err := run(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(2 * time.Minute) }}, syntheticSupport)
+	h, err := run(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(2 * time.Minute) }}, syntheticSupport)
 	if err != nil || h.Registered != 1 {
 		t.Fatalf("paginated worktree rejected: %#v %v", h, err)
 	}
@@ -101,7 +102,7 @@ func TestIncompleteSourceRetriesWhenFirstTaskArrives(t *testing.T) {
 	if err := os.WriteFile(path, []byte(lines[0]+"\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	options := Options{Now: func() time.Time { return at.Add(2 * time.Minute) }}
+	options := Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(2 * time.Minute) }}
 	h, err := run(context.Background(), store, cfg, options, syntheticSupport)
 	if err != nil || h.Registered != 0 || h.Outcomes["incomplete_metadata"] == 0 {
 		t.Fatalf("partial task admitted: %#v %v", h, err)
@@ -166,7 +167,7 @@ func TestPreviousCatalogCannotBypassRevisedNegativeClassifications(t *testing.T)
 	if err := local.Write(filepath.Join(store.Home(), "discovery-catalog.json"), old); err != nil {
 		t.Fatal(err)
 	}
-	h, err := run(context.Background(), store, cfg, Options{Now: func() time.Time { return now }}, syntheticSupport)
+	h, err := run(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return now }}, syntheticSupport)
 	if err != nil || h.Registered != 0 || h.Outcomes["unsupported_execution"] == 0 {
 		t.Fatalf("old cache bypassed classifier: %#v %v", h, err)
 	}
