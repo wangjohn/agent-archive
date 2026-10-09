@@ -3,6 +3,7 @@ package backfill
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"hash"
 	"io"
 	"io/fs"
@@ -57,7 +58,7 @@ func (r *recoveryHeaderReader) Read(p []byte) (int, error) {
 		_, _ = r.hash.Write(p[:n])
 	}
 	r.bytes += int64(n)
-	if err != nil && err != io.EOF {
+	if err != nil && !errors.Is(err, io.EOF) {
 		r.valid = false
 	}
 	return n, err
