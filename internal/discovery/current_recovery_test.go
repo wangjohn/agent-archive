@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agents/builtin"
-	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/state"
@@ -25,7 +24,7 @@ func TestMovedDiscoveryContinuationRecoversOwnerOutsideNewStartWindow(t *testing
 	store, cfg, at, root := fixture(t)
 	project := cfg.Archive.Projects[0].Root
 	native := writeRollout(t, root, project, at.Add(time.Minute), 1, "sessions")
-	if h, err := run(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(2 * time.Minute) }}, syntheticSupport); err != nil || h.Registered != 1 {
+	if h, err := run(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(2 * time.Minute) }}, syntheticSupport); err != nil || h.Registered != 1 {
 		t.Fatalf("initial admission: %#v %v", h, err)
 	}
 	regs, err := store.LoadRegistrations()
@@ -68,7 +67,7 @@ func TestMovedDiscoveryContinuationRecoversOwnerOutsideNewStartWindow(t *testing
 	// An unrelated pre-consent original must remain unregistered even when
 	// census repair restores the existing admitted owner's derived indexes.
 	unknown := writeRollout(t, root, project, at.Add(-time.Hour), 2, "sessions")
-	options := Options{Now: func() time.Time { return at.Add(4 * time.Minute) }}
+	options := Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(4 * time.Minute) }}
 	for range 4 {
 		if h, err := runScheduledSynthetic(context.Background(), store, cfg, options); err != nil || h.Registered != 0 {
 			t.Fatalf("recovery allocated new identity: %#v %v", h, err)
@@ -89,8 +88,8 @@ func TestMovedDiscoveryContinuationRecoversOwnerOutsideNewStartWindow(t *testing
 	if err != nil || len(regs) != 1 {
 		t.Fatalf("recovery lost or duplicated registration: %#v %v", regs, err)
 	}
-	result, err := collector.Run(context.Background(), store, storagetest.NewMemoryStore(), collector.Options{Sources: builtin.NewBuiltins(), MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: options.Now})
-	if err != nil || len(result.Published) != 1 || len(result.Errors) != 0 {
+	result := collectNativeFixture(t, store, storagetest.NewMemoryStore(), root, options.Now())
+	if len(result.Published) != 1 || len(result.Errors) != 0 {
 		t.Fatalf("restored continuation did not publish: %#v %v", result, err)
 	}
 }
@@ -108,7 +107,7 @@ func TestCompletedEmptyCensusDoesNotRepeatForHistoricalUnknownSources(t *testing
 		writeRollout(t, root, cfg.Archive.Projects[0].Root, at.Add(-time.Hour), n, "sessions")
 	}
 	var priorGeneration string
-	options := Options{Now: func() time.Time { return at.Add(4 * time.Minute) }}
+	options := Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(4 * time.Minute) }}
 	for pass := range 5 {
 		if h, err := runScheduledSynthetic(context.Background(), store, cfg, options); err != nil || h.Registered != 0 {
 			t.Fatalf("historical unknown admitted: %#v %v", h, err)

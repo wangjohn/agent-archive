@@ -54,7 +54,7 @@ flowchart LR
 | `agents/builtin` | Immutable production operation bindings and precomputed runtime/cleanup projections; composition does no filesystem, version or executable probing. CLI composition injects narrow lookups into real consumers. |
 | `testutil/agenttest` | Launch and runtime conformance suites called by each native integration's tests. |
 | `archive` | Pure shared privacy policy, source envelope, normalized Analysis values and metadata/transcript/handoff builders. Native filtering and semantic parsing live in integration codecs; builders consume one caller-owned Analysis. |
-| `codexmeta` | Pure bounded Codex thread/root/parent/fork and physical rollout metadata interpretation; source facts do not authorize capture. |
+| `codexmeta` | Pure bounded Codex thread/root/parent/fork and physical rollout metadata interpretation; source facts do not authorize capture. Archive shares its canonical producer-source projection; stats consumers reach it only through archive. Its dependency guard permits pure standard-library interpretation and refuses file/process/network/random or clock access. |
 | `nativesessions` | Shared bounded no-setup discovery orchestration, header reservations, symlink/scope/cancellation policy and coverage. Injected native providers own purpose-specific roots and header interpretation. Import keeps its separate compatibility bounds. |
 | `transcriptio` | Verified regular-file snapshots, captured read boundaries and complete-record bounded head/tail windows. No native discovery or archive policy. |
 | `collector` | The scan, build, publish loop; change detection; subagent capture. |

@@ -3,6 +3,7 @@ package discovery
 import (
 	"context"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agents/builtin"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -64,7 +65,7 @@ func benchmarkCoverageAndWarmBurstMode(b *testing.B, count int, dated, wal bool)
 	_ = syscall.Getrusage(syscall.RUSAGE_SELF, &before)
 	passes, readBytes, probes := 0, int64(0), 0
 	for {
-		h, err := runScheduledSynthetic(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(2 * time.Minute) }})
+		h, err := runScheduledSynthetic(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(2 * time.Minute) }})
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -94,7 +95,7 @@ func benchmarkCoverageAndWarmBurstMode(b *testing.B, count int, dated, wal bool)
 	b.ResetTimer()
 	warmProbes := 0
 	for range b.N {
-		h, err := runScheduledSynthetic(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(2 * time.Minute) }})
+		h, err := runScheduledSynthetic(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(2 * time.Minute) }})
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -106,7 +107,7 @@ func benchmarkCoverageAndWarmBurstMode(b *testing.B, count int, dated, wal bool)
 		if len(regs) > 0 {
 			break
 		}
-		h, err := runScheduledSynthetic(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(2 * time.Minute) }})
+		h, err := runScheduledSynthetic(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(2 * time.Minute) }})
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -208,7 +209,7 @@ func BenchmarkIndexedWarmBurst(b *testing.B) {
 				}
 				coldPasses := 0
 				for {
-					h, err := runScheduledSynthetic(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(2 * time.Minute) }})
+					h, err := runScheduledSynthetic(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(2 * time.Minute) }})
 					if err != nil {
 						b.Fatal(err)
 					}
@@ -227,7 +228,7 @@ func BenchmarkIndexedWarmBurst(b *testing.B) {
 				b.ResetTimer()
 				for n := range b.N {
 					for {
-						h, err := runScheduledSynthetic(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(2 * time.Minute) }})
+						h, err := runScheduledSynthetic(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(2 * time.Minute) }})
 						if err != nil {
 							b.Fatal(err)
 						}

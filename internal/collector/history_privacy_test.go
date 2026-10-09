@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -135,7 +136,7 @@ func TestStricterHistoryPriorStagesAllOriginalsAndLeavesRequestsOwed(t *testing.
 		t.Fatal(next.History, err)
 	}
 	for i, input := range next.History.Inputs {
-		if input != before[i] {
+		if !reflect.DeepEqual(input, before[i]) {
 			t.Fatal("original evidence/provenance lost")
 		}
 		if _, err := scan.local.ReadPendingSource(scan.id(), state.PendingSource{Reference: input.Reference, Name: input.Reference.SHA256 + ".gz"}); err != nil {
@@ -544,7 +545,7 @@ func TestCommittedHistoryMaintenanceObligationSurvivesMissingOriginalRestart(t *
 		t.Fatal(err)
 	}
 	next, found, err := scan.local.LoadPending(scan.id())
-	if err != nil || !found || next.History.MaintenanceOwed || next.Attempted || next.History.Inputs[1] != original {
+	if err != nil || !found || next.History.MaintenanceOwed || next.Attempted || !reflect.DeepEqual(next.History.Inputs[1], original) {
 		t.Fatal("restart lost original provenance", err)
 	}
 	request, found, err := scan.local.LoadRequest(scan.id())
