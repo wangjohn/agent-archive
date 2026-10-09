@@ -225,7 +225,7 @@ func recoveryWitnessInventory(ctx context.Context, r *resolver, items []*work, c
 	witnesses := map[string][]*work{}
 	var gaps recoveryGaps
 	if r.inventoryCurrent != nil {
-		current := false
+		var current bool
 		if len(checkedHeaders) != 0 {
 			current = checkedHeaders[0]
 		} else {
