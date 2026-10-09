@@ -3,6 +3,7 @@ package discovery
 import (
 	"context"
 	"errors"
+	"github.com/wangjohn/agent-archive/internal/agents/builtin"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -57,7 +58,7 @@ func TestConflictingSourceDoesNotStarveLaterDirectoryBatches(t *testing.T) {
 	}
 	admitted := false
 	for range 12 {
-		h, err := runScheduledSynthetic(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(2 * time.Minute) }})
+		h, err := runScheduledSynthetic(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(2 * time.Minute) }})
 		if err != nil || h.Probes > HeaderProbes {
 			t.Fatalf("unbounded or failed scan: %#v %v", h, err)
 		}
@@ -143,7 +144,7 @@ func TestUnavailableDirectoryRetriesNextPassWithoutStarvingBacklog(t *testing.T)
 				t.Fatal(err)
 			}
 			adapter := &unavailableDirectoryAdapter{codexAdapter: codexAdapter{supported: syntheticSupport}, persistent: persistent}
-			opts := Options{Now: func() time.Time { return at.Add(2 * time.Minute) }}
+			opts := Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(2 * time.Minute) }}
 			first, err := runWithAdapters(context.Background(), store, cfg, opts, []SourceAdapter{adapter})
 			if err != nil || !first.Pending || first.Registered != 1 || first.Probes > HeaderProbes || adapter.attempts != 1 {
 				t.Fatalf("failed directory starved forward work: %#v attempts=%d %v", first, adapter.attempts, err)

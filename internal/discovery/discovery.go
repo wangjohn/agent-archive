@@ -54,13 +54,17 @@ type Health struct {
 	IndexBytes                   int64               `json:"index_bytes_read,omitempty"`
 	IndexQueries                 int                 `json:"index_queries,omitempty"`
 	IndexLocators                int                 `json:"index_locators,omitempty"`
-	NativeReadBytes              int64               `json:"native_read_bytes,omitempty"`
-	NativeReadOperations         int64               `json:"native_read_operations,omitempty"`
 	Bytes                        int64               `json:"bytes_read"`
+	NativeValidationBytes        int64               `json:"native_validation_bytes_read,omitempty"`
+	NativeValidationReads        int64               `json:"native_validation_reads,omitempty"`
+	NativeValidationAttempts     int64               `json:"native_validation_attempts,omitempty"`
+	NativeValidationOpens        int64               `json:"native_validation_opens,omitempty"`
 	Registered                   int                 `json:"registered"`
 	Outcomes                     map[string]int      `json:"outcomes,omitempty"`
 	Errors                       []string            `json:"errors,omitempty"`
 	Formats                      []FormatObservation `json:"observed_formats,omitempty"`
+	NativeReadBytes              int64               `json:"native_read_bytes,omitempty"`
+	NativeReadOperations         int64               `json:"native_read_operations,omitempty"`
 	RepositoryMetadataOperations int                 `json:"repository_metadata_operations,omitempty"`
 	RepositoryLookups            int                 `json:"repository_lookups,omitempty"`
 }
@@ -72,11 +76,12 @@ type directory struct {
 }
 
 type cached struct {
-	Size        int64       `json:"size"`
-	Mtime       int64       `json:"mtime"`
-	Checked     time.Time   `json:"checked"`
-	Observation Observation `json:"observation"`
-	ActiveHint  bool        `json:"active_hint,omitempty"`
+	SourceFingerprint string      `json:"source_fingerprint,omitempty"`
+	Size              int64       `json:"size"`
+	Mtime             int64       `json:"mtime"`
+	Checked           time.Time   `json:"checked"`
+	Observation       Observation `json:"observation"`
+	ActiveHint        bool        `json:"active_hint,omitempty"`
 }
 
 type catalog struct {
@@ -94,13 +99,16 @@ type catalog struct {
 // Options contains injectable clocks and stop signals; it cannot override
 // source format support or authorize capture.
 type Options struct {
-	inventoryOnly             bool
+	nativeOnly    bool
+	inventoryOnly bool
+	Sources       agentapi.SourcesLookup
+	CodexRollouts agentapi.CodexRolloutLookup
+	Now           func() time.Time
+	Stop          func() bool
+	// Rollouts receives the validated observations and bounded coverage state.
 	RepositoryIdentity        sourcefacts.RepositoryLookup
 	RepositoryIdentityCurrent func(sourcefacts.RepositoryIdentity) bool
-	// Rollouts receives the same validated observations and bounded coverage state.
-	Rollouts *CodexRolloutLookup
-	Now      func() time.Time
-	Stop     func() bool
+	Rollouts                  *CodexRolloutLookup
 }
 
 // Run observes configured Codex homes under the caller's collector lock,
@@ -110,7 +118,7 @@ func Run(ctx context.Context, store *state.Store, cfg config.Config, o Options) 
 	return runWithAdapters(ctx, store, cfg, o, registeredAdapters())
 }
 
-func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config, o Options, adapters []SourceAdapter) (Health, error) {
+func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config, o Options, adapters []SourceAdapter) (result Health, resultErr error) {
 	adapter := findAdapter(adapters, "codex")
 	if adapter == nil {
 		return Health{}, nil
@@ -139,7 +147,7 @@ func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config,
 		checkpointAllowance = min(Budget, o.Rollouts.remaining)
 		allowance = checkpointAllowance - time.Second
 		if allowance <= 0 {
-			return h, errors.New("native observation budget exhausted")
+			return h, agentapi.Wrap(agentapi.Limit, errors.New("native observation budget exhausted"))
 		}
 	}
 	started := time.Now()
@@ -154,27 +162,39 @@ func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config,
 	deadline := started.Add(allowance)
 	ctx, cancel := context.WithDeadline(checkpointCtx, deadline)
 	defer cancel()
+	if o.CodexRollouts == nil && o.Rollouts != nil {
+		o.CodexRollouts = o.Rollouts
+	}
+	proofs := &nativeProofPasses{sources: o.Sources, lookup: o.CodexRollouts, passes: map[string]agentapi.SourcePass{}}
+	defer func() { resultErr = errors.Join(resultErr, proofs.Close()) }()
 	resolver := sourcefacts.NewProjectResolver()
 	recovery := sourcefacts.NewRecoveryResolver(cfg.Archive.Projects, nil, canonicalProjectPath, o.RepositoryIdentity, &c.Recovery)
 	recovery.Validate = o.RepositoryIdentityCurrent
-	priority := scan{inventoryOnly: o.inventoryOnly, resolver: resolver, recovery: recovery, store: store, cfg: cfg, catalog: &c, health: &h, now: now, adapter: adapter, priority: true, ctx: ctx, rollouts: o.Rollouts}
+	priority := scan{nativeOnly: o.nativeOnly, inventoryOnly: o.inventoryOnly, proofs: proofs, resolver: resolver, recovery: recovery, store: store, cfg: cfg, catalog: &c, health: &h, now: now, adapter: adapter, priority: true, ctx: ctx, rollouts: o.Rollouts}
 	// The shared lookup owns the only native index projection. Production
 	// observation uses the shared directory worker rather than opening native
 	// SQLite via the legacy settled-only scheduling hint adapter.
 	if o.Rollouts == nil {
 		priority.observeIndexHints(ctx, o, roots, deadline)
 	}
-	if !o.inventoryOnly {
+	if !o.nativeOnly && !o.inventoryOnly {
 		priority.observeActiveHints(ctx, o, roots, deadline)
 		priority.observeRetries(o)
 	}
 
 	priority.observeDirectories(o, deadline)
+	// A just-validated inventory can prove deferred native ownership before the
+	// next pass starts a new coverage epoch. The same deadline/ledger still applies.
+	if !o.nativeOnly && !o.inventoryOnly && hasValidatedCoverage(c.Coverage) {
+		priority.observeRetries(o)
+	}
+	h.NativeValidationBytes, h.NativeValidationReads, h.NativeValidationOpens = proofs.bytes, proofs.reads, proofs.opens
+	h.NativeValidationAttempts = proofs.attempts
 	h.ProjectOperations = resolver.Operations
 	h.RepositoryMetadataOperations = recovery.MetadataOperations
 	h.RepositoryLookups = recovery.Operations
 	h.GitBytes = resolver.GitBytes
-	h.Pending = len(c.Queue) > 0 || len(c.Retries) > 0 || c.Coverage != nil && c.Coverage.Phase != coverageComplete
+	h.Pending = catalogPending(c, o.nativeOnly)
 	if !h.Pending && len(h.Errors) == 0 {
 		h.LastReconciled = now
 	}
@@ -185,11 +205,13 @@ func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config,
 			return h, err
 		}
 	}
-	write := func() error { return local.WriteCompact(path, c) }
-	if o.Rollouts != nil {
-		write = func() error { return o.Rollouts.writeCatalog(checkpointCtx, path, c) }
+	if o.nativeOnly {
+		if o.Rollouts != nil {
+			o.Rollouts.catalog = &c
+		}
+		return h, nil
 	}
-	if err := write(); err != nil {
+	if err := persistNativeCatalog(checkpointCtx, o.Rollouts, path, c); err != nil {
 		return h, errors.Join(errors.New("discovery state write failed; retry next scan"), err)
 	}
 	if o.Rollouts != nil {
@@ -211,7 +233,13 @@ func validSource(source SourceDescriptor, root string) bool {
 }
 
 func validCandidate(candidate Candidate, source SourceDescriptor, agent string, now time.Time) bool {
-	return candidate.Agent == agent && candidate.Source == source && candidate.NativeSessionID != "" && len(candidate.NativeSessionID) <= 4096 && filepath.IsAbs(candidate.WorkingDirectory) && len(candidate.WorkingDirectory) <= 4096 && !candidate.StartedAt.IsZero() && !candidate.FirstTaskAt.IsZero() && !candidate.FirstTaskAt.Before(candidate.StartedAt.Add(-time.Second)) && !candidate.FirstTaskAt.After(now.Add(2*time.Minute)) && candidate.StartEvidence == "native_start" && candidate.Execution == "native" && candidate.ParentNativeID == "" && candidate.ForkNativeID == ""
+	return candidate.Agent == agent && candidate.Source == source && candidate.NativeSessionID != "" && len(candidate.NativeSessionID) <= 4096 && filepath.IsAbs(candidate.WorkingDirectory) && len(candidate.WorkingDirectory) <= 4096 && !candidate.StartedAt.IsZero() && !candidate.FirstTaskAt.IsZero() && !candidate.FirstTaskAt.Before(candidate.StartedAt.Add(-time.Second)) && !candidate.FirstTaskAt.After(now.Add(2*time.Minute)) && candidate.StartEvidence == "native_start" && candidate.Execution == "native" && (candidate.ParentNativeID == "" || candidate.NativeChild && sourcefacts.RolloutID(candidate.ParentNativeID+".jsonl") == candidate.ParentNativeID) && (candidate.ForkNativeID == "" || sourcefacts.RolloutID(candidate.ForkNativeID+".jsonl") == candidate.ForkNativeID)
+}
+
+func validCandidateMetadata(candidate Candidate, source SourceDescriptor, agent string) bool {
+	metadata := candidate
+	metadata.FirstTaskAt = metadata.StartedAt
+	return validCandidate(metadata, source, agent, metadata.StartedAt)
 }
 
 func scanStopped(ctx context.Context, o Options) bool {
@@ -414,18 +442,14 @@ func admitSession(store *state.Store, candidate Candidate, project, generation s
 		err := store.RequestSessionIndexRecovery(sessionKey(candidate.Agent, candidate.NativeSessionID))
 		return false, errors.Join(state.ErrSessionIndexRecoveryRequired, err)
 	}
-	if candidate.ProjectResolution != nil && candidate.ProjectResolution.Method != "explicit_mapping" && candidate.ProjectResolution.Context != sourcefacts.RecoveryContext(cfg.Archive.Projects, nil, filepath.Clean) {
-		return false, errors.New("project recovery policy changed")
+	if err := validateAdmissionGeneration(cfg, candidate, project, generation, now, facts, factsOK); err != nil {
+		return false, err
 	}
-	current, allowed := cfg.DiscoveryGeneration(candidate.Agent, project, candidate.StartedAt, now)
-	if cfg.EffectiveCodexCaptureScope() == config.CodexAllProjects {
-		if !factsOK || facts.Root != project || cfg.Discovery == nil || !cfg.Discovery.Enabled {
-			return false, errors.New("project facts changed")
+	if candidate.Binding != nil && !cfg.CodexHistoryProtection {
+		cfg.CodexHistoryProtection = true
+		if err := config.Save(store.Home(), cfg); err != nil {
+			return false, err
 		}
-		current, allowed = cfg.CodexDiscoveryGeneration(facts.Root, facts.Cwd, candidate.StartedAt, now)
-	}
-	if !allowed || current != generation {
-		return false, errors.New("authorization changed")
 	}
 	reg, err := store.RegisterOrMerge(sessionKey(candidate.Agent, candidate.NativeSessionID), func(id string) archive.SessionRegistration {
 		var proof *archive.CodexAdmissionProof
@@ -433,6 +457,7 @@ func admitSession(store *state.Store, candidate Candidate, project, generation s
 			proof = &archive.CodexAdmissionProof{Generation: generation, Revision: cfg.CodexCapture.Revision, Cwd: facts.Cwd}
 		}
 		return archive.SessionRegistration{CodexAdmission: proof, ProjectResolution: candidate.ProjectResolution, RepoKey: candidate.RecordedRepoKey,
+			CodexBinding: candidate.Binding, NativeChild: candidate.NativeChild, ParentNativeSessionID: candidate.ParentNativeID, NativeRootSessionID: candidate.RootNativeID, NativeSourceHome: sourceRoot,
 			ArchiveSessionID: id, NativeSessionID: candidate.NativeSessionID, Harness: archive.Harness{Name: candidate.Agent, Version: candidate.HarnessVersion}, ProjectID: archive.ProjectID(project), ProjectRoot: project,
 			SourceKind: candidate.Source.Kind, SourceKey: candidate.Source.StableKey, TranscriptPath: locator, DiscoveryRoot: sourceRoot, DiscoveryCwd: candidate.WorkingDirectory, DiscoveryProducerOriginator: candidate.ProducerOriginator, DiscoveryProducerSource: candidate.ProducerSource, DiscoveryGeneration: generation, DiscoverySourcePriority: candidate.Source.Priority, SessionStartedAt: candidate.StartedAt, RegisteredAt: now, AdmittedAt: now,
 			Origin: archive.SessionOriginDiscovery, StartedAtSource: archive.StartedAtSourceTranscript, DestinationID: cfg.DestinationID(),
@@ -522,7 +547,9 @@ func continuationLocator(store *state.Store, agent, native string, source Source
 }
 
 type scan struct {
+	nativeOnly          bool
 	inventoryOnly       bool
+	proofs              *nativeProofPasses
 	rollouts            *CodexRolloutLookup
 	resolver            *sourcefacts.ProjectResolver
 	recovery            *sourcefacts.RecoveryResolver
@@ -557,11 +584,11 @@ func (s scan) visitEntry(d directory, source SourceEntry) (retry, stop bool) {
 	if entry.Observation.Outcome == outcomeIncomplete || entry.Observation.Outcome == outcomeUnavailable || entry.Observation.Outcome == outcomeChanged {
 		retryDelay = time.Minute
 	}
-	if hit && cachedObservationNeedsProbe(entry.Observation, source.Source) {
+	if hit && cachedEntryNeedsProbe(entry, source) {
 		delete(c.Cache, loc)
 		hit = false
 	}
-	if !hit || entry.Size != source.Fingerprint.Size || entry.Mtime != source.Fingerprint.Mtime || now.Sub(entry.Checked) >= retryDelay || now.Before(entry.Checked) {
+	if !hit || cachedEntryNeedsRefresh(entry, source, now, retryDelay) {
 		if !discoveryProbeAvailable(h, s.rollouts) {
 			return true, true
 		}
@@ -569,6 +596,7 @@ func (s scan) visitEntry(d directory, source SourceEntry) (retry, stop bool) {
 		if s.rollouts != nil && !s.rollouts.readBudget.Reserve(headerCharge) {
 			return true, true
 		}
+		memberChanged := !hit || entry.Size != source.Fingerprint.Size || entry.Mtime != source.Fingerprint.Mtime || entry.SourceFingerprint != source.CoverageFingerprint
 		observation := s.adapter.Inspect(s.ctx, source.Source)
 		h.Probes++
 		if s.rollouts != nil {
@@ -577,11 +605,21 @@ func (s scan) visitEntry(d directory, source SourceEntry) (retry, stop bool) {
 		h.Bytes += observation.Bytes
 		h.NativeReadBytes += observation.NativeReadBytes
 		h.NativeReadOperations += observation.NativeReadOperations
-		entry = cached{Size: source.Fingerprint.Size, Mtime: source.Fingerprint.Mtime, Checked: now, Observation: observation}
+		entry = cached{SourceFingerprint: source.CoverageFingerprint, Size: source.Fingerprint.Size, Mtime: source.Fingerprint.Mtime, Checked: now, Observation: observation}
 		if !s.retainProbedObservation(entry, headerCharge) {
 			return true, true
 		}
 		c.Cache[loc] = entry
+		// A new or changed same-thread physical member can change the first
+		// owned task or selected revision behind an earlier rejection.
+		if id := entry.Observation.Identity; memberChanged && id != nil {
+			for path, prior := range c.Cache {
+				if path != loc && prior.Observation.Outcome == outcomeOwnTaskRejected && prior.Observation.Candidate.NativeSessionID == id.ThreadID {
+					delete(c.Cache, path)
+					s.retainRetry(prior.Observation.Candidate.Source)
+				}
+			}
+		}
 	}
 	if s.priority && !entry.ActiveHint {
 		entry.ActiveHint = true
@@ -590,6 +628,15 @@ func (s scan) visitEntry(d directory, source SourceEntry) (retry, stop bool) {
 	if s.rollouts != nil {
 		s.rollouts.Observe(source.Source, source.Fingerprint, entry.Observation.Identity)
 	}
+	if s.nativeOnly || s.inventoryOnly {
+		return false, false
+	}
+	return s.admitObservation(source, entry)
+}
+
+func (s scan) admitObservation(source SourceEntry, entry cached) (bool, bool) {
+	c, h, now := s.catalog, s.health, s.now
+	loc := source.Source.Locator
 	if observedSourceChanged(entry.Observation, source.Source) {
 		delete(c.Cache, loc)
 		h.Outcomes[string(outcomeChanged)]++
@@ -598,12 +645,17 @@ func (s scan) visitEntry(d directory, source SourceEntry) (retry, stop bool) {
 	}
 	h.Outcomes[string(entry.Observation.Outcome)]++
 	if entry.Observation.Outcome != outcomeUsable {
-		return false, false
+		if entry.Observation.Outcome != outcomeIncomplete && entry.Observation.Outcome != outcomeRelatedHistory {
+			return false, false
+		}
+		if entry.Observation.Candidate.NativeSessionID == "" {
+			return false, false
+		}
 	}
 	candidate := entry.Observation.Candidate
 	// Shared structural checks do not trust an adapter to select another source
 	// or authorize inherited/unknown evidence. Project/destination policy stays here.
-	if !validCandidate(candidate, source.Source, s.adapter.Agent(), now) {
+	if !validCandidateMetadata(candidate, source.Source, s.adapter.Agent()) || (!candidate.FirstTaskAt.IsZero() && !validCandidate(candidate, source.Source, s.adapter.Agent(), now)) {
 		h.Outcomes["invalid_candidate"]++
 		return false, false
 	}
@@ -727,14 +779,7 @@ func pruneCatalog(c *catalog) {
 }
 
 func (s scan) admitCandidate(candidate Candidate, loc string) (bool, bool) {
-	if s.inventoryOnly {
-		return false, false
-	}
-	return s.admitOwnedCandidate(candidate, loc)
-}
-
-func (s scan) admitOwnedCandidate(candidate Candidate, loc string) (bool, bool) {
-	cfg, store, h, c, now := s.cfg, s.store, s.health, s.catalog, s.now
+	cfg, store, h, now := s.cfg, s.store, s.health, s.now
 	var facts sourcefacts.ProjectFacts
 	var root string
 	var ok bool
@@ -754,6 +799,11 @@ func (s scan) admitOwnedCandidate(candidate Candidate, loc string) (bool, bool) 
 		}
 		if prior.CodexAdmission != nil {
 			physical = true
+		}
+		if prior.CodexBinding != nil {
+			candidate.SnapshotProven = true
+			candidate.Binding = prior.CodexBinding
+			candidate.StartedAt = prior.CodexBinding.NativeCreatedAt
 		}
 	}
 
@@ -807,6 +857,39 @@ func (s scan) admitOwnedCandidate(candidate Candidate, loc string) (bool, bool) 
 			h.Outcomes["start_not_authorized"]++
 			return false, false
 		}
+	}
+	return s.finishCandidate(candidate, loc, root, generation, ownedRoot, physical, facts)
+}
+
+func (s scan) finishCandidate(candidate Candidate, loc, root, generation, ownedRoot string, physical bool, facts sourcefacts.ProjectFacts) (bool, bool) {
+	store, h, c, now := s.store, s.health, s.catalog, s.now
+	if !candidate.SnapshotProven {
+		proven, err := s.proofs.Prove(s.ctx, candidate)
+		if err != nil {
+			outcome := nativeProofOutcome(err)
+			h.Outcomes[outcome]++
+			if outcome == string(outcomeOwnTaskRejected) && s.ctx.Err() == nil {
+				entry := c.Cache[loc]
+				entry.Observation.Outcome = outcomeOwnTaskRejected
+				c.Cache[loc] = entry
+				kept := c.Retries[:0]
+				for _, pending := range c.Retries {
+					if pending.Locator != loc {
+						kept = append(kept, pending)
+					}
+				}
+				c.Retries = kept
+			} else {
+				s.retainRetry(candidate.Source)
+			}
+			return false, false
+		}
+		if !validCandidate(proven, proven.Source, s.adapter.Agent(), now) {
+			h.Outcomes["own_task_unavailable"]++
+			s.retainRetry(candidate.Source)
+			return false, false
+		}
+		return s.admitCandidate(proven, loc)
 	}
 	if candidate.ProjectResolution != nil && ownedRoot == "" {
 		if outcome := s.recoveryEvidenceOutcome(candidate, loc); outcome != "" {
@@ -927,7 +1010,7 @@ func (s scan) observeDirectories(o Options, deadline time.Time) {
 			unavailable = append(unavailable, d)
 			continue
 		}
-		worker := scan{inventoryOnly: s.inventoryOnly, resolver: s.resolver, recovery: s.recovery, store: s.store, cfg: s.cfg, catalog: c, health: h, now: s.now, adapter: s.adapter, ctx: s.ctx, reservedDirectories: len(unavailable), rollouts: o.Rollouts}
+		worker := scan{nativeOnly: s.nativeOnly, inventoryOnly: s.inventoryOnly, proofs: s.proofs, resolver: s.resolver, recovery: s.recovery, store: s.store, cfg: s.cfg, catalog: c, health: h, now: s.now, adapter: s.adapter, ctx: s.ctx, reservedDirectories: len(unavailable), rollouts: o.Rollouts}
 		advanced := true
 		for _, source := range batch.Entries {
 			if scanStopped(s.ctx, o) || time.Now().After(deadline) {
@@ -1011,10 +1094,19 @@ func (s scan) recoveryEvidenceOutcome(candidate Candidate, loc string) string {
 	return ""
 }
 
-// Persisted hints schedule ordinary continuation, but cannot recreate the
-// identity behind recovered ownership. Live cached facts keep their baseline.
+// Rejected-task fingerprints schedule revalidation; they never grant admission.
+func cachedEntryNeedsProbe(entry cached, source SourceEntry) bool {
+	return cachedObservationNeedsProbe(entry.Observation, source.Source) || entry.Observation.Outcome == outcomeOwnTaskRejected && (entry.SourceFingerprint == "" || entry.SourceFingerprint != source.CoverageFingerprint)
+}
+
+func cachedEntryNeedsRefresh(entry cached, source SourceEntry, now time.Time, retryDelay time.Duration) bool {
+	return entry.Size != source.Fingerprint.Size || entry.Mtime != source.Fingerprint.Mtime || entry.Observation.Outcome != outcomeOwnTaskRejected && (now.Sub(entry.Checked) >= retryDelay || now.Before(entry.Checked))
+}
+
+// Persisted hints cannot recreate the identity behind recovered ownership.
+// Live cached facts keep their baseline.
 func cachedObservationNeedsProbe(observed Observation, source SourceDescriptor) bool {
-	if observed.Outcome != outcomeUsable || source.Kind != archive.SourceKindFile {
+	if (observed.Outcome != outcomeUsable && observed.Outcome != outcomeOwnTaskRejected) || source.Kind != archive.SourceKindFile {
 		return false
 	}
 	if observed.SourceInfo == nil {
@@ -1061,4 +1153,36 @@ func (s scan) retainedProject(candidate Candidate) (*archive.SessionRegistration
 		return nil, true
 	}
 	return &prior, false
+}
+
+func validateAdmissionGeneration(cfg config.Config, candidate Candidate, project, generation string, now time.Time, facts sourcefacts.ProjectFacts, factsOK bool) error {
+	if candidate.ProjectResolution != nil && candidate.ProjectResolution.Method != "explicit_mapping" && candidate.ProjectResolution.Context != sourcefacts.RecoveryContext(cfg.Archive.Projects, nil, filepath.Clean) {
+		return errors.New("project recovery policy changed")
+	}
+	current, allowed := cfg.DiscoveryGeneration(candidate.Agent, project, candidate.StartedAt, now)
+	if cfg.EffectiveCodexCaptureScope() == config.CodexAllProjects {
+		if !factsOK || facts.Root != project || cfg.Discovery == nil || !cfg.Discovery.Enabled {
+			return errors.New("project facts changed")
+		}
+		current, allowed = cfg.CodexDiscoveryGeneration(facts.Root, facts.Cwd, candidate.StartedAt, now)
+	}
+	if !allowed || current != generation {
+		return errors.New("authorization changed")
+	}
+	return nil
+}
+
+func hasValidatedCoverage(coverage *coverageInventory) bool {
+	return coverage != nil && coverage.Phase == coverageComplete && coverage.proofEpoch == coverage.Epoch
+}
+
+func catalogPending(c catalog, nativeOnly bool) bool {
+	return len(c.Queue) > 0 || !nativeOnly && len(c.Retries) > 0 || c.Coverage != nil && c.Coverage.Phase != coverageComplete
+}
+
+func persistNativeCatalog(ctx context.Context, lookup *CodexRolloutLookup, path string, c catalog) error {
+	if lookup != nil {
+		return lookup.writeCatalog(ctx, path, c)
+	}
+	return local.WriteCompact(path, c)
 }

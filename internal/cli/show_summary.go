@@ -155,6 +155,9 @@ func summaryRows(view sessionView, opts summaryOptions, width int) []summaryRow 
 	add("PRs", wrapList(summaryLinkedPRs(m.PullRequests), " · ", width)...)
 	add("Skills", wrapList(displayAll(skillNames(m)), ", ", width)...)
 	add("Subagents", summarySubagents(m, view.LinkedAvailability))
+	if m.NativeChild && m.ParentSessionID == "" {
+		add("Parent", "archive link pending")
+	}
 	if m.ParentSessionID != "" {
 		add("Parent", archive.DisplayLine(shortSessionID(m.ParentSessionID)))
 	}
