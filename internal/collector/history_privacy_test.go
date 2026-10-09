@@ -135,14 +135,12 @@ func TestStricterHistoryPriorStagesAllOriginalsAndLeavesRequestsOwed(t *testing.
 	if _, err := scan.resumeStricterHistory(p); !errors.Is(err, archive.ErrHistoryMutationPending) {
 		t.Fatal(err)
 	}
-	next, found, err := scan.local.LoadPending(scan.id())
+	next, found, err := scan.local.LoadPublicationPending(scan.id())
 	if err != nil || !found || next.Attempted || next.History.Preparing || len(next.History.Inputs) != len(before) {
 		t.Fatal(next.History, err)
 	}
 	for i, input := range next.History.Inputs {
-		if !reflect.DeepEqual(input, before[i]) {
-			t.Fatal("original evidence/provenance lost")
-		}
+		assertOriginalHistoryInput(t, scan.local, scan.id(), input, before[i])
 		if _, err := scan.local.ReadPendingSource(scan.id(), state.PendingSource{Reference: input.Reference, Name: input.Reference.SHA256 + ".gz"}); err != nil {
 			t.Fatal(err)
 		}
@@ -651,7 +649,7 @@ func TestCommittedHistoryMaintenanceObligationSurvivesMissingOriginalRestart(t *
 	if _, err := scan.resumeStricterHistory(p); err == nil {
 		t.Fatal("missing original was invented")
 	}
-	p, found, err := scan.local.LoadPending(scan.id())
+	p, found, err := scan.local.LoadPublicationPending(scan.id())
 	if err != nil || !found || !p.History.MaintenanceOwed || !p.Attempted {
 		t.Fatal("durable obligation lost", p.History, err)
 	}
@@ -669,10 +667,11 @@ func TestCommittedHistoryMaintenanceObligationSurvivesMissingOriginalRestart(t *
 	if _, err := scan.resumeHistory(p); !errors.Is(err, archive.ErrHistoryMutationPending) {
 		t.Fatal(err)
 	}
-	next, found, err := scan.local.LoadPending(scan.id())
-	if err != nil || !found || next.History.MaintenanceOwed || next.Attempted || !reflect.DeepEqual(next.History.Inputs[1], original) {
+	next, found, err := scan.local.LoadPublicationPending(scan.id())
+	if err != nil || !found || next.History.MaintenanceOwed || next.Attempted {
 		t.Fatal("restart lost original provenance", err)
 	}
+	assertOriginalHistoryInput(t, scan.local, scan.id(), next.History.Inputs[1], original)
 	request, found, err := scan.local.LoadRequest(scan.id())
 	if err != nil || !found || request.Token != newer.Token {
 		t.Fatal("newer request acknowledged", err)
@@ -1082,5 +1081,28 @@ func assertPrivateTreeHasNoSecret(t *testing.T, home, secret string, verifiedOwe
 		return nil
 	}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// Unknown original header facts can become explicit only from the same retained
+// checksum-backed source; all other original reference, schema, age and policy facts stay exact.
+func assertOriginalHistoryInput(t *testing.T, store *state.Store, id string, got, original state.HistoryInput) {
+	t.Helper()
+	raw, err := store.ReadPendingSource(id, state.PendingSource{Reference: original.Reference, Name: original.Reference.SHA256 + ".gz"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := archive.ReadSourceBundle(bytes.NewReader(raw), archive.DecodeOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if original.ParentSessionID == nil {
+		original.ParentSessionID = &bundle.ParentSessionID
+	}
+	if original.NativeChild == nil {
+		original.NativeChild = &bundle.NativeChild
+	}
+	if !reflect.DeepEqual(got, original) {
+		t.Fatal("original evidence/provenance changed", got, original)
 	}
 }

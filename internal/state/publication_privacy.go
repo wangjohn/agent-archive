@@ -132,13 +132,8 @@ func refilterPublicationInput(ctx context.Context, registration archive.SessionR
 	if ceiling != config.SkillEvidenceBody && ceiling != config.SkillEvidenceMetadata && ceiling != config.SkillEvidenceNone {
 		return bundle, packed, ref, proof, nil, ErrDurableStorageRecovery
 	}
-	// Bind the supplied borrowed metadata view to its exact raw authority,
-	// including full ordered manifest membership, before decoding source bytes.
-	if err = validatePrivacyFactoryOrigin(origin, originBody, input, index, budget); err != nil {
+	if err = validatePrivacyFrozenInput(origin, originBody, input, index, registration, frozenContext, nextPolicy, budget); err != nil {
 		return bundle, packed, ref, proof, nil, err
-	}
-	if h := input.HookObservations; h != nil && validatePublicationHookFacts(&h.Facts, input, publicationOwner(origin, registration.DestinationID, frozenContext.AdmissionContext), registration.DestinationID, frozenContext.AdmissionContext, nextPolicy.Context()) != nil {
-		return bundle, packed, ref, proof, nil, ErrDurableStorageRecovery
 	}
 	selected := origin
 	selected.SchemaVersion = archive.HistoryMetadataSchemaVersion
@@ -201,33 +196,41 @@ func refilterPublicationInput(ctx context.Context, registration archive.SessionR
 	originalParent := strings.Clone(originalHeader.ParentSessionID)
 	originalMarker := originalHeader.NativeChild
 	r := PrivacySource{OriginalParentSessionID: &originalParent, OriginalNativeChild: &originalMarker, OutputParentSessionID: bundle.ParentSessionID, OutputNativeChild: bundle.NativeChild, NativeTargetSHA256: targetSHA, Hook: publicationHookFacts(input.HookObservations), Version: 1, InputIndex: index, Previous: input.Reference, Next: ref, Selection: input.Selection, SessionID: origin.SessionID, NativeSessionID: origin.NativeSessionID, ProjectID: origin.ProjectID, MachineID: origin.MachineID, Harness: origin.Harness, Origin: origin.Origin, ImportedAt: origin.ImportedAt, StartedAtSource: origin.StartedAtSource, PreviousGenerationID: origin.PreviousGenerationID, StartedAt: origin.StartedAt.UTC(), OwnerSHA256: publicationOwner(origin, registration.DestinationID, frozenContext.AdmissionContext), DestinationID: registration.DestinationID, AdmissionContext: frozenContext.AdmissionContext, OriginMetadataSHA256: publicationSHA256(originBody), PreviousPolicy: oldPolicy, NextPolicy: nextPolicy}
+	r, err = sealPrivacySourceReceipt(ctx, budget, r, covered)
+	if err != nil {
+		return bundle, packed, ref, proof, nil, err
+	}
+	proof = ValidatedPrivacySource{receipt: r, budget: budget, ctx: ctx}
+	return bundle, packed, ref, proof, closeAll, nil
+}
+
+func sealPrivacySourceReceipt(ctx context.Context, budget *agentapi.NativeReadBudget, r PrivacySource, covered []CoveredPrivacySource) (PrivacySource, error) {
 	const receiptScratch = 32 << 10
 	if !budget.Reserve(receiptScratch) {
-		return bundle, packed, ref, proof, nil, agentapi.ErrReadBudget
+		return r, agentapi.ErrReadBudget
 	}
 	r.SHA256 = r.OriginMetadataSHA256
 	for i := range covered {
-		covered[i].Next = ref
+		covered[i].Next = r.Next
 		covered[i].SHA256 = r.OriginMetadataSHA256
 	}
 	r.Covered = covered
 	receiptBound, e := jsonwire.Bound(ctx, r, budget.Available()/2)
 	budget.Release(receiptScratch)
 	if e != nil {
-		return bundle, packed, ref, proof, nil, e
+		return r, e
 	}
 	if !budget.Reserve(2 * receiptBound) {
-		return bundle, packed, ref, proof, nil, agentapi.ErrReadBudget
+		return r, agentapi.ErrReadBudget
 	}
 	for i := range covered {
-		covered[i].Next = ref
+		covered[i].Next = r.Next
 		covered[i].SHA256 = coveredPrivacySHA(covered[i])
 	}
 	r.Covered = covered
 	r.SHA256 = privacySourceSHA(r)
 	budget.Release(2 * receiptBound)
-	proof = ValidatedPrivacySource{receipt: r, budget: budget, ctx: ctx}
-	return bundle, packed, ref, proof, closeAll, nil
+	return r, nil
 }
 
 func (r PrivacySource) validate(a PreparationAuthority, index int, input PreparationInput, output PublicationSource) error {
@@ -242,6 +245,18 @@ func (r PrivacySource) validate(a PreparationAuthority, index int, input Prepara
 		return ErrDurableStorageRecovery
 	}
 	return validateCoveredPrivacyFacts(r)
+}
+
+func validatePrivacyFrozenInput(origin archive.Metadata, originBody []byte, input PreparationInput, index int, registration archive.SessionRegistration, frozenContext PublicationContext, nextPolicy PublicationPolicy, budget *agentapi.NativeReadBudget) error {
+	// Bind the supplied borrowed metadata view to its exact raw authority,
+	// including full ordered manifest membership, before decoding source bytes.
+	if err := validatePrivacyFactoryOrigin(origin, originBody, input, index, budget); err != nil {
+		return err
+	}
+	if h := input.HookObservations; h != nil && validatePublicationHookFacts(&h.Facts, input, publicationOwner(origin, registration.DestinationID, frozenContext.AdmissionContext), registration.DestinationID, frozenContext.AdmissionContext, nextPolicy.Context()) != nil {
+		return ErrDurableStorageRecovery
+	}
+	return nil
 }
 
 // RecordPrivacyOutput retains an independently charged factory receipt until its returned release.

@@ -181,15 +181,19 @@ func (p publishedState) validateSelectingPublishedWithFacts(facts *payloadDigest
 
 	// Published validation uses private Commit2+payload witnesses without a mutable preparation cursor.
 	var metadata struct {
-		ParentSessionID string `json:"parent_session_id"`
-		NativeChild     bool   `json:"native_child"`
-		SessionID       string `json:"session_id"`
+		SourceBundle    archive.SourceReference `json:"source_bundle"`
+		ParentSessionID string                  `json:"parent_session_id"`
+		NativeChild     bool                    `json:"native_child"`
+		SessionID       string                  `json:"session_id"`
 		Harness         struct {
 			Name string `json:"name"`
 		} `json:"harness"`
 	}
 	if err := json.Unmarshal(p.MetadataBytes, &metadata); err != nil {
 		return err
+	}
+	if metadata.SourceBundle != current || p.LastPublished != nil && p.LastPublished.Source != nil && *p.LastPublished.Source != current {
+		return ErrDurableStorageRecovery
 	}
 	var target *PublicationNativeTarget
 	if p.Preparation != nil {

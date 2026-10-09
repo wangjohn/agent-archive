@@ -265,6 +265,10 @@ func decodePrivacyOriginal(ctx context.Context, registration archive.SessionRegi
 	if err != nil {
 		return bundle, nil, err
 	}
+	if (bundle.ParentSessionID != registration.ParentSessionID || bundle.NativeChild != registration.NativeChild) && !agentapi.RetainedNativeChildOwned(admittedRegistration, bundle) {
+		closeOriginal()
+		return archive.SourceBundle{}, nil, ErrDurableStorageRecovery
+	}
 	// A frozen output descriptor cannot turn an unbound registration into a
 	// legacy child license. Positive checksum-decoded headers remain sufficient.
 	if !bundle.NativeChild && registration.NativeChild {

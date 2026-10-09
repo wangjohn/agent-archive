@@ -436,6 +436,10 @@ func (s *sessionScan) prepareStricterHistoryInput(next *state.PendingPublication
 }
 
 func (s *sessionScan) freezeRetainedMaintenance(authority archive.Metadata, bundle archive.SourceBundle, adapterVersion string) (state.PendingPublication, error) {
+	// Header maintenance transforms the exact committed current input through
+	// the same frozen receipt factory as preserved inputs. Pre-freeze hook
+	// normalization must not replace that original reference.
+	headerMaintenance := nativeParentResolved(s.reg, bundle) || nativeChildMarkerPending(s.reg, bundle)
 	inputs, err := s.retainedManifestInputs(authority, nil)
 	if err != nil {
 		return state.PendingPublication{}, err
@@ -493,37 +497,10 @@ func (s *sessionScan) freezeRetainedMaintenance(authority archive.Metadata, bund
 	if err != nil {
 		return state.PendingPublication{}, err
 	}
-	for i, input := range p.History.Inputs {
-		if input.RevisionID != authority.History.CurrentRevision {
-			continue
-		}
-		if bundle.Capture.FilterVersion != archive.FilterVersion || bundle.Capture.AdapterVersion != adapter.Version() || !sourceEvidenceWithinPolicy(bundle.SupplementalEvidence, s.opts.skillEvidence()) {
-			break
-		}
-		if err := s.prepareHistoryInput(&p, &authority, input); err != nil {
-			return state.PendingPublication{}, err
-		}
-		parent := p.Bundle.ParentSessionID
-		marker := p.Bundle.NativeChild
-		p.History.Inputs[i] = state.HistoryInput{ParentSessionID: &parent, NativeChild: &marker, Reference: authority.SourceBundle, RevisionID: input.RevisionID, CapturedAt: input.CapturedAt, FilterVersion: p.Bundle.Capture.FilterVersion, SourceSchemaVersion: p.Bundle.SchemaVersion}
-		refs, err := authority.SourceReferences()
-		if err != nil {
-			return state.PendingPublication{}, err
-		}
-		stages := p.History.Sources[:0]
-		for _, stage := range p.History.Sources {
-			if slices.Contains(refs, stage.Reference) {
-				stages = append(stages, stage)
-			}
-		}
-		p.History.Sources = stages
-		p.MetadataBytes, err = s.marshalRetained(authority)
-		if err != nil {
-			return state.PendingPublication{}, err
-		}
-		break
+	if err := s.normalizeRetainedMaintenanceCurrent(&p, &authority, bundle, adapter, headerMaintenance); err != nil {
+		return state.PendingPublication{}, err
 	}
-	if bundle.Capture.FilterVersion != archive.FilterVersion || bundle.Capture.AdapterVersion != adapter.Version() || !sourceEvidenceWithinPolicy(bundle.SupplementalEvidence, s.opts.skillEvidence()) {
+	if headerMaintenance || bundle.Capture.FilterVersion != archive.FilterVersion || bundle.Capture.AdapterVersion != adapter.Version() || !sourceEvidenceWithinPolicy(bundle.SupplementalEvidence, s.opts.skillEvidence()) {
 		if err := s.freezePublicationHooks(&p, observations, adapter.Version()); err != nil {
 			return state.PendingPublication{}, err
 		}
@@ -532,6 +509,40 @@ func (s *sessionScan) freezeRetainedMaintenance(authority archive.Metadata, bund
 		return state.PendingPublication{}, err
 	}
 	return p, nil
+}
+
+func (s *sessionScan) normalizeRetainedMaintenanceCurrent(p *state.PendingPublication, authority *archive.Metadata, bundle archive.SourceBundle, adapter agentapi.TranscriptFilter, headerMaintenance bool) error {
+	for i, input := range p.History.Inputs {
+		if input.RevisionID != authority.History.CurrentRevision {
+			continue
+		}
+		if headerMaintenance || bundle.Capture.FilterVersion != archive.FilterVersion || bundle.Capture.AdapterVersion != adapter.Version() || !sourceEvidenceWithinPolicy(bundle.SupplementalEvidence, s.opts.skillEvidence()) {
+			break
+		}
+		if err := s.prepareHistoryInput(p, authority, input); err != nil {
+			return err
+		}
+		parent := p.Bundle.ParentSessionID
+		marker := p.Bundle.NativeChild
+		p.History.Inputs[i] = state.HistoryInput{ParentSessionID: &parent, NativeChild: &marker, Reference: authority.SourceBundle, RevisionID: input.RevisionID, CapturedAt: input.CapturedAt, FilterVersion: p.Bundle.Capture.FilterVersion, SourceSchemaVersion: p.Bundle.SchemaVersion}
+		refs, err := authority.SourceReferences()
+		if err != nil {
+			return err
+		}
+		stages := p.History.Sources[:0]
+		for _, stage := range p.History.Sources {
+			if slices.Contains(refs, stage.Reference) {
+				stages = append(stages, stage)
+			}
+		}
+		p.History.Sources = stages
+		p.MetadataBytes, err = s.marshalRetained(*authority)
+		if err != nil {
+			return err
+		}
+		break
+	}
+	return nil
 }
 
 func retireStricterHistoryReferences(next *state.PendingPublication, metadata archive.Metadata, inputs []state.HistoryInput, at time.Time) error {

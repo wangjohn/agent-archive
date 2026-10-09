@@ -345,7 +345,9 @@ func (p publishedState) next(bundle archive.SourceBundle, publishedAt time.Time,
 		last = &snapshot
 	}
 	if status == CacheStatusPublished {
-		commit, sources = nil, nil
+		if p.PublicationVersion != 2 {
+			commit, sources = nil, nil
+		}
 		// The candidate becoming the current bundle is exactly what was just
 		// published, so the snapshot records only when, not a second copy.
 		last = &publishedSnapshot{PublishedAt: publishedAt, SameAsBundle: true, Source: source}
@@ -813,7 +815,9 @@ func (p *Published) SaveRepublishedMetadata(pending PendingPublication, at time.
 	next.PublishedAt = at
 	// A legacy acknowledged publication replaces the old seal, not just its body.
 	// Its complete references remain readable from the exact cached metadata.
-	next.Commit, next.Sources = nil, nil
+	if next.PublicationVersion != 2 {
+		next.Commit, next.Sources = nil, nil
+	}
 	next.PredecessorUnknown = false
 	source := pending.SourceReference()
 	if next.Status == CacheStatusPublished {

@@ -44,12 +44,14 @@ func TestNativeHeaderFactoryChecksClaimsAndFrozenOwner(t *testing.T) {
 		cancel        bool
 		invalidUnused bool
 		knownConflict bool
+		unadmitted    bool
 	}{
 		{name: "licensed_legacy"}, {name: "parent_claim", badParent: true}, {name: "marker_claim", badMarker: true},
 		{name: "forged_target_binding", unbound: true}, {name: "positive_header", positive: true},
 		{name: "frozen_empty_target", later: true}, {name: "pressure", pressure: true}, {name: "cancel", cancel: true},
 		{name: "positive_header_unused_binding", positive: true, invalidUnused: true},
 		{name: "known_target_conflict", knownConflict: true},
+		{name: "positive_header_forged_target_owner", positive: true, unadmitted: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -109,6 +111,9 @@ func TestNativeHeaderFactoryChecksClaimsAndFrozenOwner(t *testing.T) {
 				marker = !marker
 			}
 			admitted := producer
+			if tc.unadmitted {
+				admitted.NativeChild = false
+			}
 			if tc.knownConflict {
 				admitted.ParentSessionID = "different-known-parent"
 			}
@@ -129,7 +134,7 @@ func TestNativeHeaderFactoryChecksClaimsAndFrozenOwner(t *testing.T) {
 			before := budget.Available()
 			out, _, _, _, release, e := state.RefilterPublicationInput(ctx, admitted, adapter, metadata, body, input, 0, packed.Bytes, state.PublicationContext{NativeTarget: candidate.Preparation.NativeTarget, DestinationID: reg.DestinationID, AdmissionContext: scan.publicationAdmission()}, policy, policy, config.SkillEvidenceBody, budget)
 			cancel()
-			refused := tc.badParent || tc.badMarker || tc.unbound || tc.pressure || tc.cancel || tc.knownConflict
+			refused := tc.badParent || tc.badMarker || tc.unbound || tc.pressure || tc.cancel || tc.knownConflict || tc.unadmitted
 			if refused {
 				if e == nil || release != nil {
 					t.Fatal("invalid claim minted transform", e)
