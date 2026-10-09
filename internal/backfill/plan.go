@@ -129,6 +129,9 @@ type work struct {
 	sourceRewritten bool
 	appendWitness   *resolution
 	evidenceOnly    bool
+	// appendHeaderVerified is set only on evidence copies after a complete
+	// original-prefix inventory check, never by stat-only growth.
+	appendHeaderVerified bool
 }
 
 // subagentWork is one subagent transcript of an imported parent.
@@ -301,6 +304,7 @@ func preparePlanWork(ctx context.Context, env Environment, cfg config.Config, fi
 		t := &transcript{harness: harness(c.Session.Agent), path: c.Source.Path, size: c.Bytes, nativeID: c.Session.NativeID, cwd: c.Header.Directory, repoKey: c.Header.RepoKey, metaStart: c.Header.StartedAt, identityMismatch: c.Header.IdentityMismatch, capturePending: c.Header.CapturePending != "" && env.CodexRollouts == nil, cursorSlug: c.WorkspaceKey, sourcePriority: c.SourcePriority, sourceInfo: c.SourceInfo}
 		w := &work{t: t, c: importNativeCandidate(c, t), unsafe: c.IdentityError != nil}
 		w.checkSource(env)
+		inventory.ownContent(c.Source.Path, c.SourceInfo, c.Root)
 		items = append(items, w)
 		return nil
 	})
@@ -312,9 +316,6 @@ func preparePlanWork(ctx context.Context, env Environment, cfg config.Config, fi
 	// the other apps' sessions resolved to.
 	if err := validateProjectMappings(env, cfg, filters.ProjectMappings); err != nil {
 		return nil, nil, unread, workers, err
-	}
-	for _, w := range items {
-		inventory.ownContent(w.t.path, w.t.sourceInfo)
 	}
 	r := newResolver(env, cfg, filters)
 	r.inventoryCurrent = inventory.current
