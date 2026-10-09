@@ -195,7 +195,8 @@ func prepareRevocation(home string, cfg config.Config, selector revokeSelector, 
 		return revocation.Journal{}, err
 	}
 	j := revocation.Journal{Version: 1, OperationID: id, DestinationID: cfg.DestinationID(), RequesterID: cfg.MachineID, RequestedSelector: requestedRevocationSelector(selector), AccountID: account, Bucket: bucket.Name, Jurisdiction: bucket.Jurisdiction, CreatedAt: env.now().UTC(), IncludeIssued: selector.IncludeIssued, Keys: []revocation.Key{}, PublicationPending: true}
-	return j, j.Validate()
+	err = j.Validate()
+	return j, err
 }
 
 func requestedRevocationSelector(selector revokeSelector) *revocation.RequestedSelector {
@@ -405,7 +406,8 @@ func selectRevocation(ctx context.Context, home string, cfg config.Config, selec
 		}
 		return j.Keys[a].ProviderID < j.Keys[b].ProviderID
 	})
-	return j, j.Validate()
+	err = j.Validate()
+	return j, err
 }
 
 func trustedRevokeTarget(ctx context.Context, cfg config.Config, selector revokeSelector, slots []issuance.Slot, env Env, bindings ...*operatorBinding) (string, string, *config.MachineAssignment, error) {
