@@ -93,18 +93,7 @@ func RefilterRetainedSource(ctx context.Context, reg archive.SessionRegistration
 		return out, nil, err
 	}
 	out.Capture.Harness = input.Capture.Harness
-	gaps := out.Capture.Gaps
-	out.Capture.Gaps = make([]archive.CaptureGap, 0, len(input.Capture.Gaps))
-	for _, gap := range input.Capture.Gaps {
-		if gap.Code != "native_parent_link_pending" || !RetainedNativeChildOwned(reg, input) || input.ParentSessionID != "" || reg.ParentSessionID == "" {
-			out.Capture.Gaps = append(out.Capture.Gaps, gap)
-		}
-	}
-	for _, gap := range gaps {
-		if !slices.Contains(out.Capture.Gaps, gap) {
-			out.Capture.Gaps = append(out.Capture.Gaps, gap)
-		}
-	}
+	mergeRetainedNativeGaps(&out, input, reg)
 	if err = out.ValidateHistory(); err != nil {
 		return out, nil, err
 	}
@@ -213,4 +202,19 @@ func RetainedNativeChildOwned(reg archive.SessionRegistration, input archive.Sou
 	}
 	binding := reg.CodexBinding
 	return binding != nil && binding.Child && binding.Validate() == nil && reg.Harness.Name == archive.HarnessCodex && binding.NativeThreadID == reg.NativeSessionID && binding.Home != "" && (binding.ParentID == "" || reg.ParentNativeSessionID == binding.ParentID) && (binding.RootID == "" || reg.NativeRootSessionID == binding.RootID) && (binding.Home == "" || reg.NativeSourceHome == binding.Home)
+}
+
+func mergeRetainedNativeGaps(out *archive.SourceBundle, input archive.SourceBundle, reg archive.SessionRegistration) {
+	gaps := out.Capture.Gaps
+	out.Capture.Gaps = make([]archive.CaptureGap, 0, len(input.Capture.Gaps))
+	for _, gap := range input.Capture.Gaps {
+		if gap.Code != "native_parent_link_pending" || !RetainedNativeChildOwned(reg, input) || input.ParentSessionID != "" || reg.ParentSessionID == "" {
+			out.Capture.Gaps = append(out.Capture.Gaps, gap)
+		}
+	}
+	for _, gap := range gaps {
+		if !slices.Contains(out.Capture.Gaps, gap) {
+			out.Capture.Gaps = append(out.Capture.Gaps, gap)
+		}
+	}
 }

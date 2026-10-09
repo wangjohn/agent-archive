@@ -9,7 +9,8 @@ import (
 // need remote verification; absence of inline bytes never permits regeneration.
 func PreparePublication(p PendingPublication, prior PublicationPredecessor, destination, admission, policy string, purpose PublicationPurpose) (PendingPublication, error) {
 	if p.Commit != nil {
-		return p, p.ValidatePublication()
+		err := p.ValidatePublication()
+		return p, err
 	}
 	if purpose != PublicationCapture && purpose != PublicationMetadata {
 		return p, errors.New("unsupported publication purpose")
@@ -47,5 +48,6 @@ func PreparePublication(p PendingPublication, prior PublicationPredecessor, dest
 	if prior.State == PredecessorPresent {
 		p.Commit.PredecessorSHA256 = publicationSHA256(prior.Body)
 	}
-	return p, p.ValidatePublication()
+	err = p.ValidatePublication()
+	return p, err
 }

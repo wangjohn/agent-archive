@@ -307,18 +307,8 @@ func (a PreparationAuthority) validateWithFacts(facts *payloadDigestFacts) (err 
 	if a.Version != 1 || (a.Kind != PreparationCapture && a.Kind != PreparationPrivacyCommitted && a.Kind != PreparationPrivacyPending && a.Kind != PreparationPrivacyPendingAbsent) || a.SHA256 != preparationSHAWithFacts(a, facts) || a.OriginMetadataSHA256 != publicationSHA256(a.OriginMetadata) || len(a.Inputs) == 0 || len(a.Inputs) > 65 {
 		return ErrDurableStorageRecovery
 	}
-	if a.NativeTarget != nil && a.NativeTarget.validate() != nil {
-		return ErrDurableStorageRecovery
-	}
-	for _, input := range a.Inputs {
-		if input.ParentSessionID != nil && len(*input.ParentSessionID) > 4096 {
-			return ErrDurableStorageRecovery
-		}
-		if h := input.HookObservations; h != nil {
-			if validatePublicationHookFacts(&h.Facts, input, a.OwnerSHA256, a.DestinationID, a.AdmissionContext, a.PolicyContext) != nil || len(h.Body) != h.Facts.BodySize || publicationSHA256(h.Body) != h.Facts.BodySHA256 {
-				return ErrDurableStorageRecovery
-			}
-		}
+	if err := a.validateInputFacts(); err != nil {
+		return err
 	}
 	if err := a.validatePurpose(); err != nil {
 		return err
@@ -562,5 +552,22 @@ func (p *PendingPublication) initializeHistoryProgress(sources []PublicationSour
 	}
 	progress.SHA256 = progressSHAWithFacts(*progress, facts)
 	p.Progress = progress
+	return nil
+}
+
+func (a PreparationAuthority) validateInputFacts() error {
+	if a.NativeTarget != nil && a.NativeTarget.validate() != nil {
+		return ErrDurableStorageRecovery
+	}
+	for _, input := range a.Inputs {
+		if input.ParentSessionID != nil && len(*input.ParentSessionID) > 4096 {
+			return ErrDurableStorageRecovery
+		}
+		if h := input.HookObservations; h != nil {
+			if validatePublicationHookFacts(&h.Facts, input, a.OwnerSHA256, a.DestinationID, a.AdmissionContext, a.PolicyContext) != nil || len(h.Body) != h.Facts.BodySize || publicationSHA256(h.Body) != h.Facts.BodySHA256 {
+				return ErrDurableStorageRecovery
+			}
+		}
+	}
 	return nil
 }

@@ -164,27 +164,8 @@ func (p publishedState) validateSelectingPublishedWithFacts(facts *payloadDigest
 	if (p.Preparation == nil) == (p.SettledPrivacy == nil) {
 		return ErrDurableStorageRecovery
 	}
-	if p.SettledPrivacy != nil {
-		if err := p.SettledPrivacy.validate(p); err != nil {
-			return err
-		}
-	} else {
-		if p.Commit.SettledPrivacySHA256 != "" || p.Commit.PreparationSHA256 != p.Preparation.SHA256 || p.Preparation.SHA256 != preparationSHAWithFacts(*p.Preparation, facts) {
-			return ErrDurableStorageRecovery
-		}
-		if err := p.Preparation.validateWithFacts(facts); err != nil {
-			return err
-		}
-		if p.Preparation.Migration != nil && p.Preparation.Migration.NextMetadataSHA256 != publicationSHA256(p.MetadataBytes) {
-			return ErrDurableStorageRecovery
-		}
-		if p.Commit.Purpose == PublicationPrivacyRewrite {
-			if err := validatePrivacyCorrespondence(*p.Preparation, p.Payloads, p.PrivacyReceipts, p.MetadataBytes, privacyPreviousBody(*p.Preparation)); err != nil {
-				return err
-			}
-		} else if len(p.PrivacyReceipts) > 0 {
-			return ErrDurableStorageRecovery
-		}
+	if err := p.validateSelectingPreparationWithFacts(facts); err != nil {
+		return err
 	}
 	// The selecting bundle survives cache/block candidates in LastPublished.
 	bundle, _, found := p.resolveLastPublished()
@@ -316,4 +297,30 @@ func publicationJSONField(destination reflect.Type, name string) (string, reflec
 		child = destination.Elem()
 	}
 	return name, child
+}
+
+func (p publishedState) validateSelectingPreparationWithFacts(facts *payloadDigestFacts) error {
+	if p.SettledPrivacy != nil {
+		if err := p.SettledPrivacy.validate(p); err != nil {
+			return err
+		}
+	} else {
+		if p.Commit.SettledPrivacySHA256 != "" || p.Commit.PreparationSHA256 != p.Preparation.SHA256 || p.Preparation.SHA256 != preparationSHAWithFacts(*p.Preparation, facts) {
+			return ErrDurableStorageRecovery
+		}
+		if err := p.Preparation.validateWithFacts(facts); err != nil {
+			return err
+		}
+		if p.Preparation.Migration != nil && p.Preparation.Migration.NextMetadataSHA256 != publicationSHA256(p.MetadataBytes) {
+			return ErrDurableStorageRecovery
+		}
+		if p.Commit.Purpose == PublicationPrivacyRewrite {
+			if err := validatePrivacyCorrespondence(*p.Preparation, p.Payloads, p.PrivacyReceipts, p.MetadataBytes, privacyPreviousBody(*p.Preparation)); err != nil {
+				return err
+			}
+		} else if len(p.PrivacyReceipts) > 0 {
+			return ErrDurableStorageRecovery
+		}
+	}
+	return nil
 }

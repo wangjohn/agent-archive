@@ -55,30 +55,9 @@ type publicationOriginalHeader struct {
 }
 
 func filterPrivacySource(ctx context.Context, registration archive.SessionRegistration, adapter agentapi.TranscriptFilter, selected archive.Metadata, input PreparationInput, original []byte, oldPolicy, nextPolicy PublicationPolicy, ceiling config.SkillEvidence, budget *agentapi.NativeReadBudget, header *publicationOriginalHeader, admittedRegistration archive.SessionRegistration) (archive.SourceBundle, func(), error) {
-	if input.ParentSessionID != nil {
-		selected.ParentSessionID = *input.ParentSessionID
-	}
-	bundle, closeOriginal, err := agentapi.DecodeRevisionSourceLeased(ctx, selected, input.Selection.RevisionID, original, agentapi.SourceReadLimits{}, budget)
-	if err != nil && input.ParentSessionID == nil && selected.NativeChild && registration.NativeChild && selected.ParentSessionID != "" {
-		selected.ParentSessionID = ""
-		bundle, closeOriginal, err = agentapi.DecodeRevisionSourceLeased(ctx, selected, input.Selection.RevisionID, original, agentapi.SourceReadLimits{}, budget)
-		if err == nil && !bundle.NativeChild {
-			closeOriginal()
-			return archive.SourceBundle{}, nil, ErrDurableStorageRecovery
-		}
-	}
+	bundle, closeOriginal, err := decodePrivacyOriginal(ctx, registration, selected, input, original, budget, admittedRegistration)
 	if err != nil {
 		return bundle, nil, err
-	}
-	// A frozen output descriptor cannot turn an unbound registration into a
-	// legacy child license. Positive checksum-decoded headers remain sufficient.
-	if !bundle.NativeChild && registration.NativeChild {
-		current := admittedRegistration.CodexBinding
-		frozen := registration.CodexBinding
-		if !agentapi.RetainedNativeChildOwned(admittedRegistration, bundle) || current == nil || frozen == nil || !current.PreservesFacts(frozen) || admittedRegistration.NativeSourceHome != registration.NativeSourceHome || frozen.ParentID != "" && admittedRegistration.ParentNativeSessionID != registration.ParentNativeSessionID || frozen.RootID != "" && admittedRegistration.NativeRootSessionID != registration.NativeRootSessionID {
-			closeOriginal()
-			return archive.SourceBundle{}, nil, ErrDurableStorageRecovery
-		}
 	}
 	if header != nil {
 		header.ParentSessionID = bundle.ParentSessionID
@@ -268,4 +247,33 @@ func validateCoveredPrivacyFacts(r PrivacySource) error {
 
 func privacyAlternativeOwnerChanged(metadata, origin archive.Metadata, alternative PublicationPrivacyAlternative, context PublicationContext) bool {
 	return !reflect.DeepEqual(metadata, alternative.Metadata) || metadata.SessionID != origin.SessionID || metadata.NativeSessionID != origin.NativeSessionID || metadata.ProjectID != origin.ProjectID || metadata.MachineID != origin.MachineID || metadata.Harness != origin.Harness || metadata.Origin != origin.Origin || !sameOptionalTime(metadata.ImportedAt, origin.ImportedAt) || metadata.StartedAtSource != origin.StartedAtSource || metadata.PreviousGenerationID != origin.PreviousGenerationID || !metadata.StartedAt.Equal(origin.StartedAt) || publicationOwner(metadata, context.DestinationID, context.AdmissionContext) != publicationOwner(origin, context.DestinationID, context.AdmissionContext)
+}
+
+func decodePrivacyOriginal(ctx context.Context, registration archive.SessionRegistration, selected archive.Metadata, input PreparationInput, original []byte, budget *agentapi.NativeReadBudget, admittedRegistration archive.SessionRegistration) (archive.SourceBundle, func(), error) {
+	if input.ParentSessionID != nil {
+		selected.ParentSessionID = *input.ParentSessionID
+	}
+	bundle, closeOriginal, err := agentapi.DecodeRevisionSourceLeased(ctx, selected, input.Selection.RevisionID, original, agentapi.SourceReadLimits{}, budget)
+	if err != nil && input.ParentSessionID == nil && selected.NativeChild && registration.NativeChild && selected.ParentSessionID != "" {
+		selected.ParentSessionID = ""
+		bundle, closeOriginal, err = agentapi.DecodeRevisionSourceLeased(ctx, selected, input.Selection.RevisionID, original, agentapi.SourceReadLimits{}, budget)
+		if err == nil && !bundle.NativeChild {
+			closeOriginal()
+			return archive.SourceBundle{}, nil, ErrDurableStorageRecovery
+		}
+	}
+	if err != nil {
+		return bundle, nil, err
+	}
+	// A frozen output descriptor cannot turn an unbound registration into a
+	// legacy child license. Positive checksum-decoded headers remain sufficient.
+	if !bundle.NativeChild && registration.NativeChild {
+		current := admittedRegistration.CodexBinding
+		frozen := registration.CodexBinding
+		if !agentapi.RetainedNativeChildOwned(admittedRegistration, bundle) || current == nil || frozen == nil || !current.PreservesFacts(frozen) || admittedRegistration.NativeSourceHome != registration.NativeSourceHome || frozen.ParentID != "" && admittedRegistration.ParentNativeSessionID != registration.ParentNativeSessionID || frozen.RootID != "" && admittedRegistration.NativeRootSessionID != registration.NativeRootSessionID {
+			closeOriginal()
+			return archive.SourceBundle{}, nil, ErrDurableStorageRecovery
+		}
+	}
+	return bundle, closeOriginal, nil
 }

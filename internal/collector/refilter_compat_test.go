@@ -10,6 +10,7 @@ import (
 
 // Test output remains borrowed until test cleanup, using the actual shared transform.
 func refilterBundle(t *testing.T, ctx context.Context, reg archive.SessionRegistration, adapter archive.Adapter, input archive.SourceBundle) (archive.SourceBundle, error) {
+	t.Helper()
 	return refilterBundleWithBudget(t, ctx, reg, adapter, input, agentapi.NewNativeReadBudget(128<<20))
 }
 

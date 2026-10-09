@@ -201,7 +201,8 @@ func (s *sessionScan) stricterHistorySuccessor(p state.PendingPublication, commi
 	if err != nil {
 		return state.PendingPublication{}, err
 	}
-	return next, next.ValidateHistoryBudgeted(s.id(), s.readBudget())
+	err = next.ValidateHistoryBudgeted(s.id(), s.readBudget())
+	return next, err
 }
 
 // pendingManifestInputs upgrades original parent provenance before verifying the

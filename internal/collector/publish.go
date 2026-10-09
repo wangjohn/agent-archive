@@ -387,28 +387,9 @@ func (s *sessionScan) sealPending(p *state.PendingPublication) error {
 		return p.ValidatePublicationBudgeted(s.ctx, s.readBudget())
 	}
 	prior := s.published.PublicationPredecessor()
-	purpose := state.PublicationCapture
-	if p.Preparation != nil {
-		purpose = p.Preparation.Purpose
-	} else if p.History != nil && p.History.Preparing {
-		for _, input := range p.History.Inputs {
-			if input.FilterVersion != archive.FilterVersion {
-				purpose = state.PublicationPrivacyRewrite
-				break
-			}
-		}
-		if p.Bundle.Capture.FilterVersion != archive.FilterVersion || p.Bundle.Capture.AdapterVersion != p.History.AdapterVersion {
-			purpose = state.PublicationPrivacyRewrite
-		}
-	}
-	if p.Preparation == nil && p.History != nil && p.History.Preparing {
-		needed, e := s.freezeNativeHeaderInputs(p)
-		if e != nil {
-			return e
-		}
-		if needed {
-			purpose = state.PublicationPrivacyRewrite
-		}
+	purpose, err := s.pendingPublicationPurpose(p)
+	if err != nil {
+		return err
 	}
 	if purpose != state.PublicationPrivacyRewrite {
 		if err := s.bindPublicationContinuity(&prior, *p); err != nil {
@@ -533,4 +514,31 @@ func (s *sessionScan) recordPublicationRetirement(pending state.PendingPublicati
 		}
 	}
 	return nil
+}
+
+func (s *sessionScan) pendingPublicationPurpose(p *state.PendingPublication) (state.PublicationPurpose, error) {
+	purpose := state.PublicationCapture
+	if p.Preparation != nil {
+		purpose = p.Preparation.Purpose
+	} else if p.History != nil && p.History.Preparing {
+		for _, input := range p.History.Inputs {
+			if input.FilterVersion != archive.FilterVersion {
+				purpose = state.PublicationPrivacyRewrite
+				break
+			}
+		}
+		if p.Bundle.Capture.FilterVersion != archive.FilterVersion || p.Bundle.Capture.AdapterVersion != p.History.AdapterVersion {
+			purpose = state.PublicationPrivacyRewrite
+		}
+	}
+	if p.Preparation == nil && p.History != nil && p.History.Preparing {
+		needed, e := s.freezeNativeHeaderInputs(p)
+		if e != nil {
+			return purpose, e
+		}
+		if needed {
+			purpose = state.PublicationPrivacyRewrite
+		}
+	}
+	return purpose, nil
 }

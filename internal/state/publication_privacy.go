@@ -122,14 +122,9 @@ func refilterPublicationInput(ctx context.Context, registration archive.SessionR
 		return bundle, packed, ref, proof, nil, err
 	}
 	admittedRegistration := registration
-	if frozenContext.NativeTarget != nil {
-		if frozenContext.NativeTarget.ParentSessionID != "" && registration.ParentSessionID != "" && frozenContext.NativeTarget.ParentSessionID != registration.ParentSessionID {
-			return bundle, packed, ref, proof, nil, ErrDurableStorageRecovery
-		}
-		if err = frozenContext.NativeTarget.validate(); err != nil {
-			return bundle, packed, ref, proof, nil, err
-		}
-		registration = frozenContext.NativeTarget.registration(registration)
+	registration, err = privacyNativeRegistration(registration, frozenContext.NativeTarget)
+	if err != nil {
+		return bundle, packed, ref, proof, nil, err
 	}
 	if privacyFactoryInputInvalid(adapter, oldPolicy, nextPolicy, index, original, input, origin, registration) {
 		return bundle, packed, ref, proof, nil, ErrDurableStorageRecovery
@@ -324,19 +319,9 @@ func validatePrivacyCorrespondence(a PreparationAuthority, sources []Publication
 	if privacyPreparationPurposeInvalid(a) {
 		return ErrDurableStorageRecovery
 	}
-	var old, next, origin archive.Metadata
-	if json.Unmarshal(nextBody, &next) != nil || json.Unmarshal(a.OriginMetadata, &origin) != nil {
-		return ErrDurableStorageRecovery
-	}
-	if a.Kind == PreparationPrivacyPendingAbsent {
-		if a.Predecessor != PredecessorAbsent || a.PredecessorSHA256 != "" || len(previousBody) != 0 || len(a.PrivacyPreviousMetadata) != 0 {
-			return ErrDurableStorageRecovery
-		}
-		old = origin
-	} else {
-		if a.Predecessor != PredecessorPresent || len(previousBody) == 0 || len(previousBody) > 32<<20 || publicationSHA256(previousBody) != a.PredecessorSHA256 || !bytes.Equal(previousBody, privacyPreviousBody(a)) || json.Unmarshal(previousBody, &old) != nil {
-			return ErrDurableStorageRecovery
-		}
+	old, next, err := privacyCorrespondenceMetadata(a, nextBody, previousBody)
+	if err != nil {
+		return err
 	}
 
 	if a.NativeTarget != nil && (next.ParentSessionID != a.NativeTarget.ParentSessionID || next.NativeChild != a.NativeTarget.NativeChild) {
@@ -525,4 +510,36 @@ func filterPrivacyAlternatives(ctx context.Context, registration archive.Session
 		covered = append(covered, receipt)
 	}
 	return bundle, covered, leases, nil
+}
+
+func privacyNativeRegistration(registration archive.SessionRegistration, target *PublicationNativeTarget) (archive.SessionRegistration, error) {
+	if target != nil {
+		if target.ParentSessionID != "" && registration.ParentSessionID != "" && target.ParentSessionID != registration.ParentSessionID {
+			return registration, ErrDurableStorageRecovery
+		}
+		if err := target.validate(); err != nil {
+			return registration, err
+		}
+		registration = target.registration(registration)
+	}
+	return registration, nil
+}
+
+func privacyCorrespondenceMetadata(a PreparationAuthority, nextBody, previousBody []byte) (old, next archive.Metadata, err error) {
+	var origin archive.Metadata
+	if json.Unmarshal(nextBody, &next) != nil || json.Unmarshal(a.OriginMetadata, &origin) != nil {
+		return old, next, ErrDurableStorageRecovery
+	}
+	if a.Kind == PreparationPrivacyPendingAbsent {
+		if a.Predecessor != PredecessorAbsent || a.PredecessorSHA256 != "" || len(previousBody) != 0 || len(a.PrivacyPreviousMetadata) != 0 {
+			return old, next, ErrDurableStorageRecovery
+		}
+		old = origin
+	} else {
+		if a.Predecessor != PredecessorPresent || len(previousBody) == 0 || len(previousBody) > 32<<20 || publicationSHA256(previousBody) != a.PredecessorSHA256 || !bytes.Equal(previousBody, privacyPreviousBody(a)) || json.Unmarshal(previousBody, &old) != nil {
+			return old, next, ErrDurableStorageRecovery
+		}
+	}
+
+	return old, next, nil
 }
