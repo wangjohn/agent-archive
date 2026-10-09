@@ -271,8 +271,8 @@ func TestRecoveryWitnessLimitLeavesExactMappingAvailable(t *testing.T) {
 	cfg.Archive.Projects = []archive.ProjectActivation{project(root, true)}
 	r := newResolver(env, cfg, Filters{ProjectMappings: map[string]string{gone: root}})
 	prepareRecoveryInventory(t.Context(), r, witnessLimitItems(t), unreadable{}, nil)
-	if r.recoveryInventoryCause != CauseWitnessLimit {
-		t.Fatalf("cause %q", r.recoveryInventoryCause)
+	if !r.recoveryGaps[recoveryGap{Cause: CauseWitnessLimit}] {
+		t.Fatalf("gaps %+v", r.recoveryGaps)
 	}
 	res := r.resolveEvidence(t.Context(), gone, archive.RepoKey("https://example.test/acme/repo"))
 	if res.outcome != "" || res.root != root || res.proof == nil || res.proof.Method != "explicit_mapping" || res.current == nil {
