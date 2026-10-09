@@ -373,11 +373,17 @@ type SessionRegistration struct {
 	LastHead *GitHead `json:"last_head,omitempty"`
 	// LastHeadSeenAt fences delayed stop observations without changing the
 	// first-seen time published in LastHead. Local only; absent on older state.
-	LastHeadSeenAt        *time.Time `json:"last_head_seen_at,omitempty"`
-	ParentSessionID       string     `json:"parent_session_id,omitempty"`
-	ParentNativeSessionID string     `json:"parent_native_session_id,omitempty"`
-	SubagentID            string     `json:"subagent_id,omitempty"`
-	SubagentObservedAt    time.Time  `json:"subagent_observed_at,omitempty"`
+	LastHeadSeenAt *time.Time `json:"last_head_seen_at,omitempty"`
+	// NativeChild identifies independently admitted native Codex children, including unresolved links.
+	NativeChild         bool   `json:"native_child,omitempty"`
+	NativeRootSessionID string `json:"native_root_session_id,omitempty"`
+	NativeSourceHome    string `json:"native_source_home,omitempty"`
+	// NativeLinkVersion records bounded native relationship/legacy-link reconciliation.
+	NativeLinkVersion     int       `json:"native_link_version,omitempty"`
+	ParentSessionID       string    `json:"parent_session_id,omitempty"`
+	ParentNativeSessionID string    `json:"parent_native_session_id,omitempty"`
+	SubagentID            string    `json:"subagent_id,omitempty"`
+	SubagentObservedAt    time.Time `json:"subagent_observed_at,omitempty"`
 	// AdmittedAt is when this machine took ownership of the session: the
 	// boundary for project activation and storage destination. Hooks set it at
 	// registration and backfill sets it to the import time. Empty on older
@@ -434,10 +440,16 @@ func (r SessionRegistration) Imported() bool {
 	return r.Origin == SessionOriginImport
 }
 
+// IsChild reports child ownership independently of whether the parent link resolved.
+func (r SessionRegistration) IsChild() bool { return r.NativeChild || r.ParentSessionID != "" }
+
 // Validate reports the first problem that makes the registration unusable:
-// a missing session ID, project, harness name, or start time, or source
-// fields (SourceKind, SourceKey, TranscriptPath) that do not fit together.
+// a missing session ID, project, harness name, start time or incompatible source.
 func (r SessionRegistration) Validate() error {
+	if err := r.validateNativeChild(); err != nil {
+		return err
+	}
+
 	if r.CodexBinding != nil {
 		if r.Harness.Name != "codex" || r.CodexBinding.NativeThreadID != r.NativeSessionID {
 			return errors.New("codex binding requires matching codex registration")
@@ -553,6 +565,7 @@ type SourceBundle struct {
 	NativeText           []TextTranscript         `json:"native_text,omitempty"`
 	SupplementalEvidence []SupplementalEvidence   `json:"supplemental_evidence,omitempty"`
 	PreviousGenerationID string                   `json:"previous_generation_id,omitempty"`
+	NativeChild          bool                     `json:"native_child,omitempty"`
 	ParentSessionID      string                   `json:"parent_session_id,omitempty"`
 	LinkedSessions       []LinkedSessionReference `json:"linked_sessions,omitempty"`
 }
@@ -804,6 +817,7 @@ type Metadata struct {
 	GitActivity     []GitEvent               `json:"git_activity,omitempty"`
 	CaptureGaps     []CaptureGap             `json:"capture_gaps,omitempty"`
 	SourceBundle    SourceReference          `json:"source_bundle"`
+	NativeChild     bool                     `json:"native_child,omitempty"`
 	ParentSessionID string                   `json:"parent_session_id,omitempty"`
 	LinkedSessions  []LinkedSessionReference `json:"linked_sessions,omitempty"`
 	// Origin, ImportedAt, and StartedAtSource describe a session backfill
@@ -859,3 +873,19 @@ func (m *Metadata) ApplyRegistrationProvenance(r SessionRegistration) {
 // importedGapDetail is about the time before the import only: a hook that
 // resumes an imported session records its lifecycle from then on.
 const importedGapDetail = "No hook observed this session before it was imported (imported_at): activity before then has no hook lifecycle events, final-response text, or skill inventory."
+
+func (r SessionRegistration) validateNativeChild() error {
+	if !r.NativeChild {
+		return nil
+	}
+	if r.Harness.Name != "codex" || r.NativeSourceHome != "" && !filepath.IsAbs(r.NativeSourceHome) {
+		return errors.New("invalid native child ownership")
+	}
+	return nil
+}
+
+// IsChild reports source child ownership even when the archive parent is unresolved.
+func (b SourceBundle) IsChild() bool { return b.NativeChild || b.ParentSessionID != "" }
+
+// IsChild reports metadata child ownership independently of parent-link availability.
+func (m *Metadata) IsChild() bool { return m.NativeChild || m.ParentSessionID != "" }

@@ -29,7 +29,7 @@ request. On macOS it builds all production packages with cgo and runs the
 focused Keychain, launchd, terminal, and CLI smoke suite above. macOS
 golangci-lint also runs on each pull request: the first pass blocks, and
 revive's doc-comment rule checks only code the pull request adds or changes.
-All jobs use Go 1.27.1 exactly (go.mod's `toolchain` line). A new push to a
+All jobs use Go 1.27.2 exactly (go.mod's `toolchain` line). A new push to a
 pull request cancels that pull request's older Test and Levenshtein runs.
 
 The Git identity compatibility job separately runs isolated native Git tests on
@@ -90,11 +90,16 @@ it is blocked (`TestHookRegistersOnTimeWhenTheRepoKeyLookupHangs`).
 
 The `verify` job (`levenshtein.yml`) runs the shared checks from
 [wangjohn/levenshtein](https://github.com/wangjohn/levenshtein) at the
-commit that workflow pins, in a Linux container: Go lint (staticcheck and
-more) and vet, HTTP and SQL rules, `go.mod` hygiene, `govulncheck`,
-`actionlint`, and `zizmor` for the workflows. `levenshtein.json` picks the
-checks. Run the same thing from a sibling checkout of Levenshtein at the
-pinned commit (it needs Docker):
+commit that workflow pins: Go lint (staticcheck and more) and vet, HTTP and
+SQL rules, `go.mod` hygiene, `actionlint`, and `zizmor` run in its pinned
+Linux container. Only `govulncheck` uses the native `release-go` environment
+on the Linux runner, with the Go 1.27.2 release compiler installed from
+`app/go.mod` and checked exactly by the workflow. This scans the standard
+library shipped in release builds rather than the shared container's older
+compiler. The shared scanner version and rules remain pinned; vulnerability
+results are never cached. `levenshtein.json` keeps all eight checks enabled.
+Run the same thing from a sibling checkout of Levenshtein at the pinned
+commit (it needs Docker and Go 1.27.2 on PATH for the native scan):
 
 ```sh
 ../levenshtein/verify pre-merge --source .

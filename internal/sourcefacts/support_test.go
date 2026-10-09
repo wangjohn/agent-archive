@@ -49,11 +49,9 @@ func TestCodexCompatibilityRejectsMissingOrUnsupportedEvidence(t *testing.T) {
 		{"unsafe-originator", func(m *CodexMeta) { m.Originator = "client\x1b" }},
 		{"remote-source", func(m *CodexMeta) { m.Source = json.RawMessage(`"remote"`) }},
 		{"missing-source", func(m *CodexMeta) { m.Source = nil }},
-		{"subagent-source", func(m *CodexMeta) { m.Source = json.RawMessage(`{"subagent":"review"}`) }},
 		{"fork", func(m *CodexMeta) { m.ForkedFrom = json.RawMessage(`"parent"`) }},
 		{"history-base", func(m *CodexMeta) { m.HistoryBase = json.RawMessage(`{}`) }},
 		{"internal-thread", func(m *CodexMeta) { m.ThreadSource = json.RawMessage(`"memory_consolidation"`) }},
-		{"spawned-agent", func(m *CodexMeta) { m.AgentPath = json.RawMessage(`"/agent/child"`) }},
 		{"compressed", withHistoryMode(`"compressed"`)},
 		{"referenced", withHistoryMode(`"referenced"`)},
 	} {

@@ -31,6 +31,7 @@ type Revision struct {
 	ETag        string    `json:"v"`
 	Hash        string    `json:"h"`
 	Activity    time.Time `json:"a"`
+	NativeChild bool      `json:"c,omitempty"`
 	Parent      string    `json:"p,omitempty"`
 	Replay      bool      `json:"r,omitempty"`
 	ProjectID   string    `json:"j"`
@@ -79,7 +80,7 @@ func revisionSummary(key string, data []byte, etag, nonce string) (Revision, err
 	if err := json.Unmarshal(data, &m); err != nil {
 		return Revision{}, err
 	}
-	return Revision{Nonce: nonce, MetadataKey: key, CapturedAt: m.CapturedAt, ETag: etag, Hash: legacy.Hash, Activity: ActivityTime(m), Parent: m.ParentSessionID, Replay: m.Replay != nil, ProjectID: m.ProjectID, RepoKey: m.RepoKey}, nil
+	return Revision{Nonce: nonce, MetadataKey: key, CapturedAt: m.CapturedAt, ETag: etag, Hash: legacy.Hash, Activity: ActivityTime(m), NativeChild: m.NativeChild, Parent: m.ParentSessionID, Replay: m.Replay != nil, ProjectID: m.ProjectID, RepoKey: m.RepoKey}, nil
 }
 
 const revisionComponentLimit = 255
