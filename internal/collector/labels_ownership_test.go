@@ -3,11 +3,13 @@ package collector
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agents/codex"
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
@@ -109,9 +111,7 @@ func TestExternalRenameRequiresCurrentPublishedOwnerBeforeLookup(t *testing.T) {
 				if tc.mutate == labelMalformedMetadata {
 					encoded = []byte(labelMalformedMetadata)
 				}
-				if err := published.CacheMetadata(encoded); err != nil {
-					t.Fatal(err)
-				}
+				injectPublishedMetadata(t, local, reg.ArchiveSessionID, published.Metadata(), encoded)
 				checksum, _, err := local.LabelRevision(reg.ArchiveSessionID)
 				if err != nil || checksum != originalChecksum {
 					t.Fatalf("owner edit changed source revision: %s %s %v", originalChecksum, checksum, err)
@@ -126,7 +126,17 @@ func TestExternalRenameRequiresCurrentPublishedOwnerBeforeLookup(t *testing.T) {
 			calls := provider.calls
 			filter.calls = 0
 			remote.keys = nil
-			run()
+			result, runErr := Run(context.Background(), local, remote, opts)
+			if runErr != nil {
+				t.Fatal(runErr)
+			}
+			if tc.mutate == labelMachineChange {
+				if len(result.Errors) != 0 {
+					t.Fatal(result)
+				}
+			} else if !errors.Is(result.Errors[reg.ArchiveSessionID], state.ErrDurableStorageRecovery) || len(result.Published) != 0 {
+				t.Fatalf("invalid selecting metadata must refuse before native work: %+v", result)
+			}
 			after := fetchMetadata(t, remote, "codex", reg.ArchiveSessionID)
 			if provider.calls != calls || filter.calls != 0 || len(remote.keys) != 0 || after.MachineID != before.MachineID || after.Name != before.Name || after.SourceBundle != before.SourceBundle {
 				t.Fatalf("foreign label caused native or publication work: calls=%d/%d filters=%d before=%+v after=%+v keys=%v", calls, provider.calls, filter.calls, before, after, remote.keys)

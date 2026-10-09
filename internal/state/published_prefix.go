@@ -41,7 +41,7 @@ func (s *Store) publishedPrefix(id string) (summary PublishedSummary, found, hea
 	if err != nil {
 		return summary, true, false, info, errors.Join(ErrDurableStorageRecovery, err)
 	}
-	_, present, err := s.loadDurableInspectionConfig(home)
+	cfg, present, err := s.loadDurableInspectionConfig(home)
 	if err != nil || !present {
 		return summary, true, false, info, errors.Join(ErrDurableStorageRecovery, err)
 	}
@@ -63,7 +63,7 @@ func (s *Store) publishedPrefix(id string) (summary PublishedSummary, found, hea
 		}
 		defer s.resourceBudget.Release(16 << 10)
 	}
-	summary, head, err = readLeadingSummary(io.LimitReader(f, 8192))
+	summary, head, err = readLeadingSummaryProtocol(io.LimitReader(f, 8192), cfg.PublicationCompositionProtection)
 	if errors.Is(err, ErrDurableStorageRecovery) {
 		return summary, true, false, info, err
 	}

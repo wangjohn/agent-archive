@@ -100,6 +100,8 @@ type Config struct {
 
 	// DurableStorageProtection permanently protects rooted publication obligations.
 	DurableStorageProtection bool `json:"durable_storage_protection,omitempty"`
+	// PublicationCompositionProtection permanently protects protocol2 publication.
+	PublicationCompositionProtection bool `json:"publication_composition_protection,omitempty"`
 	// CodexHistoryProtection permanently fences writers without revision lifecycle support.
 	CodexHistoryProtection bool `json:"codex_history_protection,omitempty"`
 	// GenerationProtection permanently fences writers that cannot freeze archive generations.

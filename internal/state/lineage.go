@@ -488,6 +488,7 @@ func (s *Store) forgetSession(archiveSessionID string, key agentmeta.SessionKey,
 				return err
 			}
 		}
+		s.invalidatePublishedAccounting(path)
 		remove := os.Remove
 		if path == s.registrationPath(archiveSessionID) {
 			remove = func(path string) error { return s.removeRegistrationWithRevision(path, revision) }

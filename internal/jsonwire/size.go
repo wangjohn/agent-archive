@@ -7,8 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
-	"strings"
-	"time"
 	"unicode/utf8"
 )
 
@@ -18,8 +16,8 @@ var ErrLimit = errors.New("JSON wire size exceeds reservation limit")
 // ErrUnsupported refuses unknown encoding behavior or excessive nesting.
 var ErrUnsupported = errors.New("unsupported JSON preflight value")
 
-// Bound counts an upper bound for encoding/json output. Omitted struct fields
-// are included, making this conservative without guessing a heap multiplier.
+// Bound counts a conservative upper bound for supported default JSON output.
+// It shares field inclusion and value validation with the streaming encoder.
 // Custom marshalers are refused except the explicit bounded wire types below.
 func Bound(ctx context.Context, value any, limit int64) (int64, error) {
 	c := counter{ctx: ctx, left: limit}
@@ -44,9 +42,26 @@ func (c *counter) text(s string) error {
 	if err := c.add(2); err != nil {
 		return err
 	}
+	checkedAt := -256
 	for i := 0; i < len(s); {
+		if i-checkedAt >= 256 {
+			checkedAt = i
+			if err := c.ctx.Err(); err != nil {
+				return err
+			}
+		}
 		n := int64(1)
 		b := s[i]
+		if safeASCII(b) {
+			start := i
+			for i < len(s) && i-start < (32<<10) && safeASCII(s[i]) {
+				i++
+			}
+			if err := c.add(int64(i - start)); err != nil {
+				return err
+			}
+			continue
+		}
 		switch {
 		case b == '"' || b == '\\' || b == '\n' || b == '\r' || b == '\t' || b == '\b' || b == '\f':
 			n = 2
@@ -72,174 +87,7 @@ func (c *counter) text(s string) error {
 }
 
 func (c *counter) value(v reflect.Value, depth int) error {
-	if err := c.ctx.Err(); err != nil {
-		return err
-	}
-	if depth > 128 {
-		return ErrUnsupported
-	}
-	if !v.IsValid() {
-		return c.add(4)
-	}
-	if handled, err := c.special(v); handled {
-		return err
-	}
-	switch v.Kind() {
-	case reflect.Interface, reflect.Pointer:
-		if v.IsNil() {
-			return c.add(4)
-		}
-		return c.value(v.Elem(), depth+1)
-	case reflect.Bool:
-		return c.add(5)
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
-		return c.add(20)
-	case reflect.Float32, reflect.Float64:
-		return c.add(24)
-	case reflect.String:
-		return c.text(v.String())
-	case reflect.Slice, reflect.Array:
-		return c.sequence(v, depth)
-	case reflect.Map:
-		return c.object(v, depth)
-	case reflect.Struct:
-		return c.structure(v, depth)
-	case reflect.Invalid, reflect.Complex64, reflect.Complex128, reflect.Chan, reflect.Func, reflect.UnsafePointer:
-		return ErrUnsupported
-	default:
-		return ErrUnsupported
-	}
-}
-
-func (c *counter) special(v reflect.Value) (bool, error) {
-	// ImportBatch is the archive's one bounded string wrapper. Keep this helper
-	// standard-library-only and size its recorded field without invoking its
-	// marshaler (or accepting arbitrary custom encoding behavior).
-	batch := v
-	if batch.Kind() == reflect.Pointer {
-		batch = batch.Elem()
-	}
-	typ := v.Type()
-	if typ.Kind() == reflect.Pointer {
-		typ = typ.Elem()
-	}
-	if typ.PkgPath() == "github.com/wangjohn/agent-archive/internal/archive" && typ.Name() == "ImportBatch" {
-		if !batch.IsValid() {
-			return true, c.add(4)
-		}
-		id := batch.FieldByName("id")
-		if !id.IsValid() || id.Kind() != reflect.String {
-			return true, ErrUnsupported
-		}
-		return true, c.text(id.String())
-	}
-
-	if v.CanInterface() {
-		switch x := v.Interface().(type) {
-		case *time.Time:
-			if x == nil {
-				return true, c.add(4)
-			}
-			return true, c.add(37)
-		case time.Time:
-			return true, c.add(37) // quoted RFC3339Nano, including maximum precision and offset
-		case json.Number:
-			return true, c.add(int64(len(x)))
-		case json.RawMessage:
-			return true, c.rawMessage(x)
-		case json.Marshaler:
-			return true, ErrUnsupported
-		}
-	}
-	return false, nil
-}
-
-func (c *counter) sequence(v reflect.Value, depth int) error {
-	if v.Kind() == reflect.Slice {
-		if v.IsNil() {
-			return c.add(4)
-		}
-		if v.Type().Elem().Kind() == reflect.Uint8 {
-			groups := (int64(v.Len()) + 2) / 3
-			if c.left < 2 || groups > (c.left-2)/4 {
-				return ErrLimit
-			}
-			return c.add(2 + groups*4)
-		}
-	}
-
-	if err := c.add(2 + int64(v.Len())); err != nil {
-		return err
-	}
-	for i := range v.Len() {
-		if err := c.value(v.Index(i), depth+1); err != nil {
-			return err
-		}
-	}
-	return nil
-
-}
-
-func (c *counter) object(v reflect.Value, depth int) error {
-	if v.IsNil() {
-		return c.add(4)
-	}
-	if v.Type().Key().Kind() != reflect.String {
-		return ErrUnsupported
-	}
-	if int64(v.Len()) > (c.left-2)/2 {
-		return ErrLimit
-	}
-	if err := c.add(2 + int64(v.Len())*2); err != nil {
-		return err
-	}
-	it := v.MapRange()
-	for it.Next() {
-		if err := c.text(it.Key().String()); err != nil {
-			return err
-		}
-		if err := c.value(it.Value(), depth+1); err != nil {
-			return err
-		}
-	}
-	return nil
-
-}
-
-func (c *counter) structure(v reflect.Value, depth int) error {
-	if err := c.add(2); err != nil {
-		return err
-	}
-	typ := v.Type()
-	for i := range v.NumField() {
-		f := typ.Field(i)
-		if f.PkgPath != "" {
-			continue
-		}
-		tag := strings.Split(f.Tag.Get("json"), ",")
-		if tag[0] == "-" {
-			continue
-		}
-		name := tag[0]
-		if name == "" {
-			name = f.Name
-		}
-		if err := c.text(name); err != nil {
-			return err
-		}
-		if err := c.add(2); err != nil {
-			return err
-		}
-		if len(tag) > 1 && strings.Contains(f.Tag.Get("json"), ",string") {
-			if err := c.add(2); err != nil {
-				return err
-			}
-		}
-		if err := c.value(v.Field(i), depth+1); err != nil {
-			return err
-		}
-	}
-	return nil
+	return (&traversal{ctx: c.ctx, count: c}).value(v, depth, false)
 }
 
 func (c *counter) rawMessage(x json.RawMessage) error {
@@ -251,6 +99,11 @@ func (c *counter) rawMessage(x json.RawMessage) error {
 	}
 	// encoding/json compacts RawMessage and applies HTML escaping.
 	for i := 0; i < len(x); i++ {
+		if i%256 == 0 {
+			if err := c.ctx.Err(); err != nil {
+				return err
+			}
+		}
 		if x[i] == '<' || x[i] == '>' || x[i] == '&' {
 			if err := c.add(5); err != nil {
 				return err

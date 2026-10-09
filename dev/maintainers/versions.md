@@ -149,6 +149,15 @@ single-component v2/v3 hints, and older readers use compatibility scanning when
 they reject segmented hints. Canonical source and metadata schemas, derived
 metadata, privacy filtering, adapter and parser versions are unchanged.
 
+Private source-set publication uses `{version: 8, writer: publication-composition-v8}`
+with sticky publication-composition and durable-storage protection. Protocol-2
+published state has a leading `publication_version: 2`; pending state has closed
+preparing/ready phases and a selecting commit only when ready. The same held root
+derives the version-7 storage guard. This preserves already-enabled history
+publication; admission staging and future native ancestor permission remain
+separate milestones. Remote source/metadata schemas and filter versions are
+unchanged. Every save and rollback preserves the strongest writer floor.
+
 Codex native child ownership advances its parser from the naming policy 0.25.0
 to 0.26.0. Native children retain their stable thread identity and own admission,
 and `native_child` remains observable while their parent archive link is pending.

@@ -22,6 +22,9 @@ import (
 // no Published or Pending value read through the handle may outlive it.
 func (s *Store) WithReadBudget(ctx context.Context, budget *agentapi.NativeReadBudget) (*Store, func()) {
 	scoped := *s
+	if scoped.publicationAccounting != nil && scoped.publicationAccounting.budget != budget {
+		scoped.publicationAccounting = nil
+	}
 	scoped.resourceBudget = budget
 	scoped.resourceContext = ctx
 	scoped.resourceReleases = &[]func(){}
@@ -39,10 +42,14 @@ func (s *Store) WithReadBudget(ctx context.Context, budget *agentapi.NativeReadB
 var errStateBudget = agentapi.ReadBudgetLimit(errors.New("local state exceeds shared data budget"))
 
 func (s *Store) readBudgeted(path string, value any, retain bool) error {
+	return s.readBudgetedContext(s.durableContext(), path, value, retain)
+}
+
+func (s *Store) readBudgetedContext(ctx context.Context, path string, value any, retain bool) error {
 	if s.resourceBudget == nil {
 		return local.Read(path, value)
 	}
-	if err := s.resourceContext.Err(); err != nil {
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	owner, err := os.OpenRoot(s.home)
@@ -89,10 +96,10 @@ func (s *Store) readBudgeted(path string, value any, retain bool) error {
 	if count, err := f.Read(extra[:]); count != 0 || !errors.Is(err, io.EOF) {
 		return errStateBudget
 	}
-	if err := s.resourceContext.Err(); err != nil {
+	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := json.Unmarshal(data, value); err != nil {
+	if err := s.decodePublicationOwned(ctx, data, value); err != nil {
 		return err
 	}
 	if retain {
@@ -103,6 +110,7 @@ func (s *Store) readBudgeted(path string, value any, retain bool) error {
 }
 
 func (s *Store) writeCompact(path string, value any) error {
+	s.invalidatePublishedAccounting(path)
 	if s.resourceBudget == nil {
 		return local.WriteCompact(path, value)
 	}
@@ -126,7 +134,7 @@ func (s *Store) writeCompact(path string, value any) error {
 // this scope. Returned metadata has an independent lifetime from its wire input.
 func (s *Store) unmarshalOwned(data []byte, value any) error {
 	if s.resourceBudget == nil {
-		return json.Unmarshal(data, value)
+		return s.decodePublicationOwned(s.durableContext(), data, value)
 	}
 	if err := s.resourceContext.Err(); err != nil {
 		return err
@@ -135,7 +143,7 @@ func (s *Store) unmarshalOwned(data []byte, value any) error {
 	if !s.resourceBudget.Reserve(n) {
 		return errStateBudget
 	}
-	if err := json.Unmarshal(data, value); err != nil {
+	if err := s.decodePublicationOwned(s.durableContext(), data, value); err != nil {
 		s.resourceBudget.Release(n)
 		return err
 	}
@@ -221,4 +229,17 @@ func (p *Published) nextBudgeted(bundle archive.SourceBundle, at time.Time, stat
 	}
 	defer p.store.resourceBudget.Release(n)
 	return p.state.next(bundle, at, status, reason, metadata, held, source), nil
+}
+
+// decodePublicationOwned shares the closed authority decoder with default JSON
+// while supplying only this Store's inherited ledger to invocation scratch.
+func (s *Store) decodePublicationOwned(ctx context.Context, data []byte, value any) error {
+	switch p := value.(type) {
+	case *publishedState:
+		return decodePublishedState(data, p, ctx, s.resourceBudget)
+	case *PendingPublication:
+		return decodePendingPublication(data, p, ctx, s.resourceBudget)
+	default:
+		return json.Unmarshal(data, value)
+	}
 }

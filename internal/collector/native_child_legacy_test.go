@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/state"
 )
 
@@ -112,6 +113,9 @@ func TestLegacyNativeChildPreparationFreezesParentAndDoesNotReadNative(t *testin
 	for i := range p.History.Inputs {
 		p.History.Inputs[i].ParentSessionID = nil
 	}
+	// Import the verified original descriptor before its first protocol2 seal;
+	// rewinding an already selecting commit is not a supported legacy producer.
+	p = freshLegacyHistoryOriginal(t, scan, p)
 	paths, err := filepath.Glob(filepath.Join(facts.Home, "rollout-*.jsonl"))
 	if err != nil || len(paths) == 0 {
 		t.Fatal("native fixture inputs missing", err)
@@ -166,3 +170,10 @@ const (
 	legacyAuthorityHome        legacyAuthorityCase = "home"
 	legacyAuthorityVersion     legacyAuthorityCase = "unsupported_binding"
 )
+
+// Native parent links may resolve after a retained revision was captured. The
+// stable child owner still identifies that earlier evidence; a different known
+// parent remains a conflict.
+func retainedParentMatches(reg archive.SessionRegistration, bundle archive.SourceBundle) bool {
+	return bundle.ParentSessionID == reg.ParentSessionID || nativeChildOwned(reg, bundle) && bundle.ParentSessionID == ""
+}

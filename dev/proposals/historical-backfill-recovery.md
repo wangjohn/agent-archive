@@ -312,6 +312,13 @@ Work in `internal/collector`, `internal/state`, `internal/archive`,
 `internal/retention`, reader/export paths and CLI recovery. Reconcile the current
 reader contract with publication design before changing any mutation fence.
 
+Current publication infrastructure provides composition version 8, closed
+protocol-2 selection and serial owned history-stage replay while preserving
+already-enabled main history publication. This does not complete step 4a's
+historical import admission staging or step 4c's additional native ancestor
+permission. The future authority floor 9 remains separate; all requirements
+below still apply to completing historical backfill.
+
 Implement this area as 4a (staging and publication journal), 4b (maintenance and
 compatibility), then 4c (writer enablement), with no newly enabled writers in 4a
 or 4b. All import entry points, including setup's historical import and background

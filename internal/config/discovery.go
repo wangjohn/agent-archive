@@ -73,7 +73,7 @@ func underlyingSkillEvidence(mode SkillEvidence) SkillEvidence {
 }
 
 func prepareDiscoveryConfig(c *Config) error {
-	if (c.SchemaVersion > 5 && c.SchemaVersion != 7) || (c.SchemaVersion == 7 && !c.DurableStorageProtection) || (c.SchemaVersion == 5 && !c.CodexHistoryProtection) || (c.SchemaVersion == 4 && !c.GenerationProtection) || (c.SchemaVersion == 3 && c.CodexCapture == nil) {
+	if (c.SchemaVersion > 5 && c.SchemaVersion != 7 && c.SchemaVersion != 8) || (c.SchemaVersion == 8 && (!c.PublicationCompositionProtection || !c.DurableStorageProtection)) || (c.SchemaVersion == 7 && !c.DurableStorageProtection) || (c.SchemaVersion == 5 && !c.CodexHistoryProtection) || (c.SchemaVersion == 4 && !c.GenerationProtection) || (c.SchemaVersion == 3 && c.CodexCapture == nil) {
 		return errors.New("configuration requires a newer agent-archive writer")
 	}
 	if c.Discovery != nil {
@@ -108,10 +108,21 @@ func prepareDiscoveryConfig(c *Config) error {
 	if c.DurableStorageProtection {
 		c.SchemaVersion = 7
 	}
+	if c.PublicationCompositionProtection {
+		c.DurableStorageProtection = true
+		c.SchemaVersion = 8
+	}
 	return validateDiscoveryConfig(*c)
 }
 
 func validateDiscoveryConfig(c Config) error {
+	if c.PublicationCompositionProtection {
+		if c.SchemaVersion != 8 || !c.DurableStorageProtection {
+			return errors.New("publication composition requires schema 8 and storage protection")
+		}
+		c.PublicationCompositionProtection = false
+		c.SchemaVersion = 7
+	}
 	if c.DurableStorageProtection {
 		if c.SchemaVersion != 7 {
 			return errors.New("durable storage protection requires schema 7")
