@@ -5,9 +5,10 @@ Interactive import separates the plan from the current question. Enter skips a s
 
 `agent-archive backfill` imports the Claude Code, Codex, and Cursor sessions
 already on this machine. Run it after [setup](../getting-started/setup.md), which
-itself offers to import the past sessions of the projects you chose (an
-import like `backfill --project DIR`, listed in `backfill history` and undone
-with `backfill undo`); run `backfill` for anything else. With
+itself imports the last 7 days of sessions in the projects you chose (an
+import like `backfill --since 7d --project DIR`, listed in `backfill history`
+and undone with `backfill undo`; see [setup](../getting-started/setup.md#sessions-from-the-last-7-days));
+run `backfill` for older sessions and anything else. With
 no options it imports every session it finds, but first it shows each project
 with its session count per app, what it will skip and why, and the date
 retention will delete the imported sessions. Nothing changes until you answer
@@ -49,7 +50,9 @@ may have made; a copy a killed backfill leaves is removed by the next
   afterwards. Their subagent chats are not imported yet; the plan says how
   many there are.
 - Sessions run from your home directory or a temporary directory are skipped
-  unless you pass `--include-home` or `--include-temp`.
+  unless you pass `--include-home` or `--include-temp`. A Git repository in a
+  temporary directory, such as a throwaway clone an agent made to review a
+  pull request, counts as temporary too.
 - A plain folder that isn't a repository (say `~/code`, where you once ran an
   agent) becomes a project that captures new sessions anywhere under it
   that no nearer project owns; the plan says so under its row. Repositories

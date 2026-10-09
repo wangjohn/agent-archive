@@ -24,8 +24,43 @@ func TestRealCLICatalogStatsKeepsOldDescendants(t *testing.T) {
 		{id: "child", harness: "claude", project: "p", parent: "root", captured: old, models: []string{"claude-opus-5"}, perModel: []modelTokenSpec{{model: "claude-opus-5", input: 200, output: 20}}},
 		{id: "grandchild", harness: "claude", project: "p", parent: "child", captured: old.Add(-24 * time.Hour), models: []string{"claude-opus-5"}, perModel: []modelTokenSpec{{model: "claude-opus-5", input: 300, output: 30}}},
 	} {
-		session.publish(t, legacy)
-		complete = append(complete, session.build())
+		metadata := session.build()
+		metadata.ProjectID = session.project
+		bundle := archive.SourceBundle{
+			SchemaVersion:    archive.SourceSchemaVersion,
+			ArchiveSessionID: session.id, NativeSessionID: session.id,
+			ProjectID: session.project, ParentSessionID: session.parent,
+			Capture: archive.SourceCapture{
+				Harness: metadata.Harness, AdapterName: "synthetic-stats",
+				CapturedAt: session.captured,
+			},
+		}
+		packed, err := archive.BuildCompressedSource(bundle)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sourceKey, err := archive.SourceObjectKey(bundle, packed.SHA256)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = legacy.Put(t.Context(), sourceKey, packed.Bytes); err != nil {
+			t.Fatal(err)
+		}
+		metadata.SourceBundle = archive.SourceReference{
+			Key: sourceKey, SHA256: packed.SHA256, CompressedBytes: len(packed.Bytes),
+		}
+		raw, err := json.Marshal(metadata)
+		if err != nil {
+			t.Fatal(err)
+		}
+		key, err := archive.MetadataObjectKey(session.harness, session.id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = legacy.Put(t.Context(), key, raw); err != nil {
+			t.Fatal(err)
+		}
+		complete = append(complete, metadata)
 	}
 	remote := privateCatalogFromLegacy(t, legacy)
 	counts := &catalogListReads{MeasuredStore: storagetest.NewMeasuredStore(remote.ObjectStore, 0), paths: map[string]int{}}

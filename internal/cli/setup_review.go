@@ -352,7 +352,7 @@ func renderSetupReview(p *prompter, m *setupReviewModel, details bool) {
 			terminal.Println(p.out, p.style.hang("    ", line))
 		}
 	}
-	p.warn("History import is separate.")
+	p.warn("Setup imports the last 7 days of included projects; older history is separate.")
 	p.warn("Sensitive text may remain after filtering.")
 	p.renderer().block(m.implications)
 }

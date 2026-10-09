@@ -254,37 +254,9 @@ func (c *SQLiteSessionCatalog) refreshRemote(ctx context.Context, requiredPrior 
 		}
 		return false, err
 	}
-	if requiredPrior == nil {
-		if _, err = tx.ExecContext(ctx, "CREATE TABLE IF NOT EXISTS remote_root(id INTEGER PRIMARY KEY CHECK(id=1),root BLOB NOT NULL)"); err != nil {
-			return false, err
-		}
-	}
-	var raw []byte
-	err = tx.QueryRowContext(ctx, "SELECT root FROM remote_root WHERE id=1").Scan(&raw)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		if requiredPrior != nil {
-			return false, ctx.Err()
-		}
+	prior, usable, err := remotePriorRoot(ctx, tx, requiredPrior)
+	if err != nil || !usable {
 		return false, err
-	}
-	var prior catalog.ObjectRef
-	if len(raw) > 0 && json.Unmarshal(raw, &prior) != nil {
-		if requiredPrior != nil {
-			return false, ctx.Err()
-		}
-		return false, errors.New("invalid remote catalog root")
-	}
-	if requiredPrior != nil {
-		var complete bool
-		if prior != *requiredPrior {
-			return false, nil
-		}
-		if err = tx.QueryRowContext(ctx, "SELECT complete FROM catalog_state WHERE id=1").Scan(&complete); err != nil {
-			return false, ctx.Err()
-		}
-		if !complete {
-			return false, nil
-		}
 	}
 	delta, err := snapshot.Delta(ctx, prior)
 	if err != nil {
@@ -315,7 +287,13 @@ func (c *SQLiteSessionCatalog) refreshRemote(ctx context.Context, requiredPrior 
 	if err = applyRemoteDelta(ctx, tx, delta); err != nil {
 		return false, err
 	}
-	raw, err = json.Marshal(delta.Next)
+	// These rows now belong to the remote root, not a prior canonical destination.
+	// Canonical namespaces are always prefixed; empty means no canonical proof.
+	// Commit this invalidation atomically with the replaced rows and remote root.
+	if _, err = tx.ExecContext(ctx, "UPDATE catalog_state SET namespace='' WHERE id=1"); err != nil {
+		return false, err
+	}
+	raw, err := json.Marshal(delta.Next)
 	if err != nil {
 		return false, err
 	}
@@ -351,6 +329,44 @@ func (c *SQLiteSessionCatalog) refreshRemote(ctx context.Context, requiredPrior 
 	c.remoteSnapshot = snapshot
 	c.viewEpoch, c.viewGeneration, c.viewReady = epoch, generation, true
 	return true, nil
+}
+
+// remotePriorRoot preserves the read-only reuse probe: unavailable or different
+// local roots never authorize repair through a required-root request.
+func remotePriorRoot(ctx context.Context, tx *sql.Tx, requiredPrior *catalog.ObjectRef) (catalog.ObjectRef, bool, error) {
+	if requiredPrior == nil {
+		if _, err := tx.ExecContext(ctx, "CREATE TABLE IF NOT EXISTS remote_root(id INTEGER PRIMARY KEY CHECK(id=1),root BLOB NOT NULL)"); err != nil {
+			return catalog.ObjectRef{}, false, err
+		}
+	}
+	var raw []byte
+	err := tx.QueryRowContext(ctx, "SELECT root FROM remote_root WHERE id=1").Scan(&raw)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		if requiredPrior != nil {
+			return catalog.ObjectRef{}, false, ctx.Err()
+		}
+		return catalog.ObjectRef{}, false, err
+	}
+	var prior catalog.ObjectRef
+	if len(raw) > 0 && json.Unmarshal(raw, &prior) != nil {
+		if requiredPrior != nil {
+			return catalog.ObjectRef{}, false, ctx.Err()
+		}
+		return catalog.ObjectRef{}, false, errors.New("invalid remote catalog root")
+	}
+	if requiredPrior != nil {
+		var complete bool
+		if prior != *requiredPrior {
+			return catalog.ObjectRef{}, false, nil
+		}
+		if err = tx.QueryRowContext(ctx, "SELECT complete FROM catalog_state WHERE id=1").Scan(&complete); err != nil {
+			return catalog.ObjectRef{}, false, ctx.Err()
+		}
+		if !complete {
+			return catalog.ObjectRef{}, false, nil
+		}
+	}
+	return prior, true, nil
 }
 
 func remoteReusedRows(delta catalog.Delta, invalid []string, cachedKeys map[string]bool) int {

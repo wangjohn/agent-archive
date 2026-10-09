@@ -64,11 +64,14 @@ type RecoveryInventory struct {
 // RecoveryResolver only recovers absent checkouts into existing configured roots.
 // Live ownership and explicit configured rules must be evaluated before calling Recover.
 type RecoveryResolver struct {
-	Projects             []archive.ProjectActivation
-	Mappings             map[string]string
-	ResolvePath          func(string) string
-	Lookup               RepositoryLookup
-	Validate             func(RepositoryIdentity) bool
+	Projects    []archive.ProjectActivation
+	Mappings    map[string]string
+	ResolvePath func(string) string
+	Lookup      RepositoryLookup
+	Validate    func(RepositoryIdentity) bool
+	// Proposed names inventory roots that are not committed configuration
+	// (backfill's prospective roots). See nonOwning.
+	Proposed             map[string]bool
 	rawResolve           func(string) string
 	pathContext          string
 	mappedIdentities     map[string]RepositoryIdentity
@@ -143,7 +146,8 @@ func RecoveryContext(projects []archive.ProjectActivation, mappings map[string]s
 }
 
 // Recover considers exact mappings and recorded keys without basename inference.
-// Unknown inventory entries remain uncertainty, even when the included match looks unique.
+// Unknown inventory entries remain uncertainty, even when the included match looks
+// unique; only keyless proposed checkouts are non-owning (see nonOwning).
 func (r *RecoveryResolver) Recover(ctx context.Context, cwd, key string) (proof archive.ProjectResolution, outcome RecoveryOutcome) {
 	r.observationContext = ctx
 	cacheKey := cwd + "\x00" + key + "\x00" + r.Context
@@ -320,15 +324,25 @@ func (r *RecoveryResolver) prepareInventory(ctx context.Context) RecoveryOutcome
 		sum := sha256.Sum256(b)
 		r.digest = hex.EncodeToString(sum[:])
 	}
-	for _, id := range inv.Entries {
+	for i, id := range inv.Entries {
 		if id.BudgetExhausted {
 			return RecoveryBudgetExhausted
 		}
-		if !id.Known {
+		if !id.Known && !r.nonOwning(i, id) {
 			return RecoveryInventoryUnavailable
 		}
 	}
 	return ""
+}
+
+// nonOwning reports a proposed (uncommitted) root whose lookup completed within
+// budget and found a checkout top level, but no normalizable repository key,
+// such as a clone whose origin is a local path. Such a root cannot be shown to
+// own any recorded key, so it is not uncertainty for other roots' matches; it
+// is rechecked with the semantic sweep and must still lack a key at admission.
+// Configured roots, and lookups that observed no checkout at all, stay strict.
+func (r *RecoveryResolver) nonOwning(i int, id RepositoryIdentity) bool {
+	return !id.Known && !id.BudgetExhausted && id.Root != "" && id.Key == "" && i < len(r.Projects) && r.Proposed[r.Projects[i].Root]
 }
 
 func safeRepositoryIdentity(id RepositoryIdentity) RepositoryIdentity {
@@ -391,8 +405,9 @@ func (r *RecoveryResolver) Current(proof archive.ProjectResolution) bool {
 	if !r.semanticCurrent() {
 		return false
 	}
-	for _, id := range r.Inventory.Entries {
-		if !r.identityCurrent(id) {
+	for i, id := range r.Inventory.Entries {
+		// Non-owning entries have no dependency stamps; semanticCurrent rechecked them.
+		if !r.nonOwning(i, id) && !r.identityCurrent(id) {
 			return false
 		}
 	}
@@ -473,20 +488,22 @@ func validRecoveryPath(path string) bool {
 
 // semanticCurrent performs the second complete semantic sweep once per slice.
 // Every configured entry participates, including excluded roots and scratch roots.
+// Without semantic evidence, only non-owning proposed entries are observed again.
 func (r *RecoveryResolver) semanticCurrent() bool {
 	if r.semanticChecked {
 		return r.semanticValidated
 	}
-	semantic := false
-	for _, id := range r.Inventory.Entries {
+	semantic, unowned := false, false
+	for i, id := range r.Inventory.Entries {
 		semantic = semantic || id.Validation == "semantic"
+		unowned = unowned || r.nonOwning(i, id)
 	}
-	if !semantic {
+	if !semantic && !unowned {
 		return true
 	}
 	r.semanticChecked = true
 	for i, id := range r.Inventory.Entries {
-		if !r.semanticLookupCurrent(id, r.Projects[i].Root) {
+		if (semantic || r.nonOwning(i, id)) && !r.semanticLookupCurrent(id, r.Projects[i].Root) {
 			return false
 		}
 	}
@@ -529,5 +546,9 @@ func (r *RecoveryResolver) ResetValidationContext(ctx context.Context) {
 }
 
 func semanticIdentityAgrees(planned, fresh RepositoryIdentity) bool {
+	if !planned.Known {
+		// A non-owning entry must still be a keyless checkout at the same top level.
+		return !fresh.Known && !fresh.BudgetExhausted && fresh.Root == planned.Root && fresh.Key == "" && fresh.ObservationScope == planned.ObservationScope
+	}
 	return fresh.Known && !fresh.BudgetExhausted && fresh.Root == planned.Root && fresh.Key == planned.Key && fresh.Validation == planned.Validation && fresh.ObservationScope == planned.ObservationScope
 }

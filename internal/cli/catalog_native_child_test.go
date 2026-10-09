@@ -101,7 +101,7 @@ func TestRealCLICatalogNativeChildMatchesLegacyDiscoveryAndSource(t *testing.T) 
 						{"show", id, "--json"},
 						{"show", id, "--transcript", "--no-pager"},
 						{"show", "Independent", "--json"},
-						{"stats", "--days", "0", "--all", "--json"},
+						{"stats", "--days", "1", "--all", "--json"},
 					} {
 						var got, errs, want, wantErr bytes.Buffer
 						code := Run(args, nil, &got, &errs, env)

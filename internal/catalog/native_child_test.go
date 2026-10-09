@@ -35,6 +35,8 @@ func TestNativeChildOverflowCountsFollowResolvedParentOnly(t *testing.T) {
 		if stage != nativeChildUnresolved {
 			child.ID = "native-transition/" + string(stage)
 			switch stage {
+			case nativeChildUnresolved:
+				// The initial unresolved commit is handled before this branch.
 			case nativeChildLinked:
 				child.Next.Summary.ParentSessionID = parent.Next.Summary.SessionID
 			case nativeChildUnlinked:

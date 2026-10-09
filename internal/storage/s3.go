@@ -24,6 +24,7 @@ import (
 	smithyhttp "github.com/aws/smithy-go/transport/http"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/destination"
+ "github.com/wangjohn/agent-archive/internal/config"
 )
 
 // S3Store is an ObjectStore backed by Amazon S3 or a compatible endpoint such
@@ -35,6 +36,7 @@ type S3Store struct {
 	bucket      string
 	prefix      string
 	maxGetBytes int64
+ catalogNamespace string
 }
 
 // S3StoreOptions configures a store. Client must be constructed with the
@@ -71,6 +73,19 @@ func NewS3Store(options S3StoreOptions) (*S3Store, error) {
 		maxGetBytes = 64 << 20
 	}
 	return &S3Store{provider: strings.ToLower(strings.TrimSpace(options.Provider)), client: options.Client, bucket: options.Bucket, prefix: strings.Trim(options.Prefix, "/"), maxGetBytes: maxGetBytes}, nil
+}
+
+// CatalogNamespace is set only by the configured constructor, which binds the
+// immutable provider/endpoint/bucket/prefix through the existing credential-free
+// config identity. Arbitrary injected clients/resolvers remain process-scoped.
+func (s *S3Store) CatalogNamespace() string { return s.catalogNamespace }
+
+func configuredCatalogNamespace(cfg credentials.Config, client *s3.Client) string {
+ options := client.Options()
+ if options.EndpointResolver != nil { return "" }
+ // Bind the actual SDK endpoint too: named AWS profiles may supply an
+ // endpoint override beyond the application's configured destination ID.
+ return SHA256Hex([]byte(config.DestinationID(cfg) + "\x00" + options.Region + "\x00" + aws.ToString(options.BaseEndpoint)))
 }
 
 // NewClient constructs an S3 client for AWS or an S3-compatible endpoint.
@@ -520,7 +535,10 @@ func NewConfiguredStore(ctx context.Context, cfg credentials.Config, keychain cr
 		return nil, err
 	}
 	client := NewClient(awsCfg, endpoint, true, 3)
-	return NewS3Store(S3StoreOptions{Provider: cfg.Provider, Client: client, Bucket: cfg.Bucket, Prefix: cfg.Prefix})
+	store, err := NewS3Store(S3StoreOptions{Provider: cfg.Provider, Client: client, Bucket: cfg.Bucket, Prefix: cfg.Prefix})
+ if err != nil { return nil, err }
+ store.catalogNamespace = configuredCatalogNamespace(cfg, client)
+ return store, nil
 }
 
 // CheckConfiguredArchiveFormat refuses unqualified formats before credentials
