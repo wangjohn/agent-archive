@@ -148,6 +148,7 @@ type ListOptions struct {
 	// CompatibilityScan explains why the exhaustive reader was required.
 	CompatibilityScan func(string)
 	// BodyRead observes successful selected metadata or cache body reads.
+	// Indexed reads invoke it serially in selection order after workers join.
 	BodyRead func(key string, cached bool)
 
 	// Cache, when set, serves a sidecar whose listed ETag is unchanged from
