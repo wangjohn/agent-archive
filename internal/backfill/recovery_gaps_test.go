@@ -246,3 +246,36 @@ func TestRecoveryWitnessRootLimitIsNotABudget(t *testing.T) {
 		t.Fatalf("diagnostic %+v", d)
 	}
 }
+
+// An exact mapping does not use the witness inventory, so a witness gap must
+// not rename an inventory outcome from the mapped target's own lookup.
+func TestRecoveryMappingOutcomeCarriesNoWitnessGap(t *testing.T) {
+	tr, env, cfg, root, _ := firstRunRecoveryFixture(t, false)
+	gone := tr.path("home/.codex/worktrees/deleted/repo")
+	env.RepositoryIdentity = func(context.Context, string) sourcefacts.RepositoryIdentity {
+		return sourcefacts.RepositoryIdentity{}
+	}
+	cfg.Archive.Projects = []archive.ProjectActivation{project(root, true)}
+	r := newResolver(env, cfg, Filters{ProjectMappings: map[string]string{gone: root}})
+	prepareRecoveryInventory(t.Context(), r, nil, unreadable{stores: map[string]bool{"claude": true}}, nil)
+	res := r.resolveEvidence(t.Context(), gone, archive.RepoKey("https://example.test/acme/repo"))
+	if res.outcome != sourcefacts.RecoveryInventoryUnavailable || res.cause != noGapCause {
+		t.Fatalf("got %q/%q", res.outcome, res.cause)
+	}
+}
+
+// A workspace reference whose workspace.json does not exist resolves no
+// folder; the epoch itself, not only the witness inventory, stays incomplete.
+func TestCursorRecoveryMissingWorkspaceLeavesEpochIncomplete(t *testing.T) {
+	_, env, cfg, _, _ := firstRunRecoveryFixture(t, false)
+	works := []*work{{t: &transcript{harness: harnessCursor}, chat: CursorDatabaseChat{ID: "c", WorkspaceID: "missing"}}}
+	complete, gaps, err := observeCursorRecoveryWorks(t.Context(), env, newResolver(env, cfg, Filters{}), works, &cursorRecoveryReadBudget{remaining: 1 << 20, rows: 16})
+	if err != nil || complete || !gaps[recoveryGap{Agent: string(harnessCursor), Cause: CauseCursorChatFolderUnavailable}] {
+		t.Fatalf("complete=%v gaps=%+v err=%v", complete, gaps, err)
+	}
+	folderless := []*work{{t: &transcript{harness: harnessCursor}, chat: CursorDatabaseChat{ID: "f"}}}
+	complete, gaps, err = observeCursorRecoveryWorks(t.Context(), env, newResolver(env, cfg, Filters{}), folderless, &cursorRecoveryReadBudget{remaining: 1 << 20, rows: 16})
+	if err != nil || !complete || len(gaps) != 0 {
+		t.Fatalf("folderless: complete=%v gaps=%+v err=%v", complete, gaps, err)
+	}
+}
