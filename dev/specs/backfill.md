@@ -526,7 +526,16 @@ matching rule wins.
    when archive state or output filters hide their sessions.
    Pending or oversized sources cannot
    alone propose destinations; malformed or incomplete evidence cannot certify
-   uniqueness. Exact mappings continue to require configured targets.
+   uniqueness. One exception applies to proposed (not yet configured) roots
+   only: when Git reports a checkout top level and prints an origin that yields
+   no repository key (for example a clone whose origin is a local path to a
+   deleted worktree), that root cannot own any recorded key and is non-owning
+   rather than unknown, so it does not make recovery unavailable for other
+   sessions. It must still be a keyless checkout at the same top level when
+   evidence is renewed. A proposed root that Git could not observe, whose
+   origin read failed, or whose observation exhausted its budget, still blocks, and every configured root
+   keeps the strict rule ([Recorded project recovery](#recorded-project-recovery)).
+   Exact mappings continue to require configured targets.
    The plan displays selected proposed roots as projects it will add through the
    ordinary batch/config transaction. Hidden roots remain recovery evidence
    without becoming new capture roots. Evidence Context/digest binds the union;
@@ -1138,7 +1147,18 @@ mapping. Live filesystem ownership and nearest configured rules take precedence.
 The discovery catalog checkpoints an incomplete configured-root sweep. Each
 pass allows at most 128 identity lookups; completed sweeps refresh next pass,
 and cached prefix metadata is validated before a resumed sweep. Unavailable
-entries cannot certify uniqueness. Bounded Git config origin names identify
+entries cannot certify uniqueness. Backfill's proposed roots are the only
+exception: a proposed root whose completed, within-budget lookup found a
+checkout top level and an origin value that yields no repository key is
+non-owning; a failed origin read is unknown, not keyless. It cannot match a
+recorded key, so a match elsewhere stays unique among the identifiable roots.
+It has no dependency stamps, so every admission slice observes it again
+(sharing the coalesced semantic sweep) and requires the same keyless top level
+and observer scope; gaining a key or becoming unobservable invalidates the proof.
+Unobserved or budget-exhausted proposed roots, and all configured roots, remain
+uncertainty. A keyless origin that is a `url.insteadOf` shorthand for the same
+repository is the accepted residual: it is never normalized, so it could not
+match the recorded key even if configured. Bounded Git config origin names identify
 metadata dependencies; no partial Git configuration parser interprets remotes.
 Source and Git reads run outside admission locks. Under-lock scope digests and
 permission generations reject configuration changes.

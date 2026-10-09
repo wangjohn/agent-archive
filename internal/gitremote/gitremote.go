@@ -98,8 +98,16 @@ func RepoKey(ctx context.Context, root string, run Runner) string {
 // entry (Git exit 1 with no output) establishes no origin. run is nil for
 // ExecRunner; it must respect ctx. Remote URLs never leave this function.
 func ProjectKey(ctx context.Context, root string, run Runner) (string, bool) {
+	key, known, _ := projectKey(ctx, root, run)
+	return key, known
+}
+
+// projectKey also reports whether Git read an origin value it could not
+// normalize (a local path, file:// URL or unparsable remote). Only such an
+// origin is keyless evidence; a failed read is unknown and may hide any key.
+func projectKey(ctx context.Context, root string, run Runner) (key string, known, nonportable bool) {
 	if root == "" || !filepath.IsAbs(root) || ctx.Err() != nil {
-		return "", false
+		return "", false, false
 	}
 	if run == nil {
 		run = ExecRunner
@@ -108,16 +116,17 @@ func ProjectKey(ctx context.Context, root string, run Runner) (string, bool) {
 	defer cancel()
 	out, err := run(ctx, root, "-C", root, "config", "--get", "remote.origin.url")
 	if ctx.Err() != nil {
-		return "", false
+		return "", false, false
 	}
 	if err != nil {
 		var status interface{ ExitCode() int }
 		missing := errors.As(err, &status) && status.ExitCode() == 1 && len(out) == 0
-		return "", missing
+		return "", missing, false
 	}
 	raw := strings.TrimSpace(strings.SplitN(string(out), "\n", 2)[0])
-	key := archive.RepoKey(raw)
-	return key, raw == "" || key != ""
+	key = archive.RepoKey(raw)
+	known = raw == "" || key != ""
+	return key, known, !known
 }
 
 // ProjectRoot returns Git's checkout top level, or empty when it cannot be
