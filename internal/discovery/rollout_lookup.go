@@ -37,6 +37,7 @@ type CodexRolloutLookup struct {
 	homes            []string
 	store            *state.Store
 	catalog          *catalog
+	readOnly         bool
 	readBudget       *agentapi.NativeReadBudget
 	coverage         *coverageInventory
 	coverageDirty    bool
@@ -824,7 +825,7 @@ func (l *CodexRolloutLookup) closeWithContext(ctx context.Context) error {
 			errs = append(errs, view.snapshot.close())
 		}
 	}
-	if l.coverageDirty {
+	if l.coverageDirty && !l.readOnly {
 		if err := l.coverage.validate(l.roots); err != nil {
 			return errors.Join(append(errs, err)...)
 		}
@@ -866,6 +867,16 @@ func (l *CodexRolloutLookup) beginOperation(ctx context.Context) (context.Contex
 
 // NativeReadBudget is the pass-owned shared native/source/cache charge ledger.
 func (l *CodexRolloutLookup) NativeReadBudget() *agentapi.NativeReadBudget { return l.readBudget }
+
+// ObserveReadOnly advances the existing bounded inventory without admission or
+// durable state writes. It shares this lookup's pass deadline and charge ledger.
+func (l *CodexRolloutLookup) ObserveReadOnly(ctx context.Context) (Health, error) {
+	l.readOnly = true
+	// Planning slices share one overall deadline and retained-data ledger. Reset
+	// only this slice's I/O allowance so large inventories can advance fairly.
+	l.probes = 0
+	return runWithAdapters(ctx, l.store, config.Config{}, Options{Rollouts: l, nativeOnly: true}, registeredAdapters())
+}
 
 // PrepareRegistered requests qualified history coverage only for already admitted
 // owners, then advances one shared observation slice before source snapshots open.
@@ -909,4 +920,5 @@ func (l *CodexRolloutLookup) PrepareRegistered(ctx context.Context, cfg config.C
 	o.inventoryOnly = true
 	_, err := runWithAdapters(ctx, l.store, cfg, o, registeredAdapters())
 	return err
+
 }

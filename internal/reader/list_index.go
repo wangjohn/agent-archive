@@ -246,7 +246,7 @@ func listRecentFullWithHeaders(ctx context.Context, store storage.ObjectStore, p
 		if opts.TopLevelOnly {
 			countScoped = 0
 			for _, m := range scoped {
-				if m.ParentSessionID == "" {
+				if !m.IsChild() {
 					countScoped++
 				}
 			}
@@ -260,7 +260,7 @@ func listRecentFullWithHeaders(ctx context.Context, store storage.ObjectStore, p
 	}
 	result := RecentResult{Complete: true, Children: allChildren, ScopeEmpty: scopeEmpty, Outside: outside}
 	for _, m := range all {
-		if m.ParentSessionID != "" {
+		if m.IsChild() {
 			if opts.TopLevelOnly {
 				result.Hidden++
 			}
@@ -269,7 +269,7 @@ func listRecentFullWithHeaders(ctx context.Context, store storage.ObjectStore, p
 	if opts.TopLevelOnly {
 		top := all[:0]
 		for _, m := range all {
-			if m.ParentSessionID == "" {
+			if !m.IsChild() {
 				top = append(top, m)
 			}
 		}
@@ -404,8 +404,10 @@ func selectListingRevisions(objects []storage.Object, revisions map[RevisionID]l
 		}
 		parts := strings.Split(r.MetadataKey, "/")
 		inScope := opts.ScopeMatch == nil || opts.ScopeMatch(archive.Metadata{ProjectID: r.ProjectID, RepoKey: r.RepoKey})
-		if r.Parent != "" {
-			allChildren[parts[1]+"/"+r.Parent]++
+		if r.NativeChild || r.Parent != "" {
+			if r.Parent != "" {
+				allChildren[parts[1]+"/"+r.Parent]++
+			}
 			if opts.TopLevelOnly {
 				allHidden++
 				if inScope {

@@ -55,6 +55,14 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Capture native Codex children without a stop hook or archived parent. Children
+  keep their own identity, creation, task evidence, consent and activity. Historical
+  imports validate the same native source facts; nested children belong to the new
+  import batch, and undo leaves a parent from an earlier batch in place. Backfill
+  previews remain read-only and report pending native evidence accurately. Earlier
+  captures with a persisted native child binding upgrade their retained ownership
+  headers before linking a parent, including preserved revisions.
+
 - An explicitly requested Codex metadata inventory shares the existing discovery
   owner, retains active and archived physical copies and validates bounded
   slices with live native-current checks. Pending-history diagnostics preserve
@@ -106,6 +114,10 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Validate a Codex fork's first own task during import and ongoing capture,
+  and protect every qualified history import from older writers. Discovery
+  stops rereading decisively rejected tasks until their native source changes.
+  Undo retention warnings count independent native children with resolved parents.
 - Pending publication and historical source staging share a bounded durable
   storage budget. Interrupted or unregistered source stages remain visible as
   recovery work; automatic cleanup retains original evidence. A sticky storage
