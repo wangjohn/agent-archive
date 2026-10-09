@@ -1,11 +1,13 @@
 package cursorstore
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // kill ends the writer without closing its database, as a crash (or a quit
@@ -89,7 +91,7 @@ func TestRecoveryRefusesWALFrames(t *testing.T) {
 				t.Fatal("read a database with WAL frames")
 				return nil
 			})
-			if ReasonOf(err) != Locked {
+			if err == nil || ReasonOf(err) != Locked {
 				t.Fatal(err)
 			}
 			assertUnchanged(t, dir, before)
@@ -115,6 +117,28 @@ func TestRecoverySettledReadInvalidatedByChange(t *testing.T) {
 			w.put(map[string]string{"composerData:late": chat("late", 1, "x")})
 			w.do(writerCommand{Op: writerCheckpoint})
 		}},
+		// Rewriting a value in place leaves the file's size and header as
+		// they were (WAL commits change the header's counter only when
+		// page 1 changes): only the modification time shows the
+		// checkpoint.
+		"same-size write checkpointed and truncated": {change: func(t *testing.T, w *writer, path string) {
+			t.Helper()
+			header, _ := sqliteHeader(path)
+			info, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			w.put(map[string]string{"bubbleId:c:b1": bubble("FIRST")})
+			w.do(writerCommand{Op: writerCheckpoint})
+			headerAfter, _ := sqliteHeader(path)
+			after, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(header, headerAfter) || after.Size() != info.Size() || !emptyFile(path+"-wal") {
+				t.Fatal("the rewrite changed more than the modification time")
+			}
+		}},
 		"-shm removed": {killed: true, change: func(t *testing.T, _ *writer, path string) {
 			t.Helper()
 			if err := os.Remove(path + "-shm"); err != nil {
@@ -138,6 +162,13 @@ func TestRecoverySettledReadInvalidatedByChange(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			path := StateDatabase(t.TempDir())
 			w := settledWriter(t, path, tc.killed)
+			// A checkpoint during the read may show only in the file's
+			// modification time: set it into the past, so a file system
+			// with coarse timestamps still shows one.
+			old := time.Now().Add(-time.Hour)
+			if err := os.Chtimes(path, old, old); err != nil {
+				t.Fatal(err)
+			}
 			if tc.setup != nil {
 				tc.setup(t, path)
 			}
@@ -151,7 +182,7 @@ func TestRecoverySettledReadInvalidatedByChange(t *testing.T) {
 				tc.change(t, w, path)
 				return nil
 			})
-			if !called || ReasonOf(err) != ChangedDuringRead {
+			if !called || err == nil || ReasonOf(err) != ChangedDuringRead {
 				t.Fatal(called, err)
 			}
 		})

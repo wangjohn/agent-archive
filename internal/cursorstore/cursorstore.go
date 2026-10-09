@@ -249,7 +249,10 @@ func dsn(path string, live bool) string {
 // database open but has written nothing since its last truncating
 // checkpoint); a write that lands during the read fills the -wal, or, when
 // checkpointed and truncated, changes the database file, and the check
-// afterwards fails. ok is false for any other source.
+// afterwards fails. Such a checkpoint can leave the file's size and header
+// as they were (a WAL commit changes the header's change counter only when
+// it changes page 1), so its modification time is what shows it. ok is
+// false for any other source.
 func (s source) settled() (source, bool) {
 	if !s.live || !s.emptyWAL {
 		return source{}, false
