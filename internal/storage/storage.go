@@ -44,7 +44,7 @@ type ObjectStore interface {
 // (and any custom routing identity); revision validators are scoped to it. Empty
 // declines persistent summary reuse. It must not contain credentials or tokens.
 type CatalogNamespace interface {
- CatalogNamespace() string
+	CatalogNamespace() string
 }
 
 // LimitedGetter reads at most limit bytes, rejecting oversized objects before

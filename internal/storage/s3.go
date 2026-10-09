@@ -22,21 +22,21 @@ import (
 	"github.com/aws/smithy-go"
 	"github.com/aws/smithy-go/logging"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
+	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/destination"
- "github.com/wangjohn/agent-archive/internal/config"
 )
 
 // S3Store is an ObjectStore backed by Amazon S3 or a compatible endpoint such
 // as Cloudflare R2. The SDK client is injected so tests can use a fake HTTP
 // server without credentials or a bucket administrator account.
 type S3Store struct {
-	provider    string
-	client      *s3.Client
-	bucket      string
-	prefix      string
-	maxGetBytes int64
- catalogNamespace string
+	provider         string
+	client           *s3.Client
+	bucket           string
+	prefix           string
+	maxGetBytes      int64
+	catalogNamespace string
 }
 
 // S3StoreOptions configures a store. Client must be constructed with the
@@ -81,11 +81,13 @@ func NewS3Store(options S3StoreOptions) (*S3Store, error) {
 func (s *S3Store) CatalogNamespace() string { return s.catalogNamespace }
 
 func configuredCatalogNamespace(cfg credentials.Config, client *s3.Client) string {
- options := client.Options()
- if options.EndpointResolver != nil { return "" }
- // Bind the actual SDK endpoint too: named AWS profiles may supply an
- // endpoint override beyond the application's configured destination ID.
- return SHA256Hex([]byte(config.DestinationID(cfg) + "\x00" + options.Region + "\x00" + aws.ToString(options.BaseEndpoint)))
+	options := client.Options()
+	if options.EndpointResolver != nil {
+		return ""
+	}
+	// Bind the actual SDK endpoint too: named AWS profiles may supply an
+	// endpoint override beyond the application's configured destination ID.
+	return SHA256Hex([]byte(config.DestinationID(cfg) + "\x00" + options.Region + "\x00" + aws.ToString(options.BaseEndpoint)))
 }
 
 // NewClient constructs an S3 client for AWS or an S3-compatible endpoint.
@@ -536,9 +538,11 @@ func NewConfiguredStore(ctx context.Context, cfg credentials.Config, keychain cr
 	}
 	client := NewClient(awsCfg, endpoint, true, 3)
 	store, err := NewS3Store(S3StoreOptions{Provider: cfg.Provider, Client: client, Bucket: cfg.Bucket, Prefix: cfg.Prefix})
- if err != nil { return nil, err }
- store.catalogNamespace = configuredCatalogNamespace(cfg, client)
- return store, nil
+	if err != nil {
+		return nil, err
+	}
+	store.catalogNamespace = configuredCatalogNamespace(cfg, client)
+	return store, nil
 }
 
 // CheckConfiguredArchiveFormat refuses unqualified formats before credentials

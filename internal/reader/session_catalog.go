@@ -13,7 +13,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
- "reflect"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -133,7 +133,7 @@ type SQLiteSessionCatalog struct {
 	viewReady      bool
 	remoteSnapshot *catalog.Snapshot
 	remoteBinding  string
- namespace string
+	namespace      string
 }
 
 // OpenSessionCatalog opens a disposable private SQLite index. Each connection
@@ -251,46 +251,65 @@ func lockCatalogOpen(dir string) (func(), error) {
 // reuse from inheriting another destination's summaries. Registry eviction only
 // makes a later open cold; namespaces are never recycled.
 var catalogStoreIDs = struct {
- sync.Mutex
- stores map[storage.ObjectStore]string
+	sync.Mutex
+	stores map[storage.ObjectStore]string
 }{stores: make(map[storage.ObjectStore]string)}
 
 func catalogStoreNamespace(store storage.ObjectStore) string {
- if identified, ok := store.(storage.CatalogNamespace); ok {
-  if namespace := identified.CatalogNamespace(); namespace != "" {
-   return "destination:" + storage.SHA256Hex([]byte(namespace))
-  }
- }
- if store == nil || reflect.TypeOf(store).Kind() != reflect.Pointer { return "handle:" + rand.Text() }
- catalogStoreIDs.Lock()
- defer catalogStoreIDs.Unlock()
- if namespace, ok := catalogStoreIDs.stores[store]; ok { return namespace }
- if len(catalogStoreIDs.stores) >= 64 { clear(catalogStoreIDs.stores) }
- namespace := "instance:" + rand.Text()
- catalogStoreIDs.stores[store] = namespace
- return namespace
+	if identified, ok := store.(storage.CatalogNamespace); ok {
+		if namespace := identified.CatalogNamespace(); namespace != "" {
+			return "destination:" + storage.SHA256Hex([]byte(namespace))
+		}
+	}
+	if store == nil || reflect.TypeOf(store).Kind() != reflect.Pointer {
+		return "handle:" + rand.Text()
+	}
+	catalogStoreIDs.Lock()
+	defer catalogStoreIDs.Unlock()
+	if namespace, ok := catalogStoreIDs.stores[store]; ok {
+		return namespace
+	}
+	if len(catalogStoreIDs.stores) >= 64 {
+		clear(catalogStoreIDs.stores)
+	}
+	namespace := "instance:" + rand.Text()
+	catalogStoreIDs.stores[store] = namespace
+	return namespace
 }
 
 func initializeCatalogState(ctx context.Context, db *sql.DB) error {
- if err := migrateCatalogSummaryHash(ctx, db); err != nil { return err }
- rows, err := db.QueryContext(ctx, "PRAGMA table_info(catalog_state)")
- if err != nil { return err }
- found := false
- for rows.Next() {
-  var cid, notnull, pk int
-  var name, typ string
-  var defaultValue any
-  if err = rows.Scan(&cid, &name, &typ, &notnull, &defaultValue, &pk); err != nil { _ = rows.Close(); return err }
-  found = found || name == "namespace"
- }
- err = rows.Err()
- if closeErr := rows.Close(); err == nil { err = closeErr }
- if err != nil { return err }
- if !found {
-  if _, err = db.ExecContext(ctx, "ALTER TABLE catalog_state ADD COLUMN namespace TEXT NOT NULL DEFAULT ''"); err != nil { return err }
- }
- _, err = db.ExecContext(ctx, "INSERT OR IGNORE INTO catalog_state(id,generation,epoch,complete,namespace) VALUES(1,0,?,0,'')", rand.Text())
- return err
+	if err := migrateCatalogSummaryHash(ctx, db); err != nil {
+		return err
+	}
+	rows, err := db.QueryContext(ctx, "PRAGMA table_info(catalog_state)")
+	if err != nil {
+		return err
+	}
+	found := false
+	for rows.Next() {
+		var cid, notnull, pk int
+		var name, typ string
+		var defaultValue any
+		if err = rows.Scan(&cid, &name, &typ, &notnull, &defaultValue, &pk); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		found = found || name == "namespace"
+	}
+	err = rows.Err()
+	if closeErr := rows.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return err
+	}
+	if !found {
+		if _, err = db.ExecContext(ctx, "ALTER TABLE catalog_state ADD COLUMN namespace TEXT NOT NULL DEFAULT ''"); err != nil {
+			return err
+		}
+	}
+	_, err = db.ExecContext(ctx, "INSERT OR IGNORE INTO catalog_state(id,generation,epoch,complete,namespace) VALUES(1,0,?,0,'')", rand.Text())
+	return err
 }
 
 // migrateCatalogSummaryHash leaves legacy rows untrusted until a proven complete
@@ -377,7 +396,7 @@ func (c *SQLiteSessionCatalog) Refresh(ctx context.Context, snapshot HeaderSnaps
 	}
 	c.viewMu.Lock()
 	defer c.viewMu.Unlock()
- c.viewReady = false
+	c.viewReady = false
 	// A canonical refresh owns a legacy row universe, not the retained remote view.
 	c.remoteSnapshot = nil
 	c.remoteBinding = ""
@@ -403,13 +422,19 @@ func (c *SQLiteSessionCatalog) Refresh(ctx context.Context, snapshot HeaderSnaps
 			return err
 		}
 	}
- var namespace string
- if err = tx.QueryRowContext(ctx, "SELECT namespace FROM catalog_state WHERE id=1").Scan(&namespace); err != nil { return err }
- destinationChanged := namespace != c.namespace
- if destinationChanged {
-  if _, err = tx.ExecContext(ctx, "DELETE FROM sessions"); err != nil { return err }
-  if _, err = tx.ExecContext(ctx, "UPDATE catalog_state SET namespace=?,generation=generation+1,complete=0 WHERE id=1", c.namespace); err != nil { return err }
- }
+	var namespace string
+	if err = tx.QueryRowContext(ctx, "SELECT namespace FROM catalog_state WHERE id=1").Scan(&namespace); err != nil {
+		return err
+	}
+	destinationChanged := namespace != c.namespace
+	if destinationChanged {
+		if _, err = tx.ExecContext(ctx, "DELETE FROM sessions"); err != nil {
+			return err
+		}
+		if _, err = tx.ExecContext(ctx, "UPDATE catalog_state SET namespace=?,generation=generation+1,complete=0 WHERE id=1", c.namespace); err != nil {
+			return err
+		}
+	}
 	rows, err := tx.QueryContext(ctx, "SELECT key,etag,hash,capture,activity,summary,search,lowerid,unlabeled,summary_hash FROM sessions")
 	if err != nil {
 		return err
@@ -448,26 +473,32 @@ func (c *SQLiteSessionCatalog) Refresh(ctx context.Context, snapshot HeaderSnaps
 			reused++
 		}
 	}
- // Complete canonical discovery proves absence independently of decoding a
- // different current sidecar. Retire those logical rows even if that decode
- // fails, while withholding a complete view and invalidating every old cursor.
- retired := destinationChanged
- for key := range prior {
-  if !seen[key] {
-   if _, err = tx.ExecContext(ctx, "DELETE FROM sessions WHERE key=?", key); err != nil { return err }
-   retired = true
-  }
- }
- loaded, err := c.readChanges(ctx, pending, snapshot.Revisions)
- if err != nil {
-  readErr := err
-  if retired && ctx.Err() == nil {
-   if _, err = tx.ExecContext(ctx, "UPDATE catalog_state SET generation=generation+1,complete=0 WHERE id=1"); err != nil { return errors.Join(readErr, err) }
-   if err = tx.Commit(); err != nil { return errors.Join(readErr, err) }
-  }
-  return readErr
- }
- changed := len(loaded) > 0 || retired
+	// Complete canonical discovery proves absence independently of decoding a
+	// different current sidecar. Retire those logical rows even if that decode
+	// fails, while withholding a complete view and invalidating every old cursor.
+	retired := destinationChanged
+	for key := range prior {
+		if !seen[key] {
+			if _, err = tx.ExecContext(ctx, "DELETE FROM sessions WHERE key=?", key); err != nil {
+				return err
+			}
+			retired = true
+		}
+	}
+	loaded, err := c.readChanges(ctx, pending, snapshot.Revisions)
+	if err != nil {
+		readErr := err
+		if retired && ctx.Err() == nil {
+			if _, err = tx.ExecContext(ctx, "UPDATE catalog_state SET generation=generation+1,complete=0 WHERE id=1"); err != nil {
+				return errors.Join(readErr, err)
+			}
+			if err = tx.Commit(); err != nil {
+				return errors.Join(readErr, err)
+			}
+		}
+		return readErr
+	}
+	changed := len(loaded) > 0 || retired
 	for _, row := range loaded {
 		data, e := json.Marshal(row.Summary)
 		if e != nil {

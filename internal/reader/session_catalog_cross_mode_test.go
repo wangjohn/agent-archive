@@ -13,7 +13,7 @@ import (
 type catalogCrossModeIdentity string
 
 const (
-	catalogCrossModeSameKey catalogCrossModeIdentity = "same_key"
+	catalogCrossModeSameKey      catalogCrossModeIdentity = "same_key"
 	catalogCrossModeDifferentKey catalogCrossModeIdentity = "different_key"
 )
 
