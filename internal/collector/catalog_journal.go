@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -58,6 +59,9 @@ func (s *sessionScan) prepareCatalogJournal(pending state.PendingPublication) (s
 }
 
 func (s *sessionScan) removeCompletedCatalogJournal(pending state.PendingPublication) error {
+	if pending.Catalog == nil && pending.History == nil && pending.Bundle.History == nil && pending.Bundle.SchemaVersion == archive.SourceSchemaVersion {
+		return s.local.RemoveExactLegacyPending(s.id(), pending)
+	}
 	if pending.Catalog == nil || pending.Catalog.Recovery == nil {
 		return s.local.RemovePending(s.id())
 	}
