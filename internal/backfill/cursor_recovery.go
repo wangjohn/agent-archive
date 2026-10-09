@@ -254,6 +254,7 @@ func cursorRecoveryDigest(works []*work) [32]byte {
 		CreatedAt   time.Time  `json:"created_at"`
 		Folder      string     `json:"folder"`
 		WorkspaceID string     `json:"workspace_id"`
+		Workspace   bool       `json:"workspace"`
 		Malformed   bool       `json:"malformed"`
 		Root        string     `json:"root"`
 		Skip        SkipReason `json:"skip"`
@@ -267,7 +268,7 @@ func cursorRecoveryDigest(works []*work) [32]byte {
 	}
 	facts := make([]fact, 0, len(works))
 	for _, w := range works {
-		facts = append(facts, fact{ID: w.chat.ID, KeyID: w.chat.KeyID, CreatedAt: w.chat.CreatedAt, Folder: w.chat.Folder, WorkspaceID: w.chat.WorkspaceID, Malformed: w.chat.Malformed, Root: w.res.root, Skip: w.res.skip, Unsafe: w.unsafe, Empty: w.empty, Large: w.tooLarge, Vanished: w.vanished, Duplicate: w.duplicate, Mismatch: w.t.identityMismatch, Validated: w.validated})
+		facts = append(facts, fact{ID: w.chat.ID, KeyID: w.chat.KeyID, CreatedAt: w.chat.CreatedAt, Folder: w.chat.Folder, WorkspaceID: w.chat.WorkspaceID, Workspace: w.chat.WorkspaceIdentifier, Malformed: w.chat.Malformed, Root: w.res.root, Skip: w.res.skip, Unsafe: w.unsafe, Empty: w.empty, Large: w.tooLarge, Vanished: w.vanished, Duplicate: w.duplicate, Mismatch: w.t.identityMismatch, Validated: w.validated})
 	}
 	sort.Slice(facts, func(i, j int) bool {
 		a, _ := json.Marshal(facts[i])

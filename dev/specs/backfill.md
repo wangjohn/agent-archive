@@ -561,8 +561,10 @@ matching rule wins.
    A Cursor database chat with no folder evidence at all (no folder, no
    workspace reference, no message folder; for example a subagent composer)
    is a non-witness, not incomplete evidence: it names no root, so it cannot
-   hide a clone. A chat whose workspace reference cannot be read, or whose
-   messages name several folders, still makes the inventory incomplete.
+   hide a clone. A chat whose workspace reference cannot be read, whose
+   `workspaceIdentifier` is present in any shape this release cannot resolve
+   to a local folder (a remote URI, an unknown shape), or whose messages name
+   several folders, still makes the inventory incomplete.
    The plan displays selected proposed roots as projects it will add through the
    ordinary batch/config transaction. Hidden roots remain recovery evidence
    without becoming new capture roots. Evidence Context/digest binds the union;
@@ -1180,7 +1182,11 @@ and cached prefix metadata is validated before a resumed sweep. Unavailable
 entries cannot certify uniqueness. Backfill's proposed roots are the only
 exception: a proposed root whose completed, within-budget lookup found a
 checkout top level and an origin value that yields no repository key is
-non-owning; a failed origin read is unknown, not keyless. It cannot match a
+non-owning; a failed origin read is unknown, not keyless. Every
+`remote.origin.url` value is read (`git config --get` reports only the last):
+the checkout is keyless only when no value yields a key; a value that yields
+one is the checkout's key wherever it appears; values that yield different
+keys leave the identity unknown, neither keyless nor matched. It cannot match a
 recorded key, so a match elsewhere stays unique among the identifiable roots.
 It has no dependency stamps, so every admission slice observes it again
 (sharing the coalesced semantic sweep) and requires the same keyless top level
@@ -1228,6 +1234,17 @@ by app) and a "Project recovery evidence" note in text. An app's own gaps
 still block its sessions as defense in depth. Witnesses from an incomplete
 Cursor database epoch remain clone evidence but cannot propose a destination,
 because they cannot be renewed; such an epoch needs no renewal at admission.
+A complete epoch that changes between the plan and confirmation (its settled
+stamps differ, or a renewed read of an unsettled database differs) is isolated
+the same way at admission. It blocks Cursor's own recoveries, recoveries of
+unknown app, and any recovery whose destination rests on Cursor database
+evidence: an unconfigured destination with no current witness from another
+source that could propose it on its own. It does not block another app's
+recovery into a configured root or into a destination that current evidence
+from another source can propose. Such a proof used Cursor's chats only as
+possible clones, and a change can at most remove one (the proof stays
+unique) or add one (a second checkout known only to Cursor, the residual
+above).
 A native transcript that was only appended to after its header was read (same
 file, same mode, larger size) keeps its own `source_changed` skip but stays
 clone evidence that cannot propose a destination, and further appends renew

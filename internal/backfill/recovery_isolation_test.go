@@ -484,11 +484,11 @@ func TestAppendedWitnessRenewsAtAdmission(t *testing.T) {
 	}
 	witnesses := map[string][]*work{w.res.root: {w}}
 	tr.write("home/source.jsonl", "a\nb\nc\n")
-	if !recoveryWitnessesCurrent(t.Context(), r, witnesses, map[string]bool{}) {
+	if current, _ := recoveryWitnessesCurrent(t.Context(), r, witnesses, map[string]bool{}, true); !current {
 		t.Fatal("further append invalidated the appended witness")
 	}
 	tr.write("home/source.jsonl", "a\n")
-	if recoveryWitnessesCurrent(t.Context(), r, witnesses, map[string]bool{}) {
+	if current, _ := recoveryWitnessesCurrent(t.Context(), r, witnesses, map[string]bool{}, true); current {
 		t.Fatal("truncated witness renewed")
 	}
 }
