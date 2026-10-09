@@ -1,0 +1,96 @@
+# CLI performance baselines
+
+The synthetic benchmarks measure current reader/command work without real
+credentials, transcripts, native applications or a bucket. They change no
+production command behavior. Run from the repository root with the toolchain in go.mod (Go 1.27.2):
+
+```sh
+go test ./internal/reader ./internal/cli -run '^$' -bench 'Benchmark(ReaderScale|CommandScale)$' -benchtime=1x -count=2
+go test ./internal/reader ./internal/cli -run '^$' -bench 'Benchmark(ReaderLatency|CommandLatency|UsableTerminalScreen|CommandReads)$' -benchtime=1x -count=2
+```
+
+Use a private `GOCACHE` and `GOTMPDIR` when running from an isolated checkout.
+Run timings serially on an otherwise idle host. These benchmarks report costs;
+they do not enforce wall-clock thresholds in CI. `-benchtime=1x` keeps the full
+50k filesystem matrix practical; repeat with `-count` to see timing variance.
+
+`BenchCase` covers 800, 10k and 50k sessions, limits 1, 50 and 0 (all), and
+cold/warm/changed caches. Synthetic metadata uses pinned timestamps and 100
+projects, one placeholder source header per session, and complete v3 revision
+summaries. No source is downloaded. Cold cases start with an empty private
+cache. Warm cases prepare precisely the selected cache. Changed cases warm the
+original revision, then replace every sidecar and add its new revision summary;
+the old summaries remain, as they may after publication. Every iteration starts
+from the same two generations. Fixture construction, warmup and mutation are
+outside timed/allocation measurements.
+
+Reader and command scale operations include opening the metadata cache. Reader
+cases additionally report `cacheOpen-ns/op`; their total includes that span.
+Command cases call `Run` with injected `Env` and include flags, config loading,
+store opening, cache work, discovery, downloads and JSON rendering to a buffer. After stopping the timer, command cases
+validate that same JSON document against the expected count, identity order,
+revision, and complete match count. Validation does not issue another read or
+warm the cache. They exclude OS process execution, credential lookup and real network
+transport. Limits select by capture time; limit 0 exercises exhaustive fallback.
+
+`MeasuredStore` retains versioned GET, bounded GET, paged/ranged LIST and Stat
+capabilities. LIST/GET counters count attempted calls, including failed or
+cancelled reads; GET bytes count returned body bytes. LIST header bytes are key
+and ETag lengths plus 16 bytes for size/time per object, an explicit estimate
+that excludes provider serialization, HTTP and TLS. Peak reads includes both
+LIST and GET; Stat is forwarded but not counted. Delay applies independently to
+each LIST/GET and honors cancellation. Small latency cases use 80 sessions,
+limit 50 and 1 ms/request; they separate injected waits from zero-delay CPU and
+filesystem scale costs. MemoryStore sorting/copying costs remain in both.
+
+The command-read cases cover an exact summary, a parent with 50 direct children,
+a short ID summary and one-day stats over 800 synthetic sessions. The stats
+case spreads capture times evenly over 90 days (about 1/90 in the current
+window), 100 projects, and one gpt-5 token attribution per session with varying
+input/output counts. It includes no parent relationships or skill/tool usage;
+those richer compute workloads have separate stats benchmarks. The listing
+matrix itself spans less than 14 hours and has no token/model counts. The first
+usable screen case covers cold interactive stats on an injected 80x24 terminal;
+it records the completed first full-frame write and then quits through fake
+keys. It includes data loading, stats computation and rendering, but does not
+measure emulator painting or process startup. Browser list startup, real
+provider latency, live archive targets and platform acceptance require separate
+validation; no synthetic run establishes them.
+
+The initial baseline uses production main at `d914dfb2391dd5f8b18b2d182b17bf6f4269e256`
+(2026-10-07), including the history/lazy-inventory changes. Compare later PRs on
+the same fixtures and machine. Warm list-50 should retain zero GETs; bounded
+list-50 reads 50 selected sidecars, while narrow stats and short-ID lookup
+currently require exhaustive bodies. Timing/allocation snapshots are supporting
+local evidence, not provider guarantees. The [implementation plan](../proposals/cli-performance.md)
+tracks subsequent optimizations.
+
+Initial local execution recorded content-free counters on native Darwin/amd64.
+Bounded cold/changed list-50 used 50 GETs; warm used zero. Exact show used four
+attempted GETs (including unavailable harness probes). The short-ID path used
+804 GETs and two LISTs for 800 sessions. Cold stats and its first usable screen
+used 800 GETs. The full matrix was attempted, but repeated exhaustive cache
+cleanup became prohibitively slow in `unlinkat`; the partial 10k exhaustive
+warm sample still showed zero GETs and 50 ranged LISTs. Full 10k/50k cache
+coverage remained pending after that initial run. Concurrent local validation
+caused material timing variance, so these wall-time samples are not accepted as
+controlled baselines.
+Use the commands above on an idle host before assessing speed improvements.
+`BenchmarkReaderExhaustiveNoCache` supplies a cheap additional cardinality/read
+check at 10k and 50k without claiming filesystem-cache coverage.
+
+A subsequent run at the same pinned head completed all 27 reader and 27 command
+scale cases, including 10k/50k exhaustive cold/warm/changed disk caches, plus
+latency, first-screen and command-read cases. This closes the matrix execution
+coverage gap. Unrelated CPU race tests and temporary cleanup overlapped that
+run, so its wall times still carry an external-contention limitation. They do
+not establish idle-host, live-provider or real-terminal acceptance.
+
+Command result validation adds measured buffer writes and allocations to the
+harness. Freeze this updated harness on both the production baseline and the
+optimization candidate before comparing them; earlier discard-writer timings
+are not equivalent. Preserve exact production commits/trees, harness/source and
+fixture hashes, toolchain/build settings and every raw sample. The initial
+production baseline above is historical provenance, not a claim that prior
+samples used the current toolchain or repaired harness. Controlled matched
+measurements of the repaired harness remain pending.
