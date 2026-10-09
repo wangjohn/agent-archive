@@ -87,3 +87,5 @@ func TestPublicationNativeTargetPressureAndCancelKeepOriginal(t *testing.T) {
 		}
 	}
 }
+
+func preparationSHA(a PreparationAuthority) string { return preparationSHAWithFacts(a, nil) }

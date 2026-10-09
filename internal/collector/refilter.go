@@ -100,13 +100,6 @@ func (s *sessionScan) refilterRewritten(_ context.Context, read sourceRead, snap
 	return refiltered, true, nil
 }
 
-// Native parent links may resolve after a retained revision was captured. The
-// stable child owner still identifies that earlier evidence; a different known
-// parent remains a conflict.
-func retainedParentMatches(reg archive.SessionRegistration, bundle archive.SourceBundle) bool {
-	return bundle.ParentSessionID == reg.ParentSessionID || nativeChildOwned(reg, bundle) && bundle.ParentSessionID == ""
-}
-
 // Only positively identified native child evidence can acquire its first archive parent.
 func nativeParentResolved(reg archive.SessionRegistration, bundle archive.SourceBundle) bool {
 	return nativeChildOwned(reg, bundle) && bundle.ParentSessionID == "" && reg.ParentSessionID != ""

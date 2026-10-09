@@ -75,8 +75,6 @@ type CleanupProgress struct {
 	SHA256                  string          `json:"sha256"`
 }
 
-func preparationSHA(a PreparationAuthority) string { return preparationSHAWithFacts(a, nil) }
-
 func preparationSHAWithFacts(a PreparationAuthority, facts *payloadDigestFacts) string {
 	type inputBinding struct {
 		ParentSessionID *string                 `json:"ParentSessionID,omitempty"`
