@@ -508,7 +508,14 @@ matching rule wins.
    allocation. This bounds
    payload read into the process, not SQLite page I/O. Recovery reads only
    settled in-place transactions, with no backup or failure-signature reads;
-   live WAL, unavailable capability and exhausted budgets keep it pending.
+   a live WAL with frames in `-wal`, unavailable capability and exhausted
+   budgets keep it pending. A WAL database whose `-wal` is empty (with or
+   without `-shm`, as Cursor can leave both after quitting) is settled: it is
+   read with `immutable=1` and rejected as `changed_during_read` unless the
+   file, its header and its side files (`-wal` still empty, `-shm` still
+   present or absent as before, no `-journal`) are unchanged afterwards.
+   Frames in `-wal` are never read for recovery: `immutable=1` would ignore
+   them, and nothing checkpoints or rewrites Cursor's side files.
    Native recovery requires a non-partial unique binary index on the exact key
    column with the native default binary comparisons; explicit collations and
    unknown schemas cannot establish payload length bounds.
@@ -785,7 +792,10 @@ the variables still finds them. A session in two of these folders is a
   - If Cursor quits in the instant between the side-file check and the open,
     SQLite can leave an empty `-wal` behind. That is harmless (an empty WAL
     has nothing to replay), and the reader never deletes files next to
-    Cursor's database.
+    Cursor's database. Such a database is listed as closed. One with an empty
+    `-wal` and a `-shm` is listed as running (in place, `readonly_shm`), and
+    the recovery evidence pass reads it as closed (see recorded-repository
+    recovery above), so leftover side files don't lock recovery.
 
 ## Skip reasons
 
