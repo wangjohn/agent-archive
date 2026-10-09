@@ -148,6 +148,10 @@ type Env struct {
 	// backfillHoldSteps, when positive (only in tests), caps the steps
 	// registration takes per hold of hooks.lock, to force several holds.
 	backfillHoldSteps int
+	// importCollectorWait, set only by tests, is given how long an import
+	// would wait for collector.lock (backfillCollectorWait for backfill,
+	// setupImportCollectorWait for setup) and returns the wait to use.
+	importCollectorWait func(wait time.Duration) time.Duration
 	// exitOnSignal, set only by tests, stands in for exitOnSignal (the
 	// function) when a signal stops backfill at once.
 	exitOnSignal func(os.Signal)

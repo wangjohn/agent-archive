@@ -37,7 +37,12 @@ func (e Env) checkpoint(step string) error {
 // milliseconds.
 const (
 	backfillCollectorWait = 2 * time.Minute
-	backfillHooksWait     = 5 * time.Second
+	// setupImportCollectorWait is setup's: setup reloads the background
+	// job, which often starts a collector pass just as setup finishes, and
+	// setup should not sit behind it for minutes. Its import is retried
+	// with backfill.
+	setupImportCollectorWait = 20 * time.Second
+	backfillHooksWait        = 5 * time.Second
 )
 
 // importPlan runs steps 4 to 6 of a confirmed import: it commits the
@@ -62,8 +67,11 @@ func importPlanLocked(env Env, stdout, stderr io.Writer, home string, plan backf
 		terminal.Printf(stderr, "agent-archive: backfill: "+format+"\n", args...)
 		return 1
 	}
-	reg, err := registerImportLocked(env, stdout, stderr, home, plan, fingerprint)
+	reg, err := registerImportLocked(env, stdout, stderr, home, plan, fingerprint, backfillCollectorWait)
 	defer reg.release()
+	if errors.Is(err, errCollectorBusy) {
+		return fail("%v; run backfill again. Nothing was changed", err)
+	}
 	var stopped *importStoppedError
 	if errors.As(err, &stopped) {
 		terminal.Printf(reg.out, "Stopped. %s registered as import %s; run agent-archive backfill again with the same options to finish it.\n", countNoun(stopped.sessions, "session"), stopped.batchID)
@@ -108,6 +116,10 @@ func (r *registeredImport) release() {
 	r.releases = nil
 }
 
+// errCollectorBusy is an import that gave up waiting for a collector pass
+// before changing anything.
+var errCollectorBusy = errors.New("a collector pass is still running")
+
 // importStoppedError is a registration Ctrl-C stopped between holds: the
 // sessions registered before it are recorded in the import, which a run
 // with the same options finishes.
@@ -138,18 +150,23 @@ func (e *importRegistrationError) Unwrap() error { return e.err }
 // that holds setup.lock: it commits the configuration and registers the
 // plan's sessions, then marks the import complete. It prints only spinners;
 // the caller reports the result, and uploads or leaves that to the
-// background collector. The returned import's release is always called.
-func registerImportLocked(env Env, stdout, stderr io.Writer, home string, plan backfill.Plan, fingerprint string) (*registeredImport, error) {
+// background collector. It waits up to collectorWait for a collector pass
+// to finish, and returns errCollectorBusy when one is still running. The
+// returned import's release is always called.
+func registerImportLocked(env Env, stdout, stderr io.Writer, home string, plan backfill.Plan, fingerprint string, collectorWait time.Duration) (*registeredImport, error) {
 	reg := &registeredImport{out: stdout}
 	confirmationCtx, stopConfirmation := importConfirmationContext(env, stderr, plan)
 	stopConfirmation = releaseOnce(stopConfirmation)
 	reg.releases = append(reg.releases, stopConfirmation)
 	// Step 4: commit the configuration, under collector.lock and hooks.lock.
 	stopWait := startActivity(stdout, "Waiting for collector…")
-	releaseCollector, err := lockCollectorWait(home, "backfill import", env.now(), backfillCollectorWait)
+	if env.importCollectorWait != nil {
+		collectorWait = env.importCollectorWait(collectorWait)
+	}
+	releaseCollector, err := lockCollectorWait(home, "backfill import", env.now(), collectorWait)
 	stopWait()
 	if err != nil {
-		return reg, errors.New("a collector pass is still running; run backfill again. Nothing was changed")
+		return reg, errCollectorBusy
 	}
 	// collector.lock stays held through registration, so no pass runs
 	// between a session's subagent candidates and its registration.

@@ -482,7 +482,7 @@ func importRecentSessions(p *prompter, errOut io.Writer, home, userHome string, 
 		return
 	}
 	if len(plan.Imported()) > 0 {
-		reg, err := registerImportLocked(env, p.out, errOut, home, plan, configFingerprint(cfg))
+		reg, err := registerImportLocked(env, p.out, errOut, home, plan, configFingerprint(cfg), setupImportCollectorWait)
 		reg.release()
 		if err != nil {
 			notImported(err)

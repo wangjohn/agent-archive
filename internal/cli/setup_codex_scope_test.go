@@ -67,7 +67,7 @@ func TestAllCodexScopeSupportsZeroProjectsAndDiscoveryOff(t *testing.T) {
 					t.Fatalf("missing concise consent row %q: %s", row, output)
 				}
 			}
-			if !strings.Contains(output, "start a supported new task in any non-excluded current or future project") && !strings.Contains(output, "Start a supported new Codex task in any non-excluded project.") {
+			if !setupContainsText(output, "start from now on in any non-excluded current or future project") && !strings.Contains(output, "Codex hooks capture supported tasks in any non-excluded project.") {
 				t.Fatalf("all-mode next step required an included project: %s", output)
 			}
 			before := cfg.CodexCapture

@@ -24,10 +24,17 @@ Confirmed 2026-10-08:
 2. **Discovery's start-time floor stays.** Automatic discovery still admits
    only sessions that start after it is enabled. The lookback is a
    one-time import at setup, not a wider discovery rule, so the consent
-   moment stays setup. Once a session is imported, discovery keeps it
-   current: `admitOwnedCandidate` admits a session it already has an
-   archive ID for even when `DiscoveryGeneration` would refuse the start
-   (`internal/discovery/discovery.go`, the `!authorized` branch).
+   moment stays setup. Once a session is imported, the collector, not
+   discovery, keeps it current: every pass scans every accepted
+   registration (`loadWork` in `internal/collector/collector.go`) and
+   rereads a transcript whose size or modification time changed
+   (`unchangedSinceLastScan`), so later turns are published as a hook
+   session's are, with no hook, request, or second import. Discovery only
+   recognizes the session: `mergeContinuation` returns early for a
+   registration it did not make, so it never moves an import's locator.
+   Tested in `internal/cli/setup_recent_import_continue_test.go`, for
+   Claude Code through setup and for a Codex session refused as
+   `start_not_authorized` before `backfill --since 7d` imports it.
 
 ## Problem
 
@@ -191,23 +198,21 @@ From the §1–§3 implementation (#386):
   included projects imported at setup; older sessions require backfill", so
   the consent screen says what setup does.
 - **Next steps.** "Sessions already open are not captured" went from both
-  forms of the line. The Codex all-projects form keeps its scope hint:
-  "Start a supported new Codex task in any non-excluded project." when
-  discovery is off (with discovery on, the Codex line already names the
-  scope), and "Other apps still require an included project." with more
-  than one app. In Codex all-projects scope, a session already open in a
+  forms of the line, and the per-app lines say which sessions hooks or
+  discovery capture from now on ("Claude Code: nothing to approve; hooks
+  capture sessions that start from now on (or after `/clear`).") rather
+  than telling people to start a new session, which read as if the open one
+  were lost. The Codex all-projects form keeps its scope hint, "Codex hooks
+  capture supported tasks in any non-excluded project.", when discovery is
+  off (with discovery on, the Codex line already names the scope), and
+  "Other apps still require an included project." with more than one app. In Codex all-projects scope, a session already open in a
   project that is not explicitly included is neither imported (the import
   is limited to included roots) nor captured; nothing now says so.
 - **Pairing.** `machines pair` on the receiving machine finishes through
   `finishSetup` too, so it imports the last 7 days as well.
-- **What keeps an imported session current.** The collector, not discovery.
-  Every pass scans every accepted registration and rereads a transcript whose
-  size or modification time changed, so an imported session's later turns are
-  published like a hook session's (no hook, request, or second import needed).
-  Discovery only recognizes the session: its `!authorized` branch lets the
-  existing archive ID through, and `mergeContinuation` then leaves an
-  import-origin registration as it is (it never moves an import's locator).
-  Tested in `setup_recent_import_continue_test.go`, for Claude Code
-  through setup and for a Codex session refused as `start_not_authorized`
-  before `backfill --since 7d` imports it; refusing it in discovery's
-  `!authorized` branch as well leaves the Codex test passing.
+- **Short collector wait.** Setup reloads the background job, which often
+  starts a collector pass as setup finishes, so setup's import waits at
+  most 20 seconds for `collector.lock` (`setupImportCollectorWait`), not
+  backfill's 2 minutes, and then prints the retry line ("Recent sessions
+  were not imported: a collector pass is still running. Run agent-archive
+  backfill --since 7d to retry.").

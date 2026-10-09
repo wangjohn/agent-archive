@@ -24,9 +24,9 @@ Installed the agent-archive skill, which lets your agents look up and pull in pa
 To remove the agent skills and keep them off, run \e[36magent-archive setup --no-skills\e[0m.
 
 \e[1mNext, in each app\e[0m
-  Codex: run \e[36m/hooks\e[0m and approve the archive hooks, then start a new session (or
-  \e[36m/clear\e[0m).
-Start a supported new Codex task in any non-excluded project.
+  Codex: run \e[36m/hooks\e[0m and approve the archive hooks; they capture sessions that
+  start after that (or after \e[36m/clear\e[0m).
+Codex hooks capture supported tasks in any non-excluded project.
 Check progress with \e[36magent-archive status\e[0m.
   \e[2m·\e[0m Another machine: agent-archive machines pair
 [exit 0]

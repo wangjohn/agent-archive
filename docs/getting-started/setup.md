@@ -575,16 +575,20 @@ from loading its own job into your real launchd or systemd user manager: stub
 
 ## After setup
 
-After "Setup complete", setup says, with one line per app, what to do next:
+After "Setup complete", setup says, with one line per app, what it needs and
+which sessions it captures from now on. Sessions already open are not lost:
+setup imports them ([below](#sessions-from-the-last-7-days)), and the
+collector keeps them current.
 
-- **Codex:** start a supported new task within the reviewed Codex scope: an included
-  project in included-project mode, or any non-excluded project in all-projects mode.
-  Interactive setup reviews automatic discovery and Codex scope; fresh scripts
-  specify both choices explicitly. Hook
-  capture remains available with `/hooks` approval, and is required when
-  discovery is disabled or the native producer is unsupported.
-- **Claude Code:** nothing to approve; start a new session.
-- **Cursor:** nothing to approve; start a new Agent chat.
+- **Codex:** automatic discovery captures supported tasks that start within the
+  reviewed Codex scope: an included project in included-project mode, or any
+  non-excluded project in all-projects mode. Interactive setup reviews
+  automatic discovery and Codex scope; fresh scripts specify both choices
+  explicitly. Hook capture remains available with `/hooks` approval, and is
+  required when discovery is disabled or the native producer is unsupported.
+- **Claude Code:** nothing to approve; hooks capture sessions that start from
+  now on (or after `/clear`).
+- **Cursor:** nothing to approve; hooks capture Agent chats that start from now on.
 
 Setup's closing lines also name the agent skills it installed (`/handoff` and
 `agent-archive`) and the opt-out, `--no-skills`. Unlike Codex's hooks, a skill
@@ -595,10 +599,11 @@ as "pull in the auth session from Codex" ([agent skills](../guides/agent-skills.
 Claude Code asks before it first uses the skill and before the commands it
 runs.
 
-Automatic capture needs a provable fresh start, so it admits only sessions
+Hooks and discovery need a provable fresh start, so they admit only sessions
 that start after setup in an included project. In Codex and Claude Code,
-`/clear` also starts one; in Cursor, only a new chat does. Setup finishes
-without waiting for it. Check progress with:
+`/clear` also starts one; in Cursor, only a new chat does. Sessions that
+started before setup are covered by its import instead. Setup finishes
+without waiting for either. Check progress with:
 
 ```sh
 agent-archive status
@@ -633,7 +638,8 @@ when the same projects have older sessions that are not in the archive.
 
 Setup says nothing about importing when there is nothing to import, and skips
 it while capture is paused. `setup --yes` imports the same way. If the import
-fails, setup is still complete and says so:
+fails, or a collector pass is still running after about 20 seconds, setup is
+still complete and says so:
 
 ```text
 Recent sessions were not imported: <reason>. Run agent-archive backfill --since 7d to retry.

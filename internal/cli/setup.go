@@ -1083,17 +1083,19 @@ func runStorageCheck(p *prompter, cfg *config.Config, env Env) error {
 	return nil
 }
 
-// hookNextStep says what each app needs before it captures: Codex asks to
-// review new hooks in /hooks, while Claude Code and Cursor read them when a
-// session starts.
+// hookNextStep says what each app needs before its hooks capture, and which
+// sessions they capture: Codex asks to review new hooks in /hooks, while
+// Claude Code and Cursor read them when a session starts. It does not say
+// that sessions already open are left out: setup imports those
+// (importRecentSessions), and the collector keeps them current.
 // Codex and Claude Code prove a fresh start with SessionStart's source,
 // which /clear sets too; Cursor proves it from the transcript, so only a new
 // chat counts there. What the user types is in backquotes, painted as a
 // command when printed.
 var hookNextStep = map[string]string{
-	"codex":  "Codex: run `/hooks` and approve the archive hooks, then start a new session (or `/clear`).",
-	"claude": "Claude Code: nothing to approve; start a new session (or `/clear`).",
-	"cursor": "Cursor: nothing to approve; start a new Agent chat.",
+	"codex":  "Codex: run `/hooks` and approve the archive hooks; they capture sessions that start after that (or after `/clear`).",
+	"claude": "Claude Code: nothing to approve; hooks capture sessions that start from now on (or after `/clear`).",
+	"cursor": "Cursor: nothing to approve; hooks capture Agent chats that start from now on.",
 }
 
 // printNextSteps ends a committed setup with one line per app on what to do
@@ -1110,7 +1112,7 @@ func printNextSteps(p *prompter, cfg config.Config, paused bool) {
 				if cfg.EffectiveCodexCaptureScope() == config.CodexAllProjects {
 					location = "any non-excluded current or future project"
 				}
-				terminal.Println(p.out, p.style.hang("  ", "Codex: start a supported new task in "+location+"; automatic discovery does not require hook approval."))
+				terminal.Println(p.out, p.style.hang("  ", "Codex: automatic discovery captures supported tasks that start from now on in "+location+"; no hook approval needed."))
 				terminal.Println(p.out, p.style.hang("  ", "Optional hook capture: "+paintCommands(p.style, hookNextStep[app])))
 				continue
 			}
@@ -1121,7 +1123,7 @@ func printNextSteps(p *prompter, cfg config.Config, paused bool) {
 		if containsString(cfg.Harnesses, "codex") && cfg.EffectiveCodexCaptureScope() == config.CodexAllProjects {
 			// The discovery line above names the scope; hook capture's does not.
 			if cfg.Discovery == nil || !cfg.Discovery.Enabled {
-				terminal.Println(p.out, "Start a supported new Codex task in any non-excluded project.")
+				terminal.Println(p.out, "Codex hooks capture supported tasks in any non-excluded project.")
 			}
 			if len(cfg.Harnesses) > 1 {
 				terminal.Println(p.out, "Other apps still require an included project.")

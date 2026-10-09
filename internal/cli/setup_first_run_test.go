@@ -135,9 +135,9 @@ func TestSetupNextStepsNameEachApp(t *testing.T) {
 	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
 	output := setupRun(t, env, s3SetupInput("b", "us-east-1", "profile", true, true, true, t.TempDir()), 0)
 	for _, want := range []string{
-		"Codex: run /hooks and approve the archive hooks, then start a new session (or /clear).",
-		"Claude Code: nothing to approve; start a new session (or /clear).",
-		"Cursor: nothing to approve; start a new Agent chat.\n",
+		"Codex: run /hooks and approve the archive hooks; they capture sessions that start after that (or after /clear).",
+		"Claude Code: nothing to approve; hooks capture sessions that start from now on (or after /clear).",
+		"Cursor: nothing to approve; hooks capture Agent chats that start from now on.\n",
 		"Check progress with agent-archive status.",
 	} {
 		if !setupContainsText(output, want) {

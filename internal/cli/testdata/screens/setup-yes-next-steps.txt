@@ -15,7 +15,8 @@ Installed the agent-archive skill, which lets your agents look up and pull in pa
 To remove the agent skills and keep them off, run agent-archive setup --no-skills.
 
 Next, in each app
-  Claude Code: nothing to approve; start a new session (or /clear).
+  Claude Code: nothing to approve; hooks capture sessions that start from now on
+  (or after /clear).
 Check progress with agent-archive status.
   · Another machine: agent-archive machines pair
 [exit 0]
