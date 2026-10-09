@@ -143,9 +143,9 @@ func (g *recoveryGaps) addUnreadable(unread unreadable) {
 }
 
 // cause is the highest-priority gap cause, or "" for a complete inventory.
-func (g recoveryGaps) cause() DiagnosticDetail {
+func (g *recoveryGaps) cause() DiagnosticDetail {
 	for _, cause := range recoveryGapCauses {
-		for gap := range g {
+		for gap := range *g {
 			if gap.Cause == cause {
 				return cause
 			}

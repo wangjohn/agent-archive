@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +13,24 @@ import (
 	"github.com/wangjohn/agent-archive/internal/cursorstore"
 	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 )
+
+// A workspace reference that fails to read keeps the epoch incomplete even when
+// a single message folder would otherwise name the chat's root.
+func TestCursorRecoveryUnreadableWorkspaceStaysGapDespiteMessageFolder(t *testing.T) {
+	_, env, cfg, root, _ := firstRunRecoveryFixture(t, false)
+	env.ReadFile = os.ReadFile // recovery refuses the unbounded port
+	works := []*work{{t: &transcript{harness: harnessCursor}, chat: CursorDatabaseChat{ID: "c", WorkspaceID: "current"}, messageFolders: []string{root}}}
+	complete, gaps, err := observeCursorRecoveryWorks(t.Context(), env, newResolver(env, cfg, Filters{}), works, &cursorRecoveryReadBudget{remaining: 1 << 20, rows: 16})
+	if err != nil || complete || !gaps[recoveryGap{Agent: string(harnessCursor), Cause: CauseCursorChatFolderUnavailable}] {
+		t.Fatalf("complete=%v gaps=%+v err=%v", complete, gaps, err)
+	}
+	if works[0].res.root != root {
+		t.Fatalf("message folder not used: %+v", works[0].res)
+	}
+}
+
+// noGapCause is a recovery failure that no witness gap explains.
+const noGapCause DiagnosticDetail = ""
 
 // Chats with no folder evidence (subagent composers, a chat opened without a
 // workspace) name no root, so they cannot hide a clone. A workspace reference
@@ -72,7 +91,7 @@ func TestCursorChatFolderlessRequiresNoEvidence(t *testing.T) {
 
 func TestRecoveryWitnessGapsNameTheirCause(t *testing.T) {
 	file := func(edit func(*work)) *work {
-		w := &work{t: &transcript{harness: "codex"}, res: resolution{root: "/r", kind: ProjectKindRepository}}
+		w := &work{t: &transcript{harness: harnessCodex}, res: resolution{root: "/r", kind: ProjectKindRepository}}
 		edit(w)
 		return w
 	}
@@ -193,7 +212,7 @@ func TestRecoveryGapDiagnosticsRenderInTextAndJSON(t *testing.T) {
 		})
 	}
 	// A cause never replaces a decided outcome other than inventory.
-	if d := candidateDiagnostic(SkipWorktreeUnresolved, sourcefacts.RecoveryAmbiguous, CauseNativeStoreUnreadable); d.Detail != DiagnosticDetail(sourcefacts.RecoveryAmbiguous) {
+	if d := candidateDiagnostic(SkipWorktreeUnresolved, sourcefacts.RecoveryAmbiguous, CauseNativeStoreUnreadable); string(d.Detail) != string(sourcefacts.RecoveryAmbiguous) {
 		t.Fatal(d)
 	}
 }

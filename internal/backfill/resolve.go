@@ -184,10 +184,7 @@ func (r *resolver) resolveEvidence(ctx context.Context, cwd, key string) resolut
 			res = resolution{root: proof.Root, kind: r.kindOf(proof.Root), included: configured && owner.included, proof: &visibleProof, current: check}
 		}
 		if outcome != "" {
-			res = resolution{skip: SkipWorktreeUnresolved, outcome: outcome}
-			if outcome == sourcefacts.RecoveryInventoryUnavailable && recovery == r.recovery {
-				res.cause = r.recoveryInventoryCause
-			}
+			res = r.unrecovered(recovery, outcome)
 		}
 		if outcome == sourcefacts.RecoveryBudgetExhausted || outcome == sourcefacts.RecoveryInventoryUnavailable {
 			return res
@@ -195,6 +192,16 @@ func (r *resolver) resolveEvidence(ctx context.Context, cwd, key string) resolut
 	}
 	r.cache[cacheKey] = res
 	return res
+}
+
+// unrecovered is a failed recovery. An inventory outcome from the witness
+// resolver carries the witness gap that caused it, when one was recorded.
+func (r *resolver) unrecovered(recovery *sourcefacts.RecoveryResolver, outcome sourcefacts.RecoveryOutcome) resolution {
+	var cause DiagnosticDetail
+	if outcome == sourcefacts.RecoveryInventoryUnavailable && recovery == r.recovery {
+		cause = r.recoveryInventoryCause
+	}
+	return resolution{skip: SkipWorktreeUnresolved, outcome: outcome, cause: cause}
 }
 
 func (r *resolver) resolve(cwd string) resolution {
