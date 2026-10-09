@@ -5,9 +5,10 @@ Interactive import separates the plan from the current question. Enter skips a s
 
 `agent-archive backfill` imports the Claude Code, Codex, and Cursor sessions
 already on this machine. Run it after [setup](../getting-started/setup.md), which
-itself offers to import the past sessions of the projects you chose (an
-import like `backfill --project DIR`, listed in `backfill history` and undone
-with `backfill undo`); run `backfill` for anything else. With
+itself imports the last 7 days of sessions in the projects you chose (an
+import like `backfill --since 7d --project DIR`, listed in `backfill history`
+and undone with `backfill undo`; see [setup](../getting-started/setup.md#sessions-from-the-last-7-days));
+run `backfill` for older sessions and anything else. With
 no options it imports every session it finds, but first it shows each project
 with its session count per app, what it will skip and why, and the date
 retention will delete the imported sessions. Nothing changes until you answer

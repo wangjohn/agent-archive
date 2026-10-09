@@ -428,9 +428,9 @@ var screens = []screen{
 		},
 	},
 	{
-		// A first setup whose project has past sessions offers to import
-		// them, and imports them.
-		name:    "setup-import-offer",
+		// A first setup whose project has past sessions imports those of
+		// the last 7 days without asking, and names the older ones.
+		name:    "setup-recent-import",
 		answers: []string{"", "", "s3-existing", "work", "2", "", ""},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
@@ -438,6 +438,7 @@ var screens = []screen{
 			f.inWebApp(t)
 			f.pastSession(t, "one", "src/web-app", screenNow.Add(-72*time.Hour))
 			f.pastSession(t, "two", "src/web-app", screenNow.Add(-2*time.Hour))
+			f.pastSession(t, "old", "src/web-app", screenNow.Add(-9*24*time.Hour))
 		},
 	},
 	{

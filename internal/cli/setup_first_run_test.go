@@ -127,18 +127,18 @@ func TestSetupTakesAccountAndBucketFromTheR2BucketURL(t *testing.T) {
 	}
 }
 
-// Setup ends with one line per selected app on what it needs, and says that
-// sessions already open are not captured.
+// Setup ends with one line per selected app on what it needs, then how to
+// check progress.
 func TestSetupNextStepsNameEachApp(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
 	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
 	output := setupRun(t, env, s3SetupInput("b", "us-east-1", "profile", true, true, true, t.TempDir()), 0)
 	for _, want := range []string{
-		"Codex: run /hooks and approve the archive hooks, then start a new session (or /clear).",
-		"Claude Code: nothing to approve; start a new session (or /clear).",
-		"Cursor: nothing to approve; start a new Agent chat.\n",
-		"Sessions already open are not captured",
+		"Codex: run /hooks and approve the archive hooks; they capture sessions that start after that (or after /clear).",
+		"Claude Code: nothing to approve; hooks capture sessions that start from now on (or after /clear).",
+		"Cursor: nothing to approve; hooks capture Agent chats that start from now on.\n",
+		"Check progress with agent-archive status.",
 	} {
 		if !setupContainsText(output, want) {
 			t.Fatalf("missing %q:\n%s", want, output)
