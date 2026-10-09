@@ -9,11 +9,13 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
@@ -135,6 +137,35 @@ func TestAdmittedHistoryUsesTrustedReadHomesWithDiscoveryDisabled(t *testing.T) 
 			must(t, err)
 			if len(registrations) != 1 {
 				t.Fatal("read-home migration created discovery owners")
+			}
+			// This current segment reverts the original outgoing prompt. The
+			// actual publication must retain that outgoing revision independently.
+			objects, err := cloud.List(t.Context(), "")
+			must(t, err)
+			for _, object := range objects {
+				if strings.HasSuffix(object.Key, "metadata.json") {
+					metadata, err := reader.ReadMetadata(t.Context(), cloud, object.Key)
+					must(t, err)
+					currentBundle, err := reader.LoadSource(t.Context(), cloud, metadata, reader.Limits{})
+					must(t, err)
+					encoded, err := json.Marshal(currentBundle)
+					must(t, err)
+					if !strings.Contains(string(encoded), "synthetic current-only") || strings.Contains(string(encoded), "synthetic outgoing-only") || metadata.History == nil || len(metadata.History.Preserved) == 0 {
+						t.Fatal("revert lost revision boundary/alternative", metadata.History)
+					}
+					must(t, os.Remove(seed))
+					recovered := false
+					for _, revision := range metadata.History.Preserved {
+						previous, err := reader.LoadRevision(t.Context(), cloud, metadata, revision.RevisionID, reader.Limits{})
+						must(t, err)
+						data, err := json.Marshal(previous)
+						must(t, err)
+						recovered = recovered || strings.Contains(string(data), "synthetic outgoing-only")
+					}
+					if !recovered {
+						t.Fatal("outgoing evidence unreadable after native dependency deletion")
+					}
+				}
 			}
 			saved := mustLoadConfig(t, home)
 			if saved.Discovery != nil && saved.Discovery.Enabled {

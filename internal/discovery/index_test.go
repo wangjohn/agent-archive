@@ -3,6 +3,7 @@ package discovery
 import (
 	"context"
 	"database/sql"
+	"github.com/wangjohn/agent-archive/internal/agents/builtin"
 	"os"
 	"path/filepath"
 	"strings"
@@ -53,7 +54,7 @@ func TestIndexedHintFindsFreshTaskAheadOfLargeFlatOrSameDayHistory(t *testing.T)
 			path := filepath.Join(root, folder, "rollout-2026-10-01T12-00-00-"+native+".jsonl")
 			db := hintDatabase(t, root, false)
 			addHint(t, db, native, path, at.Add(time.Minute))
-			h, err := run(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(2 * time.Minute) }}, syntheticSupport)
+			h, err := run(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(2 * time.Minute) }}, syntheticSupport)
 			if err != nil || h.Registered != 1 || h.IndexQueries != 4 || h.IndexLocators != 1 || h.Probes > HeaderProbes || !h.Pending {
 				t.Fatalf("hint or fair backlog lost: %#v %v", h, err)
 			}
@@ -68,12 +69,12 @@ func TestIndexHintsNeverSupplyAuthorizationOrSourceSupport(t *testing.T) {
 	id := writeRollout(t, root, project, at.Add(-time.Hour), 1, "sessions")
 	db := hintDatabase(t, root, false)
 	addHint(t, db, id, filepath.Join(root, "sessions", "rollout-2026-10-01T12-00-00-"+id+".jsonl"), at.Add(time.Minute))
-	h, err := run(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(2 * time.Minute) }}, syntheticSupport)
+	h, err := run(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(2 * time.Minute) }}, syntheticSupport)
 	if err != nil || h.Registered != 0 || h.Outcomes["start_not_authorized"] == 0 {
 		t.Fatalf("index date authorized native start: %#v %v", h, err)
 	}
 	writeRollout(t, root, project, at.Add(time.Minute), 2, "sessions")
-	h, err = runWithAdapters(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(2 * time.Minute) }}, []SourceAdapter{codexAdapter{supported: func(sourcefacts.CodexMeta) bool { return false }}})
+	h, err = runWithAdapters(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(2 * time.Minute) }}, []SourceAdapter{codexAdapter{supported: func(sourcefacts.CodexMeta) bool { return false }}})
 	if err != nil || h.Supported || h.Registered != 0 || sourcefacts.SupportedCodexProducer(sourcefacts.CodexMeta{}) {
 		t.Fatal("SQLite bypassed source compatibility checks", err)
 	}
@@ -95,7 +96,7 @@ func TestIndexHintsRejectOutsideRootAndEscapingSources(t *testing.T) {
 	db := hintDatabase(t, root, false)
 	addHint(t, db, "outside", external, at)
 	addHint(t, db, "link", link, at)
-	h, err := run(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(2 * time.Minute) }}, syntheticSupport)
+	h, err := run(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(2 * time.Minute) }}, syntheticSupport)
 	if err != nil || h.Registered != 0 || h.Probes != 0 || h.Outcomes["index_locator_rejected"] == 0 {
 		t.Fatalf("unsafe source read: %#v %v", h, err)
 	}
@@ -147,7 +148,7 @@ func TestIndexHintFallbackForMissingCorruptAndUnorderedIndexes(t *testing.T) {
 					}
 				}
 			}
-			h, err := run(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(2 * time.Minute) }}, syntheticSupport)
+			h, err := run(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(2 * time.Minute) }}, syntheticSupport)
 			if err != nil || h.Registered != 1 {
 				t.Fatalf("optional index stopped enumeration: %#v %v", h, err)
 			}
