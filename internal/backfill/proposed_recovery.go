@@ -45,12 +45,15 @@ func prepareRecoveryInventory(ctx context.Context, r *resolver, items []*work, u
 			r.workspaceReset()
 		}
 	}
-	r.recoverySourcesCurrent = func() bool {
+	r.recoverySourcesCurrent = func(h harness, root string) bool {
 		if !validation.checked {
 			validation.checked = true
-			validation.current = recoveryWitnessesCurrent(validation.ctx, r, witnesses, selectedRoots) && ownershipCurrent(validation.ctx)
+			validation.database = r.databaseRecoveryCurrent == nil || r.databaseRecoveryCurrent(validation.ctx)
+			var current bool
+			current, validation.databaseRoots = recoveryWitnessesCurrent(validation.ctx, r, witnesses, selectedRoots, validation.database)
+			validation.current = current && ownershipCurrent(validation.ctx)
 		}
-		return validation.current
+		return validation.current && (validation.database || !cursorEvidenceRequired(h, validation.databaseRoots[root]))
 	}
 	r.mappingRecovery = r.recovery
 	r.recovery = sourcefacts.NewRecoveryResolver(projects, r.filters.ProjectMappings, r.env.resolved, r.env.RepositoryIdentity, nil)
@@ -84,6 +87,24 @@ type recoveryWitnessValidation struct {
 	ctx     context.Context
 	checked bool
 	current bool
+	// database reports whether the Cursor database epoch is still current;
+	// databaseRoots are the destination roots whose witness proof rests on
+	// Cursor database chats alone (computed only when it is not).
+	database      bool
+	databaseRoots map[string]bool
+}
+
+// cursorEvidenceRequired reports whether a recovery for a session of h into
+// a destination whose proof rests on Cursor database chats (dependsOnCursor)
+// needs the Cursor database epoch to still be current. A changed epoch blocks
+// Cursor's own sessions, sessions of unknown app, and any recovery whose
+// destination was proposed by Cursor database evidence. It does not block
+// another app's recovery into a destination its own evidence proposes: that
+// proof used Cursor's chats only as possible clones, and a change can at most
+// add or remove one, the per-app gap residual (dev/specs/backfill.md,
+// "Recorded project recovery").
+func cursorEvidenceRequired(h harness, dependsOnCursor bool) bool {
+	return h == "" || h == harnessCursor || dependsOnCursor
 }
 
 // recoveryGap is one reason the witness inventory may omit a clone root.
@@ -231,41 +252,83 @@ func recoveryWitnessInventory(ctx context.Context, r *resolver, items []*work) (
 	return projects, witnesses, gaps
 }
 
-func recoveryWitnessesCurrent(ctx context.Context, r *resolver, witnesses map[string][]*work, selectedRoots map[string]bool) bool {
+// recoveryWitnessesCurrent renews every witness root: each must still have one
+// current witness. Cursor database chats are current with their epoch
+// (databaseCurrent). When the epoch changed, a root whose only current
+// evidence (for a selected destination, its only current evidence able to
+// propose it) is Cursor database chats is returned in cursorRoots instead of
+// failing every recovery; recoverySourcesCurrent decides whom it blocks.
+func recoveryWitnessesCurrent(ctx context.Context, r *resolver, witnesses map[string][]*work, selectedRoots map[string]bool, databaseCurrent bool) (current bool, cursorRoots map[string]bool) {
 	if r.inventoryCurrent != nil && !r.inventoryCurrent(ctx) {
-		return false
+		return false, nil
 	}
-	if r.databaseRecoveryCurrent != nil && !r.databaseRecoveryCurrent(ctx) {
-		return false
-	}
-	checks := 0
-	ownership := newResolver(r.env, r.cfg, r.filters)
+	renewal := witnessRenewal{ctx: ctx, r: r, ownership: newResolver(r.env, r.cfg, r.filters), databaseCurrent: databaseCurrent}
 	for root, group := range witnesses {
-		found := false
-		for _, w := range group {
-			if selectedRoots[root] && !w.importable() {
+		found, proposes, database, ok := renewal.root(group, selectedRoots[root])
+		if !ok || (!found && !database) {
+			return false, nil
+		}
+		if !databaseCurrent && database && (!found || (selectedRoots[root] && !proposes)) {
+			if cursorRoots == nil {
+				cursorRoots = map[string]bool{}
+			}
+			cursorRoots[root] = true
+		}
+	}
+	return true, cursorRoots
+}
+
+// witnessRenewal renews witness roots within one bounded check budget.
+type witnessRenewal struct {
+	ctx             context.Context
+	r               *resolver
+	ownership       *resolver
+	checks          int
+	databaseCurrent bool
+}
+
+// root renews one root's witnesses. found is a current witness (a Cursor
+// database chat counts only while its epoch is current), proposes a current
+// non-database witness able to propose the root, database a Cursor database
+// chat still owned by the root. ok is false when the budget or context ended.
+func (v *witnessRenewal) root(group []*work, selected bool) (found, proposes, database, ok bool) {
+	for _, w := range group {
+		if selected && !w.importable() {
+			continue
+		}
+		if v.checks >= 1024 || v.ctx.Err() != nil {
+			return false, false, false, false
+		}
+		v.checks++
+		if w.t.cwd != "" {
+			fresh := v.ownership.resolve(w.t.cwd)
+			if fresh.root != w.res.root || fresh.kind != w.res.kind || fresh.skip != w.res.skip {
 				continue
 			}
-			if checks >= 1024 || ctx.Err() != nil {
-				return false
+		}
+		if w.c.SourceKind == archive.SourceKindCursorSQLite {
+			if v.databaseCurrent {
+				return true, proposes, database, true
 			}
-			checks++
-			if w.t.cwd != "" {
-				fresh := ownership.resolve(w.t.cwd)
-				if fresh.root != w.res.root || fresh.kind != w.res.kind || fresh.skip != w.res.skip {
-					continue
-				}
-			}
-			if (w.c.SourceKind == archive.SourceKindCursorSQLite || w.sourceCurrent(r.env) || w.stillAppendedOnly(r.env)) && (w.workspaceCurrent == nil || w.workspaceCurrent(ctx)) {
-				found = true
+			database = true
+			continue
+		}
+		if (w.sourceCurrent(v.r.env) || w.stillAppendedOnly(v.r.env)) && (w.workspaceCurrent == nil || w.workspaceCurrent(v.ctx)) {
+			found = true
+			proposes = proposes || proposesRoot(w)
+			if v.databaseCurrent || !selected || proposes {
 				break
 			}
 		}
-		if !found {
-			return false
-		}
 	}
-	return true
+	return found, proposes, database, true
+}
+
+// proposesRoot reports a witness that can make its root an eligible proposed
+// destination on its own (see recoveryWitnessInventory and
+// proposedRootEligible).
+func proposesRoot(w *work) bool {
+	return w.validated && w.importable() && !w.vanished && !w.evidenceOnly && !w.t.capturePending && !w.tooLarge && !w.sourceChanged
 }
 
 // bindRecoveryPolicy binds admitted imports to the exact prospective config,

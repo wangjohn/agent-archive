@@ -1225,6 +1225,16 @@ by app) and a "Project recovery evidence" note in text. An app's own gaps
 still block its sessions as defense in depth. Witnesses from an incomplete
 Cursor database epoch remain clone evidence but cannot propose a destination,
 because they cannot be renewed; such an epoch needs no renewal at admission.
+A complete epoch that changes between the plan and confirmation (its settled
+stamps differ, or a renewed read of an unsettled database differs) is isolated
+the same way at admission. It blocks Cursor's own recoveries, recoveries of
+unknown app, and any recovery whose destination rests on Cursor database
+evidence: an unconfigured destination with no current witness from another
+source that could propose it on its own. It does not block another app's
+recovery into a configured root or into a destination that app's own evidence
+proposes. Such a proof used Cursor's chats only as possible clones, and a
+change can at most remove one (the proof stays unique) or add one (a second
+checkout known only to Cursor, the residual above).
 A native transcript that was only appended to after its header was read (same
 file, same mode, larger size) keeps its own `source_changed` skip but stays
 clone evidence that cannot propose a destination, and further appends renew
