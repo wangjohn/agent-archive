@@ -205,10 +205,12 @@ func witnessGap(w *work) (cause DiagnosticDetail, ok bool) {
 // cursorChatFolderless reports a Cursor database chat with no folder evidence:
 // no folder, no workspace reference and no message folder. Such a chat (for
 // example a subagent composer) cannot name a clone root, so it cannot hide a
-// second clone. A workspace reference stays evidence even when unreadable, and
-// several message folders stay evidence even though none is chosen.
+// second clone. A workspace reference stays evidence even when unreadable or
+// of a shape this release cannot resolve (a workspaceIdentifier whose URI is
+// remote or unknown), and several message folders stay evidence even though
+// none is chosen.
 func cursorChatFolderless(chat CursorDatabaseChat, messageFolders []string) bool {
-	return chat.Folder == "" && chat.WorkspaceID == "" && len(messageFolders) == 0
+	return chat.Folder == "" && chat.WorkspaceID == "" && !chat.WorkspaceIdentifier && len(messageFolders) == 0
 }
 
 func recoveryWitnessInventory(ctx context.Context, r *resolver, items []*work) ([]archive.ProjectActivation, map[string][]*work, recoveryGaps) {

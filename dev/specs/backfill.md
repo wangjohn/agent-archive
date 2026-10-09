@@ -561,8 +561,10 @@ matching rule wins.
    A Cursor database chat with no folder evidence at all (no folder, no
    workspace reference, no message folder; for example a subagent composer)
    is a non-witness, not incomplete evidence: it names no root, so it cannot
-   hide a clone. A chat whose workspace reference cannot be read, or whose
-   messages name several folders, still makes the inventory incomplete.
+   hide a clone. A chat whose workspace reference cannot be read, whose
+   `workspaceIdentifier` is present in any shape this release cannot resolve
+   to a local folder (a remote URI, an unknown shape), or whose messages name
+   several folders, still makes the inventory incomplete.
    The plan displays selected proposed roots as projects it will add through the
    ordinary batch/config transaction. Hidden roots remain recovery evidence
    without becoming new capture roots. Evidence Context/digest binds the union;

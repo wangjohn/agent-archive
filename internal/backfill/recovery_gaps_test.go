@@ -36,9 +36,10 @@ const noGapCause DiagnosticDetail = ""
 
 // Chats with no folder evidence (subagent composers, a chat opened without a
 // workspace) name no root, so they cannot hide a clone. A workspace reference
-// whose workspace.json is missing still could, so it stays a gap.
+// whose workspace.json is missing still could, and so could one this release
+// cannot resolve (a remote or unknown workspaceIdentifier), so both stay gaps.
 func TestFirstRunRecoveryFolderlessCursorChatsAreNotWitnesses(t *testing.T) {
-	for _, kind := range []string{"folderless", "unreadable_workspace"} {
+	for _, kind := range []string{"folderless", "unreadable_workspace", "unresolvable_workspace"} {
 		t.Run(kind, func(t *testing.T) {
 			_, env, cfg, root, goneID := firstRunRecoveryFixture(t, false)
 			chats := []CursorDatabaseChat{
@@ -48,6 +49,9 @@ func TestFirstRunRecoveryFolderlessCursorChatsAreNotWitnesses(t *testing.T) {
 			}
 			if kind == "unreadable_workspace" {
 				chats[2].WorkspaceID = "missing"
+			}
+			if kind == "unresolvable_workspace" {
+				chats[2].WorkspaceIdentifier = true
 			}
 			composers := map[string]cursorstore.Composer{}
 			for _, chat := range chats {
@@ -87,12 +91,24 @@ func TestCursorChatFolderlessRequiresNoEvidence(t *testing.T) {
 		{CursorDatabaseChat{}, nil, true},
 		{CursorDatabaseChat{Folder: "/a"}, nil, false},
 		{CursorDatabaseChat{WorkspaceID: "w"}, nil, false},
+		{CursorDatabaseChat{WorkspaceIdentifier: true}, nil, false},
 		{CursorDatabaseChat{}, []string{"/a"}, false},
 		{CursorDatabaseChat{}, []string{"/a", "/b"}, false},
 	} {
 		if got := cursorChatFolderless(tc.chat, tc.folders); got != tc.want {
 			t.Errorf("%+v %v: got %v", tc.chat, tc.folders, got)
 		}
+	}
+}
+
+// The epoch digest covers a present but unresolvable workspace reference, so
+// an admission renewal notices it appearing or disappearing.
+func TestCursorRecoveryDigestCoversWorkspaceIdentifier(t *testing.T) {
+	works := func(present bool) []*work {
+		return []*work{{t: &transcript{harness: harnessCursor}, chat: CursorDatabaseChat{ID: "c", KeyID: "c", WorkspaceIdentifier: present}}}
+	}
+	if cursorRecoveryDigest(works(false)) == cursorRecoveryDigest(works(true)) {
+		t.Fatal("digest ignores the workspace reference")
 	}
 }
 
