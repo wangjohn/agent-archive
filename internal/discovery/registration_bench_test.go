@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"github.com/wangjohn/agent-archive/internal/agents/builtin"
 	"github.com/wangjohn/agent-archive/internal/state"
 
 	"github.com/wangjohn/agent-archive/internal/testutil/recoverytest"
@@ -32,7 +33,7 @@ func BenchmarkUnknownDiscoveryWithRegistrationInventory(b *testing.B) {
 			if err := recoverytest.Exhaust(context.Background(), store, state.SessionIndexRecoverySlice, false); err != nil {
 				b.Fatal(err)
 			}
-			options := Options{Now: func() time.Time { return at.Add(2 * time.Minute) }}
+			options := Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(2 * time.Minute) }}
 			var before, after syscall.Rusage
 			_ = syscall.Getrusage(syscall.RUSAGE_SELF, &before)
 			passes := 0

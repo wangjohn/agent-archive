@@ -21,7 +21,12 @@ type FormatObservation struct {
 
 func (h *Health) observeFormat(c Candidate) {
 	source, _ := json.Marshal(c.ProducerSource)
-	f := FormatObservation{Profile: c.FormatProfile, Version: c.HarnessVersion, Source: c.ProducerSource,
+	diagnosticSource := c.ProducerSource
+	if c.NativeChild && len(c.ProducerSource) > 0 && c.ProducerSource[0] == '{' {
+		diagnosticSource = "subagent"
+		source = nil
+	}
+	f := FormatObservation{Profile: c.FormatProfile, Version: c.HarnessVersion, Source: diagnosticSource,
 		Evidence: sourcefacts.CodexProducerEvidence(sourcefacts.CodexMeta{Source: source, Version: c.HarnessVersion, Originator: c.ProducerOriginator}), Observations: 1}
 	if !validFormatObservation(f) {
 		return
@@ -44,7 +49,7 @@ func (h *Health) observeFormat(c Candidate) {
 func validFormatObservation(f FormatObservation) bool {
 	return (f.Profile == sourcefacts.CodexLegacyJSONL || f.Profile == sourcefacts.CodexPaginatedJSONL) &&
 		nativesessions.ValidCodexVersion(f.Version) &&
-		nativesessions.ValidCodexExecutionSource(f.Source) &&
+		(nativesessions.ValidCodexExecutionSource(f.Source) || f.Source == "subagent") &&
 		(f.Evidence == sourcefacts.CodexRuntimeTested || f.Evidence == sourcefacts.CodexSourceInspected || f.Evidence == sourcefacts.CodexCompatibleUntested) &&
 		f.Observations > 0
 }

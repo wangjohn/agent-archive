@@ -31,7 +31,7 @@ func createDiscoveryCleanupState(t *testing.T) (string, Env) {
 	must(t, config.Save(home, cfg))
 	store, err := state.Open(home)
 	must(t, err)
-	_, err = discovery.Run(context.Background(), store, cfg, discovery.Options{Now: func() time.Time { return now }})
+	_, err = discovery.Run(context.Background(), store, cfg, discovery.Options{Sources: registryFor(env), Now: func() time.Time { return now }})
 	must(t, err)
 	unlock, err := local.NamedLock(home, "hooks.lock")
 	must(t, err)
