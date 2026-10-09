@@ -182,7 +182,7 @@ class LevenshteinToolchainTest(unittest.TestCase):
         self.assertEqual(len(guards), 1)
         self.assertIn('GOTOOLCHAIN: local', guards[0])
         self.assertIn("grep -q ' " + re.escape(compiler) + " '", guards[0])
-        self.assertIn('ref: b8b8ee429de80d44c00ae7c8020662de89f927c6', workflow)
+        self.assertIn('ref: 6f799f72befb925d10f2ef01a7c9a46725fa714d', workflow)
         self.assertIn('./levenshtein/verify "$run" --source ./app', workflow)
 
 
