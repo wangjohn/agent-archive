@@ -16,7 +16,7 @@ import (
 func TestPublicationClosedReachableLayouts(t *testing.T) {
 	type pendingJSON PendingPublication
 	type publishedJSON publishedState
-	roots := []reflect.Type{reflect.TypeFor[pendingJSON](), reflect.TypeFor[publishedJSON](), reflect.TypeFor[PublicationOriginalEvidence](), reflect.TypeFor[[]archive.SupplementalEvidence]()}
+	roots := []reflect.Type{reflect.TypeFor[pendingJSON](), reflect.TypeFor[publishedJSON](), reflect.TypeFor[PublicationOriginalEvidence](), reflect.TypeFor[[]archive.SupplementalEvidence](), reflect.TypeFor[PublicationNativeTarget]()}
 	seen := make(map[reflect.Type]bool)
 	var visit func(reflect.Type)
 	visit = func(typ reflect.Type) {

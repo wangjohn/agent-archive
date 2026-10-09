@@ -99,3 +99,26 @@ func (s *sessionScan) refilterRewritten(_ context.Context, read sourceRead, snap
 	s.rewritten = &candidate
 	return refiltered, true, nil
 }
+
+// Native parent links may resolve after a retained revision was captured. The
+// stable child owner still identifies that earlier evidence; a different known
+// parent remains a conflict.
+func retainedParentMatches(reg archive.SessionRegistration, bundle archive.SourceBundle) bool {
+	return bundle.ParentSessionID == reg.ParentSessionID || nativeChildOwned(reg, bundle) && bundle.ParentSessionID == ""
+}
+
+// Only positively identified native child evidence can acquire its first archive parent.
+func nativeParentResolved(reg archive.SessionRegistration, bundle archive.SourceBundle) bool {
+	return nativeChildOwned(reg, bundle) && bundle.ParentSessionID == "" && reg.ParentSessionID != ""
+}
+
+// A missing optional marker is unknown on older sources. Only the same already
+// admitted owner and a supported persisted child binding may upgrade it; parent
+// links and current native observations cannot supply that proof.
+func nativeChildOwned(reg archive.SessionRegistration, bundle archive.SourceBundle) bool {
+	return agentapi.RetainedNativeChildOwned(reg, bundle)
+}
+
+func nativeChildMarkerPending(reg archive.SessionRegistration, bundle archive.SourceBundle) bool {
+	return !bundle.NativeChild && nativeChildOwned(reg, bundle)
+}

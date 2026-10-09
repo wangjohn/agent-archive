@@ -70,6 +70,10 @@ func (s *sessionScan) freezeRevisionPublication(p *state.PendingPublication) err
 	if err := s.freezePreservedHistoryInputs(&final, history); err != nil {
 		return err
 	}
+	for i := range history.Inputs {
+		parent := final.ParentSessionID
+		history.Inputs[i].ParentSessionID = &parent
+	}
 	if found {
 		if err := freezeRetiredHistorySources(previous, final, history); err != nil {
 			return err
@@ -214,7 +218,7 @@ func (s *sessionScan) reactivatedRevision(candidate archive.SourceBundle) (archi
 		if revision.RevisionID == revisionID(candidate) {
 			input := state.HistoryInput{Reference: revision.Source, RevisionID: revision.RevisionID, CapturedAt: revision.CapturedAt, FilterVersion: revision.FilterVersion, SourceSchemaVersion: revision.SourceSchemaVersion}
 			if input.FilterVersion == "" || input.SourceSchemaVersion == 0 {
-				inputs, err := s.retainedManifestInputs(metadata)
+				inputs, err := s.retainedManifestInputs(metadata, nil)
 				if err != nil {
 					return archive.SourceBundle{}, false, err
 				}

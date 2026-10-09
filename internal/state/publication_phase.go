@@ -15,6 +15,7 @@ import (
 // PreparationAuthority freezes the exact original selection and inputs.
 // Progress and retired cleanup are deliberately outside its digest.
 type PreparationAuthority struct {
+	NativeTarget            *PublicationNativeTarget  `json:"native_target,omitempty"`
 	PrivacyPreviousMetadata []byte                    `json:"privacy_previous_metadata,omitempty"`
 	Migration               *OrdinaryHistoryMigration `json:"migration,omitempty"`
 	Version                 int                       `json:"version"`
@@ -37,6 +38,8 @@ type PreparationAuthority struct {
 
 // PreparationInput is one immutable input in the original ordered selection.
 type PreparationInput struct {
+	ParentSessionID  *string                      `json:"parent_session_id,omitempty"`
+	NativeChild      *bool                        `json:"native_child,omitempty"`
 	HookObservations *PublicationHookObservations `json:"hook_observations,omitempty"`
 	Reference        archive.SourceReference      `json:"reference"`
 	Selection        PublicationSelection         `json:"selection"`
@@ -76,34 +79,37 @@ func preparationSHA(a PreparationAuthority) string { return preparationSHAWithFa
 
 func preparationSHAWithFacts(a PreparationAuthority, facts *payloadDigestFacts) string {
 	type inputBinding struct {
-		Hook           *PublicationHookFacts   `json:"Hook"`
-		Reference      archive.SourceReference `json:"Reference"`
-		Selection      PublicationSelection    `json:"Selection"`
-		FilterVersion  string                  `json:"FilterVersion"`
-		AdapterVersion string                  `json:"AdapterVersion"`
-		SkillPolicy    string                  `json:"SkillPolicy"`
-		PayloadSHA256  string                  `json:"PayloadSHA256"`
+		ParentSessionID *string                 `json:"ParentSessionID,omitempty"`
+		NativeChild     *bool                   `json:"NativeChild,omitempty"`
+		Hook            *PublicationHookFacts   `json:"Hook"`
+		Reference       archive.SourceReference `json:"Reference"`
+		Selection       PublicationSelection    `json:"Selection"`
+		FilterVersion   string                  `json:"FilterVersion"`
+		AdapterVersion  string                  `json:"AdapterVersion"`
+		SkillPolicy     string                  `json:"SkillPolicy"`
+		PayloadSHA256   string                  `json:"PayloadSHA256"`
 	}
 	inputs := make([]inputBinding, len(a.Inputs))
 	for i, input := range a.Inputs {
-		inputs[i] = inputBinding{publicationHookFacts(input.HookObservations), input.Reference, input.Selection, input.FilterVersion, input.AdapterVersion, input.SkillPolicy, payloadSetSHAWithFacts([]PublicationSource{{Reference: input.Reference, Selection: input.Selection, Payload: input.Payload}}, facts)}
+		inputs[i] = inputBinding{input.ParentSessionID, input.NativeChild, publicationHookFacts(input.HookObservations), input.Reference, input.Selection, input.FilterVersion, input.AdapterVersion, input.SkillPolicy, payloadSetSHAWithFacts([]PublicationSource{{Reference: input.Reference, Selection: input.Selection, Payload: input.Payload}}, facts)}
 	}
 	raw, _ := json.Marshal(struct {
-		Version                int                `json:"Version"`
-		Kind                   PreparationKind    `json:"Kind"`
-		SessionID              string             `json:"SessionID"`
-		OwnerSHA256            string             `json:"OwnerSHA256"`
-		DestinationID          string             `json:"DestinationID"`
-		AdmissionContext       string             `json:"AdmissionContext"`
-		PolicyContext          string             `json:"PolicyContext"`
-		Purpose                PublicationPurpose `json:"Purpose"`
-		Predecessor            PredecessorState   `json:"Predecessor"`
-		PredecessorSHA256      string             `json:"PredecessorSHA256"`
-		OriginMetadataSHA256   string             `json:"OriginMetadataSHA256"`
-		OriginSetSHA256        string             `json:"OriginSetSHA256"`
-		OriginalEvidenceSHA256 string             `json:"OriginalEvidenceSHA256"`
-		Inputs                 []inputBinding     `json:"Inputs"`
-	}{a.Version, a.Kind, a.SessionID, a.OwnerSHA256, a.DestinationID, a.AdmissionContext, a.PolicyContext, a.Purpose, a.Predecessor, a.PredecessorSHA256, a.OriginMetadataSHA256, a.OriginSetSHA256, a.OriginalEvidenceSHA256, inputs})
+		NativeTarget           *PublicationNativeTarget `json:"NativeTarget,omitempty"`
+		Version                int                      `json:"Version"`
+		Kind                   PreparationKind          `json:"Kind"`
+		SessionID              string                   `json:"SessionID"`
+		OwnerSHA256            string                   `json:"OwnerSHA256"`
+		DestinationID          string                   `json:"DestinationID"`
+		AdmissionContext       string                   `json:"AdmissionContext"`
+		PolicyContext          string                   `json:"PolicyContext"`
+		Purpose                PublicationPurpose       `json:"Purpose"`
+		Predecessor            PredecessorState         `json:"Predecessor"`
+		PredecessorSHA256      string                   `json:"PredecessorSHA256"`
+		OriginMetadataSHA256   string                   `json:"OriginMetadataSHA256"`
+		OriginSetSHA256        string                   `json:"OriginSetSHA256"`
+		OriginalEvidenceSHA256 string                   `json:"OriginalEvidenceSHA256"`
+		Inputs                 []inputBinding           `json:"Inputs"`
+	}{a.NativeTarget, a.Version, a.Kind, a.SessionID, a.OwnerSHA256, a.DestinationID, a.AdmissionContext, a.PolicyContext, a.Purpose, a.Predecessor, a.PredecessorSHA256, a.OriginMetadataSHA256, a.OriginSetSHA256, a.OriginalEvidenceSHA256, inputs})
 	previousPrivacySHA := publicationSHA256(a.PrivacyPreviousMetadata)
 	migration := ""
 	if a.Migration != nil {
@@ -301,7 +307,13 @@ func (a PreparationAuthority) validateWithFacts(facts *payloadDigestFacts) (err 
 	if a.Version != 1 || (a.Kind != PreparationCapture && a.Kind != PreparationPrivacyCommitted && a.Kind != PreparationPrivacyPending && a.Kind != PreparationPrivacyPendingAbsent) || a.SHA256 != preparationSHAWithFacts(a, facts) || a.OriginMetadataSHA256 != publicationSHA256(a.OriginMetadata) || len(a.Inputs) == 0 || len(a.Inputs) > 65 {
 		return ErrDurableStorageRecovery
 	}
+	if a.NativeTarget != nil && a.NativeTarget.validate() != nil {
+		return ErrDurableStorageRecovery
+	}
 	for _, input := range a.Inputs {
+		if input.ParentSessionID != nil && len(*input.ParentSessionID) > 4096 {
+			return ErrDurableStorageRecovery
+		}
 		if h := input.HookObservations; h != nil {
 			if validatePublicationHookFacts(&h.Facts, input, a.OwnerSHA256, a.DestinationID, a.AdmissionContext, a.PolicyContext) != nil || len(h.Body) != h.Facts.BodySize || publicationSHA256(h.Body) != h.Facts.BodySHA256 {
 				return ErrDurableStorageRecovery
@@ -430,12 +442,14 @@ func (p *PendingPublication) initializePreparation(prior PublicationPredecessor,
 	if prior.State == PredecessorPresent {
 		predecessorSHA = publicationSHA256(prior.Body)
 	}
-	a := &PreparationAuthority{Version: 1, Kind: kind, PrivacyPreviousMetadata: previousPrivacy, PredecessorSHA256: predecessorSHA, SessionID: m.SessionID, OwnerSHA256: publicationOwner(m, destination, admission), DestinationID: destination, AdmissionContext: admission, PolicyContext: policy, Purpose: purpose, Predecessor: prior.State, OriginMetadata: slices.Clone(p.MetadataBytes), OriginMetadataSHA256: publicationSHA256(p.MetadataBytes), OriginSetSHA256: digest}
+	a := &PreparationAuthority{NativeTarget: p.nativeTarget, Version: 1, Kind: kind, PrivacyPreviousMetadata: previousPrivacy, PredecessorSHA256: predecessorSHA, SessionID: m.SessionID, OwnerSHA256: publicationOwner(m, destination, admission), DestinationID: destination, AdmissionContext: admission, PolicyContext: policy, Purpose: purpose, Predecessor: prior.State, OriginMetadata: slices.Clone(p.MetadataBytes), OriginMetadataSHA256: publicationSHA256(p.MetadataBytes), OriginSetSHA256: digest}
 	for _, source := range sources {
 		input := PreparationInput{Reference: source.Reference, Selection: source.Selection, FilterVersion: p.Bundle.Capture.FilterVersion, AdapterVersion: p.Bundle.Capture.AdapterVersion, SkillPolicy: p.SkillEvidence, Payload: source.Payload}
 		if p.History != nil {
 			for _, h := range p.History.Inputs {
 				if h.Reference == input.Reference {
+					input.ParentSessionID = h.ParentSessionID
+					input.NativeChild = h.NativeChild
 					input.FilterVersion = h.FilterVersion
 					input.Selection.CapturedAt = h.CapturedAt.UTC()
 					input.Selection.SourceSchemaVersion = h.SourceSchemaVersion
@@ -458,6 +472,15 @@ func (p *PendingPublication) initializePreparation(prior PublicationPredecessor,
 
 func (p *PendingPublication) validatePreparationCommit(facts *payloadDigestFacts) error {
 	a := p.Preparation
+	if a.NativeTarget != nil {
+		var next archive.Metadata
+		if err := json.Unmarshal(p.MetadataBytes, &next); err != nil {
+			return err
+		}
+		if next.ParentSessionID != a.NativeTarget.ParentSessionID || next.NativeChild != a.NativeTarget.NativeChild || p.Bundle.ParentSessionID != a.NativeTarget.ParentSessionID || p.Bundle.NativeChild != a.NativeTarget.NativeChild {
+			return ErrDurableStorageRecovery
+		}
+	}
 	if p.Commit.PreparationSHA256 != a.SHA256 || p.Commit.PayloadSetSHA256 != payloadSetSHAWithFacts(p.Sources, facts) {
 		return ErrDurableStorageRecovery
 	}

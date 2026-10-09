@@ -128,6 +128,7 @@ func decodePublishedState(data []byte, p *publishedState, ctx context.Context, b
 		if err := json.Unmarshal(p.MetadataBytes, &metadata); err != nil {
 			return errors.Join(ErrDurableStorageRecovery, err)
 		}
+
 		key, err := archive.MetadataObjectKey(metadata.Harness.Name, metadata.SessionID)
 		if err != nil {
 			return errors.Join(ErrDurableStorageRecovery, err)
@@ -199,13 +200,24 @@ func (p publishedState) validateSelectingPublishedWithFacts(facts *payloadDigest
 
 	// Published validation uses private Commit2+payload witnesses without a mutable preparation cursor.
 	var metadata struct {
-		SessionID string `json:"session_id"`
-		Harness   struct {
+		ParentSessionID string `json:"parent_session_id"`
+		NativeChild     bool   `json:"native_child"`
+		SessionID       string `json:"session_id"`
+		Harness         struct {
 			Name string `json:"name"`
 		} `json:"harness"`
 	}
 	if err := json.Unmarshal(p.MetadataBytes, &metadata); err != nil {
 		return err
+	}
+	var target *PublicationNativeTarget
+	if p.Preparation != nil {
+		target = p.Preparation.NativeTarget
+	} else if p.SettledPrivacy != nil {
+		target = p.SettledPrivacy.NativeTarget
+	}
+	if target != nil && (metadata.ParentSessionID != target.ParentSessionID || metadata.NativeChild != target.NativeChild || bundle.ParentSessionID != target.ParentSessionID || bundle.NativeChild != target.NativeChild) {
+		return ErrDurableStorageRecovery
 	}
 	key, err := archive.MetadataObjectKey(metadata.Harness.Name, metadata.SessionID)
 	if err != nil {

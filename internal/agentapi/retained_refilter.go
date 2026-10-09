@@ -94,7 +94,12 @@ func RefilterRetainedSource(ctx context.Context, reg archive.SessionRegistration
 	}
 	out.Capture.Harness = input.Capture.Harness
 	gaps := out.Capture.Gaps
-	out.Capture.Gaps = slices.Clone(input.Capture.Gaps)
+	out.Capture.Gaps = make([]archive.CaptureGap, 0, len(input.Capture.Gaps))
+	for _, gap := range input.Capture.Gaps {
+		if gap.Code != "native_parent_link_pending" || !RetainedNativeChildOwned(reg, input) || input.ParentSessionID != "" || reg.ParentSessionID == "" {
+			out.Capture.Gaps = append(out.Capture.Gaps, gap)
+		}
+	}
 	for _, gap := range gaps {
 		if !slices.Contains(out.Capture.Gaps, gap) {
 			out.Capture.Gaps = append(out.Capture.Gaps, gap)
@@ -194,5 +199,18 @@ func ordinaryRefilterEnvelope(out archive.SourceBundle, filtered archive.Filtere
 }
 
 func retainedRefilterIdentityChanged(input archive.SourceBundle, reg archive.SessionRegistration) bool {
-	return input.SchemaVersion != archive.SourceSchemaVersion && input.SchemaVersion != archive.HistorySourceSchemaVersion || input.ArchiveSessionID != reg.ArchiveSessionID || input.NativeSessionID != reg.NativeSessionID || input.ProjectID != reg.ProjectID || input.Capture.Harness.Name != reg.Harness.Name || input.ParentSessionID != reg.ParentSessionID
+	return input.SchemaVersion != archive.SourceSchemaVersion && input.SchemaVersion != archive.HistorySourceSchemaVersion || input.ArchiveSessionID != reg.ArchiveSessionID || input.NativeSessionID != reg.NativeSessionID || input.ProjectID != reg.ProjectID || input.Capture.Harness.Name != reg.Harness.Name || input.ParentSessionID != reg.ParentSessionID && (!RetainedNativeChildOwned(reg, input) || input.ParentSessionID != "")
+}
+
+// RetainedNativeChildOwned recognizes only an already admitted child owner from
+// its verified retained header or its exact supported persisted binding.
+func RetainedNativeChildOwned(reg archive.SessionRegistration, input archive.SourceBundle) bool {
+	if !reg.NativeChild || input.ArchiveSessionID != reg.ArchiveSessionID || input.NativeSessionID != reg.NativeSessionID || input.ProjectID != reg.ProjectID || input.Capture.Harness.Name != reg.Harness.Name {
+		return false
+	}
+	if input.NativeChild {
+		return true
+	}
+	binding := reg.CodexBinding
+	return binding != nil && binding.Child && binding.Validate() == nil && reg.Harness.Name == archive.HarnessCodex && binding.NativeThreadID == reg.NativeSessionID && binding.Home != "" && (binding.ParentID == "" || reg.ParentNativeSessionID == binding.ParentID) && (binding.RootID == "" || reg.NativeRootSessionID == binding.RootID) && (binding.Home == "" || reg.NativeSourceHome == binding.Home)
 }

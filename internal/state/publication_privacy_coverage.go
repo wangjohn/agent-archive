@@ -30,6 +30,8 @@ type PublicationPrivacyAlternative struct {
 // CoveredPrivacySource records an alternative actually compared by the factory.
 // The parent PrivacySource binds owner/context, original and final output.
 type CoveredPrivacySource struct {
+	ParentSessionID *string                 `json:"parent_session_id,omitempty"`
+	NativeChild     *bool                   `json:"native_child,omitempty"`
 	Version         int                     `json:"version"`
 	MetadataSHA256  string                  `json:"metadata_sha256"`
 	SourceSetSHA256 string                  `json:"source_set_sha256"`
@@ -47,10 +49,44 @@ func coveredPrivacySHA(r CoveredPrivacySource) string {
 	return publicationSHA256(append([]byte("covered-privacy-source/v1\x00"), raw...))
 }
 
-func filterPrivacySource(ctx context.Context, registration archive.SessionRegistration, adapter agentapi.TranscriptFilter, selected archive.Metadata, input PreparationInput, original []byte, oldPolicy, nextPolicy PublicationPolicy, ceiling config.SkillEvidence, budget *agentapi.NativeReadBudget) (archive.SourceBundle, func(), error) {
+type publicationOriginalHeader struct {
+	ParentSessionID string
+	NativeChild     bool
+}
+
+func filterPrivacySource(ctx context.Context, registration archive.SessionRegistration, adapter agentapi.TranscriptFilter, selected archive.Metadata, input PreparationInput, original []byte, oldPolicy, nextPolicy PublicationPolicy, ceiling config.SkillEvidence, budget *agentapi.NativeReadBudget, header *publicationOriginalHeader, admittedRegistration archive.SessionRegistration) (archive.SourceBundle, func(), error) {
+	if input.ParentSessionID != nil {
+		selected.ParentSessionID = *input.ParentSessionID
+	}
 	bundle, closeOriginal, err := agentapi.DecodeRevisionSourceLeased(ctx, selected, input.Selection.RevisionID, original, agentapi.SourceReadLimits{}, budget)
+	if err != nil && input.ParentSessionID == nil && selected.NativeChild && registration.NativeChild && selected.ParentSessionID != "" {
+		selected.ParentSessionID = ""
+		bundle, closeOriginal, err = agentapi.DecodeRevisionSourceLeased(ctx, selected, input.Selection.RevisionID, original, agentapi.SourceReadLimits{}, budget)
+		if err == nil && !bundle.NativeChild {
+			closeOriginal()
+			return archive.SourceBundle{}, nil, ErrDurableStorageRecovery
+		}
+	}
 	if err != nil {
 		return bundle, nil, err
+	}
+	// A frozen output descriptor cannot turn an unbound registration into a
+	// legacy child license. Positive checksum-decoded headers remain sufficient.
+	if !bundle.NativeChild && registration.NativeChild {
+		current := admittedRegistration.CodexBinding
+		frozen := registration.CodexBinding
+		if !agentapi.RetainedNativeChildOwned(admittedRegistration, bundle) || current == nil || frozen == nil || !current.PreservesFacts(frozen) || admittedRegistration.NativeSourceHome != registration.NativeSourceHome || frozen.ParentID != "" && admittedRegistration.ParentNativeSessionID != registration.ParentNativeSessionID || frozen.RootID != "" && admittedRegistration.NativeRootSessionID != registration.NativeRootSessionID {
+			closeOriginal()
+			return archive.SourceBundle{}, nil, ErrDurableStorageRecovery
+		}
+	}
+	if header != nil {
+		header.ParentSessionID = bundle.ParentSessionID
+		header.NativeChild = bundle.NativeChild
+	}
+	if len(bundle.ParentSessionID) > 4096 || input.NativeChild != nil && bundle.NativeChild != *input.NativeChild {
+		closeOriginal()
+		return archive.SourceBundle{}, nil, ErrDurableStorageRecovery
 	}
 	if bundle.SchemaVersion != input.Selection.SourceSchemaVersion && input.Selection.SourceSchemaVersion != 0 || !bundle.Capture.CapturedAt.Equal(input.Selection.CapturedAt) || bundle.Capture.FilterVersion != oldPolicy.FilterVersion || bundle.Capture.AdapterVersion != oldPolicy.AdapterVersion {
 		closeOriginal()
@@ -149,7 +185,7 @@ func validatePrivacyAlternative(alternative PublicationPrivacyAlternative, origi
 	return digest, nil
 }
 
-func coverPrivacyAlternative(ctx context.Context, registration archive.SessionRegistration, adapter agentapi.TranscriptFilter, chosen archive.SourceBundle, alternative PublicationPrivacyAlternative, setSHA string, nextPolicy PublicationPolicy, sourceReader PublicationPrivacySourceReader, budget *agentapi.NativeReadBudget) (archive.SourceBundle, CoveredPrivacySource, func(), error) {
+func coverPrivacyAlternative(ctx context.Context, registration archive.SessionRegistration, adapter agentapi.TranscriptFilter, chosen archive.SourceBundle, alternative PublicationPrivacyAlternative, setSHA string, nextPolicy PublicationPolicy, sourceReader PublicationPrivacySourceReader, budget *agentapi.NativeReadBudget, admittedRegistration archive.SessionRegistration) (archive.SourceBundle, CoveredPrivacySource, func(), error) {
 	var receipt CoveredPrivacySource
 	original, closeBytes, err := sourceReader.ReadPublicationPrivacySource(ctx, alternative.Input)
 	if err != nil {
@@ -165,7 +201,8 @@ func coverPrivacyAlternative(ctx context.Context, registration archive.SessionRe
 	selected.History = &archive.RevisionHistory{CurrentRevision: alternative.Input.Selection.RevisionID}
 	selected.CapturedAt = alternative.Input.Selection.CapturedAt
 	selected.FilterVersion = alternative.Input.FilterVersion
-	candidate, closeCandidate, err := filterPrivacySource(ctx, registration, adapter, selected, alternative.Input, original, alternative.Policy, nextPolicy, alternative.Policy.SkillEvidence, budget)
+	var header publicationOriginalHeader
+	candidate, closeCandidate, err := filterPrivacySource(ctx, registration, adapter, selected, alternative.Input, original, alternative.Policy, nextPolicy, alternative.Policy.SkillEvidence, budget, &header, admittedRegistration)
 	if err != nil {
 		return archive.SourceBundle{}, receipt, nil, err
 	}
@@ -205,7 +242,9 @@ func coverPrivacyAlternative(ctx context.Context, registration archive.SessionRe
 	if err != nil {
 		return archive.SourceBundle{}, receipt, nil, err
 	}
-	receipt = CoveredPrivacySource{Version: 1, MetadataSHA256: publicationSHA256(alternative.MetadataBody), SourceSetSHA256: setSHA, Reference: alternative.Input.Reference, Selection: alternative.Input.Selection, Policy: alternative.Policy, Direction: "alternative-covered-by-original"}
+	parent := header.ParentSessionID
+	marker := header.NativeChild
+	receipt = CoveredPrivacySource{ParentSessionID: &parent, NativeChild: &marker, Version: 1, MetadataSHA256: publicationSHA256(alternative.MetadataBody), SourceSetSHA256: setSHA, Reference: alternative.Input.Reference, Selection: alternative.Input.Selection, Policy: alternative.Policy, Direction: "alternative-covered-by-original"}
 	return detached, receipt, closeEnvelope, nil
 }
 

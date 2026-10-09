@@ -7,6 +7,7 @@ import (
 	"errors"
 	"github.com/wangjohn/agent-archive/internal/jsonwire"
 	"reflect"
+	"strings"
 	"sync"
 	"time"
 
@@ -36,30 +37,35 @@ func (p PublicationPolicy) validate() error {
 
 // PrivacySource is a closed receipt of an executed retained transformation.
 type PrivacySource struct {
-	Hook                 *PublicationHookFacts   `json:"hook,omitempty"`
-	Covered              []CoveredPrivacySource  `json:"covered,omitempty"`
-	Version              int                     `json:"version"`
-	InputIndex           int                     `json:"input_index"`
-	Previous             archive.SourceReference `json:"previous"`
-	Next                 archive.SourceReference `json:"next"`
-	Selection            PublicationSelection    `json:"selection"`
-	SessionID            string                  `json:"session_id"`
-	NativeSessionID      string                  `json:"native_session_id"`
-	ProjectID            string                  `json:"project_id"`
-	MachineID            string                  `json:"machine_id"`
-	Harness              archive.Harness         `json:"harness"`
-	Origin               archive.SessionOrigin   `json:"origin,omitempty"`
-	ImportedAt           *time.Time              `json:"imported_at,omitempty"`
-	StartedAtSource      archive.StartedAtSource `json:"started_at_source,omitempty"`
-	PreviousGenerationID string                  `json:"previous_generation_id,omitempty"`
-	StartedAt            time.Time               `json:"started_at"`
-	OwnerSHA256          string                  `json:"owner_sha256"`
-	DestinationID        string                  `json:"destination_id"`
-	AdmissionContext     string                  `json:"admission_context"`
-	OriginMetadataSHA256 string                  `json:"origin_metadata_sha256"`
-	PreviousPolicy       PublicationPolicy       `json:"previous_policy"`
-	NextPolicy           PublicationPolicy       `json:"next_policy"`
-	SHA256               string                  `json:"sha256"`
+	OriginalParentSessionID *string                 `json:"original_parent_session_id,omitempty"`
+	OriginalNativeChild     *bool                   `json:"original_native_child,omitempty"`
+	OutputParentSessionID   string                  `json:"output_parent_session_id,omitempty"`
+	OutputNativeChild       bool                    `json:"output_native_child,omitempty"`
+	NativeTargetSHA256      string                  `json:"native_target_sha256,omitempty"`
+	Hook                    *PublicationHookFacts   `json:"hook,omitempty"`
+	Covered                 []CoveredPrivacySource  `json:"covered,omitempty"`
+	Version                 int                     `json:"version"`
+	InputIndex              int                     `json:"input_index"`
+	Previous                archive.SourceReference `json:"previous"`
+	Next                    archive.SourceReference `json:"next"`
+	Selection               PublicationSelection    `json:"selection"`
+	SessionID               string                  `json:"session_id"`
+	NativeSessionID         string                  `json:"native_session_id"`
+	ProjectID               string                  `json:"project_id"`
+	MachineID               string                  `json:"machine_id"`
+	Harness                 archive.Harness         `json:"harness"`
+	Origin                  archive.SessionOrigin   `json:"origin,omitempty"`
+	ImportedAt              *time.Time              `json:"imported_at,omitempty"`
+	StartedAtSource         archive.StartedAtSource `json:"started_at_source,omitempty"`
+	PreviousGenerationID    string                  `json:"previous_generation_id,omitempty"`
+	StartedAt               time.Time               `json:"started_at"`
+	OwnerSHA256             string                  `json:"owner_sha256"`
+	DestinationID           string                  `json:"destination_id"`
+	AdmissionContext        string                  `json:"admission_context"`
+	OriginMetadataSHA256    string                  `json:"origin_metadata_sha256"`
+	PreviousPolicy          PublicationPolicy       `json:"previous_policy"`
+	NextPolicy              PublicationPolicy       `json:"next_policy"`
+	SHA256                  string                  `json:"sha256"`
 }
 
 func privacySourceSHA(r PrivacySource) string {
@@ -77,8 +83,9 @@ type ValidatedPrivacySource struct {
 
 // PublicationContext identifies the frozen destination and admission scope.
 type PublicationContext struct {
-	DestinationID    string `json:"DestinationID"`
-	AdmissionContext string `json:"AdmissionContext"`
+	NativeTarget     *PublicationNativeTarget `json:"NativeTarget,omitempty"`
+	DestinationID    string                   `json:"DestinationID"`
+	AdmissionContext string                   `json:"AdmissionContext"`
 }
 
 // LimitPublicationSkillEvidence is the one retained policy limiter used before
@@ -114,6 +121,16 @@ func refilterPublicationInput(ctx context.Context, registration archive.SessionR
 	if err = ctx.Err(); err != nil {
 		return bundle, packed, ref, proof, nil, err
 	}
+	admittedRegistration := registration
+	if frozenContext.NativeTarget != nil {
+		if frozenContext.NativeTarget.ParentSessionID != "" && registration.ParentSessionID != "" && frozenContext.NativeTarget.ParentSessionID != registration.ParentSessionID {
+			return bundle, packed, ref, proof, nil, ErrDurableStorageRecovery
+		}
+		if err = frozenContext.NativeTarget.validate(); err != nil {
+			return bundle, packed, ref, proof, nil, err
+		}
+		registration = frozenContext.NativeTarget.registration(registration)
+	}
 	if privacyFactoryInputInvalid(adapter, oldPolicy, nextPolicy, index, original, input, origin, registration) {
 		return bundle, packed, ref, proof, nil, ErrDurableStorageRecovery
 	}
@@ -148,13 +165,14 @@ func refilterPublicationInput(ctx context.Context, registration archive.SessionR
 			closeAll()
 		}
 	}()
+	var originalHeader publicationOriginalHeader
 	var closeFiltered func()
-	bundle, closeFiltered, err = filterPrivacySource(ctx, registration, adapter, selected, input, original, oldPolicy, nextPolicy, ceiling, budget)
+	bundle, closeFiltered, err = filterPrivacySource(ctx, registration, adapter, selected, input, original, oldPolicy, nextPolicy, ceiling, budget, &originalHeader, admittedRegistration)
 	if err != nil {
 		return bundle, packed, ref, proof, nil, err
 	}
 	leases = append(leases, closeFiltered)
-	bundle, covered, alternativeLeases, err := filterPrivacyAlternatives(ctx, registration, adapter, origin, input, frozenContext, oldPolicy, nextPolicy, budget, sourceReader, alternatives, bundle)
+	bundle, covered, alternativeLeases, err := filterPrivacyAlternatives(ctx, registration, adapter, origin, input, frozenContext, oldPolicy, nextPolicy, budget, sourceReader, alternatives, bundle, admittedRegistration)
 	leases = append(leases, alternativeLeases...)
 	if err != nil {
 		return bundle, packed, ref, proof, nil, err
@@ -181,7 +199,13 @@ func refilterPublicationInput(ctx context.Context, registration archive.SessionR
 		return bundle, packed, ref, proof, nil, agentapi.ErrReadBudget
 	}
 	leases = append(leases, func() { budget.Release(16 << 10) })
-	r := PrivacySource{Hook: publicationHookFacts(input.HookObservations), Version: 1, InputIndex: index, Previous: input.Reference, Next: ref, Selection: input.Selection, SessionID: origin.SessionID, NativeSessionID: origin.NativeSessionID, ProjectID: origin.ProjectID, MachineID: origin.MachineID, Harness: origin.Harness, Origin: origin.Origin, ImportedAt: origin.ImportedAt, StartedAtSource: origin.StartedAtSource, PreviousGenerationID: origin.PreviousGenerationID, StartedAt: origin.StartedAt.UTC(), OwnerSHA256: publicationOwner(origin, registration.DestinationID, frozenContext.AdmissionContext), DestinationID: registration.DestinationID, AdmissionContext: frozenContext.AdmissionContext, OriginMetadataSHA256: publicationSHA256(originBody), PreviousPolicy: oldPolicy, NextPolicy: nextPolicy}
+	targetSHA, e := nativeTargetSHA(ctx, frozenContext.NativeTarget, budget)
+	if e != nil {
+		return bundle, packed, ref, proof, nil, e
+	}
+	originalParent := strings.Clone(originalHeader.ParentSessionID)
+	originalMarker := originalHeader.NativeChild
+	r := PrivacySource{OriginalParentSessionID: &originalParent, OriginalNativeChild: &originalMarker, OutputParentSessionID: bundle.ParentSessionID, OutputNativeChild: bundle.NativeChild, NativeTargetSHA256: targetSHA, Hook: publicationHookFacts(input.HookObservations), Version: 1, InputIndex: index, Previous: input.Reference, Next: ref, Selection: input.Selection, SessionID: origin.SessionID, NativeSessionID: origin.NativeSessionID, ProjectID: origin.ProjectID, MachineID: origin.MachineID, Harness: origin.Harness, Origin: origin.Origin, ImportedAt: origin.ImportedAt, StartedAtSource: origin.StartedAtSource, PreviousGenerationID: origin.PreviousGenerationID, StartedAt: origin.StartedAt.UTC(), OwnerSHA256: publicationOwner(origin, registration.DestinationID, frozenContext.AdmissionContext), DestinationID: registration.DestinationID, AdmissionContext: frozenContext.AdmissionContext, OriginMetadataSHA256: publicationSHA256(originBody), PreviousPolicy: oldPolicy, NextPolicy: nextPolicy}
 	const receiptScratch = 32 << 10
 	if !budget.Reserve(receiptScratch) {
 		return bundle, packed, ref, proof, nil, agentapi.ErrReadBudget
@@ -216,7 +240,7 @@ func (r PrivacySource) validate(a PreparationAuthority, index int, input Prepara
 	if err := json.Unmarshal(a.OriginMetadata, &origin); err != nil {
 		return err
 	}
-	if privacyReceiptBindingsChanged(r, a, index, input, output, origin) {
+	if privacyReceiptBindingsChanged(r, a, index, input, output, origin) || input.ParentSessionID != nil && !reflect.DeepEqual(r.OriginalParentSessionID, input.ParentSessionID) || input.NativeChild != nil && !reflect.DeepEqual(r.OriginalNativeChild, input.NativeChild) || a.NativeTarget != nil && (r.OutputParentSessionID != a.NativeTarget.ParentSessionID || r.OutputNativeChild != a.NativeTarget.NativeChild || r.NativeTargetSHA256 != nativeTargetDigest(a.NativeTarget)) {
 		return ErrDurableStorageRecovery
 	}
 	if !reflect.DeepEqual(r.Hook, publicationHookFacts(input.HookObservations)) {
@@ -315,6 +339,9 @@ func validatePrivacyCorrespondence(a PreparationAuthority, sources []Publication
 		}
 	}
 
+	if a.NativeTarget != nil && (next.ParentSessionID != a.NativeTarget.ParentSessionID || next.NativeChild != a.NativeTarget.NativeChild) {
+		return ErrDurableStorageRecovery
+	}
 	if privacyMetadataIdentityChanged(old, next, a) {
 		return ErrDurableStorageRecovery
 	}
@@ -455,7 +482,7 @@ func privacyPreparationPurposeInvalid(a PreparationAuthority) bool {
 	return a.Purpose != PublicationPrivacyRewrite || a.Kind != PreparationPrivacyCommitted && a.Kind != PreparationPrivacyPending && a.Kind != PreparationPrivacyPendingAbsent || a.Migration != nil
 }
 
-func filterPrivacyAlternatives(ctx context.Context, registration archive.SessionRegistration, adapter agentapi.TranscriptFilter, origin archive.Metadata, input PreparationInput, frozenContext PublicationContext, oldPolicy, nextPolicy PublicationPolicy, budget *agentapi.NativeReadBudget, sourceReader PublicationPrivacySourceReader, alternatives []PublicationPrivacyAlternative, bundle archive.SourceBundle) (archive.SourceBundle, []CoveredPrivacySource, []func(), error) {
+func filterPrivacyAlternatives(ctx context.Context, registration archive.SessionRegistration, adapter agentapi.TranscriptFilter, origin archive.Metadata, input PreparationInput, frozenContext PublicationContext, oldPolicy, nextPolicy PublicationPolicy, budget *agentapi.NativeReadBudget, sourceReader PublicationPrivacySourceReader, alternatives []PublicationPrivacyAlternative, bundle archive.SourceBundle, admittedRegistration archive.SessionRegistration) (archive.SourceBundle, []CoveredPrivacySource, []func(), error) {
 	var leases []func()
 	var closeFiltered func()
 	var covered []CoveredPrivacySource
@@ -490,7 +517,7 @@ func filterPrivacyAlternatives(ctx context.Context, registration archive.Session
 		}
 		leases = append(leases, func() { budget.Release(16 << 10) })
 		var receipt CoveredPrivacySource
-		bundle, receipt, closeFiltered, e = coverPrivacyAlternative(ctx, registration, adapter, bundle, alternative, setSHA, nextPolicy, sourceReader, budget)
+		bundle, receipt, closeFiltered, e = coverPrivacyAlternative(ctx, registration, adapter, bundle, alternative, setSHA, nextPolicy, sourceReader, budget, admittedRegistration)
 		if e != nil {
 			return bundle, covered, leases, e
 		}

@@ -401,6 +401,15 @@ func (s *sessionScan) sealPending(p *state.PendingPublication) error {
 			purpose = state.PublicationPrivacyRewrite
 		}
 	}
+	if p.Preparation == nil && p.History != nil && p.History.Preparing {
+		needed, e := s.freezeNativeHeaderInputs(p)
+		if e != nil {
+			return e
+		}
+		if needed {
+			purpose = state.PublicationPrivacyRewrite
+		}
+	}
 	if purpose != state.PublicationPrivacyRewrite {
 		if err := s.bindPublicationContinuity(&prior, *p); err != nil {
 			return err
@@ -408,6 +417,13 @@ func (s *sessionScan) sealPending(p *state.PendingPublication) error {
 	}
 	if p.MetadataOnly {
 		purpose = state.PublicationMetadata
+	}
+	if p.Preparation == nil {
+		release, e := state.FreezePublicationNativeTarget(s.ctx, p, s.reg, s.readBudget())
+		if e != nil {
+			return e
+		}
+		s.retainedReleases = append(s.retainedReleases, release)
 	}
 	sealed, err := state.PreparePublicationV2Budgeted(s.ctx, s.readBudget(), *p, prior, s.reg.DestinationID, s.publicationAdmission(), policy, purpose)
 	if err != nil {

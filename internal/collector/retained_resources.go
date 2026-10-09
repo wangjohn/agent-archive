@@ -130,11 +130,15 @@ func (s *sessionScan) decodeRevision(metadata archive.Metadata, revision string,
 // coexist with accumulated encoded output, the safe encoder buffer and decoded
 // output. Heap object headers and allocator capacity are measured separately.
 func (s *sessionScan) refilterRetained(adapter archive.Adapter, bundle archive.SourceBundle) (archive.SourceBundle, error) {
+	return s.refilterRetainedFor(s.reg, adapter, bundle)
+}
+
+func (s *sessionScan) refilterRetainedFor(reg archive.SessionRegistration, adapter archive.Adapter, bundle archive.SourceBundle) (archive.SourceBundle, error) {
 	filter, ok := adapter.(agentapi.TranscriptFilter)
 	if !ok {
 		return archive.SourceBundle{}, errRetainedBudget
 	}
-	out, release, err := agentapi.RefilterRetainedSource(s.ctx, s.reg, filter, bundle, s.readBudget())
+	out, release, err := agentapi.RefilterRetainedSource(s.ctx, reg, filter, bundle, s.readBudget())
 	if err == nil {
 		s.retainedReleases = append(s.retainedReleases, release)
 	}
@@ -305,4 +309,11 @@ func (s *sessionScan) finishNativeFilter(read *sourceRead, candidate archive.Sou
 	s.releaseRetainedIndex(*read.filterLease)
 	read.filterLease = nil
 	return detached, nil
+}
+
+// keepRetainedFrom promotes independently owned output while ending input loans.
+func (s *sessionScan) keepRetainedFrom(mark, keep int) {
+	for i := mark; i < keep; i++ {
+		s.releaseRetainedIndex(i)
+	}
 }

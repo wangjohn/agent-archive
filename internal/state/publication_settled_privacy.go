@@ -10,50 +10,53 @@ import (
 // SettledPrivacyPreparation is a non-replay projection minted only at a full
 // guarded privacy save. It carries no original metadata or source bytes.
 type SettledPrivacyPreparation struct {
-	Version                   int                     `json:"version"`
-	OriginalPreparationSHA256 string                  `json:"original_preparation_sha256"`
-	Kind                      PreparationKind         `json:"kind"`
-	SessionID                 string                  `json:"session_id"`
-	NativeSessionID           string                  `json:"native_session_id"`
-	ProjectID                 string                  `json:"project_id"`
-	MachineID                 string                  `json:"machine_id"`
-	Harness                   archive.Harness         `json:"harness"`
-	Origin                    archive.SessionOrigin   `json:"origin,omitempty"`
-	ImportedAt                *time.Time              `json:"imported_at,omitempty"`
-	StartedAtSource           archive.StartedAtSource `json:"started_at_source,omitempty"`
-	PreviousGenerationID      string                  `json:"previous_generation_id,omitempty"`
-	StartedAt                 time.Time               `json:"started_at"`
-	OwnerSHA256               string                  `json:"owner_sha256"`
-	DestinationID             string                  `json:"destination_id"`
-	AdmissionContext          string                  `json:"admission_context"`
-	PolicyContext             string                  `json:"policy_context"`
-	Purpose                   PublicationPurpose      `json:"purpose"`
-	Predecessor               PredecessorState        `json:"predecessor"`
-	PredecessorSHA256         string                  `json:"predecessor_sha256"`
-	PreviousSetSHA256         string                  `json:"previous_set_sha256"`
-	OriginMetadataSHA256      string                  `json:"origin_metadata_sha256"`
-	OriginSetSHA256           string                  `json:"origin_set_sha256"`
-	Inputs                    []SettledPrivacyInput   `json:"inputs"`
-	MetadataSHA256            string                  `json:"metadata_sha256"`
-	SourceSetSHA256           string                  `json:"source_set_sha256"`
-	PayloadSetSHA256          string                  `json:"payload_set_sha256"`
-	PrivacySHA256             string                  `json:"privacy_sha256"`
-	SHA256                    string                  `json:"sha256"`
+	NativeTarget              *PublicationNativeTarget `json:"native_target,omitempty"`
+	Version                   int                      `json:"version"`
+	OriginalPreparationSHA256 string                   `json:"original_preparation_sha256"`
+	Kind                      PreparationKind          `json:"kind"`
+	SessionID                 string                   `json:"session_id"`
+	NativeSessionID           string                   `json:"native_session_id"`
+	ProjectID                 string                   `json:"project_id"`
+	MachineID                 string                   `json:"machine_id"`
+	Harness                   archive.Harness          `json:"harness"`
+	Origin                    archive.SessionOrigin    `json:"origin,omitempty"`
+	ImportedAt                *time.Time               `json:"imported_at,omitempty"`
+	StartedAtSource           archive.StartedAtSource  `json:"started_at_source,omitempty"`
+	PreviousGenerationID      string                   `json:"previous_generation_id,omitempty"`
+	StartedAt                 time.Time                `json:"started_at"`
+	OwnerSHA256               string                   `json:"owner_sha256"`
+	DestinationID             string                   `json:"destination_id"`
+	AdmissionContext          string                   `json:"admission_context"`
+	PolicyContext             string                   `json:"policy_context"`
+	Purpose                   PublicationPurpose       `json:"purpose"`
+	Predecessor               PredecessorState         `json:"predecessor"`
+	PredecessorSHA256         string                   `json:"predecessor_sha256"`
+	PreviousSetSHA256         string                   `json:"previous_set_sha256"`
+	OriginMetadataSHA256      string                   `json:"origin_metadata_sha256"`
+	OriginSetSHA256           string                   `json:"origin_set_sha256"`
+	Inputs                    []SettledPrivacyInput    `json:"inputs"`
+	MetadataSHA256            string                   `json:"metadata_sha256"`
+	SourceSetSHA256           string                   `json:"source_set_sha256"`
+	PayloadSetSHA256          string                   `json:"payload_set_sha256"`
+	PrivacySHA256             string                   `json:"privacy_sha256"`
+	SHA256                    string                   `json:"sha256"`
 }
 
 // SettledPrivacyInput keeps original selection and payload facts without sensitive raw bodies.
 type SettledPrivacyInput struct {
-	Hook           *PublicationHookFacts   `json:"hook,omitempty"`
-	Reference      archive.SourceReference `json:"reference"`
-	Selection      PublicationSelection    `json:"selection"`
-	FilterVersion  string                  `json:"filter_version"`
-	AdapterVersion string                  `json:"adapter_version"`
-	SkillPolicy    string                  `json:"skill_policy"`
-	PayloadKind    PublicationPayloadKind  `json:"payload_kind"`
-	InlineSHA256   string                  `json:"inline_sha256,omitempty"`
-	InlineSize     int                     `json:"inline_size,omitempty"`
-	Stage          *ImmutableStageHandle   `json:"stage,omitempty"`
-	PayloadSHA256  string                  `json:"payload_sha256"`
+	ParentSessionID *string                 `json:"parent_session_id,omitempty"`
+	NativeChild     *bool                   `json:"native_child,omitempty"`
+	Hook            *PublicationHookFacts   `json:"hook,omitempty"`
+	Reference       archive.SourceReference `json:"reference"`
+	Selection       PublicationSelection    `json:"selection"`
+	FilterVersion   string                  `json:"filter_version"`
+	AdapterVersion  string                  `json:"adapter_version"`
+	SkillPolicy     string                  `json:"skill_policy"`
+	PayloadKind     PublicationPayloadKind  `json:"payload_kind"`
+	InlineSHA256    string                  `json:"inline_sha256,omitempty"`
+	InlineSize      int                     `json:"inline_size,omitempty"`
+	Stage           *ImmutableStageHandle   `json:"stage,omitempty"`
+	PayloadSHA256   string                  `json:"payload_sha256"`
 }
 
 func settledPrivacySHA(p SettledPrivacyPreparation) string {
@@ -103,14 +106,14 @@ func (s *Store) mintSettledPrivacy(p publishedState) (publishedState, error) {
 			s.resourceBudget.Release(factCharge)
 		}
 	}()
-	projection := &SettledPrivacyPreparation{Inputs: make([]SettledPrivacyInput, 0, len(a.Inputs)), Version: 1, OriginalPreparationSHA256: a.SHA256, Kind: a.Kind, SessionID: origin.SessionID, NativeSessionID: origin.NativeSessionID, ProjectID: origin.ProjectID, MachineID: origin.MachineID, Harness: origin.Harness, Origin: origin.Origin, ImportedAt: origin.ImportedAt, StartedAtSource: origin.StartedAtSource, PreviousGenerationID: origin.PreviousGenerationID, StartedAt: origin.StartedAt.UTC(), OwnerSHA256: a.OwnerSHA256, DestinationID: a.DestinationID, AdmissionContext: a.AdmissionContext, PolicyContext: a.PolicyContext, Purpose: a.Purpose, Predecessor: a.Predecessor, PredecessorSHA256: a.PredecessorSHA256, PreviousSetSHA256: previousSet, OriginMetadataSHA256: a.OriginMetadataSHA256, OriginSetSHA256: a.OriginSetSHA256, MetadataSHA256: p.Commit.MetadataSHA256, SourceSetSHA256: p.Commit.SourceSetSHA256, PayloadSetSHA256: p.Commit.PayloadSetSHA256, PrivacySHA256: p.Commit.PrivacySHA256}
+	projection := &SettledPrivacyPreparation{NativeTarget: a.NativeTarget, Inputs: make([]SettledPrivacyInput, 0, len(a.Inputs)), Version: 1, OriginalPreparationSHA256: a.SHA256, Kind: a.Kind, SessionID: origin.SessionID, NativeSessionID: origin.NativeSessionID, ProjectID: origin.ProjectID, MachineID: origin.MachineID, Harness: origin.Harness, Origin: origin.Origin, ImportedAt: origin.ImportedAt, StartedAtSource: origin.StartedAtSource, PreviousGenerationID: origin.PreviousGenerationID, StartedAt: origin.StartedAt.UTC(), OwnerSHA256: a.OwnerSHA256, DestinationID: a.DestinationID, AdmissionContext: a.AdmissionContext, PolicyContext: a.PolicyContext, Purpose: a.Purpose, Predecessor: a.Predecessor, PredecessorSHA256: a.PredecessorSHA256, PreviousSetSHA256: previousSet, OriginMetadataSHA256: a.OriginMetadataSHA256, OriginSetSHA256: a.OriginSetSHA256, MetadataSHA256: p.Commit.MetadataSHA256, SourceSetSHA256: p.Commit.SourceSetSHA256, PayloadSetSHA256: p.Commit.PayloadSetSHA256, PrivacySHA256: p.Commit.PrivacySHA256}
 	for _, input := range a.Inputs {
 		inlineSHA, inlineSize := "", 0
 		if input.Payload.Kind == PublicationInline {
 			inlineSHA = publicationSHA256(input.Payload.Inline)
 			inlineSize = len(input.Payload.Inline)
 		}
-		fact := SettledPrivacyInput{InlineSHA256: inlineSHA, InlineSize: inlineSize, Hook: publicationHookFacts(input.HookObservations), Reference: input.Reference, Selection: input.Selection, FilterVersion: input.FilterVersion, AdapterVersion: input.AdapterVersion, SkillPolicy: input.SkillPolicy, PayloadKind: input.Payload.Kind, Stage: input.Payload.Stage, PayloadSHA256: payloadSetSHA([]PublicationSource{{Reference: input.Reference, Selection: input.Selection, Payload: input.Payload}})}
+		fact := SettledPrivacyInput{ParentSessionID: input.ParentSessionID, NativeChild: input.NativeChild, InlineSHA256: inlineSHA, InlineSize: inlineSize, Hook: publicationHookFacts(input.HookObservations), Reference: input.Reference, Selection: input.Selection, FilterVersion: input.FilterVersion, AdapterVersion: input.AdapterVersion, SkillPolicy: input.SkillPolicy, PayloadKind: input.Payload.Kind, Stage: input.Payload.Stage, PayloadSHA256: payloadSetSHA([]PublicationSource{{Reference: input.Reference, Selection: input.Selection, Payload: input.Payload}})}
 		projection.Inputs = append(projection.Inputs, fact)
 	}
 	projection.SHA256 = settledPrivacySHA(*projection)
@@ -144,6 +147,9 @@ func (p SettledPrivacyPreparation) validate(published publishedState) error {
 	var next archive.Metadata
 	if err := json.Unmarshal(published.MetadataBytes, &next); err != nil {
 		return err
+	}
+	if p.NativeTarget != nil && (p.NativeTarget.validate() != nil || next.ParentSessionID != p.NativeTarget.ParentSessionID || next.NativeChild != p.NativeTarget.NativeChild) {
+		return ErrDurableStorageRecovery
 	}
 	if settledPrivacyOwnerChanged(p, next) {
 		return ErrDurableStorageRecovery
@@ -239,7 +245,7 @@ func settledPrivacyOwnerChanged(p SettledPrivacyPreparation, next archive.Metada
 }
 
 func settledPrivacyReceiptChanged(receipt PrivacySource, input SettledPrivacyInput, output PublicationSource, p SettledPrivacyPreparation) bool {
-	return (receipt.Version != 1 || receipt.SHA256 != privacySourceSHA(receipt) || receipt.Previous != input.Reference || receipt.Next != output.Reference || receipt.Selection != input.Selection || receipt.SessionID != p.SessionID || receipt.NativeSessionID != p.NativeSessionID || receipt.ProjectID != p.ProjectID || receipt.MachineID != p.MachineID || receipt.Harness != p.Harness || receipt.Origin != p.Origin || !sameOptionalTime(receipt.ImportedAt, p.ImportedAt) || receipt.StartedAtSource != p.StartedAtSource || receipt.PreviousGenerationID != p.PreviousGenerationID || !receipt.StartedAt.Equal(p.StartedAt) || receipt.OwnerSHA256 != p.OwnerSHA256 || receipt.DestinationID != p.DestinationID || receipt.AdmissionContext != p.AdmissionContext || receipt.OriginMetadataSHA256 != p.OriginMetadataSHA256 || receipt.PreviousPolicy.FilterVersion != input.FilterVersion || receipt.PreviousPolicy.AdapterVersion != input.AdapterVersion || string(receipt.PreviousPolicy.SkillEvidence) != input.SkillPolicy || receipt.NextPolicy.Context() != p.PolicyContext || receipt.PreviousPolicy.validate() != nil || receipt.NextPolicy.validate() != nil)
+	return (input.ParentSessionID != nil && !reflect.DeepEqual(receipt.OriginalParentSessionID, input.ParentSessionID) || input.NativeChild != nil && !reflect.DeepEqual(receipt.OriginalNativeChild, input.NativeChild) || p.NativeTarget != nil && (receipt.NativeTargetSHA256 != nativeTargetDigest(p.NativeTarget) || receipt.OutputParentSessionID != p.NativeTarget.ParentSessionID || receipt.OutputNativeChild != p.NativeTarget.NativeChild) || receipt.Version != 1 || receipt.SHA256 != privacySourceSHA(receipt) || receipt.Previous != input.Reference || receipt.Next != output.Reference || receipt.Selection != input.Selection || receipt.SessionID != p.SessionID || receipt.NativeSessionID != p.NativeSessionID || receipt.ProjectID != p.ProjectID || receipt.MachineID != p.MachineID || receipt.Harness != p.Harness || receipt.Origin != p.Origin || !sameOptionalTime(receipt.ImportedAt, p.ImportedAt) || receipt.StartedAtSource != p.StartedAtSource || receipt.PreviousGenerationID != p.PreviousGenerationID || !receipt.StartedAt.Equal(p.StartedAt) || receipt.OwnerSHA256 != p.OwnerSHA256 || receipt.DestinationID != p.DestinationID || receipt.AdmissionContext != p.AdmissionContext || receipt.OriginMetadataSHA256 != p.OriginMetadataSHA256 || receipt.PreviousPolicy.FilterVersion != input.FilterVersion || receipt.PreviousPolicy.AdapterVersion != input.AdapterVersion || string(receipt.PreviousPolicy.SkillEvidence) != input.SkillPolicy || receipt.NextPolicy.Context() != p.PolicyContext || receipt.PreviousPolicy.validate() != nil || receipt.NextPolicy.validate() != nil)
 }
 
 func (p SettledPrivacyPreparation) validateInputs(published publishedState, next archive.Metadata, receipts map[int]PrivacySource) error {

@@ -318,6 +318,9 @@ func missingSource(reg archive.SessionRegistration) *sourceState {
 
 func sourceSetVersion(reg archive.SessionRegistration) int {
 	if reg.Harness.Name == "codex" {
+		if reg.NativeChild || reg.CodexBinding.RequiresOwnTask() {
+			return 3 // Revalidate first-task creation evidence for related native owners.
+		}
 		return 2
 	}
 	return 0
