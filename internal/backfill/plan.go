@@ -301,6 +301,9 @@ func preparePlanWork(ctx context.Context, env Environment, cfg config.Config, fi
 	if err := validateProjectMappings(env, cfg, filters.ProjectMappings); err != nil {
 		return nil, nil, unread, workers, err
 	}
+	for _, w := range items {
+		inventory.ownContent(w.t.path, w.t.sourceInfo)
+	}
 	r := newResolver(env, cfg, filters)
 	r.inventoryCurrent = inventory.current
 	var cursorCandidates []string

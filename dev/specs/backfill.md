@@ -508,7 +508,14 @@ matching rule wins.
    allocation. This bounds
    payload read into the process, not SQLite page I/O. Recovery reads only
    settled in-place transactions, with no backup or failure-signature reads;
-   live WAL, unavailable capability and exhausted budgets keep it pending.
+   a live WAL with frames in `-wal`, unavailable capability and exhausted
+   budgets keep it pending. A WAL database whose `-wal` is empty (with or
+   without `-shm`, as Cursor can leave both after quitting) is settled: it is
+   read with `immutable=1` and rejected as `changed_during_read` unless the
+   file, its header and its side files (`-wal` still empty, `-shm` still
+   present or absent as before, no `-journal`) are unchanged afterwards.
+   Frames in `-wal` are never read for recovery: `immutable=1` would ignore
+   them, and nothing checkpoints or rewrites Cursor's side files.
    Native recovery requires a non-partial unique binary index on the exact key
    column with the native default binary comparisons; explicit collations and
    unknown schemas cannot establish payload length bounds.
@@ -519,6 +526,19 @@ matching rule wins.
    File membership/header observations renew through at most 65,536 observed
    native paths per slice, including directory and absent-store stamps; changed
    or larger inventories require a new plan and keep automatic recovery pending.
+   The inventory checks membership, not content: added, removed or replaced
+   paths (file identity), mode changes, truncation and same-size rewrites change
+   it, but a transcript growing in place does not when a planned session owns
+   that file (its header came from that same file). Running agents append to
+   their transcripts, and header facts come from complete leading records that
+   an append cannot change; a header no complete record decided already keeps
+   recovery unavailable. The owning session's own source observation still
+   skips it as `source_changed` and still governs its witness renewal, but
+   that check only runs for imported sessions' sources and for the witness a
+   recovery relies on: a same-inode rewrite that grows any other owned
+   transcript is not detected. Agents append rather than rewrite in place, so
+   this limit is accepted. Paths no session owns keep the full size and
+   modification-time comparison.
    Known plain-folder and absent-cwd ownership is also renewed, so a newly
    created checkout cannot evade clone evidence. This is an observation boundary,
    not an atomic filesystem snapshot.
@@ -790,7 +810,10 @@ the variables still finds them. A session in two of these folders is a
   - If Cursor quits in the instant between the side-file check and the open,
     SQLite can leave an empty `-wal` behind. That is harmless (an empty WAL
     has nothing to replay), and the reader never deletes files next to
-    Cursor's database.
+    Cursor's database. Such a database is listed as closed. One with an empty
+    `-wal` and a `-shm` is listed as running (in place, `readonly_shm`), and
+    the recovery evidence pass reads it as closed (see recorded-repository
+    recovery above), so leftover side files don't lock recovery.
 
 ## Skip reasons
 
