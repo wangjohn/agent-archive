@@ -250,12 +250,15 @@ func TestCursorDatabaseReader(t *testing.T) {
 				byID[c.ID] = c
 			}
 			for id, w := range map[string]CursorDatabaseChat{
-				"a":        {ID: "a", KeyID: "a", CreatedAt: sept10},
-				"b":        {ID: "b", KeyID: "b", CreatedAt: sept10.AddDate(0, 0, 11), Folder: "/work/site", WorkspaceID: "w"},
-				"c":        {ID: "c", KeyID: "c", Folder: "/work/other dir"},
-				"d":        {ID: "d", KeyID: "d"},
-				"ws-empty": {ID: "ws-empty", KeyID: "ws-empty"},
-				"k2":       {ID: "k2", KeyID: "k2"},
+				"a": {ID: "a", KeyID: "a", CreatedAt: sept10},
+				"b": {ID: "b", KeyID: "b", CreatedAt: sept10.AddDate(0, 0, 11), Folder: "/work/site", WorkspaceID: "w", WorkspaceIdentifier: true},
+				"c": {ID: "c", KeyID: "c", Folder: "/work/other dir", WorkspaceIdentifier: true},
+				// A remote or unknown reference resolves to no folder but is recorded.
+				"d":         {ID: "d", KeyID: "d", WorkspaceIdentifier: true},
+				"ws-empty":  {ID: "ws-empty", KeyID: "ws-empty", WorkspaceIdentifier: true},
+				"ws-list":   {ID: "ws-list", KeyID: "ws-list", WorkspaceIdentifier: true},
+				"ws-no-uri": {ID: "ws-no-uri", KeyID: "ws-no-uri", WorkspaceID: "x", WorkspaceIdentifier: true},
+				"k2":        {ID: "k2", KeyID: "k2"},
 			} {
 				if got := byID[id]; !reflect.DeepEqual(got, w) {
 					t.Errorf("%s: %+v, want %+v", id, got, w)
