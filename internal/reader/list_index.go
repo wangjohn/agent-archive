@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/listingindex"
@@ -68,6 +69,10 @@ type MetadataQuery struct {
 	Limit        int        `json:"Limit"`
 	Order        QueryOrder `json:"Order"`
 	TopLevelOnly bool       `json:"TopLevelOnly"`
+	// IncludeRootChildren retains descendants of date-matched sessions even
+	// outside the capture bounds. Other predicates still apply to each member.
+	// Stats uses this to keep complete root accounting; ancestors are not added.
+	IncludeRootChildren bool `json:"IncludeRootChildren"`
 }
 
 // SelectMetadata proves discovery coverage and supports unlimited date queries.
@@ -81,6 +86,7 @@ func SelectMetadata(ctx context.Context, store storage.ObjectStore, prefix strin
 	}
 	filter, limit := query.Filter, query.Limit
 	opts.ActivityOrder, opts.TopLevelOnly = query.Order == ActivityOrder, query.TopLevelOnly
+	opts.includeRootChildren = query.IncludeRootChildren
 	var snapshot *HeaderSnapshot
 	opts.Cache.maintain(ctx)
 	fallback := func(reason string) (RecentResult, error) {
@@ -101,7 +107,16 @@ func SelectMetadata(ctx context.Context, store storage.ObjectStore, prefix strin
 	if headers.incompleteReason != "" {
 		return fallback(headers.incompleteReason)
 	}
-	selected, result, err := selectListingRevisions(headers.Canonical, headers.Revisions, filter, limit, opts)
+	objects := headers.Canonical
+	selectionFilter := filter
+	if query.IncludeRootChildren {
+		objects, err = selectRootChildHeaders(objects, headers.Revisions, filter)
+		if err != nil {
+			return fallback(err.Error())
+		}
+		selectionFilter.From, selectionFilter.To = time.Time{}, time.Time{}
+	}
+	selected, result, err := selectListingRevisions(objects, headers.Revisions, selectionFilter, limit, opts)
 	if err != nil {
 		return fallback(err.Error())
 	}
@@ -218,13 +233,22 @@ func readSelectedRevision(ctx context.Context, getter storage.VersionedGetter, r
 func listRecentFullWithHeaders(ctx context.Context, store storage.ObjectStore, prefix string, filter Filter, limit int, opts ListOptions, snapshot *HeaderSnapshot) (RecentResult, error) {
 	var all []archive.Metadata
 	var err error
+	readFilter := filter
+	if opts.includeRootChildren {
+		readFilter.From, readFilter.To = time.Time{}, time.Time{}
+	}
 	if snapshot == nil {
-		all, err = ListMetadataWithOptions(ctx, store, prefix, filter, opts)
+		all, err = ListMetadataWithOptions(ctx, store, prefix, readFilter, opts)
 	} else {
-		all, err = listMetadataFromHeaders(ctx, store, filter, opts, snapshot.Canonical, snapshot.knownCanonical)
+		all, err = listMetadataFromHeaders(ctx, store, readFilter, opts, snapshot.Canonical, snapshot.knownCanonical)
 	}
 	if err != nil {
 		return RecentResult{}, err
+	}
+	if opts.includeRootChildren {
+		all = SelectRootChildren(all, filter, func(m archive.Metadata) (string, string, time.Time) {
+			return m.SessionID, m.ParentSessionID, m.CapturedAt
+		})
 	}
 	allChildren := make(map[string]int)
 	for _, m := range all {

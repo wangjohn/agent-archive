@@ -292,7 +292,7 @@ func BenchmarkStatsYearWindow(b *testing.B) {
 					if exhaustive {
 						_, err = reader.ListRecent(context.Background(), store, "sessions", filter, 0, reader.ListOptions{})
 					} else {
-						_, err = reader.SelectMetadata(context.Background(), store, "sessions", reader.MetadataQuery{Filter: filter}, reader.ListOptions{})
+						_, err = reader.SelectMetadata(context.Background(), store, "sessions", reader.MetadataQuery{Filter: filter, IncludeRootChildren: true}, reader.ListOptions{})
 					}
 					if err != nil {
 						b.Fatal(err)

@@ -258,7 +258,7 @@ func readStatsSessions(stdout, stderr io.Writer, env statsCommandDependencies, s
 			return "Reading sessions…"
 		}, spinnerInterval).stop
 	}
-	listed, err := reader.SelectMetadata(ctx, store, archiveSessionsPrefix, reader.MetadataQuery{Filter: opts.filter}, listOpts)
+	listed, err := reader.SelectMetadata(ctx, store, archiveSessionsPrefix, reader.MetadataQuery{Filter: opts.filter, IncludeRootChildren: true}, listOpts)
 	stopReading()
 	// From here on a signal is the default one's again; one that arrived
 	// while the read was finishing still stops the command, as it asked.

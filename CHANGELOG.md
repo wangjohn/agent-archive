@@ -31,6 +31,10 @@ follow [Semantic Versioning](https://semver.org/).
 
 - Select supported stats capture windows from fresh listing headers before
   downloading metadata, including comparison periods and month highlights.
+- Keep descendants of date-matched stats sessions even when the descendants
+  were captured outside the fetch window, preserving parent token accounting.
+- Let long title queries with an explicit show harness fall through to search
+  when they cannot name an existing session.
 - Resolve short show IDs with one canonical discovery. Prefix matches and title
   or pull request matches share the existing scope tiers and remain ambiguous
   when both match; full session IDs and handoff retain their precedence.
