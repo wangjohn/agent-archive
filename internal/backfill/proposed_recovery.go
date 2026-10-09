@@ -88,7 +88,7 @@ type recoveryWitnessValidation struct {
 
 // recoveryGap is one reason the witness inventory may omit a clone root.
 // Agent names the app whose evidence is missing ("" when not attributable);
-// it is internal only and never rendered.
+// the plan reports it only as an app name (RecoveryEvidenceGap).
 type recoveryGap struct {
 	Agent string
 	Cause DiagnosticDetail

@@ -145,11 +145,6 @@ func withinAny(path string, roots []string) bool {
 	return false
 }
 
-// resolveEvidence resolves a session of unknown app: every gap applies.
-func (r *resolver) resolveEvidence(ctx context.Context, cwd, key string) resolution {
-	return r.resolveSessionEvidence(ctx, "", cwd, key)
-}
-
 // resolveSessionEvidence maps a session's working directory to a project,
 // applying the spec's rules in order (the first that matches wins), then
 // recovery. Only the gaps that can affect a session of app h block its
