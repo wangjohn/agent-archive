@@ -99,7 +99,10 @@ func TestFirstRunRecoveryCursorDatabaseUnavailableOrMalformed(t *testing.T) {
 				chats[0].Malformed = true
 			}
 			if kind == cursorEvidenceUnknownRoot {
-				chats[0].Folder = ""
+				// A workspace reference that cannot be read could name a clone.
+				// (A chat with no folder evidence at all is a non-witness; see
+				// TestFirstRunRecoveryFolderlessCursorChatsAreNotWitnesses.)
+				chats[0].Folder, chats[0].WorkspaceID = "", "missing"
 			}
 			if kind == cursorEvidenceRows {
 				chats = make([]CursorDatabaseChat, cursorRecoveryRows+1)
@@ -120,6 +123,17 @@ func TestFirstRunRecoveryCursorDatabaseUnavailableOrMalformed(t *testing.T) {
 			c := candidate(t, p, goneID)
 			if c.ProjectResolution != nil || c.Skip == "" {
 				t.Fatal(c)
+			}
+			want := map[cursorUnavailableEvidenceCase]DiagnosticDetail{
+				cursorEvidenceLocked:      CauseCursorDatabaseUnavailable,
+				cursorEvidenceUnknown:     CauseCursorDatabaseUnavailable,
+				cursorEvidenceError:       CauseCursorDatabaseUnavailable,
+				cursorEvidenceMalformed:   CauseCursorDatabaseUnavailable,
+				cursorEvidenceUnknownRoot: CauseCursorChatFolderUnavailable,
+				cursorEvidenceRows:        CauseRecoveryBudget,
+			}[kind]
+			if c.Diagnostic == nil || c.Diagnostic.Detail != want {
+				t.Fatalf("diagnostic %+v, want %s", c.Diagnostic, want)
 			}
 			if kind == cursorEvidenceRows {
 				epoch, err := readCursorRecoveryEpoch(t.Context(), env, newResolver(env, cfg, Filters{}), unreadable{})

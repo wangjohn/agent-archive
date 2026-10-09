@@ -289,6 +289,9 @@ func TestFirstRunRecoveryUnknownFileOwnershipCannotCertifyUniqueness(t *testing.
 	if c := candidate(t, p, goneID); c.ProjectResolution != nil || c.Skip == "" {
 		t.Fatalf("unknown live ownership certified uniqueness: %+v", c)
 	}
+	if c := candidate(t, p, goneID); c.Diagnostic == nil || c.Diagnostic.Detail != CauseSessionFolderUnknown {
+		t.Fatalf("cause not named: %+v", c.Diagnostic)
+	}
 }
 
 func TestFirstRunRecoveryExactMappingRetainsUnionContext(t *testing.T) {

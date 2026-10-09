@@ -334,11 +334,11 @@ func preparePlanWork(ctx context.Context, env Environment, cfg config.Config, fi
 		return nil, nil, unread, workers, err
 	}
 
-	dbWitnesses, dbIncomplete, err := prepareCursorRecoveryWitnesses(ctx, env, r, items, unread)
+	dbWitnesses, dbGaps, err := prepareCursorRecoveryWitnesses(ctx, env, r, items, unread)
 	if err != nil {
 		return nil, nil, unread, workers, err
 	}
-	prepareRecoveryInventory(ctx, r, append(slices.Clone(items), dbWitnesses...), unread, dbIncomplete)
+	prepareRecoveryInventory(ctx, r, append(slices.Clone(items), dbWitnesses...), unread, dbGaps)
 	for _, w := range items {
 		if w.t.cursorSlug != "" || w.vanished || w.sourceChanged || w.tooLarge {
 			continue
@@ -571,7 +571,7 @@ func decidePlanCandidates(items []*work, since, until, now time.Time) []*work {
 			w.c.projectResolutionReset = w.res.current.reset
 		}
 		w.c.Skip = w.reason(now)
-		w.c.Diagnostic = candidateDiagnostic(w.c.Skip, w.res.outcome)
+		w.c.Diagnostic = candidateDiagnostic(w.c.Skip, w.res.outcome, w.res.cause)
 		if w.c.Skip == "" {
 			parents = append(parents, w)
 		}
