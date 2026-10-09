@@ -6,6 +6,25 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Keep large catalog metadata complete through bounded lazy overflow entries
+  referencing the original immutable body. Protocol10 fences older writers;
+  indexed key limits still apply. Collector retries now verify their originating
+  durable journal under the actual collector lock before resuming, and retain
+  source/history protection through completion acknowledgment.
+
+
+- Add the explicit `migrate --format catalog-v4 --prefix PREFIX` protocol with
+  isolated destinations, durable page checkpoints, exhaustive source/history
+  verification, owner-fenced activation and unchanged-catalog rollback. Original
+  retention dates and the read-only source are preserved. Production S3/R2 remain
+  unavailable until live atomic, provider clock and credential cutover evidence
+  are reviewed; there is no force bypass.
+- Add catalog snapshots with ten-minute request-start lifetimes, hash-validated
+  immutable tree caching, range paging and root/query-bound cursors. Root ordinary
+  and replay ranges support bounded global list selection; scoped/text/complex
+  searches retain complete summary filtering without canonical object listings.
+
+
 - Reuse a private summary catalog for repeated list searches and session browsing.
   Search includes older sessions and published native names; `o` loads another
   batch in the list and bare-show browsers.
@@ -22,6 +41,8 @@ follow [Semantic Versioning](https://semver.org/).
 
 - Overlap canonical and listing-index header discovery, narrow v3 headers by
   harness, and reuse canonical headers when a listing needs a full metadata scan.
+- Read linked child metadata and known-harness show probes concurrently, and
+  reuse selected parent metadata for summaries and verified transcripts.
 
 - Read up to eight selected metadata sidecars concurrently for faster cold and
   changed-cache listings, preserving selection order and revision validation.

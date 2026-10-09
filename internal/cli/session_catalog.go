@@ -17,26 +17,66 @@ func catalogSessions(env metadataCacheDependencies, store storage.ObjectStore, o
 }
 
 func catalogSessionsInContext(ctx context.Context, env metadataCacheDependencies, store storage.ObjectStore, opts listOptions, stderr io.Writer, command string, words []string) ([]archive.Metadata, bool, error) {
+	sessions, used, _, err := catalogCandidateSessions(ctx, env, store, opts, stderr, command, words, nil)
+	return sessions, used, err
+}
+
+func catalogCandidateSessions(ctx context.Context, env metadataCacheDependencies, store storage.ObjectStore, opts listOptions, stderr io.Writer, command string, words []string, reuse *showBodyReuse) ([]archive.Metadata, bool, bool, error) {
+	if reader.CatalogAuthority(store) {
+		cache := listCache(env, opts.noCache)
+		if cache != nil {
+			c, err := reader.OpenSessionCatalog(ctx, cache, store, reader.ListOptions{Cache: cache, BodyRead: showBodyObserver(reuse, catalogBodyObserver(env))})
+			if err == nil {
+				defer func() {
+					if reuse == nil || reuse.close == nil {
+						_ = c.Close()
+					}
+				}()
+				if err = c.RefreshRemote(ctx); err != nil {
+					return nil, true, false, err
+				}
+				page, e := c.Query(ctx, reader.CatalogQuery{Words: words, Metadata: reader.MetadataQuery{Filter: opts.filter, Order: reader.ActivityOrder}})
+				if e == nil {
+					var sessions []archive.Metadata
+					for _, row := range page.Rows {
+						sessions = append(sessions, row.Summary.Metadata())
+					}
+					if reuse != nil {
+						reuse.read = c.ReadCachedMetadata
+						reuse.close = c.Close
+					}
+					return filterListOrigin(sessions, opts.imported, opts.hookCaptured), true, false, nil
+				}
+			}
+		}
+		sessions, err := reader.CatalogSummaries(ctx, store, opts.filter)
+		return filterListOrigin(sessions, opts.imported, opts.hookCaptured), true, false, err
+	}
+
 	cache := listCache(env, opts.noCache)
 	if cache == nil {
-		return nil, false, nil
+		return nil, false, false, nil
 	}
 	span := trace.Start("list metadata")
 	defer span.End()
-	readOpts := reader.ListOptions{Cache: cache, Skipped: warnSkippedSidecar(stderr, command), BodyRead: catalogBodyObserver(env)}
+	readOpts := reader.ListOptions{Cache: cache, Skipped: warnSkippedSidecar(stderr, command), BodyRead: showBodyObserver(reuse, catalogBodyObserver(env))}
 	catalog, err := reader.OpenSessionCatalog(ctx, cache, store, readOpts)
 	if err != nil {
-		return nil, false, nil
+		return nil, false, false, nil
 	}
-	defer func() { _ = catalog.Close() }()
+	defer func() {
+		if reuse == nil || reuse.close == nil {
+			_ = catalog.Close()
+		}
+	}()
 	headers, err := reader.DiscoverCatalogHeaders(ctx, store, readOpts)
 	if err != nil {
-		return nil, true, err
+		return nil, true, false, err
 	}
 	if err = catalog.Refresh(ctx, headers); err != nil {
 		sessions, fallbackErr := reader.ListMetadataFromSnapshot(ctx, store, headers, opts.filter, readOpts)
 		sortByActivity(sessions)
-		return filterListOrigin(sessions, opts.imported, opts.hookCaptured), true, fallbackErr
+		return filterListOrigin(sessions, opts.imported, opts.hookCaptured), true, true, fallbackErr
 	}
 	query := reader.CatalogQuery{Words: words, Metadata: reader.MetadataQuery{Filter: opts.filter, Order: reader.ActivityOrder}}
 	var sessions []archive.Metadata
@@ -47,7 +87,7 @@ func catalogSessionsInContext(ctx context.Context, env metadataCacheDependencies
 			// Reuse this command's fresh headers for the verified legacy fallback.
 			sessions, fallbackErr := reader.ListMetadataFromSnapshot(ctx, store, headers, opts.filter, readOpts)
 			sortByActivity(sessions)
-			return filterListOrigin(sessions, opts.imported, opts.hookCaptured), true, fallbackErr
+			return filterListOrigin(sessions, opts.imported, opts.hookCaptured), true, true, fallbackErr
 		}
 		for _, row := range page.Rows {
 			sessions = append(sessions, row.Summary.Metadata())
@@ -57,7 +97,11 @@ func catalogSessionsInContext(ctx context.Context, env metadataCacheDependencies
 		}
 		query.Cursor = page.Next
 	}
-	return filterListOrigin(sessions, opts.imported, opts.hookCaptured), true, nil
+	if reuse != nil {
+		reuse.read = catalog.ReadCachedMetadata
+		reuse.close = catalog.Close
+	}
+	return filterListOrigin(sessions, opts.imported, opts.hookCaptured), true, false, nil
 }
 
 // readListCandidates retains selected reads for simple bounded listings and
@@ -75,16 +119,69 @@ func readListCandidates(env metadataCacheDependencies, store storage.ObjectStore
 	return listed, full, err
 }
 
-// readShowCandidates returns search projections only. The resolver returns an
-// identity, and its caller reads the selected full metadata before rendering.
-func readShowCandidates(ctx context.Context, store storage.ObjectStore, env metadataCacheDependencies, harness, query string, stderr io.Writer) ([]archive.Metadata, error) {
+// readShowCandidates distinguishes search projections from verified full bodies.
+// The resolver may reuse only the latter as selected metadata authority.
+func readShowCandidates(ctx context.Context, store storage.ObjectStore, env metadataCacheDependencies, harness, query string, stderr io.Writer) (showCandidates, error) {
+	reuse := &showBodyReuse{verified: map[string]bool{}}
 	opts := listOptions{filter: reader.Filter{Harness: harness}}
-	sessions, used, err := catalogSessionsInContext(ctx, env, store, opts, stderr, "show", nil)
+	sessions, used, fullBodies, err := catalogCandidateSessions(ctx, env, store, opts, stderr, "show", nil, reuse)
 	if used {
-		return sessions, err
+		return showCandidates{sessions: sessions, fullBodies: fullBodies, reuse: reuse}, err
 	}
 	readOpts := reader.ListOptions{Cache: listCache(env, false), Skipped: warnSkippedSidecar(stderr, "show"), BodyRead: catalogBodyObserver(env)}
-	return reader.FindMetadataPrefix(ctx, store, archiveSessionsPrefix, query, opts.filter, readOpts, func(archive.Metadata) bool { return true })
+	sessions, err = reader.FindMetadataPrefix(ctx, store, archiveSessionsPrefix, query, opts.filter, readOpts, func(archive.Metadata) bool { return true })
+	return showCandidates{sessions: sessions, fullBodies: true}, err
+}
+
+type showBodyReuse struct {
+	verified map[string]bool
+	read     func(context.Context, string) (reader.MetadataLookup, bool, error)
+	close    func() error
+}
+
+type showCandidates struct {
+	sessions   []archive.Metadata
+	fullBodies bool
+	reuse      *showBodyReuse
+}
+
+func (c showCandidates) close() {
+	if c.reuse != nil && c.reuse.close != nil {
+		_ = c.reuse.close()
+	}
+}
+
+func (c showCandidates) lookup(ctx context.Context, metadata archive.Metadata) (showLookup, error) {
+	if c.fullBodies {
+		return showMetadataLookup(metadata), nil
+	}
+	result := showLookup{SessionID: metadata.SessionID, Harness: metadata.Harness.Name}
+	key, err := archive.MetadataObjectKey(metadata.Harness.Name, metadata.SessionID)
+	if err != nil {
+		return result, err
+	}
+	if c.reuse != nil && c.reuse.read != nil && c.reuse.verified[key] {
+		lookup, found, err := c.reuse.read(ctx, key)
+		if err != nil {
+			return result, err
+		}
+		if found {
+			result.Metadata = lookup
+		}
+	}
+	return result, nil
+}
+
+func showBodyObserver(reuse *showBodyReuse, observer func(string, bool)) func(string, bool) {
+	if reuse == nil {
+		return observer
+	}
+	return func(key string, cached bool) {
+		if observer != nil {
+			observer(key, cached)
+		}
+		reuse.verified[key] = true
+	}
 }
 
 func catalogBodyObserver(env metadataCacheDependencies) func(string, bool) {

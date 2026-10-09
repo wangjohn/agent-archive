@@ -370,7 +370,7 @@ func (r *handoffQueryResolver) archiveRows() []handoffPickerRow {
 		return nil
 	}
 	stop := startActivity(r.stdout, "Finding sessions…")
-	sessions, err := loadSessionsForBrowse(r.env, store, listOptions{filter: reader.Filter{Harness: r.opts.harness}}, r.stderr, "handoff")
+	sessions, err := loadSessionsForBrowse(context.Background(), r.env, store, listOptions{filter: reader.Filter{Harness: r.opts.harness}}, r.stderr, "handoff")
 	stop()
 	if err != nil {
 		r.archiveErr = err

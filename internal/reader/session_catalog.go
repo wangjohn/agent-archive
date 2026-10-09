@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/catalog"
 	"github.com/wangjohn/agent-archive/internal/listingindex"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -129,6 +130,8 @@ type SQLiteSessionCatalog struct {
 	viewEpoch      string
 	viewGeneration int64
 	viewReady      bool
+	remoteSnapshot *catalog.Snapshot
+	remoteBinding  string
 }
 
 // OpenSessionCatalog opens a disposable private SQLite index. Each connection
@@ -137,9 +140,24 @@ func OpenSessionCatalog(ctx context.Context, cache *MetadataCache, store storage
 	return openSessionCatalog(ctx, cache, store, opts, false)
 }
 
-func openSessionCatalog(ctx context.Context, cache *MetadataCache, store storage.ObjectStore, opts ListOptions, repair bool) (*SQLiteSessionCatalog, error) {
+func boundCatalogCache(cache *MetadataCache, store storage.ObjectStore, opts ListOptions) (ListOptions, error) {
 	if cache == nil {
-		return nil, errors.New("session catalog requires a metadata cache")
+		return opts, errors.New("session catalog requires a metadata cache")
+	}
+	if opts.Cache == nil {
+		opts.Cache = cache
+	}
+	if CatalogAuthority(store) && opts.Cache.dir != cache.dir {
+		return opts, errors.New("remote session catalog requires its bound metadata cache")
+	}
+	return opts, nil
+}
+
+func openSessionCatalog(ctx context.Context, cache *MetadataCache, store storage.ObjectStore, opts ListOptions, repair bool) (*SQLiteSessionCatalog, error) {
+	var err error
+	opts, err = boundCatalogCache(cache, store, opts)
+	if err != nil {
+		return nil, err
 	}
 	dir := filepath.Join(filepath.Dir(cache.dir), "catalog")
 	if err := os.MkdirAll(dir, 0700); err != nil {
@@ -557,6 +575,9 @@ func (c *SQLiteSessionCatalog) Query(ctx context.Context, q CatalogQuery) (Catal
 	if !c.viewReady {
 		return CatalogPage{}, ctx.Err()
 	}
+	if err := c.validateRemoteQuery(ctx, q.Cursor != ""); err != nil {
+		return CatalogPage{}, err
+	}
 	tx, err := c.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return CatalogPage{}, err
@@ -571,27 +592,11 @@ func (c *SQLiteSessionCatalog) Query(ctx context.Context, q CatalogQuery) (Catal
 	if epoch != c.viewEpoch || generation != c.viewGeneration {
 		return CatalogPage{}, ErrStaleCatalogCursor
 	}
-	offset, token, err := catalogCursor(q, epoch, generation)
+	offset, token, err := catalogCursor(q, epoch, generation, c.remoteBinding)
 	if err != nil {
 		return CatalogPage{}, err
 	}
-	order := "capture DESC,key"
-	if q.Metadata.Order == ActivityOrder {
-		order = "activity DESC,capture DESC,key"
-	}
-	// SQL predicates are exact for these typed fields. Text stays a candidate
-	// superset; Go's Unicode matcher and query-time labels decide final matches.
-	where, args := catalogWhere(q.Metadata)
-	var clauses strings.Builder
-	clauses.WriteString(where)
-	for _, word := range q.Words {
-		word = strings.ToLower(word)
-		clauses.WriteString(" AND (instr(search,?) > 0 OR instr(lowerid,?) = 1 OR instr(search,?) > 0 OR unlabeled = 1)")
-		// Leading zeros still denote the same PR in the CLI matcher. Keep
-		// original text/ID candidates and OR a canonical numeric candidate.
-		args = append(args, word, word, catalogPRCandidate(word))
-	}
-	where = clauses.String()
+	order, where, args := catalogQueryPredicates(q)
 	needsSummaryFilter := q.Metadata.IncludeRootChildren || catalogRequiresSummaryFilter(q.Metadata.Filter)
 	page := CatalogPage{Complete: complete}
 	statement := "SELECT key,etag,hash,capture,activity,summary,search,lowerid,unlabeled,summary_hash FROM sessions" + where + " ORDER BY " + order //nolint:gosec // SQL fragments are fixed predicates/orders; every input is bound.
@@ -602,10 +607,7 @@ func (c *SQLiteSessionCatalog) Query(ctx context.Context, q CatalogQuery) (Catal
 		if offset > page.Total {
 			return CatalogPage{}, ErrStaleCatalogCursor
 		}
-		limit := q.Metadata.Limit
-		if limit <= 0 {
-			limit = -1
-		}
+		limit := catalogSQLLimit(q.Metadata.Limit)
 		statement += " LIMIT ? OFFSET ?"
 		args = append(args, limit, offset)
 	}
@@ -626,8 +628,14 @@ func (c *SQLiteSessionCatalog) Query(ctx context.Context, q CatalogQuery) (Catal
 	if err = rows.Close(); err != nil {
 		return CatalogPage{}, err
 	}
+	if err = tx.Commit(); err != nil {
+		return CatalogPage{}, err
+	}
+	if err = c.validateRemoteQuery(ctx, false); err != nil {
+		return CatalogPage{}, err
+	}
 	span.Count("summaries", len(page.Rows))
-	return page, tx.Commit()
+	return page, nil
 }
 
 // fillCatalogPage validates candidates before applying final typed filtering.
@@ -685,11 +693,50 @@ func fillCatalogPage(rows *sql.Rows, q CatalogQuery, offset int, filterSummaries
 	return nil
 }
 
-func catalogCursor(q CatalogQuery, epoch string, generation int64) (int, string, error) {
+func catalogSQLLimit(limit int) int {
+	if limit <= 0 {
+		return -1
+	}
+	return limit
+}
+
+func catalogQueryPredicates(q CatalogQuery) (string, string, []any) {
+	order := "capture DESC,key"
+	if q.Metadata.Order == ActivityOrder {
+		order = "activity DESC,capture DESC,key"
+	}
+	// SQL predicates are exact for these typed fields. Text stays a candidate
+	// superset; Go's Unicode matcher and query-time labels decide final matches.
+	where, args := catalogWhere(q.Metadata)
+	var clauses strings.Builder
+	clauses.WriteString(where)
+	for _, word := range q.Words {
+		word = strings.ToLower(word)
+		clauses.WriteString(" AND (instr(search,?) > 0 OR instr(lowerid,?) = 1 OR instr(search,?) > 0 OR unlabeled = 1)")
+		// Leading zeros still denote the same PR in the CLI matcher. Keep
+		// original text/ID candidates and OR a canonical numeric candidate.
+		args = append(args, word, word, catalogPRCandidate(word))
+	}
+	where = clauses.String()
+	return order, where, args
+}
+
+func (c *SQLiteSessionCatalog) validateRemoteQuery(ctx context.Context, continuation bool) error {
+	if c.remoteSnapshot == nil {
+		return ctx.Err()
+	}
+	if continuation {
+		return c.remoteSnapshot.ValidateContinuation(ctx)
+	}
+	return c.remoteSnapshot.ValidateRead(ctx)
+}
+
+func catalogCursor(q CatalogQuery, epoch string, generation int64, remoteBinding string) (int, string, error) {
 	binding, err := json.Marshal(struct {
 		Metadata MetadataQuery `json:"metadata"`
 		Words    []string      `json:"words"`
-	}{q.Metadata, q.Words})
+		Remote   string        `json:"remote,omitempty"`
+	}{q.Metadata, q.Words, remoteBinding})
 	if err != nil {
 		return 0, "", err
 	}

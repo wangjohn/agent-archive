@@ -1,6 +1,7 @@
 package collector
 
 import (
+	"context"
 	"errors"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -118,7 +119,7 @@ func (s *sessionScan) freezeRevisionPublication(p *state.PendingPublication) err
 // resumeHistory never bypasses retained work for a newer request or policy.
 // A policy mismatch stays pending until complete successor preparation can
 // resolve the remote prior/final state without uploading broader bytes.
-func (s *sessionScan) resumeHistory(p state.PendingPublication) (sessionOutcome, error) {
+func (s *sessionScan) resumeHistory(ctx context.Context, p state.PendingPublication) (sessionOutcome, error) {
 	adapter, err := sourceAdapter(s.opts.Sources, s.reg.Harness.Name)
 	if err != nil {
 		return outcomeSkipped, err
@@ -142,6 +143,9 @@ func (s *sessionScan) resumeHistory(p state.PendingPublication) (sessionOutcome,
 		return outcomeSkipped, archive.ErrHistoryMutationPending
 	}
 	if latest := s.now.Add(s.opts.minUploadInterval()); p.ReadyAt.After(latest) {
+		if p.Catalog != nil {
+			return outcomeSkipped, state.ErrCatalogJournalFrozen
+		}
 		p.ReadyAt = latest
 		if err := s.local.SavePending(s.id(), p); err != nil {
 			return outcomeSkipped, err
@@ -151,7 +155,7 @@ func (s *sessionScan) resumeHistory(p state.PendingPublication) (sessionOutcome,
 		s.readyAt = p.ReadyAt
 		return outcomeRateLimited, nil
 	}
-	return s.publishPending(p)
+	return s.publishPending(ctx, p)
 }
 
 func boundFrozenReferences(final archive.Metadata) error {

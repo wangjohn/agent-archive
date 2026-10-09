@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/catalog"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -617,10 +618,10 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		return 1
 	}
 
-	ctx := context.Background()
+	ctx := catalog.WithReadView(context.Background())
 	summary := summaryOptions{Now: env.now(), Style: styleFor(stdout), Projects: projectLabels(cfg), Hints: true}
 	if sessionID == "" {
-		return runBareShow(env, store, cfg, stdin, stdout, stderr, *harness, *jsonOut, *noPager)
+		return runBareShow(ctx, env, store, cfg, stdin, stdout, stderr, *harness, *jsonOut, *noPager)
 	}
 
 	lookup, code := resolveShowQuery(ctx, store, env, stdin, stdout, stderr, *harness, sessionID, summary.Projects, *noPager, *transcript || *jsonOut)
@@ -633,21 +634,18 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	sessionID, *harness = lookup.SessionID, lookup.Harness
 
 	stopShow := startActivity(stdout, "Loading session…")
-	key, err := locateMetadataKey(ctx, store, *harness, sessionID)
-	if err != nil {
-		stopShow()
-		terminal.Printf(stderr, "agent-archive: show: %v\n", err)
-		return 1
-	}
-
-	if !*transcript {
-		metadata, err := reader.ReadMetadata(ctx, store, key)
+	selected := lookup.Metadata
+	if selected.Key == "" {
+		selected, err = locateShowMetadata(ctx, store, *harness, sessionID)
 		if err != nil {
 			stopShow()
 			terminal.Printf(stderr, "agent-archive: show: %v\n", err)
 			return 1
 		}
-		view := metadataWithLinks(ctx, store, metadata)
+	}
+
+	if !*transcript {
+		view := metadataWithLinks(ctx, store, selected.Metadata)
 		stopShow()
 		if *jsonOut {
 			return printJSON(stdout, stderr, view)
@@ -662,31 +660,31 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		return 0
 	}
 
-	return printSessionTranscript(ctx, store, env, stdout, stderr, key, sessionID, stopShow, sessionTranscriptOptions{
+	return printSessionTranscript(ctx, store, env, stdout, stderr, selected, sessionID, stopShow, sessionTranscriptOptions{
 		summary: summary, full: *full, json: *jsonOut, normalized: *normalized, noPager: *noPager, maxBytes: *maxBytes,
 	})
 }
 
 // runBareShow is `show` with no SESSION_ID on a terminal: the browser, or with
 // --json one session picked in it and printed as its sidecar.
-func runBareShow(env showCommandDependencies, store storage.ObjectStore, cfg config.Config, stdin io.Reader, stdout, stderr io.Writer, harness string, jsonOut, noPager bool) int {
+func runBareShow(ctx context.Context, env showCommandDependencies, store storage.ObjectStore, cfg config.Config, stdin io.Reader, stdout, stderr io.Writer, harness string, jsonOut, noPager bool) int {
 	if jsonOut {
-		row, selected, code := selectArchivedSession(env, store, cfg, stdin, stdout, stderr, harness, "show", "Show")
+		row, selected, code := selectArchivedSession(ctx, env, store, cfg, stdin, stdout, stderr, harness, "show", "Show")
 		if code != 0 || !selected {
 			return code
 		}
-		view, err := readSessionView(context.Background(), store, row.HarnessKey, row.SessionID)
+		view, err := readSessionView(catalog.NewReadView(ctx), store, row.HarnessKey, row.SessionID)
 		if err != nil {
 			terminal.Printf(stderr, "agent-archive: show: %v\n", err)
 			return 1
 		}
 		return printJSON(stdout, stderr, view)
 	}
-	choices, ok, code := findBrowseSessions(env, store, cfg, stdout, stderr, harness, "show")
+	choices, ok, code := findBrowseSessions(ctx, env, store, cfg, stdout, stderr, harness, "show")
 	if !ok {
 		return code
 	}
-	_, _, code = runBrowser(context.Background(), env, newPrompter(stdin, stdout), stdout, stderr, browserSpec{Mode: browseSessions, Choices: choices, Command: "show", Store: store, NoPager: noPager})
+	_, _, code = runBrowser(ctx, env, newPrompter(stdin, stdout), stdout, stderr, browserSpec{Mode: browseSessions, Choices: choices, Command: "show", Store: store, NoPager: noPager})
 	return code
 }
 
@@ -717,8 +715,8 @@ type sessionTranscriptOptions struct {
 // printSessionTranscript downloads and verifies the session's source bundle
 // and prints its transcript: readable and paged, or with --json the sidecar
 // and the normalized view. stopShow ends the loading activity line.
-func printSessionTranscript(ctx context.Context, store storage.ObjectStore, env showCommandDependencies, stdout, stderr io.Writer, key, sessionID string, stopShow func(), opts sessionTranscriptOptions) int {
-	view, bundle, err := loadVerifiedSession(ctx, store, key)
+func printSessionTranscript(ctx context.Context, store storage.ObjectStore, env showCommandDependencies, stdout, stderr io.Writer, selected reader.MetadataLookup, sessionID string, stopShow func(), opts sessionTranscriptOptions) int {
+	view, bundle, err := loadVerifiedMetadata(ctx, store, selected)
 	if err != nil {
 		stopShow()
 		flag := "--transcript"

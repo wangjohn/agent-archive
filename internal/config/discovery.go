@@ -2,12 +2,14 @@ package config
 
 import (
 	"errors"
-	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/local"
 	"reflect"
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/destination"
+	"github.com/wangjohn/agent-archive/internal/local"
 )
 
 const discoveryWriterMarker = "+discovery-v2"
@@ -73,7 +75,7 @@ func underlyingSkillEvidence(mode SkillEvidence) SkillEvidence {
 }
 
 func prepareDiscoveryConfig(c *Config) error {
-	if (c.SchemaVersion > 5 && c.SchemaVersion != 7) || (c.SchemaVersion == 7 && !c.DurableStorageProtection) || (c.SchemaVersion == 5 && !c.CodexHistoryProtection) || (c.SchemaVersion == 4 && !c.GenerationProtection) || (c.SchemaVersion == 3 && c.CodexCapture == nil) {
+	if (c.SchemaVersion > 5 && c.SchemaVersion != 7 && c.SchemaVersion != 10) || (c.SchemaVersion == 7 && !c.DurableStorageProtection) || (c.SchemaVersion == 5 && !c.CodexHistoryProtection) || (c.SchemaVersion == 4 && !c.GenerationProtection) || (c.SchemaVersion == 3 && c.CodexCapture == nil) {
 		return errors.New("configuration requires a newer agent-archive writer")
 	}
 	if c.Discovery != nil {
@@ -108,10 +110,38 @@ func prepareDiscoveryConfig(c *Config) error {
 	if c.DurableStorageProtection {
 		c.SchemaVersion = 7
 	}
+	if c.Storage.EffectiveArchiveFormat() == destination.FormatCatalogV4 {
+		c.SchemaVersion = 10
+	}
 	return validateDiscoveryConfig(*c)
 }
 
 func validateDiscoveryConfig(c Config) error {
+	if c.Storage.EffectiveArchiveFormat() != destination.FormatLegacy && c.Storage.EffectiveArchiveFormat() != destination.FormatCatalogV4 {
+		return errors.New("unsupported archive format")
+	}
+	if c.SchemaVersion == 10 {
+		if c.Storage.EffectiveArchiveFormat() != destination.FormatCatalogV4 {
+			return errors.New("catalog schema requires catalog format")
+		}
+		c.SchemaVersion = 1
+		if c.Discovery != nil {
+			c.SchemaVersion = 2
+		}
+		if c.CodexCapture != nil {
+			c.SchemaVersion = 3
+		}
+		if c.GenerationProtection {
+			c.SchemaVersion = 4
+		}
+		if c.CodexHistoryProtection {
+			c.SchemaVersion = 5
+		}
+		if c.DurableStorageProtection {
+			c.SchemaVersion = 7
+		}
+	}
+
 	if c.DurableStorageProtection {
 		if c.SchemaVersion != 7 {
 			return errors.New("durable storage protection requires schema 7")

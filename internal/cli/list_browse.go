@@ -13,6 +13,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/catalog"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -72,13 +73,14 @@ func (b *sessionBrowser) run(ctx context.Context, choices *scopeChoices) error {
 			return err
 		}
 		stop := startActivity(b.stdout, "Loading session…")
-		view, err := readSessionView(ctx, b.store, row.HarnessKey, row.SessionID)
+		viewCtx := catalog.NewReadView(ctx)
+		view, err := readSessionView(viewCtx, b.store, row.HarnessKey, row.SessionID)
 		stop()
 		if err != nil {
 			return err
 		}
 		b.last = &view
-		action, err := b.details(ctx, view, row)
+		action, err := b.details(viewCtx, view, row)
 		if err != nil || action == browseQuit {
 			return err
 		}
@@ -898,16 +900,19 @@ func readSessionView(ctx context.Context, store storage.ObjectStore, harness, se
 // loadSessionsForBrowse lists metadata with the same filters list uses, for
 // interactive show and handoff. It reads every match, newest activity first,
 // for the caller to scope and limit.
-func loadSessionsForBrowse(env metadataCacheDependencies, store storage.ObjectStore, opts listOptions, stderr io.Writer, command string) ([]archive.Metadata, error) {
+func loadSessionsForBrowse(ctx context.Context, env metadataCacheDependencies, store storage.ObjectStore, opts listOptions, stderr io.Writer, command string) ([]archive.Metadata, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	// Handoff needs complete bodies for its source/replay policy; the session
 	// browser hydrates the chosen body when details open.
 	switch catalogBrowseCommand(command) {
 	case catalogBrowseShow, catalogBrowseList:
-		if sessions, used, err := catalogSessions(env, store, opts, stderr, command, nil); used {
+		if sessions, used, err := catalogSessionsInContext(ctx, env, store, opts, stderr, command, nil); used {
 			return sessions, err
 		}
 	}
-	sessions, err := reader.ListMetadataWithOptions(context.Background(), store, archiveSessionsPrefix, opts.filter, reader.ListOptions{Cache: listCache(env, opts.noCache), Skipped: warnSkippedSidecar(stderr, command)})
+	sessions, err := reader.ListMetadataWithOptions(ctx, store, archiveSessionsPrefix, opts.filter, reader.ListOptions{Cache: listCache(env, opts.noCache), Skipped: warnSkippedSidecar(stderr, command)})
 	if err != nil {
 		return nil, err
 	}
@@ -946,14 +951,14 @@ func archiveSearch(sessions []archive.Metadata, scope sessionScope, format listF
 // findBrowseSessions loads what bare show offers, in the working directory's
 // scope first. ok is false, with code 0, when none match (after saying so),
 // and with code 1 after an error.
-func findBrowseSessions(env sessionSelectionDependencies, store storage.ObjectStore, cfg config.Config, stdout, stderr io.Writer, harness, command string) (choices *scopeChoices, ok bool, code int) {
+func findBrowseSessions(ctx context.Context, env sessionSelectionDependencies, store storage.ObjectStore, cfg config.Config, stdout, stderr io.Writer, harness, command string) (choices *scopeChoices, ok bool, code int) {
 	scope, err := scopeFor(env, "", false)
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: %s: %v\n", command, err)
 		return nil, false, 1
 	}
 	stopBrowse := startActivity(stdout, "Finding sessions…")
-	sessions, err := loadSessionsForBrowse(env, store, listOptions{filter: reader.Filter{Harness: harness, Replays: reader.ReplaysHidden}}, stderr, command)
+	sessions, err := loadSessionsForBrowse(ctx, env, store, listOptions{filter: reader.Filter{Harness: harness, Replays: reader.ReplaysHidden}}, stderr, command)
 	stopBrowse()
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: %s: %v\n", command, err)
@@ -979,12 +984,12 @@ type archivedSessionDependencies interface {
 // returns the session chosen; handoff's also lists local sessions
 // (selectHandoffSession). verb is what Enter does, as the heading says it. It
 // returns selected=false when the archive is empty or the user quits.
-func selectArchivedSession(env archivedSessionDependencies, store storage.ObjectStore, cfg config.Config, stdin io.Reader, stdout, stderr io.Writer, harness, command, verb string) (row listRow, selected bool, code int) {
-	choices, ok, code := findBrowseSessions(env, store, cfg, stdout, stderr, harness, command)
+func selectArchivedSession(ctx context.Context, env archivedSessionDependencies, store storage.ObjectStore, cfg config.Config, stdin io.Reader, stdout, stderr io.Writer, harness, command, verb string) (row listRow, selected bool, code int) {
+	choices, ok, code := findBrowseSessions(ctx, env, store, cfg, stdout, stderr, harness, command)
 	if !ok {
 		return listRow{}, false, code
 	}
-	return runBrowser(context.Background(), env, newPrompter(stdin, stdout), stdout, stderr, browserSpec{Mode: pickSession, Verb: verb, Choices: choices, Command: command})
+	return runBrowser(ctx, env, newPrompter(stdin, stdout), stdout, stderr, browserSpec{Mode: pickSession, Verb: verb, Choices: choices, Command: command})
 }
 
 // saveTerminalState records the terminal modes of in, when it is a

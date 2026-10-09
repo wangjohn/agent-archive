@@ -86,11 +86,11 @@ func TestStatsIndexedFetchEqualsExhaustiveAcrossShapesAndWindows(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, days := range windows {
-				got, err := json.Marshal(statsInputs{sessions: indexed.Sessions, now: now, location: time.UTC}.compute(days, true))
+				got, err := json.Marshal(stats.Compute(indexed.Sessions, stats.Options{Now: now, Days: days, Location: time.UTC, AllRows: true}))
 				if err != nil {
 					t.Fatal(err)
 				}
-				want, err := json.Marshal(statsInputs{sessions: exhaustive, now: now, location: time.UTC}.compute(days, true))
+				want, err := json.Marshal(stats.Compute(exhaustive, stats.Options{Now: now, Days: days, Location: time.UTC, AllRows: true}))
 				if err != nil {
 					t.Fatal(err)
 				}

@@ -13,6 +13,16 @@ import (
 )
 
 var commandHelp = map[string]string{
+	"migrate": `Usage: agent-archive migrate --format catalog-v4 --prefix PREFIX [--bucket BUCKET] [--rollback]
+
+Copies an isolated destination in durable bounded batches, verifies all metadata
+and active/preserved source bytes against an exhaustive read-only source oracle,
+then activates catalog discovery. Resumes the original checkpoint on interruption.
+Requires reviewed live provider atomic/clock qualification, revoked old write
+credentials, and complete global writer drain evidence. S3/R2 currently refuse.
+No --force bypass exists. The original destination remains read-only. Rollback
+requires an unchanged catalog and leaves collection paused.
+`,
 	"recover": `Usage: agent-archive recover SESSION_ID [--confirm]
 
 Preview recovery of a local top-level append-only transcript blocked by a

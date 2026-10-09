@@ -32,6 +32,13 @@ type RecentResult struct {
 // exhaustive cache reader for compatibility. SelectMetadata supports indexed
 // unlimited queries.
 func ListRecent(ctx context.Context, store storage.ObjectStore, prefix string, filter Filter, limit int, opts ListOptions) (RecentResult, error) {
+	if CatalogAuthority(store) {
+		order := CaptureOrder
+		if opts.ActivityOrder {
+			order = ActivityOrder
+		}
+		return SelectMetadata(ctx, store, prefix, MetadataQuery{Filter: filter, Limit: limit, Order: order, TopLevelOnly: opts.TopLevelOnly}, opts)
+	}
 	if limit <= 0 {
 		if opts.CompatibilityScan != nil {
 			opts.CompatibilityScan("query requires an exhaustive metadata scan")
@@ -71,6 +78,13 @@ type MetadataQuery struct {
 // SelectMetadata proves discovery coverage and supports unlimited date queries.
 // Unsupported predicates and incomplete summaries use the exhaustive reader.
 func SelectMetadata(ctx context.Context, store storage.ObjectStore, prefix string, query MetadataQuery, opts ListOptions) (RecentResult, error) {
+	if CatalogAuthority(store) {
+		opts.Cache.maintain(ctx)
+		opts.ActivityOrder = query.Order == ActivityOrder
+		opts.TopLevelOnly = query.TopLevelOnly
+		opts.includeRootChildren = query.IncludeRootChildren
+		return selectCatalogMetadata(ctx, store, prefix, query, opts)
+	}
 	filter, limit := query.Filter, query.Limit
 	opts.ActivityOrder, opts.TopLevelOnly = query.Order == ActivityOrder, query.TopLevelOnly
 	opts.includeRootChildren = query.IncludeRootChildren
@@ -132,24 +146,33 @@ type selectedRead struct {
 // hide an earlier selected revision's real error. Progress runs serially on
 // the caller as reads finish; BodyRead runs in selection order after the join.
 func readSelected(ctx context.Context, getter storage.VersionedGetter, revisions []listingindex.Revision, opts ListOptions) []selectedRead {
-	reads := make([]selectedRead, len(revisions))
-	observed := make([]bool, len(revisions))
+	return readSelectedRows(ctx, len(revisions), opts, func(i int) (selectedRead, bool) {
+		return readSelectedRevision(ctx, getter, revisions[i], opts.Cache)
+	}, func(i int) string { return revisions[i].MetadataKey })
+}
+
+// readSelectedRows shares the bounded scheduler while each authority supplies
+// its exact selected-body reader. Progress runs on the caller as reads finish;
+// selected body observers run in order after every worker has joined.
+func readSelectedRows(ctx context.Context, count int, opts ListOptions, read func(int) (selectedRead, bool), key func(int) string) []selectedRead {
+	reads := make([]selectedRead, count)
+	observed := make([]bool, count)
 	var mu sync.Mutex
 	var wg sync.WaitGroup
-	completed := make(chan struct{}, len(revisions))
+	completed := make(chan struct{}, count)
 	next, failed := 0, false
-	for range min(listConcurrency, len(revisions)) {
+	for range min(listConcurrency, count) {
 		wg.Go(func() {
 			for {
 				mu.Lock()
-				if failed || ctx.Err() != nil || next == len(revisions) {
+				if failed || ctx.Err() != nil || next == count {
 					mu.Unlock()
 					return
 				}
 				i := next
 				next++
 				mu.Unlock()
-				reads[i], observed[i] = readSelectedRevision(ctx, getter, revisions[i], opts.Cache)
+				reads[i], observed[i] = read(i)
 				completed <- struct{}{}
 				if reads[i].Err != nil {
 					mu.Lock()
@@ -168,12 +191,12 @@ func readSelected(ctx context.Context, getter storage.VersionedGetter, revisions
 	for range completed {
 		finished++
 		if opts.Progress != nil {
-			opts.Progress(finished, len(revisions))
+			opts.Progress(finished, count)
 		}
 	}
 	for i := range next {
 		if observed[i] && opts.BodyRead != nil {
-			opts.BodyRead(revisions[i].MetadataKey, reads[i].Cached)
+			opts.BodyRead(key(i), reads[i].Cached)
 		}
 	}
 	return reads[:next]
