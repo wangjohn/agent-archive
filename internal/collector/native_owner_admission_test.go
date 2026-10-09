@@ -13,6 +13,15 @@ import (
 	"github.com/wangjohn/agent-archive/internal/transcriptio"
 )
 
+type nativeOwnerTaskChange string
+
+const (
+	nativeOwnerTaskUnchanged nativeOwnerTaskChange = "unchanged"
+	nativeOwnerTaskTimestamp nativeOwnerTaskChange = "timestamp"
+	nativeOwnerTaskTurnID    nativeOwnerTaskChange = "turn_id"
+	nativeOwnerTaskAppend    nativeOwnerTaskChange = "append"
+)
+
 // Replacement occurs before opening the next snapshot, so within-read file
 // change checks cannot substitute for immutable admission evidence comparison.
 func TestNativeOwnerAdmissionRejectsChangedFirstTask(t *testing.T) {
@@ -21,8 +30,8 @@ func TestNativeOwnerAdmissionRejectsChangedFirstTask(t *testing.T) {
 	const other = "33333333-3333-4333-8333-333333333333"
 	at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
 	for _, shape := range []string{"child", "fork", "ordinary"} {
-		for _, change := range []string{"unchanged", "timestamp", "turn_id", "append"} {
-			t.Run(shape+"/"+change, func(t *testing.T) {
+		for _, change := range []nativeOwnerTaskChange{nativeOwnerTaskUnchanged, nativeOwnerTaskTimestamp, nativeOwnerTaskTurnID, nativeOwnerTaskAppend} {
+			t.Run(shape+"/"+string(change), func(t *testing.T) {
 				dir := t.TempDir()
 				path := filepath.Join(dir, "rollout-"+thread+".jsonl")
 				meta := map[string]any{"id": thread, "timestamp": at.Format(time.RFC3339Nano), "cwd": dir, "source": "cli", "originator": "codex_cli_rs", "cli_version": "dev"}
@@ -88,15 +97,15 @@ func TestNativeOwnerAdmissionRejectsChangedFirstTask(t *testing.T) {
 					t.Fatalf("wrong ownership shape %+v", admitted)
 				}
 				start, turn := at, thread
-				if change == "timestamp" {
+				if change == nativeOwnerTaskTimestamp {
 					start = at.Add(time.Second)
 				}
-				if change == "turn_id" {
+				if change == nativeOwnerTaskTurnID {
 					turn = other
 				}
-				write(start, turn, change == "append")
+				write(start, turn, change == nativeOwnerTaskAppend)
 				current, err := read(admitted)
-				reject := shape != "ordinary" && (change == "timestamp" || change == "turn_id")
+				reject := shape != "ordinary" && (change == nativeOwnerTaskTimestamp || change == nativeOwnerTaskTurnID)
 				if reject {
 					if !agentapi.HasFailure(err, agentapi.Unavailable) || current != nil {
 						t.Fatalf("changed task accepted: %+v %v", current, err)

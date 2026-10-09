@@ -99,7 +99,9 @@ func TestProjectIdentityTracksBranchConditionalConfiguration(t *testing.T) {
 	if identityEvidenceCurrent(id) {
 		t.Fatal("branch conditional origin changed without invalidating cached identity")
 	}
-	if changed := observeProjectIdentity(t.Context(), root); !changed.Known || changed.Key != archive.RepoKey("https://example.test/acme/branch") {
+	// The include adds a second origin URL naming another repository. No
+	// single key is proven, so the identity is unknown, not keyless.
+	if changed := observeProjectIdentity(t.Context(), root); changed.Known || changed.Root != "" || changed.Key != "" {
 		t.Fatalf("changed identity: %+v", changed)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -16,28 +17,33 @@ import (
 )
 
 func TestNativeOwnerCanceledPlanDoesNotCheckpointRequestedCoverage(t *testing.T) {
-	home, userHome := t.TempDir(), t.TempDir()
-	native := filepath.Join(userHome, ".codex")
-	must(t, os.MkdirAll(filepath.Join(native, "sessions"), 0700))
-	lookup, err := discovery.NewCodexRolloutLookup(t.Context(), state.OpenReadOnly(home), []string{native})
-	must(t, err)
-	// Schedule coverage before interruption, without ever setting ObserveReadOnly.
-	_, _ = lookup.Thread(t.Context(), "11111111-1111-4111-8111-111111111111")
-	before := snapshotTree(t, home)
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
-	_, err = buildBackfillPlanWithLookup(ctx, env, home, userHome, config.Config{}, backfill.Filters{}, func(context.Context, *state.Store, config.Config, Env) (*discovery.CodexRolloutLookup, []string, error) {
-		return lookup, []string{native}, nil
-	})
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("canceled plan: %v", err)
-	}
-	if snapshotTree(t, home) != before {
-		t.Fatal("canceled preview checkpointed requested coverage")
-	}
-	if used, _ := lookup.NativeReadBudget().Charged(); used != 0 {
-		t.Fatalf("preview leaked %d source bytes", used)
+	for _, mode := range []os.FileMode{0o755, 0o700} {
+		t.Run("mode_"+strconv.FormatUint(uint64(mode), 8), func(t *testing.T) {
+			home, userHome := t.TempDir(), t.TempDir()
+			must(t, os.Chmod(home, mode))
+			native := filepath.Join(userHome, ".codex")
+			must(t, os.MkdirAll(filepath.Join(native, "sessions"), 0700))
+			lookup, err := discovery.NewCodexRolloutLookup(t.Context(), state.OpenReadOnly(home), []string{native})
+			must(t, err)
+			// Schedule coverage before interruption, without ever setting ObserveReadOnly.
+			_, _ = lookup.Thread(t.Context(), "11111111-1111-4111-8111-111111111111")
+			env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
+			before := snapshotTree(t, home)
+			ctx, cancel := context.WithCancel(t.Context())
+			cancel()
+			_, err = buildBackfillPlanWithLookup(ctx, env, home, userHome, config.Config{}, backfill.Filters{}, func(context.Context, *state.Store, config.Config, Env) (*discovery.CodexRolloutLookup, []string, error) {
+				return lookup, []string{native}, nil
+			})
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("canceled plan: %v", err)
+			}
+			if snapshotTree(t, home) != before {
+				t.Fatal("canceled preview checkpointed requested coverage")
+			}
+			if used, _ := lookup.NativeReadBudget().Charged(); used != 0 {
+				t.Fatalf("preview leaked %d source bytes", used)
+			}
+		})
 	}
 }
 
@@ -48,9 +54,10 @@ func TestNativeOwnerReturningDestinationIncludesResolvedChildren(t *testing.T) {
 	at := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
 	cfg := config.Config{Storage: credentialsTestConfig(), ImportedHarnesses: []string{"codex"}, Archive: archive.Config{Enabled: true}}
 	for _, tc := range []struct {
-		id           string
-		native       bool
-		parent, dest string
+		id     string
+		native bool
+		parent string
+		dest   string
 	}{
 		{"native-child", true, "external-parent", cfg.DestinationID()},
 		{"linked-child", false, "external-parent", cfg.DestinationID()},
