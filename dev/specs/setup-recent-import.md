@@ -200,5 +200,14 @@ From the §1–§3 implementation (#386):
   is limited to included roots) nor captured; nothing now says so.
 - **Pairing.** `machines pair` on the receiving machine finishes through
   `finishSetup` too, so it imports the last 7 days as well.
-- **Not tested here:** the spec's "a session that started before setup and
-  keeps writing after it is imported and then updated by discovery".
+- **What keeps an imported session current.** The collector, not discovery.
+  Every pass scans every accepted registration and rereads a transcript whose
+  size or modification time changed, so an imported session's later turns are
+  published like a hook session's (no hook, request, or second import needed).
+  Discovery only recognizes the session: its `!authorized` branch lets the
+  existing archive ID through, and `mergeContinuation` then leaves an
+  import-origin registration as it is (it never moves an import's locator).
+  Tested in `setup_recent_import_continue_test.go`, for Claude Code
+  through setup and for a Codex session refused as `start_not_authorized`
+  before `backfill --since 7d` imports it; refusing it in discovery's
+  `!authorized` branch as well leaves the Codex test passing.

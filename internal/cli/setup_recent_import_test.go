@@ -236,23 +236,43 @@ func TestSetupNamesOnlyOlderSessions(t *testing.T) {
 }
 
 // While capture is paused, setup imports nothing: backfill would refuse it.
+//
+// The same rerun without the pause imports the session, so the paused case
+// reaches the import with something to import. (The session is the app's,
+// Claude Code: one of another app would be left out by the app filter
+// whether or not capture is paused.)
 func TestSetupWhilePausedImportsNothing(t *testing.T) {
 	t.Parallel()
-	f := newScreenFixture(t)
-	f.installed(t)
-	f.env.Now = func() time.Time { return screenNow.Add(time.Minute) }
-	var out bytes.Buffer
-	if code := Run([]string{"pause"}, nil, &out, &out, f.env); code != 0 {
-		t.Fatalf("pause: %s", &out)
-	}
-	f.pastSession(t, "one", "src/web-app", screenNow.Add(-2*time.Hour))
-	// Change retention, and save.
-	got := f.runSetup(t, "3\n30\n\n")
-	if strings.Contains(got, "Imported") || strings.Contains(got, "older session") || strings.Contains(got, "Recent sessions") || !strings.Contains(got, "agent-archive resume") {
-		t.Fatalf("import while paused:\n%s", got)
-	}
-	if ids := importedSessions(t, f.home); len(ids) != 0 {
-		t.Fatalf("imported %v", ids)
+	for _, paused := range []bool{true, false} {
+		t.Run(fmt.Sprintf("paused=%v", paused), func(t *testing.T) {
+			t.Parallel()
+			f := newScreenFixture(t)
+			f.withApps(t, "claude")
+			f.inWebApp(t)
+			f.runSetup(t, "", setupYesArgs...)
+			f.env.Now = func() time.Time { return screenNow.Add(time.Minute) }
+			if paused {
+				var out bytes.Buffer
+				if code := Run([]string{"pause"}, nil, &out, &out, f.env); code != 0 {
+					t.Fatalf("pause: %s", &out)
+				}
+			}
+			f.pastSession(t, "one", "src/web-app", screenNow.Add(-2*time.Hour))
+			got := f.runSetup(t, "", setupYesArgs...)
+			ids := importedSessions(t, f.home)
+			if !paused {
+				if !strings.Contains(got, "Imported 1 session") || len(ids) != 1 {
+					t.Fatalf("rerun did not import (%v):\n%s", ids, got)
+				}
+				return
+			}
+			if strings.Contains(got, "Imported") || strings.Contains(got, "older session") || strings.Contains(got, "Recent sessions") || !strings.Contains(got, "agent-archive resume") {
+				t.Fatalf("import while paused:\n%s", got)
+			}
+			if len(ids) != 0 {
+				t.Fatalf("imported %v", ids)
+			}
+		})
 	}
 }
 
