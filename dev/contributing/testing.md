@@ -29,7 +29,7 @@ request. On macOS it builds all production packages with cgo and runs the
 focused Keychain, launchd, terminal, and CLI smoke suite above. macOS
 golangci-lint also runs on each pull request: the first pass blocks, and
 revive's doc-comment rule checks only code the pull request adds or changes.
-All jobs use Go 1.27.1 exactly (go.mod's `toolchain` line). A new push to a
+All jobs use Go 1.27.2 exactly (go.mod's `toolchain` line). A new push to a
 pull request cancels that pull request's older Test and Levenshtein runs.
 
 The Git identity compatibility job separately runs isolated native Git tests on

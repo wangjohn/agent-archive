@@ -987,7 +987,8 @@ func bindingFacts(f *rolloutFile, home string, own *uint64) (archive.CodexSource
 		root = f.identity.ThreadID
 	}
 	facts := archive.CodexSourceBinding{Version: 1, Child: f.identity.Child, NativeThreadID: f.identity.ThreadID, NativeCreatedAt: created, Cwd: f.meta.Cwd, SelectedCwd: f.meta.Cwd, ProducerSource: source, PhysicalProducerVersion: f.meta.Version, PhysicalProducerOriginator: f.meta.Originator, RootID: root, ParentID: f.identity.ParentID, OwnStart: own, PhysicalRolloutID: f.identity.RolloutID, Path: f.ref.Path, Home: home}
-	return facts, facts.Validate()
+	err = facts.Validate()
+	return facts, err
 }
 
 func (s *ordinarySnapshot) AdmissionFacts(ctx context.Context) (archive.CodexSourceBinding, error) {
@@ -1381,7 +1382,8 @@ func (p *relatedSourcePass) historyBindingFacts(ctx context.Context, selection s
 	facts.SelectedCwd = selection.leaf.meta.Cwd
 	facts.PhysicalProducerVersion = selection.leaf.meta.Version
 	facts.PhysicalProducerOriginator = selection.leaf.meta.Originator
-	return facts, facts.Validate()
+	err := facts.Validate()
+	return facts, err
 }
 
 func ownTaskFacts(line []byte, local bool) agentapi.OwnTaskFacts {
