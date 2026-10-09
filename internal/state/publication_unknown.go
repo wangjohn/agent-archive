@@ -2,8 +2,10 @@ package state
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"io"
 	"reflect"
@@ -12,21 +14,27 @@ import (
 
 // Closed protocols never let future authority fall through to a legacy record.
 func closedPublicationDecode(data []byte, dst any, fields ...map[string]bool) error {
-	if err := uniquePublicationJSON(json.NewDecoder(bytes.NewReader(data)), 0, reflect.TypeOf(dst), fields...); err != nil {
-		return errors.Join(ErrDurableStorageRecovery, err)
-	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(dst); err != nil {
+	if err := uniquePublicationJSON(decoder, 0, reflect.TypeOf(dst), fields...); err != nil {
 		return errors.Join(ErrDurableStorageRecovery, err)
 	}
-	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
+	// Preserve trailing-data refusal before typed decoding, including its
+	// non-quarantine disposition for an otherwise complete JSON value.
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
 		return ErrDurableStorageRecovery
+	}
+	if err := json.Unmarshal(data, dst); err != nil {
+		return errors.Join(ErrDurableStorageRecovery, err)
 	}
 	return nil
 }
 
+// UnmarshalJSON decodes the closed publication wire without borrowing a Store ledger.
 func (p *PendingPublication) UnmarshalJSON(data []byte) error {
+	return decodePendingPublication(data, p, context.Background(), nil)
+}
+
+func decodePendingPublication(data []byte, p *PendingPublication, ctx context.Context, budget *agentapi.NativeReadBudget) error {
 	type pendingJSON PendingPublication
 	var decoded pendingJSON
 	fields := make(map[string]bool)
@@ -41,7 +49,16 @@ func (p *PendingPublication) UnmarshalJSON(data []byte) error {
 		if len(p.Sources) > 0 && p.Sources[0].Payload.Kind == PublicationInline {
 			p.SourceBytes = p.Sources[0].Payload.Inline
 		}
-		if err := p.validatePublicationEnvelope(); err != nil {
+		count := len(p.Sources)
+		if p.Preparation != nil {
+			count += len(p.Preparation.Inputs)
+		}
+		facts, release, err := newPayloadDigestFacts(ctx, budget, count)
+		if err != nil {
+			return err
+		}
+		defer release()
+		if err := p.validatePublicationEnvelopeWithFacts(facts); err != nil {
 			return errors.Join(ErrDurableStorageRecovery, err)
 		}
 	} else {
@@ -58,6 +75,10 @@ func (p *PendingPublication) UnmarshalJSON(data []byte) error {
 }
 
 func (p *publishedState) UnmarshalJSON(data []byte) error {
+	return decodePublishedState(data, p, context.Background(), nil)
+}
+
+func decodePublishedState(data []byte, p *publishedState, ctx context.Context, budget *agentapi.NativeReadBudget) error {
 	type publishedJSON publishedState
 	var decoded publishedJSON
 	fields := make(map[string]bool)
@@ -66,7 +87,16 @@ func (p *publishedState) UnmarshalJSON(data []byte) error {
 	}
 	*p = publishedState(decoded)
 	if p.PublicationVersion == 2 {
-		return p.validateSelectingPublished()
+		count := len(p.Payloads)
+		if p.Preparation != nil {
+			count += len(p.Preparation.Inputs)
+		}
+		facts, release, err := newPayloadDigestFacts(ctx, budget, count)
+		if err != nil {
+			return err
+		}
+		defer release()
+		return p.validateSelectingPublishedWithFacts(facts)
 	}
 	for _, field := range []string{"publication_version", "settled_privacy", "preparation", "payloads", "cleanup", "privacy_receipts"} {
 		if fields[field] {
@@ -108,11 +138,16 @@ func (p *publishedState) UnmarshalJSON(data []byte) error {
 }
 
 func (p publishedState) validateSelectingPublished() error {
+	return p.validateSelectingPublishedWithFacts(nil)
+}
+
+func (p publishedState) validateSelectingPublishedWithFacts(facts *payloadDigestFacts) (err error) {
+	defer func() { err = facts.result(err) }()
 	derived := p.summary()
 	if p.Summary == nil || !reflect.DeepEqual(*p.Summary, derived) {
 		return ErrDurableStorageRecovery
 	}
-	if p.PublicationVersion != 2 || p.Commit == nil || p.Commit.Version != 2 || p.Commit.PayloadSetSHA256 != payloadSetSHA(p.Payloads) || p.Commit.MetadataSHA256 != publicationSHA256(p.MetadataBytes) || p.Commit.PrivacySHA256 != privacyReceiptsSHA(p.PrivacyReceipts) {
+	if p.PublicationVersion != 2 || p.Commit == nil || p.Commit.Version != 2 || p.Commit.PayloadSetSHA256 != payloadSetSHAWithFacts(p.Payloads, facts) || p.Commit.MetadataSHA256 != publicationSHA256(p.MetadataBytes) || p.Commit.PrivacySHA256 != privacyReceiptsSHA(p.PrivacyReceipts) {
 		return ErrDurableStorageRecovery
 	}
 	if (p.Preparation == nil) == (p.SettledPrivacy == nil) {
@@ -123,10 +158,10 @@ func (p publishedState) validateSelectingPublished() error {
 			return err
 		}
 	} else {
-		if p.Commit.SettledPrivacySHA256 != "" || p.Commit.PreparationSHA256 != p.Preparation.SHA256 || p.Preparation.SHA256 != preparationSHA(*p.Preparation) {
+		if p.Commit.SettledPrivacySHA256 != "" || p.Commit.PreparationSHA256 != p.Preparation.SHA256 || p.Preparation.SHA256 != preparationSHAWithFacts(*p.Preparation, facts) {
 			return ErrDurableStorageRecovery
 		}
-		if err := p.Preparation.validate(); err != nil {
+		if err := p.Preparation.validateWithFacts(facts); err != nil {
 			return err
 		}
 		if p.Preparation.Migration != nil && p.Preparation.Migration.NextMetadataSHA256 != publicationSHA256(p.MetadataBytes) {
@@ -167,7 +202,7 @@ func (p publishedState) validateSelectingPublished() error {
 		return err
 	}
 	pending := PendingPublication{MetadataKey: key, JournalVersion: 2, Commit: &commit, Sources: p.Payloads, Bundle: bundle, SourceKey: current.Key, SourceSHA256: current.SHA256, SourceSize: current.CompressedBytes, MetadataOnly: true, MetadataBytes: p.MetadataBytes, SourceBytes: p.Payloads[0].Payload.Inline}
-	if err := pending.validateReadyPublication(); err != nil {
+	if err := pending.validateReadyPublicationWithFacts(facts); err != nil {
 		return errors.Join(ErrDurableStorageRecovery, err)
 	}
 	return nil
@@ -202,6 +237,9 @@ func uniquePublicationJSON(d *json.Decoder, depth int, destination reflect.Type,
 			// Go's typed JSON decoder accepts case aliases for struct fields.
 			// Canonicalize only those fields; arbitrary native map keys remain exact.
 			name, child = publicationJSONField(destination, name)
+			if destination != nil && destination.Kind() == reflect.Struct && child == nil {
+				return ErrDurableStorageRecovery
+			}
 			if depth == 0 && len(topFields) > 0 {
 				name = strings.ToLower(name)
 			}

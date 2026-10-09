@@ -95,7 +95,7 @@ func (s *Store) GenerationSuccessor(id string) (string, bool, error) {
 	if !safeFileComponent(id) {
 		return "", false, errors.New("invalid archive session ID")
 	}
-	r, found, err := s.loadGenerationRecovery(id)
+	r, found, err := s.loadGenerationRecovery(s.durableContext(), id)
 	if generationReadRefusal(err) {
 		return "", false, err
 	}
@@ -326,7 +326,7 @@ func (s *Store) resumeGenerationRecoveryFile(ctx context.Context, id string, bud
 	}
 	scoped, closeScope := s.WithReadBudget(ctx, budget)
 	defer closeScope()
-	r, found, err := scoped.loadGenerationRecovery(id)
+	r, found, err := scoped.loadGenerationRecovery(ctx, id)
 	if generationReadRefusal(err) {
 		return err
 	}
@@ -357,7 +357,7 @@ func (s *Store) resumeGenerationRecovery(g config.DurableStorageGuard, ctx conte
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	r, found, err := s.loadGenerationRecovery(id)
+	r, found, err := s.loadGenerationRecovery(ctx, id)
 	if generationReadRefusal(err) {
 		return err
 	}
@@ -895,9 +895,9 @@ func (s *Store) GenerationCaptureAllowed(reg archive.SessionRegistration) error 
 	return nil
 }
 
-func (s *Store) loadGenerationRecovery(id string) (generationRecovery, bool, error) {
+func (s *Store) loadGenerationRecovery(ctx context.Context, id string) (generationRecovery, bool, error) {
 	var r generationRecovery
-	err := s.readBudgeted(s.generationRecoveryPath(id), &r, true)
+	err := s.readBudgetedContext(ctx, s.generationRecoveryPath(id), &r, true)
 	if errors.Is(err, os.ErrNotExist) {
 		return r, false, nil
 	}

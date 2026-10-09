@@ -52,10 +52,11 @@ import (
 // never stores credentials or a second copy of conversation content beyond
 // what the published source bundle itself already contains.
 type Store struct {
-	durableInspection *durableInspectionCache
-	resourceBudget    *agentapi.NativeReadBudget
-	resourceContext   context.Context
-	resourceReleases  *[]func()
+	durableInspection     *durableInspectionCache
+	publicationAccounting *publicationAccounting
+	resourceBudget        *agentapi.NativeReadBudget
+	resourceContext       context.Context
+	resourceReleases      *[]func()
 	// indexSnapshots uses logical packed authority for qualified-index writes.
 	indexSnapshots bool
 	// onPackedEnumeration observes collector-only physical-index directory probes.
@@ -85,6 +86,8 @@ type Store struct {
 	publicationFileClose func(*os.File) error
 	// publicationRootClose is confined to final owned migration-directory close.
 	publicationRootClose func(*os.Root) error
+	// publicationAfterSavedRoot is a nil-default fixture fault at the final composition callback boundary.
+	publicationAfterSavedRoot func(*os.Root) error
 }
 
 // OpenReadOnly returns a handle to an existing local store under
@@ -858,7 +861,7 @@ func (s *Store) SavePending(id string, pending PendingPublication) error {
 		return err
 	}
 	if pending.Commit != nil {
-		if err := pending.ValidatePublication(); err != nil {
+		if err := pending.ValidatePublicationBudgeted(s.durableContext(), s.resourceBudget); err != nil {
 			return err
 		}
 	}

@@ -1,6 +1,7 @@
 package state
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -9,6 +10,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 )
 
@@ -148,7 +150,30 @@ func (owned *PendingPublication) ValidatePublication() error {
 	return p.validateReadyPublication()
 }
 
+// ValidatePublicationBudgeted shares hashes only within this complete validation
+// call, borrowing the caller's existing ledger without extending proof lifetime.
+func (owned *PendingPublication) ValidatePublicationBudgeted(ctx context.Context, budget *agentapi.NativeReadBudget) error {
+	if owned.JournalVersion != 2 {
+		return owned.ValidatePublication()
+	}
+	count := len(owned.Sources)
+	if owned.Preparation != nil {
+		count += len(owned.Preparation.Inputs)
+	}
+	facts, release, err := newPayloadDigestFacts(ctx, budget, count)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return owned.validatePublicationEnvelopeWithFacts(facts)
+}
+
 func (owned *PendingPublication) validateReadyPublication() error {
+	return owned.validateReadyPublicationWithFacts(nil)
+}
+
+func (owned *PendingPublication) validateReadyPublicationWithFacts(facts *payloadDigestFacts) (err error) {
+	defer func() { err = facts.result(err) }()
 	p := *owned
 	c := p.Commit
 	if c == nil || (c.Version != 1 && c.Version != 2) || (c.Purpose != PublicationCapture && c.Purpose != PublicationMetadata && c.Purpose != PublicationPrivacyRewrite) {
@@ -187,7 +212,7 @@ func (owned *PendingPublication) validateReadyPublication() error {
 			if source.Reference != refs[i] || len(source.Bytes) != 0 {
 				return ErrDurableStorageRecovery
 			}
-			if err := validatePublicationPayload(source, metadata, c.DestinationID, c.AdmissionContext); err != nil {
+			if err := validatePublicationPayloadWithFacts(source, metadata, c.DestinationID, c.AdmissionContext, facts); err != nil {
 				return err
 			}
 			total += len(source.Payload.Inline)
@@ -313,8 +338,8 @@ func (p *Published) PublicationPredecessor() PublicationPredecessor {
 	return PublicationPredecessor{State: PredecessorPresent, Body: p.state.MetadataBytes, Bundle: bundle}
 }
 
-func attachPublication(next publishedState, pending PendingPublication) (publishedState, error) {
-	if err := pending.ValidatePublication(); err != nil {
+func attachPublication(next publishedState, pending PendingPublication, ctx context.Context, budget *agentapi.NativeReadBudget) (publishedState, error) {
+	if err := pending.ValidatePublicationBudgeted(ctx, budget); err != nil {
 		return next, err
 	}
 	commit := *pending.Commit

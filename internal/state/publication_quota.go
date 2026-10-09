@@ -1,84 +1,143 @@
 package state
 
 import (
-	"encoding/json"
+	"context"
+	"crypto/sha256"
 	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"syscall"
+
+	"github.com/wangjohn/agent-archive/internal/local"
 )
 
 // publishedProtocol classifies existing physical state under the held root.
 // Classification only accounts bytes; it supplies no source or deletion authority.
-func (q *durableQuota) publishedProtocol(path string, expected os.FileInfo) (mode int, err error) {
-	if err := q.store.durableContext().Err(); err != nil {
+func (q *durableQuota) publishedProtocol(ctx context.Context, path string, expected os.FileInfo) (mode int, err error) {
+	if err = ctx.Err(); err != nil {
 		return 0, err
+	}
+	if err = q.guard.CheckHome(q.path); err != nil {
+		return 0, err
+	}
+	if reused, ok, e := q.accountingClassification(path, expected); e != nil {
+		return 0, e
+	} else if ok {
+		return reused, nil
+	}
+	mode, _, err = q.store.readPublishedClassification(ctx, q.home, path, expected)
+	if e := q.guard.CheckHome(q.path); e != nil {
+		return 0, errors.Join(err, e)
+	}
+	return mode, err
+}
+
+func (s *Store) readPublishedClassification(ctx context.Context, home *local.RootedHome, path string, expected os.FileInfo) (mode int, sum [32]byte, err error) {
+	var p publishedState
+	sum, release, err := s.readPublishedDecoded(ctx, home, path, expected, &p)
+	defer release()
+	if err != nil {
+		return 0, sum, err
+	}
+	mode = publishedAccountingMode(p)
+	if mode == 0 {
+		return 0, sum, ErrDurableStorageRecovery
+	}
+	return mode, sum, nil
+}
+
+func publishedAccountingMode(p publishedState) int {
+	if p.PublicationVersion == 2 {
+		return 2
+	}
+	if legacyBlockedPublicationControl(p) {
+		switch p.BlockedReason {
+		case BlockedReasonTranscriptRewritten, BlockedReasonTranscriptTooLarge, BlockedReasonRecordTooLarge, BlockedReasonTranscriptMissing:
+			return 1
+		}
+	}
+	if p.PublicationVersion == 0 && p.Bundle.ArchiveSessionID != "" && p.Bundle.NativeSessionID != "" {
+		return 1
+	}
+	return 0
+}
+
+func (s *Store) readPublishedDecoded(ctx context.Context, home *local.RootedHome, path string, expected os.FileInfo, p *publishedState) (sum [32]byte, release func(), err error) {
+	if err := ctx.Err(); err != nil {
+		return sum, func() {}, err
 	}
 	if !expected.Mode().IsRegular() || expected.Size() < 0 {
-		return 0, ErrDurableStorageRecovery
+		return sum, func() {}, ErrDurableStorageRecovery
 	}
 	if expected.Size() > durableStorageQuota {
-		return 0, ErrDurableStorageCapacity
+		return sum, func() {}, ErrDurableStorageCapacity
 	}
 	n := expected.Size()
-	if q.store.resourceBudget != nil {
-		if !q.store.resourceBudget.Reserve(2 * n) {
-			return 0, errStateBudget
+	if s.resourceBudget != nil {
+		if !s.resourceBudget.Reserve(2 * n) {
+			return sum, func() {}, errStateBudget
 		}
-		defer q.store.resourceBudget.Release(2 * n)
+		defer s.resourceBudget.Release(n)
+		keep := false
+		defer func() {
+			if !keep {
+				s.resourceBudget.Release(n)
+			}
+		}()
+		defer func() {
+			if err == nil {
+				keep = true
+				release = func() { s.resourceBudget.Release(n) }
+			}
+		}()
 	}
-	f, err := q.home.Root.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	f, err := home.Root.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {
-		return 0, err
+		return sum, func() {}, err
 	}
 	defer func() {
-		if closeErr := q.store.closePublicationFile(f); closeErr != nil {
-			mode = 0
+		if closeErr := s.closePublicationFile(f); closeErr != nil {
+			sum = [32]byte{}
 			err = errors.Join(err, closeErr)
 		}
 	}()
 	opened, err := f.Stat()
 	if err != nil || !sameDurableStamp(expected, opened) {
-		return 0, errors.Join(ErrDurableStorageRecovery, err)
+		return sum, func() {}, errors.Join(ErrDurableStorageRecovery, err)
 	}
-	raw, err := io.ReadAll(io.LimitReader(f, n+1))
-	if err != nil || int64(len(raw)) != n {
-		return 0, errors.Join(ErrDurableStorageRecovery, err)
+	raw := make([]byte, n)
+	if _, err = io.ReadFull(f, raw); err != nil {
+		return sum, func() {}, errors.Join(ErrDurableStorageRecovery, err)
 	}
-	var p publishedState
-	if err = json.Unmarshal(raw, &p); err != nil {
-		return 0, errors.Join(ErrDurableStorageRecovery, err)
+	var extra [1]byte
+	count, e := f.Read(extra[:])
+	if count != 0 || !errors.Is(e, io.EOF) {
+		return sum, func() {}, errors.Join(ErrDurableStorageRecovery, e)
 	}
-	named, err := q.home.Root.Lstat(path)
+	sum = sha256.Sum256(raw)
+	if err = decodePublishedState(raw, p, ctx, s.resourceBudget); err != nil {
+		return sum, func() {}, errors.Join(ErrDurableStorageRecovery, err)
+	}
+	finalOpened, err := f.Stat()
+	if err != nil || !sameDurableStamp(expected, finalOpened) {
+		return sum, func() {}, errors.Join(ErrDurableStorageRecovery, err)
+	}
+	named, err := home.Root.Lstat(path)
 	if err != nil || !sameDurableStamp(expected, named) {
-		return 0, errors.Join(ErrDurableStorageRecovery, err)
+		return sum, func() {}, errors.Join(ErrDurableStorageRecovery, err)
 	}
-	if err = q.guard.CheckHome(q.path); err != nil {
-		return 0, err
+	if err = home.Check(); err != nil {
+		return sum, func() {}, err
 	}
-	if err = q.store.durableContext().Err(); err != nil {
-		return 0, err
+	if err = ctx.Err(); err != nil {
+		return sum, func() {}, err
 	}
-	if p.PublicationVersion == 2 {
-		return 2, nil
-	}
-	// Current ordinary blocked controls can precede the first readable bundle.
-	// Their closed status/reason is legacy accounting, never source authority.
-	if legacyBlockedPublicationControl(p) {
-		switch p.BlockedReason {
-		case BlockedReasonTranscriptRewritten, BlockedReasonTranscriptTooLarge, BlockedReasonRecordTooLarge, BlockedReasonTranscriptMissing:
-			return 1, nil
-		}
-	}
-	if p.PublicationVersion != 0 || p.Bundle.ArchiveSessionID == "" || p.Bundle.NativeSessionID == "" {
-		return 0, ErrDurableStorageRecovery
-	}
-	return 1, nil
+	return sum, func() {}, nil
 }
 
-func (q *durableQuota) scanPublished(remaining *int, u *durableUsage) (err error) {
+func (q *durableQuota) scanPublished(ctx context.Context, remaining *int, u *durableUsage) (err error) {
 	root, err := privateDirectory(q.home.Root, "published", false)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -93,7 +152,7 @@ func (q *durableQuota) scanPublished(remaining *int, u *durableUsage) (err error
 	}
 	defer func() { err = errors.Join(err, dir.Close()) }()
 	for {
-		if err = q.store.durableContext().Err(); err != nil {
+		if err = ctx.Err(); err != nil {
 			return err
 		}
 		entries, e := dir.ReadDir(128)
@@ -115,7 +174,7 @@ func (q *durableQuota) scanPublished(remaining *int, u *durableUsage) (err error
 			path := filepath.Join("published", entry.Name())
 			supportedName := !strings.HasPrefix(entry.Name(), ".pending-") && strings.HasSuffix(entry.Name(), ".json") && safeFileComponent(strings.TrimSuffix(entry.Name(), ".json"))
 			if supportedName {
-				version, e := q.publishedProtocol(path, info)
+				version, e := q.publishedProtocol(ctx, path, info)
 				if e != nil {
 					return e
 				}
@@ -137,7 +196,7 @@ func (q *durableQuota) scanPublished(remaining *int, u *durableUsage) (err error
 	}
 }
 
-func (q *durableQuota) publishedAdditional(path string, old os.FileInfo, n int64) (int64, error) {
+func (q *durableQuota) publishedAdditional(ctx context.Context, path string, old os.FileInfo, n int64) (int64, error) {
 	if n < 0 || n > durableStorageQuota/2 {
 		return 0, ErrDurableStorageCapacity
 	}
@@ -147,7 +206,7 @@ func (q *durableQuota) publishedAdditional(path string, old os.FileInfo, n int64
 		if o < 0 || o > durableStorageQuota {
 			return 0, ErrDurableStorageCapacity
 		}
-		version, err := q.publishedProtocol(path, old)
+		version, err := q.publishedProtocol(ctx, path, old)
 		if err != nil {
 			return 0, err
 		}

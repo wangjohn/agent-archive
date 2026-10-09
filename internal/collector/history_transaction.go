@@ -244,7 +244,7 @@ func (s *sessionScan) verifyHistoryReferences(p state.PendingPublication, metada
 		}
 		s.releaseRetainedAfter(mark)
 	}
-	if s.publicationAttempt != nil && p.Commit != nil && p.ValidatePublication() == nil {
+	if s.publicationAttempt != nil && p.Commit != nil && p.ValidatePublicationBudgeted(s.ctx, s.readBudget()) == nil {
 		commit := *p.Commit
 		s.publicationAttempt.verifiedCommit = &commit
 		s.publicationAttempt.verifiedKey = p.MetadataKey

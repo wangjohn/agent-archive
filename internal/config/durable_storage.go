@@ -1,10 +1,14 @@
 package config
 
 import (
+	"crypto/sha256"
 	"errors"
+	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
@@ -78,12 +82,16 @@ func WithPublicationComposition(home string, write func(PublicationCompositionGu
 	return withPublicationStorage(home, true, func(g DurableStorageGuard) error { return write(PublicationCompositionGuard{storage: g}) })
 }
 
-func withPublicationStorage(home string, composition bool, write func(DurableStorageGuard) error) (err error) {
+func withPublicationStorage(home string, composition bool, write func(DurableStorageGuard) error) error {
+	return withPublicationStorageClosing(home, composition, write, func(held *local.RootedHome) error { return held.Close() })
+}
+
+func withPublicationStorageClosing(home string, composition bool, write func(DurableStorageGuard) error, closeHome func(*local.RootedHome) error) (err error) {
 	held, err := local.OpenRootedHome(home)
 	if err != nil {
 		return err
 	}
-	defer func() { err = errors.Join(err, held.Close()) }()
+	defer func() { err = errors.Join(err, closeHome(held)) }()
 	// Reject unsupported/missing current config before creating even a lock file.
 	// The protected config is loaded again under hooks; this preflight grants no witness.
 	deadline := time.Now().Add(time.Second)
@@ -164,23 +172,65 @@ func loadDurableStoragePreflight(home *local.RootedHome, deadline time.Time) (Co
 
 // LoadRooted reads the current configuration through a caller-held archive home.
 // It uses Load's decoder and validation without creating or changing a floor.
-func LoadRooted(home *local.RootedHome) (cfg Config, found bool, err error) {
+func LoadRooted(home *local.RootedHome) (Config, bool, error) {
+	cfg, found, _, err := LoadRootedObserved(home)
+	return cfg, found, err
+}
+
+// LoadRootedObserved returns the digest of the same supported bytes decoded by
+// LoadRooted. It neither creates a protection floor nor supplies write authority.
+func LoadRootedObserved(home *local.RootedHome) (cfg Config, found bool, digest [32]byte, err error) {
 	if err = home.Check(); err != nil {
-		return Config{}, false, err
+		return Config{}, false, digest, err
 	}
 	before, err := home.Root.Lstat("config.json")
 	if errors.Is(err, os.ErrNotExist) {
-		return Config{}, false, nil
+		return Config{}, false, digest, nil
 	}
 	if err != nil || !before.Mode().IsRegular() {
-		return Config{}, false, errors.Join(errors.New("rooted configuration must be a regular file"), err)
+		return Config{}, false, digest, errors.Join(errors.New("rooted configuration must be a regular file"), err)
 	}
-	raw, readErr := home.Root.ReadFile("config.json")
+	raw, readErr := readRootedConfigObserved(home, before)
 	if err := rootedConfigReadUnchanged(home, before, raw, readErr); err != nil {
-		return Config{}, false, err
+		return Config{}, false, digest, err
 	}
 	cfg, found, _, err = decodeLoadedConfig(raw, readErr, filepath.Join(home.Root.Name(), "config.json"), agentmeta.Builtins())
-	return cfg, found, errors.Join(err, home.Check())
+	err = errors.Join(err, home.Check())
+	if err == nil {
+		digest = sha256.Sum256(raw)
+	}
+	return cfg, found, digest, err
+}
+
+func readRootedConfigObserved(home *local.RootedHome, before os.FileInfo) (raw []byte, err error) {
+	f, err := home.Root.OpenFile("config.json", os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if e := f.Close(); e != nil {
+			raw = nil
+			err = errors.Join(err, e)
+		}
+	}()
+	opened, err := f.Stat()
+	if err != nil || !opened.Mode().IsRegular() || opened.Size() < 0 || opened.Size() > math.MaxInt-1 || !os.SameFile(before, opened) || before.Size() != opened.Size() || !before.ModTime().Equal(opened.ModTime()) {
+		return nil, errors.Join(errRootedConfigObservationChanged, err)
+	}
+	raw = make([]byte, opened.Size())
+	if _, err = io.ReadFull(f, raw); err != nil {
+		return nil, err
+	}
+	var extra [1]byte
+	n, e := f.Read(extra[:])
+	if n != 0 || !errors.Is(e, io.EOF) {
+		return nil, errors.Join(errRootedConfigObservationChanged, e)
+	}
+	after, err := f.Stat()
+	if err != nil || !os.SameFile(before, after) || before.Size() != after.Size() || !before.ModTime().Equal(after.ModTime()) {
+		return nil, errors.Join(errRootedConfigObservationChanged, err)
+	}
+	return raw, nil
 }
 
 func rootedConfigReadUnchanged(home *local.RootedHome, before os.FileInfo, raw []byte, readErr error) error {

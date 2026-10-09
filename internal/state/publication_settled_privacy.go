@@ -222,7 +222,16 @@ func (s *Store) validateSelectingPublishedBudgeted(p publishedState) error {
 		return err
 	}
 	defer release()
-	return p.validateSelectingPublished()
+	count := len(p.Payloads)
+	if p.Preparation != nil {
+		count += len(p.Preparation.Inputs)
+	}
+	facts, end, e := newPayloadDigestFacts(s.durableContext(), s.resourceBudget, count)
+	if e != nil {
+		return e
+	}
+	defer end()
+	return p.validateSelectingPublishedWithFacts(facts)
 }
 
 func settledPrivacyOwnerChanged(p SettledPrivacyPreparation, next archive.Metadata) bool {

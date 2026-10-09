@@ -261,7 +261,7 @@ func (s *sessionScan) upload(pending state.PendingPublication) (*storage.Validat
 	if err := s.local.SaveListingRepair(s.id(), state.ListingRepair{MetadataKey: pending.MetadataKey, DestinationID: s.reg.DestinationID}); err != nil {
 		return nil, fmt.Errorf("journal listing repair: %w", err)
 	}
-	if err := pending.ValidatePublication(); err != nil {
+	if err := pending.ValidatePublicationBudgeted(s.ctx, s.readBudget()); err != nil {
 		return nil, err
 	}
 	var metadata archive.Metadata
@@ -384,7 +384,7 @@ func (s *sessionScan) sealPending(p *state.PendingPublication) error {
 		if p.Commit.DestinationID != s.reg.DestinationID || p.Commit.PolicyContext != policy || p.Commit.AdmissionContext != s.publicationAdmission() {
 			return errors.New("publication destination, admission or filter policy changed; retain pending evidence and reconcile")
 		}
-		return p.ValidatePublication()
+		return p.ValidatePublicationBudgeted(s.ctx, s.readBudget())
 	}
 	prior := s.published.PublicationPredecessor()
 	purpose := state.PublicationCapture
@@ -409,7 +409,7 @@ func (s *sessionScan) sealPending(p *state.PendingPublication) error {
 	if p.MetadataOnly {
 		purpose = state.PublicationMetadata
 	}
-	sealed, err := state.PreparePublicationV2(*p, prior, s.reg.DestinationID, s.publicationAdmission(), policy, purpose)
+	sealed, err := state.PreparePublicationV2Budgeted(s.ctx, s.readBudget(), *p, prior, s.reg.DestinationID, s.publicationAdmission(), policy, purpose)
 	if err != nil {
 		return fmt.Errorf("prepare publication: %w", err)
 	}

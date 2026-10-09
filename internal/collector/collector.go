@@ -264,6 +264,8 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 			runErr = errors.Join(runErr, err)
 		}
 	}()
+	local, closeAccounting := local.WithPublicationAccounting(ctx, (&sessionScan{opts: opts}).readBudget())
+	defer closeAccounting()
 	subagents := materializeSubagentCandidates(ctx, local, opts, now)
 	opts.repoKeys = newRepoKeyCache(opts.RepoKey)
 	p := &pass{

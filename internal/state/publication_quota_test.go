@@ -46,14 +46,14 @@ func TestPublicationQuotaLegacyReplacementHasNoCredit(t *testing.T) {
 		if e != nil {
 			return e
 		}
-		usage, e := q.usage()
+		usage, e := q.usage(t.Context())
 		if e != nil {
 			return e
 		}
 		if usage.charged != 0 {
 			t.Fatal("legacy gained lifetime charge", usage)
 		}
-		extra, e := q.publishedAdditional(path, info, 1024)
+		extra, e := q.publishedAdditional(t.Context(), path, info, 1024)
 		if e != nil {
 			return e
 		}
@@ -96,7 +96,7 @@ func TestPublicationFirstEvidenceControlRefusesBeforeDirectoryCreation(t *testin
 				t.Error(err)
 			}
 		}()
-		e = q.write("publication-evidence/synthetic/original.json", 3, func(w io.Writer) error { _, err := w.Write([]byte("{}\n")); return err })
+		e = q.write(t.Context(), "publication-evidence/synthetic/original.json", 3, func(w io.Writer) error { _, err := w.Write([]byte("{}\n")); return err })
 		if !errors.Is(e, ErrDurableStorageCapacity) {
 			t.Fatal("first control charge not enforced", e)
 		}

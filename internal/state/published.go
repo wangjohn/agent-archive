@@ -409,9 +409,10 @@ func (s *Store) LoadPublishedState(archiveSessionID string) (*Published, error) 
 	if !safeFileComponent(archiveSessionID) {
 		return nil, errors.New("archive session ID is not a safe file name component")
 	}
+	s.preparePublicationAccounting(archiveSessionID)
 	publishedStateLoads.Add(1)
 	p := &Published{store: s, id: archiveSessionID}
-	found, err := s.readOwned(s.publishedPath(archiveSessionID), &p.state)
+	found, err := s.readPublishedOwned(s.publishedPath(archiveSessionID), &p.state)
 	if err != nil {
 		// In a collector pass a corrupt file was moved aside: reported once,
 		// then the session is one that never published (quarantineInPass).
@@ -440,6 +441,14 @@ func (p *Published) write(next publishedState) error {
 	}
 	next.Summary = &summary
 	var writeErr error
+	var candidate *publicationAccountingFact
+	var binding publicationAccountingContext
+	var releaseCandidate func()
+	defer func() {
+		if releaseCandidate != nil {
+			releaseCandidate()
+		}
+	}()
 	if next.PublicationVersion == 2 {
 		if err := p.store.validateSelectingPublishedBudgeted(next); err != nil {
 			return err
@@ -456,13 +465,34 @@ func (p *Published) write(next publishedState) error {
 					return e
 				}
 			}
-			return p.store.writeDurableGuard(p.store.durableContext(), storage, filepath.Join("published", p.id+".json"), next)
+			path := filepath.Join("published", p.id+".json")
+			sum, n, e := p.store.writeDurableGuardDigest(p.store.durableContext(), storage, path, next)
+			if e != nil {
+				return e
+			}
+			candidate, binding, releaseCandidate, e = p.store.savedAccountingCandidate(storage, path, sum, n)
+			if e != nil {
+				return e
+			}
+			if candidate != nil && p.store.publicationAfterSavedRoot != nil {
+				home, e := storage.RootedHome(p.store.home)
+				if e != nil {
+					return e
+				}
+				return p.store.publicationAfterSavedRoot(home.Root)
+			}
+			return nil
 		})
 	} else {
 		writeErr = p.store.writeCompact(p.store.publishedPath(p.id), next)
 	}
 	if err := writeErr; err != nil {
 		return err
+	}
+	if candidate != nil {
+		if a := p.store.accountingScope(); a == nil || !a.install(*candidate, binding) {
+			return errStateBudget
+		}
 	}
 	p.state, p.found = next, true
 	return nil
@@ -679,7 +709,7 @@ func (p *Published) SavePublication(bundle archive.SourceBundle, publishedAt tim
 		if pending.SourceReference() != source || !bytes.Equal(pending.MetadataBytes, metadata) || !reflect.DeepEqual(bundle, pending.Bundle) {
 			return errors.New("committed journal differs from publication")
 		}
-		next, err = attachPublication(next, pending)
+		next, err = attachPublication(next, pending, p.store.durableContext(), p.store.resourceBudget)
 		if err != nil {
 			return err
 		}
@@ -795,7 +825,7 @@ func (p *Published) SaveRepublishedMetadata(pending PendingPublication, at time.
 	}
 	if pending.Commit != nil {
 		var err error
-		next, err = attachPublication(next, pending)
+		next, err = attachPublication(next, pending, p.store.durableContext(), p.store.resourceBudget)
 		if err != nil {
 			return err
 		}

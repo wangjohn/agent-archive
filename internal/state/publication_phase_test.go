@@ -75,7 +75,7 @@ func TestPublicationV2SinglePayloadAndSettledCharge(t *testing.T) {
 				t.Error(err)
 			}
 		}()
-		u, e := q.usage()
+		u, e := q.usage(t.Context())
 		if e == nil && u.charged != 2*int64(len(raw)) {
 			t.Fatalf("settled file not exactly charged: %d vs %d", u.charged, 2*len(raw))
 		}

@@ -139,6 +139,7 @@ func (s *Store) readOwned(path string, value any) (found bool, err error) {
 // moveAside renames a corrupt file out of the way and returns the error that
 // reports it, wrapping ErrQuarantined and the decoding error.
 func (s *Store) moveAside(path string, decodeErr error) error {
+	s.invalidatePublishedAccounting(path)
 	rel, relErr := filepath.Rel(s.home, path)
 	if relErr != nil {
 		rel = path

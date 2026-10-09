@@ -131,10 +131,15 @@ func selectedPublicationSources(p PendingPublication, destination, admission str
 }
 
 func validatePublicationPayload(source PublicationSource, m archive.Metadata, destination, admission string) error {
+	return validatePublicationPayloadWithFacts(source, m, destination, admission, nil)
+}
+
+func validatePublicationPayloadWithFacts(source PublicationSource, m archive.Metadata, destination, admission string, facts *payloadDigestFacts) (err error) {
+	defer func() { err = facts.result(err) }()
 	p := source.Payload
 	switch p.Kind {
 	case PublicationInline:
-		if p.Stage != nil || len(p.Inline) != source.Reference.CompressedBytes || publicationSHA256(p.Inline) != source.Reference.SHA256 {
+		if p.Stage != nil || len(p.Inline) != source.Reference.CompressedBytes || payloadInlineSHA(source, facts) != source.Reference.SHA256 {
 			return errors.New("inline publication checksum or union mismatch")
 		}
 	case PublicationRemote:
@@ -163,12 +168,14 @@ type payloadBinding struct {
 	Stage        *ImmutableStageHandle   `json:"Stage"`
 }
 
-func payloadSetSHA(sources []PublicationSource) string {
+func payloadSetSHA(sources []PublicationSource) string { return payloadSetSHAWithFacts(sources, nil) }
+
+func payloadSetSHAWithFacts(sources []PublicationSource, facts *payloadDigestFacts) string {
 	bindings := make([]payloadBinding, len(sources))
 	for i, s := range sources {
 		inlineSHA, inlineSize := "", 0
 		if s.Payload.Kind == PublicationInline {
-			inlineSHA = publicationSHA256(s.Payload.Inline)
+			inlineSHA = payloadInlineSHA(s, facts)
 			inlineSize = len(s.Payload.Inline)
 		}
 		bindings[i] = payloadBinding{Reference: s.Reference, Selection: s.Selection, Kind: s.Payload.Kind, Stage: s.Payload.Stage, InlineSHA256: inlineSHA, InlineSize: inlineSize}

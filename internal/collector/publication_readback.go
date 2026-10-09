@@ -114,7 +114,7 @@ type publicationClosingReadback struct {
 }
 
 func (s *sessionScan) closePublicationReadback(p state.PendingPublication) (*publicationClosingReadback, error) {
-	if s.publicationAttempt == nil || p.Commit == nil || s.publicationAttempt.verifiedCommit == nil || *s.publicationAttempt.verifiedCommit != *p.Commit || s.publicationAttempt.verifiedKey != p.MetadataKey || p.Phase != state.PublicationReady || p.ValidatePublication() != nil {
+	if s.publicationAttempt == nil || p.Commit == nil || s.publicationAttempt.verifiedCommit == nil || *s.publicationAttempt.verifiedCommit != *p.Commit || s.publicationAttempt.verifiedKey != p.MetadataKey || p.Phase != state.PublicationReady || p.ValidatePublicationBudgeted(s.ctx, s.readBudget()) != nil {
 		return nil, state.ErrDurableStorageRecovery
 	}
 	if err := s.ctx.Err(); err != nil {
@@ -175,7 +175,7 @@ func (r *publicationClosingReadback) consumeSelection(s *sessionScan, p state.Pe
 	} else if err := s.local.GenerationCaptureAllowed(s.reg); err != nil {
 		return err
 	}
-	if err := p.ValidatePublication(); err != nil {
+	if err := p.ValidatePublicationBudgeted(s.ctx, s.readBudget()); err != nil {
 		return err
 	}
 	r.consumed = true

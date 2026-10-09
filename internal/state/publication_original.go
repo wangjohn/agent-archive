@@ -356,7 +356,7 @@ func (s *Store) LoadPublicationPending(id string) (pending PendingPublication, f
 		}
 		defer closeBody()
 
-		if e = json.Unmarshal(body, &pending); e != nil {
+		if e = s.decodePublicationOwned(s.durableContext(), body, &pending); e != nil {
 			return e
 		}
 		if pending.Bundle.ArchiveSessionID != id {
@@ -417,7 +417,7 @@ func (s *Store) SettlePublicationMigration(id string, p PendingPublication) erro
 		}
 		defer closePublished()
 		var published publishedState
-		if err = json.Unmarshal(publishedRaw, &published); err != nil {
+		if err = s.decodePublicationOwned(s.durableContext(), publishedRaw, &published); err != nil {
 			return err
 		}
 		if migrationSelectingStateChanged(published, p, evidence) {

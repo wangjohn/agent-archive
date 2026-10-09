@@ -2,11 +2,13 @@ package state
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 )
 
@@ -70,7 +72,9 @@ type CleanupProgress struct {
 	SHA256                  string          `json:"sha256"`
 }
 
-func preparationSHA(a PreparationAuthority) string {
+func preparationSHA(a PreparationAuthority) string { return preparationSHAWithFacts(a, nil) }
+
+func preparationSHAWithFacts(a PreparationAuthority, facts *payloadDigestFacts) string {
 	type inputBinding struct {
 		Hook           *PublicationHookFacts   `json:"Hook"`
 		Reference      archive.SourceReference `json:"Reference"`
@@ -82,7 +86,7 @@ func preparationSHA(a PreparationAuthority) string {
 	}
 	inputs := make([]inputBinding, len(a.Inputs))
 	for i, input := range a.Inputs {
-		inputs[i] = inputBinding{publicationHookFacts(input.HookObservations), input.Reference, input.Selection, input.FilterVersion, input.AdapterVersion, input.SkillPolicy, payloadSetSHA([]PublicationSource{{Reference: input.Reference, Selection: input.Selection, Payload: input.Payload}})}
+		inputs[i] = inputBinding{publicationHookFacts(input.HookObservations), input.Reference, input.Selection, input.FilterVersion, input.AdapterVersion, input.SkillPolicy, payloadSetSHAWithFacts([]PublicationSource{{Reference: input.Reference, Selection: input.Selection, Payload: input.Payload}}, facts)}
 	}
 	raw, _ := json.Marshal(struct {
 		Version                int                `json:"Version"`
@@ -108,7 +112,7 @@ func preparationSHA(a PreparationAuthority) string {
 	return publicationSHA256(append(append([]byte("preparation-authority/v1\x00"), raw...), []byte("\x00"+migration+"\x00"+previousPrivacySHA)...))
 }
 
-func progressSHA(p PreparationProgress) string {
+func progressSHAWithFacts(p PreparationProgress, facts *payloadDigestFacts) string {
 	type outputBinding struct {
 		Index         int    `json:"Index"`
 		PayloadSHA256 string `json:"PayloadSHA256"`
@@ -120,7 +124,7 @@ func progressSHA(p PreparationProgress) string {
 		if o.Privacy != nil {
 			proofSHA = o.Privacy.SHA256
 		}
-		outputs[i] = outputBinding{o.InputIndex, payloadSetSHA([]PublicationSource{o.Source}), proofSHA}
+		outputs[i] = outputBinding{o.InputIndex, payloadSetSHAWithFacts([]PublicationSource{o.Source}, facts), proofSHA}
 	}
 	raw, _ := json.Marshal(struct {
 		Version               int             `json:"Version"`
@@ -141,9 +145,15 @@ func cleanupSHA(c CleanupProgress) string {
 // PreparePublicationV2 freezes a preparing adjunct or seals a ready transaction.
 // It grants no storage capability; the guarded writer persists composition8 first.
 func PreparePublicationV2(p PendingPublication, prior PublicationPredecessor, destination, admission, policy string, purpose PublicationPurpose) (PendingPublication, error) {
+	return PreparePublicationV2Budgeted(context.Background(), nil, p, prior, destination, admission, policy, purpose)
+}
+
+// PreparePublicationV2Budgeted borrows invocation-only digest scratch from the
+// existing source ledger; it grants no persistence or storage capability.
+func PreparePublicationV2Budgeted(ctx context.Context, budget *agentapi.NativeReadBudget, p PendingPublication, prior PublicationPredecessor, destination, admission, policy string, purpose PublicationPurpose) (prepared PendingPublication, err error) {
 	preparing := p.History != nil && p.History.Preparing
 	if p.JournalVersion == 2 && p.Commit != nil {
-		if err := p.ValidatePublication(); err != nil {
+		if err := p.ValidatePublicationBudgeted(ctx, budget); err != nil {
 			return p, fmt.Errorf("existing selecting seal: %w", err)
 		}
 		return p, nil
@@ -156,13 +166,23 @@ func PreparePublicationV2(p PendingPublication, prior PublicationPredecessor, de
 	if err != nil {
 		return p, err
 	}
+	count := 2 * len(sources)
+	if p.Preparation != nil {
+		count = len(sources) + len(p.Preparation.Inputs)
+	}
+	facts, release, err := newPayloadDigestFacts(ctx, budget, count)
+	if err != nil {
+		return p, err
+	}
+	defer release()
+	defer func() { err = facts.result(err) }()
 	p.Sources = sources
 	var m archive.Metadata
 	if err = json.Unmarshal(p.MetadataBytes, &m); err != nil {
 		return p, err
 	}
 	if p.Preparation == nil {
-		if err := p.initializePreparation(prior, m, destination, admission, policy, purpose, sources); err != nil {
+		if err := p.initializePreparation(prior, m, destination, admission, policy, purpose, sources, facts); err != nil {
 			return p, err
 		}
 	}
@@ -172,40 +192,9 @@ func PreparePublicationV2(p PendingPublication, prior PublicationPredecessor, de
 		p.Phase = PublicationPreparing
 	}
 	if p.History != nil {
-		p.History.Version = 2
-		if !preparing && p.Progress == nil {
-			if len(p.History.Inputs) == 0 {
-				for _, input := range p.Preparation.Inputs {
-					p.History.Inputs = append(p.History.Inputs, HistoryInput{Reference: input.Reference, RevisionID: input.Selection.RevisionID, CapturedAt: input.Selection.CapturedAt, SourceSchemaVersion: input.Selection.SourceSchemaVersion, FilterVersion: input.FilterVersion})
-				}
-			}
-			p.History.PrivacyCursor = len(p.Preparation.Inputs)
+		if err := p.initializeHistoryProgress(sources, facts, preparing); err != nil {
+			return p, err
 		}
-		cursor := p.History.PrivacyCursor
-		progress := &PreparationProgress{Version: 1, AuthoritySHA256: p.Preparation.SHA256, Cursor: cursor, WorkingMetadata: slices.Clone(p.MetadataBytes)}
-		for i := range cursor {
-			input := p.Preparation.Inputs[i]
-			var output *PublicationSource
-			for j := range sources {
-				if sources[j].Selection.RevisionID == input.Selection.RevisionID {
-					output = &sources[j]
-					break
-				}
-			}
-			if output == nil {
-				return p, errors.New("completed preparation input has no selected output")
-			}
-			var privacy *PrivacySource
-			if proof, ok := p.privacyOutputs[i]; ok {
-				factCopy := proof
-				privacy = &factCopy
-			} else if p.Progress != nil && i < len(p.Progress.Outputs) {
-				privacy = p.Progress.Outputs[i].Privacy
-			}
-			progress.Outputs = append(progress.Outputs, PreparedOutput{InputIndex: i, Source: *output, Privacy: privacy})
-		}
-		progress.SHA256 = progressSHA(*progress)
-		p.Progress = progress
 	}
 	digest, _, err := archive.PublicationIdentity(p.MetadataBytes, destination, admission, policy, string(purpose))
 	if err != nil {
@@ -222,18 +211,23 @@ func PreparePublicationV2(p PendingPublication, prior PublicationPredecessor, de
 		if err = p.validatePublicationPredecessor(prior, destination, admission, policy, purpose); err != nil {
 			return p, fmt.Errorf("selecting predecessor correspondence: %w", err)
 		}
-		p.Commit = &PublicationCommit{Version: 2, MetadataSHA256: publicationSHA256(p.MetadataBytes), SourceSetSHA256: digest, PayloadSetSHA256: payloadSetSHA(sources), PreparationSHA256: p.Preparation.SHA256, PrivacySHA256: privacyReceiptsSHA(p.privacyReceipts()), Predecessor: prior.State, DestinationID: destination, AdmissionContext: admission, PolicyContext: policy, Purpose: purpose}
+		p.Commit = &PublicationCommit{Version: 2, MetadataSHA256: publicationSHA256(p.MetadataBytes), SourceSetSHA256: digest, PayloadSetSHA256: payloadSetSHAWithFacts(sources, facts), PreparationSHA256: p.Preparation.SHA256, PrivacySHA256: privacyReceiptsSHA(p.privacyReceipts()), Predecessor: prior.State, DestinationID: destination, AdmissionContext: admission, PolicyContext: policy, Purpose: purpose}
 		if prior.State == PredecessorPresent {
 			p.Commit.PredecessorSHA256 = publicationSHA256(prior.Body)
 		}
 	}
-	if err := p.validatePublicationEnvelope(); err != nil {
+	if err := p.validatePublicationEnvelopeWithFacts(facts); err != nil {
 		return p, fmt.Errorf("new selecting preparation envelope: %w", err)
 	}
 	return p, nil
 }
 
 func (owned *PendingPublication) validatePublicationEnvelope() error {
+	return owned.validatePublicationEnvelopeWithFacts(nil)
+}
+
+func (owned *PendingPublication) validatePublicationEnvelopeWithFacts(facts *payloadDigestFacts) (err error) {
+	defer func() { err = facts.result(err) }()
 	p := *owned
 	if p.JournalVersion != 2 || (p.Phase != PublicationPreparing && p.Phase != PublicationReady) || p.Preparation == nil || p.Cleanup == nil {
 		return ErrDurableStorageRecovery
@@ -245,7 +239,7 @@ func (owned *PendingPublication) validatePublicationEnvelope() error {
 	if len(p.MetadataBytes) > 32<<20 || len(a.OriginMetadata) > 32<<20 {
 		return ErrDurableStorageCapacity
 	}
-	if err := a.validate(); err != nil {
+	if err := a.validateWithFacts(facts); err != nil {
 		return fmt.Errorf("frozen preparation authority: %w", err)
 	}
 	if a.Migration != nil && p.Phase == PublicationReady && a.Migration.NextMetadataSHA256 != publicationSHA256(p.MetadataBytes) {
@@ -262,13 +256,13 @@ func (owned *PendingPublication) validatePublicationEnvelope() error {
 	if len(expected) != len(p.Sources) {
 		return ErrDurableStorageRecovery
 	}
-	if err := p.validatePreparationPayloads(expected, working); err != nil {
+	if err := p.validatePreparationPayloads(expected, working, facts); err != nil {
 		return err
 	}
 	if err := p.validatePreparationPhase(); err != nil {
 		return err
 	}
-	if err := p.validatePreparationProgress(); err != nil {
+	if err := p.validatePreparationProgress(facts); err != nil {
 		return err
 	}
 	c := p.Cleanup
@@ -279,7 +273,7 @@ func (owned *PendingPublication) validatePublicationEnvelope() error {
 		return ErrDurableStorageRecovery
 	}
 	if p.Phase == PublicationReady {
-		return p.validatePreparationCommit()
+		return p.validatePreparationCommit(facts)
 	}
 	return nil
 }
@@ -299,11 +293,12 @@ func publicationWire(p PendingPublication) PendingPublication {
 }
 
 // validate checks immutable preparation authority without a mutable cursor.
-func (a PreparationAuthority) validate() error {
+func (a PreparationAuthority) validateWithFacts(facts *payloadDigestFacts) (err error) {
+	defer func() { err = facts.result(err) }()
 	if len(a.OriginMetadata) == 0 || len(a.OriginMetadata) > 32<<20 {
 		return ErrDurableStorageCapacity
 	}
-	if a.Version != 1 || (a.Kind != PreparationCapture && a.Kind != PreparationPrivacyCommitted && a.Kind != PreparationPrivacyPending && a.Kind != PreparationPrivacyPendingAbsent) || a.SHA256 != preparationSHA(a) || a.OriginMetadataSHA256 != publicationSHA256(a.OriginMetadata) || len(a.Inputs) == 0 || len(a.Inputs) > 65 {
+	if a.Version != 1 || (a.Kind != PreparationCapture && a.Kind != PreparationPrivacyCommitted && a.Kind != PreparationPrivacyPending && a.Kind != PreparationPrivacyPendingAbsent) || a.SHA256 != preparationSHAWithFacts(a, facts) || a.OriginMetadataSHA256 != publicationSHA256(a.OriginMetadata) || len(a.Inputs) == 0 || len(a.Inputs) > 65 {
 		return ErrDurableStorageRecovery
 	}
 	for _, input := range a.Inputs {
@@ -334,18 +329,18 @@ func (a PreparationAuthority) validate() error {
 		if input.Reference != refs[i] {
 			return ErrDurableStorageRecovery
 		}
-		if err := validatePublicationPayload(PublicationSource{Reference: input.Reference, Selection: input.Selection, Payload: input.Payload}, origin, a.DestinationID, a.AdmissionContext); err != nil {
+		if err := validatePublicationPayloadWithFacts(PublicationSource{Reference: input.Reference, Selection: input.Selection, Payload: input.Payload}, origin, a.DestinationID, a.AdmissionContext, facts); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (p *PendingPublication) validatePreparationProgress() error {
+func (p *PendingPublication) validatePreparationProgress(facts *payloadDigestFacts) error {
 	a := p.Preparation
 	if p.History != nil {
 		g := p.Progress
-		if g == nil || g.Version != 1 || g.AuthoritySHA256 != a.SHA256 || g.SHA256 != progressSHA(*g) || g.Cursor != p.History.PrivacyCursor || len(g.Outputs) != g.Cursor || g.Cursor < 0 || g.Cursor > len(a.Inputs) || publicationSHA256(g.WorkingMetadata) != publicationSHA256(p.MetadataBytes) {
+		if g == nil || g.Version != 1 || g.AuthoritySHA256 != a.SHA256 || g.SHA256 != progressSHAWithFacts(*g, facts) || g.Cursor != p.History.PrivacyCursor || len(g.Outputs) != g.Cursor || g.Cursor < 0 || g.Cursor > len(a.Inputs) || publicationSHA256(g.WorkingMetadata) != publicationSHA256(p.MetadataBytes) {
 			return ErrDurableStorageRecovery
 		}
 		for i, output := range g.Outputs {
@@ -364,7 +359,7 @@ func (p *PendingPublication) validatePreparationProgress() error {
 	return nil
 }
 
-func (p *PendingPublication) validatePreparationPayloads(expected []PublicationSource, working archive.Metadata) error {
+func (p *PendingPublication) validatePreparationPayloads(expected []PublicationSource, working archive.Metadata, facts *payloadDigestFacts) error {
 	a := p.Preparation
 	inline, compressed := 0, 0
 	for _, input := range a.Inputs {
@@ -377,7 +372,7 @@ func (p *PendingPublication) validatePreparationPayloads(expected []PublicationS
 		if source.Reference != expected[i].Reference || source.Selection != expected[i].Selection || source.Reference.CompressedBytes <= 0 || source.Reference.CompressedBytes > 128<<20 || len(source.Bytes) != 0 {
 			return ErrDurableStorageRecovery
 		}
-		if err := validatePublicationPayload(source, working, a.DestinationID, a.AdmissionContext); err != nil {
+		if err := validatePublicationPayloadWithFacts(source, working, a.DestinationID, a.AdmissionContext, facts); err != nil {
 			return err
 		}
 		inline += len(source.Payload.Inline)
@@ -414,7 +409,7 @@ func (a PreparationAuthority) validatePurpose() error {
 	return nil
 }
 
-func (p *PendingPublication) initializePreparation(prior PublicationPredecessor, m archive.Metadata, destination, admission, policy string, purpose PublicationPurpose, sources []PublicationSource) error {
+func (p *PendingPublication) initializePreparation(prior PublicationPredecessor, m archive.Metadata, destination, admission, policy string, purpose PublicationPurpose, sources []PublicationSource, facts *payloadDigestFacts) error {
 	digest, _, e := archive.PublicationIdentity(p.MetadataBytes, destination, admission, policy, string(purpose))
 	if e != nil {
 		return e
@@ -456,14 +451,14 @@ func (p *PendingPublication) initializePreparation(prior PublicationPredecessor,
 		receipt := p.migration.receipt
 		a.Migration = &receipt
 	}
-	a.SHA256 = preparationSHA(*a)
+	a.SHA256 = preparationSHAWithFacts(*a, facts)
 	p.Preparation = a
 	return nil
 }
 
-func (p *PendingPublication) validatePreparationCommit() error {
+func (p *PendingPublication) validatePreparationCommit(facts *payloadDigestFacts) error {
 	a := p.Preparation
-	if p.Commit.PreparationSHA256 != a.SHA256 || p.Commit.PayloadSetSHA256 != payloadSetSHA(p.Sources) {
+	if p.Commit.PreparationSHA256 != a.SHA256 || p.Commit.PayloadSetSHA256 != payloadSetSHAWithFacts(p.Sources, facts) {
 		return ErrDurableStorageRecovery
 	}
 	if p.Commit.PrivacySHA256 != privacyReceiptsSHA(p.privacyReceipts()) {
@@ -474,7 +469,7 @@ func (p *PendingPublication) validatePreparationCommit() error {
 			return err
 		}
 	}
-	return p.validateReadyPublication()
+	return p.validateReadyPublicationWithFacts(facts)
 }
 
 func (a PreparationAuthority) validateMigration() error {
@@ -506,5 +501,43 @@ func (p *PendingPublication) validatePreparationPhase() error {
 	} else if p.Commit == nil || p.Commit.Version != 2 || p.History != nil && p.History.Preparing {
 		return fmt.Errorf("ready preparation commit: %w", ErrDurableStorageRecovery)
 	}
+	return nil
+}
+
+func (p *PendingPublication) initializeHistoryProgress(sources []PublicationSource, facts *payloadDigestFacts, preparing bool) error {
+	p.History.Version = 2
+	if !preparing && p.Progress == nil {
+		if len(p.History.Inputs) == 0 {
+			for _, input := range p.Preparation.Inputs {
+				p.History.Inputs = append(p.History.Inputs, HistoryInput{Reference: input.Reference, RevisionID: input.Selection.RevisionID, CapturedAt: input.Selection.CapturedAt, SourceSchemaVersion: input.Selection.SourceSchemaVersion, FilterVersion: input.FilterVersion})
+			}
+		}
+		p.History.PrivacyCursor = len(p.Preparation.Inputs)
+	}
+	cursor := p.History.PrivacyCursor
+	progress := &PreparationProgress{Version: 1, AuthoritySHA256: p.Preparation.SHA256, Cursor: cursor, WorkingMetadata: slices.Clone(p.MetadataBytes)}
+	for i := range cursor {
+		input := p.Preparation.Inputs[i]
+		var output *PublicationSource
+		for j := range sources {
+			if sources[j].Selection.RevisionID == input.Selection.RevisionID {
+				output = &sources[j]
+				break
+			}
+		}
+		if output == nil {
+			return errors.New("completed preparation input has no selected output")
+		}
+		var privacy *PrivacySource
+		if proof, ok := p.privacyOutputs[i]; ok {
+			factCopy := proof
+			privacy = &factCopy
+		} else if p.Progress != nil && i < len(p.Progress.Outputs) {
+			privacy = p.Progress.Outputs[i].Privacy
+		}
+		progress.Outputs = append(progress.Outputs, PreparedOutput{InputIndex: i, Source: *output, Privacy: privacy})
+	}
+	progress.SHA256 = progressSHAWithFacts(*progress, facts)
+	p.Progress = progress
 	return nil
 }

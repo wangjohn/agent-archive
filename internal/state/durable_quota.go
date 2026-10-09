@@ -2,7 +2,7 @@ package state
 
 import (
 	"context"
-	"encoding/json"
+	"crypto/sha256"
 	"errors"
 	"io"
 	"os"
@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/jsonwire"
@@ -136,9 +137,9 @@ func privateDirectoryWithParentSync(root *os.Root, path string, create bool, syn
 	return current, nil
 }
 
-func (q *durableQuota) usage() (u durableUsage, err error) {
+func (q *durableQuota) usage(ctx context.Context) (u durableUsage, err error) {
 	remaining := durableEntryLimit
-	if err := q.scanPublished(&remaining, &u); err != nil {
+	if err := q.scanPublished(ctx, &remaining, &u); err != nil {
 		return u, errors.Join(ErrDurableStorageRecovery, err)
 	}
 	for _, dir := range []string{"pending", generationRecoveryDir, "publication-evidence", "temporary-reservations", "temporary-scratch", "admission-stages"} {
@@ -288,11 +289,11 @@ func (q *durableQuota) scan(path string, depth int, remaining *int, u *durableUs
 	}
 }
 
-func (q *durableQuota) write(path string, n int64, write func(io.Writer) error) (err error) {
+func (q *durableQuota) write(ctx context.Context, path string, n int64, write func(io.Writer) error) (err error) {
 	if n < 0 || n > durableStorageQuota/2 {
 		return ErrDurableStorageCapacity
 	}
-	u, err := q.usage()
+	u, err := q.usage(ctx)
 	if err != nil {
 		return err
 	}
@@ -308,7 +309,7 @@ func (q *durableQuota) write(path string, n int64, write func(io.Writer) error) 
 	}
 	additional := max(int64(0), 2*n-2*old)
 	if filepath.Dir(path) == "published" {
-		additional, err = q.publishedAdditional(path, info, n)
+		additional, err = q.publishedAdditional(ctx, path, info, n)
 		if err != nil {
 			return err
 		}
@@ -331,6 +332,7 @@ func (q *durableQuota) write(path string, n int64, write func(io.Writer) error) 
 	if err = q.guard.CheckHome(q.path); err != nil {
 		return err
 	}
+	q.store.invalidatePublishedAccounting(filepath.Join(q.path, path))
 	dir, err := privateDirectory(q.home.Root, filepath.Dir(path), true)
 	if err != nil {
 		return err
@@ -366,39 +368,76 @@ func (s *Store) savePendingGuard(ctx context.Context, g config.DurableStorageGua
 	return s.writeDurableGuard(ctx, g, filepath.Join("pending", id+".json"), publicationWire(p))
 }
 
-func (s *Store) writeDurableGuard(ctx context.Context, g config.DurableStorageGuard, path string, p any) (err error) {
+func (s *Store) writeDurableGuard(ctx context.Context, g config.DurableStorageGuard, path string, p any) error {
+	_, _, err := s.writeDurableGuardDigest(ctx, g, path, p)
+	return err
+}
+
+func (s *Store) writeDurableGuardDigest(ctx context.Context, g config.DurableStorageGuard, path string, p any) (sum [32]byte, n int64, err error) {
 	if err = g.CheckHome(s.home); err != nil {
-		return err
+		return sum, n, err
 	}
-	// Keep the existing independent encoder lease; disk quota never substitutes for memory.
+	// The physical bound funds the two atomic disk copies. Encoder scratch and
+	// live aliases use the existing independent memory ledger.
+	budget := s.resourceBudget
+	if budget == nil {
+		// Standalone APIs have no inherited read ledger; this operation-only
+		// fallback grants no read, authority, or disk quota credit.
+		budget = agentapi.NewNativeReadBudget(128 << 20)
+	}
 	const scratch = 32 << 10
-	limit := durableStorageQuota/2 - 1
-	if s.resourceBudget != nil {
-		if !s.resourceBudget.Reserve(scratch) {
-			return errStateBudget
-		}
-		limit = min(limit, s.resourceBudget.Available()-1)
+	if !budget.Reserve(scratch) {
+		return sum, n, errStateBudget
 	}
-	n, err := jsonwire.Bound(ctx, p, limit)
-	if s.resourceBudget != nil {
-		s.resourceBudget.Release(scratch)
-	}
+	n, err = jsonwire.Bound(ctx, p, durableStorageQuota/2-1)
+	budget.Release(scratch)
 	if err != nil {
-		return errors.Join(errStateBudget, err)
+		return sum, n, errors.Join(errStateBudget, err)
 	}
 	n++
-	if s.resourceBudget != nil {
-		if !s.resourceBudget.Reserve(n) {
-			return errStateBudget
-		}
-		defer s.resourceBudget.Release(n)
-	}
 	q, err := s.openDurableQuota(g)
 	if err != nil {
-		return err
+		return sum, n, err
 	}
-	defer func() { err = errors.Join(err, q.Close()) }()
-	return q.write(path, n, func(w io.Writer) error { return json.NewEncoder(w).Encode(p) })
+	defer func() {
+		err = errors.Join(err, q.Close())
+		if err != nil {
+			sum = [32]byte{}
+			n = 0
+		}
+	}()
+	const digestScratch = 1024
+	if !budget.Reserve(digestScratch) {
+		return sum, n, errStateBudget
+	}
+	defer budget.Release(digestScratch)
+	hash := sha256.New()
+	var emitted int64
+	err = q.write(ctx, path, n, func(w io.Writer) error {
+		output := &publicationEmittedWriter{writer: io.MultiWriter(w, hash)}
+		e := jsonwire.Encode(ctx, output, p, budget)
+		emitted = output.written
+		if errors.Is(e, jsonwire.ErrMemory) {
+			return errors.Join(errStateBudget, e)
+		}
+		return e
+	})
+	if err == nil {
+		copy(sum[:], hash.Sum(nil))
+		n = emitted
+	}
+	return sum, n, err
+}
+
+type publicationEmittedWriter struct {
+	writer  io.Writer
+	written int64
+}
+
+func (w *publicationEmittedWriter) Write(p []byte) (int, error) {
+	n, err := w.writer.Write(p)
+	w.written += int64(n)
+	return n, err
 }
 
 func (s *Store) stagePendingSourceGuard(g config.DurableStorageGuard, id string, ref archive.SourceReference, data []byte) (err error) {
@@ -407,5 +446,5 @@ func (s *Store) stagePendingSourceGuard(g config.DurableStorageGuard, id string,
 		return err
 	}
 	defer func() { err = errors.Join(err, q.Close()) }()
-	return q.write(filepath.Join("sessions", id, "pending-sources", ref.SHA256+".gz"), int64(len(data)), func(w io.Writer) error { _, e := w.Write(data); return e })
+	return q.write(s.durableContext(), filepath.Join("sessions", id, "pending-sources", ref.SHA256+".gz"), int64(len(data)), func(w io.Writer) error { _, e := w.Write(data); return e })
 }

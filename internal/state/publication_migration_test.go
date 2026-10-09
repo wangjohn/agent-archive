@@ -49,6 +49,7 @@ func TestOrdinaryMigrationRetainsPriorBodyForFullPublishedReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	assertPrivateWireParity(t, publicationWire(next))
 	published, err := s.LoadPublishedState(old.SessionID)
 	if err != nil {
 		t.Fatal(err)
@@ -60,6 +61,7 @@ func TestOrdinaryMigrationRetainsPriorBodyForFullPublishedReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	assertPrivateWireParity(t, reloaded.state)
 	if !bytes.Equal(reloaded.state.Preparation.Migration.PreviousMetadata, oldBody) {
 		t.Fatal("prior body lost after published replacement")
 	}
