@@ -78,7 +78,7 @@ Checking your storage connection…
   ! Bucket privacy unknown · public-access settings could not be read
     Make sure public access is off:
     https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
-  \e[33m!\e[0m History import is separate.
+  \e[33m!\e[0m Setup imports the last 7 days of included projects; older history is separate.
   \e[33m!\e[0m Sensitive text may remain after filtering.
 
   \e[33m!\e[0m Codex scope expands to all current and future projects (Codex only).
@@ -106,7 +106,6 @@ To remove the agent skills and keep them off, run \e[36magent-archive setup --no
   project; automatic discovery does not require hook approval.
   Optional hook capture: Codex: run \e[36m/hooks\e[0m and approve the archive hooks, then
   start a new session (or \e[36m/clear\e[0m).
-Sessions already open are not captured. Start a supported new Codex task in any non-excluded project.
 Check progress with \e[36magent-archive status\e[0m.
   \e[2m·\e[0m Another machine: agent-archive machines pair
 

@@ -84,7 +84,7 @@ Checking your storage connection…
   ! Bucket privacy unknown · public-access settings could not be read
     Make sure public access is off:
     https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
-  \e[33m!\e[0m History import is separate.
+  \e[33m!\e[0m Setup imports the last 7 days of included projects; older history is separate.
   \e[33m!\e[0m Sensitive text may remain after filtering.
 
 ? Start archiving?
@@ -109,7 +109,8 @@ Checking your storage connection…
   Exceptions     None configured · Nearest explicit project rule wins
   Codex sources  /Users/alex/.codex
   Starts         After local consent, outside pause or exclusion
-  History        Old sessions require deliberate backfill
+  History        Last 7 days of included projects imported at setup; older
+                 sessions require backfill
   Copies         Qualifying recent native copies may be captured
   Hooks          Optional for discovery; approval and observation are separate
   Skills         metadata · User skill roots outside selected projects may be
@@ -146,7 +147,7 @@ Checking your storage connection…
   ! Bucket privacy unknown · public-access settings could not be read
     Make sure public access is off:
     https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
-  \e[33m!\e[0m History import is separate.
+  \e[33m!\e[0m Setup imports the last 7 days of included projects; older history is separate.
   \e[33m!\e[0m Sensitive text may remain after filtering.
 
 ? Start archiving?
@@ -162,6 +163,7 @@ Checking your storage connection…
 \e[2m✓ Start archiving\e[0m
 
 \e[32m✓\e[0m Setup complete · Automatic capture is on
+Imported 2 sessions from the last 7 days (Claude Code 2). Uploading in the background.
 Installed /handoff, which continues a session in another agent: ~/.claude/skills/handoff/SKILL.md, ~/.agents/skills/handoff/SKILL.md
 Installed the agent-archive skill, which lets your agents look up and pull in past sessions: ~/.claude/skills/agent-archive/SKILL.md, ~/.agents/skills/agent-archive/SKILL.md
 To remove the agent skills and keep them off, run \e[36magent-archive setup --no-skills\e[0m.
@@ -173,25 +175,7 @@ To remove the agent skills and keep them off, run \e[36magent-archive setup --no
   start a new session (or \e[36m/clear\e[0m).
   Claude Code: nothing to approve; start a new session (or \e[36m/clear\e[0m).
   Cursor: nothing to approve; start a new Agent chat.
-Sessions already open are not captured. Start a new one in an included project.
 Check progress with \e[36magent-archive status\e[0m.
-
-\e[1mOptional · Import past sessions\e[0m
-
-Looking for past sessions in these projects… 2 found.
-
-? Import these sessions?
-
-  Found 2 sessions in 2 selected projects.
-  90-day retention applies.
-
-  1) Import 2 sessions (default)
-  2) Skip for now
-
-› Choose [1]:
-\e[2m✓ Skip for now\e[0m
-
-Not imported. Setup is complete. Import them later with \e[36magent-archive backfill\e[0m.
   \e[2m·\e[0m Another machine: agent-archive machines pair
 
 ? More next steps?

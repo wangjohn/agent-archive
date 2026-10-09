@@ -1,8 +1,12 @@
 # Import the last 7 days at setup — engineering plan
 
 Status: planned 2026-10-08; [decisions](#decisions) confirmed by the owner
-the same day. Not started. Where this plan and the code differ once it
-merges, the code is the reference and differences go under Deviations.
+the same day. §1–§3 implemented in
+[#386](https://github.com/wangjohn/agent-archive/pull/386)
+(`importRecentSessions` in `internal/cli/backfill.go`, `backfill.Plan.Recent`
+in `internal/backfill/recent.go`); §4 (`status`) not started. Where this plan
+and the code differ once it merges, the code is the reference and
+differences go under Deviations.
 
 Goal: the session a person is working in when they set up agent-archive,
 and anything else they did in the past week in the projects they chose, is
@@ -148,4 +152,53 @@ order works; §4 helps existing installs first.
 
 ## Deviations
 
-None yet.
+From the §1–§3 implementation (#386):
+
+- **One plan, narrowed.** Setup builds one plan with no `Since` (the plan
+  `offerSetupImport` built, so no new cost) and `backfill.Plan.Recent`
+  narrows it: sessions that start before the day `--since 7d` names are
+  marked `filtered_out` and counted as older, and the narrowed plan records
+  `since`/`since_arg: 7d` in its filters, so its import record reads as
+  `backfill --since 7d` in `backfill history`. For a session that is
+  imported, the undated and dated plans decide the same way (both run the
+  adapter over it); they differ only in which already-skipped sessions are
+  read for a start time.
+- **No projects, by construction and by check.** The filter is the included
+  roots, and `Plan.Recent` also marks `filtered_out` any session whose root
+  is not a configured, included project (`!ProjectIncluded`), so a recovery
+  proposal or folder rule that would add a root is dropped. `ApplyToConfig`
+  therefore adds no project, kept-out folder, or app (tested). Recovered
+  sessions whose root is already included are kept, with the recovery policy
+  bound again for the narrowed plan.
+- **Shared commit path.** `importPlanLocked` is split: `registerImportLocked`
+  is steps 4 and 5 (commit and register, then mark complete) and is what
+  setup calls; `backfill --background` prints its usual lines around the
+  same call. Setup prints only its own line.
+- **Placement.** The import runs right after "Setup complete", before the
+  skills and next-steps lines, so the result is next to the completion.
+- **Failure text.** A registration error or Ctrl-C during registration
+  prints only the cause (`simulated crash`, `stopped`) before "Run agent-archive
+  backfill --since 7d to retry." A registration that stops part way leaves
+  an incomplete import; the retry command (different options) starts a new
+  import for the rest, and `backfill` names the interrupted one. Ctrl-C while
+  planning prints "Stopped looking for recent sessions. Setup is complete.
+  Import them later with agent-archive backfill --since 7d."
+- **Older sessions alone.** When nothing is recent but older sessions exist,
+  setup prints only the older line.
+- **Review text.** The review's "! History import is separate." became
+  "! Setup imports the last 7 days of included projects; older history is
+  separate.", and the Codex details row "History" says "Last 7 days of
+  included projects imported at setup; older sessions require backfill", so
+  the consent screen says what setup does.
+- **Next steps.** "Sessions already open are not captured" went from both
+  forms of the line. The Codex all-projects form keeps its scope hint:
+  "Start a supported new Codex task in any non-excluded project." when
+  discovery is off (with discovery on, the Codex line already names the
+  scope), and "Other apps still require an included project." with more
+  than one app. In Codex all-projects scope, a session already open in a
+  project that is not explicitly included is neither imported (the import
+  is limited to included roots) nor captured; nothing now says so.
+- **Pairing.** `machines pair` on the receiving machine finishes through
+  `finishSetup` too, so it imports the last 7 days as well.
+- **Not tested here:** the spec's "a session that started before setup and
+  keeps writing after it is imported and then updated by discovery".

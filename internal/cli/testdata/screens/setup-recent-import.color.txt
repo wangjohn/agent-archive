@@ -1,10 +1,10 @@
 $ agent-archive setup
 Checking installed applications...
-  ✓ Claude Code hooks: ~/.claude/settings.json
-  ✓ Background job: launchctl responds
+  \e[32m✓\e[0m Claude Code hooks: ~/.claude/settings.json
+  \e[32m✓\e[0m Background job: launchctl responds
 Choose Cloudflare R2 or Amazon S3 for private archive storage. Setup will guide you through connecting your account.
 
-Step 1 of 3 · Choose what to capture
+\e[1mStep 1 of 3 · Choose what to capture\e[0m
 
 ? Capture sessions from Claude Code?
 
@@ -12,12 +12,12 @@ Step 1 of 3 · Choose what to capture
   2) No
 
 › Choose [1]:
-✓ Capture sessions from Claude Code Yes
+\e[2m✓ Capture sessions from Claude Code Yes\e[0m
 
 ? Which projects?
 
   Found 1 projects:
-  1) ~/src/web-app · this folder · 2 sessions · today
+  1) ~/src/web-app · this folder · 3 sessions · today
 
   1) All 1 found projects (default)
   2) Choose specific projects
@@ -26,9 +26,9 @@ Step 1 of 3 · Choose what to capture
   [r] Retry search
 
 › Choose [1]:
-✓ Projects All 1 found projects
+\e[2m✓ Projects All 1 found projects\e[0m
 
-Step 2 of 3 · Connect storage
+\e[1mStep 2 of 3 · Connect storage\e[0m
 
 ? Where should your archive live?
 
@@ -38,14 +38,14 @@ Step 2 of 3 · Connect storage
   [h] Setup instructions
 
 › Choose [1]: s3-existing
-✓ Provider Amazon S3
+\e[2m✓ Provider Amazon S3\e[0m
 
 ? AWS profile
 
   [:back] Back to storage options
 
 › Answer: work
-✓ AWS profile work
+\e[2m✓ AWS profile work\e[0m
 
 ? Which bucket should sessions be stored in?
 
@@ -55,14 +55,14 @@ Step 2 of 3 · Connect storage
   [:back] Back to storage options
 
 › Choose: 2
-✓ team-archive
+\e[2m✓ team-archive\e[0m
 
 Bucket team-archive is in us-east-1; using that region.
 
 Checking your storage connection…
-✓ Connected to your storage.
+\e[32m✓\e[0m Connected to your storage.
 
-Step 3 of 3 · Review and start
+\e[1mStep 3 of 3 · Review and start\e[0m
   Apps      Claude Code
   Projects  ~/src/web-app
   Skills    Metadata, including user folders
@@ -72,8 +72,8 @@ Step 3 of 3 · Review and start
   ! Bucket privacy unknown · public-access settings could not be read
     Make sure public access is off:
     https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
-  ! History import is separate.
-  ! Sensitive text may remain after filtering.
+  \e[33m!\e[0m Setup imports the last 7 days of included projects; older history is separate.
+  \e[33m!\e[0m Sensitive text may remain after filtering.
 
 ? Start archiving?
 
@@ -85,39 +85,19 @@ Step 3 of 3 · Review and start
   [m] Name this machine
 
 › Choose [1]:
-✓ Start archiving
+\e[2m✓ Start archiving\e[0m
 
-✓ Setup complete · Automatic capture is on
+\e[32m✓\e[0m Setup complete · Automatic capture is on
+Imported 2 sessions from the last 7 days (Claude Code 2). Uploading in the background.
+1 older session: run \e[36magent-archive backfill\e[0m to import it.
 Installed /handoff, which continues a session in another agent: ~/.claude/skills/handoff/SKILL.md
 Installed the agent-archive skill, which lets your agents look up and pull in past sessions: ~/.claude/skills/agent-archive/SKILL.md
-To remove the agent skills and keep them off, run agent-archive setup --no-skills.
+To remove the agent skills and keep them off, run \e[36magent-archive setup --no-skills\e[0m.
 
-Next, in each app
-  Claude Code: nothing to approve; start a new session (or /clear).
-Sessions already open are not captured. Start a new one in an included project.
-Check progress with agent-archive status.
-
-Optional · Import past sessions
-
-Looking for past sessions in these projects… 2 found.
-
-? Import these sessions?
-
-  Found 2 sessions in 1 selected projects.
-  90-day retention applies.
-
-  1) Import 2 sessions (default)
-  2) Skip for now
-
-› Choose [1]:
-✓ Import 2 sessions
-
-Registered 2 sessions as import 2026-09-25-1.
-Uploading: 2 of 2 sessions, 4 KB of 4 KB
-Uploaded 2 sessions (4 KB).
-See them with agent-archive list --imported.
-Undo with agent-archive backfill undo 2026-09-25-1.
-  · Another machine: agent-archive machines pair
+\e[1mNext, in each app\e[0m
+  Claude Code: nothing to approve; start a new session (or \e[36m/clear\e[0m).
+Check progress with \e[36magent-archive status\e[0m.
+  \e[2m·\e[0m Another machine: agent-archive machines pair
 
 ? More next steps?
 
@@ -125,4 +105,7 @@ Undo with agent-archive backfill undo 2026-09-25-1.
 
   [d] Machine transfer details
 
-› Choose [1]:[exit 0]
+› Choose [1]:
+\e[2m✓ Finish setup\e[0m
+
+[exit 0]

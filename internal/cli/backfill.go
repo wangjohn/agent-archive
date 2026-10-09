@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -397,14 +398,28 @@ func importBackfillPlan(env Env, stdin io.Reader, stdout, stderr io.Writer, home
 	return importPlan(env, stdout, stderr, home, plan, configFingerprint(cfg), opts.background)
 }
 
-// offerSetupImport follows a committed interactive setup: when the chosen
-// projects have sessions on this machine that are not in the archive, it asks
-// whether to import them, and imports them as agent-archive backfill
-// --project would, with the same plan, safety checks and import record, so
-// backfill undo removes them again. setup already holds setup.lock and has
-// just checked storage. Setup is done whatever happens here, so a failure
-// is reported, never returned.
-func offerSetupImport(p *prompter, errOut io.Writer, home, userHome string, env Env) {
+// setupImportSince is the lookback of setup's import, as backfill --since
+// reads it: the 7 local days before setup.
+const setupImportSince = "7d"
+
+// setupImportRetryCommand is the backfill command a person runs when setup's
+// import did not happen.
+const setupImportRetryCommand = "agent-archive backfill --since " + setupImportSince
+
+// importRecentSessions follows a committed setup: it imports the sessions of
+// the last 7 days (backfill --since 7d) in the included projects and
+// configured apps, without asking, as backfill --yes --background would:
+// with the same plan, safety checks, and import record, so backfill history
+// lists it and backfill undo removes it again. The background collector
+// uploads them. It never adds a project, kept-out folder, or app: sessions
+// whose project is not already included are left to backfill. It says how
+// many older sessions the same projects hold.
+//
+// setup already holds setup.lock and has just checked storage. Setup is done
+// whatever happens here, so a failure is reported, never returned. It does
+// nothing while capture is paused, with no included project or app, or when
+// backfill would refuse to import.
+func importRecentSessions(p *prompter, errOut io.Writer, home, userHome string, env Env) {
 	cfg, found, err := config.Load(home)
 	if err != nil || !found || importRefusal(home, cfg) != "" {
 		return
@@ -418,96 +433,105 @@ func offerSetupImport(p *prompter, errOut io.Writer, home, userHome string, env 
 	if len(roots) == 0 || len(cfg.Harnesses) == 0 {
 		return
 	}
-	filters := backfill.Filters{Harnesses: cfg.Harnesses, Projects: roots}
-	later := "Setup is complete. Import them later with " + p.style.cmd("agent-archive backfill") + "."
-	p.setupHeading("Optional · Import past sessions")
-	releasePrompts := p.suspendPrompts()
-	var stopLooking func()
-	if p.style.live {
-		terminal.Print(p.out, "\n")
-		stopLooking = p.style.spin(p.out, "Looking for past sessions…").stop
-	} else {
-		terminal.Print(p.out, "\nLooking for past sessions in these projects… ")
-		stopLooking = func() {}
+	notImported := func(err error) {
+		// Setup's import has no options to repeat; the retry is the command
+		// below, so only the cause is said.
+		var stopped *importStoppedError
+		var registration *importRegistrationError
+		switch {
+		case errors.As(err, &stopped):
+			err = errors.New("stopped")
+		case errors.As(err, &registration):
+			err = registration.err
+		}
+		reason := strings.TrimRight(strings.TrimSpace(err.Error()), ".")
+		terminal.Printf(p.out, "Recent sessions were not imported: %s. Run %s to retry.\n", reason, p.style.cmd(setupImportRetryCommand))
 	}
+	since, err := backfillDay(setupImportSince, env.now())
+	if err != nil {
+		notImported(err)
+		return
+	}
+	// One plan of every session in the included projects gives both the
+	// recent import and the count of older ones (backfill.Plan.Recent).
+	filters := backfill.Filters{Harnesses: cfg.Harnesses, Projects: roots}
+	const label = "Looking for sessions from the last 7 days…"
+	releasePrompts := p.suspendPrompts()
+	stopLooking := func() {}
+	if p.style.live {
+		stopLooking = p.style.spin(p.out, label).stop
+	}
+	// Ctrl-C while planning stops the import, never setup.
 	planCtx, stopPlanning := interruptibleContext(env, errOut)
-	plan, err := backfill.BuildPlan(planCtx, env.backfillEnvironment(userHome, cfg), newArchiveState(home, cfg), cfg, filters)
+	full, err := backfill.BuildPlan(planCtx, env.backfillEnvironment(userHome, cfg), newArchiveState(home, cfg), cfg, filters)
 	interrupted := planCtx.Err() != nil
 	stopPlanning()
 	stopLooking()
 	releasePrompts()
-	switch {
-	case interrupted:
-		if p.style.live {
-			terminal.Println(p.out, "Looking for past sessions… stopped. "+later)
-		} else {
-			terminal.Println(p.out, "stopped. "+later)
-		}
-		return
-	case err != nil:
-		if p.style.live {
-			terminal.Println(p.out, "Looking for past sessions… failed.")
-		} else {
-			terminal.Println(p.out)
-		}
-		terminal.Printf(errOut, "agent-archive: backfill: %v\n", err)
-		terminal.Println(p.out, later)
-		return
-	case len(plan.Imported()) == 0:
-		if p.style.live {
-			terminal.Println(p.out, "Looking for past sessions… none to import.")
-		} else {
-			terminal.Println(p.out, "none to import.")
-		}
+	if interrupted {
+		terminal.Println(p.out, "Stopped looking for recent sessions. Setup is complete. Import them later with "+p.style.cmd(setupImportRetryCommand)+".")
 		return
 	}
-	if p.style.live {
-		terminal.Printf(p.out, "Looking for past sessions… %d found.\n", len(plan.Imported()))
-	} else {
-		terminal.Printf(p.out, "%d found.\n", len(plan.Imported()))
-	}
-	choice, err := p.guidedChoice(promptModel{Question: "Import these sessions?", Helpers: []string{fmt.Sprintf("Found %d sessions in %d selected projects.", len(plan.Imported()), len(plan.Projects())), fmt.Sprintf("%d-day retention applies.", cfg.RetentionDays)}, Default: "import", Primary: []option{{"import", fmt.Sprintf("Import %d sessions", len(plan.Imported()))}, {"skip", "Skip for now"}}, Aliases: []option{{"yes", ""}, {"y", ""}, {"no", ""}, {"n", ""}}, ResolveReceipt: func(key string) string {
-		if key == "import" || setupAffirmed(key) {
-			return fmt.Sprintf("Import %d sessions", len(plan.Imported()))
-		}
-		return "Skip for now"
-	}})
-	yes := choice == "import" || setupAffirmed(choice)
-	if err != nil || !yes {
-		terminal.Println(p.out, "Not imported. "+later)
+	if err != nil {
+		notImported(err)
 		return
 	}
-	started := env.now().UTC()
-	if importPlanLocked(env, p.out, errOut, home, plan, configFingerprint(cfg), false) != 0 && !setupImportRegistered(home, plan, cfg, started) {
-		terminal.Println(p.out, "Setup is complete. To finish the import, run "+p.style.cmd(setupImportRetry(plan, cfg))+".")
+	plan, older, err := full.Recent(cfg, since, setupImportSince)
+	if err != nil {
+		notImported(err)
+		return
+	}
+	if len(plan.Imported()) > 0 {
+		reg, err := registerImportLocked(env, p.out, errOut, home, plan, configFingerprint(cfg))
+		reg.release()
+		if err != nil {
+			notImported(err)
+			return
+		}
+		if apps := registeredByApp(home, reg.batch.ID); len(reg.result.Sessions) > 0 {
+			terminal.Printf(p.out, "Imported %s from the last 7 days%s. Uploading in the background.\n", countNoun(len(reg.result.Sessions), "session"), apps)
+		}
+	}
+	if older > 0 {
+		them := "them"
+		if older == 1 {
+			them = "it"
+		}
+		terminal.Printf(p.out, "%s: run %s to import %s.\n", countNoun(older, "older session"), p.style.cmd("agent-archive backfill"), them)
 	}
 }
 
-// setupImportRegistered reports whether setup's import, started at started,
-// registered every session: its record is complete, so what is left, if
-// anything, is the upload, which the background collector finishes.
-func setupImportRegistered(home string, plan backfill.Plan, cfg config.Config, started time.Time) bool {
-	batches, err := backfill.LoadBatches(home)
-	if err != nil || len(batches) == 0 {
-		return false
+// registeredByApp is " (Codex 2, Claude Code 1)": the sessions import
+// batchID registered, by app, most first; "" when the store cannot say.
+func registeredByApp(home, batchID string) string {
+	regs, err := state.OpenReadOnly(home).LoadRegistrations()
+	if err != nil {
+		return ""
 	}
-	last := batches[len(batches)-1]
-	return last.CompletedAt != nil && !last.CompletedAt.Before(started) && last.Matches(plan.BatchFilters(), cfg.DestinationID())
-}
-
-// setupImportRetry is the backfill command that continues setup's import:
-// the options its import record was made with, so the run finds the same
-// sessions and finishes the same import.
-func setupImportRetry(plan backfill.Plan, cfg config.Config) string {
-	flags, _ := plan.BatchFilters().Flags(plan, func(id string) (string, bool) {
-		for _, project := range cfg.Archive.Projects {
-			if project.ProjectID == id {
-				return project.Root, true
-			}
+	counts := map[string]int{}
+	for _, reg := range regs {
+		if reg.InBatch(batchID) && reg.ParentSessionID == "" {
+			counts[appName(reg.Harness.Name)]++
 		}
-		return "", false
+	}
+	if len(counts) == 0 {
+		return ""
+	}
+	apps := make([]string, 0, len(counts))
+	for app := range counts {
+		apps = append(apps, app)
+	}
+	slices.SortFunc(apps, func(a, b string) int {
+		if counts[a] != counts[b] {
+			return counts[b] - counts[a]
+		}
+		return strings.Compare(a, b)
 	})
-	return strings.TrimSpace("agent-archive backfill " + flags)
+	parts := make([]string, len(apps))
+	for i, app := range apps {
+		parts[i] = fmt.Sprintf("%s %d", app, counts[app])
+	}
+	return " (" + strings.Join(parts, ", ") + ")"
 }
 
 // interruptibleContext returns a context that the first Ctrl-C cancels,

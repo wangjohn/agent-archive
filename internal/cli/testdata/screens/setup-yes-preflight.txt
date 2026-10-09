@@ -8,7 +8,7 @@ Checking your storage connection…
   · Exceptions: None configured.
   · Codex sources: /Users/alex/.codex.
   · Starts: After local consent, outside pause or exclusion.
-  · History: Old sessions require deliberate backfill.
+  · History: Last 7 days of included projects imported at setup; older sessions require backfill.
   · Copies: Qualifying recent native copies may be captured.
   · Hooks: Optional for discovery; approval and observation are separate.
 Apps: Codex. Projects: 1. Storage: Amazon S3 bucket team-archive.
@@ -26,8 +26,6 @@ Next, in each app
   does not require hook approval.
   Optional hook capture: Codex: run /hooks and approve the archive hooks, then
   start a new session (or /clear).
-Sessions already open are not captured. Start a new one in an included project.
-Import sessions from before setup with agent-archive backfill.
 Check progress with agent-archive status.
   · Another machine: agent-archive machines pair
 [exit 0]

@@ -45,7 +45,7 @@ Step 3 of 3 · Review and start
     be read
     Make sure public access is off:
     https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
-  ! History import is separate.
+  ! Setup imports the last 7 days of included projects; older history is separate.
   ! Sensitive text may remain after filtering.
 
 ? Review pairing settings
@@ -71,7 +71,7 @@ Checking your storage connection…
   · Exceptions: None configured.
   · Codex sources: /Users/alex/.codex.
   · Starts: After local consent, outside pause or exclusion.
-  · History: Old sessions require deliberate backfill.
+  · History: Last 7 days of included projects imported at setup; older sessions require backfill.
   · Copies: Qualifying recent native copies may be captured.
   · Hooks: Optional for discovery; approval and observation are separate.
 Apps: Codex. Projects: 1. Storage: Amazon S3 bucket synthetic.
@@ -96,12 +96,7 @@ Next, in each app
   /hooks and approve the archive
   hooks, then start a new session
   (or /clear).
-Sessions already open are not captured. Start a new one in an included project.
 Check progress with agent-archive status.
-
-Optional · Import past sessions
-
-Looking for past sessions in these projects… none to import.
   · Another machine: agent-archive machines pair
 
 ? More next steps?

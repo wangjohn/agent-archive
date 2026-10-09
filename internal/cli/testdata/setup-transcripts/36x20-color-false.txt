@@ -103,7 +103,7 @@ Step 3 of 3 · Review and start
     be read
     Make sure public access is off:
     https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
-  ! History import is separate.
+  ! Setup imports the last 7 days of included projects; older history is separate.
   ! Sensitive text may remain after filtering.
 
 ? Start archiving?
@@ -140,8 +140,9 @@ Full settings and privacy
     After local consent, outside
     pause or exclusion
   History
-    Old sessions require deliberate
-    backfill
+    Last 7 days of included projects
+    imported at setup; older
+    sessions require backfill
   Copies
     Qualifying recent native copies
     may be captured
@@ -215,7 +216,7 @@ Step 3 of 3 · Review and start
     be read
     Make sure public access is off:
     https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
-  ! History import is separate.
+  ! Setup imports the last 7 days of included projects; older history is separate.
   ! Sensitive text may remain after filtering.
 
 ? Start archiving?
@@ -231,6 +232,7 @@ Step 3 of 3 · Review and start
 ✓ Start archiving
 
 ✓ Setup complete · Automatic capture is on
+Imported 2 sessions from the last 7 days (Claude Code 2). Uploading in the background.
 Installed /handoff, which continues a session in another agent: ~/.claude/skills/handoff/SKILL.md, ~/.agents/skills/handoff/SKILL.md
 Installed the agent-archive skill, which lets your agents look up and pull in past sessions: ~/.claude/skills/agent-archive/SKILL.md, ~/.agents/skills/agent-archive/SKILL.md
 To remove the agent skills and keep them off, run agent-archive setup --no-skills.
@@ -248,26 +250,7 @@ Next, in each app
   start a new session (or /clear).
   Cursor: nothing to approve; start
   a new Agent chat.
-Sessions already open are not captured. Start a new one in an included project.
 Check progress with agent-archive status.
-
-Optional · Import past sessions
-
-Looking for past sessions in these projects… 2 found.
-
-? Import these sessions?
-
-  Found 2 sessions in 2 selected
-  projects.
-  90-day retention applies.
-
-  1) Import 2 sessions (default)
-  2) Skip for now
-
-› Choose [1]:
-✓ Skip for now
-
-Not imported. Setup is complete. Import them later with agent-archive backfill.
   · Another machine: agent-archive machines pair
 
 ? More next steps?

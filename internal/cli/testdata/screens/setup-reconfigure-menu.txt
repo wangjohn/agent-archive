@@ -35,7 +35,7 @@ Review your changes
   ! Bucket privacy unknown · public-access settings could not be read
     Make sure public access is off:
     https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
-  ! History import is separate.
+  ! Setup imports the last 7 days of included projects; older history is separate.
   ! Sensitive text may remain after filtering.
 
 ? Save these changes?

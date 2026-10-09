@@ -9,14 +9,13 @@ Skill evidence: metadata. User-level skill roots outside selected projects may b
     Make sure public access is off: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
 
 \e[32m✓\e[0m Setup complete · Automatic capture is on
+Imported 1 session from the last 7 days (Claude Code 1). Uploading in the background.
 Installed /handoff, which continues a session in another agent: ~/.claude/skills/handoff/SKILL.md
 Installed the agent-archive skill, which lets your agents look up and pull in past sessions: ~/.claude/skills/agent-archive/SKILL.md
 To remove the agent skills and keep them off, run \e[36magent-archive setup --no-skills\e[0m.
 
 \e[1mNext, in each app\e[0m
   Claude Code: nothing to approve; start a new session (or \e[36m/clear\e[0m).
-Sessions already open are not captured. Start a new one in an included project.
-Import sessions from before setup with \e[36magent-archive backfill\e[0m.
 Check progress with \e[36magent-archive status\e[0m.
   \e[2m·\e[0m Another machine: agent-archive machines pair
 [exit 0]

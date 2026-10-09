@@ -9,6 +9,8 @@ Included-project scope captures new sessions in explicitly included projects.
 Codex also offers an explicit all-current-and-future-projects scope, subject to
 exclusions. Claude Code and Cursor remain project scoped. Review
 [Codex source and scope consent](#automatic-codex-discovery) before choosing it.
+When it finishes, setup imports the sessions of the last 7 days in the
+projects and apps you chose ([after setup](#after-setup)).
 [Backfill](../guides/backfill.md) imports older sessions only when you choose it.
 
 ```sh
@@ -61,9 +63,10 @@ makes the same checks, for the apps it would include, and checks the
 credential store (the Keychain, or on Linux the credentials folder) when it
 stores in R2.
 
-Setup captures **new** sessions within the scope you approve: included projects by default, or all non-excluded projects for Codex when explicitly chosen. To import
-conversations already on this machine, run [`agent-archive
-backfill`](../guides/backfill.md) afterwards.
+Setup captures **new** sessions within the scope you approve: included projects by default, or all non-excluded projects for Codex when explicitly chosen. It also
+imports the last 7 days of sessions in the included projects
+([after setup](#after-setup)). To import older conversations already on this
+machine, run [`agent-archive backfill`](../guides/backfill.md) afterwards.
 
 ## 1. Apps and projects
 
@@ -209,7 +212,7 @@ Step 3 of 3 · Review and start
 
   ✓ Storage connected
   ✓ Bucket is private
-  ! History import is separate.
+  ! Setup imports the last 7 days of included projects; older history is separate.
   ! Sensitive text may remain after filtering.
 ```
 
@@ -592,10 +595,10 @@ as "pull in the auth session from Codex" ([agent skills](../guides/agent-skills.
 Claude Code asks before it first uses the skill and before the commands it
 runs.
 
-Sessions already open are not captured: capture needs a provable fresh
-start, so only a new session in an included project counts. In Codex and
-Claude Code, `/clear` also starts one; in Cursor, only a new chat does. Setup finishes without waiting for it. Check
-progress with:
+Automatic capture needs a provable fresh start, so it admits only sessions
+that start after setup in an included project. In Codex and Claude Code,
+`/clear` also starts one; in Cursor, only a new chat does. Setup finishes
+without waiting for it. Check progress with:
 
 ```sh
 agent-archive status
@@ -605,36 +608,36 @@ agent-archive status --json
 What each status line means is in
 [troubleshooting](../guides/troubleshooting.md#reading-status).
 
-Once it has said how to check capture, setup offers to import the past
-sessions of the projects you chose, when they have some on this machine that
-aren't in the archive yet:
+### Sessions from the last 7 days
+
+Sessions that started before setup, the one you may be running setup from
+among them, are imported instead. Right after "Setup complete", without a
+question, setup imports the sessions of the last 7 days (the same days as
+`agent-archive backfill --since 7d`) in the included projects, for the apps
+you chose:
 
 ```text
-Optional · Import past sessions
-
-Looking for past sessions in these projects… 214 found.
-
-? Import these sessions?
-
-  Found 214 sessions in 3 selected projects.
-  90-day retention applies.
-
-  1) Import 214 sessions (default)
-  2) Skip for now
-
-› Choose [1]:
+✓ Setup complete · Automatic capture is on
+Imported 3 sessions from the last 7 days (Codex 2, Claude Code 1). Uploading in the background.
+211 older sessions: run agent-archive backfill to import them.
 ```
 
-Yes runs the same import as `agent-archive backfill --project DIR` for each
-chosen project, with the same checks, and uploads the sessions; it ends with
-the import's ID, and `agent-archive backfill undo ID` removes them again (see
-[backfill](../guides/backfill.md)). If the import stops or fails, setup
-stays done and prints the `agent-archive backfill` command that finishes
-it. No changes
-nothing; you can run `agent-archive backfill` any time. Setup skips the offer
-while capture is paused, when there is nothing to import, and with `--yes`,
-which asks nothing and mentions `agent-archive backfill` in its next steps
-instead.
+The import registers the sessions and leaves the upload to the background
+collector, as `agent-archive backfill --yes --background` does. It is an
+ordinary import: `agent-archive backfill history` lists it and
+`agent-archive backfill undo ID` removes its sessions again (see
+[backfill](../guides/backfill.md)). It never adds a project: a session in a
+folder you did not include, a temporary folder, or a worktree that no longer
+exists is left to `backfill`, which asks first. The second line appears only
+when the same projects have older sessions that are not in the archive.
+
+Setup says nothing about importing when there is nothing to import, and skips
+it while capture is paused. `setup --yes` imports the same way. If the import
+fails, setup is still complete and says so:
+
+```text
+Recent sessions were not imported: <reason>. Run agent-archive backfill --since 7d to retry.
+```
 
 Setup's storage check and installed hooks establish configuration, not a captured session. After `agent-archive sync` or the next background pass, check that the app's Capture row says **archived, verified**, then confirm the session appears in `agent-archive list` and `agent-archive show SESSION_ID`. An overall `Ready` state alone does not establish that this app published a new session and had it read back. For a short route through the check, see [first successful capture](../README.md#first-successful-capture).
 
@@ -722,7 +725,8 @@ created while paused stay excluded. Recognizable imports, forks and spawned-agen
 records stay unsupported. A recently copied native session that has indistinguishable
 supported metadata may qualify; discovery does not attest where execution occurred.
 Project exclusions, destination consent, deduplication and privacy filtering still
-apply. Deliberate backfill remains the way to include older history.
+apply. Setup's [7-day import](#sessions-from-the-last-7-days) and deliberate
+backfill are the ways to include earlier history.
 
 Ordinary `agent-archive status` leads Codex with discovery state and scope;
 absent optional hooks are healthy, while broken owned hooks remain actionable.

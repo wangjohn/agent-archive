@@ -14,8 +14,10 @@ the skills installed in the app's user-level skill folders (such as
 encryption. See [privacy](../security/privacy.md#what-is-uploaded).
 
 **Can it capture sessions I had before installing it?**
-Yes, with [`agent-archive backfill`](backfill.md). Setup alone captures only
-new sessions in explicitly included projects. If setup offers to import past sessions, you can decline and run `backfill` later.
+Yes. Setup imports the sessions of the last 7 days in the projects you
+include ([details](../getting-started/setup.md#sessions-from-the-last-7-days)),
+and [`agent-archive backfill`](backfill.md) imports older ones, or ones in
+other folders, when you run it.
 
 **Does it capture every project on my machine?**
 No. Only projects you include in setup (or that a backfill adds, which it
