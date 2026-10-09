@@ -59,7 +59,7 @@ func TestDeletedWorktreeResolverRetainsUnavailableAndAmbiguousEvidence(t *testin
 func TestDiagnosticsAreBoundedContentFreeAndJSONOptional(t *testing.T) {
 	p := Plan{Filters: Filters{Harnesses: []string{"codex"}}}
 	for range 5000 {
-		p.Candidates = append(p.Candidates, Candidate{Harness: "codex", NativeSessionID: "private-native-id", TranscriptPath: "/private/native/locator.jsonl", SourceKey: "credential-secret", Skip: SkipWorktreeUnresolved, Diagnostic: candidateDiagnostic(SkipWorktreeUnresolved, sourcefacts.RecoveryAmbiguous)})
+		p.Candidates = append(p.Candidates, Candidate{Harness: "codex", NativeSessionID: "private-native-id", TranscriptPath: "/private/native/locator.jsonl", SourceKey: "credential-secret", Skip: SkipWorktreeUnresolved, Diagnostic: candidateDiagnostic(SkipWorktreeUnresolved, sourcefacts.RecoveryAmbiguous, "")})
 	}
 	p.Candidates = append(p.Candidates, Candidate{Skip: SkipWorktreeUnresolved, Diagnostic: &Diagnostic{Detail: "untrusted transcript content"}})
 	var text, structured bytes.Buffer
@@ -115,7 +115,7 @@ func TestInventoryCountsPhysicalCandidatesWithoutOverlappingRoles(t *testing.T) 
 	if total != 5 || a.UniqueCandidateFiles != 5 || a.DatabaseCandidates != 1 || a.Dispositions["duplicate_candidate"] != 1 || a.Dispositions["unresolved"] != 1 || !a.LogicalHistoryPending {
 		t.Fatalf("%+v", a)
 	}
-	if d := candidateDiagnostic(SkipRelatedHistory, ""); d.Detail != "history_lookup_pending" || d.Action != ActionAwaitSupport {
+	if d := candidateDiagnostic(SkipRelatedHistory, "", ""); d.Detail != "history_lookup_pending" || d.Action != ActionAwaitSupport {
 		t.Fatal(d)
 	}
 }
@@ -169,7 +169,7 @@ func TestDatabaseCandidateDiagnosticsFollowWinningSkip(t *testing.T) {
 // Recorded exclusion evidence must be reflected without changing the primary skip.
 func TestInventoryRetainsRecoveryExclusion(t *testing.T) {
 	t.Parallel()
-	c := Candidate{TranscriptPath: "/synthetic/excluded", Skip: SkipWorktreeUnresolved, Diagnostic: candidateDiagnostic(SkipWorktreeUnresolved, sourcefacts.RecoveryExcluded)}
+	c := Candidate{TranscriptPath: "/synthetic/excluded", Skip: SkipWorktreeUnresolved, Diagnostic: candidateDiagnostic(SkipWorktreeUnresolved, sourcefacts.RecoveryExcluded, "")}
 	p := Plan{Candidates: []Candidate{c}}
 	a := p.InventoryAccounting()
 	if a.UniqueCandidateFiles != 1 || a.Dispositions["excluded"] != 1 || a.Dispositions["unresolved"] != 0 || p.Candidates[0].Skip != SkipWorktreeUnresolved {

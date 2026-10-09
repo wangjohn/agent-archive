@@ -25,8 +25,10 @@ type resolution struct {
 	included bool
 	skip     SkipReason
 	outcome  sourcefacts.RecoveryOutcome
-	proof    *archive.ProjectResolution
-	current  *resolutionCheck
+	// cause names the missing witness evidence behind an inventory outcome.
+	cause   DiagnosticDetail
+	proof   *archive.ProjectResolution
+	current *resolutionCheck
 }
 
 // resolver applies the spec's project resolution rules. It never runs git:
@@ -54,12 +56,14 @@ type resolver struct {
 	recoverySourcesCurrent  func() bool
 	recoverySourcesReset    func(context.Context)
 	databaseRecoveryCurrent func(context.Context) bool
-	recoveryInventoryBudget bool
-	inventoryCurrent        func(context.Context) bool
-	mappingRecovery         *sourcefacts.RecoveryResolver
-	workspaceReset          func()
-	requireWitnessFormats   func(string)
-	proposedRootEligible    func(string) bool
+	// recoveryInventoryCause is set when the witness inventory has gaps, so
+	// recorded-key recovery is unavailable for this plan (see recoveryGaps).
+	recoveryInventoryCause DiagnosticDetail
+	inventoryCurrent       func(context.Context) bool
+	mappingRecovery        *sourcefacts.RecoveryResolver
+	workspaceReset         func()
+	requireWitnessFormats  func(string)
+	proposedRootEligible   func(string) bool
 }
 
 func newResolver(env Environment, cfg config.Config, filters Filters) *resolver {
@@ -181,6 +185,9 @@ func (r *resolver) resolveEvidence(ctx context.Context, cwd, key string) resolut
 		}
 		if outcome != "" {
 			res = resolution{skip: SkipWorktreeUnresolved, outcome: outcome}
+			if outcome == sourcefacts.RecoveryInventoryUnavailable && recovery == r.recovery {
+				res.cause = r.recoveryInventoryCause
+			}
 		}
 		if outcome == sourcefacts.RecoveryBudgetExhausted || outcome == sourcefacts.RecoveryInventoryUnavailable {
 			return res

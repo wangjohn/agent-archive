@@ -536,6 +536,11 @@ matching rule wins.
    origin read failed, or whose observation exhausted its budget, still blocks, and every configured root
    keeps the strict rule ([Recorded project recovery](#recorded-project-recovery)).
    Exact mappings continue to require configured targets.
+   A Cursor database chat with no folder evidence at all (no folder, no
+   workspace reference, no message folder; for example a subagent composer)
+   is a non-witness, not incomplete evidence: it names no root, so it cannot
+   hide a clone. A chat whose workspace reference cannot be read, or whose
+   messages name several folders, still makes the inventory incomplete.
    The plan displays selected proposed roots as projects it will add through the
    ordinary batch/config transaction. Hidden roots remain recovery evidence
    without becoming new capture roots. Evidence Context/digest binds the union;
@@ -1162,6 +1167,23 @@ match the recorded key even if configured. Bounded Git config origin names ident
 metadata dependencies; no partial Git configuration parser interprets remotes.
 Source and Git reads run outside admission locks. Under-lock scope digests and
 permission generations reject configuration changes.
+
+Backfill's uniqueness proof is over the clone roots its evidence names: the
+configured roots plus the live repository roots of every observed session, from
+every app, before output filters. Evidence that could name a root but was not
+observed (an unreadable store or folder, a session whose folder is unknown or
+unreadable, a changed native inventory, an unavailable or unsettled Cursor
+database, an exhausted budget) is a recorded gap. Any gap makes recorded-key
+recovery unavailable for the plan, because the missing evidence could be a
+second clone with the same key. Evidence that names no root (a Cursor chat
+with no folder, workspace reference or message folder) cannot be such a clone
+and is not a gap. Gaps are kept as a finite set of (app, cause) values, and
+the plan's diagnostic names the highest-priority cause instead of
+`project_inventory_unavailable`: `project_budget_exhausted`,
+`native_store_unreadable`, `cursor_database_unavailable`,
+`native_inventory_changed`, `cursor_chat_folder_unavailable`, then
+`session_folder_unknown`. Exact mappings and configured-path ownership do not
+depend on the witness inventory.
 
 `--map-project OLD_CWD=CONFIGURED_ROOT` is exact and invocation-local, with at
 most 128 mappings and 4,096 bytes per absolute path. The first equals sign is

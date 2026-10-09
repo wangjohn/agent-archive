@@ -13,9 +13,13 @@ import (
 
 // prepareRecoveryInventory separates observed repository membership from
 // committed capture policy. Discovery has finished; output filters have not run.
-func prepareRecoveryInventory(ctx context.Context, r *resolver, items []*work, unread unreadable, dbIncomplete bool) {
-	projects, witnesses, incomplete := recoveryWitnessInventory(ctx, r, items)
-	incomplete = incomplete || dbIncomplete || unread.folders > 0 || len(unread.stores) > 0
+func prepareRecoveryInventory(ctx context.Context, r *resolver, items []*work, unread unreadable, dbGaps recoveryGaps) {
+	projects, witnesses, gaps := recoveryWitnessInventory(ctx, r, items)
+	gaps.merge(dbGaps)
+	gaps.addUnreadable(unread)
+	cause := gaps.cause()
+	incomplete := cause != ""
+	r.recoveryInventoryCause = cause
 	selectedRoots := map[string]bool{}
 	r.requireWitnessFormats = func(root string) {
 		selectedRoots[root] = true
@@ -50,7 +54,7 @@ func prepareRecoveryInventory(ctx context.Context, r *resolver, items []*work, u
 	lookup := r.env.RepositoryIdentity
 	if incomplete {
 		lookup = func(context.Context, string) sourcefacts.RepositoryIdentity {
-			return sourcefacts.RepositoryIdentity{BudgetExhausted: r.recoveryInventoryBudget}
+			return sourcefacts.RepositoryIdentity{BudgetExhausted: cause == CauseRecoveryBudget}
 		}
 	}
 	r.mappingRecovery = r.recovery
@@ -87,7 +91,106 @@ type recoveryWitnessValidation struct {
 	current bool
 }
 
-func recoveryWitnessInventory(ctx context.Context, r *resolver, items []*work) ([]archive.ProjectActivation, map[string][]*work, bool) {
+// recoveryGap is one reason the witness inventory may omit a clone root.
+// Agent names the app whose evidence is missing ("" when not attributable);
+// it is internal only and never rendered.
+type recoveryGap struct {
+	Agent string
+	Cause DiagnosticDetail
+}
+
+// recoveryGaps is the bounded set of witness evidence gaps for one plan. Any
+// gap makes recorded-key recovery unavailable: missing evidence could name a
+// second clone holding the same recorded repository key.
+type recoveryGaps map[recoveryGap]bool
+
+// recoveryGapCauses orders causes for the single diagnostic a candidate
+// carries. Budget comes first because it also selects the budget outcome.
+var recoveryGapCauses = []DiagnosticDetail{
+	CauseRecoveryBudget,
+	CauseNativeStoreUnreadable,
+	CauseCursorDatabaseUnavailable,
+	CauseNativeInventoryChanged,
+	CauseCursorChatFolderUnavailable,
+	CauseSessionFolderUnknown,
+}
+
+func (g *recoveryGaps) add(agent string, cause DiagnosticDetail) {
+	if *g == nil {
+		*g = recoveryGaps{}
+	}
+	(*g)[recoveryGap{Agent: agent, Cause: cause}] = true
+}
+
+func (g *recoveryGaps) merge(other recoveryGaps) {
+	for gap := range other {
+		g.add(gap.Agent, gap.Cause)
+	}
+}
+
+func (g *recoveryGaps) addUnreadable(unread unreadable) {
+	for agent := range unread.folderAgents {
+		g.add(agent, CauseNativeStoreUnreadable)
+	}
+	if unread.folders > 0 && len(unread.folderAgents) == 0 {
+		g.add("", CauseNativeStoreUnreadable)
+	}
+	for agent, unreadable := range unread.stores {
+		if unreadable {
+			g.add(agent, CauseNativeStoreUnreadable)
+		}
+	}
+}
+
+// cause is the highest-priority gap cause, or "" for a complete inventory.
+func (g recoveryGaps) cause() DiagnosticDetail {
+	for _, cause := range recoveryGapCauses {
+		for gap := range g {
+			if gap.Cause == cause {
+				return cause
+			}
+		}
+	}
+	return ""
+}
+
+// witnessGap classifies an item that cannot be counted as a witness. ok is
+// false for a usable item. A Cursor database chat with no folder evidence at
+// all names no root, so it is a non-witness rather than a gap.
+func witnessGap(w *work) (cause DiagnosticDetail, ok bool) {
+	database := w.c.SourceKind == archive.SourceKindCursorSQLite
+	switch {
+	case w.vanished || w.sourceChanged:
+		if database {
+			return CauseCursorDatabaseUnavailable, true
+		}
+		return CauseNativeInventoryChanged, true
+	case w.unsafe || w.t.identityMismatch:
+		if database {
+			return CauseCursorDatabaseUnavailable, true
+		}
+		return CauseSessionFolderUnknown, true
+	case w.res.skip != SkipProjectUnknown:
+		return "", false
+	case !database:
+		return CauseSessionFolderUnknown, true
+	case cursorChatFolderless(w.chat, w.messageFolders):
+		return "", false
+	default:
+		return CauseCursorChatFolderUnavailable, true
+	}
+}
+
+// cursorChatFolderless reports a Cursor database chat with no folder evidence:
+// no folder, no workspace reference and no message folder. Such a chat (for
+// example a subagent composer) cannot name a clone root, so it cannot hide a
+// second clone. A workspace reference stays evidence even when unreadable, and
+// several message folders stay evidence even though none is chosen.
+func cursorChatFolderless(chat CursorDatabaseChat, messageFolders []string) bool {
+	return chat.Folder == "" && chat.WorkspaceID == "" && len(messageFolders) == 0
+}
+
+func recoveryWitnessInventory(ctx context.Context, r *resolver, items []*work) ([]archive.ProjectActivation, map[string][]*work, recoveryGaps) {
 	projects := slices.Clone(r.cfg.Archive.Projects)
 	configured := map[string]bool{}
 	for _, p := range projects {
@@ -95,15 +198,17 @@ func recoveryWitnessInventory(ctx context.Context, r *resolver, items []*work) (
 	}
 	observed := map[string]bool{}
 	witnesses := map[string][]*work{}
-	incomplete := r.inventoryCurrent != nil && !r.inventoryCurrent(ctx)
+	var gaps recoveryGaps
+	if r.inventoryCurrent != nil && !r.inventoryCurrent(ctx) {
+		gaps.add("", CauseNativeInventoryChanged)
+	}
 	for _, w := range items {
-		if w.vanished || w.sourceChanged || w.unsafe || w.t.identityMismatch {
-			incomplete = true
+		if cause, gap := witnessGap(w); gap {
+			gaps.add(string(w.t.harness), cause)
 			continue
 		}
 		if w.res.skip == SkipProjectUnknown {
-			incomplete = true
-			continue
+			continue // folderless: a non-witness, not a gap
 		}
 		if w.res.skip != "" || w.res.kind != ProjectKindRepository || !r.env.exists(w.res.root) || configured[r.env.resolved(w.res.root)] {
 			continue
@@ -111,7 +216,7 @@ func recoveryWitnessInventory(ctx context.Context, r *resolver, items []*work) (
 		// Pending or oversized sources can establish clone uncertainty, but cannot
 		// authorize a new destination on their own.
 		if _, existing := observed[w.res.root]; !existing && len(observed) >= 1024 {
-			incomplete = true
+			gaps.add("", CauseRecoveryBudget)
 			continue
 		}
 		eligible := !w.t.capturePending && !w.tooLarge
@@ -121,7 +226,7 @@ func recoveryWitnessInventory(ctx context.Context, r *resolver, items []*work) (
 	for root, eligible := range observed {
 		projects = append(projects, archive.ProjectActivation{Root: root, ProjectID: archive.ProjectID(root), Included: eligible})
 	}
-	return projects, witnesses, incomplete
+	return projects, witnesses, gaps
 }
 
 func recoveryWitnessesCurrent(ctx context.Context, r *resolver, witnesses map[string][]*work, selectedRoots map[string]bool) bool {
