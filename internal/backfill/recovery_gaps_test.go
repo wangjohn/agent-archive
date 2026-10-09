@@ -226,6 +226,22 @@ func TestRecoveryWitnessRootLimitIsNotABudget(t *testing.T) {
 	tr, env, cfg, _, _ := firstRunRecoveryFixture(t, false)
 	gone := tr.path("home/.codex/worktrees/deleted/repo")
 	key := archive.RepoKey("https://example.test/acme/repo")
+	r := newResolver(env, cfg, Filters{})
+	prepareRecoveryInventory(t.Context(), r, witnessLimitItems(t), unreadable{}, nil)
+	res := r.resolveEvidence(t.Context(), gone, key)
+	if res.outcome != sourcefacts.RecoveryInventoryUnavailable || res.cause != CauseWitnessLimit {
+		t.Fatalf("got %q/%q", res.outcome, res.cause)
+	}
+	d := candidateDiagnostic(res.skip, res.outcome, res.cause)
+	if d == nil || d.Detail != CauseWitnessLimit || d.Action == ActionRetry {
+		t.Fatalf("diagnostic %+v", d)
+	}
+}
+
+// witnessLimitItems names one more distinct repository root than the witness
+// inventory compares.
+func witnessLimitItems(t *testing.T) []*work {
+	t.Helper()
 	base := t.TempDir()
 	items := make([]*work, 0, 1025)
 	for i := range 1025 {
@@ -235,15 +251,42 @@ func TestRecoveryWitnessRootLimitIsNotABudget(t *testing.T) {
 		}
 		items = append(items, &work{t: &transcript{harness: harnessCodex}, res: resolution{root: root, kind: ProjectKindRepository}})
 	}
-	r := newResolver(env, cfg, Filters{})
-	prepareRecoveryInventory(t.Context(), r, items, unreadable{}, nil)
-	res := r.resolveEvidence(t.Context(), gone, key)
-	if res.outcome != sourcefacts.RecoveryInventoryUnavailable || res.cause != CauseWitnessLimit {
-		t.Fatalf("got %q/%q", res.outcome, res.cause)
+	return items
+}
+
+// The witness-limit text points to --map-project, so an exact mapping to a
+// configured repository must still recover, and stay valid, past the limit.
+func TestRecoveryWitnessLimitLeavesExactMappingAvailable(t *testing.T) {
+	tr, env, cfg, root, _ := firstRunRecoveryFixture(t, false)
+	gone := tr.path("home/.codex/worktrees/deleted/repo")
+	cfg.Archive.Projects = []archive.ProjectActivation{project(root, true)}
+	r := newResolver(env, cfg, Filters{ProjectMappings: map[string]string{gone: root}})
+	prepareRecoveryInventory(t.Context(), r, witnessLimitItems(t), unreadable{}, nil)
+	if r.recoveryInventoryCause != CauseWitnessLimit {
+		t.Fatalf("cause %q", r.recoveryInventoryCause)
 	}
-	d := candidateDiagnostic(res.skip, res.outcome, res.cause)
-	if d == nil || d.Detail != CauseWitnessLimit || d.Action == ActionRetry {
-		t.Fatalf("diagnostic %+v", d)
+	res := r.resolveEvidence(t.Context(), gone, archive.RepoKey("https://example.test/acme/repo"))
+	if res.outcome != "" || res.root != root || res.proof == nil || res.proof.Method != "explicit_mapping" || res.current == nil {
+		t.Fatalf("%+v", res)
+	}
+	res.current.reset(t.Context())
+	if !res.current.valid() {
+		t.Fatal("mapped recovery did not stay valid past the witness limit")
+	}
+}
+
+// When the Cursor budget and the witness limit both leave gaps, the budget
+// outcome wins, as on main, where only the budget selected it.
+func TestRecoveryBudgetOutranksWitnessLimit(t *testing.T) {
+	tr, env, cfg, _, _ := firstRunRecoveryFixture(t, false)
+	gone := tr.path("home/.codex/worktrees/deleted/repo")
+	var db recoveryGaps
+	db.add(string(harnessCursor), CauseRecoveryBudget)
+	r := newResolver(env, cfg, Filters{})
+	prepareRecoveryInventory(t.Context(), r, witnessLimitItems(t), unreadable{}, db)
+	res := r.resolveEvidence(t.Context(), gone, archive.RepoKey("https://example.test/acme/repo"))
+	if res.outcome != sourcefacts.RecoveryBudgetExhausted {
+		t.Fatalf("got %q/%q", res.outcome, res.cause)
 	}
 }
 
