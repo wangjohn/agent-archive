@@ -273,7 +273,7 @@ func (c *SQLiteSessionCatalog) refreshRemote(ctx context.Context, requiredPrior 
 	if err != nil {
 		return false, err
 	}
-	if requiredPrior != nil && (len(invalid) != 0 || uint64(len(cachedKeys)) != expected) {
+	if remoteReuseRowsInvalid(requiredPrior, invalid, cachedKeys, expected) {
 		return false, nil
 	}
 	delta, err = reconcileRemoteDelta(ctx, snapshot, delta, cachedKeys, invalid, expected)
@@ -329,6 +329,11 @@ func (c *SQLiteSessionCatalog) refreshRemote(ctx context.Context, requiredPrior 
 	c.remoteSnapshot = snapshot
 	c.viewEpoch, c.viewGeneration, c.viewReady = epoch, generation, true
 	return true, nil
+}
+
+// remoteReuseRowsInvalid preserves the reuse-only refusal without repairing rows.
+func remoteReuseRowsInvalid(requiredPrior *catalog.ObjectRef, invalid []string, cachedKeys map[string]bool, expected uint64) bool {
+	return requiredPrior != nil && (len(invalid) != 0 || uint64(len(cachedKeys)) != expected)
 }
 
 // remotePriorRoot preserves the read-only reuse probe: unavailable or different

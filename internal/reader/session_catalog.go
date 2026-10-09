@@ -285,13 +285,13 @@ func initializeCatalogState(ctx context.Context, db *sql.DB) error {
 	if err != nil {
 		return err
 	}
+	defer func() { _ = rows.Close() }()
 	found := false
 	for rows.Next() {
 		var cid, notnull, pk int
 		var name, typ string
 		var defaultValue any
 		if err = rows.Scan(&cid, &name, &typ, &notnull, &defaultValue, &pk); err != nil {
-			_ = rows.Close()
 			return err
 		}
 		found = found || name == "namespace"
@@ -405,55 +405,11 @@ func (c *SQLiteSessionCatalog) Refresh(ctx context.Context, snapshot HeaderSnaps
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	// Acquire the SQLite writer before reading validators, preventing a stale
-	// comparison from overwriting another connection's completed refresh.
-	if _, err = tx.ExecContext(ctx, "UPDATE catalog_state SET generation=generation WHERE id=1"); err != nil {
-		return err
-	}
-	// Canonical reconciliation may replace remote rows even at equal cardinality.
-	// Invalidate their root in the SAME transaction, including retirement-only
-	// commits on unrelated decode failure. Rollback retains the prior provenance.
-	var hasRemoteRoot bool
-	if err = tx.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type='table' AND name='remote_root')").Scan(&hasRemoteRoot); err != nil {
-		return err
-	}
-	if hasRemoteRoot {
-		if _, err = tx.ExecContext(ctx, "DELETE FROM remote_root WHERE id=1"); err != nil {
-			return err
-		}
-	}
-	var namespace string
-	if err = tx.QueryRowContext(ctx, "SELECT namespace FROM catalog_state WHERE id=1").Scan(&namespace); err != nil {
-		return err
-	}
-	destinationChanged := namespace != c.namespace
-	if destinationChanged {
-		if _, err = tx.ExecContext(ctx, "DELETE FROM sessions"); err != nil {
-			return err
-		}
-		if _, err = tx.ExecContext(ctx, "UPDATE catalog_state SET namespace=?,generation=generation+1,complete=0 WHERE id=1", c.namespace); err != nil {
-			return err
-		}
-	}
-	rows, err := tx.QueryContext(ctx, "SELECT key,etag,hash,capture,activity,summary,search,lowerid,unlabeled,summary_hash FROM sessions")
+	destinationChanged, err := prepareCanonicalCatalog(ctx, tx, c.namespace)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = rows.Close() }()
-	prior := map[string]string{}
-	validSummary := map[string]bool{}
-	for rows.Next() {
-		var record catalogRecord
-		if err = record.scan(rows); err != nil {
-			return err
-		}
-		prior[record.key] = record.etag
-		validSummary[record.key] = record.valid()
-	}
-	err = rows.Err()
-	if closeErr := rows.Close(); err == nil {
-		err = closeErr
-	}
+	prior, validSummary, err := canonicalCatalogRows(ctx, tx)
 	if err != nil {
 		return err
 	}
@@ -530,6 +486,68 @@ func (c *SQLiteSessionCatalog) Refresh(ctx context.Context, snapshot HeaderSnaps
 	}
 	c.viewEpoch, c.viewGeneration, c.viewReady = epoch, generation, true
 	return nil
+}
+
+// prepareCanonicalCatalog keeps provenance retirement inside the caller's writer transaction.
+func prepareCanonicalCatalog(ctx context.Context, tx *sql.Tx, canonicalNamespace string) (bool, error) {
+	// Acquire the SQLite writer before reading validators, preventing a stale
+	// comparison from overwriting another connection's completed refresh.
+	if _, err := tx.ExecContext(ctx, "UPDATE catalog_state SET generation=generation WHERE id=1"); err != nil {
+		return false, err
+	}
+	// Canonical reconciliation may replace remote rows even at equal cardinality.
+	// Invalidate their root in the SAME transaction, including retirement-only
+	// commits on unrelated decode failure. Rollback retains the prior provenance.
+	var hasRemoteRoot bool
+	if err := tx.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type='table' AND name='remote_root')").Scan(&hasRemoteRoot); err != nil {
+		return false, err
+	}
+	if hasRemoteRoot {
+		if _, err := tx.ExecContext(ctx, "DELETE FROM remote_root WHERE id=1"); err != nil {
+			return false, err
+		}
+	}
+	var namespace string
+	if err := tx.QueryRowContext(ctx, "SELECT namespace FROM catalog_state WHERE id=1").Scan(&namespace); err != nil {
+		return false, err
+	}
+	destinationChanged := namespace != canonicalNamespace
+	if destinationChanged {
+		if _, err := tx.ExecContext(ctx, "DELETE FROM sessions"); err != nil {
+			return false, err
+		}
+		if _, err := tx.ExecContext(ctx, "UPDATE catalog_state SET namespace=?,generation=generation+1,complete=0 WHERE id=1", canonicalNamespace); err != nil {
+			return false, err
+		}
+	}
+	return destinationChanged, nil
+}
+
+// canonicalCatalogRows closes its cursor before the caller uses the single connection again.
+func canonicalCatalogRows(ctx context.Context, tx *sql.Tx) (map[string]string, map[string]bool, error) {
+	rows, err := tx.QueryContext(ctx, "SELECT key,etag,hash,capture,activity,summary,search,lowerid,unlabeled,summary_hash FROM sessions")
+	if err != nil {
+		return nil, nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	prior := map[string]string{}
+	validSummary := map[string]bool{}
+	for rows.Next() {
+		var record catalogRecord
+		if err = record.scan(rows); err != nil {
+			return nil, nil, err
+		}
+		prior[record.key] = record.etag
+		validSummary[record.key] = record.valid()
+	}
+	err = rows.Err()
+	if closeErr := rows.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	return prior, validSummary, nil
 }
 
 // readChanges overlaps independent cold/changed reads while keeping observers

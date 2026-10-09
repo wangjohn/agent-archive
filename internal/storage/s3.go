@@ -82,12 +82,20 @@ func (s *S3Store) CatalogNamespace() string { return s.catalogNamespace }
 
 func configuredCatalogNamespace(cfg credentials.Config, client *s3.Client) string {
 	options := client.Options()
-	if options.EndpointResolver != nil {
+	resolver, admitted := options.EndpointResolverV2.(*configuredCatalogEndpointResolver)
+	if !admitted || resolver == nil || resolver.EndpointResolverV2 == nil {
 		return ""
 	}
 	// Bind the actual SDK endpoint too: named AWS profiles may supply an
 	// endpoint override beyond the application's configured destination ID.
 	return SHA256Hex([]byte(config.DestinationID(cfg) + "\x00" + options.Region + "\x00" + aws.ToString(options.BaseEndpoint)))
+}
+
+// This private marker is installed only after the restricted configured loaders
+// succeed. Their pinned SDK configuration sources cannot install legacy resolvers.
+// Public NewClient and arbitrary SDK clients receive no configured authority.
+type configuredCatalogEndpointResolver struct {
+	s3.EndpointResolverV2
 }
 
 // NewClient constructs an S3 client for AWS or an S3-compatible endpoint.
@@ -109,10 +117,17 @@ func configuredCatalogNamespace(cfg credentials.Config, client *s3.Client) strin
 // no supported checksum" into the middle of a command's output. Failures
 // reach the caller as errors, which Diagnose explains.
 func NewClient(cfg aws.Config, endpoint string, pathStyle bool, maxAttempts int) *s3.Client {
+	return newClient(cfg, endpoint, pathStyle, maxAttempts, nil)
+}
+
+func newClient(cfg aws.Config, endpoint string, pathStyle bool, maxAttempts int, resolver s3.EndpointResolverV2) *s3.Client {
 	if maxAttempts <= 0 {
 		maxAttempts = 3
 	}
 	return s3.NewFromConfig(cfg, func(options *s3.Options) {
+		if resolver != nil {
+			options.EndpointResolverV2 = resolver
+		}
 		if endpoint != "" {
 			options.BaseEndpoint = aws.String(strings.TrimRight(endpoint, "/"))
 		}
@@ -536,7 +551,11 @@ func NewConfiguredStore(ctx context.Context, cfg credentials.Config, keychain cr
 	if err != nil {
 		return nil, err
 	}
-	client := NewClient(awsCfg, endpoint, true, 3)
+	// LoadAWSConfig uses only profile/region/logger options; LoadR2Config builds
+	// a fresh static-credential config. Neither admits an injected legacy resolver.
+	// Keep this marker construction here, after those exact vetted loaders.
+	resolver := &configuredCatalogEndpointResolver{EndpointResolverV2: s3.NewDefaultEndpointResolverV2()}
+	client := newClient(awsCfg, endpoint, true, 3, resolver)
 	store, err := NewS3Store(S3StoreOptions{Provider: cfg.Provider, Client: client, Bucket: cfg.Bucket, Prefix: cfg.Prefix})
 	if err != nil {
 		return nil, err
