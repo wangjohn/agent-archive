@@ -614,7 +614,7 @@ func (u *upload) refresh() error {
 	}
 	u.total, u.totalBytes, u.pending = 0, 0, map[string]int64{}
 	for _, reg := range regs {
-		if !reg.InBatch(u.batch) || reg.ParentSessionID != "" {
+		if !reg.InBatch(u.batch) || !independentImportedSession(reg) {
 			continue
 		}
 		size := u.size(reg)
@@ -785,7 +785,7 @@ func batchUploadState(store *state.Store, cfg config.Config, regs []archive.Sess
 		if !reg.InBatch(b.ID) {
 			continue
 		}
-		if reg.ParentSessionID != "" {
+		if !independentImportedSession(reg) {
 			subagents++
 			continue
 		}
@@ -821,7 +821,7 @@ func batchUploadState(store *state.Store, cfg config.Config, regs []archive.Sess
 		return fmt.Sprintf("interrupted; %d registered; run agent-archive backfill with the same options to finish", registered), nil
 	case b.CompletedAt == nil:
 		return fmt.Sprintf("interrupted; %d registered", registered), nil
-	case len(b.Sessions) == 0:
+	case len(b.Sessions)+len(b.Subagents) == 0:
 		return "nothing registered", nil
 	case registered == 0:
 		return "removed", nil

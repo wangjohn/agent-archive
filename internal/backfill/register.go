@@ -294,6 +294,12 @@ func (r Registration) step(cfg config.Config, w *parentWork, result *Registratio
 			result.Invalid++
 			return true, nil
 		}
+		if (c.NativeChild || c.CodexBinding != nil) && !cfg.CodexHistoryProtection {
+			cfg.CodexHistoryProtection = true
+			if err := config.Save(r.Home, cfg); err != nil {
+				return true, err
+			}
+		}
 		w.id, _, err = r.Store.EnsureArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(c.Harness)), NativeID: c.NativeSessionID})
 		return false, err
 	}
@@ -322,7 +328,11 @@ func (r Registration) step(cfg config.Config, w *parentWork, result *Registratio
 	if err := r.Store.SaveRequest(reg.ArchiveSessionID, "backfill", r.AdmittedAt, w.links...); err != nil {
 		return true, fmt.Errorf("queue an imported session: %w", err)
 	}
-	result.Sessions = append(result.Sessions, reg.ArchiveSessionID)
+	if reg.NativeChild {
+		result.Subagents = append(result.Subagents, reg.ArchiveSessionID)
+	} else {
+		result.Sessions = append(result.Sessions, reg.ArchiveSessionID)
+	}
 	result.Subagents = append(result.Subagents, w.children...)
 	return true, nil
 }
@@ -424,23 +434,23 @@ func (r Registration) registration(c Candidate, archiveID, repoKey string) archi
 		repoKey = c.ProjectResolution.RecordedRepoKey
 	}
 	return archive.SessionRegistration{
-		ArchiveSessionID:  archiveID,
-		NativeSessionID:   c.NativeSessionID,
-		ProjectID:         archive.ProjectID(c.ProjectRoot),
-		ProjectRoot:       c.ProjectRoot,
-		RepoKey:           repoKey,
-		ProjectResolution: c.ProjectResolution,
-		Harness:           archive.Harness{Name: c.Harness},
-		TranscriptPath:    c.TranscriptPath,
-		SourceKind:        c.SourceKind,
-		SourceKey:         c.SourceKey,
-		SessionStartedAt:  c.StartedAt,
-		StartedAtSource:   c.StartedAtSource,
-		RegisteredAt:      r.AdmittedAt,
-		AdmittedAt:        r.AdmittedAt,
-		Origin:            archive.SessionOriginImport,
-		ImportBatch:       archive.NewImportBatch(r.Batch),
-		DestinationID:     r.DestinationID,
+		CodexBinding: c.CodexBinding, ProjectResolution: c.ProjectResolution, NativeChild: c.NativeChild, NativeRootSessionID: c.RootNativeID, ParentNativeSessionID: c.ParentNativeID, NativeSourceHome: c.NativeHome,
+		ArchiveSessionID: archiveID,
+		NativeSessionID:  c.NativeSessionID,
+		ProjectID:        archive.ProjectID(c.ProjectRoot),
+		ProjectRoot:      c.ProjectRoot,
+		RepoKey:          repoKey,
+		Harness:          archive.Harness{Name: c.Harness},
+		TranscriptPath:   c.TranscriptPath,
+		SourceKind:       c.SourceKind,
+		SourceKey:        c.SourceKey,
+		SessionStartedAt: c.StartedAt,
+		StartedAtSource:  c.StartedAtSource,
+		RegisteredAt:     r.AdmittedAt,
+		AdmittedAt:       r.AdmittedAt,
+		Origin:           archive.SessionOriginImport,
+		ImportBatch:      archive.NewImportBatch(r.Batch),
+		DestinationID:    r.DestinationID,
 	}
 }
 

@@ -78,14 +78,14 @@ func TestCompatibleFormatsPublishAndReadBackAmongRejectedRecords(t *testing.T) {
 		func(m, _ map[string]any) { m["history_mode"] = "referenced" },
 		func(m, _ map[string]any) { delete(m, "originator") },
 		func(m, _ map[string]any) { m["forked_from_id"] = "parent" },
-		func(m, _ map[string]any) { m["agent_path"] = "/root/child" },
+		func(m, _ map[string]any) { m["thread_source"] = "guardian_review" },
 		func(_, task map[string]any) { task["turn_id"] = "external-import-turn-1" },
 		func(_, task map[string]any) { delete(task, "started_at") },
 	} {
 		compatibilityRollout(t, root, cfg.Archive.Projects[0].Root, fixtures[2], "0.999.0", 100+i, alter)
 	}
-	h, err := runWithCensus(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(2 * time.Minute) }}, registeredAdapters())
-	if err != nil || h.Registered != len(versions) || !h.Supported || h.Outcomes["unsupported_history"] != 2 || h.Outcomes["unsupported_producer"] != 1 || h.Outcomes["inherited_history"] != 2 || h.Outcomes["child_history_pending"] != 1 || h.Outcomes["invalid_relationship"] != 1 {
+	h, err := runWithCensus(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(2 * time.Minute) }}, registeredAdapters())
+	if err != nil || h.Registered != len(versions) || !h.Supported || h.Outcomes["unsupported_history"] != 2 || h.Outcomes["unsupported_producer"] != 1 || h.Outcomes["inherited_history"] != 2 || h.Outcomes["unsupported_execution"] != 1 || h.Outcomes["invalid_relationship"] != 1 {
 		t.Fatalf("mixed scan: %+v %v", h, err)
 	}
 	if len(h.Formats) != len(versions) {
@@ -132,7 +132,7 @@ func TestCompatibleFormatsPublishAndReadBackAmongRejectedRecords(t *testing.T) {
 		}
 	}
 	// Repeated observations retain native ownership and never allocate duplicates.
-	h, err = runWithCensus(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(4 * time.Minute) }}, registeredAdapters())
+	h, err = runWithCensus(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(4 * time.Minute) }}, registeredAdapters())
 	if err != nil || h.Registered != 0 {
 		t.Fatalf("duplicate admission: %+v %v", h, err)
 	}
@@ -199,7 +199,7 @@ func TestUnknownCompatibleVersionCannotBypassCreationConsent(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			h, err := runWithCensus(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(2 * time.Minute) }}, registeredAdapters())
+			h, err := runWithCensus(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(2 * time.Minute) }}, registeredAdapters())
 			if err != nil || h.Registered != 0 {
 				t.Fatalf("consent bypass: %+v %v", h, err)
 			}
@@ -246,7 +246,7 @@ func TestVersionTwoCatalogReprobesForFormatEvidence(t *testing.T) {
 	if err := local.Write(filepath.Join(store.Home(), "discovery-catalog.json"), old); err != nil {
 		t.Fatal(err)
 	}
-	h, err := Run(context.Background(), store, cfg, Options{Now: func() time.Time { return now }})
+	h, err := Run(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return now }})
 	if err != nil || h.Probes != 1 || len(h.Formats) != 1 || h.Formats[0].Profile != sourcefacts.CodexPaginatedJSONL || !h.Supported {
 		t.Fatalf("stale cache blocked compatible producer: %+v %v", h, err)
 	}
@@ -256,7 +256,7 @@ func TestCompatibleProducerVersionIsImmutableAtPublication(t *testing.T) {
 	t.Parallel()
 	store, cfg, at, root := fixture(t)
 	compatibilityRollout(t, root, cfg.Archive.Projects[0].Root, "codex-155-alpha-paginated.jsonl", "0.999.0-alpha.1", 1, nil)
-	h, err := runWithCensus(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(2 * time.Minute) }}, registeredAdapters())
+	h, err := runWithCensus(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(2 * time.Minute) }}, registeredAdapters())
 	if err != nil || h.Registered != 1 {
 		t.Fatalf("admission failed: %+v %v", h, err)
 	}
@@ -271,7 +271,7 @@ func TestCompatibleProducerVersionIsImmutableAtPublication(t *testing.T) {
 	}
 }
 
-func TestRelatedCodexHistoriesStayPendingWithoutRegistrations(t *testing.T) {
+func TestSelfContainedChildrenAndForksAdmitIndependentlyWhileDependenciesRemainPending(t *testing.T) {
 	t.Parallel()
 	store, cfg, at, root := fixture(t)
 	const ancestor = "00000000-0000-0000-0000-000000000001"
@@ -286,12 +286,12 @@ func TestRelatedCodexHistoriesStayPendingWithoutRegistrations(t *testing.T) {
 	} {
 		compatibilityRollout(t, root, cfg.Archive.Projects[0].Root, "codex-155-alpha-paginated.jsonl", "0.999.0", 20+i, alter)
 	}
-	h, err := runWithCensus(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(2 * time.Minute) }}, registeredAdapters())
-	if err != nil || h.Registered != 0 || h.Outcomes["child_history_pending"] != 2 || h.Outcomes["fork_history_pending"] != 1 || h.Outcomes["related_history_pending"] != 1 || h.Outcomes["invalid_identity"] != 0 {
+	h, err := runWithCensus(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(2 * time.Minute) }}, registeredAdapters())
+	if err != nil || h.Registered != 3 || h.Outcomes["related_history_pending"] < 1 || h.Outcomes["invalid_identity"] != 0 {
 		t.Fatalf("related history: %+v %v", h, err)
 	}
 	regs, err := store.LoadRegistrations()
-	if err != nil || len(regs) != 0 {
-		t.Fatalf("incomplete histories registered: %v %v", regs, err)
+	if err != nil || len(regs) != 3 {
+		t.Fatalf("independent histories missing: %v %v", regs, err)
 	}
 }

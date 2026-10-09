@@ -38,6 +38,9 @@ func handleSubagentStop(store *state.Store, cfg config.Config, event agentapi.Li
 		return err
 	}
 
+	if harness == "codex" {
+		return nativeCodexSubagentStop(store, cfg, parent, event, now)
+	}
 	agentID := event.Child.ID
 	if agentID == "" {
 		return saveSubagentCaptureGap(store, parent.ArchiveSessionID, "subagent_identity_unavailable", event.Child.MissingDetail, now)

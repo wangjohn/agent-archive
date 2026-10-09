@@ -76,7 +76,7 @@ func refilterBundleBounded(ctx context.Context, reg archive.SessionRegistration,
 	if bundle.SchemaVersion != archive.SourceSchemaVersion && bundle.SchemaVersion != archive.HistorySourceSchemaVersion {
 		return archive.SourceBundle{}, errors.New("unsupported retained source schema")
 	}
-	if bundle.ArchiveSessionID != reg.ArchiveSessionID || bundle.NativeSessionID != reg.NativeSessionID || bundle.ProjectID != reg.ProjectID || bundle.Capture.Harness.Name != reg.Harness.Name || bundle.ParentSessionID != reg.ParentSessionID {
+	if bundle.ArchiveSessionID != reg.ArchiveSessionID || bundle.NativeSessionID != reg.NativeSessionID || bundle.ProjectID != reg.ProjectID || bundle.Capture.Harness.Name != reg.Harness.Name || !retainedParentMatches(reg, bundle) {
 		return archive.SourceBundle{}, errors.New("retained refilter identity mismatch")
 	}
 	if err := bundle.ValidateHistory(); err != nil {
@@ -105,7 +105,11 @@ func refilterBundleBounded(ctx context.Context, reg archive.SessionRegistration,
 	if err := refiltered.ValidateHistory(); err != nil {
 		return archive.SourceBundle{}, err
 	}
-	refiltered.Capture.Gaps = mergeCaptureGaps(bundle.Capture.Gaps, refiltered.Capture.Gaps)
+	originalGaps := bundle.Capture.Gaps
+	if nativeParentResolved(reg, bundle) {
+		originalGaps = withoutNativeParentPendingGap(originalGaps)
+	}
+	refiltered.Capture.Gaps = mergeCaptureGaps(originalGaps, refiltered.Capture.Gaps)
 	return refiltered, nil
 }
 
@@ -173,4 +177,38 @@ func (s *sessionScan) refilterRewritten(_ context.Context, read sourceRead, snap
 	}
 	s.rewritten = &candidate
 	return refiltered, true, nil
+}
+
+// Native parent links may resolve after a retained revision was captured. The
+// stable child owner still identifies that earlier evidence; a different known
+// parent remains a conflict.
+func retainedParentMatches(reg archive.SessionRegistration, bundle archive.SourceBundle) bool {
+	return bundle.ParentSessionID == reg.ParentSessionID || nativeChildOwned(reg, bundle) && bundle.ParentSessionID == ""
+}
+
+// Only positively identified native child evidence can acquire its first archive parent.
+func nativeParentResolved(reg archive.SessionRegistration, bundle archive.SourceBundle) bool {
+	return nativeChildOwned(reg, bundle) && bundle.ParentSessionID == "" && reg.ParentSessionID != ""
+}
+
+// A missing optional marker is unknown on older sources. Only the same already
+// admitted owner and a supported persisted child binding may upgrade it; parent
+// links and current native observations cannot supply that proof.
+func nativeChildOwned(reg archive.SessionRegistration, bundle archive.SourceBundle) bool {
+	if !reg.NativeChild {
+		return false
+	}
+	if bundle.NativeChild {
+		return true
+	}
+	binding := reg.CodexBinding
+	return binding != nil && binding.Child && binding.Validate() == nil &&
+		reg.Harness.Name == archive.HarnessCodex && bundle.Capture.Harness.Name == archive.HarnessCodex &&
+		binding.NativeThreadID == reg.NativeSessionID && bundle.NativeSessionID == reg.NativeSessionID &&
+		bundle.ArchiveSessionID == reg.ArchiveSessionID && bundle.ProjectID == reg.ProjectID &&
+		binding.Home != "" && nativeBindingRelationshipsMatch(reg, binding)
+}
+
+func nativeChildMarkerPending(reg archive.SessionRegistration, bundle archive.SourceBundle) bool {
+	return !bundle.NativeChild && nativeChildOwned(reg, bundle)
 }
