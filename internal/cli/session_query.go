@@ -219,7 +219,7 @@ func searchSessions(sessions []archive.Metadata, q sessionQuery, scope sessionSc
 	matched := matchPool(sessions, q, fields)
 	var top, subagents []archive.Metadata
 	for _, m := range matched {
-		if m.ParentSessionID == "" {
+		if !m.IsChild() {
 			top = append(top, m)
 		} else {
 			subagents = append(subagents, m)

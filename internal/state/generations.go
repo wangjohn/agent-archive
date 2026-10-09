@@ -263,7 +263,7 @@ func (s *Store) generationRecoveryOriginal(id string) (archive.SessionRegistrati
 	if pending, err := s.HasPending(id); err != nil || pending {
 		return archive.SessionRegistration{}, agentmeta.SessionKey{}, errors.New("settle pending publication with agent-archive sync before recovery")
 	}
-	if old.ParentSessionID != "" || !old.ReadsTranscriptFile() {
+	if old.IsChild() || !old.ReadsTranscriptFile() {
 		return archive.SessionRegistration{}, agentmeta.SessionKey{}, errors.New("recovery supports top-level transcript files only")
 	}
 	return old, key, nil

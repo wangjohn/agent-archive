@@ -101,6 +101,13 @@ type OwnTaskFacts struct {
 	TurnID         string
 }
 
+// ValidNativeCreation reports whether the first observed task can originate in
+// this native thread. The one-second tolerance matches bounded header admission;
+// a rejected first event remains decisive even if a later event looks native.
+func (f OwnTaskFacts) ValidNativeCreation(created time.Time) bool {
+	return f.Seen && f.Native && f.LocalExecution && !created.IsZero() && !f.StartedAt.IsZero() && !f.StartedAt.Before(created.Add(-time.Second))
+}
+
 // SourceOwnTaskFacts observes the first task within the snapshot's own logical
 // boundary, even when a copied model-context prefix exceeds a header window.
 type SourceOwnTaskFacts interface {

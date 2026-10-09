@@ -60,7 +60,7 @@ func TestDeletedWorktreeDiscoveryRetainsCreationConsent(t *testing.T) {
 			}
 			key := archive.RepoKey("https://example.test/acme/repo")
 			calls := 0
-			opts := Options{Now: func() time.Time { return at.Add(2 * time.Minute) }, RepositoryIdentity: func(_ context.Context, path string) sourcefacts.RepositoryIdentity {
+			opts := Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(2 * time.Minute) }, RepositoryIdentity: func(_ context.Context, path string) sourcefacts.RepositoryIdentity {
 				calls++
 				return sourcefacts.RepositoryIdentity{Root: path, Key: key, Known: true}
 			}}
@@ -108,7 +108,7 @@ func TestDeletedWorktreeImportContinuesWithoutRemapping(t *testing.T) {
 		t.Fatal(err)
 	}
 	calls := 0
-	opts := Options{Now: func() time.Time { return at.Add(3 * time.Minute) }, RepositoryIdentity: func(context.Context, string) sourcefacts.RepositoryIdentity {
+	opts := Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(3 * time.Minute) }, RepositoryIdentity: func(context.Context, string) sourcefacts.RepositoryIdentity {
 		calls++
 		return sourcefacts.RepositoryIdentity{}
 	}}
@@ -154,7 +154,7 @@ func TestRecoveredDiscoveryRechecksEvidenceBeforeAdmission(t *testing.T) {
 			t.Fatal(err)
 		}
 		key := archive.RepoKey("https://example.test/acme/repo")
-		opts := Options{Now: func() time.Time { return at.Add(2 * time.Minute) }, RepositoryIdentity: func(_ context.Context, rootPath string) sourcefacts.RepositoryIdentity {
+		opts := Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(2 * time.Minute) }, RepositoryIdentity: func(_ context.Context, rootPath string) sourcefacts.RepositoryIdentity {
 			if changeSource {
 				if err := os.WriteFile(path, append(raw, '\n'), 0600); err != nil {
 					t.Fatal(err)
@@ -302,7 +302,7 @@ func TestDiscoveryRejectsSourceChangesAcrossHeaderAndRecovery(t *testing.T) {
 					mutate()
 				}
 				key := archive.RepoKey("https://example.test/acme/repo")
-				opts := Options{Now: func() time.Time { return at.Add(2 * time.Minute) }, RepositoryIdentity: func(_ context.Context, rootPath string) sourcefacts.RepositoryIdentity {
+				opts := Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(2 * time.Minute) }, RepositoryIdentity: func(_ context.Context, rootPath string) sourcefacts.RepositoryIdentity {
 					if phase == sourceChangeLookup {
 						mutate()
 					}
@@ -463,7 +463,7 @@ func TestPersistedMissingConfiguredCwdReprobesWithoutRepositoryKey(t *testing.T)
 					t.Fatalf("probe exhaustion reused stale missing-cwd facts: %+v retry=%v stop=%v", h, retry, stop)
 				}
 			}
-			h, err := runWithAdapters(t.Context(), store, cfg, Options{Now: func() time.Time { return at.Add(2 * time.Minute) }}, []SourceAdapter{adapter})
+			h, err := runWithAdapters(t.Context(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(2 * time.Minute) }}, []SourceAdapter{adapter})
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -101,7 +101,8 @@ type appStatus struct {
 	SubagentSessions int `json:"subagent_sessions"`
 	// ImportedSessions counts the app's top-level sessions agent-archive
 	// backfill imported that the configuration publishes (AcceptSession).
-	ImportedSessions int `json:"imported_sessions"`
+	ImportedSessions      int `json:"imported_sessions"`
+	ImportedChildSessions int `json:"imported_child_sessions,omitempty"`
 	// ReplaySessions counts the top-level sessions among Sessions that a
 	// replay tool ran (archive.ReplayEnv). They are hook captures, so they
 	// count as sessions and verify the app's hooks; list hides them.
@@ -707,7 +708,10 @@ func (s statusSessions) appStatus(name string, cfg config.Config, home string, i
 			// the session. Actual subsequent hook observation is recorded above.
 			// Imports only count toward imports and uploads, not verification.
 			// Subagents go with their parent.
-			if reg.ParentSessionID == "" {
+			if independentImportedSession(reg) {
+				if reg.NativeChild {
+					app.ImportedChildSessions++
+				}
 				app.ImportedSessions++
 				project(reg.ProjectRoot).imported++
 				if s.owed[reg.ArchiveSessionID].Blocked || issues[reg.ArchiveSessionID] != "" {
@@ -717,7 +721,7 @@ func (s statusSessions) appStatus(name string, cfg config.Config, home string, i
 			}
 			continue
 		}
-		if reg.ParentSessionID != "" {
+		if reg.IsChild() {
 			app.SubagentSessions++
 		} else {
 			if reg.Replay != nil {
@@ -1317,7 +1321,7 @@ func collectorLockHeld(home string) bool {
 // reported here. owed holds every import's Outstanding.
 func importedSessionCounts(cfg config.Config, regs []archive.SessionRegistration, owed map[string]state.Outstanding, issues map[string]string) (imported, pending, withIssues int) {
 	for _, reg := range regs {
-		if !reg.Imported() || reg.ParentSessionID != "" {
+		if !reg.Imported() || !independentImportedSession(reg) {
 			continue
 		}
 		imported++
@@ -2627,6 +2631,9 @@ func printStatusDetails(out io.Writer, view statusView) {
 // wrote them, counted by type.
 func subagentDetailLines(collector state.Status) []string {
 	var lines []string
+	if n := collector.PendingNativeLinks; n > 0 {
+		lines = append(lines, fmt.Sprintf("%d native child parent links unresolved; children capture independently", n))
+	}
 	if n := collector.WaitingSubagents; n > 0 {
 		lines = append(lines, fmt.Sprintf("%d waiting for their transcripts", n))
 	}
@@ -2911,4 +2918,8 @@ func discoveryFormats(d *discovery.Health) string {
 		return ""
 	}
 	return "Recorded session formats: " + strings.Join(formats, "; ") + ". Compatibility permits discovery; capture still requires consent and publication/read-back."
+}
+
+func independentImportedSession(reg archive.SessionRegistration) bool {
+	return !reg.IsChild() || reg.NativeChild
 }

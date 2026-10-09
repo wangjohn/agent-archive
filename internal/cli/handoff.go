@@ -553,7 +553,7 @@ type localMatches struct {
 func (r handoffResolver) localCandidates(regs []archive.SessionRegistration, dir string) localMatches {
 	var matches localMatches
 	for _, reg := range regs {
-		if reg.ParentSessionID != "" || reg.SubagentID != "" || reg.Replay != nil || r.skip[handoffSessionKey(reg.Harness.Name, reg.NativeSessionID)] {
+		if reg.IsChild() || reg.SubagentID != "" || reg.Replay != nil || r.skip[handoffSessionKey(reg.Harness.Name, reg.NativeSessionID)] {
 			continue
 		}
 		byPath := sameProject(reg.ProjectRoot, dir)
@@ -734,7 +734,7 @@ func (r handoffResolver) projectIDs(dir string) map[string]bool {
 func topLevelSessions(sessions []archive.Metadata) []archive.Metadata {
 	out := sessions[:0:0]
 	for _, m := range sessions {
-		if m.ParentSessionID == "" {
+		if !m.IsChild() {
 			out = append(out, m)
 		}
 	}
@@ -746,7 +746,7 @@ func topLevelSessions(sessions []archive.Metadata) []archive.Metadata {
 func subagentSessions(sessions []archive.Metadata) []archive.Metadata {
 	out := sessions[:0:0]
 	for _, m := range sessions {
-		if m.ParentSessionID != "" {
+		if m.IsChild() {
 			out = append(out, m)
 		}
 	}

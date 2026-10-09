@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"context"
+	"github.com/wangjohn/agent-archive/internal/agents/builtin"
 	"os"
 	"path/filepath"
 	"testing"
@@ -84,7 +85,7 @@ func TestAdapterFactsCannotGrantAdmission(t *testing.T) {
 					c.StartEvidence = "mtime"
 				}
 			}}
-			h, err := runWithAdapters(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(2 * time.Minute) }}, []SourceAdapter{adapter})
+			h, err := runWithAdapters(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(2 * time.Minute) }}, []SourceAdapter{adapter})
 			if err != nil || h.Registered != 0 {
 				t.Fatalf("adapter bypassed shared policy: %#v %v", h, err)
 			}
@@ -145,7 +146,7 @@ func TestCachedUsableFactsRecheckCurrentProducerSupport(t *testing.T) {
 	if err := local.Write(filepath.Join(store.Home(), "discovery-catalog.json"), prior); err != nil {
 		t.Fatal(err)
 	}
-	h, err := runWithAdapters(context.Background(), store, cfg, Options{Now: func() time.Time { return now }}, []SourceAdapter{codexAdapter{supported: func(sourcefacts.CodexMeta) bool { return false }}})
+	h, err := runWithAdapters(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return now }}, []SourceAdapter{codexAdapter{supported: func(sourcefacts.CodexMeta) bool { return false }}})
 	if err != nil || h.Probes != 0 || h.Supported || h.Registered != 0 || h.Outcomes["unsupported_producer"] == 0 {
 		t.Fatalf("cached facts bypassed current producer gate: %#v %v", h, err)
 	}
@@ -166,7 +167,7 @@ func TestDelayedFirstTaskUsesNativeSessionStartForConsent(t *testing.T) {
 			}
 			writeRollout(t, root, cfg.Archive.Projects[0].Root, started, 1, "sessions")
 			adapter := factAdapter{alter: func(c *Candidate) { c.FirstTaskAt = at.Add(24 * time.Hour) }}
-			h, err := runWithCensus(context.Background(), store, cfg, Options{Now: func() time.Time { return at.Add(24*time.Hour + time.Minute) }}, []SourceAdapter{adapter})
+			h, err := runWithCensus(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(24*time.Hour + time.Minute) }}, []SourceAdapter{adapter})
 			want := 1
 			if oldStart {
 				want = 0

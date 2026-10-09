@@ -3,6 +3,7 @@ package collector
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
@@ -83,17 +84,6 @@ func (s *sessionScan) stricterHistorySuccessor(p state.PendingPublication, commi
 		return state.PendingPublication{}, err
 	}
 	inputs := append([]state.HistoryInput(nil), p.History.Inputs...)
-	// Older ready journals may lack Inputs. Their bounded validated final bytes
-	// supply provenance individually; no active provenance is copied to siblings.
-	finalInputs, err := s.retainedManifestInputs(metadata)
-	if err != nil {
-		return state.PendingPublication{}, err
-	}
-	for _, input := range finalInputs {
-		if !hasRevisionInput(inputs, input.RevisionID) {
-			inputs = append(inputs, input)
-		}
-	}
 	acknowledged := archive.Metadata{}
 	expected := p.History.ExpectedMetadataSHA256
 	if committed {
@@ -116,7 +106,7 @@ func (s *sessionScan) stricterHistorySuccessor(p state.PendingPublication, commi
 	}
 	var ackInputs []state.HistoryInput
 	if acknowledged.SessionID != "" {
-		ackInputs, err = s.retainedManifestInputs(acknowledged)
+		ackInputs, err = s.retainedManifestInputs(acknowledged, nil)
 		if err != nil {
 			return state.PendingPublication{}, err
 		}
@@ -128,6 +118,17 @@ func (s *sessionScan) stricterHistorySuccessor(p state.PendingPublication, commi
 				return state.PendingPublication{}, errors.New("stricter successor exceeds retained revision limit")
 			}
 			metadata.History.Preserved = append(metadata.History.Preserved, archive.RevisionReference{RevisionID: input.RevisionID, CapturedAt: input.CapturedAt, Source: input.Reference, FilterVersion: input.FilterVersion, SourceSchemaVersion: input.SourceSchemaVersion})
+			inputs = append(inputs, input)
+		}
+	}
+	// Older ready journals may lack Inputs. Their bounded validated final bytes
+	// supply provenance individually; no active provenance is copied to siblings.
+	finalInputs, err := s.pendingManifestInputs(metadata, p, ackInputs, inputs)
+	if err != nil {
+		return state.PendingPublication{}, err
+	}
+	for _, input := range finalInputs {
+		if !hasRevisionInput(inputs, input.RevisionID) {
 			inputs = append(inputs, input)
 		}
 	}
@@ -195,6 +196,41 @@ func (s *sessionScan) stricterHistorySuccessor(p state.PendingPublication, commi
 	return next, next.ValidateHistoryBudgeted(s.id(), s.readBudget())
 }
 
+// pendingManifestInputs upgrades original parent provenance before verifying the
+// mixed original/prepared manifest, without reading current native data.
+func (s *sessionScan) pendingManifestInputs(metadata archive.Metadata, p state.PendingPublication, acknowledged, inputs []state.HistoryInput) ([]state.HistoryInput, error) {
+	for i := range inputs {
+		if inputs[i].ParentSessionID != nil {
+			continue
+		}
+		for _, original := range acknowledged {
+			if inputs[i].RevisionID == original.RevisionID && inputs[i].Reference == original.Reference {
+				inputs[i].ParentSessionID = original.ParentSessionID
+			}
+		}
+		if inputs[i].ParentSessionID != nil {
+			continue
+		}
+		mark := len(s.retainedReleases)
+		bundle, err := s.loadHistoryInput(metadata, inputs[i])
+		if err != nil {
+			return nil, err
+		}
+		keep := len(s.retainedReleases)
+		if err := s.retainCharge(int64(len(bundle.ParentSessionID))); err != nil {
+			return nil, err
+		}
+		parent := strings.Clone(bundle.ParentSessionID)
+		inputs[i].ParentSessionID = &parent
+		s.keepRetainedFrom(mark, keep)
+	}
+	frozen := p
+	history := *p.History
+	history.Inputs = inputs
+	frozen.History = &history
+	return s.retainedManifestInputs(metadata, &frozen)
+}
+
 func hasRevisionInput(inputs []state.HistoryInput, id string) bool {
 	for _, input := range inputs {
 		if input.RevisionID == id {
@@ -204,7 +240,7 @@ func hasRevisionInput(inputs []state.HistoryInput, id string) bool {
 	return false
 }
 
-func (s *sessionScan) retainedManifestInputs(metadata archive.Metadata) ([]state.HistoryInput, error) {
+func (s *sessionScan) retainedManifestInputs(metadata archive.Metadata, pending *state.PendingPublication) ([]state.HistoryInput, error) {
 	mark := len(s.retainedReleases)
 	defer s.releaseRetainedAfter(mark)
 	if err := s.validateAuthorityIdentity(metadata); err != nil {
@@ -234,16 +270,30 @@ func (s *sessionScan) retainedManifestInputs(metadata archive.Metadata) ([]state
 		if err != nil {
 			return nil, err
 		}
+		selected := metadata
+		if pending != nil {
+			for _, original := range pending.History.Inputs {
+				if original.RevisionID != id {
+					continue
+				}
+				if original.Reference == ref && original.ParentSessionID != nil {
+					selected.ParentSessionID = *original.ParentSessionID
+				} else if original.Reference != ref && pending.Bundle.NativeChild {
+					selected.ParentSessionID = pending.Bundle.ParentSessionID
+				}
+			}
+		}
 		var bundle archive.SourceBundle
 		if metadata.History == nil {
-			bundle, err = s.decodeReferenced(metadata, data)
+			bundle, err = s.decodeReferenced(selected, data)
 		} else {
-			bundle, err = s.decodeRevision(metadata, id, data)
+			bundle, err = s.decodeRevision(selected, id, data)
 		}
 		if err != nil {
 			return nil, fmt.Errorf("validate retained successor input: %w", err)
 		}
-		inputs = append(inputs, state.HistoryInput{Reference: ref, RevisionID: id, CapturedAt: bundle.Capture.CapturedAt, FilterVersion: bundle.Capture.FilterVersion, SourceSchemaVersion: bundle.SchemaVersion})
+		parent := selected.ParentSessionID
+		inputs = append(inputs, state.HistoryInput{ParentSessionID: &parent, Reference: ref, RevisionID: id, CapturedAt: bundle.Capture.CapturedAt, FilterVersion: bundle.Capture.FilterVersion, SourceSchemaVersion: bundle.SchemaVersion})
 		s.releaseRetainedAfter(mark)
 	}
 	return inputs, nil
@@ -299,7 +349,11 @@ func (s *sessionScan) prepareRetainedHistoryWork() (sessionOutcome, bool, error)
 	if err != nil {
 		return outcomeSkipped, true, err
 	}
-	needed := bundle.Capture.FilterVersion != archive.FilterVersion || bundle.Capture.AdapterVersion != adapter.Version() || !sourceEvidenceWithinPolicy(bundle.SupplementalEvidence, s.opts.skillEvidence()) || authority.Parser.Version != s.parserVersion() || s.reg.CaptureFrozen && s.req.Token != "" || headFingerprint(s.reg.LastHead) != s.publishedLastHead()
+	// A newly resolved native parent changes every retained source header. Reuse
+	// sequential maintenance against the original authority before native
+	// reconciliation can combine old-parent inputs with a new-parent sidecar.
+	parentResolved := nativeParentResolved(s.reg, bundle)
+	needed := parentResolved || nativeChildMarkerPending(s.reg, bundle) || bundle.Capture.FilterVersion != archive.FilterVersion || bundle.Capture.AdapterVersion != adapter.Version() || !sourceEvidenceWithinPolicy(bundle.SupplementalEvidence, s.opts.skillEvidence()) || authority.Parser.Version != s.parserVersion() || s.reg.CaptureFrozen && s.req.Token != "" || headFingerprint(s.reg.LastHead) != s.publishedLastHead()
 	for _, revision := range authority.History.Preserved {
 		needed = needed || revision.FilterVersion != archive.FilterVersion
 	}
@@ -408,7 +462,7 @@ func (s *sessionScan) prepareStricterHistoryInput(metadata archive.Metadata, inp
 }
 
 func (s *sessionScan) freezeRetainedMaintenance(authority archive.Metadata, bundle archive.SourceBundle, adapterVersion string) (state.PendingPublication, error) {
-	inputs, err := s.retainedManifestInputs(authority)
+	inputs, err := s.retainedManifestInputs(authority, nil)
 	if err != nil {
 		return state.PendingPublication{}, err
 	}
@@ -423,6 +477,15 @@ func (s *sessionScan) freezeRetainedMaintenance(authority archive.Metadata, bund
 		}
 	}
 	bundle.SupplementalEvidence = mergeSupplementalEvidence(bundle.SupplementalEvidence, observations)
+	// Freeze the target relationship in the existing output envelope; inputs
+	// retain their original authority until every header has been prepared.
+	if nativeParentResolved(s.reg, bundle) {
+		bundle.ParentSessionID = s.reg.ParentSessionID
+		bundle.Capture.Gaps = withoutNativeParentPendingGap(bundle.Capture.Gaps)
+	}
+	if nativeChildMarkerPending(s.reg, bundle) {
+		bundle.NativeChild = true
+	}
 	// Live requests still owe native reads; frozen requests cover retained observations.
 	requestToken := ""
 	if s.reg.CaptureFrozen {
