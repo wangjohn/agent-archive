@@ -382,7 +382,7 @@ func (r *handoffQueryResolver) archiveRows() []handoffPickerRow {
 			r.replays = append(r.replays, row)
 			continue
 		}
-		if m.ParentSessionID == "" {
+		if !m.IsChild() {
 			r.archive = append(r.archive, row)
 		} else {
 			r.subagents = append(r.subagents, row)
