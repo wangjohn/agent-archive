@@ -29,40 +29,26 @@ type RecentResult struct {
 // ListRecent proves coverage from fresh canonical headers before choosing bodies.
 // Unsupported predicates and incomplete indexes use the exhaustive cache reader.
 func ListRecent(ctx context.Context, store storage.ObjectStore, prefix string, filter Filter, limit int, opts ListOptions) (RecentResult, error) {
+	var snapshot *HeaderSnapshot
 	fallback := func(reason string) (RecentResult, error) {
 		if opts.CompatibilityScan != nil {
 			opts.CompatibilityScan(reason)
 		}
-		return listRecentFull(ctx, store, prefix, filter, limit, opts)
+		return listRecentFullWithHeaders(ctx, store, prefix, filter, limit, opts, snapshot)
 	}
 	getter, ok := store.(storage.VersionedGetter)
 	if !ok || limit <= 0 || filter.Model != "" || filter.Skill != "" || filter.SkillSHA256 != "" || filter.RequireCompleteCoverage {
 		return fallback("query requires an exhaustive metadata scan")
 	}
-	objects, err := store.List(ctx, listPrefixFor(prefix, filter.Harness))
+	headers, err := discoverHeaders(ctx, store, prefix, filter, opts.Cache)
 	if err != nil {
 		return RecentResult{}, err
 	}
-	if opts.Cache != nil {
-		opts.Cache.evictUnlisted(opts.Cache.keys(listPrefixFor(prefix, filter.Harness)), objects)
+	snapshot = &headers
+	if headers.incompleteReason != "" {
+		return fallback(headers.incompleteReason)
 	}
-	hints, err := listRevisionHeaders(ctx, store)
-	if err != nil {
-		return RecentResult{}, err
-	}
-	revisions := make(map[string]listingindex.Revision)
-	for _, hint := range hints {
-		r, err := listingindex.ParseRevision(hint.Key)
-		if err != nil {
-			return fallback("listing index contains an unsupported or damaged entry; run list --rebuild-index")
-		}
-		key := r.MetadataKey + "\x00" + r.ETag
-		if prior, exists := revisions[key]; exists && !prior.SameSummary(r) {
-			return fallback("listing index has conflicting revision summaries")
-		}
-		revisions[key] = r
-	}
-	selected, result, err := selectListingRevisions(objects, revisions, filter, limit, opts)
+	selected, result, err := selectListingRevisions(headers.Canonical, headers.Revisions, filter, limit, opts)
 	if err != nil {
 		return fallback(err.Error())
 	}
@@ -155,8 +141,14 @@ func readSelectedRevision(ctx context.Context, getter storage.VersionedGetter, r
 	return selectedRead{Metadata: metadata, Cached: cached}, true
 }
 
-func listRecentFull(ctx context.Context, store storage.ObjectStore, prefix string, filter Filter, limit int, opts ListOptions) (RecentResult, error) {
-	all, err := ListMetadataWithOptions(ctx, store, prefix, filter, opts)
+func listRecentFullWithHeaders(ctx context.Context, store storage.ObjectStore, prefix string, filter Filter, limit int, opts ListOptions, snapshot *HeaderSnapshot) (RecentResult, error) {
+	var all []archive.Metadata
+	var err error
+	if snapshot == nil {
+		all, err = ListMetadataWithOptions(ctx, store, prefix, filter, opts)
+	} else {
+		all, err = listMetadataFromHeaders(ctx, store, filter, opts, snapshot.Canonical, snapshot.knownCanonical)
+	}
 	if err != nil {
 		return RecentResult{}, err
 	}
@@ -313,7 +305,7 @@ func cleanupRevisionHeaders(ctx context.Context, store storage.ObjectStore, lega
 }
 
 // selectListingRevisions proves canonical coverage and applies summary predicates before body reads.
-func selectListingRevisions(objects []storage.Object, revisions map[string]listingindex.Revision, filter Filter, limit int, opts ListOptions) ([]listingindex.Revision, RecentResult, error) {
+func selectListingRevisions(objects []storage.Object, revisions map[RevisionID]listingindex.Revision, filter Filter, limit int, opts ListOptions) ([]listingindex.Revision, RecentResult, error) {
 	var selected, all []listingindex.Revision
 	allChildren := make(map[string]int)
 	scopedHidden, allHidden := 0, 0
@@ -321,7 +313,7 @@ func selectListingRevisions(objects []storage.Object, revisions map[string]listi
 		if !isMetadataKey(obj.Key) {
 			continue
 		}
-		r, exists := revisions[obj.Key+"\x00"+obj.ETag]
+		r, exists := revisions[RevisionID{Key: obj.Key, ETag: obj.ETag}]
 		if obj.ETag == "" || !exists {
 			return nil, RecentResult{}, errors.New("listing index does not cover current metadata; run list --rebuild-index")
 		}
@@ -379,13 +371,9 @@ func selectListingRevisions(objects []storage.Object, revisions map[string]listi
 
 // listRevisionHeaders reads discovery summaries without downloading hint bodies.
 func listRevisionHeaders(ctx context.Context, store storage.ObjectStore) ([]storage.Object, error) {
-	v2, err := store.List(ctx, listingindex.V2Prefix)
+	objects, _, err := listHeaderGroups(ctx, store, "", nil, false, listingindex.V3Prefix)
 	if err != nil {
 		return nil, err
 	}
-	v3, err := store.List(ctx, listingindex.V3Prefix)
-	if err != nil {
-		return nil, err
-	}
-	return append(v2, v3...), nil
+	return append(objects[1], objects[2]...), nil
 }

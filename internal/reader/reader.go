@@ -193,6 +193,14 @@ func ListMetadataWithOptions(ctx context.Context, store storage.ObjectStore, pre
 	if err != nil {
 		return nil, err
 	}
+	return listMetadataFromHeaders(ctx, store, filter, options, objects, known)
+}
+
+// listMetadataFromHeaders consumes one complete canonical listing, including
+// when an indexed query must fall back after discovery.
+func listMetadataFromHeaders(ctx context.Context, store storage.ObjectStore, filter Filter, options ListOptions, objects []storage.Object, known []string) ([]archive.Metadata, error) {
+	span := trace.Start("read metadata headers")
+	defer span.End()
 	sidecars := make([]storage.Object, 0, len(objects))
 	for _, object := range objects {
 		if strings.HasSuffix(object.Key, "/metadata.json") {
