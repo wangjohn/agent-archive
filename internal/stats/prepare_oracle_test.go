@@ -1,7 +1,8 @@
 package stats
 
 // This oracle preserves the pre-preparation window and member-accounting
-// algorithm at d914dfb2391dd5f8b18b2d182b17bf6f4269e256. Keep it independent of Prepare and the model lookup cache.
+// algorithm at d914dfb2391dd5f8b18b2d182b17bf6f4269e256, with current native-child
+// orphan classification. Keep it independent of Prepare and the model lookup cache.
 import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"math"
@@ -237,7 +238,7 @@ func legacyFinish(u *unit, loc *time.Location, prices priceIndex) {
 	captured := root.CapturedAt.In(loc)
 	u.day = dayNumber(civilOf(captured))
 	u.month = captured.Year()*12 + int(captured.Month()) - 1
-	u.orphan = root.ParentSessionID != ""
+	u.orphan = root.IsChild()
 	u.lacksParser014 = !parserAtLeast(root.Parser.Version, 0, 14, 0)
 	if root.Counts.Turns != nil {
 		turns := value(root.Counts.Turns)
