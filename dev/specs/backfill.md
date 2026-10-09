@@ -526,6 +526,19 @@ matching rule wins.
    File membership/header observations renew through at most 65,536 observed
    native paths per slice, including directory and absent-store stamps; changed
    or larger inventories require a new plan and keep automatic recovery pending.
+   The inventory checks membership, not content: added, removed or replaced
+   paths (file identity), mode changes, truncation and same-size rewrites change
+   it, but a transcript growing in place does not when a planned session owns
+   that file (its header came from that same file). Running agents append to
+   their transcripts, and header facts come from complete leading records that
+   an append cannot change; a header no complete record decided already keeps
+   recovery unavailable. The owning session's own source observation still
+   skips it as `source_changed` and still governs its witness renewal, but
+   that check only runs for imported sessions' sources and for the witness a
+   recovery relies on: a same-inode rewrite that grows any other owned
+   transcript is not detected. Agents append rather than rewrite in place, so
+   this limit is accepted. Paths no session owns keep the full size and
+   modification-time comparison.
    Known plain-folder and absent-cwd ownership is also renewed, so a newly
    created checkout cannot evade clone evidence. This is an observation boundary,
    not an atomic filesystem snapshot.
