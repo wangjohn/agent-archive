@@ -698,6 +698,9 @@ func TestCursorWriterProcess(t *testing.T) {
 		}
 		fmt.Println("ok")
 	}
+	if err := in.Err(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // TestCursorDatabaseReaderLive reads a WAL database in place while Cursor
