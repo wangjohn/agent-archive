@@ -158,10 +158,21 @@ func prepareCursorRecoveryWitnesses(ctx context.Context, env Environment, r *res
 	if err != nil {
 		return nil, nil, err
 	}
+	gaps := cursorRecoveryGaps(epoch)
+	for _, w := range epoch.works {
+		// An incomplete epoch cannot be renewed: its chats stay clone evidence
+		// but cannot propose a destination.
+		w.evidenceOnly = !epoch.complete
+	}
 	renewals := 0
 	r.databaseRecoveryCurrent = func(ctx context.Context) bool {
-		if !epoch.complete || ctx.Err() != nil {
+		if ctx.Err() != nil {
 			return false
+		}
+		if !epoch.complete {
+			// The Cursor gap was accepted at planning for the recoveries it does
+			// not block (Cursor's own stay blocked); there is nothing to renew.
+			return true
 		}
 		if epoch.settled {
 			current, ok := recoveryStamps(env, epoch.paths)
@@ -174,7 +185,7 @@ func prepareCursorRecoveryWitnesses(ctx context.Context, env Environment, r *res
 		renewed, err := readCursorRecoveryEpoch(ctx, env, r, unread)
 		return err == nil && renewed.complete && renewed.digest == epoch.digest
 	}
-	return epoch.works, cursorRecoveryGaps(epoch), nil
+	return epoch.works, gaps, nil
 }
 
 // cursorRecoveryGaps is empty for a complete epoch. An incomplete one names its

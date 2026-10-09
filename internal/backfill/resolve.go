@@ -25,8 +25,10 @@ type resolution struct {
 	included bool
 	skip     SkipReason
 	outcome  sourcefacts.RecoveryOutcome
-	// cause names the missing witness evidence behind an inventory outcome.
+	// cause names the missing witness evidence behind an inventory outcome;
+	// gap is the per-app gap that blocked recorded recovery (either outcome).
 	cause   DiagnosticDetail
+	gap     *recoveryGap
 	proof   *archive.ProjectResolution
 	current *resolutionCheck
 }
@@ -56,14 +58,17 @@ type resolver struct {
 	recoverySourcesCurrent  func() bool
 	recoverySourcesReset    func(context.Context)
 	databaseRecoveryCurrent func(context.Context) bool
-	// recoveryInventoryCause is set when the witness inventory has gaps, so
-	// recorded-key recovery is unavailable for this plan (see recoveryGaps).
-	recoveryInventoryCause DiagnosticDetail
-	inventoryCurrent       func(context.Context) bool
-	mappingRecovery        *sourcefacts.RecoveryResolver
-	workspaceReset         func()
-	requireWitnessFormats  func(string)
-	proposedRootEligible   func(string) bool
+	// recoveryGaps are the witness inventory's gaps, per app. gapRecovery
+	// holds the resolver, over gapProjects, for sessions a gap blocks, keyed
+	// by whether the blocking gap is a budget (see recoveryFor).
+	recoveryGaps          recoveryGaps
+	gapRecovery           map[bool]*sourcefacts.RecoveryResolver
+	gapProjects           []archive.ProjectActivation
+	inventoryCurrent      func(context.Context) bool
+	mappingRecovery       *sourcefacts.RecoveryResolver
+	workspaceReset        func()
+	requireWitnessFormats func(string)
+	proposedRootEligible  func(string) bool
 }
 
 func newResolver(env Environment, cfg config.Config, filters Filters) *resolver {
@@ -140,14 +145,19 @@ func withinAny(path string, roots []string) bool {
 	return false
 }
 
-// resolve maps a session's working directory to a project, applying the
-// spec's rules in order; the first that matches wins.
-func (r *resolver) resolveEvidence(ctx context.Context, cwd, key string) resolution {
-	recovery := r.recovery
+// resolveSessionEvidence maps a session's working directory to a project,
+// applying the spec's rules in order (the first that matches wins), then
+// recovery. Only the gaps that can affect a session of app h block its
+// recorded recovery (recoveryGaps.blocking).
+func (r *resolver) resolveSessionEvidence(ctx context.Context, h harness, cwd, key string) resolution {
+	recovery, gap := r.recoveryFor(ctx, h)
 	if r.mappingRecovery != nil && r.filters.ProjectMappings[filepath.Clean(cwd)] != "" {
-		recovery = r.mappingRecovery
+		recovery, gap = r.mappingRecovery, nil
 	}
 	cacheKey := cwd + "\x00" + r.env.resolved(cwd) + "\x00" + key + "\x00" + recovery.Context
+	if gap != nil {
+		cacheKey += "\x00" + gap.Agent + "\x00" + string(gap.Cause)
+	}
 	if cached, ok := r.cache[cacheKey]; ok && !r.env.exists(cwd) {
 		return cached
 	}
@@ -184,7 +194,7 @@ func (r *resolver) resolveEvidence(ctx context.Context, cwd, key string) resolut
 			res = resolution{root: proof.Root, kind: r.kindOf(proof.Root), included: configured && owner.included, proof: &visibleProof, current: check}
 		}
 		if outcome != "" {
-			res = r.unrecovered(recovery, outcome)
+			res = unrecovered(gap, outcome)
 		}
 		if outcome == sourcefacts.RecoveryBudgetExhausted || outcome == sourcefacts.RecoveryInventoryUnavailable {
 			return res
@@ -194,14 +204,18 @@ func (r *resolver) resolveEvidence(ctx context.Context, cwd, key string) resolut
 	return res
 }
 
-// unrecovered is a failed recovery. An inventory outcome from the witness
-// resolver carries the witness gap that caused it, when one was recorded.
-func (r *resolver) unrecovered(recovery *sourcefacts.RecoveryResolver, outcome sourcefacts.RecoveryOutcome) resolution {
+// unrecovered is a failed recovery. The outcome a blocking gap produces
+// carries that gap, and an inventory outcome names its cause.
+func unrecovered(gap *recoveryGap, outcome sourcefacts.RecoveryOutcome) resolution {
+	var blocking *recoveryGap
 	var cause DiagnosticDetail
-	if outcome == sourcefacts.RecoveryInventoryUnavailable && recovery == r.recovery {
-		cause = r.recoveryInventoryCause
+	if gap != nil && outcome == gap.blockedOutcome() {
+		blocking = gap
+		if outcome == sourcefacts.RecoveryInventoryUnavailable {
+			cause = gap.Cause
+		}
 	}
-	return resolution{skip: SkipWorktreeUnresolved, outcome: outcome, cause: cause}
+	return resolution{skip: SkipWorktreeUnresolved, outcome: outcome, gap: blocking, cause: cause}
 }
 
 func (r *resolver) resolve(cwd string) resolution {
