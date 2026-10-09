@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/jsonwire"
 	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -151,7 +151,7 @@ func (s *sessionScan) refilterRetainedFor(reg archive.SessionRegistration, adapt
 	largest := int64(0)
 	var sizingErr error
 	for _, record := range bundle.NativeRecords {
-		n, err := jsonwire.Bound(s.ctx, record, b.Available())
+		n, err := agentmeta.JSONWireBound(s.ctx, record, b.Available())
 		if err != nil {
 			sizingErr = err
 			break
@@ -298,7 +298,7 @@ func (s *sessionScan) marshalRetained(value any) ([]byte, error) {
 	if !b.Reserve(scratch) {
 		return nil, errRetainedBudget
 	}
-	n, err := jsonwire.Bound(s.ctx, value, b.Available()/2)
+	n, err := agentmeta.JSONWireBound(s.ctx, value, b.Available()/2)
 	b.Release(scratch)
 	if err != nil {
 		return nil, errors.Join(errRetainedBudget, err)

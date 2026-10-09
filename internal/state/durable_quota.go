@@ -12,7 +12,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
-	"github.com/wangjohn/agent-archive/internal/jsonwire"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
@@ -357,7 +357,7 @@ func (s *Store) writeDurableGuard(ctx context.Context, g config.DurableStorageGu
 		}
 		limit = min(limit, s.resourceBudget.Available()-1)
 	}
-	n, err := jsonwire.Bound(ctx, p, limit)
+	n, err := agentmeta.JSONWireBound(ctx, p, limit)
 	if s.resourceBudget != nil {
 		s.resourceBudget.Release(scratch)
 	}
