@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/listingindex"
@@ -27,9 +28,54 @@ type RecentResult struct {
 }
 
 // ListRecent proves coverage from fresh canonical headers before choosing bodies.
-// Unsupported predicates and incomplete indexes use the exhaustive cache reader.
+// Unsupported predicates, incomplete indexes, and nonpositive limits use the
+// exhaustive cache reader for compatibility. SelectMetadata supports indexed
+// unlimited queries.
 func ListRecent(ctx context.Context, store storage.ObjectStore, prefix string, filter Filter, limit int, opts ListOptions) (RecentResult, error) {
+	if limit <= 0 {
+		if opts.CompatibilityScan != nil {
+			opts.CompatibilityScan("query requires an exhaustive metadata scan")
+		}
+		return listRecentFullWithHeaders(ctx, store, prefix, filter, limit, opts, nil)
+	}
+	order := CaptureOrder
+	if opts.ActivityOrder {
+		order = ActivityOrder
+	}
+	return SelectMetadata(ctx, store, prefix, MetadataQuery{Filter: filter, Limit: limit, Order: order, TopLevelOnly: opts.TopLevelOnly}, opts)
+}
+
+// QueryOrder selects the ordering used before applying the query limit.
+type QueryOrder uint8
+
+const (
+	// CaptureOrder sorts newest capture first, with identity ties.
+	CaptureOrder QueryOrder = iota
+	// ActivityOrder sorts newest activity first, then capture and identity.
+	ActivityOrder
+)
+
+// MetadataQuery selects metadata from fresh headers before downloading bodies.
+// A nonpositive Limit selects every matching session.
+type MetadataQuery struct {
+	Filter       Filter
+	Limit        int
+	Order        QueryOrder
+	TopLevelOnly bool
+	// IncludeRootChildren retains descendants of date-matched sessions even
+	// outside the capture bounds. Other predicates still apply to each member.
+	// Stats uses this to keep complete root accounting; ancestors are not added.
+	IncludeRootChildren bool
+}
+
+// SelectMetadata proves discovery coverage and supports unlimited date queries.
+// Unsupported predicates and incomplete summaries use the exhaustive reader.
+func SelectMetadata(ctx context.Context, store storage.ObjectStore, prefix string, query MetadataQuery, opts ListOptions) (RecentResult, error) {
+	filter, limit := query.Filter, query.Limit
+	opts.ActivityOrder, opts.TopLevelOnly = query.Order == ActivityOrder, query.TopLevelOnly
+	opts.includeRootChildren = query.IncludeRootChildren
 	var snapshot *HeaderSnapshot
+	opts.Cache.maintain(ctx, 64)
 	fallback := func(reason string) (RecentResult, error) {
 		if opts.CompatibilityScan != nil {
 			opts.CompatibilityScan(reason)
@@ -37,7 +83,7 @@ func ListRecent(ctx context.Context, store storage.ObjectStore, prefix string, f
 		return listRecentFullWithHeaders(ctx, store, prefix, filter, limit, opts, snapshot)
 	}
 	getter, ok := store.(storage.VersionedGetter)
-	if !ok || limit <= 0 || filter.Model != "" || filter.Skill != "" || filter.SkillSHA256 != "" || filter.RequireCompleteCoverage {
+	if !ok || filter.Model != "" || filter.Skill != "" || filter.SkillSHA256 != "" || filter.RequireCompleteCoverage {
 		return fallback("query requires an exhaustive metadata scan")
 	}
 	headers, err := discoverHeaders(ctx, store, prefix, filter, opts.Cache)
@@ -48,7 +94,16 @@ func ListRecent(ctx context.Context, store storage.ObjectStore, prefix string, f
 	if headers.incompleteReason != "" {
 		return fallback(headers.incompleteReason)
 	}
-	selected, result, err := selectListingRevisions(headers.Canonical, headers.Revisions, filter, limit, opts)
+	objects := headers.Canonical
+	selectionFilter := filter
+	if query.IncludeRootChildren {
+		objects, err = selectRootChildHeaders(objects, headers.Revisions, filter)
+		if err != nil {
+			return fallback(err.Error())
+		}
+		selectionFilter.From, selectionFilter.To = time.Time{}, time.Time{}
+	}
+	selected, result, err := selectListingRevisions(objects, headers.Revisions, selectionFilter, limit, opts)
 	if err != nil {
 		return fallback(err.Error())
 	}
@@ -74,13 +129,14 @@ type selectedRead struct {
 
 // readSelected stops assigning work on failure and joins every started read.
 // In-flight reads retain the caller context: an internal cancellation must not
-// hide an earlier selected revision's real error. Observers run serially after
-// the join, in selection order, and need no synchronization from callers.
+// hide an earlier selected revision's real error. Progress runs serially on
+// the caller as reads finish; BodyRead runs in selection order after the join.
 func readSelected(ctx context.Context, getter storage.VersionedGetter, revisions []listingindex.Revision, opts ListOptions) []selectedRead {
 	reads := make([]selectedRead, len(revisions))
 	observed := make([]bool, len(revisions))
 	var mu sync.Mutex
 	var wg sync.WaitGroup
+	completed := make(chan struct{}, len(revisions))
 	next, failed := 0, false
 	for range min(listConcurrency, len(revisions)) {
 		wg.Go(func() {
@@ -94,6 +150,7 @@ func readSelected(ctx context.Context, getter storage.VersionedGetter, revisions
 				next++
 				mu.Unlock()
 				reads[i], observed[i] = readSelectedRevision(ctx, getter, revisions[i], opts.Cache)
+				completed <- struct{}{}
 				if reads[i].Err != nil {
 					mu.Lock()
 					failed = true
@@ -103,7 +160,17 @@ func readSelected(ctx context.Context, getter storage.VersionedGetter, revisions
 			}
 		})
 	}
-	wg.Wait()
+	go func() {
+		wg.Wait()
+		close(completed)
+	}()
+	finished := 0
+	for range completed {
+		finished++
+		if opts.Progress != nil {
+			opts.Progress(finished, len(revisions))
+		}
+	}
 	for i := range next {
 		if observed[i] && opts.BodyRead != nil {
 			opts.BodyRead(revisions[i].MetadataKey, reads[i].Cached)
@@ -144,13 +211,22 @@ func readSelectedRevision(ctx context.Context, getter storage.VersionedGetter, r
 func listRecentFullWithHeaders(ctx context.Context, store storage.ObjectStore, prefix string, filter Filter, limit int, opts ListOptions, snapshot *HeaderSnapshot) (RecentResult, error) {
 	var all []archive.Metadata
 	var err error
+	readFilter := filter
+	if opts.includeRootChildren {
+		readFilter.From, readFilter.To = time.Time{}, time.Time{}
+	}
 	if snapshot == nil {
-		all, err = ListMetadataWithOptions(ctx, store, prefix, filter, opts)
+		all, err = ListMetadataWithOptions(ctx, store, prefix, readFilter, opts)
 	} else {
-		all, err = listMetadataFromHeaders(ctx, store, filter, opts, snapshot.Canonical, snapshot.knownCanonical)
+		all, err = listMetadataFromHeaders(ctx, store, readFilter, opts, snapshot.Canonical, snapshot.knownCanonical)
 	}
 	if err != nil {
 		return RecentResult{}, err
+	}
+	if opts.includeRootChildren {
+		all = SelectRootChildren(all, filter, func(m archive.Metadata) (string, string, time.Time) {
+			return m.SessionID, m.ParentSessionID, m.CapturedAt
+		})
 	}
 	allChildren := make(map[string]int)
 	for _, m := range all {
@@ -363,7 +439,7 @@ func selectListingRevisions(objects []storage.Object, revisions map[RevisionID]l
 		}
 		return a.MetadataKey < b.MetadataKey
 	})
-	if len(selected) > limit {
+	if limit > 0 && len(selected) > limit {
 		selected = selected[:limit]
 	}
 	return selected, result, nil

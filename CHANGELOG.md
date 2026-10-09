@@ -6,11 +6,23 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Select supported stats capture windows from fresh listing headers before
+  downloading metadata, including comparison periods and month highlights.
+- Keep descendants of date-matched stats sessions even when the descendants
+  were captured outside the fetch window, preserving parent token accounting.
+- Let long title queries with an explicit show harness fall through to search
+  when they cannot name an existing session.
+- Resolve short show IDs with one canonical discovery. Prefix matches and title
+  or pull request matches share the existing scope tiers and remain ambiguous
+  when both match; full session IDs and handoff retain their precedence.
+
 - Overlap canonical and listing-index header discovery, narrow v3 headers by
   harness, and reuse canonical headers when a listing needs a full metadata scan.
 
 - Read up to eight selected metadata sidecars concurrently for faster cold and
   changed-cache listings, preserving selection order and revision validation.
+- Open the metadata cache without scanning session directories. Commands clean
+  up at most 64 cached sessions, with progress saved for later commands.
 
 - Preserve settled capture and source bytes when cached native naming reads are
   unavailable and the same observation uses an equivalent timezone offset.

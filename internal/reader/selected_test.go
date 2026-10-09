@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
@@ -72,6 +74,86 @@ func TestSelectedReadsOverlapAndWarmCacheAvoidsGETs(t *testing.T) {
 	if measured.Metrics().Gets != 50 {
 		t.Fatal("warm cache made remote GETs")
 	}
+}
+
+func TestSelectedReadsReportProgressBeforeJoinAndFromCache(t *testing.T) {
+	store, revisions := selectedFixture(t, 2)
+	cache, err := OpenMetadataCache(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, warm := range []bool{false, true} {
+		synctest.Test(t, func(t *testing.T) {
+			release := make(chan struct{})
+			var mu sync.Mutex
+			var seen []int
+			opts := ListOptions{Cache: cache, Progress: func(done, total int) {
+				mu.Lock()
+				defer mu.Unlock()
+				if total != len(revisions) {
+					t.Errorf("progress total=%d want=%d", total, len(revisions))
+				}
+				seen = append(seen, done)
+			}}
+			getter := selectedGetterFunc(func(ctx context.Context, key string) ([]byte, string, error) {
+				if key == revisions[1].MetadataKey {
+					<-release
+				}
+				return store.GetVersioned(ctx, key)
+			})
+			done := make(chan []selectedRead)
+			go func() { done <- readSelected(t.Context(), getter, revisions, opts) }()
+			synctest.Wait()
+			mu.Lock()
+			count := len(seen)
+			mu.Unlock()
+			if !warm && count != 1 {
+				t.Errorf("progress before blocked read finishes=%d want=1", count)
+			}
+			close(release)
+			reads := <-done
+			for _, read := range reads {
+				if read.Err != nil || read.Cached != warm {
+					t.Fatalf("warm=%v read=%+v", warm, read)
+				}
+			}
+			slices.Sort(seen)
+			if !reflect.DeepEqual(seen, []int{1, 2}) {
+				t.Fatalf("progress=%v want=[1 2]", seen)
+			}
+		})
+	}
+}
+
+func TestSelectedProgressAndBodyObserversAreSerial(t *testing.T) {
+	store, revisions := selectedFixture(t, 20)
+	synctest.Test(t, func(t *testing.T) {
+		var progress []int
+		var bodies []string
+		reads := readSelected(t.Context(), store, revisions, ListOptions{
+			Progress: func(done, total int) {
+				if total != len(revisions) {
+					t.Errorf("progress total=%d want=%d", total, len(revisions))
+				}
+				// Let another callback start if observers wrongly run on workers.
+				if done == 1 {
+					time.Sleep(time.Millisecond)
+				}
+				progress = append(progress, done)
+			},
+			BodyRead: func(key string, _ bool) {
+				if len(progress) != len(revisions) {
+					t.Error("body observer ran before progress callbacks finished")
+				}
+				bodies = append(bodies, key)
+			},
+		})
+		for i, read := range reads {
+			if read.Err != nil || progress[i] != i+1 || bodies[i] != revisions[i].MetadataKey {
+				t.Fatalf("observer order at %d: progress=%v bodies=%v read=%+v", i, progress, bodies, read)
+			}
+		}
+	})
 }
 
 func TestSelectedFailureStopsDispatchAndJoinsEarlierErrors(t *testing.T) {
