@@ -66,6 +66,25 @@ func TestRealCLICatalogNativeChildMatchesLegacyDiscoveryAndSource(t *testing.T) 
 					t.Fatal(err)
 				}
 				parent := archive.Metadata{SchemaVersion: 1, SessionID: "known-parent", Harness: archive.Harness{Name: "codex"}, ProjectID: child.ProjectID, CapturedAt: child.CapturedAt, Title: "Known parent"}
+				parentBundle := bundle
+				parentBundle.ArchiveSessionID = parent.SessionID
+				parentBundle.NativeSessionID = "native-known-parent"
+				parentBundle.NativeChild = false
+				parentBundle.ParentSessionID = ""
+				packed, err := archive.BuildCompressedSource(parentBundle)
+				if err != nil {
+					t.Fatal(err)
+				}
+				sourceKey, err := archive.SourceObjectKey(parentBundle, packed.SHA256)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err = legacy.Put(t.Context(), sourceKey, packed.Bytes); err != nil {
+					t.Fatal(err)
+				}
+				parent.NativeSessionID = parentBundle.NativeSessionID
+				parent.Harness = parentBundle.Capture.Harness
+				parent.SourceBundle = archive.SourceReference{Key: sourceKey, SHA256: packed.SHA256, CompressedBytes: len(packed.Bytes)}
 				raw, err = json.Marshal(parent)
 				if err != nil {
 					t.Fatal(err)

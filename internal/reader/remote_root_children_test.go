@@ -62,7 +62,11 @@ func rootRemoteFixture(t *testing.T, count int) (*catalog.Store, *storagetest.Me
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, err = writer.Commit(t.Context(), catalog.CatalogMutation{ID: "root-window/" + id, SessionKey: key, Next: &catalog.CatalogEntry{Metadata: ref, Summary: metadata}})
+		_, revision, err := writer.Find(t.Context(), key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = writer.Commit(t.Context(), catalog.CatalogMutation{ID: "root-window/" + id, SessionKey: key, ExpectedRevision: revision, Next: &catalog.CatalogEntry{Metadata: ref, Summary: metadata}})
 		if err != nil {
 			t.Fatal(err)
 		}

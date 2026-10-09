@@ -48,7 +48,11 @@ func TestRemoteNativeChildBoundsFallbackAndIndependentDateSeed(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err = writer.Commit(t.Context(), catalog.CatalogMutation{ID: "native-window/" + id, SessionKey: key, Next: &catalog.CatalogEntry{Metadata: ref, Summary: m}}); err != nil {
+		_, revision, err := writer.Find(t.Context(), key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = writer.Commit(t.Context(), catalog.CatalogMutation{ID: "native-window/" + id, SessionKey: key, ExpectedRevision: revision, Next: &catalog.CatalogEntry{Metadata: ref, Summary: m}}); err != nil {
 			t.Fatal(err)
 		}
 	}

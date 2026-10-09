@@ -15,9 +15,11 @@ func TestNativeChildOverflowCountsFollowResolvedParentOnly(t *testing.T) {
 	child := largeLinkedMutation(t, writer, "native-child")
 	child.Next.Summary.NativeChild = true
 	child = replaceFixtureBody(t, writer, child)
-	if _, err := writer.Commit(t.Context(), child); err != nil {
+	revision, err := writer.Commit(t.Context(), child)
+	if err != nil {
 		t.Fatal(err)
 	}
+	child.ExpectedRevision = revision
 	activateFixture(t, writer)
 	for _, stage := range []string{"unresolved", "linked", "unlinked", "replay", "deleted"} {
 		if stage != "unresolved" {
@@ -35,9 +37,11 @@ func TestNativeChildOverflowCountsFollowResolvedParentOnly(t *testing.T) {
 			if child.Next != nil {
 				child = replaceFixtureBody(t, writer, child)
 			}
-			if _, err := writer.Commit(t.Context(), child); err != nil {
+			revision, err = writer.Commit(t.Context(), child)
+			if err != nil {
 				t.Fatal(stage, err)
 			}
+			child.ExpectedRevision = revision
 		}
 		snapshot, err := OpenSnapshot(t.Context(), raw, nil)
 		if err != nil {
