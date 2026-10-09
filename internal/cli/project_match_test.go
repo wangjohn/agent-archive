@@ -198,7 +198,7 @@ func TestProjectMatcherFindsRelocatedRepositoryInHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	key := archive.RepoKey("https://user:synthetic-secret@example.test/acme/repo.git")
-	env := Env{WorkingDir: func() (string, error) { return "", nil }, LookupEnv: func(string) (string, bool) { return "", false }, repoKeyContext: func(context.Context, string) string { return key }}
+	env := Env{BackfillTempDirs: []string{}, WorkingDir: func() (string, error) { return "", nil }, LookupEnv: func(string) (string, bool) { return "", false }, repoKeyContext: func(context.Context, string) string { return key }}
 	got := matchProjects(context.Background(), env, home, config.Config{}, []projectMatchRequest{{RepoKey: key}})
 	if got.Incomplete || len(got.Roots[0]) != 1 || got.Roots[0][0] != local.CanonicalPath(root) {
 		t.Fatalf("got %+v", got)

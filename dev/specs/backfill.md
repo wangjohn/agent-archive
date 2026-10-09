@@ -526,7 +526,16 @@ matching rule wins.
    when archive state or output filters hide their sessions.
    Pending or oversized sources cannot
    alone propose destinations; malformed or incomplete evidence cannot certify
-   uniqueness. Exact mappings continue to require configured targets.
+   uniqueness. One exception applies to proposed (not yet configured) roots
+   only: when Git reports a checkout top level and prints an origin that yields
+   no repository key (for example a clone whose origin is a local path to a
+   deleted worktree), that root cannot own any recorded key and is non-owning
+   rather than unknown, so it does not make recovery unavailable for other
+   sessions. It must still be a keyless checkout at the same top level when
+   evidence is renewed. A proposed root that Git could not observe, whose
+   origin read failed, or whose observation exhausted its budget, still blocks, and every configured root
+   keeps the strict rule ([Recorded project recovery](#recorded-project-recovery)).
+   Exact mappings continue to require configured targets.
    The plan displays selected proposed roots as projects it will add through the
    ordinary batch/config transaction. Hidden roots remain recovery evidence
    without becoming new capture roots. Evidence Context/digest binds the union;
@@ -535,7 +544,15 @@ matching rule wins.
    stale evidence. Neither planning nor automatic discovery uses uncommitted
    proposed roots as capture authorization.
 4. **Repository.** If walking up finds a `.git` directory, use its parent.
-   The walk stops at home.
+   The walk stops at home. A repository inside a temporary directory (rule
+   6), reached directly or through one of its worktrees, is not a project:
+   the session is temporary under rule 6. Such repositories are mostly
+   throwaway clones an agent made, say to review a pull request, and adding
+   one would capture every later session there. A configured project still
+   owns it (rule 2), and a worktree in a temporary directory of a repository
+   elsewhere still folds into that repository (rule 3). A temporary
+   directory that holds home (a container or sandbox whose `HOME` is under
+   `/tmp`) does not make the repositories in home temporary.
 5. **Desktop app workspaces.** Anything under
    `~/Library/Application Support/Claude/scratch-workspaces/` (Claude desktop
    scratch chats) or `~/Documents/Codex/` (Codex desktop's dated workspaces,
@@ -550,9 +567,12 @@ matching rule wins.
    configured project is already in Documents is the folder's own symlink
    resolved, as before.
 6. **Temporary directories.** `/tmp`, `/private/tmp`, `/var/folders`, and
-   `$TMPDIR` are skipped with `temporary_directory`. With `--include-temp`,
-   each directory becomes its own project. These sessions are mostly tool
-   runs whose folders are gone.
+   `$TMPDIR` are skipped with `temporary_directory`, under both their given
+   and symlink-resolved spellings (`/tmp` is `/private/tmp` on macOS), and so
+   is a repository in one (rule 4). With `--include-temp`, each session's
+   directory becomes its own project, except that a repository in one
+   becomes one project at its root, which its worktrees join wherever they
+   are. These sessions are mostly tool runs whose folders are gone.
 7. **Home and above.** Home is skipped with `home_directory`. With
    `--include-home`, it becomes a project, and unless home is already
    included, the plan warns that it will then capture every future session
@@ -1127,7 +1147,18 @@ mapping. Live filesystem ownership and nearest configured rules take precedence.
 The discovery catalog checkpoints an incomplete configured-root sweep. Each
 pass allows at most 128 identity lookups; completed sweeps refresh next pass,
 and cached prefix metadata is validated before a resumed sweep. Unavailable
-entries cannot certify uniqueness. Bounded Git config origin names identify
+entries cannot certify uniqueness. Backfill's proposed roots are the only
+exception: a proposed root whose completed, within-budget lookup found a
+checkout top level and an origin value that yields no repository key is
+non-owning; a failed origin read is unknown, not keyless. It cannot match a
+recorded key, so a match elsewhere stays unique among the identifiable roots.
+It has no dependency stamps, so every admission slice observes it again
+(sharing the coalesced semantic sweep) and requires the same keyless top level
+and observer scope; gaining a key or becoming unobservable invalidates the proof.
+Unobserved or budget-exhausted proposed roots, and all configured roots, remain
+uncertainty. A keyless origin that is a `url.insteadOf` shorthand for the same
+repository is the accepted residual: it is never normalized, so it could not
+match the recorded key even if configured. Bounded Git config origin names identify
 metadata dependencies; no partial Git configuration parser interprets remotes.
 Source and Git reads run outside admission locks. Under-lock scope digests and
 permission generations reject configuration changes.

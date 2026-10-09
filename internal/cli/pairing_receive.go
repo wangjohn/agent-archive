@@ -201,7 +201,7 @@ func setupPairing(opts setupOptions, stdin io.Reader, out, errOut io.Writer, env
 		return fmt.Errorf("pairing setup did not commit: %w; retry the same pairing or finish/discard the saved setup", err)
 	}
 	printPairingConnected(out, cfg.MachineName, payload, opts.yes)
-	if err = finishSetup(p, errOut, home, cfg, existing.Paused, discoveries, env.now(), setupFinish{env: env, userHome: userHome, offerImport: !opts.yes, skills: skills}); err != nil {
+	if err = finishSetup(p, errOut, home, cfg, existing.Paused, discoveries, env.now(), setupFinish{env: env, userHome: userHome, interactive: !opts.yes, skills: skills}); err != nil {
 		return err
 	}
 	return nil

@@ -55,11 +55,30 @@ func prepareRecoveryInventory(ctx context.Context, r *resolver, items []*work, u
 	}
 	r.mappingRecovery = r.recovery
 	r.recovery = sourcefacts.NewRecoveryResolver(projects, r.filters.ProjectMappings, r.env.resolved, lookup, nil)
+	if !incomplete {
+		// A proposed root whose checkout has no repository key cannot own a
+		// recorded key; it must not block recovery into configured projects.
+		r.recovery.Proposed = proposedRoots(r, projects)
+	}
 	r.recovery.MaxOperations = 1024
 	r.recovery.Validate = r.env.RepositoryIdentityCurrent
 	r.recovery.ResetValidationContext(ctx)
 	// Ordinary path ownership still uses committed r.cfg exclusively.
 	r.cache = map[string]resolution{}
+}
+
+func proposedRoots(r *resolver, projects []archive.ProjectActivation) map[string]bool {
+	configured := map[string]bool{}
+	for _, p := range r.cfg.Archive.Projects {
+		configured[p.Root] = true
+	}
+	proposed := map[string]bool{}
+	for _, p := range projects {
+		if !configured[p.Root] {
+			proposed[p.Root] = true
+		}
+	}
+	return proposed
 }
 
 type recoveryWitnessValidation struct {

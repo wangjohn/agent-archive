@@ -215,10 +215,22 @@ func (r *resolver) resolveUncached(cwd string) resolution {
 	// Rules 3 and 4: a worktree folds into its repository; a repository is
 	// its own project. The repository then goes through rule 2 itself, so a
 	// worktree outside its repository lands in the configured project, or is
-	// excluded with it.
+	// excluded with it. A repository in a temporary directory (a throwaway
+	// clone, or a worktree of one) is not a project: rule 6 takes it, so
+	// adding it never captures every later session there. A worktree in a
+	// temporary directory of a repository elsewhere still folds into it.
 	repo, found, skip := r.repository(dir)
 	if skip != "" {
 		return resolution{skip: skip}
+	}
+	if found && r.temporaryRepository(repo) {
+		if res, ok := r.configured(repo); ok {
+			return res
+		}
+		// The repository, not the session's folder in it, is what
+		// --include-temp adds: one project per clone, as before rule 6
+		// took them, and a worktree of the clone kept elsewhere joins it.
+		return r.tempRule(repo)
 	}
 	if found {
 		if res, ok := r.configured(repo); ok {
@@ -242,10 +254,7 @@ func (r *resolver) resolveUncached(cwd string) resolution {
 
 	// Rule 6: temporary directories.
 	if withinAny(dir, r.temps) {
-		if r.filters.IncludeTemp {
-			return resolution{root: dir, kind: ProjectKindTemporary}
-		}
-		return resolution{root: dir, kind: ProjectKindTemporary, skip: SkipTemporaryDirectory}
+		return r.tempRule(dir)
 	}
 
 	// Rule 7: home and everything above it.
@@ -301,6 +310,29 @@ func (r *resolver) isWorkspaceFolder(resolved string) bool {
 		}
 	}
 	return false
+}
+
+// temporaryRepository reports whether repo, a repository root, is in a
+// temporary directory, so rule 6 takes it rather than rule 4. A temporary
+// directory that holds home (a container or sandbox whose HOME is under
+// /tmp) does not make the person's own repositories in home temporary.
+func (r *resolver) temporaryRepository(repo string) bool {
+	inHome := local.PathWithin(repo, r.home) || local.PathWithin(repo, r.homeRaw)
+	for _, temp := range r.temps {
+		if local.PathWithin(repo, temp) && (!inHome || !r.homeOrAbove(temp)) {
+			return true
+		}
+	}
+	return false
+}
+
+// tempRule is rule 6 for dir, a session folder (or a repository) in a
+// temporary directory: skipped, or with --include-temp its own project.
+func (r *resolver) tempRule(dir string) resolution {
+	if r.filters.IncludeTemp {
+		return resolution{root: dir, kind: ProjectKindTemporary}
+	}
+	return resolution{root: dir, kind: ProjectKindTemporary, skip: SkipTemporaryDirectory}
 }
 
 // configured applies rule 2 to dir.

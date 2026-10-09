@@ -47,7 +47,7 @@ OpenAI and Anthropic are constantly one-upping each other or the best model, but
 
 6. **Verify capture.** Allow the background collector to run, or run `agent-archive sync`, then `agent-archive status`. Look for your app's **archived, verified** Capture row: this establishes publication and read-back. Find the new session with `agent-archive list` and inspect it with `agent-archive show SESSION_ID` ([first successful capture and troubleshooting](docs/README.md#first-successful-capture)).
 
-7. If you want to pull in older sessions, you can import them with `agent-archive backfill` ([backfill guide](docs/guides/backfill.md)). Add `--dry-run` to preview without importing.
+7. Setup imports the last 7 days of sessions in the included projects. If you want to pull in older sessions, you can import them with `agent-archive backfill` ([backfill guide](docs/guides/backfill.md)). Add `--dry-run` to preview without importing.
 
 To add a second machine, install and run setup there with the same bucket (see [multiple machines](docs/guides/multiple-machines.md)).
 

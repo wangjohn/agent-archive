@@ -10,7 +10,7 @@ Checking your storage connection…
   · Exceptions: None configured.
   · Codex sources: Automatic discovery off.
   · Starts: After local consent, outside pause or exclusion.
-  · History: Old sessions require deliberate backfill.
+  · History: Last 7 days of included projects imported at setup; older sessions require backfill.
   · Copies: Qualifying recent native copies may be captured.
   · Hooks: Hook-only capture requires approval; observation is separate.
 Apps: Codex. Projects: 0. Storage: Amazon S3 bucket team-archive.
@@ -24,10 +24,9 @@ Installed the agent-archive skill, which lets your agents look up and pull in pa
 To remove the agent skills and keep them off, run agent-archive setup --no-skills.
 
 Next, in each app
-  Codex: run /hooks and approve the archive hooks, then start a new session (or
-  /clear).
-Sessions already open are not captured. Start a supported new Codex task in any non-excluded project.
-Import sessions from before setup with agent-archive backfill.
+  Codex: run /hooks and approve the archive hooks; they capture sessions that
+  start after that (or after /clear).
+Codex hooks capture supported tasks in any non-excluded project.
 Check progress with agent-archive status.
   · Another machine: agent-archive machines pair
 [exit 0]
