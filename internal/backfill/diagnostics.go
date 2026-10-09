@@ -62,7 +62,10 @@ type diagnosticDescription struct {
 
 // The finite vocabulary bounds rendering even when thousands of sources fail.
 var diagnosticDescriptions = map[DiagnosticDetail]diagnosticDescription{
-	DetailRecoveryBudget:              {ActionRetry, "Project recovery reached its resource limit; retry the plan."},
+	// Most recovery limits are fixed (configured roots, dependency stamps,
+	// Cursor catalog rows), so the same plan reaches them again; retrying
+	// clears only a timeout. An exact mapping bypasses the shared inventory.
+	DetailRecoveryBudget:              {ActionReviewMapping, "Project recovery reached a fixed work or time limit. Retrying helps only if Git or the disk was slow; otherwise review an exact --map-project assignment."},
 	DetailInventoryUnavailable:        {ActionRetry, "Configured repository evidence is unavailable or changed; check repository access and Git, then retry."},
 	DetailRecoveryExcluded:            {ActionReviewProject, "Recorded repository identity matches an excluded project; review the exclusion."},
 	DetailRecoveryAmbiguous:           {ActionReviewMapping, "Recorded repository identity matches multiple configured repositories; review an exact --map-project assignment."},
