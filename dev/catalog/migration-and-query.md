@@ -145,3 +145,21 @@ refresh inventories cache directory names in O(N), then retries best-effort
 removal only for known keys absent from its verified complete universe. This
 retries interrupted cleanup without adding a journal. Bounded list selection is
 unchanged; selected ranges never prove deletion.
+
+Stats date windows select recent roots and include their older descendants using
+complete authenticated identity headers and the shared root-child policy. Cold
+or uncached catalog stats walk the identity tree in O(N), then load only selected
+full metadata; an empty future window loads no overflow metadata bodies. Complex
+non-date predicates and ambiguous headers can require a complete pinned body
+fallback. These paths never use canonical LIST.
+
+Stats can reuse an already complete SQLite summary universe only when its saved
+root exactly matches the captured catalog root. The transaction checks complete
+state, whole-row integrity, key count and the existing root binding before reuse.
+This saves remote identity-tree walks but still scans O(N) local summaries and
+cache directory names. Stats does not bootstrap or rebuild SQL to enable this
+optimization: missing, changed, incomplete or damaged state uses lazy catalog
+selection. Thus a stats-only workload may receive no SQL benefit. Selected bodies
+retain exact revision/hash verification, eight-worker loading and the original
+request lifetime. Safe title text longer than the supported catalog identity key
+is searched directly instead of being probed as an impossible exact ID.

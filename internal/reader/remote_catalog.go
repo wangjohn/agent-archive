@@ -23,6 +23,14 @@ func CatalogAuthority(store storage.ObjectStore) bool {
 }
 
 func catalogRows(ctx context.Context, snapshot *catalog.Snapshot) ([]catalog.Row, error) {
+	rows, err := lazyCatalogRows(ctx, snapshot)
+	if err != nil {
+		return nil, err
+	}
+	return resolveCatalogRows(ctx, snapshot, rows, ListOptions{})
+}
+
+func lazyCatalogRows(ctx context.Context, snapshot *catalog.Snapshot) ([]catalog.Row, error) {
 	var rows []catalog.Row
 	cursor := ""
 	for {
@@ -32,7 +40,7 @@ func catalogRows(ctx context.Context, snapshot *catalog.Snapshot) ([]catalog.Row
 		}
 		rows = append(rows, page.Rows...)
 		if page.Next == "" {
-			return resolveCatalogRows(ctx, snapshot, rows, ListOptions{})
+			return rows, snapshot.ValidateRead(ctx)
 		}
 		cursor = page.Next
 	}
@@ -121,9 +129,18 @@ func catalogMetadata(ctx context.Context, store storage.ObjectStore, prefix stri
 }
 
 func selectCatalogMetadata(ctx context.Context, store storage.ObjectStore, prefix string, q MetadataQuery, opts ListOptions) (RecentResult, error) {
+	if err := ctx.Err(); err != nil {
+		return RecentResult{}, err
+	}
+	if q.IncludeRootChildren {
+		ctx = catalog.WithReadView(ctx)
+	}
 	snapshot, err := catalog.OpenSnapshot(ctx, store, nil)
 	if err != nil {
 		return RecentResult{}, err
+	}
+	if q.IncludeRootChildren {
+		return selectRootCatalogMetadata(ctx, snapshot, store, prefix, q, opts)
 	}
 	f := q.Filter
 	// A single indexed predicate is bounded. Complex/scope filters retain the
@@ -200,6 +217,12 @@ func CatalogSummaries(ctx context.Context, store storage.ObjectStore, filter Fil
 // roots rebuild the complete summary universe. It never asserts canonical LIST
 // completeness for a subset of remote leaves.
 func (c *SQLiteSessionCatalog) RefreshRemote(ctx context.Context) error {
+	_, err := c.refreshRemote(ctx, nil)
+	return err
+}
+
+// A required root permits reuse only; it never repairs or rebuilds local rows.
+func (c *SQLiteSessionCatalog) refreshRemote(ctx context.Context, requiredPrior *catalog.ObjectRef) (bool, error) {
 	span := trace.Start("refresh session catalog")
 	reused := 0
 	defer func() { span.Count("from catalog", reused); span.End() }()
@@ -209,63 +232,95 @@ func (c *SQLiteSessionCatalog) RefreshRemote(ctx context.Context) error {
 	defer c.viewMu.Unlock()
 	snapshot, err := catalog.OpenSnapshot(ctx, c.store, nil)
 	if err != nil {
-		return err
+		return false, err
 	}
 	nonce, err := catalog.NewMutationID()
 	if err != nil {
-		return err
+		return false, err
 	}
 	root := snapshot.Root()
+	if requiredPrior != nil && root != *requiredPrior {
+		return false, nil
+	}
 	binding := nonce + ":" + root.Key + ":" + root.SHA256
 	tx, err := c.db.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer func() { _ = tx.Rollback() }()
 	if _, err = tx.ExecContext(ctx, "UPDATE catalog_state SET generation=generation WHERE id=1"); err != nil {
-		return err
+		if requiredPrior != nil {
+			return false, ctx.Err()
+		}
+		return false, err
 	}
-	if _, err = tx.ExecContext(ctx, "CREATE TABLE IF NOT EXISTS remote_root(id INTEGER PRIMARY KEY CHECK(id=1),root BLOB NOT NULL)"); err != nil {
-		return err
+	if requiredPrior == nil {
+		if _, err = tx.ExecContext(ctx, "CREATE TABLE IF NOT EXISTS remote_root(id INTEGER PRIMARY KEY CHECK(id=1),root BLOB NOT NULL)"); err != nil {
+			return false, err
+		}
 	}
 	var raw []byte
 	err = tx.QueryRowContext(ctx, "SELECT root FROM remote_root WHERE id=1").Scan(&raw)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return err
+		if requiredPrior != nil {
+			return false, ctx.Err()
+		}
+		return false, err
 	}
 	var prior catalog.ObjectRef
 	if len(raw) > 0 && json.Unmarshal(raw, &prior) != nil {
-		return errors.New("invalid remote catalog root")
+		if requiredPrior != nil {
+			return false, ctx.Err()
+		}
+		return false, errors.New("invalid remote catalog root")
+	}
+	if requiredPrior != nil {
+		var complete bool
+		if prior != *requiredPrior {
+			return false, nil
+		}
+		if err = tx.QueryRowContext(ctx, "SELECT complete FROM catalog_state WHERE id=1").Scan(&complete); err != nil {
+			return false, ctx.Err()
+		}
+		if !complete {
+			return false, nil
+		}
 	}
 	delta, err := snapshot.Delta(ctx, prior)
 	if err != nil {
-		return err
+		return false, err
 	}
 	cachedKeys, invalid, err := remoteCachedRows(ctx, tx)
 	if err != nil {
-		return err
+		if requiredPrior != nil {
+			return false, ctx.Err()
+		}
+		return false, err
 	}
 	expected, err := snapshot.Count(ctx, catalog.Query{Index: catalog.CaptureIndex})
 	if err != nil {
-		return err
+		return false, err
+	}
+	if requiredPrior != nil && (len(invalid) != 0 || uint64(len(cachedKeys)) != expected) {
+		return false, nil
 	}
 	delta, err = reconcileRemoteDelta(ctx, snapshot, delta, cachedKeys, invalid, expected)
 	if err != nil {
-		return err
+		return false, err
 	}
 	delta.Changed, err = resolveCatalogRows(ctx, snapshot, delta.Changed, c.opts)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if err = applyRemoteDelta(ctx, tx, delta); err != nil {
-		return err
+		return false, err
 	}
 	raw, err = json.Marshal(delta.Next)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if _, err = tx.ExecContext(ctx, "INSERT OR REPLACE INTO remote_root VALUES(1,?)", raw); err != nil {
-		return err
+		return false, err
 	}
 	changed := delta.Rebuild || delta.Prior != delta.Next || len(invalid) > 0
 	if changed {
@@ -274,28 +329,28 @@ func (c *SQLiteSessionCatalog) RefreshRemote(ctx context.Context) error {
 		_, err = tx.ExecContext(ctx, "UPDATE catalog_state SET complete=1 WHERE id=1")
 	}
 	if err != nil {
-		return err
+		return false, err
 	}
 	var epoch string
 	var generation int64
 	if err = tx.QueryRowContext(ctx, "SELECT epoch,generation FROM catalog_state WHERE id=1").Scan(&epoch, &generation); err != nil {
-		return err
+		return false, err
 	}
 	if err = snapshot.ValidateRead(ctx); err != nil {
-		return err
+		return false, err
 	}
 	if err = tx.Commit(); err != nil {
-		return err
+		return false, err
 	}
 	reused = remoteReusedRows(delta, invalid, cachedKeys)
 	if err = snapshot.ValidateRead(ctx); err != nil {
-		return err
+		return false, err
 	}
 	c.evictRemoteBodies(knownBodies, delta, cachedKeys)
 	c.remoteBinding = binding
 	c.remoteSnapshot = snapshot
 	c.viewEpoch, c.viewGeneration, c.viewReady = epoch, generation, true
-	return nil
+	return true, nil
 }
 
 func remoteReusedRows(delta catalog.Delta, invalid []string, cachedKeys map[string]bool) int {
@@ -347,7 +402,7 @@ func canonicalCatalogPrefix(prefix string) string {
 
 func boundedCatalogSelection(prefix string, q MetadataQuery, opts ListOptions) bool {
 	f := q.Filter
-	if canonicalCatalogPrefix(prefix) != "sessions/" || opts.ScopeMatch != nil || f.Harness != "" || f.Model != "" || f.Skill != "" || f.SkillSHA256 != "" || f.RequireCompleteCoverage {
+	if q.IncludeRootChildren || canonicalCatalogPrefix(prefix) != "sessions/" || opts.ScopeMatch != nil || f.Harness != "" || f.Model != "" || f.Skill != "" || f.SkillSHA256 != "" || f.RequireCompleteCoverage {
 		return false
 	}
 	replayRange := q.TopLevelOnly && (f.Replays == ReplaysHidden || f.Replays == ReplaysOnly) || !q.TopLevelOnly && f.Replays == ReplaysIncluded

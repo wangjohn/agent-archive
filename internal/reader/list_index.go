@@ -82,6 +82,7 @@ func SelectMetadata(ctx context.Context, store storage.ObjectStore, prefix strin
 		opts.Cache.maintain(ctx)
 		opts.ActivityOrder = query.Order == ActivityOrder
 		opts.TopLevelOnly = query.TopLevelOnly
+		opts.includeRootChildren = query.IncludeRootChildren
 		return selectCatalogMetadata(ctx, store, prefix, query, opts)
 	}
 	filter, limit := query.Filter, query.Limit

@@ -26,6 +26,19 @@ type showLookup struct {
 	Cancelled bool
 }
 
+// Catalog identities have a bounded canonical key; longer safe text remains
+// searchable as a title. Legacy full IDs retain their established direct path.
+func showExactIDCandidate(store storage.ObjectStore, harness, query string) bool {
+	if len(query) < 32 {
+		return false
+	}
+	if harness == "" {
+		harness = "probe"
+	}
+	key, err := archive.MetadataObjectKey(harness, query)
+	return err == nil && (!reader.CatalogAuthority(store) || len(key) <= 1024)
+}
+
 // resolveShowQuery turns a show argument into a session. Exact SESSION_ID
 // lookups win. Otherwise the argument is words, combining identity prefixes
 // with text matches (sessionQuery) over every archived sidecar, in the tiers of the search: the
@@ -39,8 +52,7 @@ type showLookup struct {
 func resolveShowQuery(ctx context.Context, store storage.ObjectStore, env showQueryDependencies, stdin io.Reader, stdout, stderr io.Writer, harness, query string, cfgProjects map[string]string, noPager, pickOne bool) (showLookup, int) {
 	// Full archive IDs use the direct-read path. With --harness, a short ID
 	// or title would otherwise be mistaken for a literal object key.
-	_, componentErr := archive.MetadataObjectKey("probe", query)
-	if len(query) >= 32 && componentErr == nil {
+	if showExactIDCandidate(store, harness, query) {
 		lookup, err := locateShowMetadata(ctx, store, harness, query)
 		if err == nil {
 			parts := strings.Split(strings.TrimPrefix(lookup.Key, archiveSessionsPrefix+"/"), "/")
