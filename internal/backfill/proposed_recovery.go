@@ -17,7 +17,22 @@ import (
 // gaps that can affect it (see recoveryGaps.blocking).
 func prepareRecoveryInventory(ctx context.Context, r *resolver, items []*work, unread unreadable, dbGaps recoveryGaps) {
 	items = recoveryEvidenceItems(items)
-	projects, witnesses, gaps := recoveryWitnessInventory(ctx, r, items)
+	slugs := addedSourceSlugs(items)
+	var inventoryGaps recoveryGaps
+	if r.inventoryAdded != nil {
+		// Transcripts added while planning become evidence; any other
+		// membership change leaves every app's inventory incomplete.
+		added, ok := r.inventoryAdded(ctx)
+		if !ok {
+			inventoryGaps.add("", CauseNativeInventoryChanged)
+		} else {
+			var witnesses []*work
+			witnesses, inventoryGaps = addedWitnesses(r, items, added)
+			items = append(items, witnesses...)
+		}
+	}
+	projects, witnesses, gaps := recoveryWitnessInventory(r, items)
+	gaps.merge(inventoryGaps)
 	gaps.merge(dbGaps)
 	gaps.addUnreadable(unread)
 	r.recoveryGaps = gaps
@@ -45,15 +60,20 @@ func prepareRecoveryInventory(ctx context.Context, r *resolver, items []*work, u
 			r.workspaceReset()
 		}
 	}
-	r.recoverySourcesCurrent = func(h harness, root string) bool {
+	r.recoverySourcesCurrent = func(h harness, proof archive.ProjectResolution) bool {
 		if !validation.checked {
 			validation.checked = true
 			validation.database = r.databaseRecoveryCurrent == nil || r.databaseRecoveryCurrent(validation.ctx)
 			var current bool
-			current, validation.databaseRoots = recoveryWitnessesCurrent(validation.ctx, r, witnesses, selectedRoots, validation.database)
+			var added addedSources
+			current, added, validation.databaseRoots = recoveryWitnessesCurrent(validation.ctx, r, witnesses, selectedRoots, validation.database)
 			validation.current = current && ownershipCurrent(validation.ctx)
+			if validation.current {
+				validation.addedKeys, validation.addedGaps = addedRecoveryBlocks(validation.ctx, r, slugs, witnesses, added)
+				validation.current = validation.ctx.Err() == nil
+			}
 		}
-		return validation.current && (validation.database || !cursorEvidenceRequired(h, validation.databaseRoots[root]))
+		return validation.current && (validation.database || !cursorEvidenceRequired(h, validation.databaseRoots[proof.Root])) && addedAllows(validation.addedKeys, validation.addedGaps, h, proof)
 	}
 	r.mappingRecovery = r.recovery
 	r.recovery = sourcefacts.NewRecoveryResolver(projects, r.filters.ProjectMappings, r.env.resolved, r.env.RepositoryIdentity, nil)
@@ -92,6 +112,10 @@ type recoveryWitnessValidation struct {
 	// Cursor database chats alone (computed only when it is not).
 	database      bool
 	databaseRoots map[string]bool
+	// addedKeys and addedGaps are what transcripts added since planning
+	// block (addedRecoveryBlocks).
+	addedKeys map[string]bool
+	addedGaps recoveryGaps
 }
 
 // cursorEvidenceRequired reports whether a recovery for a session of h into
@@ -213,7 +237,7 @@ func cursorChatFolderless(chat CursorDatabaseChat, messageFolders []string) bool
 	return chat.Folder == "" && chat.WorkspaceID == "" && !chat.WorkspaceIdentifier && len(messageFolders) == 0
 }
 
-func recoveryWitnessInventory(ctx context.Context, r *resolver, items []*work) ([]archive.ProjectActivation, map[string][]*work, recoveryGaps) {
+func recoveryWitnessInventory(r *resolver, items []*work) ([]archive.ProjectActivation, map[string][]*work, recoveryGaps) {
 	projects := slices.Clone(r.cfg.Archive.Projects)
 	configured := map[string]bool{}
 	for _, p := range projects {
@@ -222,9 +246,6 @@ func recoveryWitnessInventory(ctx context.Context, r *resolver, items []*work) (
 	observed := map[string]bool{}
 	witnesses := map[string][]*work{}
 	var gaps recoveryGaps
-	if r.inventoryCurrent != nil && !r.inventoryCurrent(ctx) {
-		gaps.add("", CauseNativeInventoryChanged)
-	}
 	for _, w := range items {
 		if cause, gap := witnessGap(w); gap {
 			gaps.add(string(w.t.harness), cause)
@@ -259,16 +280,20 @@ func recoveryWitnessInventory(ctx context.Context, r *resolver, items []*work) (
 // (databaseCurrent). When the epoch changed, a root whose only current
 // evidence (for a selected destination, its only current evidence able to
 // propose it) is Cursor database chats is returned in cursorRoots instead of
-// failing every recovery; recoverySourcesCurrent decides whom it blocks.
-func recoveryWitnessesCurrent(ctx context.Context, r *resolver, witnesses map[string][]*work, selectedRoots map[string]bool, databaseCurrent bool) (current bool, cursorRoots map[string]bool) {
-	if r.inventoryCurrent != nil && !r.inventoryCurrent(ctx) {
-		return false, nil
+// failing every recovery; recoverySourcesCurrent decides whom it blocks. The
+// native inventory may only have grown; added is what it gained.
+func recoveryWitnessesCurrent(ctx context.Context, r *resolver, witnesses map[string][]*work, selectedRoots map[string]bool, databaseCurrent bool) (current bool, added addedSources, cursorRoots map[string]bool) {
+	if r.inventoryAdded != nil {
+		var ok bool
+		if added, ok = r.inventoryAdded(ctx); !ok {
+			return false, addedSources{}, nil
+		}
 	}
 	renewal := witnessRenewal{ctx: ctx, r: r, ownership: newResolver(r.env, r.cfg, r.filters), databaseCurrent: databaseCurrent}
 	for root, group := range witnesses {
 		found, proposes, database, ok := renewal.root(group, selectedRoots[root])
 		if !ok || (!found && !database) {
-			return false, nil
+			return false, addedSources{}, nil
 		}
 		if !databaseCurrent && database && (!found || (selectedRoots[root] && !proposes)) {
 			if cursorRoots == nil {
@@ -277,7 +302,7 @@ func recoveryWitnessesCurrent(ctx context.Context, r *resolver, witnesses map[st
 			cursorRoots[root] = true
 		}
 	}
-	return true, cursorRoots
+	return true, added, cursorRoots
 }
 
 // witnessRenewal renews witness roots within one bounded check budget.
@@ -315,7 +340,7 @@ func (v *witnessRenewal) root(group []*work, selected bool) (found, proposes, da
 			database = true
 			continue
 		}
-		if (w.sourceCurrent(v.r.env) || w.stillAppendedOnly(v.r.env)) && (w.workspaceCurrent == nil || w.workspaceCurrent(v.ctx)) {
+		if (w.sourceCurrent(v.r.env) || w.stillAppendedOnly(v.r.env) || w.addedSourceGrown(v.r.env)) && (w.workspaceCurrent == nil || w.workspaceCurrent(v.ctx)) {
 			found = true
 			proposes = proposes || proposesRoot(w)
 			if v.databaseCurrent || !selected || proposes {
@@ -349,30 +374,81 @@ func bindRecoveryPolicy(cfg config.Config, p *Plan) error {
 			c.ProjectResolution.PolicyContext = policy
 		}
 	}
+	base := cfg
+	base.Archive.Projects = slices.Clone(cfg.Archive.Projects)
+	base.ImportedHarnesses = slices.Clone(cfg.ImportedHarnesses)
+	p.policyConfig = &base
 	return nil
 }
 
-// CheckRecovery requires a non-nil context and renews recovered ownership
-// before committing proposed capture configuration. It performs repository work outside the short hooks lock hold.
-func (p Plan) CheckRecovery(ctx context.Context) error {
+// errRecoveryChanged refuses an import none of whose sessions is still current.
+var errRecoveryChanged = errors.New("project or source evidence changed or is unavailable; run backfill again. Nothing was changed")
+
+// AdmitRecovery requires a non-nil context and renews recovered ownership
+// before committing proposed capture configuration. It performs repository
+// work outside the short hooks lock hold.
+//
+// A session whose project or source evidence is no longer current is left out
+// of the returned plan (as source_changed) instead of refusing the whole
+// import, as planning leaves out a transcript that changed while it was read;
+// changed counts them. The returned plan imports a subset of the confirmed one
+// and is bound to the configuration that subset needs: a proposed project only
+// the left-out sessions needed is no longer added (bindRecoveryPolicy). It
+// refuses when the context ends, or when no session would be left.
+func (p Plan) AdmitRecovery(ctx context.Context) (admitted Plan, changed int, err error) {
 	if ctx == nil {
-		return errors.New("recovery validation requires a context")
+		return Plan{}, 0, errors.New("recovery validation requires a context")
 	}
 	if err := ctx.Err(); err != nil {
-		return err
+		return Plan{}, 0, err
 	}
 	for _, c := range p.Imported() {
 		if c.projectResolutionReset != nil {
 			c.projectResolutionReset(ctx)
 		}
 	}
-	for _, c := range p.Imported() {
+	stale := map[int]bool{}
+	imported := 0
+	for i, c := range p.Candidates {
+		if c.Skip != "" {
+			continue
+		}
+		imported++
 		if err := ctx.Err(); err != nil {
-			return err
+			return Plan{}, 0, err
 		}
 		if c.projectResolutionCurrent != nil && !c.projectResolutionCurrent() {
-			return errors.New("project or source evidence changed or is unavailable; run backfill again. Nothing was changed")
+			stale[i] = true
 		}
 	}
-	return ctx.Err()
+	// A check that ended with the context says nothing about the evidence.
+	if err := ctx.Err(); err != nil {
+		return Plan{}, 0, err
+	}
+	if len(stale) == 0 {
+		return p, 0, nil
+	}
+	if len(stale) == imported || p.policyConfig == nil {
+		return Plan{}, 0, errRecoveryChanged
+	}
+	admitted = p
+	admitted.Candidates = slices.Clone(p.Candidates)
+	for i := range admitted.Candidates {
+		c := &admitted.Candidates[i]
+		// bindRecoveryPolicy updates every resolution, including skipped
+		// candidates. Keep all confirmed proof pointers independent.
+		if c.ProjectResolution != nil {
+			resolution := *c.ProjectResolution
+			c.ProjectResolution = &resolution
+		}
+		if stale[i] {
+			c.Skip = SkipSourceChanged
+			c.Diagnostic = candidateDiagnostic(c.Skip, "", "")
+			continue
+		}
+	}
+	if err := bindRecoveryPolicy(*p.policyConfig, &admitted); err != nil {
+		return Plan{}, 0, err
+	}
+	return admitted, len(stale), nil
 }
