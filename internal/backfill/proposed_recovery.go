@@ -8,6 +8,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 )
 
@@ -435,20 +436,55 @@ func (p Plan) AdmitRecovery(ctx context.Context) (admitted Plan, changed int, er
 	admitted.Candidates = slices.Clone(p.Candidates)
 	for i := range admitted.Candidates {
 		c := &admitted.Candidates[i]
-		if stale[i] {
-			c.Skip = SkipSourceChanged
-			c.Diagnostic = candidateDiagnostic(c.Skip, "", "")
-			continue
-		}
-		if c.Skip == "" && c.ProjectResolution != nil {
+		if c.ProjectResolution != nil {
 			// Bound again below for the narrowed plan; the confirmed plan's
 			// resolution is left as it was.
 			resolution := *c.ProjectResolution
 			c.ProjectResolution = &resolution
 		}
+		if stale[i] {
+			c.Skip = SkipSourceChanged
+			c.Diagnostic = candidateDiagnostic(c.Skip, "", "")
+		}
+	}
+	if droppedNestsWithCapture(p, admitted) {
+		return Plan{}, 0, errRecoveryChanged
 	}
 	if err := bindRecoveryPolicy(*p.policyConfig, &admitted); err != nil {
 		return Plan{}, 0, err
 	}
 	return admitted, len(stale), nil
+}
+
+// droppedNestsWithCapture reports whether a project only the left-out
+// sessions needed nests with a plain folder the admitted plan still adds.
+// The confirmed plan decided what to keep out of each added plain folder
+// with the projects it adds as its own (planNested skips their roots, and
+// capturedAnyway counts them); without the dropped project, the plain folder
+// would capture the dropped project's folder, which neither the person
+// confirmed nor the plan checked. Such an import is refused whole, as before
+// partial admission, so the next plan decides it again.
+func droppedNestsWithCapture(confirmed, admitted Plan) bool {
+	added := admitted.Projects()
+	kept := map[string]bool{}
+	for _, s := range added {
+		kept[s.Root] = true
+	}
+	var dropped []string
+	for _, s := range confirmed.Projects() {
+		if !kept[s.Root] && !s.Included {
+			dropped = append(dropped, s.Root)
+		}
+	}
+	for _, s := range added {
+		if s.Included || !capturesSubfolders(s.Kind) {
+			continue
+		}
+		for _, root := range dropped {
+			if local.PathWithin(root, s.Root) || local.PathWithin(s.Root, root) {
+				return true
+			}
+		}
+	}
+	return false
 }
