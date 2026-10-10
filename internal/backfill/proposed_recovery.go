@@ -384,6 +384,10 @@ func bindRecoveryPolicy(cfg config.Config, p *Plan) error {
 // errRecoveryChanged refuses an import none of whose sessions is still current.
 var errRecoveryChanged = errors.New("project or source evidence changed or is unavailable; run backfill again. Nothing was changed")
 
+// errRecoveryUnbound refuses an import some of whose sessions changed when the
+// plan has no bound recovery policy to narrow it with.
+var errRecoveryUnbound = errors.New("project or source evidence changed for some sessions, and this plan cannot leave them out; run backfill again. Nothing was changed")
+
 // AdmitRecovery requires a non-nil context and renews recovered ownership
 // before committing proposed capture configuration. It performs repository
 // work outside the short hooks lock hold.
@@ -408,12 +412,10 @@ func (p Plan) AdmitRecovery(ctx context.Context) (admitted Plan, changed int, er
 		}
 	}
 	stale := map[int]bool{}
-	imported := 0
 	for i, c := range p.Candidates {
 		if c.Skip != "" {
 			continue
 		}
-		imported++
 		if err := ctx.Err(); err != nil {
 			return Plan{}, 0, err
 		}
@@ -428,23 +430,28 @@ func (p Plan) AdmitRecovery(ctx context.Context) (admitted Plan, changed int, er
 	if len(stale) == 0 {
 		return p, 0, nil
 	}
-	if len(stale) == imported || p.policyConfig == nil {
+	if len(stale) == len(p.Imported()) {
 		return Plan{}, 0, errRecoveryChanged
+	}
+	if p.policyConfig == nil {
+		// Without the configuration it was bound to, a narrowed plan cannot be
+		// bound again, so the import cannot leave the changed sessions out.
+		return Plan{}, 0, errRecoveryUnbound
 	}
 	admitted = p
 	admitted.Candidates = slices.Clone(p.Candidates)
 	for i := range admitted.Candidates {
 		c := &admitted.Candidates[i]
+		if c.ProjectResolution != nil {
+			// Bound again below for the narrowed plan; the confirmed plan's
+			// resolutions, which bindRecoveryPolicy rewrites for every
+			// candidate, are left as they were.
+			resolution := *c.ProjectResolution
+			c.ProjectResolution = &resolution
+		}
 		if stale[i] {
 			c.Skip = SkipSourceChanged
 			c.Diagnostic = candidateDiagnostic(c.Skip, "", "")
-			continue
-		}
-		if c.Skip == "" && c.ProjectResolution != nil {
-			// Bound again below for the narrowed plan; the confirmed plan's
-			// resolution is left as it was.
-			resolution := *c.ProjectResolution
-			c.ProjectResolution = &resolution
 		}
 	}
 	if err := bindRecoveryPolicy(*p.policyConfig, &admitted); err != nil {

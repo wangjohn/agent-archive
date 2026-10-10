@@ -377,8 +377,11 @@ func preparePlanWork(ctx context.Context, env Environment, cfg config.Config, fi
 		w.checkSource(env)
 		if w.t.sourceInfo != nil && w.res.current != nil {
 			base := w.res.current
+			// The session's own source may only have grown: its header, which
+			// recovery used, comes from leading records an append cannot change.
 			w.res.current = &resolutionCheck{reset: base.reset, valid: func() bool {
-				return w.sourceCurrent(env) && base.valid()
+				current, err := env.lstat(w.t.path)
+				return (w.matchesSource(current, err) || appendedSource(w.t.sourceInfo, current, err)) && base.valid()
 			}}
 		}
 	}

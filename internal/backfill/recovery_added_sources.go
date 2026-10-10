@@ -250,6 +250,14 @@ func addedRecoveryBlocks(ctx context.Context, r *resolver, slugs map[string]bool
 			continue
 		}
 		looked[root.res.root] = true
+		if r.recovery != nil {
+			// Added roots share the recovery's bounded Git lookups.
+			if r.recovery.Operations >= r.recovery.MaxOperations {
+				gaps.add(root.agent, CauseRecoveryBudget)
+				continue
+			}
+			r.recovery.Operations++
+		}
 		var id sourcefacts.RepositoryIdentity
 		if r.env.RepositoryIdentity != nil {
 			id = r.env.RepositoryIdentity(ctx, root.res.root)

@@ -2,6 +2,7 @@ package backfill
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -392,8 +393,8 @@ func register(t *testing.T, cfg config.Config, admitted Plan) (ConfigChanges, Re
 // with the configuration they need, and registration accepts them.
 func TestAdmitRecoveryLeavesOutChangedSessions(t *testing.T) {
 	cfg, p, gone, _ := partialAdmissionFixture(t, 3)
-	// Its agent appended to it: that session's source changed.
-	appendRecord(t, candidate(t, p, gone[0]).TranscriptPath, `{"more":1}`+"\n")
+	// Only that session's evidence changed.
+	markStale(t, &p, gone[0])
 	admitted, changed, err := p.AdmitRecovery(t.Context())
 	if err != nil || changed != 1 {
 		t.Fatal(changed, err)
@@ -418,7 +419,7 @@ func TestAdmitRecoveryLeavesOutChangedSessions(t *testing.T) {
 // without it.
 func TestAdmitRecoveryDropsProjectsOnlyChangedSessionsNeeded(t *testing.T) {
 	cfg, p, gone, others := partialAdmissionFixture(t, 1)
-	appendRecord(t, candidate(t, p, gone[0]).TranscriptPath, `{"more":1}`+"\n")
+	markStale(t, &p, gone[0])
 	admitted, changed, err := p.AdmitRecovery(t.Context())
 	if err != nil || changed != 1 {
 		t.Fatal(changed, err)
@@ -441,7 +442,7 @@ func TestAdmitRecoveryDropsProjectsOnlyChangedSessionsNeeded(t *testing.T) {
 // ended with its context.
 func TestAdmitRecoveryRefusesWhenNothingIsLeft(t *testing.T) {
 	_, p, gone, others := partialAdmissionFixture(t, 1)
-	appendRecord(t, candidate(t, p, gone[0]).TranscriptPath, `{"more":1}`+"\n")
+	markStale(t, &p, gone[0])
 	for i := range p.Candidates {
 		if p.Candidates[i].NativeSessionID == others[0] || p.Candidates[i].NativeSessionID == others[1] {
 			p.Candidates[i].Skip = SkipFilteredOut
@@ -539,5 +540,62 @@ func TestAddedTranscriptInConfiguredProjectNeedsNoGit(t *testing.T) {
 	}
 	if lookups[other] != before {
 		t.Fatal("a configured project's added transcript was looked up as a new clone")
+	}
+}
+
+// markStale makes one planned session's evidence no longer current, as a
+// change only that recovery depends on would. A rewritten transcript would
+// not do: rewrites of observed files fail every recovery (compare).
+func markStale(t *testing.T, p *Plan, id string) {
+	t.Helper()
+	for i := range p.Candidates {
+		if p.Candidates[i].NativeSessionID == id {
+			p.Candidates[i].projectResolutionCurrent = func() bool { return false }
+			return
+		}
+	}
+	t.Fatalf("no candidate %s", id)
+}
+
+// A recovered session its agent is still appending to is admitted: its
+// header, which recovery used, cannot change.
+func TestAdmitRecoveryAcceptsAppendsToRecoveredSession(t *testing.T) {
+	_, p, gone, _ := partialAdmissionFixture(t, 1)
+	appendRecord(t, candidate(t, p, gone[0]).TranscriptPath, `{"more":1}`+"\n")
+	admitted, changed, err := p.AdmitRecovery(t.Context())
+	if err != nil || changed != 0 || len(admitted.Imported()) != len(p.Imported()) {
+		t.Fatal(changed, err)
+	}
+}
+
+// A plan that was never bound to a recovery policy cannot be narrowed, and
+// says so instead of reporting that nothing is left.
+func TestAdmitRecoveryRefusesUnboundPartialPlan(t *testing.T) {
+	_, p, gone, _ := partialAdmissionFixture(t, 3)
+	markStale(t, &p, gone[0])
+	p.policyConfig = nil
+	if _, _, err := p.AdmitRecovery(t.Context()); !errors.Is(err, errRecoveryUnbound) {
+		t.Fatal(err)
+	}
+}
+
+// Leaving changed sessions out does not rewrite the confirmed plan's
+// resolutions.
+func TestAdmitRecoveryLeavesConfirmedResolutionsAlone(t *testing.T) {
+	_, p, gone, _ := partialAdmissionFixture(t, 1)
+	before := map[string]string{}
+	for _, c := range p.Candidates {
+		if c.ProjectResolution != nil {
+			before[c.NativeSessionID] = c.ProjectResolution.PolicyContext
+		}
+	}
+	markStale(t, &p, gone[0])
+	if _, changed, err := p.AdmitRecovery(t.Context()); err != nil || changed != 1 {
+		t.Fatal(changed, err)
+	}
+	for _, c := range p.Candidates {
+		if c.ProjectResolution != nil && c.ProjectResolution.PolicyContext != before[c.NativeSessionID] {
+			t.Fatalf("confirmed resolution of %s rebound", c.NativeSessionID)
+		}
 	}
 }

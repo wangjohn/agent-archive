@@ -32,6 +32,9 @@ type recoverySourceInventory struct {
 	// item's own source check.
 	appendable map[string]bool
 	complete   bool
+	// resolvedKnown holds the resolved paths of observed regular files, built
+	// on first use by known.
+	resolvedKnown map[string]bool
 }
 
 const recoverySourceObservationLimit = 65536
@@ -127,8 +130,20 @@ func sameRecoveryDirectory(before, after fs.FileInfo) bool {
 // known reports a regular file observed at the baseline; compare keeps it the
 // same file.
 func (i *recoverySourceInventory) known(path string) bool {
-	stamp, ok := i.stamps[path]
-	return ok && !stamp.absent && stamp.info.Mode().IsRegular()
+	if stamp, ok := i.stamps[path]; ok {
+		return !stamp.absent && stamp.info.Mode().IsRegular()
+	}
+	// Another spelling of an observed file (a symlinked home or store) is
+	// still that file, not an added one.
+	if i.resolvedKnown == nil {
+		i.resolvedKnown = map[string]bool{}
+		for p, stamp := range i.stamps {
+			if !stamp.absent && stamp.info.Mode().IsRegular() {
+				i.resolvedKnown[i.env.resolved(p)] = true
+			}
+		}
+	}
+	return i.resolvedKnown[i.env.resolved(path)]
 }
 
 // sameRecoveryMember reports whether a path still names the observed member.
