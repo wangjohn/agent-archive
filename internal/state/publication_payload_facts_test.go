@@ -12,6 +12,8 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 )
 
+func preparationSHA(a PreparationAuthority) string { return preparationSHAWithFacts(a, nil) }
+
 func TestPublicationPayloadInvocationPreservesDigestsAndChecksDistinctBytes(t *testing.T) {
 	p := publicationFixture(t, publicationThread, time.Now())
 	p.History = &PendingHistory{Version: 1}

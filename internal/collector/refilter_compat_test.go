@@ -29,3 +29,10 @@ func refilterBundleWithBudget(t *testing.T, ctx context.Context, reg archive.Ses
 	}
 	return out, err
 }
+
+// Native parent links may resolve after a retained revision was captured. The
+// stable child owner still identifies that earlier evidence; a different known
+// parent remains a conflict.
+func retainedParentMatches(reg archive.SessionRegistration, bundle archive.SourceBundle) bool {
+	return bundle.ParentSessionID == reg.ParentSessionID || nativeChildOwned(reg, bundle) && bundle.ParentSessionID == ""
+}
