@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/codexmeta"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/state"
 )
@@ -277,4 +278,88 @@ func TestCoverageMemberChecksProgressAcrossProbeLimitedPasses(t *testing.T) {
 		}
 	}
 	t.Fatal("validation never finished under a per-pass probe limit")
+}
+
+// inspectingCoverageAdapter rewrites the observation of validation-time
+// header reads, standing in for a racing append or an in-place rewrite.
+type inspectingCoverageAdapter struct {
+	SourceAdapter
+	inspect func(call int, o Observation) Observation
+	calls   int
+}
+
+func (a *inspectingCoverageAdapter) Inspect(ctx context.Context, source SourceDescriptor) Observation {
+	a.calls++
+	return a.inspect(a.calls, a.SourceAdapter.Inspect(ctx, source))
+}
+
+// validatingRequestedRollout observes one requested rollout and begins its
+// epoch's validation with an empty observation cache, so validation rereads it.
+func validatingRequestedRollout(t *testing.T) (*catalog, string) {
+	t.Helper()
+	_, cfg, at, root := fixture(t)
+	wanted := writeRollout(t, root, cfg.Archive.Projects[0].Root, at.Add(-time.Hour), 1, "sessions")
+	c := newCoverage([]string{root})
+	c.request(wanted)
+	c.restart()
+	path := rolloutPath(root, "sessions", wanted)
+	source := codexAdapter{}.Describe(root, "sessions", filepath.Base(path)).Source
+	observed := codexAdapter{}.Inspect(t.Context(), source)
+	if observed.Identity == nil || observed.Identity.ThreadID != wanted {
+		t.Fatalf("fixture identity %#v", observed.Identity)
+	}
+	c.observe(source, Fingerprint{}, *observed.Identity)
+	collectCoverageDirectory(t, c, root, "sessions", false)
+	collectCoverageDirectory(t, c, root, "archived_sessions", false)
+	c.beginValidation()
+	return &catalog{Coverage: c, Cache: map[string]cached{}}, wanted
+}
+
+// A header read racing an append is deferred to a later pass in the same
+// epoch; it is neither certified nor allowed to restart the epoch.
+func TestCoverageMemberReadRacingAppendDefersWithoutFailingEpoch(t *testing.T) {
+	t.Parallel()
+	cat, wanted := validatingRequestedRollout(t)
+	epoch := cat.Coverage.Epoch
+	adapter := &inspectingCoverageAdapter{SourceAdapter: codexAdapter{}, inspect: func(call int, o Observation) Observation {
+		if call == 1 {
+			return Observation{Outcome: outcomeChanged}
+		}
+		return o
+	}}
+	advanceCoverageValidation(t.Context(), cat, &Health{}, adapter, time.Now().Add(time.Minute), Options{})
+	if cat.Coverage.Phase != coverageValidate || cat.Coverage.Failed {
+		t.Fatalf("raced read phase=%s failed=%v", cat.Coverage.Phase, cat.Coverage.Failed)
+	}
+	advanceCoverageValidation(t.Context(), cat, &Health{}, adapter, time.Now().Add(time.Minute), Options{})
+	if cat.Coverage.Phase != coverageComplete || cat.Coverage.Failed || cat.Coverage.Epoch != epoch || len(cat.Coverage.Requests[wanted].Candidates) != 1 {
+		t.Fatalf("deferred validation did not finish its epoch: %#v", cat.Coverage)
+	}
+}
+
+// A requested rollout whose identity changed in place between observation and
+// validation fails the epoch rather than certifying either identity.
+func TestCoverageFailsWhenRequestedRolloutIdentityChangesMidEpoch(t *testing.T) {
+	t.Parallel()
+	for name, change := range map[string]func(*codexmeta.CodexIdentity){
+		"other thread": func(id *codexmeta.CodexIdentity) { id.ThreadID = "00000000-0000-0000-0000-000000000099" },
+		"new fork":     func(id *codexmeta.CodexIdentity) { id.ForkID = "00000000-0000-0000-0000-000000000098" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			cat, _ := validatingRequestedRollout(t)
+			adapter := &inspectingCoverageAdapter{SourceAdapter: codexAdapter{}, inspect: func(_ int, o Observation) Observation {
+				if o.Identity != nil {
+					id := *o.Identity
+					change(&id)
+					o.Identity = &id
+				}
+				return o
+			}}
+			advanceCoverageValidation(t.Context(), cat, &Health{}, adapter, time.Now().Add(time.Minute), Options{})
+			if cat.Coverage.Phase != coverageComplete || !cat.Coverage.Failed {
+				t.Fatalf("phase=%s failed=%v", cat.Coverage.Phase, cat.Coverage.Failed)
+			}
+		})
+	}
 }
