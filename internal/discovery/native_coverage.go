@@ -71,6 +71,11 @@ type coverageCandidate struct {
 	Source   SourceDescriptor        `json:"source"`
 	Stamp    Fingerprint             `json:"stamp"`
 	Identity codexmeta.CodexIdentity `json:"identity"`
+	// Member records that this epoch's validation listed the locator and
+	// reread the same identity. Restored cache facts can name a rollout that
+	// has since been renamed into archived_sessions/; such a candidate is not
+	// a member and is dropped when validation completes.
+	Member bool `json:"member,omitempty"`
 }
 
 type coverageDirectory struct {
@@ -228,7 +233,7 @@ func (c *coverageInventory) observe(source SourceDescriptor, stamp Fingerprint, 
 			c.Requests[key] = request
 			continue
 		}
-		candidate := coverageCandidate{source, stamp, id}
+		candidate := coverageCandidate{Source: source, Stamp: stamp, Identity: id}
 		added := candidate.byteBound() + 6*int64(len(source.Locator)) + 16
 		prior := int64(0)
 		if old, found := request.Candidates[source.Locator]; found {
@@ -358,6 +363,10 @@ func (c *coverageInventory) checkMember(locator string, id *codexmeta.CodexIdent
 			c.Failed = true
 			return
 		}
+		if matches && !candidate.Member {
+			candidate.Member = true
+			request.Candidates[locator] = candidate
+		}
 	}
 }
 
@@ -379,6 +388,16 @@ func (c *coverageInventory) finishValidation() bool {
 	for key, request := range c.Requests {
 		if request.TargetEpoch <= c.Epoch && !c.Failed {
 			request.AttemptEpoch = c.Epoch
+		}
+		if request.TargetEpoch <= c.Epoch && !request.Overflow && !c.Failed {
+			// Every listed rollout claiming this key was recorded and marked, so
+			// an unmarked candidate names a locator that is no longer listed.
+			for locator, candidate := range request.Candidates {
+				if !candidate.Member {
+					delete(request.Candidates, locator)
+					c.factBound = 0
+				}
+			}
 		}
 		if request.TargetEpoch <= c.Epoch && !request.Overflow && !c.Failed {
 			request.CompleteEpoch = c.Epoch
@@ -453,7 +472,7 @@ func advanceCoverageValidation(ctx context.Context, c *catalog, h *Health, adapt
 // or a header read raced a write, so the batch is validated again later.
 func checkCoverageMembers(ctx context.Context, c *catalog, h *Health, adapter SourceAdapter, rollouts *CodexRolloutLookup, entries []SourceEntry) bool {
 	for _, entry := range entries {
-		if entry.memberFingerprint == "" || entry.Source.Locator == "" {
+		if entry.Source.Locator == "" {
 			continue
 		}
 		if prior, hit := c.Cache[entry.Source.Locator]; hit && prior.SourceFingerprint == entry.CoverageFingerprint && prior.Size == entry.Fingerprint.Size && prior.Mtime == entry.Fingerprint.Mtime {
