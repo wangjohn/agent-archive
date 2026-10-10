@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -547,10 +548,10 @@ func TestAddedTranscriptInConfiguredProjectNeedsNoGit(t *testing.T) {
 // must enforce the same count bound for both native discovery paths.
 func TestAddedCursorTranscriptsCountBudget(t *testing.T) {
 	for _, count := range []int{64, 65} {
-		t.Run(fmt.Sprint(count), func(t *testing.T) {
+		t.Run(strconv.Itoa(count), func(t *testing.T) {
 			tr, env, _, _, _ := addedSourcesFixture(t)
 			inv := inventoryBaseline(t, env)
-			for n := 0; n < count; n++ {
+			for n := range count {
 				tr.write(filepath.Join("home", ".cursor", "projects", "known-slug", "agent-transcripts", fmt.Sprintf("added-%d.txt", n)), "[user]\nhello\n")
 			}
 			added, ok := inv.added(t.Context())
