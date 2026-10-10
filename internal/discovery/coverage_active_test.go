@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"slices"
@@ -361,5 +362,78 @@ func TestCoverageFailsWhenRequestedRolloutIdentityChangesMidEpoch(t *testing.T) 
 				t.Fatalf("phase=%s failed=%v", cat.Coverage.Phase, cat.Coverage.Failed)
 			}
 		})
+	}
+}
+
+// A validating checkpoint written before membership marks existed carries
+// unmarked candidates for batches it already validated. Finishing that epoch
+// must not drop them and certify the request with no candidates.
+func TestCoverageFailsValidatingCheckpointWithoutMemberMarks(t *testing.T) {
+	t.Parallel()
+	cat, wanted := validatingRequestedRollout(t)
+	c := cat.Coverage
+	// Validate every batch but stop before the final directory stamp check.
+	for range 8 {
+		if len(c.Validation) == 0 {
+			break
+		}
+		advanceCoverageValidation(t.Context(), cat, &Health{Entries: 2047}, codexAdapter{}, time.Now().Add(time.Minute), Options{})
+	}
+	if c.Phase != coverageValidate || len(c.Validation) != 0 || c.FinalOffset >= len(c.Directories) || c.Failed {
+		t.Fatalf("setup phase=%s validation=%d final=%d failed=%v", c.Phase, len(c.Validation), c.FinalOffset, c.Failed)
+	}
+	// This writer's own checkpoint resumes and certifies its marked candidate.
+	current := restoreCoverage(t, c)
+	advanceCoverageValidation(t.Context(), &catalog{Coverage: current, Cache: map[string]cached{}}, &Health{}, codexAdapter{}, time.Now().Add(time.Minute), Options{})
+	if current.Phase != coverageComplete || current.Failed || current.Requests[wanted].CompleteEpoch != current.Epoch || len(current.Requests[wanted].Candidates) != 1 {
+		t.Fatalf("marked checkpoint phase=%s failed=%v request=%#v", current.Phase, current.Failed, current.Requests[wanted])
+	}
+	request := c.Requests[wanted]
+	for locator, candidate := range request.Candidates {
+		candidate.Member = false
+		request.Candidates[locator] = candidate
+	}
+	c.MemberChecks = false
+	legacy := restoreCoverage(t, c)
+	advanceCoverageValidation(t.Context(), &catalog{Coverage: legacy, Cache: map[string]cached{}}, &Health{}, codexAdapter{}, time.Now().Add(time.Minute), Options{})
+	if legacy.Phase != coverageComplete || !legacy.Failed || legacy.Requests[wanted].CompleteEpoch != 0 || len(legacy.Requests[wanted].Candidates) != 1 {
+		t.Fatalf("unmarked checkpoint phase=%s failed=%v request=%#v", legacy.Phase, legacy.Failed, legacy.Requests[wanted])
+	}
+}
+
+// restoreCoverage round-trips a checkpoint the way a later pass loads it.
+func restoreCoverage(t *testing.T, c *coverageInventory) *coverageInventory {
+	t.Helper()
+	// The catalog is persisted through local's generic JSON writer and reader.
+	var checkpoint any = catalog{Coverage: c}
+	raw, err := json.Marshal(checkpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var restored catalog
+	var target any = &restored
+	if err := json.Unmarshal(raw, target); err != nil {
+		t.Fatal(err)
+	}
+	if restored.Coverage == nil {
+		t.Fatal("checkpoint lost its coverage")
+	}
+	if err := restored.Coverage.validate(c.Roots); err != nil {
+		t.Fatal(err)
+	}
+	return restored.Coverage
+}
+
+// An overflowed request is not member-checked, so finishing its epoch keeps
+// the candidates it recorded rather than treating them all as unlisted.
+func TestCoverageKeepsOverflowedRequestCandidates(t *testing.T) {
+	t.Parallel()
+	cat, wanted := validatingRequestedRollout(t)
+	request := cat.Coverage.Requests[wanted]
+	request.Overflow = true
+	cat.Coverage.Requests[wanted] = request
+	advanceCoverageValidation(t.Context(), cat, &Health{}, codexAdapter{}, time.Now().Add(time.Minute), Options{})
+	if cat.Coverage.Phase != coverageComplete || cat.Coverage.Failed || len(cat.Coverage.Requests[wanted].Candidates) != 1 {
+		t.Fatalf("overflowed request phase=%s failed=%v request=%#v", cat.Coverage.Phase, cat.Coverage.Failed, cat.Coverage.Requests[wanted])
 	}
 }

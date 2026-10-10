@@ -55,6 +55,10 @@ type coverageInventory struct {
 	proofEpoch   uint64
 	reserveFacts func(int64) bool
 	Failed       bool `json:"failed,omitempty"`
+	// MemberChecks records that this epoch's validation marks candidate
+	// membership. A validating checkpoint from an earlier writer lacks the
+	// marks, so finishing it would drop every candidate it already validated.
+	MemberChecks bool `json:"member_checks,omitempty"`
 }
 
 type coverageRequest struct {
@@ -166,6 +170,9 @@ func (c *coverageInventory) validate(roots []string) error {
 	}
 	if err := c.validateCompleteProof(); err != nil {
 		return err
+	}
+	if c.Phase == coverageValidate && !c.MemberChecks {
+		c.Failed = true
 	}
 	if c.Phase == coverageComplete && !c.Failed {
 		c.proofEpoch = c.Epoch
@@ -302,6 +309,7 @@ func (c *coverageInventory) beginValidation() {
 		return
 	}
 	c.Phase = coverageValidate
+	c.MemberChecks = true
 	c.Validation = nil
 	for _, entry := range c.Directories {
 		if !entry.Complete {
@@ -415,6 +423,7 @@ func (c *coverageInventory) restart() {
 	c.proofEpoch = 0
 	c.Phase = coverageObserve
 	c.Failed = false
+	c.MemberChecks = false
 	c.Directories = map[string]coverageDirectory{}
 	c.Validation = nil
 	c.FinalOffset = 0
