@@ -15,6 +15,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/codexmeta"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 )
 
 const maxCoverageRequests = 256
@@ -34,7 +35,10 @@ const (
 // coverageInventory is bounded REQUESTED evidence, not a global native index.
 // Enumerating stores only directory digests and requested matching facts. A
 // second shared streaming pass validates ALL entry fingerprints before complete
-// evidence becomes usable. Stamp comparison has the ordinary filesystem model:
+// evidence becomes usable. A rollout's fingerprint is its membership only (see
+// memberFingerprint), so appends by running sessions cannot fail every epoch;
+// validation instead rechecks each rollout's header identity against the
+// recorded candidates. Stamp comparison has the ordinary filesystem model:
 // same-stamp out-of-band rewrites and changes after observation are not detected.
 type coverageInventory struct {
 	Version      int                          `json:"version"`
@@ -94,6 +98,20 @@ func entryFingerprint(name string, info os.FileInfo) string {
 		identity = fmt.Sprintf("%d:%d", stat.Dev, stat.Ino)
 	}
 	raw := fmt.Sprintf("%s\x00%s\x00%d\x00%d\x00%d", name, identity, info.Mode(), info.Size(), info.ModTime().UnixNano())
+	sum := sha256.Sum256([]byte(raw))
+	return hex.EncodeToString(sum[:])
+}
+
+// memberFingerprint identifies a rollout file's directory membership: its
+// name, file identity and type. Size and modification time are left out so an
+// append by a running Codex session does not fail the whole-home proof; the
+// validation pass rechecks that rollout's header identity instead.
+func memberFingerprint(name string, info os.FileInfo) string {
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return ""
+	}
+	raw := fmt.Sprintf("member\x00%s\x00%d:%d\x00%d", name, stat.Dev, stat.Ino, info.Mode())
 	sum := sha256.Sum256([]byte(raw))
 	return hex.EncodeToString(sum[:])
 }
@@ -319,6 +337,30 @@ func (c *coverageInventory) validateBatch(d directory, b coverageBatch, complete
 	c.Directories[key] = prior
 }
 
+// checkMember fails validation unless a rollout's identity, read at
+// validation time, agrees with the candidates its observation recorded for
+// every request that epoch covers. Membership digests omit rollout sizes and
+// times, so this is what detects a header rewritten in place mid-epoch.
+func (c *coverageInventory) checkMember(locator string, id *codexmeta.CodexIdentity) {
+	if c.Phase != coverageValidate || c.Failed {
+		return
+	}
+	if id != nil && (id.ThreadID == "" || id.RolloutID == "" || identityByteBound(*id) > 4096) {
+		id = nil // Observe never records such an identity as a candidate.
+	}
+	for key, request := range c.Requests {
+		if request.TargetEpoch > c.Epoch || request.Overflow {
+			continue
+		}
+		matches := id != nil && (id.ThreadID == key || id.RolloutID == key)
+		candidate, recorded := request.Candidates[locator]
+		if matches != recorded || matches && !reflect.DeepEqual(candidate.Identity, *id) {
+			c.Failed = true
+			return
+		}
+	}
+}
+
 func (c *coverageInventory) finishValidation() bool {
 	if c.Phase != coverageValidate || len(c.Validation) != 0 {
 		return false
@@ -387,6 +429,9 @@ func advanceCoverageValidation(ctx context.Context, c *catalog, h *Health, adapt
 			coverage.Validation = coverage.Validation[1:]
 			continue
 		}
+		if !checkCoverageMembers(ctx, c, h, adapter, o.Rollouts, batch.Entries) {
+			break // this batch is validated again on a later run
+		}
 		h.Entries += len(batch.Entries)
 		coverage.validateBatch(d, *batch.coverage, batch.Complete)
 		if batch.Complete {
@@ -399,6 +444,45 @@ func advanceCoverageValidation(ctx context.Context, c *catalog, h *Health, adapt
 	if coverage.Phase == coverageValidate && len(coverage.Validation) == 0 {
 		finishCoverageDirectoryCheck(ctx, coverage, h, deadline, o)
 	}
+}
+
+// checkCoverageMembers rechecks each rollout in a validation batch against
+// the requested candidates. A rollout whose stamp still matches its cached
+// observation reuses that identity; a changed one has its header read again.
+// It reports false, without failing coverage, when the probe budget is spent
+// or a header read raced a write, so the batch is validated again later.
+func checkCoverageMembers(ctx context.Context, c *catalog, h *Health, adapter SourceAdapter, rollouts *CodexRolloutLookup, entries []SourceEntry) bool {
+	for _, entry := range entries {
+		if entry.memberFingerprint == "" || entry.Source.Locator == "" {
+			continue
+		}
+		if prior, hit := c.Cache[entry.Source.Locator]; hit && prior.SourceFingerprint == entry.CoverageFingerprint && prior.Size == entry.Fingerprint.Size && prior.Mtime == entry.Fingerprint.Mtime {
+			c.Coverage.checkMember(entry.Source.Locator, prior.Observation.Identity)
+			continue
+		}
+		if !discoveryProbeAvailable(h, rollouts) {
+			return false
+		}
+		const headerCharge = int64(sourcefacts.HeaderBytes + 128<<10)
+		if rollouts != nil && !rollouts.readBudget.Reserve(headerCharge) {
+			return false
+		}
+		observation := adapter.Inspect(ctx, entry.Source)
+		if rollouts != nil {
+			rollouts.readBudget.Release(headerCharge)
+			rollouts.probes++
+		}
+		h.Probes++
+		h.Bytes += observation.Bytes
+		h.NativeReadBytes += observation.NativeReadBytes
+		h.NativeReadOperations += observation.NativeReadOperations
+		if ctx.Err() != nil || observation.Outcome == outcomeChanged {
+			// An append raced the header read; read it again next pass.
+			return false
+		}
+		c.Coverage.checkMember(entry.Source.Locator, observation.Identity)
+	}
+	return true
 }
 
 func finishCoverageDirectoryCheck(ctx context.Context, c *coverageInventory, h *Health, deadline time.Time, o Options) {
