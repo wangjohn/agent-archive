@@ -4,7 +4,7 @@
 // local state through internal/state, builds on internal/local for atomic
 // file I/O and the machine-level lock, and does not own transcript reading
 // (archive adapters), privacy filtering (archive adapters), or storage
-// upload mechanics (storage.PutSourceThenMetadataIndexed). A caller runs Run under
+// upload mechanics (storage.PutResolvedSourceSetThenMetadataReadback). A caller runs Run under
 // local.Lock(home) so only one collector process acts on a given home at a
 // time; Run itself does not take that lock.
 //
@@ -267,6 +267,8 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 			runErr = errors.Join(runErr, err)
 		}
 	}()
+	local, closeAccounting := local.WithPublicationAccounting(ctx, (&sessionScan{opts: opts}).readBudget())
+	defer closeAccounting()
 	subagents := materializeSubagentCandidates(ctx, local, opts, now)
 	opts.repoKeys = newRepoKeyCache(opts.RepoKey)
 	p := &pass{
@@ -377,8 +379,10 @@ func (p *pass) loadWork() error {
 	// pass like any other outstanding work.
 	p.pending = len(registrationIssues)
 	registered := make(map[string]bool, len(registrations)+len(registrationIssues))
+	publicationOwners := make(map[string]archive.SessionRegistration, len(registrations))
 	for _, reg := range registrations {
 		registered[reg.ArchiveSessionID] = true
+		publicationOwners[reg.ArchiveSessionID] = reg
 	}
 	for id, issue := range registrationIssues {
 		addError(p.result.Errors, id, issue)
@@ -394,7 +398,14 @@ func (p *pass) loadWork() error {
 			continue
 		}
 		if registered[id] && obligation.Namespace == state.GenerationRecoveryStorage && !orphaned[id] {
-			if err := checkDurableSessionRead(p.ctx, p.local, id, p.opts); err != nil {
+			owner, found := publicationOwners[id]
+			var readErr error
+			if found {
+				readErr = checkPublicationSessionRead(p.ctx, p.local, owner, p.opts)
+			} else {
+				readErr = checkDurableSessionRead(p.ctx, p.local, id, p.opts)
+			}
+			if err := readErr; err != nil {
 				orphaned[id] = true
 				p.pending++
 				p.durableCounted[id] = true
@@ -716,17 +727,28 @@ func (p *pass) repairListingIndex() {
 		if p.opts.AcceptSession != nil && !p.opts.AcceptSession(reg) {
 			continue
 		}
-		getter, ok := p.remote.(storage.VersionedGetter)
+		_, ok := p.remote.(storage.VersionedGetter)
 		if !ok {
 			continue
 		}
-		data, _, err := getter.GetVersioned(p.ctx, repair.MetadataKey)
+		data, err := storage.ReadPublicationMetadata(p.ctx, p.remote, repair.MetadataKey)
 		if errors.Is(err, storage.ErrNotFound) {
 			_ = p.local.RemoveListingRepair(id)
 			continue
 		}
 		if err == nil {
-			err = listingindex.PublishRevision(p.ctx, p.remote, repair.MetadataKey, data)
+			_, refs, identityErr := archive.PublicationIdentity(data, reg.DestinationID, "", "", "listing_repair")
+			err = identityErr
+			if err == nil {
+				sources := make([]storage.SourcePublication, len(refs))
+				for i, ref := range refs {
+					sources[i] = storage.SourcePublication{Key: ref.Key, SHA256: ref.SHA256, Size: ref.CompressedBytes}
+				}
+				err = storage.VerifySourceSet(p.ctx, p.remote, sources, p.opts.Retry)
+			}
+			if err == nil {
+				err = listingindex.PublishRevision(p.ctx, p.remote, repair.MetadataKey, data)
+			}
 		}
 		if err == nil {
 			err = p.local.RemoveListingRepair(id)

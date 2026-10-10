@@ -59,16 +59,17 @@ import (
 // saves it through this one copy rather than decoding published/<id>.json
 // again (it holds whole source bundles).
 type sessionScan struct {
-	parser         agentapi.TranscriptParser
-	parserResolved bool
-	ctx            context.Context
-	local          *state.Store
-	remote         storage.ObjectStore
-	opts           Options
-	now            time.Time
-	reg            archive.SessionRegistration
-	req            state.Request
-	published      *state.Published
+	publicationAttempt *publicationAttempt
+	parser             agentapi.TranscriptParser
+	parserResolved     bool
+	ctx                context.Context
+	local              *state.Store
+	remote             storage.ObjectStore
+	opts               Options
+	now                time.Time
+	reg                archive.SessionRegistration
+	req                state.Request
+	published          *state.Published
 	// readyAt is when a publication the scan left waiting for the upload
 	// interval (outcomeRateLimited) becomes due.
 	readyAt time.Time
@@ -90,6 +91,7 @@ type sessionScan struct {
 	// gap it is, with this candidate cached as the state it was reached at.
 	retainedBudget   *agentapi.NativeReadBudget
 	retainedReleases []func()
+	priorBinding     *archive.CodexSourceBinding
 	revisions        *revisionPlan
 	rewritten        *archive.SourceBundle
 }
@@ -106,7 +108,7 @@ type filteredSource struct {
 func (s *sessionScan) warn(err error) { s.warnings = append(s.warnings, err) }
 
 func newSessionScan(ctx context.Context, local *state.Store, remote storage.ObjectStore, reg archive.SessionRegistration, req state.Request, published *state.Published, now time.Time, opts Options) *sessionScan {
-	scan := &sessionScan{ctx: ctx, local: local, remote: remote, opts: opts, now: now, reg: reg, req: req, published: published}
+	scan := &sessionScan{ctx: ctx, local: local, remote: remote, opts: opts, now: now, reg: reg, req: req, published: published, priorBinding: reg.CodexBinding}
 	scan.opts.retainedOwner = scan
 	return scan
 }
@@ -197,7 +199,7 @@ func (s *sessionScan) run() (sessionOutcome, error) {
 func (s *sessionScan) resume() (outcome sessionOutcome, handled bool, err error) {
 	// A publication that may already have reached storage is immutable local
 	// work. Retry its exact bytes before considering later transcript changes.
-	pending, havePending, err := s.local.LoadPending(s.id())
+	pending, havePending, err := s.local.LoadPublicationPending(s.id())
 	if err != nil {
 		return outcomeSkipped, true, err
 	}
@@ -217,12 +219,11 @@ func (s *sessionScan) resume() (outcome sessionOutcome, handled bool, err error)
 		return outcome, true, err
 	}
 	if pendingSkillMode(pending.SkillEvidence) != s.opts.skillEvidence() {
-		// An older pending file may contain broader evidence. Discard it
-		// before any retry; the next scan rebuilds under the active policy.
-		if err := s.local.RemovePending(s.id()); err != nil {
-			return outcomeSkipped, true, err
-		}
-		return outcomeSkipped, false, nil
+		return outcomeSkipped, true, errors.New("pending source privacy policy changed; retain evidence for refilter and reconcile")
+	}
+	// Validate policy and frozen context before a new request may replace replay evidence.
+	if err := s.sealPending(&pending); err != nil {
+		return outcomeSkipped, true, err
 	}
 	if !pending.Attempted && s.req.Token != "" && s.req.Token != pending.RequestToken {
 		// A stop/end request is a natural debounce flush. A merely rate-limited,
@@ -237,7 +238,7 @@ func (s *sessionScan) resume() (outcome sessionOutcome, handled bool, err error)
 	// each pass's now would keep moving away.
 	if latest := s.now.Add(s.opts.minUploadInterval()); pending.ReadyAt.After(latest) {
 		pending.ReadyAt = latest
-		if err := s.local.SavePending(s.id(), pending); err != nil {
+		if err := s.savePending(&pending); err != nil {
 			return outcomeSkipped, true, fmt.Errorf("cap pending publication time: %w", err)
 		}
 	}
@@ -508,6 +509,11 @@ func (s *sessionScan) compare(read sourceRead, candidate *archive.SourceBundle) 
 	// Unchanged since the last actual publish, or since a policy decline:
 	// nothing to do. A decline is reconsidered only by a genuine further
 	// content change, never by time alone.
+	// Unchanged transcript bytes do not settle a hook's unpublished HEAD.
+	// A missing/unreadable legacy sidecar leaves that observation owed.
+	if _, _, published := s.published.LastPublished(); published && headFingerprint(s.reg.LastHead) != "" && headFingerprint(s.reg.LastHead) != s.publishedLastHead() {
+		return true, storage.ErrPublicationConflict
+	}
 	if err := s.completeRequest("complete unchanged request"); err != nil {
 		return true, err
 	}
@@ -650,7 +656,7 @@ func (s *sessionScan) publish(read sourceRead, candidate archive.SourceBundle) (
 			return outcomeSkipped, err
 		}
 	}
-	if err := s.local.SavePending(s.id(), pending); err != nil {
+	if err := s.savePending(&pending); err != nil {
 		return outcomeSkipped, fmt.Errorf("persist pending publication: %w", err)
 	}
 	if pending.History != nil {

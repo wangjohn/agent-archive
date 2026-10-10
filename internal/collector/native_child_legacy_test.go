@@ -112,6 +112,9 @@ func TestLegacyNativeChildPreparationFreezesParentAndDoesNotReadNative(t *testin
 	for i := range p.History.Inputs {
 		p.History.Inputs[i].ParentSessionID = nil
 	}
+	// Import the verified original descriptor before its first protocol2 seal;
+	// rewinding an already selecting commit is not a supported legacy producer.
+	p = freshLegacyHistoryOriginal(t, scan, p)
 	paths, err := filepath.Glob(filepath.Join(facts.Home, "rollout-*.jsonl"))
 	if err != nil || len(paths) == 0 {
 		t.Fatal("native fixture inputs missing", err)

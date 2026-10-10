@@ -6,6 +6,12 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Recover complete source-set publications from exact private retained evidence,
+  with one shared disk/memory budget and permanent composition writer protection.
+  Stronger privacy replaces all selected revisions and retires obsolete private
+  proof bodies only after the full local selection is durable. Historical import
+  admission staging and additional native ancestor permission remain separate.
+
 - Preserve settled capture and source bytes when cached native naming reads are
   unavailable and the same observation uses an equivalent timezone offset.
 
@@ -91,6 +97,13 @@ follow [Semantic Versioning](https://semver.org/).
   coverage remains tracked for release testing.
 
 ### Fixed
+
+- Publication retries verify the complete selected source set and exact committed
+  metadata before acknowledging capture. A different remote winner or unknown
+  predecessor stays pending instead of overwriting retained evidence. A recorded
+  predecessor that is now missing also requires reconciliation; queued evidence
+  stays local and pending. History writers remain protected pending admission
+  and lifecycle support.
 
 - Validate a Codex fork's first own task during import and ongoing capture,
   and protect every qualified history import from older writers. Discovery

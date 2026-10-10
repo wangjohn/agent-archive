@@ -166,3 +166,14 @@ func (SourceProvider) Activities(ctx context.Context, e agentapi.SourceEnvironme
 func (Filter) NamingOnlyChange(previous, candidate archive.SourceBundle) bool {
 	return nativecodec.ClaudeNamingOnlyChange(previous, candidate)
 }
+
+type boundedRetained struct{ boundary archive.CaptureBoundary }
+
+func (f boundedRetained) FilterJSONL(r io.Reader) (archive.FilteredTranscript, error) {
+	return nativecodec.FilterClaudeRetainedJSONL(r, f.boundary)
+}
+
+// RefilterBounded preserves the Claude retained codec under the shared output ceiling.
+func (Filter) RefilterBounded(ctx context.Context, b archive.SourceBundle, _ time.Time, limits agentapi.ReadLimits) (archive.FilteredTranscript, error) {
+	return sourceio.RefilterJSONL(ctx, boundedRetained{archive.CaptureBoundary{RetainedRecords: limits.Records, RetainedBytes: int(limits.FilteredBytes)}}, b)
+}

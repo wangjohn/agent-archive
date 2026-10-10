@@ -39,6 +39,9 @@ func TestBlanketUnknownPhysicalProjectsPublishAndReadBackWithoutConfigGrowth(t *
 			}
 			beforeCfg.CodexHistoryProtection = true
 			beforeCfg.DurableStorageProtection = true
+			// First protocol2 publication upgrades only the sticky protection and
+			// its writer fence. All permission and unrelated fields stay exact.
+			beforeCfg.PublicationCompositionProtection = true
 			before, _ := json.Marshal(beforeCfg)
 			want := map[string]bool{}
 			for i := range 4 {
@@ -120,7 +123,7 @@ func TestBlanketUnknownPhysicalProjectsPublishAndReadBackWithoutConfigGrowth(t *
 			}
 			after, _ := json.Marshal(afterCfg)
 			if !bytes.Equal(before, after) {
-				t.Fatal("discovered projects wrote permissions")
+				t.Fatalf("discovered projects wrote permissions: before=%s after=%s", before, after)
 			}
 		})
 	}

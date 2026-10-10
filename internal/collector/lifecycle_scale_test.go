@@ -111,6 +111,13 @@ func (s lifecycleRemote) GetLimited(ctx context.Context, key string, limit int64
 	return data, err
 }
 
+func (s lifecycleRemote) GetVersionedLimited(ctx context.Context, key string, limit int64) ([]byte, string, error) {
+	data, etag, err := s.MemoryStore.GetVersionedLimited(ctx, key, limit)
+	s.cost.remoteGets++
+	s.cost.remoteBytes += int64(len(data))
+	return data, etag, err
+}
+
 func (s lifecycleRemote) Get(ctx context.Context, key string) ([]byte, error) {
 	data, err := s.MemoryStore.Get(ctx, key)
 	s.cost.remoteGets++

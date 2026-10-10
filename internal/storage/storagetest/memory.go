@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/md5"
 	"encoding/hex"
+	"errors"
 	"sort"
 	"sync"
 	"time"
@@ -231,6 +232,26 @@ func (s *MemoryStore) GetVersioned(ctx context.Context, key string) ([]byte, str
 	obj, ok := s.objects[key]
 	if !ok {
 		return nil, "", storage.ErrNotFound
+	}
+	return append([]byte(nil), obj.data...), obj.etag, nil
+}
+
+// GetVersionedLimited checks the bound under the same lock before copying.
+func (s *MemoryStore) GetVersionedLimited(ctx context.Context, key string, limit int64) ([]byte, string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, "", err
+	}
+	if limit <= 0 {
+		return nil, "", errors.New("object read limit must be positive")
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	obj, ok := s.objects[key]
+	if !ok {
+		return nil, "", storage.ErrNotFound
+	}
+	if int64(len(obj.data)) > limit {
+		return nil, "", storage.ErrObjectTooLarge
 	}
 	return append([]byte(nil), obj.data...), obj.etag, nil
 }

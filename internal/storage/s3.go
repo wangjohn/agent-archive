@@ -191,6 +191,12 @@ func (s *S3Store) GetVersioned(ctx context.Context, relative string) ([]byte, st
 	return s.getVersioned(ctx, relative, s.maxGetBytes)
 }
 
+// GetVersionedLimited preserves the same-response validator while enforcing
+// the caller allocation bound and the store's independent ceiling.
+func (s *S3Store) GetVersionedLimited(ctx context.Context, relative string, limit int64) ([]byte, string, error) {
+	return s.getVersioned(ctx, relative, limit)
+}
+
 func (s *S3Store) getVersioned(ctx context.Context, relative string, limit int64) ([]byte, string, error) {
 	if limit < 1 {
 		return nil, "", errors.New("object read limit must be positive")

@@ -99,19 +99,14 @@ func (s *sessionScan) maintainFrozen() (sessionOutcome, error) {
 	if err != nil {
 		return outcomeSkipped, err
 	}
-	if pending, found, err := s.local.LoadPending(s.id()); err != nil {
+	if pending, found, err := s.local.LoadPublicationPending(s.id()); err != nil {
 		return outcomeSkipped, err
 	} else if found {
 		if pending.History != nil {
 			return s.resumeHistory(pending)
 		}
 		if pending.Bundle.Capture.FilterVersion != archive.FilterVersion || pending.Bundle.Capture.AdapterVersion != adapter.Version() || !sourceEvidenceWithinPolicy(pending.Bundle.SupplementalEvidence, s.opts.skillEvidence()) {
-			// Stronger privacy supersedes a retained-history maintenance retry.
-			// Rebuild below from the last acknowledged publication, without native
-			// input and without carrying the discarded retry's newer age forward.
-			if err := s.local.RemovePending(s.id()); err != nil {
-				return outcomeSkipped, err
-			}
+			return outcomeSkipped, errors.New("frozen pending privacy policy changed; retain evidence for refilter and reconcile")
 		} else if _, err := s.publishPending(pending); err != nil {
 			return outcomeSkipped, err
 		}
@@ -149,7 +144,7 @@ func (s *sessionScan) maintainFrozen() (sessionOutcome, error) {
 			return outcomeSkipped, errors.New("frozen history maintenance cannot decline an existing publication")
 		}
 		pending := state.PendingPublication{SkillEvidence: string(s.opts.skillEvidence()), Bundle: filtered, SourceKey: rendered.source.Key, SourceSHA256: rendered.source.SHA256, SourceBytes: rendered.sourceBytes, MetadataKey: rendered.metadataKey, MetadataBytes: rendered.metadata, ReadyAt: s.now, Attempted: true}
-		if err := s.local.SavePending(s.id(), pending); err != nil {
+		if err := s.savePending(&pending); err != nil {
 			return outcomeSkipped, err
 		}
 		outcome, err := s.publishPending(pending)
@@ -170,6 +165,12 @@ func (s *sessionScan) maintainFrozen() (sessionOutcome, error) {
 // its token; requests and publication/scan journals still force maintenance.
 func (p *pass) unchangedFrozenSinceLastScan(reg archive.SessionRegistration) (bool, state.ScanSignature, error) {
 	var signature state.ScanSignature
+	if err := checkPublicationSessionRead(p.ctx, p.local, reg, p.opts); err != nil {
+		return false, signature, err
+	}
+	if settled, _, err := p.owesNothing(reg.ArchiveSessionID, false); err != nil || !settled {
+		return false, signature, err
+	}
 	if err := p.local.FrozenGeneration(reg); err != nil {
 		return false, signature, err
 	}
@@ -184,8 +185,7 @@ func (p *pass) unchangedFrozenSinceLastScan(reg archive.SessionRegistration) (bo
 	if !known || signature.ParserVersion != p.opts.parserVersionFor(reg.Harness.Name) || signature.FilterVersion != archive.FilterVersion || signature.AdapterVersion != adapterVersion || pendingSkillMode(signature.SkillEvidence) != p.opts.skillEvidence() || signature.PublishedLastHead != headFingerprint(reg.LastHead) {
 		return false, signature, nil
 	}
-	unchanged, _, err := p.owesNothing(reg.ArchiveSessionID, false)
-	return unchanged, signature, err
+	return true, signature, nil
 }
 
 func (s *sessionScan) recordFrozenSignature() error {
@@ -257,6 +257,16 @@ func generationRecoveryBuilder(ctx context.Context, owner *sessionScan, filtered
 		}
 		pending := state.PendingPublication{History: history, SkillEvidence: string(opts.skillEvidence()), Bundle: bundle, SourceKey: rendered.source.Key, SourceSHA256: rendered.source.SHA256, SourceBytes: rendered.sourceBytes, MetadataKey: rendered.metadataKey, MetadataBytes: rendered.metadata, ReadyAt: at, Attempted: true}
 		if err := pending.ValidateHistoryBudgeted(id, owner.readBudget()); err != nil {
+			return latest, state.PendingPublication{}, err
+		}
+		preparationScan := *owner
+		preparationScan.reg = latest
+		policy, err := preparationScan.publicationPolicy(bundle)
+		if err != nil {
+			return latest, state.PendingPublication{}, err
+		}
+		pending, err = state.PreparePublicationV2(pending, state.PublicationPredecessor{State: state.PredecessorAbsent}, latest.DestinationID, preparationScan.publicationAdmission(), policy, state.PublicationCapture)
+		if err != nil {
 			return latest, state.PendingPublication{}, err
 		}
 		returned = true

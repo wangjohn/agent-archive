@@ -52,10 +52,11 @@ import (
 // never stores credentials or a second copy of conversation content beyond
 // what the published source bundle itself already contains.
 type Store struct {
-	durableInspection *durableInspectionCache
-	resourceBudget    *agentapi.NativeReadBudget
-	resourceContext   context.Context
-	resourceReleases  *[]func()
+	durableInspection     *durableInspectionCache
+	publicationAccounting *publicationAccounting
+	resourceBudget        *agentapi.NativeReadBudget
+	resourceContext       context.Context
+	resourceReleases      *[]func()
 	// indexSnapshots uses logical packed authority for qualified-index writes.
 	indexSnapshots bool
 	// onPackedEnumeration observes collector-only physical-index directory probes.
@@ -81,6 +82,12 @@ type Store struct {
 	onIndexStep func(string) error
 	// onIndexSync tests index staging without changing registration sync seams.
 	onIndexSync func()
+	// publicationFileClose injects a checked actual descriptor close in private fixtures.
+	publicationFileClose func(*os.File) error
+	// publicationRootClose is confined to final owned migration-directory close.
+	publicationRootClose func(*os.Root) error
+	// publicationAfterSavedRoot is a nil-default fixture fault at the final composition callback boundary.
+	publicationAfterSavedRoot func(*os.Root) error
 }
 
 // OpenReadOnly returns a handle to an existing local store under
@@ -744,6 +751,17 @@ func (s *Store) CompleteRequest(archiveSessionID, coveredToken string) (bool, er
 // every retry uses the same hash and timestamps even after process restart.
 // Bundle remains available for change detection and future parser-only rebuilds.
 type PendingPublication struct {
+	nativeTarget     *PublicationNativeTarget
+	hookObservations *PublicationHookObservations
+	migration        *ValidatedOrdinaryMigration
+	privacyOutputs   map[int]PrivacySource
+	JournalVersion   int                   `json:"journal_version,omitempty"`
+	Phase            PublicationPhase      `json:"phase,omitempty"`
+	Preparation      *PreparationAuthority `json:"preparation,omitempty"`
+	Progress         *PreparationProgress  `json:"progress,omitempty"`
+	Cleanup          *CleanupProgress      `json:"cleanup,omitempty"`
+	Commit           *PublicationCommit    `json:"commit,omitempty"`
+	Sources          []PublicationSource   `json:"sources,omitempty"`
 	// ScanSignature freezes the consumed native observation for resumed history
 	// acknowledgement. It never licenses newer input or a privacy successor.
 	ScanSignature *ScanSignature       `json:"scan_signature,omitempty"`
@@ -754,7 +772,7 @@ type PendingPublication struct {
 	SourceKey     string               `json:"source_key"`
 	MetadataKey   string               `json:"metadata_key"`
 	SourceSHA256  string               `json:"source_sha256"`
-	SourceBytes   []byte               `json:"source_bytes"`
+	SourceBytes   []byte               `json:"source_bytes,omitempty"`
 	// SourceSize is the source's compressed size when SourceBytes is empty:
 	// a metadata-only publication over a source this build cannot reproduce
 	// byte for byte, which is checked in storage instead of re-uploaded.
@@ -767,8 +785,15 @@ type PendingPublication struct {
 
 // SourceReference is the reference the publication's metadata carries for
 // its source object.
-func (p PendingPublication) SourceReference() archive.SourceReference {
+func (owned *PendingPublication) SourceReference() archive.SourceReference {
+	p := *owned
 	size := len(p.SourceBytes)
+	if p.JournalVersion == 2 {
+		size = p.SourceSize
+		if len(p.Sources) > 0 {
+			size = p.Sources[0].Reference.CompressedBytes
+		}
+	}
 	if p.CarriesNoSource() {
 		size = p.SourceSize
 	}
@@ -777,7 +802,8 @@ func (p PendingPublication) SourceReference() archive.SourceReference {
 
 // CarriesNoSource reports a metadata-only publication that points at an
 // existing source without carrying its bytes (see SourceSize).
-func (p PendingPublication) CarriesNoSource() bool {
+func (owned *PendingPublication) CarriesNoSource() bool {
+	p := *owned
 	return p.MetadataOnly && len(p.SourceBytes) == 0
 }
 
@@ -787,7 +813,11 @@ func (s *Store) pendingPath(id string) string {
 
 // validateComplete is the supported transaction structure shared by writes
 // and protected reads. History validation keeps its separate budget ownership.
-func (pending PendingPublication) validateComplete() error {
+func (owned *PendingPublication) validateComplete() error {
+	pending := *owned
+	if pending.JournalVersion == 2 {
+		return pending.validatePublicationEnvelope()
+	}
 	if len(pending.SourceBytes) > maxPendingHistoryBytes {
 		return ErrDurableStorageCapacity
 	}
@@ -803,7 +833,7 @@ func (s *Store) validateReadablePending(pending PendingPublication) error {
 	if err := pending.validateComplete(); err != nil {
 		return err
 	}
-	if !pending.CarriesNoSource() {
+	if pending.JournalVersion == 0 && !pending.CarriesNoSource() {
 		sum := sha256.Sum256(pending.SourceBytes)
 		if !strings.EqualFold(hex.EncodeToString(sum[:]), strings.TrimSpace(pending.SourceSHA256)) {
 			return errors.New("pending source checksum does not match its persisted bytes")
@@ -831,8 +861,22 @@ func (s *Store) SavePending(id string, pending PendingPublication) error {
 	if err := pending.validateComplete(); err != nil {
 		return err
 	}
+	if pending.Commit != nil {
+		if err := pending.ValidatePublicationBudgeted(s.durableContext(), s.resourceBudget); err != nil {
+			return err
+		}
+	}
 	if err := pending.ValidateHistoryBudgeted(id, s.resourceBudget); err != nil {
 		return err
+	}
+	if pending.JournalVersion == 2 {
+		return config.WithPublicationComposition(s.home, func(g config.PublicationCompositionGuard) error {
+			storage, err := g.Storage(s.home)
+			if err != nil {
+				return err
+			}
+			return s.savePublicationPendingGuard(storage, id, pending)
+		})
 	}
 	return config.WithDurableStorage(s.home, func(g config.DurableStorageGuard) error {
 		return s.savePendingGuard(s.durableContext(), g, id, pending)
@@ -878,10 +922,14 @@ func (s *Store) LoadPending(id string) (PendingPublication, bool, error) {
 		}
 		found = true
 	} else {
-		found, err = s.readOwned(s.pendingPath(id), &pending)
+		err = s.readBudgeted(s.pendingPath(id), &pending, true)
+		if errors.Is(err, os.ErrNotExist) {
+			return PendingPublication{}, false, nil
+		}
+		found = true
 	}
 	if err != nil {
-		return PendingPublication{}, protected || cfg.DurableStorageProtection || errors.Is(err, ErrDurableStorageRecovery), fmt.Errorf("read pending publication %q: %w", id, errors.Join(ErrDurableStorageRecovery, err))
+		return PendingPublication{}, true, fmt.Errorf("read pending publication %q: %w", id, errors.Join(ErrDurableStorageRecovery, err))
 	}
 	if found {
 		if protected {

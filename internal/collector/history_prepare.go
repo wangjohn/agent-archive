@@ -3,7 +3,9 @@ package collector
 import (
 	"errors"
 	"fmt"
+	"strings"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -81,7 +83,7 @@ func (s *sessionScan) advanceHistoryPreparation(p *state.PendingPublication) err
 			}
 		}
 	}
-	return s.local.SavePending(s.id(), *p)
+	return s.savePending(p)
 }
 
 func (s *sessionScan) loadHistoryInput(identity archive.Metadata, input state.HistoryInput) (archive.SourceBundle, error) {
@@ -127,6 +129,9 @@ func (s *sessionScan) loadHistoryInput(identity archive.Metadata, input state.Hi
 	}
 	// Decode owns independent records; compressed input is no longer used.
 	s.releaseRetainedIndex(mark)
+	if err == nil && input.NativeChild != nil && bundle.NativeChild != *input.NativeChild {
+		return archive.SourceBundle{}, errors.New("frozen input child marker differs from retained bytes")
+	}
 	if err == nil && input.SourceSchemaVersion != 0 && bundle.SchemaVersion != input.SourceSchemaVersion {
 		return archive.SourceBundle{}, errors.New("frozen input source schema differs from retained bytes")
 	}
@@ -173,7 +178,10 @@ func (s *sessionScan) derivePreparedHistory(p *state.PendingPublication, metadat
 	if maintenance.MachineID == "" {
 		maintenance.MachineID = metadata.MachineID
 	}
-	rendered, err := renderPublication(s.ctx, s.resolveParser(), s.parserVersion(), p.Bundle, s.reg, s.now, maintenance, func() string { return metadata.RepoKey })
+	if metadata.MetadataDerivedAt.IsZero() {
+		return errors.New("history derivation time is unavailable")
+	}
+	rendered, err := renderPublication(s.ctx, s.resolveParser(), s.parserVersion(), p.Bundle, s.reg, metadata.MetadataDerivedAt, maintenance, func() string { return metadata.RepoKey })
 	if err != nil {
 		return err
 	}
@@ -204,6 +212,7 @@ func (s *sessionScan) prepareHistoryInput(p *state.PendingPublication, metadata 
 	if err != nil {
 		return err
 	}
+	inputScope := len(s.retainedReleases)
 	bundle, err := s.loadHistoryInput(*metadata, input)
 	if err != nil {
 		return err
@@ -218,6 +227,9 @@ func (s *sessionScan) prepareHistoryInput(p *state.PendingPublication, metadata 
 		}
 		observationsChanged = !same
 		bundle.SupplementalEvidence = observations
+	}
+	if p.Preparation != nil && p.Preparation.Purpose == state.PublicationPrivacyRewrite && (privacyChanged || nativeParentResolved(reg, bundle) || nativeChildMarkerPending(reg, bundle)) {
+		return s.prepareFrozenPrivacyInput(p, metadata, input, adapter, bundle, inputScope)
 	}
 	if nativeParentResolved(reg, bundle) || nativeChildMarkerPending(reg, bundle) || observationsChanged || bundle.Capture.FilterVersion != archive.FilterVersion || bundle.Capture.AdapterVersion != adapter.Version() || !sourceEvidenceWithinPolicy(bundle.SupplementalEvidence, s.opts.skillEvidence()) {
 		bundle.SupplementalEvidence = limitSkillEvidence(bundle.SupplementalEvidence, s.opts.skillEvidence())
@@ -237,7 +249,7 @@ func (s *sessionScan) prepareHistoryInput(p *state.PendingPublication, metadata 
 			return err
 		}
 		next := archive.SourceReference{Key: key, SHA256: compressed.SHA256, CompressedBytes: len(compressed.Bytes)}
-		stage, err := s.local.StagePendingSource(s.id(), next, compressed.Bytes)
+		stage, err := s.local.StagePublicationSource(s.id(), next, compressed.Bytes)
 		if err != nil {
 			return err
 		}
@@ -250,4 +262,95 @@ func (s *sessionScan) prepareHistoryInput(p *state.PendingPublication, metadata 
 		}
 	}
 	return nil
+}
+
+func (s *sessionScan) prepareFrozenPrivacyInput(p *state.PendingPublication, metadata *archive.Metadata, input state.HistoryInput, adapter agentapi.TranscriptFilter, bundle archive.SourceBundle, inputScope int) error {
+	oldPolicy := state.PublicationPolicy{FilterVersion: bundle.Capture.FilterVersion, AdapterVersion: bundle.Capture.AdapterVersion, SkillEvidence: pendingSkillMode(p.SkillEvidence)}
+	s.releaseRetainedAfter(inputScope)
+	original, err := s.readRetainedInputBytes(input.Reference)
+	if err != nil {
+		return err
+	}
+	index := -1
+	for i, frozen := range p.Preparation.Inputs {
+		if frozen.Reference == input.Reference && frozen.Selection.RevisionID == input.RevisionID {
+			index = i
+			break
+		}
+	}
+	if index < 0 {
+		return errors.New("privacy input is absent from frozen authority")
+	}
+	frozen := p.Preparation.Inputs[index]
+	var origin archive.Metadata
+	if err = s.unmarshalRetained(p.Preparation.OriginMetadata, &origin); err != nil {
+		return err
+	}
+	filtered, compressed, next, proof, release, err := state.RefilterPublicationInput(s.ctx, s.reg, adapter, origin, p.Preparation.OriginMetadata, frozen, index, original, state.PublicationContext{NativeTarget: p.Preparation.NativeTarget, DestinationID: s.reg.DestinationID, AdmissionContext: s.publicationAdmission()}, oldPolicy, state.PublicationPolicy{FilterVersion: archive.FilterVersion, AdapterVersion: adapter.Version(), SkillEvidence: s.opts.skillEvidence()}, pendingSkillMode(p.SkillEvidence), s.readBudget())
+	if err != nil {
+		return err
+	}
+	s.retainedReleases = append(s.retainedReleases, release)
+	stage, err := s.local.StagePublicationSource(s.id(), next, compressed.Bytes)
+	if err != nil {
+		return err
+	}
+	receiptRelease, recordErr := p.RecordPrivacyOutput(proof)
+	if recordErr != nil {
+		err = recordErr
+		return err
+	}
+	s.retainedReleases = append(s.retainedReleases, receiptRelease)
+	if err = replacePreparedReference(p, metadata, input, filtered, next, compressed.Bytes); err != nil {
+		return err
+	}
+	if next != input.Reference {
+		p.History.Sources = append(p.History.Sources, stage)
+		p.History.Retired = append(p.History.Retired, state.RetiredSource{Reference: input.Reference, PrivacySensitive: true})
+	}
+	return nil
+
+}
+
+// The typed retained transformation lane also covers owned header maintenance.
+// It is selected from actual original headers before the immutable first seal.
+func (s *sessionScan) freezeNativeHeaderInputs(p *state.PendingPublication) (bool, error) {
+	if !s.reg.NativeChild {
+		return false, nil
+	}
+	var metadata archive.Metadata
+	if err := s.unmarshalRetained(p.MetadataBytes, &metadata); err != nil {
+		return false, err
+	}
+	reg := s.reg
+	reg.ParentSessionID = p.Bundle.ParentSessionID
+	needed := false
+	for i, input := range p.History.Inputs {
+		mark := len(s.retainedReleases)
+		bundle, err := s.loadHistoryInput(metadata, input)
+		if err != nil {
+			return false, err
+		}
+		needed = needed || nativeParentResolved(reg, bundle) || nativeChildMarkerPending(reg, bundle)
+		keep := len(s.retainedReleases)
+		if len(bundle.ParentSessionID) > 4096 {
+			return false, state.ErrDurableStorageRecovery
+		}
+		if input.ParentSessionID == nil {
+			if err := s.retainCharge(int64(len(bundle.ParentSessionID)) + 16); err != nil {
+				return false, err
+			}
+			parent := strings.Clone(bundle.ParentSessionID)
+			p.History.Inputs[i].ParentSessionID = &parent
+		}
+		if input.NativeChild == nil {
+			if err := s.retainCharge(16); err != nil {
+				return false, err
+			}
+			marker := bundle.NativeChild
+			p.History.Inputs[i].NativeChild = &marker
+		}
+		s.keepRetainedFrom(mark, keep)
+	}
+	return needed, nil
 }
