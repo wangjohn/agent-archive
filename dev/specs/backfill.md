@@ -1313,7 +1313,11 @@ needed is not added, and every remaining proof is bound to that configuration
 again (setup names its own retry command). Confirmation still refuses, with
 nothing changed, when no session would be left or when the check ran out of
 time or was cancelled, since a session that read as changed then may only have
-run out of time. Admission slices already skip a stale session per session.
+run out of time. It also refuses when a dropped proposed project nests with a
+plain folder the import still adds (one inside the other): the plan decided
+what to keep out of that folder with the dropped project as a project of its
+own, so without it the folder would capture what the plan never checked.
+Admission slices already skip a stale session per session.
 
 `--map-project OLD_CWD=CONFIGURED_ROOT` is exact and invocation-local, with at
 most 128 mappings and 4,096 bytes per absolute path. The first equals sign is

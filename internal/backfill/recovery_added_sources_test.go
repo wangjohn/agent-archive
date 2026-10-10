@@ -106,6 +106,17 @@ func TestAddedTranscriptsAfterPlanningBlockOnlyCompetingClones(t *testing.T) {
 		{name: "unknown Codex folder", change: func(_ *testing.T, tr *tree, _ string) {
 			addRepoRollout(tr, addedID, "")
 		}},
+		{name: "Codex store listed in part", change: func(t *testing.T, tr *tree, _ string) {
+			t.Helper()
+			// A new day folder that cannot be listed may hold a clone's
+			// transcript: what the store holds now is unknown.
+			tr.write(filepath.Join("home", ".codex", "sessions", "2026", "10", "10", "rollout-2026-10-10T10-00-00-"+addedID+".jsonl"), codexTranscript(addedID, addedID, tr.repo("home/clone"), fixedNow.Add(-time.Hour)))
+			day := tr.path(filepath.Join("home", ".codex", "sessions", "2026", "10", "10"))
+			if err := os.Chmod(day, 0); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.Chmod(day, 0o755) })
+		}},
 		{name: "removed witness", change: func(t *testing.T, tr *tree, root string) {
 			t.Helper()
 			addedRollout(tr, addedID, tr.repo("home/other"), addedOtherURL)
@@ -420,9 +431,15 @@ func TestAdmitRecoveryLeavesOutChangedSessions(t *testing.T) {
 func TestAdmitRecoveryDropsProjectsOnlyChangedSessionsNeeded(t *testing.T) {
 	cfg, p, gone, others := partialAdmissionFixture(t, 1)
 	markStale(t, &p, gone[0])
+	confirmedPolicy := candidate(t, p, gone[0]).ProjectResolution.PolicyContext
 	admitted, changed, err := p.AdmitRecovery(t.Context())
 	if err != nil || changed != 1 {
 		t.Fatal(changed, err)
+	}
+	// Binding the narrowed plan leaves the confirmed plan's resolutions,
+	// the left-out session's too, as they were.
+	if candidate(t, p, gone[0]).ProjectResolution.PolicyContext != confirmedPolicy {
+		t.Fatal("admission rebound the confirmed plan's resolution")
 	}
 	if imported := admitted.Imported(); len(imported) != 2 || imported[0].ProjectRoot != imported[1].ProjectRoot {
 		t.Fatalf("%+v", imported)
@@ -597,5 +614,40 @@ func TestAdmitRecoveryLeavesConfirmedResolutionsAlone(t *testing.T) {
 		if c.ProjectResolution != nil && c.ProjectResolution.PolicyContext != before[c.NativeSessionID] {
 			t.Fatalf("confirmed resolution of %s rebound", c.NativeSessionID)
 		}
+	}
+}
+
+// A proposed project only the left-out sessions needed, nested with a plain
+// folder the import still adds, would leave its folder to that plain
+// folder's capture: the plan never looked inside it to keep its folders out.
+// Such an import is refused whole; one without the nesting is admitted.
+func TestAdmitRecoveryRefusesWhenADroppedProjectNestsInAnAddedFolder(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		plain     string
+		recovered string
+		refused   bool
+	}{
+		{name: "dropped repository inside the added folder", plain: "/h/code", recovered: "/h/code/foo", refused: true},
+		{name: "added folder inside the dropped project", plain: "/h/code/foo/tmp", recovered: "/h/code/foo", refused: true},
+		{name: "unrelated folders", plain: "/h/notes", recovered: "/h/code/foo"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := config.Config{}
+			p := Plan{policyConfig: &cfg, nested: map[string]nestedFolders{tc.plain: {Complete: true}}, Candidates: []Candidate{
+				{NativeSessionID: "plain", ProjectRoot: tc.plain, ProjectKind: ProjectKindDirectory},
+				{NativeSessionID: "recovered", ProjectRoot: tc.recovered, ProjectKind: ProjectKindRepository, ProjectResolution: &archive.ProjectResolution{Method: "recorded_repository"}, projectResolutionCurrent: func() bool { return false }},
+			}}
+			admitted, changed, err := p.AdmitRecovery(t.Context())
+			if tc.refused {
+				if err == nil || !strings.Contains(err.Error(), "Nothing was changed") {
+					t.Fatalf("admitted %+v (%d changed)", admitted.Imported(), changed)
+				}
+				return
+			}
+			if err != nil || changed != 1 || len(admitted.Imported()) != 1 {
+				t.Fatal(changed, err)
+			}
+		})
 	}
 }
