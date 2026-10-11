@@ -850,6 +850,9 @@ func (m *metadataInventory) current(ctx context.Context, id string) (*agentapi.S
 				break
 			}
 		}
+		if !valid && local.PathWithin(path, root) && currentLocatorMissing(path) {
+			continue
+		}
 		if !valid || (current != nil && current.Path != path) {
 			return nil, metadataChanged()
 		}

@@ -185,6 +185,50 @@ func (s *sessionScan) nativeBindingChanged(binding *archive.CodexSourceBinding) 
 	return true, nil
 }
 
+// followRelocatedRollout moves an unbound legacy Codex registration's
+// locator to where its rollout was just read from, after Codex renamed it
+// into archived_sessions/ (or back). Nothing else about the registration
+// changes, and only the same rollout file name inside the same trusted Codex
+// home qualifies: the source already matched its thread and rollout IDs.
+// Without this the registration would keep naming a locator that no longer
+// exists, so every later pass would find the rollout again by its ID.
+func (s *sessionScan) followRelocatedRollout(path string) error {
+	if path == "" || path == s.reg.TranscriptPath || s.reg.CodexBinding != nil {
+		return nil
+	}
+	old := s.reg.TranscriptPath
+	confined := confinedSourceRegistration(s.reg, s.opts.ConfiguredCodexHomes)
+	if confined == nil || confined.DiscoveryRoot == "" || filepath.Base(path) != filepath.Base(old) || !filepath.IsAbs(path) || filepath.Clean(path) != path {
+		return nil
+	}
+	root := confined.DiscoveryRoot
+	if !local.PathWithin(path, filepath.Join(root, "sessions")) && !local.PathWithin(path, filepath.Join(root, "archived_sessions")) {
+		return nil
+	}
+	unlock, err := local.NamedLockWait(s.local.Home(), "hooks.lock", time.Second)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	var updated archive.SessionRegistration
+	found, err := s.local.UpdateRegistration(s.id(), func(current *archive.SessionRegistration) error {
+		if current.NativeSessionID != s.reg.NativeSessionID || current.CodexBinding != nil || current.TranscriptPath != old {
+			return errors.New("codex registration changed before following its rollout")
+		}
+		current.TranscriptPath = path
+		updated = *current
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if !found {
+		return errors.New("codex registration disappeared before following its rollout")
+	}
+	s.reg = updated
+	return nil
+}
+
 func (s *sessionScan) validateMigrationHome(cfg config.Config, binding *archive.CodexSourceBinding) error {
 	if binding.Home == "" || s.reg.CodexBinding != nil && s.reg.CodexBinding.Home != "" || s.reg.Origin == archive.SessionOriginDiscovery {
 		return nil
