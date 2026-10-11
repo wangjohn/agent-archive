@@ -143,13 +143,38 @@ const rawSizeFactor = 4
 // reports both.
 const DefaultMaxRawTranscriptBytes = DefaultMaxTranscriptBytes * rawSizeFactor
 
-// maxRawBytes is the raw size ceiling for a filtered size limit.
-func maxRawBytes(maxFiltered int64) int64 {
-	if maxFiltered > (1<<62)/rawSizeFactor {
+// codexRawSizeFactor is rawSizeFactor for a Codex thread, whose rollouts keep
+// every tool call's full output (see archive.MaxCodexRawTranscriptBytes).
+const codexRawSizeFactor = archive.MaxCodexRawTranscriptBytes / DefaultMaxTranscriptBytes
+
+// maxRawBytes is the raw size ceiling for a filtered size limit and the
+// harness whose transcript it bounds.
+func maxRawBytes(harness string, maxFiltered int64) int64 {
+	factor := int64(rawSizeFactor)
+	if harness == archive.HarnessCodex {
+		factor = codexRawSizeFactor
+	}
+	if maxFiltered > (1<<62)/factor {
 		return 1 << 62
 	}
-	return maxFiltered * rawSizeFactor
+	return maxFiltered * factor
 }
+
+// SessionReadCeiling bounds the bytes one session's scan may hold in the
+// pass's shared read ledger (agentapi.PassReadBudget, 192 MiB): its record
+// buffers, decoded rows, filtered output, and the retained state it rewrites,
+// together. The rest stays for what the pass itself keeps between sessions
+// (the Codex index copy and catalog, cached headers and prefixes), so one
+// large session cannot leave the others without room. The largest session
+// measured needed 107 MiB (see agentapi.PassReadBudget). A session that
+// needs more than this is recorded as a size-limit gap (SizeLimitReadBudget)
+// once, rather than failing every pass; one refused because others held the
+// ledger is deferred to a later pass.
+const SessionReadCeiling int64 = 160 << 20
+
+// sessionReadCeiling is SessionReadCeiling, a variable only so a test can
+// lower it.
+var sessionReadCeiling = SessionReadCeiling
 
 // recordLimit is the largest single transcript record the collector reads,
 // archive.MaxRecordBytes; a variable only so a test can lower it.
@@ -160,6 +185,11 @@ func (o Options) maxTranscriptBytes() int64 {
 		return o.MaxTranscriptBytes
 	}
 	return DefaultMaxTranscriptBytes
+}
+
+// maxRawBytes is the raw transcript limit for harness under these options.
+func (o Options) maxRawBytes(harness string) int64 {
+	return maxRawBytes(harness, o.maxTranscriptBytes())
 }
 
 func (o Options) now() time.Time {
@@ -358,6 +388,9 @@ type pass struct {
 	// sizeLimited lists the sessions sitting in a size-limit gap, which
 	// status reports: capture of them has stopped.
 	sizeLimited []string
+	// sizeLimits names the limits those sessions stopped at, where known
+	// (SizeLimitLabel), for the pass's problem.
+	sizeLimits []string
 	// pending counts the sessions left with outstanding work.
 	pending int
 	// expiredSubagents lists the subagents this pass stopped waiting for
@@ -508,7 +541,12 @@ func (p *pass) deferScan(id, reason string, err error) {
 // changed, otherwise scan it (sessionScan.run) and account for the outcome.
 func (p *pass) scan(reg archive.SessionRegistration) {
 	priorLocal := p.local
-	scopedLocal, closeLocal := p.local.WithReadBudget(p.ctx, (&sessionScan{opts: p.opts}).readBudget())
+	budget := (&sessionScan{opts: p.opts}).readBudget()
+	// Everything the session's scan charges counts against its own ceiling
+	// too, so one large session cannot leave the others without room, and
+	// its own excess is told from pressure others put on the ledger.
+	defer budget.BeginScope(sessionReadCeiling)()
+	scopedLocal, closeLocal := p.local.WithReadBudget(p.ctx, budget)
 	p.local = scopedLocal
 	defer func() { closeLocal(); p.local = priorLocal }()
 	id := reg.ArchiveSessionID
@@ -546,6 +584,9 @@ func (p *pass) scan(reg archive.SessionRegistration) {
 	scan := newSessionScan(p.ctx, p.local, p.remote, reg, req, published, p.now, p.opts)
 	defer scan.releaseRetained()
 	outcome, err := scan.run()
+	if err != nil && p.ctx.Err() == nil {
+		outcome, err = scan.overCeiling(err)
+	}
 	for _, warning := range scan.warnings {
 		addError(p.result.Errors, id, warning)
 	}
@@ -567,7 +608,7 @@ func (p *pass) scan(reg archive.SessionRegistration) {
 		p.fail(id, err)
 		return
 	}
-	p.noteGap(id, scan.gap)
+	p.noteGap(reg, scan.gap, scan.sizeLimit)
 	p.finishScan(reg)
 	switch outcome {
 	case outcomePublished:
@@ -617,23 +658,6 @@ func (p *pass) finishScan(reg archive.SessionRegistration) {
 	}
 }
 
-// SizeLimitProblem is the problem a pass records in its Status when n
-// sessions sit in a size-limit gap: not a failure, and nothing to do, but
-// capture of them has stopped at their last snapshot.
-func SizeLimitProblem(n int) string {
-	return fmt.Sprintf("%d session(s) stopped being captured: over the transcript size limit, kept at their last snapshot", n)
-}
-
-// IsSizeLimitProblem reports whether problem is a SizeLimitProblem, for any
-// count.
-func IsSizeLimitProblem(problem string) bool {
-	var n int
-	if _, err := fmt.Sscanf(problem, "%d ", &n); err != nil || n < 1 {
-		return false
-	}
-	return problem == SizeLimitProblem(n)
-}
-
 // FailedSessionsProblem is the problem a pass records in its Status when n
 // sessions failed to scan or publish. A caller that reports those sessions
 // again, with a fuller count, replaces this entry rather than adding one.
@@ -661,7 +685,7 @@ func (p *pass) saveStatus() error {
 	// stopped at its last snapshot, which status must say rather than look
 	// healthy.
 	if len(p.sizeLimited) > 0 {
-		problems = append(problems, SizeLimitProblem(len(p.sizeLimited)))
+		problems = append(problems, SizeLimitProblem(len(p.sizeLimited), p.sizeLimits...))
 	}
 	status := state.Status{
 		LastScanAt:             p.now.UTC(),

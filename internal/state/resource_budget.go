@@ -110,7 +110,11 @@ func (s *Store) writeCompact(path string, value any) error {
 	if !s.resourceBudget.Reserve(scratch) {
 		return errStateBudget
 	}
-	n, err := jsonwire.Bound(s.resourceContext, value, s.resourceBudget.Available()-1)
+	available := s.resourceBudget.Available()
+	n, err := jsonwire.Bound(s.resourceContext, value, available-1)
+	if errors.Is(err, jsonwire.ErrLimit) {
+		s.resourceBudget.Refuse(available + 1)
+	}
 	s.resourceBudget.Release(scratch)
 	if err != nil {
 		return errors.Join(errStateBudget, err)

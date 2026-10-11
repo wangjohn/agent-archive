@@ -69,7 +69,7 @@ func (p *pass) skipUnchanged(reg archive.SessionRegistration, req state.Request)
 			return true
 		}
 	}
-	p.noteGap(id, signature.Blocked)
+	p.noteGap(reg, signature.Blocked, signature.SizeLimit)
 	// Nothing to read, nothing to compare, nothing to journal.
 	p.result.Skipped = append(p.result.Skipped, id)
 	p.opts.progress(id, false)
@@ -150,7 +150,7 @@ func (p *pass) unchangedSinceLastScan(reg archive.SessionRegistration) (unchange
 	if signature.ParserVersion != p.opts.parserVersionFor(reg.Harness.Name) || signature.FilterVersion != archive.FilterVersion || signature.AdapterVersion != adapterVersion || pendingSkillMode(signature.SkillEvidence) != p.opts.skillEvidence() {
 		return false, signature, nil
 	}
-	if (signature.Failed || sizeLimitGap(signature.Blocked)) && (signature.FailedMaxBytes != p.opts.maxTranscriptBytes() || signature.FailedRecordLimit != recordLimit) {
+	if (signature.Failed || sizeLimitGap(signature.Blocked)) && (signature.FailedMaxBytes != p.opts.maxTranscriptBytes() || signature.FailedRecordLimit != recordLimit || signature.FailedRawLimit != p.opts.maxRawBytes(reg.Harness.Name)) {
 		return false, signature, nil
 	}
 	if !sourceStillAt(p.ctx, reader, signature) {
@@ -222,10 +222,14 @@ func sizeLimitGap(reason state.BlockedReason) bool {
 	return reason == state.BlockedReasonTranscriptTooLarge || reason == state.BlockedReasonRecordTooLarge
 }
 
-// noteGap counts a session sitting in a size-limit gap, for status.
-func (p *pass) noteGap(id string, reason state.BlockedReason) {
+// noteGap counts a session sitting in a size-limit gap, and the limit it
+// stopped at when known, for status.
+func (p *pass) noteGap(reg archive.SessionRegistration, reason state.BlockedReason, limit *state.SizeLimitGap) {
 	if sizeLimitGap(reason) {
-		p.sizeLimited = append(p.sizeLimited, id)
+		p.sizeLimited = append(p.sizeLimited, reg.ArchiveSessionID)
+		if limit != nil {
+			p.sizeLimits = append(p.sizeLimits, SizeLimitLabel(reg.Harness.Name, *limit))
+		}
 	}
 }
 
@@ -298,8 +302,9 @@ func (s *sessionScan) recordBlockedSignature(reason state.BlockedReason, observe
 		SourceSignature: signaturePointer(*observed), SourceKind: observed.kind, CursorLastUpdatedAt: observed.cursor.LastUpdatedAt,
 		CursorHeaderCount: observed.cursor.HeaderCount, CursorLastBubbleID: observed.cursor.LastBubbleID,
 		CursorMessageRows: observed.cursor.MessageRows, CursorLastMessageHash: observed.cursor.LastMessageHash,
-		FailedMaxBytes: s.opts.maxTranscriptBytes(), FailedRecordLimit: recordLimit,
-		Blocked: reason, PublishedLastHead: s.publishedLastHead(),
+		FailedMaxBytes: s.opts.maxTranscriptBytes(), FailedRecordLimit: recordLimit, FailedRawLimit: s.opts.maxRawBytes(s.reg.Harness.Name),
+		SizeLimit: s.sizeLimit,
+		Blocked:   reason, PublishedLastHead: s.publishedLastHead(),
 		PublishedLabel: s.publishedLabel(),
 	})
 }

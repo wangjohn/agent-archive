@@ -21,8 +21,11 @@ func nativeScannerCharge(ctx context.Context, file agentapi.FileInput, limits ag
 	}
 	defer budget.Release(countScratch)
 	length := file.Length()
-	if length < 0 || limits.RawBytes > 0 && length > limits.RawBytes {
+	if length < 0 {
 		return 0, errFilterBudget
+	}
+	if limits.RawBytes > 0 && length > limits.RawBytes {
+		return 0, agentapi.RawLimit(length, limits.RawBytes, nil)
 	}
 	maxRecord := limits.RecordBytes
 	if maxRecord <= 0 {
