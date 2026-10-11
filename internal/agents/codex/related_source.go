@@ -300,6 +300,11 @@ func (p *relatedSourcePass) openSelectedSeed(ctx context.Context, ref agentapi.S
 		if set.Complete && len(set.Candidates) > 0 && len(set.Candidates) <= archive.MaxHistorySpans {
 			return p.open(ctx, set.Candidates[0])
 		}
+		if p.coverageUnproven(set) {
+			// Codex may have renamed it (into archived_sessions/ or back): it
+			// is missing only once coverage finds no rollout by its ID.
+			return nil, coverageIncomplete("registered rollout not found; coverage incomplete")
+		}
 	}
 	return seed, err
 }
@@ -1342,7 +1347,7 @@ func (p *relatedSourcePass) historyBindingFacts(ctx context.Context, selection s
 			}
 			if candidate.identity.ThreadID == selection.thread && candidate.identity.RolloutID == selection.thread {
 				if original != nil && original.ref.Path != candidate.ref.Path {
-					return archive.CodexSourceBinding{}, sourceFailure(agentapi.Unavailable, "original native identity ambiguous")
+					return archive.CodexSourceBinding{}, p.coverageRefusal(selection.set, "original native identity ambiguous")
 				}
 				original = candidate
 			}

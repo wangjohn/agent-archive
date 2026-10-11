@@ -8,6 +8,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/state"
 )
 
@@ -147,5 +148,39 @@ func TestFollowRelocatedRolloutIsGuardedAndBestEffort(t *testing.T) {
 			t.Fatal(err)
 		}
 		refused(t, scan, archived)
+	})
+	t.Run("capture no longer accepted", func(t *testing.T) {
+		t.Parallel()
+		scan, _, archived := relocationFixture(t)
+		cfg, _, err := config.Load(scan.local.Home())
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg.Archive.Projects[0].Included = false
+		if err := config.Save(scan.local.Home(), cfg); err != nil {
+			t.Fatal(err)
+		}
+		refused(t, scan, archived)
+	})
+	t.Run("setup pending", func(t *testing.T) {
+		t.Parallel()
+		scan, _, archived := relocationFixture(t)
+		if err := os.WriteFile(setupjournal.JournalPath(scan.local.Home()), []byte("{}"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		refused(t, scan, archived)
+	})
+	t.Run("registration removed meanwhile", func(t *testing.T) {
+		t.Parallel()
+		scan, original, archived := relocationFixture(t)
+		if err := os.Remove(filepath.Join(scan.local.Home(), "registrations", scan.id()+".json")); err != nil {
+			t.Fatal(err)
+		}
+		if err := scan.followRelocatedRollout(archived); err != nil {
+			t.Fatalf("a removed registration failed the scan: %v", err)
+		}
+		if _, found, err := scan.local.LoadRegistration(scan.id()); err != nil || found || scan.reg.TranscriptPath != original {
+			t.Fatalf("removed registration recreated or followed: found=%v err=%v scan=%s", found, err, scan.reg.TranscriptPath)
+		}
 	})
 }
