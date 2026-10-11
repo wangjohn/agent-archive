@@ -185,6 +185,10 @@ func (s *sessionScan) nativeBindingChanged(binding *archive.CodexSourceBinding) 
 	return true, nil
 }
 
+// errRelocationRaced reports that the registration changed between the read
+// and the relocation, so following the rollout is left to a later pass.
+var errRelocationRaced = errors.New("codex registration changed before following its rollout")
+
 // followRelocatedRollout moves an unbound legacy Codex registration's
 // locator to where its rollout was just read from, after Codex renamed it
 // into archived_sessions/ (or back). Nothing else about the registration
@@ -192,6 +196,13 @@ func (s *sessionScan) nativeBindingChanged(binding *archive.CodexSourceBinding) 
 // home qualifies: the source already matched its thread and rollout IDs.
 // Without this the registration would keep naming a locator that no longer
 // exists, so every later pass would find the rollout again by its ID.
+//
+// The read has already succeeded, so following is best effort: whatever
+// stops it (a busy hooks.lock, a pending setup, capture paused or no longer
+// accepted, a registration changed or removed meanwhile) leaves the
+// registration as it is for a later pass, as the same checks stop
+// persistCodexBinding. Only a failure to read the configuration or write the
+// registration is an error.
 func (s *sessionScan) followRelocatedRollout(path string) error {
 	if path == "" || path == s.reg.TranscriptPath || s.reg.CodexBinding != nil {
 		return nil
@@ -205,25 +216,39 @@ func (s *sessionScan) followRelocatedRollout(path string) error {
 	if !local.PathWithin(path, filepath.Join(root, "sessions")) && !local.PathWithin(path, filepath.Join(root, "archived_sessions")) {
 		return nil
 	}
-	unlock, err := local.NamedLockWait(s.local.Home(), "hooks.lock", time.Second)
+	home := s.local.Home()
+	unlock, err := local.NamedLockWait(home, "hooks.lock", time.Second)
+	if errors.Is(err, local.ErrBusy) {
+		return nil
+	}
 	if err != nil {
 		return err
 	}
 	defer unlock()
+	if setupjournal.TransactionPending(home) {
+		return nil
+	}
+	cfg, found, err := config.Load(home)
+	if err != nil {
+		return err
+	}
+	if !found || cfg.Paused || !cfg.AcceptSession(s.reg) {
+		return nil
+	}
 	var updated archive.SessionRegistration
-	found, err := s.local.UpdateRegistration(s.id(), func(current *archive.SessionRegistration) error {
-		if current.NativeSessionID != s.reg.NativeSessionID || current.CodexBinding != nil || current.TranscriptPath != old {
-			return errors.New("codex registration changed before following its rollout")
+	found, err = s.local.UpdateRegistration(s.id(), func(current *archive.SessionRegistration) error {
+		if current.NativeSessionID != s.reg.NativeSessionID || current.CodexBinding != nil || current.TranscriptPath != old || !cfg.AcceptSession(*current) {
+			return errRelocationRaced
 		}
 		current.TranscriptPath = path
 		updated = *current
 		return nil
 	})
+	if errors.Is(err, errRelocationRaced) || err == nil && !found {
+		return nil
+	}
 	if err != nil {
 		return err
-	}
-	if !found {
-		return errors.New("codex registration disappeared before following its rollout")
 	}
 	s.reg = updated
 	return nil

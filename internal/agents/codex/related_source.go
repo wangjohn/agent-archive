@@ -327,7 +327,7 @@ func (p *relatedSourcePass) selectLineage(ctx context.Context, selected sourceSe
 			return selected, sourceFailure(agentapi.Unsafe, "rollout candidate identity mismatch")
 		}
 		if prior := candidates[id.RolloutID]; prior != nil && prior.ref.Path != f.ref.Path {
-			return selected, sourceFailure(agentapi.Unavailable, "ambiguous physical rollout")
+			return selected, p.coverageRefusal(set, "ambiguous physical rollout")
 		}
 		candidates[id.RolloutID] = f
 		if id.HistoryBase != nil {
@@ -338,15 +338,15 @@ func (p *relatedSourcePass) selectLineage(ctx context.Context, selected sourceSe
 	for id, f := range candidates {
 		if !bases[id] {
 			if tip != nil {
-				return selected, sourceFailure(agentapi.Unavailable, "ambiguous rollout tips")
+				return selected, p.coverageRefusal(set, "ambiguous rollout tips")
 			}
 			tip = f
 		}
 	}
 	if tip == nil {
-		return selected, sourceFailure(agentapi.Unavailable, "no complete rollout tip")
+		return selected, p.coverageRefusal(set, "no complete rollout tip")
 	}
-	spans, err := p.graph(ctx, tip)
+	spans, err := p.graph(ctx, tip, set)
 	if err != nil {
 		return selected, err
 	}
@@ -354,7 +354,7 @@ func (p *relatedSourcePass) selectLineage(ctx context.Context, selected sourceSe
 		delete(candidates, span.file.identity.RolloutID)
 	}
 	if len(candidates) != 0 {
-		return selected, sourceFailure(agentapi.Unavailable, "disconnected rollout lineage")
+		return selected, p.coverageRefusal(set, "disconnected rollout lineage")
 	}
 	selected.leaf = tip
 	selected.lineage = true
@@ -369,7 +369,7 @@ type physicalSpan struct {
 	digest       [32]byte
 }
 
-func (p *relatedSourcePass) graph(ctx context.Context, leaf *rolloutFile) ([]physicalSpan, error) {
+func (p *relatedSourcePass) graph(ctx context.Context, leaf *rolloutFile, set agentapi.CodexRolloutSet) ([]physicalSpan, error) {
 	var reversed []physicalSpan
 	seen := map[string]bool{}
 	current := leaf
@@ -405,7 +405,7 @@ func (p *relatedSourcePass) graph(ctx context.Context, leaf *rolloutFile) ([]phy
 			return nil, err
 		}
 		if len(refs) != 1 {
-			return nil, sourceFailure(agentapi.Unavailable, "history dependency missing or ambiguous")
+			return nil, p.coverageRefusal(set, "history dependency missing or ambiguous")
 		}
 		base, err := p.open(ctx, refs[0])
 		if err != nil {
@@ -466,7 +466,7 @@ func (p *relatedSourcePass) Signature(ctx context.Context, ref agentapi.SourceRe
 	if p.env.RequireConfinedHistory && p.env.Policy.Root == "" {
 		return agentapi.SourceObservation{}, sourceFailure(agentapi.Unavailable, "related history requires admitted confined source home")
 	}
-	spans, err := p.graph(ctx, selection.leaf)
+	spans, err := p.graph(ctx, selection.leaf, selection.set)
 	if err != nil {
 		return agentapi.SourceObservation{}, err
 	}
@@ -574,7 +574,7 @@ func (p *relatedSourcePass) readHistorySelection(ctx context.Context, limits age
 		return nil, sourceFailure(agentapi.Unavailable, "related history requires admitted confined source home")
 	}
 	fail := p.readFailure
-	spans, err := p.graph(ctx, selection.leaf)
+	spans, err := p.graph(ctx, selection.leaf, selection.set)
 	if err != nil {
 		return fail(err)
 	}
@@ -1045,7 +1045,7 @@ func (p *relatedSourcePass) ValidateSourceAdmission(ctx context.Context, ref age
 	if p.env.RequireConfinedHistory && p.env.Policy.Root == "" && hasRelated(selection.leaf) {
 		return sourceFailure(agentapi.Unavailable, "related admission requires confined source home")
 	}
-	spans, err := p.graph(ctx, selection.leaf)
+	spans, err := p.graph(ctx, selection.leaf, selection.set)
 	if err != nil {
 		return err
 	}
@@ -1361,7 +1361,7 @@ func (p *relatedSourcePass) historyBindingFacts(ctx context.Context, selection s
 			facts.OwnStart = own
 		}
 	} else {
-		return archive.CodexSourceBinding{}, sourceFailure(agentapi.Unavailable, "original native creation facts unavailable")
+		return archive.CodexSourceBinding{}, p.coverageRefusal(selection.set, "original native creation facts unavailable")
 	}
 	for _, span := range spans {
 		id := span.file.identity

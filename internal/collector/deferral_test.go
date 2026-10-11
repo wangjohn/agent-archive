@@ -105,7 +105,7 @@ func TestRunDefersScansTheNextPassCanFinish(t *testing.T) {
 		{"coverage incomplete wrapped with context", fmt.Errorf("revision candidates: %w", coverageRefusal()), &coverageLookup{}, DeferredHistoryCoverage},
 		{"coverage refusal while the lookup reports it complete", coverageRefusal(), &coverageLookup{complete: true}, DeferredHistoryCoverage},
 		{"coverage refusal without a lookup", coverageRefusal(), nil, DeferredHistoryCoverage},
-		{"unnamed refusal while coverage is incomplete", lineageRefusal(), &coverageLookup{}, ""},
+		{"untagged refusal while coverage is incomplete", lineageRefusal(), &coverageLookup{}, ""},
 		{"input/output failure while coverage is incomplete", agentapi.Wrap(agentapi.Unavailable, &fs.PathError{Op: "read", Path: "/synthetic", Err: errors.New("i/o")}), &coverageLookup{}, ""},
 		{"current header unavailable while coverage is incomplete", agentapi.Wrap(agentapi.Unavailable, errors.New("current header unavailable")), &coverageLookup{}, ""},
 		{"source changed", agentapi.Wrap(agentapi.Changed, errors.New("native index changed during snapshot")), nil, DeferredSourceChanged},
