@@ -15,6 +15,13 @@ follow [Semantic Versioning](https://semver.org/).
   leaving a "transcript missing" gap, and unchanged content is not uploaded
   again. This also works while Codex's thread index still names the old
   location.
+- Add an explicit Keep forever choice in setup and `--keep-forever` for
+  scripted setup; new installations still default to 90 days. Pairing and
+  imports preserve this per-machine preference. It disables automatic
+  whole-session expiry, while privacy cleanup, explicit deletion and provider
+  lifecycle rules still apply. Choosing it installs a permanent compatibility
+  fence: older binaries refuse the configuration, even after switching back
+  to finite retention. Upgrade installed hooks and collectors before using it.
 - Report failed or short JSON output writes, including status and normalized
   transcripts. Reject nonregular or invalid UTF-8 feedback input without
   blocking on named pipes. Publish handoff files privately and atomically,
@@ -45,9 +52,16 @@ follow [Semantic Versioning](https://semver.org/).
 - Clarify storage onboarding with Account, Storage, and Verification stages.
   Keep valid existing-bucket answers when going back, show S3 archive
   permissions on request, and report privacy separately from connectivity.
+- Resume interrupted storage setup from durable resource receipts, prevent
+  ambiguous duplicate creation, track manual bucket cleanup, and explicitly
+  revoke unused guided keys while protecting active and draft credentials.
+
 - Preserve private, durable bucket creation receipts across interrupted setup and
   abandoned drafts, including uncertain provider outcomes. Archive keys continue
   to use the existing issuance ledger.
+- Show pairing delivery and receiver setup as separate progress stages. Closing
+  source transfer instructions no longer implies receiver success. Cancellation
+  and expiry explain bundle and credential effects, including local S3 profiles.
 
 - Stop titling Codex desktop sessions with injected open-page context such as
   `<external_codex_apps_open_page>{"page_id":null}</external_codex_apps_open_page>`.
@@ -80,6 +94,13 @@ follow [Semantic Versioning](https://semver.org/).
 
 
 ### Added
+
+- List retained native revision IDs with `show SESSION_ID --revisions`, including
+  capture times and recorded provenance in human or JSON output. Select one exact
+  parent revision with `--revision` in show, archive-only handoff, or a single
+  full-detail eval export. Selected summaries and provenance come from verified
+  retained evidence; unknown IDs and invalid history fail without an active
+  fallback. Selection excludes children, and retained history remains bounded.
 
 - Capture native Codex children without a stop hook or archived parent. Children
   keep their own identity, creation, task evidence, consent and activity. Historical
@@ -139,6 +160,19 @@ follow [Semantic Versioning](https://semver.org/).
   coverage remains tracked for release testing.
 
 ### Fixed
+
+- Preserve confirmed backfill evidence before registering sessions, including
+  selected Codex history and native children. Imports can finish after native
+  files disappear; background recovery verifies remote sources and metadata
+  before reporting completion. Private filtered staging has a shared 1 GiB
+  quota, resumable admission, current-policy filtering, and journalled cancel
+  and undo cleanup. History distinguishes staged/admitted from remotely verified
+  sessions. Staging rechecks native identity before admission. Dry-run creates
+  no staging and reports incomplete JSON writes as failures. Oversized selected
+  sources and encoded journals fail before admission, within the collector's
+  recovery memory allowance.
+  Imports also finish skipped candidates promptly when their project proof or
+  authorization changes after identity reservation and before staging.
 
 - Validate a Codex fork's first own task during import and ongoing capture,
   and protect every qualified history import from older writers. Discovery

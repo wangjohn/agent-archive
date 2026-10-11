@@ -567,6 +567,8 @@ func validLowerSHA256(value string) bool {
 func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, env showCommandDependencies) int {
 	fs := env.newCommandFlags("show", stderr)
 	harness := fs.String("harness", "", "the session's harness, if the same ID exists under more than one")
+	revisions := fs.Bool("revisions", false, "list validated active and preserved native revisions; with --json, print the inventory")
+	revision := fs.String("revision", "", "read this exact native revision ID from the parent only (see --revisions)")
 	transcript := fs.Bool("transcript", false, "also download and verify the source bundle, and print the conversation (this prints transcript content)")
 	full := fs.Bool("full", false, "with --transcript, also print each tool call's trimmed result")
 	normalized := fs.Bool("normalized", false, "deprecated: the same as --transcript --json")
@@ -586,6 +588,9 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	if *normalized {
 		terminal.Println(stderr, "agent-archive: show: --normalized is deprecated; use --transcript --json")
 		*transcript, *jsonOut = true, true
+	}
+	if code := checkShowRevisionFlags(fs, sessionID, *revision, *revisions, *transcript, *full, *normalized); code != 0 {
+		return code
 	}
 	if *full && !*transcript {
 		return fs.usageError("--full needs --transcript")
@@ -640,14 +645,16 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		return 1
 	}
 
+	if *revisions {
+		return readRevisionInventory(ctx, store, key, stdout, stderr, *jsonOut, stopShow)
+	}
 	if !*transcript {
-		metadata, err := reader.ReadMetadata(ctx, store, key)
+		view, err := loadShowSummarySelection(ctx, store, key, *revision, parsersFor(env))
 		if err != nil {
 			stopShow()
 			terminal.Printf(stderr, "agent-archive: show: %v\n", err)
 			return 1
 		}
-		view := metadataWithLinks(ctx, store, metadata)
 		stopReads()
 		stopShow()
 		if *jsonOut {
@@ -664,7 +671,7 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	}
 
 	return printSessionTranscript(ctx, store, env, stdout, stderr, key, sessionID, stopShow, stopReads, sessionTranscriptOptions{
-		summary: summary, full: *full, json: *jsonOut, normalized: *normalized, noPager: *noPager, maxBytes: *maxBytes,
+		revision: *revision, summary: summary, full: *full, json: *jsonOut, normalized: *normalized, noPager: *noPager, maxBytes: *maxBytes,
 	})
 }
 
@@ -709,6 +716,7 @@ func checkShowMaxBytes(fs *commandFlags, maxBytes int, transcript bool) int {
 
 // sessionTranscriptOptions are the show flags that shape a transcript.
 type sessionTranscriptOptions struct {
+	revision   string
 	summary    summaryOptions
 	full       bool
 	json       bool
@@ -721,7 +729,17 @@ type sessionTranscriptOptions struct {
 // and prints its transcript: readable and paged, or with --json the sidecar
 // and the normalized view. stopShow ends the loading activity line.
 func printSessionTranscript(ctx context.Context, store storage.ObjectStore, env showCommandDependencies, stdout, stderr io.Writer, key, sessionID string, stopShow, stopReads func(), opts sessionTranscriptOptions) int {
-	view, bundle, err := loadVerifiedSession(ctx, store, key)
+	var view sessionView
+	var bundle archive.SourceBundle
+	var err error
+	if opts.revision == "" {
+		view, bundle, err = loadVerifiedSession(ctx, store, key)
+	}
+	if opts.revision != "" {
+		var metadata archive.Metadata
+		metadata, bundle, err = loadArchiveSelection(ctx, store, key, opts.revision, parsersFor(env))
+		view = sessionView{Metadata: metadata, SelectedRevisionID: opts.revision}
+	}
 	if err != nil {
 		stopShow()
 		flag := "--transcript"
@@ -805,7 +823,7 @@ func printSessionTranscript(ctx context.Context, store storage.ObjectStore, env 
 // the sidecar's fields at the top level is what existing readers of this
 // command already parse. Validate stored objects, not command output.
 func metadataWithLinks(ctx context.Context, store storage.ObjectStore, metadata archive.Metadata) sessionView {
-	return sessionView{metadata, reader.ResolveLinkedSessions(ctx, store, metadata)}
+	return sessionView{Metadata: metadata, LinkedAvailability: reader.ResolveLinkedSessions(ctx, store, metadata)}
 }
 
 // normalizedOutput is the JSON shape `show --transcript --json` prints for

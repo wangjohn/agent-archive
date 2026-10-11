@@ -28,6 +28,25 @@ storage prompt for a link to the [bucket guide](bucket.md). Setup asks questions
 stops before asking anything and changes nothing. Its prompt sequence is not
 a scripting API; to script it, use [`setup --yes`](#set-up-without-questions).
 
+### Interrupted storage creation
+
+If setup stops after requesting a bucket, rerun `agent-archive setup`. Private
+resource receipts survive draft changes and record whether creation was confirmed
+or its outcome remains unknown. Setup offers to connect the bucket as existing
+storage, choose other storage, or inspect resource details. Connecting still asks
+for credentials and verifies access; it does not establish ownership.
+
+An unknown creation is never retried for the same bucket automatically. Inspect
+the named account and bucket in the provider console. S3 receipts record the
+creation profile, which can change accounts; a profile name is not ownership proof.
+Bucket cleanup instructions remain pending because setup cannot verify ownership
+or manual deletion. Check bucket contents and other machines before deleting it.
+
+Unused guided R2 keys can be explicitly revoked after confirmation, using a fresh
+management token. Setup verifies exact provider key lineage and permissions before
+deleting, protects active and saved-draft credentials, and retains unsuccessful
+cleanup for retry. Bootstrap and management tokens are not stored in receipts.
+
 Setup groups each question, explanation, choices and shortcuts together. On a
 supported terminal, the answered question becomes a short receipt. Yes/No receipts
 retain the question subject so completed decisions remain identifiable.
@@ -263,8 +282,7 @@ hooks moving to another file.
 At "Start archiving?", enter the number for "Edit a setting" to adjust apps, projects, session scope, retention, storage,
 the folder inside the bucket, or the AWS region. The folder inside the
 bucket (the prefix) is `agent-archive/` unless you change it. Retention is
-a whole number of days from 1 to 36,500; there is no "keep forever" (36,500
-days is about a century). Storage changes are checked
+a whole number of days from 1 to 36,500, or `forever` to disable automatic whole-session expiry. Provider lifecycle rules and explicit deletion still apply. Storage changes are checked
 again before starting. If the connection test fails, setup says why and
 how to fix it; see [when setup's storage check
 fails](../guides/troubleshooting.md#when-setups-storage-check-fails).
@@ -326,6 +344,7 @@ agent-archive setup --yes --provider s3 --bucket BUCKET --aws-profile PROFILE \
 - `--prefix PREFIX` sets the folder inside the bucket, including when changing
   only that setting on an existing installation.
 - `--retention-days DAYS` sets retention from 1 to 36500 days.
+- `--keep-forever` disables automatic whole-session expiry and conflicts with `--retention-days`. The default remains 90 days. Guided retention offers **90 days**, **Custom duration**, and **Keep forever**, starting from the saved preference. Custom duration also accepts `forever`. This preference applies to existing and future sessions owned by this installation; provider lifecycle rules and explicit deletion still apply.
 - `--require-skill-use` captures only sessions that use skills;
   `--no-require-skill-use` captures sessions with or without skills. Omitted
   settings keep their saved values (fresh setup captures both).

@@ -169,6 +169,10 @@ func PlanUndo(env Environment, store *state.Store, cfg config.Config, batches []
 	if err != nil {
 		return UndoPlan{}, err
 	}
+	regs, err = importUndoRegistrations(store, regs, b.ID)
+	if err != nil {
+		return UndoPlan{}, err
+	}
 	if n := sessionsOutsideBatch(regs, b); n > 0 {
 		return UndoPlan{}, &SharedBatchIDError{Batch: b.ID, Sessions: n}
 	}
@@ -381,34 +385,35 @@ func keptOutToRemove(env Environment, cfg config.Config, regs []archive.SessionR
 // admission, so only a session admitted over r.From days ago can be one; only
 // those have their published state read.
 func retentionDeletes(store *state.Store, cfg config.Config, regs []archive.SessionRegistration, removing []UndoSession, r RetentionChange, now time.Time) (int, error) {
-	if r.From <= 0 || r.From >= r.To {
+	if !config.RetentionShorter(r.From, r.To) {
 		return 0, nil
 	}
 	removed := map[string]bool{}
 	for _, s := range removing {
 		removed[s.Registration.ArchiveSessionID] = true
 	}
-	from, to := time.Duration(r.From)*24*time.Hour, time.Duration(r.To)*24*time.Hour
 	n := 0
+	preview, err := retention.NewExpiryPreview(store, now, cfg.AcceptSession)
+	if err != nil {
+		return 0, err
+	}
 	for _, reg := range regs {
 		if !independentImportOwner(reg) || removed[reg.ArchiveSessionID] || !cfg.InCurrentDestination(reg) {
 			continue
 		}
-		ageFrom := reg.Admitted()
-		if ageFrom.IsZero() || now.Sub(ageFrom) < from {
-			continue
-		}
-		bundle, _, _, found, err := store.LoadPublished(reg.ArchiveSessionID)
+		after, err := preview.SessionExpired(reg, config.RetentionDuration(r.From))
 		if err != nil {
 			return 0, err
 		}
-		if found && !bundle.Capture.CapturedAt.IsZero() {
-			ageFrom = bundle.Capture.CapturedAt
+		before, err := preview.SessionExpired(reg, config.RetentionDuration(r.To))
+		if err != nil {
+			return 0, err
 		}
-		if age := now.Sub(ageFrom); age >= from && age < to {
+		if after && !before {
 			n++
 		}
 	}
+
 	return n, nil
 }
 
@@ -835,15 +840,17 @@ func RenderUndo(w io.Writer, p UndoPlan) {
 		bullet("%s the import added as excluded, to keep folders inside a project\n    out of capture, %s removed from setup again; nothing there is captured\n    either way.\n", CountNoun(n, "project"), IsAre(n))
 	}
 	switch r := p.RestoreRetention; {
+	case r != nil && r.To == 0:
+		bullet("Retention goes back from Keep forever to %s. The next collector pass may delete %s.\n", config.RetentionLabel(r.From), CountNoun(p.RetentionDeletes, "session"))
 	case r != nil && p.RetentionDeletes > 0:
 		bullet("Retention goes back from %d to %d days, as it was before the import\n    raised it. The next collector pass then deletes %s older than\n    %d days from %s.\n", r.To, r.From, CountNoun(p.RetentionDeletes, "session"), r.From, p.view.destination())
 	case r != nil:
 		bullet("Retention goes back from %d to %d days, as it was before the import\n    raised it. No session is old enough for that to delete it now.\n", r.To, r.From)
 	case p.RetentionKept != nil:
 		r := p.RetentionKept
-		bullet("Retention stays at %d days: --yes does not shorten it. To put back\n    the %d days from before the import, which %s, run\n    agent-archive backfill undo %s --restore-retention\n", r.To, r.From, retentionDeletesPhrase(p.RetentionDeletes, r.From), p.Batch.ID)
+		bullet("Retention stays at %s: --yes does not shorten it. To put back\n    the %d days from before the import, which %s, run\n    agent-archive backfill undo %s --restore-retention\n", config.RetentionLabel(r.To), r.From, retentionDeletesPhrase(p.RetentionDeletes, r.From), p.Batch.ID)
 	case p.RetentionChangedSince:
-		bullet("Retention stays at %d days: it was changed after the import raised it.\n", p.view.RetentionDays)
+		bullet("Retention stays at %s: it was changed after the import raised it.\n", config.RetentionLabel(p.view.RetentionDays))
 	}
 	bullet("Hook-captured sessions and the apps' own files are not touched.\n")
 	if c.Sessions+c.Subagents > 0 {
@@ -1098,4 +1105,40 @@ func orderUndoChildrenFirst(sessions []UndoSession) ([]UndoSession, error) {
 // Other subagents continue to follow their imported parent.
 func independentImportOwner(reg archive.SessionRegistration) bool {
 	return reg.NativeChild || reg.ParentSessionID == ""
+}
+
+func importUndoRegistrations(store *state.Store, regs []archive.SessionRegistration, batchID string) ([]archive.SessionRegistration, error) {
+	cfg, found, err := config.Load(store.Home())
+	if err != nil {
+		return nil, err
+	}
+	if !found || !cfg.ImportStagingProtection {
+		return regs, nil
+	}
+
+	// Include selected evidence prepared before an admission crash. Undo owns
+	// its durable cleanup even when no registration reached disk yet.
+	seen := map[string]bool{}
+	for _, reg := range regs {
+		seen[reg.ArchiveSessionID] = true
+	}
+	for after := ""; ; {
+		stages, next, err := store.ImportStages(context.Background(), after, 50)
+		if err != nil {
+			return nil, err
+		}
+		for _, stage := range stages {
+			reg := stage.Registration
+			if reg.InBatch(batchID) && !seen[reg.ArchiveSessionID] {
+				reg.StagedImportSHA256 = stage.SHA256
+				regs = append(regs, reg)
+				seen[reg.ArchiveSessionID] = true
+			}
+		}
+		if next == "" {
+			break
+		}
+		after = next
+	}
+	return regs, nil
 }

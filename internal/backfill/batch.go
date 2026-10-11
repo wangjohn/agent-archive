@@ -1,6 +1,7 @@
 package backfill
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/state"
 )
@@ -44,6 +46,9 @@ type Batch struct {
 	ProjectsKeptOut []string `json:"projects_kept_out,omitempty"`
 	// Sessions are the archive session IDs the import registered.
 	Sessions []string `json:"sessions"`
+	// StagedSessions records selected durable evidence, independently of
+	// registration and remotely verified publication. It contains no locators.
+	StagedSessions []string `json:"staged_sessions,omitempty"`
 	// Subagents are the archive session IDs given to the imported sessions'
 	// subagent transcripts. Each registers when the collector validates it.
 	Subagents []string `json:"subagents"`
@@ -115,6 +120,9 @@ func (p Plan) BatchFilters() BatchFilters {
 func (b *Batch) Reconcile(store *state.Store) error {
 	regs, err := store.LoadRegistrations()
 	if err != nil {
+		return err
+	}
+	if err := b.reconcileStagedSources(store); err != nil {
 		return err
 	}
 	parents := map[string]bool{}
@@ -404,4 +412,30 @@ func addUnique(list []string, values ...string) []string {
 		}
 	}
 	return list
+}
+
+func (b *Batch) reconcileStagedSources(store *state.Store) error {
+	cfg, found, err := config.Load(store.Home())
+	if err != nil {
+		return err
+	}
+	if !found || !cfg.ImportStagingProtection {
+		return nil
+	}
+	for after := ""; ; {
+		stages, next, err := store.ImportStages(context.Background(), after, 50)
+		if err != nil {
+			return err
+		}
+		for _, stage := range stages {
+			if stage.Registration.InBatch(b.ID) {
+				b.StagedSessions = addUnique(b.StagedSessions, stage.Registration.ArchiveSessionID)
+			}
+		}
+		if next == "" {
+			break
+		}
+		after = next
+	}
+	return nil
 }
