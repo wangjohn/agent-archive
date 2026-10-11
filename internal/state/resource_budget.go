@@ -170,11 +170,15 @@ func (s *Store) summaryBudgeted(p publishedState) (PublishedSummary, error) {
 			return PublishedSummary{}, errStateBudget
 		}
 		ctx := s.resourceContext
+		available := s.resourceBudget.Available()
 		size, err := jsonwire.Bound(ctx, struct {
 			Active     archive.SourceReference  `json:"active"`
 			CapturedAt time.Time                `json:"captured_at"`
 			History    *archive.RevisionHistory `json:"history,omitempty"`
-		}{metadata.SourceBundle, metadata.CapturedAt, metadata.History}, s.resourceBudget.Available()/2)
+		}{metadata.SourceBundle, metadata.CapturedAt, metadata.History}, available/2)
+		if errors.Is(err, jsonwire.ErrLimit) {
+			s.resourceBudget.Refuse(available + 2)
+		}
 		s.resourceBudget.Release(scratch)
 		if err != nil {
 			return PublishedSummary{}, errors.Join(errStateBudget, err)

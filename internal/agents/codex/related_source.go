@@ -137,7 +137,7 @@ func (p *relatedSourcePass) open(ctx context.Context, ref agentapi.SourceRef) (*
 	ownedCharge := int64(0)
 	fail := func(e error) (*rolloutFile, error) {
 		if ownedCharge > 0 {
-			p.release(ownedCharge)
+			p.releaseCache(ownedCharge)
 			ownedCharge = 0
 		}
 		return nil, errors.Join(e, agentapi.Wrap(agentapi.Cleanup, f.Close()))
@@ -149,7 +149,7 @@ func (p *relatedSourcePass) open(ctx context.Context, ref agentapi.SourceRef) (*
 	}
 	// The file is read through its descriptor, a bounded record at a time;
 	// only the header and proof state stay in memory with it.
-	if !p.reserve(sourceHeaderCharge) {
+	if !p.reserveCache(sourceHeaderCharge) {
 		return fail(agentapi.ReadBudgetLimit(errors.New("shared source and index budget exhausted")))
 	}
 	ownedCharge = sourceHeaderCharge
@@ -191,7 +191,7 @@ func (p *relatedSourcePass) evict() error {
 
 // dropFile forgets a cached file and returns everything it held.
 func (p *relatedSourcePass) dropFile(path string, f *rolloutFile) {
-	p.release(f.charge())
+	p.releaseCache(f.charge())
 	p.prefixBytes -= int64(len(f.prefix))
 	delete(p.files, path)
 }
@@ -209,7 +209,7 @@ func (p *relatedSourcePass) Close() error {
 		err = errors.Join(err, s.Close())
 	}
 	for _, f := range p.files {
-		p.release(f.charge())
+		p.releaseCache(f.charge())
 		err = errors.Join(err, agentapi.Wrap(agentapi.Cleanup, f.file.Close()))
 		f.prefix = nil
 		f.validated = nil
@@ -1132,13 +1132,13 @@ func (p *relatedSourcePass) cachePrefixes(ctx context.Context, spans []physicalS
 		// The one bounded immutable copy is shared by descendants; never replace it
 		// while a snapshot might hold a borrowed scanner over its bytes.
 		charge := span.end + prefixSummaryCharge
-		if !p.reserve(charge) {
+		if !p.reserveCache(charge) {
 			continue
 		}
 		raw := make([]byte, span.end)
 		reader := sourceio.Reader(ctx, f.file, span.end)
 		if _, err := io.ReadFull(reader, raw); err != nil {
-			p.release(charge)
+			p.releaseCache(charge)
 			return sourceio.Classify(err)
 		}
 		f.prefix = raw
@@ -1534,6 +1534,31 @@ func (p *relatedSourcePass) reserve(bytes int64) bool {
 }
 
 func (p *relatedSourcePass) release(bytes int64) { p.env.ReadBudget.Release(bytes); p.bytes -= bytes }
+
+// reserveCache charges what the pass keeps between reads (cached headers and
+// ancestor prefixes): no session's own, so no session's scope counts it.
+func (p *relatedSourcePass) reserveCache(bytes int64) bool {
+	if bytes < 0 || !p.env.ReadBudget.ReserveUnscoped(bytes) {
+		return false
+	}
+	p.bytes += bytes
+	return true
+}
+
+func (p *relatedSourcePass) releaseCache(bytes int64) {
+	p.env.ReadBudget.ReleaseUnscoped(bytes)
+	p.bytes -= bytes
+}
+
+// ReleaseCaches drops every cached file no snapshot holds, with its header
+// and any ancestor prefix, so the next session's scan starts with the pass
+// ledger as free as the pass can make it.
+func (p *relatedSourcePass) ReleaseCaches() error {
+	if p.closed {
+		return nil
+	}
+	return p.evict()
+}
 
 func (p *relatedSourcePass) lookupThread(ctx context.Context, id string) (agentapi.CodexRolloutSet, error) {
 	set, err := p.env.CodexRollouts.Thread(ctx, id)

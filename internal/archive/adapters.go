@@ -69,6 +69,17 @@ const MaxRawTranscriptBytes int64 = 4 * MaxRecordBytes
 // (the redaction of kept text dominates: 32 s for that rollout).
 const MaxCodexRawTranscriptBytes int64 = 2 * MaxRawTranscriptBytes
 
+// MaxRawTranscriptBytesFor is the default raw transcript limit for harness:
+// MaxCodexRawTranscriptBytes for Codex, MaxRawTranscriptBytes otherwise.
+// Every reader that admits, plans or captures a transcript uses it, so none
+// refuses what capture accepts.
+func MaxRawTranscriptBytesFor(harness string) int64 {
+	if harness == HarnessCodex {
+		return MaxCodexRawTranscriptBytes
+	}
+	return MaxRawTranscriptBytes
+}
+
 // DefaultParserVersion is the source parser version reported by this bounded
 // foundation. The parser is intentionally partial until fixture coverage proves
 // a given native format more completely.

@@ -83,7 +83,11 @@ func (r *leasedHistoryInput) Next(ctx context.Context) (agentapi.NativeRecord, b
 	if err != nil || !more || row.Kind != agentapi.CodexHistoryHeader || row.History == nil {
 		return row, more, err
 	}
-	n, err := jsonwire.Bound(ctx, row.History, r.budget.Available())
+	available := r.budget.Available()
+	n, err := jsonwire.Bound(ctx, row.History, available)
+	if errors.Is(err, jsonwire.ErrLimit) {
+		r.budget.Refuse(available + 1)
+	}
 	if err != nil {
 		return agentapi.NativeRecord{}, false, errors.Join(errFilterBudget, err)
 	}

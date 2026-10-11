@@ -340,7 +340,7 @@ func (s *sessionScan) readFailed(read sourceRead, err error) (sessionOutcome, er
 		s.sizeLimit = sizeLimitOf(errSessionReadCeiling, read.observed, s.reg.Harness.Name, s.opts.maxTranscriptBytes())
 		return s.blockThenRemember(state.BlockedReasonTranscriptTooLarge, read)
 	}
-	if errors.Is(err, agentapi.ErrReadBudget) && !agentapi.HasFailure(err, agentapi.Cleanup) && !agentapi.HasFailure(err, agentapi.Changed) && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+	if s.sharedPressure(err) {
 		return outcomeSkipped, &readBudgetDeferralError{err: err}
 	}
 	if agentapi.HasFailure(err, agentapi.Cleanup) || agentapi.HasFailure(err, agentapi.Changed) || agentapi.HasFailure(err, agentapi.Unavailable) || errors.Is(err, agentapi.ErrReadBudget) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {

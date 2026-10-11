@@ -1307,8 +1307,8 @@ const (
 type SizeLimitGap struct {
 	Kind       SizeLimitKind `json:"kind"`
 	LimitBytes int64         `json:"limit_bytes"`
-	// SizeBytes is the source's size against the limit, when known: the
-	// raw or filtered size, or the raw size for the other kinds.
+	// SizeBytes is the size measured against the limit, when known: the
+	// raw or filtered size. Record and read_budget gaps have none.
 	SizeBytes int64 `json:"size_bytes,omitempty"`
 }
 

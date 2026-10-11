@@ -9,6 +9,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/jsonwire"
 	"github.com/wangjohn/agent-archive/internal/state"
 )
 
@@ -41,14 +42,15 @@ func (s *sessionScan) overSessionCeiling(err error) bool {
 // (refreshing the last publication, building, compressing or reconciling
 // what was read, saving it) needed more than the session's share of the
 // pass: the same size-limit gap a read over it records, at the state the
-// source was read at, or is in now when the scan never read it. A scan that
-// left a publication pending keeps its error instead, for the next pass to
-// finish.
+// source was read at, or is in now when the scan never read it. That
+// includes a pending publication itself too large to finish: the gap stands
+// rather than the failure every pass. Work refused only because others held
+// the ledger is deferred to a later pass, as a source read is.
 func (s *sessionScan) overCeiling(err error) (sessionOutcome, error) {
 	if !s.overSessionCeiling(err) {
-		return outcomeSkipped, err
-	}
-	if owed, owedErr := s.local.Outstanding(s.reg, false); owedErr != nil || owed.Upload {
+		if s.sharedPressure(err) {
+			return outcomeSkipped, &readBudgetDeferralError{err: err}
+		}
 		return outcomeSkipped, err
 	}
 	s.releaseRetained()
@@ -71,6 +73,60 @@ func (s *sessionScan) overCeiling(err error) (sessionOutcome, error) {
 	return s.blockThenRemember(state.BlockedReasonTranscriptTooLarge, read)
 }
 
+// readCeilingChanged reports a per-session read gap reached under another
+// ceiling than this build's: raising the ceiling reads the session again.
+func readCeilingChanged(signature state.ScanSignature) bool {
+	limit := signature.SizeLimit
+	return limit != nil && limit.Kind == state.SizeLimitReadBudget && limit.LimitBytes != sessionReadCeiling
+}
+
+// sharedPressure reports a refusal the session met within its own ceiling
+// because others held the pass's ledger: a later pass, starting with it
+// free, need not meet it.
+func (s *sessionScan) sharedPressure(err error) bool {
+	return onlyReadBudget(err) && s.readBudget().ScopePressured() && !s.readBudget().ScopeExceeded()
+}
+
+// onlyReadBudget reports a refusal of the read ledger and nothing a
+// deferral would hide: every failure err joins is such a refusal, or the
+// sizing that led to one (jsonwire.ErrLimit), with no change, cleanup
+// failure or cancellation, and no deferral already.
+func onlyReadBudget(err error) bool {
+	if agentapi.HasFailure(err, agentapi.Cleanup) || agentapi.HasFailure(err, agentapi.Changed) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	refused, other := readBudgetParts(err)
+	return refused && !other
+}
+
+// readBudgetParts reports whether err holds a ledger refusal, and whether it
+// holds any failure that is neither one nor the sizing behind one.
+func readBudgetParts(err error) (refused, other bool) {
+	if _, deferred := err.(interface{ deferralReason() string }); deferred {
+		return false, true
+	}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		for _, part := range joined.Unwrap() {
+			if part == nil {
+				continue
+			}
+			r, o := readBudgetParts(part)
+			refused, other = refused || r, other || o
+		}
+		return refused, other
+	}
+	if errors.Is(err, agentapi.ErrReadBudget) {
+		return true, false
+	}
+	if errors.Is(err, jsonwire.ErrLimit) {
+		return false, false
+	}
+	if wrapped := errors.Unwrap(err); wrapped != nil {
+		return readBudgetParts(wrapped)
+	}
+	return false, true
+}
+
 // sizeLimitOf names the limit a size-limit failure stopped at, or nil when
 // err carries no sizes (observed supplies the source's size then).
 func sizeLimitOf(err error, observed sourceState, harness string, maxBytes int64) *state.SizeLimitGap {
@@ -82,9 +138,9 @@ func sizeLimitOf(err error, observed sourceState, harness string, maxBytes int64
 	case errors.As(err, &filtered):
 		return &state.SizeLimitGap{Kind: state.SizeLimitFiltered, LimitBytes: filtered.limit, SizeBytes: filtered.size}
 	case errors.Is(err, errSessionReadCeiling):
-		return &state.SizeLimitGap{Kind: state.SizeLimitReadBudget, LimitBytes: sessionReadCeiling, SizeBytes: observed.size()}
+		return &state.SizeLimitGap{Kind: state.SizeLimitReadBudget, LimitBytes: sessionReadCeiling}
 	case errors.Is(err, errRecordTooLarge), errors.Is(err, archive.ErrRecordTooLarge):
-		return &state.SizeLimitGap{Kind: state.SizeLimitRecord, LimitBytes: recordLimit, SizeBytes: observed.size()}
+		return &state.SizeLimitGap{Kind: state.SizeLimitRecord, LimitBytes: recordLimit}
 	case errors.Is(err, errTranscriptTooLarge):
 		return &state.SizeLimitGap{Kind: state.SizeLimitRaw, LimitBytes: maxRawBytes(harness, maxBytes), SizeBytes: observed.size()}
 	}
@@ -95,6 +151,9 @@ func sizeLimitOf(err error, observed sourceState, harness string, maxBytes int64
 // problem name it: "Codex raw 512 MiB".
 func SizeLimitLabel(harness string, limit state.SizeLimitGap) string {
 	mib := fmt.Sprintf("%d MiB", limit.LimitBytes>>20)
+	if limit.LimitBytes%(1<<20) != 0 {
+		mib = fmt.Sprintf("%d bytes", limit.LimitBytes)
+	}
 	switch limit.Kind {
 	case state.SizeLimitRaw:
 		if harness == archive.HarnessCodex {
@@ -133,6 +192,10 @@ func IsSizeLimitProblem(problem string) bool {
 	var n int
 	if _, err := fmt.Sscanf(problem, "%d ", &n); err != nil || n < 1 {
 		return false
+	}
+	// A status written before the limits were named.
+	if problem == fmt.Sprintf("%d session(s) stopped being captured: over the transcript size limit, kept at their last snapshot", n) {
+		return true
 	}
 	rest, ok := strings.CutPrefix(problem, fmt.Sprintf("%d%s", n, sizeLimitProblemPrefix))
 	if !ok {

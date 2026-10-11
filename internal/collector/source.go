@@ -475,6 +475,21 @@ type sourcePassSet struct {
 	passes       map[sourcePassKey]agentapi.SourcePass
 }
 
+// releaseCaches drops the open source passes' idle caches when budget has
+// less than need free (see pass.scan).
+func (s *sourcePassSet) releaseCaches(budget *agentapi.NativeReadBudget, need int64) error {
+	if s == nil || budget.Available() >= need {
+		return nil
+	}
+	var err error
+	for _, pass := range s.passes {
+		if caches, ok := pass.(interface{ ReleaseCaches() error }); ok {
+			err = errors.Join(err, caches.ReleaseCaches())
+		}
+	}
+	return err
+}
+
 func (s *sourcePassSet) get(ctx context.Context, key sourcePassKey, p agentapi.SourceProvider) (agentapi.SourcePass, error) {
 	if key.name == "codex" {
 		if provider, ok := s.env.CodexRollouts.(agentapi.CodexRolloutSliceProvider); ok {

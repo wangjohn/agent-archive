@@ -18,7 +18,7 @@ var errCatalogBudget = agentapi.ReadBudgetLimit(errors.New("native catalog excee
 // charged for the lookup lifetime. The catalog and its coverage borrow the same
 // owner; assigning their pointers does not charge a second decoded document.
 func (l *CodexRolloutLookup) reserveCatalog(n int64) bool {
-	if !l.readBudget.Reserve(n) {
+	if !l.readBudget.ReserveUnscoped(n) {
 		return false
 	}
 	l.catalogCharge += n
@@ -46,13 +46,13 @@ func (l *CodexRolloutLookup) readCatalog(ctx context.Context, path string, c *ca
 		return errCatalogBudget
 	}
 	defer l.readBudget.Release(n)
-	if !l.readBudget.Reserve(n) {
+	if !l.readBudget.ReserveUnscoped(n) {
 		return errCatalogBudget
 	}
 	keep := false
 	defer func() {
 		if !keep {
-			l.readBudget.Release(n)
+			l.readBudget.ReleaseUnscoped(n)
 		}
 	}()
 	raw := make([]byte, n)
@@ -85,7 +85,11 @@ func (l *CodexRolloutLookup) writeCatalog(ctx context.Context, path string, c ca
 	if !l.readBudget.Reserve(countScratch) {
 		return errCatalogBudget
 	}
-	n, err := jsonwire.Bound(ctx, c, l.readBudget.Available()-1)
+	available := l.readBudget.Available()
+	n, err := jsonwire.Bound(ctx, c, available-1)
+	if errors.Is(err, jsonwire.ErrLimit) {
+		l.readBudget.Refuse(available + 1)
+	}
 	l.readBudget.Release(countScratch)
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -103,12 +107,15 @@ func (l *CodexRolloutLookup) writeCatalog(ctx context.Context, path string, c ca
 	return local.WriteCompact(path, c)
 }
 
+// retainObservation keeps an observation only when the pass has room for
+// it: a pass-lifetime cache, so neither its scratch nor its refusal is any
+// session's.
 func (l *CodexRolloutLookup) retainObservation(ctx context.Context, entry cached) bool {
 	const countScratch = 32 << 10
-	if !l.readBudget.Reserve(countScratch) {
+	if !l.readBudget.ReserveUnscoped(countScratch) {
 		return false
 	}
 	n, err := jsonwire.Bound(ctx, entry, l.readBudget.Available())
-	l.readBudget.Release(countScratch)
+	l.readBudget.ReleaseUnscoped(countScratch)
 	return err == nil && l.reserveCatalog(n)
 }

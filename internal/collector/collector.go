@@ -147,6 +147,14 @@ const DefaultMaxRawTranscriptBytes = DefaultMaxTranscriptBytes * rawSizeFactor
 // every tool call's full output (see archive.MaxCodexRawTranscriptBytes).
 const codexRawSizeFactor = archive.MaxCodexRawTranscriptBytes / DefaultMaxTranscriptBytes
 
+// MaxRawTranscriptBytes is the raw size past which the collector, with its
+// default limits, records harness's transcript as too large
+// (archive.MaxRawTranscriptBytesFor). Planners use it so they refuse no
+// transcript capture would read.
+func MaxRawTranscriptBytes(harness string) int64 {
+	return maxRawBytes(harness, DefaultMaxTranscriptBytes)
+}
+
 // maxRawBytes is the raw size ceiling for a filtered size limit and the
 // harness whose transcript it bounds.
 func maxRawBytes(harness string, maxFiltered int64) int64 {
@@ -161,16 +169,18 @@ func maxRawBytes(harness string, maxFiltered int64) int64 {
 }
 
 // SessionReadCeiling bounds the bytes one session's scan may hold in the
-// pass's shared read ledger (agentapi.PassReadBudget, 192 MiB): its record
+// pass's shared read ledger (agentapi.PassReadBudget, 256 MiB): its record
 // buffers, decoded rows, filtered output, and the retained state it rewrites,
-// together. The rest stays for what the pass itself keeps between sessions
-// (the Codex index copy and catalog, cached headers and prefixes), so one
-// large session cannot leave the others without room. The largest session
-// measured needed 107 MiB (see agentapi.PassReadBudget). A session that
+// together: 160 MiB. The rest, agentapi.PassCacheReserve, holds what the pass
+// keeps between sessions, so a session within its ceiling always fits and
+// one large session cannot leave the others without room. The largest
+// session measured needed 107 MiB (see agentapi.PassReadBudget). Peak memory
+// is roughly the pass ledger plus the decoded value of the one record being
+// filtered beyond its raw length, which is all it is charged. A session that
 // needs more than this is recorded as a size-limit gap (SizeLimitReadBudget)
 // once, rather than failing every pass; one refused because others held the
 // ledger is deferred to a later pass.
-const SessionReadCeiling int64 = 160 << 20
+const SessionReadCeiling = agentapi.PassReadBudget - agentapi.PassCacheReserve
 
 // sessionReadCeiling is SessionReadCeiling, a variable only so a test can
 // lower it.
@@ -542,6 +552,10 @@ func (p *pass) deferScan(id, reason string, err error) {
 func (p *pass) scan(reg archive.SessionRegistration) {
 	priorLocal := p.local
 	budget := (&sessionScan{opts: p.opts}).readBudget()
+	// Every pass-lifetime cache is bounded by agentapi.PassCacheReserve, so
+	// the session's full ceiling is free; the source passes' idle caches are
+	// dropped first should anything else have taken that room.
+	cacheErr := p.opts.sourcePasses.releaseCaches(budget, sessionReadCeiling)
 	// Everything the session's scan charges counts against its own ceiling
 	// too, so one large session cannot leave the others without room, and
 	// its own excess is told from pressure others put on the ledger.
@@ -551,6 +565,9 @@ func (p *pass) scan(reg archive.SessionRegistration) {
 	defer func() { closeLocal(); p.local = priorLocal }()
 	id := reg.ArchiveSessionID
 	p.result.Scanned++
+	if cacheErr != nil {
+		addError(p.result.Errors, id, fmt.Errorf("release source caches: %w", cacheErr))
+	}
 	if p.unreadable[id] {
 		if !p.durableCounted[id] {
 			p.pending++

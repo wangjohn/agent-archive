@@ -31,6 +31,9 @@ type chargedLineReader struct {
 	lineCharge int64
 	charged    bool
 	done       bool
+	// err is the failure that ended the records: it is returned again,
+	// never a later record past a refused or oversized one.
+	err error
 }
 
 func (p *relatedSourcePass) newChargedLineReader(r io.Reader, limit int64) (*chargedLineReader, error) {
@@ -41,8 +44,20 @@ func (p *relatedSourcePass) newChargedLineReader(r io.Reader, limit int64) (*cha
 }
 
 // next returns the next record without its line ending, and false at the
-// end of input. The record is valid until the following call.
+// end of input. The record is valid until the following call. A failure
+// ends the records: every later call returns it again.
 func (c *chargedLineReader) next(ctx context.Context) ([]byte, bool, error) {
+	if c.err != nil {
+		return nil, false, c.err
+	}
+	record, more, err := c.read(ctx)
+	if err != nil {
+		c.err = err
+	}
+	return record, more, err
+}
+
+func (c *chargedLineReader) read(ctx context.Context) ([]byte, bool, error) {
 	if c.done || !c.charged {
 		return nil, false, nil
 	}

@@ -102,3 +102,45 @@ func TestRawLimitErrorCarriesSizes(t *testing.T) {
 		t.Fatal("observation lost")
 	}
 }
+
+func TestUnscopedCacheIsNoSessionsCharge(t *testing.T) {
+	t.Parallel()
+	b := NewNativeReadBudget(100)
+	end := b.BeginScope(40)
+	defer end()
+	if !b.ReserveUnscoped(50) || b.Available() != 40 {
+		t.Fatal("a pass cache counted toward the scope", b.Available())
+	}
+	if !b.Reserve(30) {
+		t.Fatal("reserve")
+	}
+	// Releasing the cache does not lower the scope's own count.
+	b.ReleaseUnscoped(50)
+	if b.Reserve(11) || !b.ScopeExceeded() {
+		t.Fatal("the cache release lowered the session's count")
+	}
+	b.Release(30)
+	other := NewNativeReadBudget(100)
+	endOther := other.BeginScope(40)
+	defer endOther()
+	if other.ReserveUnscoped(101) || other.ScopeExceeded() || other.ScopePressured() {
+		t.Fatal("a refused cache was charged to the session")
+	}
+}
+
+func TestScopePressuredIsSharedRefusalOnly(t *testing.T) {
+	t.Parallel()
+	b := NewNativeReadBudget(100)
+	if !b.ReserveUnscoped(80) {
+		t.Fatal("reserve")
+	}
+	end := b.BeginScope(50)
+	defer end()
+	if b.ScopePressured() {
+		t.Fatal("pressured before any refusal")
+	}
+	if b.Reserve(21) || !b.ScopePressured() || b.ScopeExceeded() {
+		t.Fatal("a shared refusal was not pressure")
+	}
+	b.ReleaseUnscoped(80)
+}

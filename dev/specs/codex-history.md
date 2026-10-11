@@ -133,7 +133,7 @@ Appends beyond the captured prefix are allowed; replacements and prefix rewrites
 are retryable changes. This permits continuously active chats to make progress.
 
 A pass owns at most 64 open dependencies, depth 64 and one million records per
-materialized graph. The shared pass charge (agentapi.PassReadBudget, 192 MiB)
+materialized graph. The shared pass charge (agentapi.PassReadBudget, 256 MiB)
 includes cached headers, immutable ancestor-prefix byte caches, bounded prefix
 summaries and line buffers grown only as far as the longest record read. A
 rollout read through its descriptor is not charged for its length. Cached

@@ -179,13 +179,13 @@ successors clear the native proof because they did not consume current native
 input under their new policy. This keeps both same-pass and interrupted
 publication cheap after restart without acknowledging newer work.
 
-A collector pass shares one 192 MiB logical data ledger across native/index
+A collector pass shares one 256 MiB logical data ledger across native/index
 reads, retained compressed and decoded inputs, filtered output, comparison and
 encoding scratch, and local pending/published input. It charges bytes held in
 memory, never the length of a transcript read through its descriptor: a
 rollout is streamed a record at a time, so its charge follows its longest
 record and what the filter keeps. Each session's scan may hold at most
-160 MiB of it, so one large session cannot leave the others without room. A
+160 MiB of it; the other 96 MiB holds what the pass keeps between sessions (cached rollout headers and prefixes, Codex coverage and catalog), so a session within its share always fits and one large session cannot leave the others without room. A
 session that needs more than that is recorded once as a `transcript_too_large`
 gap naming the per-session read limit; one refused only because other owners
 held the ledger is deferred (`read_budget`) to a later pass. Reservations precede the

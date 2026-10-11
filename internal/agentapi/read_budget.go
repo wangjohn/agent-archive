@@ -20,6 +20,9 @@ type readScope struct {
 	ceiling  int64
 	used     int64
 	exceeded bool
+	// pressured: a charge within the ceiling was refused because others
+	// held the shared ledger.
+	pressured bool
 }
 
 // PassReadBudget is the shared ledger one collector pass gives its native
@@ -28,10 +31,17 @@ type readScope struct {
 // filtered output, retained state being rewritten), never file lengths read
 // through a descriptor. Measured on the owner's machine, the largest
 // Codex session (a 182 MB rollout, 31 MB filtered, 40 MB of retained state)
-// held 107 MiB while refreshing its publication; the per-session ceiling
-// beneath this (collector.SessionReadCeiling) leaves room for that and for
-// what the pass keeps between sessions.
-const PassReadBudget int64 = 192 << 20
+// held 107 MiB while refreshing its publication. It is PassCacheReserve
+// above the per-session ceiling (collector.SessionReadCeiling), so a session
+// within its ceiling always fits beside what the pass keeps between sessions.
+const PassReadBudget int64 = 256 << 20
+
+// PassCacheReserve is the room the pass keeps for what outlives one
+// session's scan, all charged with ReserveUnscoped: the Codex coverage
+// observations (16 MiB), metadata inventory (16 MiB), cached ancestor
+// prefixes (16 MiB) and rollout headers (64 x 128 KiB), and the restored
+// discovery catalog (its size on disk, a few MiB in practice).
+const PassCacheReserve int64 = 96 << 20
 
 // NewNativeReadBudget creates a pass-owned shared charge ledger.
 func NewNativeReadBudget(limit int64) *NativeReadBudget {
@@ -53,6 +63,9 @@ func (b *NativeReadBudget) Reserve(bytes int64) bool {
 		return false
 	}
 	if bytes > b.limit-b.used {
+		if b.scope != nil {
+			b.scope.pressured = true
+		}
 		return false
 	}
 	b.used += bytes
@@ -80,6 +93,38 @@ func (b *NativeReadBudget) Release(bytes int64) {
 		// then under-counts rather than refusing its owner too early.
 		s.used -= min(bytes, s.used)
 	}
+}
+
+// ReserveUnscoped charges a pass-lifetime cache against the shared limit
+// only: it is no session's, so it neither counts toward the current scope
+// nor marks the scope exceeded when refused. Its owner releases it with
+// ReleaseUnscoped.
+func (b *NativeReadBudget) ReserveUnscoped(bytes int64) bool {
+	if b == nil {
+		return true
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if bytes < 0 || bytes > b.limit-b.used {
+		return false
+	}
+	b.used += bytes
+	b.peak = max(b.peak, b.used)
+	return true
+}
+
+// ReleaseUnscoped returns a ReserveUnscoped charge without lowering the
+// current scope's count.
+func (b *NativeReadBudget) ReleaseUnscoped(bytes int64) {
+	if b == nil {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if bytes < 0 || bytes > b.used {
+		panic("unbalanced native read budget release")
+	}
+	b.used -= bytes
 }
 
 // BeginScope attributes every later charge, until end, to one owner (one
@@ -116,9 +161,24 @@ func (b *NativeReadBudget) Refuse(bytes int64) {
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if s := b.scope; s != nil && bytes > s.ceiling-s.used {
+	switch s := b.scope; {
+	case s == nil:
+	case bytes > s.ceiling-s.used:
 		s.exceeded = true
+	case bytes > b.limit-b.used:
+		s.pressured = true
 	}
+}
+
+// ScopePressured reports whether the current scope was refused a charge
+// within its own ceiling because others held the shared ledger.
+func (b *NativeReadBudget) ScopePressured() bool {
+	if b == nil {
+		return false
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.scope != nil && b.scope.pressured
 }
 
 // ScopeExceeded reports whether the current scope refused a charge at its

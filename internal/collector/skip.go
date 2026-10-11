@@ -150,7 +150,7 @@ func (p *pass) unchangedSinceLastScan(reg archive.SessionRegistration) (unchange
 	if signature.ParserVersion != p.opts.parserVersionFor(reg.Harness.Name) || signature.FilterVersion != archive.FilterVersion || signature.AdapterVersion != adapterVersion || pendingSkillMode(signature.SkillEvidence) != p.opts.skillEvidence() {
 		return false, signature, nil
 	}
-	if (signature.Failed || sizeLimitGap(signature.Blocked)) && (signature.FailedMaxBytes != p.opts.maxTranscriptBytes() || signature.FailedRecordLimit != recordLimit || signature.FailedRawLimit != p.opts.maxRawBytes(reg.Harness.Name)) {
+	if (signature.Failed || sizeLimitGap(signature.Blocked)) && (signature.FailedMaxBytes != p.opts.maxTranscriptBytes() || signature.FailedRecordLimit != recordLimit || signature.FailedRawLimit != p.opts.maxRawBytes(reg.Harness.Name) || readCeilingChanged(signature)) {
 		return false, signature, nil
 	}
 	if !sourceStillAt(p.ctx, reader, signature) {
