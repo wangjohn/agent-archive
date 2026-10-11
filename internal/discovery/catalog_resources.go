@@ -14,6 +14,14 @@ import (
 
 var errCatalogBudget = agentapi.ReadBudgetLimit(errors.New("native catalog exceeds shared data budget"))
 
+// errCatalogTooLarge refuses a restored catalog past maxCatalogBytes. It is
+// no memory pressure a later pass clears: the catalog is rebuilt instead,
+// as a corrupt one is.
+var errCatalogTooLarge = errors.New("native catalog exceeds its size cap")
+
+// errCatalogChanged refuses a catalog that grew while it was read.
+var errCatalogChanged = errors.New("native catalog changed while read")
+
 // maxCatalogBytes caps what the lookup keeps for its whole life: the
 // restored catalog and the coverage facts it adds. It is part of
 // agentapi.PassCacheReserve (see PassCacheBytes).
@@ -27,7 +35,7 @@ const PassCacheBytes = maxCatalogBytes + maxCoverageBytes/2 + metadataBytes
 // charged for the lookup lifetime. The catalog and its coverage borrow the same
 // owner; assigning their pointers does not charge a second decoded document.
 func (l *CodexRolloutLookup) reserveCatalog(n int64) bool {
-	if n < 0 || l.catalogCharge+n > maxCatalogBytes || !l.readBudget.ReserveUnscoped(n) {
+	if n < 0 || l.catalogCharge+l.restoredCharge+n > maxCatalogBytes || !l.readBudget.ReserveUnscoped(n) {
 		return false
 	}
 	l.catalogCharge += n
@@ -55,7 +63,12 @@ func (l *CodexRolloutLookup) readCatalog(ctx context.Context, path string, c *ca
 		return errCatalogBudget
 	}
 	defer l.readBudget.Release(n)
-	if l.catalogCharge+n > maxCatalogBytes || !l.readBudget.ReserveUnscoped(n) {
+	// A read replaces the catalog the lookup restored before, if any: the
+	// same file is never charged twice.
+	if l.catalogCharge+n > maxCatalogBytes {
+		return errCatalogTooLarge
+	}
+	if !l.readBudget.ReserveUnscoped(n) {
 		return errCatalogBudget
 	}
 	keep := false
@@ -70,7 +83,7 @@ func (l *CodexRolloutLookup) readCatalog(ctx context.Context, path string, c *ca
 	}
 	var extra [1]byte
 	if count, err := f.Read(extra[:]); count != 0 || !errors.Is(err, io.EOF) {
-		return errCatalogBudget
+		return errCatalogChanged
 	}
 	if err := ctx.Err(); err != nil {
 		return err
@@ -81,9 +94,17 @@ func (l *CodexRolloutLookup) readCatalog(ctx context.Context, path string, c *ca
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	l.catalogCharge += n
+	l.releaseRestored()
+	l.restoredCharge = n
 	keep = true
 	return nil
+}
+
+// releaseRestored returns the charge of a restored catalog the lookup no
+// longer keeps (a reset discards it; a later read replaces it).
+func (l *CodexRolloutLookup) releaseRestored() {
+	l.readBudget.ReleaseUnscoped(l.restoredCharge)
+	l.restoredCharge = 0
 }
 
 func (l *CodexRolloutLookup) writeCatalog(ctx context.Context, path string, c catalog) error {

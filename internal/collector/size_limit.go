@@ -174,7 +174,7 @@ func SizeLimitLabel(harness string, limit state.SizeLimitGap) string {
 	return mib
 }
 
-// limitBytes words a limit in the largest binary unit that keeps it exact
+// limitBytes words a limit in the largest binary unit it reaches, rounded
 // to a tenth: "512 MiB", "1.5 MiB", "64 KiB", "100 bytes".
 func limitBytes(n int64) string {
 	for _, unit := range []struct {

@@ -1,7 +1,15 @@
 package discovery
 
 import (
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
+	"time"
+
+	"github.com/wangjohn/agent-archive/internal/agents/builtin"
+	"github.com/wangjohn/agent-archive/internal/local"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agents/codex"
@@ -49,9 +57,52 @@ func TestCatalogChargeIsCapped(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = lookup.Close() }()
-	room := maxCatalogBytes - lookup.catalogCharge
+	room := maxCatalogBytes - lookup.catalogCharge - lookup.restoredCharge
 	if lookup.reserveCatalog(room+1) || !lookup.reserveCatalog(room) || lookup.reserveCatalog(1) {
 		t.Fatal("catalog charge not capped", lookup.catalogCharge)
+	}
+}
+
+// A restored catalog over the cap is rebuilt, as a corrupt one is, and one
+// a reset discards gives its charge back: either way discovery goes on and
+// writes a new catalog, rather than failing every pass.
+func TestOversizedCatalogIsRebuilt(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name  string
+		size  int
+		reset bool
+	}{{"over the cap", maxCatalogBytes + 1<<20, false}, {"discarded by a reset", 20 << 20, true}} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			store, cfg, at, root := fixture(t)
+			writeRollout(t, root, cfg.Archive.Projects[0].Root, at.Add(time.Minute), 1, "sessions")
+			path := filepath.Join(store.Home(), "discovery-catalog.json")
+			old := catalog{Version: catalogVersion, Roots: []string{"/elsewhere"}, Health: Health{Errors: []string{strings.Repeat("x", c.size)}}}
+			if err := local.WriteCompact(path, old); err != nil {
+				t.Fatal(err)
+			}
+			lookup, err := NewCodexRolloutLookup(t.Context(), store, []string{root})
+			if err != nil {
+				t.Fatal("lookup refused an oversized catalog:", err)
+			}
+			if lookup.restoredCharge != 0 {
+				t.Fatalf("discarded catalog still charged: %d", lookup.restoredCharge)
+			}
+			h, err := run(t.Context(), store, cfg, Options{Sources: builtin.NewBuiltins(), Rollouts: lookup, Now: func() time.Time { return at.Add(2 * time.Minute) }}, syntheticSupport)
+			if err != nil || h.Probes == 0 {
+				t.Fatalf("discovery made no progress: probes=%d errors=%v err=%v", h.Probes, h.Errors, err)
+			}
+			if !c.reset && !slices.Contains(h.Errors, "catalog_rebuilt") {
+				t.Fatalf("over-cap catalog not reported rebuilt: %v", h.Errors)
+			}
+			if err := lookup.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if info, err := os.Stat(path); err != nil || info.Size() >= 1<<20 {
+				t.Fatalf("catalog not rewritten: %v %v", info, err)
+			}
+		})
 	}
 }
 

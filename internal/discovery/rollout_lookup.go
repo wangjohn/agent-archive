@@ -46,6 +46,7 @@ type CodexRolloutLookup struct {
 	remaining        time.Duration
 	observationBytes int64
 	catalogCharge    int64
+	restoredCharge   int64
 	observations     map[string]rolloutObservation
 	byThread         map[string]map[string]struct{}
 	byPhysical       map[string]map[string]struct{}
@@ -97,6 +98,7 @@ func NewCodexRolloutLookup(ctx context.Context, store *state.Store, homes []stri
 		return nil, errors.Join(errors.New("native coverage requires a newer writer"), lookup.closeWithContext(ctx))
 	}
 	if catalogNeedsReset(prior, roots) {
+		lookup.releaseRestored()
 		return lookup, nil
 	}
 	if prior.Coverage != nil {
@@ -826,6 +828,7 @@ func (l *CodexRolloutLookup) closeWithContext(ctx context.Context) error {
 	defer func() {
 		l.readBudget.ReleaseUnscoped(l.catalogCharge)
 		l.catalogCharge = 0
+		l.releaseRestored()
 	}()
 	l.readBudget.ReleaseUnscoped(l.observationBytes)
 	l.observationBytes = 0

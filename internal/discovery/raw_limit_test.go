@@ -13,9 +13,9 @@ import (
 
 // A Codex rollout past the former 128 MiB proof limit, but within the Codex
 // raw limit capture uses, is admitted: discovery refuses nothing capture
-// reads. The file is sparse past its records (a hole, then the newline that
-// ends the last record), so it takes no disk space; proof reads only the
-// header and the first task.
+// reads. The file is sparse past its records (a hole, read as NUL bytes,
+// then a newline), so it takes no disk space; proof hashes it whole but
+// parses only the records up to the first task.
 func TestDiscoveryAdmitsCodexRolloutOverFormerProofLimit(t *testing.T) {
 	t.Parallel()
 	store, cfg, at, root := fixture(t)

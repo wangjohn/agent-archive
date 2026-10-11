@@ -38,6 +38,11 @@ func (s *Store) WithReadBudget(ctx context.Context, budget *agentapi.NativeReadB
 
 var errStateBudget = agentapi.ReadBudgetLimit(errors.New("local state exceeds shared data budget"))
 
+// errStateFileUnstable refuses a local state file that is not a regular file
+// or grew while it was read. Unlike errStateBudget it is no memory refusal,
+// so a pending publication that meets it still requires recovery.
+var errStateFileUnstable = errors.New("local state file is not a stable regular file")
+
 func (s *Store) readBudgeted(path string, value any, retain bool) error {
 	if s.resourceBudget == nil {
 		return local.Read(path, value)
@@ -65,7 +70,7 @@ func (s *Store) readBudgeted(path string, value any, retain bool) error {
 	}
 	n := info.Size()
 	if !info.Mode().IsRegular() || n < 0 {
-		return errStateBudget
+		return errStateFileUnstable
 	}
 	// Serialized input and decoded logical data coexist during Unmarshal.
 	if !s.resourceBudget.Reserve(n) {
@@ -87,7 +92,7 @@ func (s *Store) readBudgeted(path string, value any, retain bool) error {
 	}
 	var extra [1]byte
 	if count, err := f.Read(extra[:]); count != 0 || !errors.Is(err, io.EOF) {
-		return errStateBudget
+		return errStateFileUnstable
 	}
 	if err := s.resourceContext.Err(); err != nil {
 		return err

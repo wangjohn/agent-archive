@@ -559,7 +559,9 @@ func (p *pass) scan(reg archive.SessionRegistration) {
 	// the session's full ceiling is free; the source passes' idle caches are
 	// dropped first should anything else have taken that room.
 	// A cache that fails to close is the pass's problem, not the session's.
-	p.cacheErr = errors.Join(p.cacheErr, p.opts.sourcePasses.releaseCaches(budget, sessionReadCeiling))
+	if cacheErr := p.opts.sourcePasses.releaseCaches(budget, sessionReadCeiling); cacheErr != nil && p.cacheErr == nil {
+		p.cacheErr = cacheErr // the first is reported; later ones repeat it
+	}
 	// Everything the session's scan charges counts against its own ceiling
 	// too, so one large session cannot leave the others without room, and
 	// its own excess is told from pressure others put on the ledger.
@@ -593,7 +595,7 @@ func (p *pass) scan(reg archive.SessionRegistration) {
 	}
 	if err != nil {
 		err = fmt.Errorf("load published cache: %w", err)
-		if errors.Is(err, agentapi.ErrReadBudget) && (budget.ScopeExceeded() || budget.ScopePressured()) {
+		if onlyReadBudget(err) && (budget.ScopeExceeded() || budget.ScopePressured()) {
 			// Too little read memory even to load what was published: a
 			// deferral, which fails once it has lasted MaxDeferral, rather
 			// than a failure every pass.

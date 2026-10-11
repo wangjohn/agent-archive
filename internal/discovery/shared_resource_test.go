@@ -69,7 +69,7 @@ func TestSourceAndLiveIndexShareChargeBeforeCopyAndRelease(t *testing.T) {
 	if err := owner.readCatalog(t.Context(), catalogPath, &restored); err != nil {
 		t.Fatal(err)
 	}
-	catalogCharge := owner.catalogCharge
+	catalogCharge := owner.catalogCharge + owner.restoredCharge
 	source, err := (codex.SourceProvider{}).OpenPass(t.Context(), agentapi.SourceEnvironment{ReadBudget: ledger})
 	if err != nil {
 		t.Fatal(err)
