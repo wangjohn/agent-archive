@@ -129,8 +129,10 @@ func TestCodexTooLargeFollowsTheCodexRawLimit(t *testing.T) {
 		return os.Open(path)
 	}
 	p := plan(t, env, nil, config.Config{}, Filters{})
-	if c := candidate(t, p, within); c.Skip == SkipTooLarge {
-		t.Fatalf("a Codex rollout under the Codex raw limit was too large")
+	// It grew while being planned, as the general limit would have made it
+	// too large: it is read again, never refused for its size.
+	if c := candidate(t, p, within); c.Skip != SkipSourceChanged {
+		t.Fatalf("a Codex rollout under the Codex raw limit: %q", c.Skip)
 	}
 	if c := candidate(t, p, over); c.Skip != SkipTooLarge {
 		t.Fatalf("over the Codex raw limit: %q", c.Skip)

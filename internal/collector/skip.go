@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/state"
 )
@@ -24,6 +25,11 @@ func (p *pass) skipUnchanged(reg archive.SessionRegistration, req state.Request)
 		unchanged, signature, err = p.unchangedFrozenSinceLastScan(reg)
 	} else {
 		unchanged, signature, err = p.unchangedSinceLastScan(reg)
+	}
+	if errors.Is(err, agentapi.ErrReadBudget) && !errors.Is(err, state.ErrDurableStorageRecovery) {
+		// Too little read memory to check is not a change: the scan itself
+		// meets the same refusal and records it as a gap or a deferral.
+		return false
 	}
 	if err != nil {
 		p.fail(id, fmt.Errorf("check transcript for changes: %w", err))

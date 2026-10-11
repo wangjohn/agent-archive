@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
@@ -42,16 +43,22 @@ func (s *sessionScan) overSessionCeiling(err error) bool {
 // (refreshing the last publication, building, compressing or reconciling
 // what was read, saving it) needed more than the session's share of the
 // pass: the same size-limit gap a read over it records, at the state the
-// source was read at, or is in now when the scan never read it. That
-// includes a pending publication itself too large to finish: the gap stands
-// rather than the failure every pass. Work refused only because others held
-// the ledger is deferred to a later pass, as a source read is.
+// source was read at, or is in now when the scan never read it. Work
+// refused only because others held the ledger is deferred to a later pass,
+// as a source read is. So is a scan that left a publication pending: a gap
+// would leave the upload owed and retried every pass without ever reading
+// the source again, while a deferral fails once it has lasted MaxDeferral.
 func (s *sessionScan) overCeiling(err error) (sessionOutcome, error) {
 	if !s.overSessionCeiling(err) {
 		if s.sharedPressure(err) {
 			return outcomeSkipped, &readBudgetDeferralError{err: err}
 		}
 		return outcomeSkipped, err
+	}
+	if owed, owedErr := s.local.Outstanding(s.reg, false); owedErr != nil {
+		return outcomeSkipped, errors.Join(err, owedErr)
+	} else if owed.Upload {
+		return outcomeSkipped, &readBudgetDeferralError{err: err}
 	}
 	s.releaseRetained()
 	var read sourceRead
@@ -150,10 +157,7 @@ func sizeLimitOf(err error, observed sourceState, harness string, maxBytes int64
 // SizeLimitLabel words a size-limit gap's limit, as status and the pass's
 // problem name it: "Codex raw 512 MiB".
 func SizeLimitLabel(harness string, limit state.SizeLimitGap) string {
-	mib := fmt.Sprintf("%d MiB", limit.LimitBytes>>20)
-	if limit.LimitBytes%(1<<20) != 0 {
-		mib = fmt.Sprintf("%d bytes", limit.LimitBytes)
-	}
+	mib := limitBytes(limit.LimitBytes)
 	switch limit.Kind {
 	case state.SizeLimitRaw:
 		if harness == archive.HarnessCodex {
@@ -168,6 +172,21 @@ func SizeLimitLabel(harness string, limit state.SizeLimitGap) string {
 		return "per-session read memory " + mib
 	}
 	return mib
+}
+
+// limitBytes words a limit in the largest binary unit that keeps it exact
+// to a tenth: "512 MiB", "1.5 MiB", "64 KiB", "100 bytes".
+func limitBytes(n int64) string {
+	for _, unit := range []struct {
+		shift uint
+		name  string
+	}{{20, "MiB"}, {10, "KiB"}} {
+		if n >= 1<<unit.shift {
+			value := strconv.FormatFloat(float64(n)/float64(int64(1)<<unit.shift), 'f', 1, 64)
+			return strings.TrimSuffix(value, ".0") + " " + unit.name
+		}
+	}
+	return fmt.Sprintf("%d bytes", n)
 }
 
 // sizeLimitProblemPrefix begins every SizeLimitProblem.

@@ -82,6 +82,68 @@ func TestSessionOverItsReadShareIsANamedGapOnce(t *testing.T) {
 	}
 }
 
+// TestPendingUploadOverItsShareDefersThenEscalates: a publication left
+// pending that needs more than the session's share to finish is deferred,
+// not recorded as a gap (which would leave the upload owed and retried on
+// every pass), and fails once it has been deferred for MaxDeferral.
+//
+// At 96 MiB the session loads what it published and the pending upload,
+// and finishing the upload is refused; at 36 MiB even loading them is.
+//
+// Not parallel: it lowers sessionReadCeiling.
+func TestPendingUploadOverItsShareDefersThenEscalates(t *testing.T) {
+	previous := sessionReadCeiling
+	t.Cleanup(func() { sessionReadCeiling = previous })
+	for _, ceiling := range []int64{96 << 20, 36 << 20} {
+		sessionReadCeiling = previous
+		pendingUploadOverCeiling(t, ceiling)
+	}
+}
+
+func pendingUploadOverCeiling(t *testing.T, ceiling int64) {
+	t.Helper()
+	local := newTestStore(t)
+	dir := t.TempDir()
+	reg := registration(t, writeTranscript(t, dir, "large.jsonl", keptTranscript(1<<20)))
+	now := reg.RegisteredAt.Add(time.Hour)
+	remote := storagetest.NewMemoryStore()
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return now }, MinUploadInterval: time.Hour}
+	publishOnce(t, local, remote, reg, &opts)
+	// The transcript grows; its next publication waits, pending, for the
+	// upload interval.
+	writeTranscript(t, dir, "large.jsonl", keptTranscript(40<<20))
+	now = now.Add(time.Minute)
+	if result, err := Run(t.Context(), local, remote, opts); err != nil || len(result.Waiting) != 1 {
+		t.Fatalf("fixture: %#v %v", result, err)
+	}
+	if pending, err := local.HasPending(reg.ArchiveSessionID); err != nil || !pending {
+		t.Fatalf("fixture left no pending upload: %v", err)
+	}
+	// The upload is due, but finishing it needs more than the session's
+	// share: on each later pass the session is deferred, the source is not
+	// read past it, and no gap is recorded.
+	sessionReadCeiling = ceiling
+	for range 2 {
+		now = now.Add(2 * time.Hour)
+		filters := transcriptFilters.Load()
+		result, err := Run(t.Context(), local, remote, opts)
+		if err != nil || result.Deferred[reg.ArchiveSessionID] != DeferredReadBudget || len(result.Errors) != 0 || len(result.Published) != 0 {
+			t.Fatalf("pending upload over a %d MiB share: %v %v", ceiling>>20, result.Errors, err)
+		}
+		if _, blocked, _ := local.LoadBlocked(reg.ArchiveSessionID); blocked {
+			t.Fatal("pending upload recorded as a gap")
+		}
+		if transcriptFilters.Load() != filters {
+			t.Fatal("the source was read past a pending upload")
+		}
+	}
+	now = now.Add(MaxDeferral)
+	result, err := Run(t.Context(), local, remote, opts)
+	if err != nil || result.Errors[reg.ArchiveSessionID] == nil || !strings.Contains(result.Errors[reg.ArchiveSessionID].Error(), DeferralExpiredProblem) {
+		t.Fatalf("expired deferral: %#v %v", result, err)
+	}
+}
+
 // TestRaisedRawLimitReadsAGapAgain: a size-limit gap stands only while the
 // limit it was reached under does. A gap from before the raw limit was
 // recorded (a Codex thread over the former 128 MiB cap) is read again.
@@ -206,6 +268,16 @@ func TestOverCeilingAfterTheReadIsANamedGap(t *testing.T) {
 		}
 		outcome, err := scan.overCeiling(errRetainedBudget)
 		end()
+		if pending {
+			// A gap would leave the upload owed and retried every pass.
+			if reason, ok := deferralReason(err); !ok || reason != DeferredReadBudget {
+				t.Fatalf("pending upload over the ceiling: %v", err)
+			}
+			if _, blocked, _ := local.LoadBlocked(reg.ArchiveSessionID); blocked {
+				t.Fatal("pending upload recorded as a gap")
+			}
+			continue
+		}
 		if err != nil || outcome != outcomeSkipped {
 			t.Fatalf("pending=%v: %v", pending, err)
 		}
@@ -270,14 +342,82 @@ func TestSessionStartsWithItsCeilingFree(t *testing.T) {
 
 type cachingPass struct {
 	agentapi.SourcePass
-	budget *agentapi.NativeReadBudget
-	held   int64
+	budget   *agentapi.NativeReadBudget
+	held     int64
+	releases int
 }
 
 func (p *cachingPass) ReleaseCaches() error {
 	p.budget.ReleaseUnscoped(p.held)
 	p.held = 0
+	p.releases++
 	return nil
+}
+
+func (p *cachingPass) Close() error {
+	p.budget.ReleaseUnscoped(p.held)
+	p.held = 0
+	return p.SourcePass.Close()
+}
+
+// cachingSources opens source passes that keep more cached than
+// agentapi.PassCacheReserve, as a pass whose caches grew past their caps.
+type cachingSources struct {
+	agentapi.SourcesLookup
+	passes *[]*cachingPass
+}
+
+func (s cachingSources) LookupSources(name string) (agentapi.SourceProvider, agentapi.TranscriptFilter, bool) {
+	p, f, ok := s.SourcesLookup.LookupSources(name)
+	return cachingProvider{SourceProvider: p, passes: s.passes}, f, ok
+}
+
+type cachingProvider struct {
+	agentapi.SourceProvider
+	passes *[]*cachingPass
+}
+
+func (p cachingProvider) OpenPass(ctx context.Context, env agentapi.SourceEnvironment) (agentapi.SourcePass, error) {
+	pass, err := p.SourceProvider.OpenPass(ctx, env)
+	if err != nil {
+		return nil, err
+	}
+	held := agentapi.PassCacheReserve + 32<<20
+	if !env.ReadBudget.ReserveUnscoped(held) {
+		return nil, errors.Join(errors.New("reserve cache"), pass.Close())
+	}
+	cached := &cachingPass{SourcePass: pass, budget: env.ReadBudget, held: held}
+	*p.passes = append(*p.passes, cached)
+	return cached, nil
+}
+
+// TestPassDropsSourceCachesBeforeASession: a pass whose source caches left
+// less than a session's ceiling free drops them before the next session
+// begins.
+func TestPassDropsSourceCachesBeforeASession(t *testing.T) {
+	t.Parallel()
+	local := newTestStore(t)
+	dir := t.TempDir()
+	for _, id := range []string{"session-1", "session-2"} {
+		reg := registration(t, writeTranscript(t, dir, id+".jsonl", codexTranscript))
+		reg.ArchiveSessionID, reg.NativeSessionID = id, "native-"+id
+		if err := local.SaveRegistration(reg); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var passes []*cachingPass
+	opts := Options{Sources: cachingSources{SourcesLookup: testSources, passes: &passes}, Parsers: testParsers, MachineID: "m"}
+	result, err := Run(t.Context(), local, storagetest.NewMemoryStore(), opts)
+	if err != nil || len(result.Errors) != 0 || len(result.Published) != 2 {
+		t.Fatalf("%#v %v", result, err)
+	}
+	releases := 0
+	for _, pass := range passes {
+		releases += pass.releases
+	}
+	if len(passes) == 0 || releases == 0 {
+		t.Fatalf("no cache dropped before the second session: passes=%d releases=%d", len(passes), releases)
+	}
 }
 
 func TestCodexRawLimitIsTheSharedConstant(t *testing.T) {
@@ -334,7 +474,7 @@ func TestSizeLimitOfNamesEachLimit(t *testing.T) {
 	if got := SizeLimitLabel(archive.HarnessCodex, state.SizeLimitGap{Kind: state.SizeLimitRaw, LimitBytes: 512 << 20}); got != "Codex raw 512 MiB" {
 		t.Fatal(got)
 	}
-	if got := SizeLimitLabel(archive.HarnessClaude, state.SizeLimitGap{Kind: state.SizeLimitFiltered, LimitBytes: 64}); got != "filtered 64 bytes" {
+	if got := SizeLimitLabel(archive.HarnessClaude, state.SizeLimitGap{Kind: state.SizeLimitFiltered, LimitBytes: 64}); got != "filtered 64 bytes" || SizeLimitLabel("", state.SizeLimitGap{Kind: state.SizeLimitFiltered, LimitBytes: 1536 << 10}) != "filtered 1.5 MiB" || SizeLimitLabel("", state.SizeLimitGap{Kind: state.SizeLimitRecord, LimitBytes: 64 << 10}) != "record 64 KiB" {
 		t.Fatal(got)
 	}
 	// A status written before the limits were named is still recognised.

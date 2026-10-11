@@ -45,6 +45,32 @@ func TestPassCachesAreNoSessionsAndRelease(t *testing.T) {
 	}
 }
 
+// TestRefusedHeaderIsSharedPressure: a rollout's header, though charged as
+// a pass cache, is required for the read; refused because others hold the
+// ledger, it marks the session's scope pressured, so the collector defers
+// the session instead of failing it every pass.
+func TestRefusedHeaderIsSharedPressure(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	ref, _ := historyFile(t, dir, threadA, threadA, 0, nil, "text")
+	ledger := agentapi.NewNativeReadBudget(passLedger)
+	held := ledger.Available() - (64 << 10)
+	if !ledger.ReserveUnscoped(held) {
+		t.Fatal("reserve")
+	}
+	end := ledger.BeginScope(sessionCeiling)
+	defer end()
+	pass, err := (SourceProvider{}).OpenPass(t.Context(), agentapi.SourceEnvironment{ReadBudget: ledger})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = pass.Close() }()
+	if _, err := pass.Read(t.Context(), ref, agentapi.ReadLimits{}); !errors.Is(err, agentapi.ErrReadBudget) || !ledger.ScopePressured() || ledger.ScopeExceeded() {
+		t.Fatalf("refused header: err=%v pressured=%v", err, ledger.ScopePressured())
+	}
+	ledger.ReleaseUnscoped(held)
+}
+
 // TestChargedLineReaderFailureIsFinal: an oversized record ends the
 // records; no later record is returned past it.
 func TestChargedLineReaderFailureIsFinal(t *testing.T) {

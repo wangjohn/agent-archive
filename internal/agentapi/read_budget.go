@@ -37,10 +37,11 @@ type readScope struct {
 const PassReadBudget int64 = 256 << 20
 
 // PassCacheReserve is the room the pass keeps for what outlives one
-// session's scan, all charged with ReserveUnscoped: the Codex coverage
-// observations (16 MiB), metadata inventory (16 MiB), cached ancestor
-// prefixes (16 MiB) and rollout headers (64 x 128 KiB), and the restored
-// discovery catalog (its size on disk, a few MiB in practice).
+// session's scan, all charged with ReserveUnscoped and capped: the Codex
+// lookup's restored catalog with its coverage facts (32 MiB), coverage
+// observations (8 MiB) and metadata inventory (16 MiB); the source's cached
+// ancestor prefixes (16 MiB) and rollout headers (64 x 128 KiB): 80 MiB in
+// all (discovery.PassCacheBytes plus codex.PassCacheBytes).
 const PassCacheReserve int64 = 96 << 20
 
 // NewNativeReadBudget creates a pass-owned shared charge ledger.
@@ -111,6 +112,22 @@ func (b *NativeReadBudget) ReserveUnscoped(bytes int64) bool {
 	b.used += bytes
 	b.peak = max(b.peak, b.used)
 	return true
+}
+
+// ReserveUnscopedRequired is ReserveUnscoped for a pass-lifetime charge the
+// current session cannot go on without (a rollout's header): its refusal
+// marks the scope pressured, so the session is deferred to a later pass
+// rather than failed.
+func (b *NativeReadBudget) ReserveUnscopedRequired(bytes int64) bool {
+	if b.ReserveUnscoped(bytes) {
+		return true
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.scope != nil {
+		b.scope.pressured = true
+	}
+	return false
 }
 
 // ReleaseUnscoped returns a ReserveUnscoped charge without lowering the

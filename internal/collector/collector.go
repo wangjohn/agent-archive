@@ -401,6 +401,9 @@ type pass struct {
 	// sizeLimits names the limits those sessions stopped at, where known
 	// (SizeLimitLabel), for the pass's problem.
 	sizeLimits []string
+	// cacheErr holds failures to close the source passes' idle caches
+	// before a session (see sourcePassSet.releaseCaches).
+	cacheErr error
 	// pending counts the sessions left with outstanding work.
 	pending int
 	// expiredSubagents lists the subagents this pass stopped waiting for
@@ -555,7 +558,8 @@ func (p *pass) scan(reg archive.SessionRegistration) {
 	// Every pass-lifetime cache is bounded by agentapi.PassCacheReserve, so
 	// the session's full ceiling is free; the source passes' idle caches are
 	// dropped first should anything else have taken that room.
-	cacheErr := p.opts.sourcePasses.releaseCaches(budget, sessionReadCeiling)
+	// A cache that fails to close is the pass's problem, not the session's.
+	p.cacheErr = errors.Join(p.cacheErr, p.opts.sourcePasses.releaseCaches(budget, sessionReadCeiling))
 	// Everything the session's scan charges counts against its own ceiling
 	// too, so one large session cannot leave the others without room, and
 	// its own excess is told from pressure others put on the ledger.
@@ -565,9 +569,6 @@ func (p *pass) scan(reg archive.SessionRegistration) {
 	defer func() { closeLocal(); p.local = priorLocal }()
 	id := reg.ArchiveSessionID
 	p.result.Scanned++
-	if cacheErr != nil {
-		addError(p.result.Errors, id, fmt.Errorf("release source caches: %w", cacheErr))
-	}
 	if p.unreadable[id] {
 		if !p.durableCounted[id] {
 			p.pending++
@@ -591,7 +592,15 @@ func (p *pass) scan(reg archive.SessionRegistration) {
 		published, err = p.local.LoadPublishedState(id)
 	}
 	if err != nil {
-		p.fail(id, fmt.Errorf("load published cache: %w", err))
+		err = fmt.Errorf("load published cache: %w", err)
+		if errors.Is(err, agentapi.ErrReadBudget) && (budget.ScopeExceeded() || budget.ScopePressured()) {
+			// Too little read memory even to load what was published: a
+			// deferral, which fails once it has lasted MaxDeferral, rather
+			// than a failure every pass.
+			p.deferScan(id, DeferredReadBudget, err)
+			return
+		}
+		p.fail(id, err)
 		return
 	}
 	if err := announceSubagent(p.local, reg, published); err != nil {
@@ -697,6 +706,9 @@ func (p *pass) saveStatus() error {
 	var problems []string
 	if len(p.result.Errors) > 0 {
 		problems = append(problems, FailedSessionsProblem(len(p.result.Errors)))
+	}
+	if p.cacheErr != nil {
+		problems = append(problems, fmt.Sprintf("release source caches: %v", p.cacheErr))
 	}
 	// A size-limit gap is not a failure, but capture of the session has
 	// stopped at its last snapshot, which status must say rather than look

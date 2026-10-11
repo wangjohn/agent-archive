@@ -14,11 +14,20 @@ import (
 
 var errCatalogBudget = agentapi.ReadBudgetLimit(errors.New("native catalog exceeds shared data budget"))
 
+// maxCatalogBytes caps what the lookup keeps for its whole life: the
+// restored catalog and the coverage facts it adds. It is part of
+// agentapi.PassCacheReserve (see PassCacheBytes).
+const maxCatalogBytes = 32 << 20
+
+// PassCacheBytes is the most the lookup keeps between sessions: catalog,
+// coverage observations and metadata inventory, all charged unscoped.
+const PassCacheBytes = maxCatalogBytes + maxCoverageBytes/2 + metadataBytes
+
 // reserveCatalog keeps restored facts and new observation/coverage allocations
 // charged for the lookup lifetime. The catalog and its coverage borrow the same
 // owner; assigning their pointers does not charge a second decoded document.
 func (l *CodexRolloutLookup) reserveCatalog(n int64) bool {
-	if !l.readBudget.ReserveUnscoped(n) {
+	if n < 0 || l.catalogCharge+n > maxCatalogBytes || !l.readBudget.ReserveUnscoped(n) {
 		return false
 	}
 	l.catalogCharge += n
@@ -46,7 +55,7 @@ func (l *CodexRolloutLookup) readCatalog(ctx context.Context, path string, c *ca
 		return errCatalogBudget
 	}
 	defer l.readBudget.Release(n)
-	if !l.readBudget.ReserveUnscoped(n) {
+	if l.catalogCharge+n > maxCatalogBytes || !l.readBudget.ReserveUnscoped(n) {
 		return errCatalogBudget
 	}
 	keep := false

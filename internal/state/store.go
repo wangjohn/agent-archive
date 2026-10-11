@@ -880,6 +880,11 @@ func (s *Store) LoadPending(id string) (PendingPublication, bool, error) {
 	} else {
 		found, err = s.readOwned(s.pendingPath(id), &pending)
 	}
+	if errors.Is(err, agentapi.ErrReadBudget) && !errors.Is(err, ErrDurableStorageRecovery) {
+		// The memory ledger refused the read: the publication is intact and
+		// is read again when there is room, never recovered.
+		return PendingPublication{}, true, fmt.Errorf("read pending publication %q: %w", id, err)
+	}
 	if err != nil {
 		return PendingPublication{}, protected || cfg.DurableStorageProtection || errors.Is(err, ErrDurableStorageRecovery), fmt.Errorf("read pending publication %q: %w", id, errors.Join(ErrDurableStorageRecovery, err))
 	}

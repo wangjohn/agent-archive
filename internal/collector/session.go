@@ -340,9 +340,8 @@ func (s *sessionScan) readFailed(read sourceRead, err error) (sessionOutcome, er
 		s.sizeLimit = sizeLimitOf(errSessionReadCeiling, read.observed, s.reg.Harness.Name, s.opts.maxTranscriptBytes())
 		return s.blockThenRemember(state.BlockedReasonTranscriptTooLarge, read)
 	}
-	if s.sharedPressure(err) {
-		return outcomeSkipped, &readBudgetDeferralError{err: err}
-	}
+	// A refusal under others' pressure ends the scan here; pass.scan defers
+	// it (sessionScan.overCeiling), as any refusal after the read.
 	if agentapi.HasFailure(err, agentapi.Cleanup) || agentapi.HasFailure(err, agentapi.Changed) || agentapi.HasFailure(err, agentapi.Unavailable) || errors.Is(err, agentapi.ErrReadBudget) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return outcomeSkipped, err
 	}

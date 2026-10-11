@@ -33,6 +33,11 @@ const passReadBudget = agentapi.PassReadBudget
 // stays small beside a session's own ceiling.
 const prefixCacheLimit int64 = 16 << 20
 
+// PassCacheBytes is the most a pass keeps between reads: cached ancestor
+// prefixes and the header of every open rollout, all charged unscoped
+// within agentapi.PassCacheReserve.
+const PassCacheBytes = prefixCacheLimit + archive.MaxHistorySpans*sourceHeaderCharge
+
 // ordinaryScratch is what an ordinary snapshot holds while open: hashing and
 // boundary scratch. The filter charges its own record buffer (see
 // nativeScannerCharge).
@@ -149,7 +154,7 @@ func (p *relatedSourcePass) open(ctx context.Context, ref agentapi.SourceRef) (*
 	}
 	// The file is read through its descriptor, a bounded record at a time;
 	// only the header and proof state stay in memory with it.
-	if !p.reserveCache(sourceHeaderCharge) {
+	if !p.reserveHeader() {
 		return fail(agentapi.ReadBudgetLimit(errors.New("shared source and index budget exhausted")))
 	}
 	ownedCharge = sourceHeaderCharge
@@ -1542,6 +1547,17 @@ func (p *relatedSourcePass) reserveCache(bytes int64) bool {
 		return false
 	}
 	p.bytes += bytes
+	return true
+}
+
+// reserveHeader charges a cached rollout's header like reserveCache, but
+// the read cannot go on without it: a refusal marks the session's scope
+// pressured, so the session is deferred rather than failed.
+func (p *relatedSourcePass) reserveHeader() bool {
+	if !p.env.ReadBudget.ReserveUnscopedRequired(sourceHeaderCharge) {
+		return false
+	}
+	p.bytes += sourceHeaderCharge
 	return true
 }
 

@@ -1,12 +1,9 @@
 package discovery
 
 import (
-	"bufio"
 	"context"
-	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -16,28 +13,20 @@ import (
 
 // A Codex rollout past the former 128 MiB proof limit, but within the Codex
 // raw limit capture uses, is admitted: discovery refuses nothing capture
-// reads. Most of it is command output, as in a multi-day thread.
+// reads. The file is sparse past its records (a hole, then the newline that
+// ends the last record), so it takes no disk space; proof reads only the
+// header and the first task.
 func TestDiscoveryAdmitsCodexRolloutOverFormerProofLimit(t *testing.T) {
 	t.Parallel()
 	store, cfg, at, root := fixture(t)
 	id := writeRollout(t, root, cfg.Archive.Projects[0].Root, at.Add(time.Minute), 1, "sessions")
 	path := filepath.Join(root, "sessions", "rollout-2026-10-01T12-00-00-"+id+".jsonl")
-	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
+	const size = 130 << 20
+	file, err := os.OpenFile(path, os.O_WRONLY, 0o600)
 	if err != nil {
 		t.Fatal(err)
 	}
-	w := bufio.NewWriterSize(file, 1<<20)
-	line, err := json.Marshal(map[string]any{"type": "event_msg", "timestamp": at.Add(time.Minute).Format(time.RFC3339Nano), "payload": map[string]any{"type": "exec_command_end", "call_id": "c", "aggregated_output": strings.Repeat("output line\n", 1<<16)}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	line = append(line, '\n')
-	for written := int64(0); written <= 130<<20; written += int64(len(line)) {
-		if _, err := w.Write(line); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := w.Flush(); err != nil {
+	if _, err := file.WriteAt([]byte("\n"), size-1); err != nil {
 		t.Fatal(err)
 	}
 	if err := file.Close(); err != nil {
