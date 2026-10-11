@@ -312,7 +312,7 @@ func (p *relatedSourcePass) legacyOrdinarySeed(seed *rolloutFile) bool {
 func (p *relatedSourcePass) selectLineage(ctx context.Context, selected sourceSelection) (sourceSelection, error) {
 	set := selected.set
 	if !set.Complete {
-		return selected, sourceFailure(agentapi.Unavailable, "rollout lineage incomplete")
+		return selected, coverageIncomplete("rollout lineage incomplete")
 	}
 	candidates := map[string]*rolloutFile{}
 	bases := map[string]bool{}
@@ -549,7 +549,7 @@ func (p *relatedSourcePass) Read(ctx context.Context, ref agentapi.SourceRef, li
 		// A retained proof can lack a segment created since it, so the tip it
 		// yields may be stale. It still lets Signature recognize an unchanged
 		// source; content waits for this pass's own coverage proof.
-		return fail(sourceFailure(agentapi.Unavailable, "rollout lineage incomplete"))
+		return fail(coverageIncomplete("rollout lineage incomplete"))
 	}
 	return p.readSelection(ctx, limits, selection)
 }
@@ -1267,7 +1267,7 @@ func (s *historySnapshot) RevisionCandidates(ctx context.Context) ([]agentapi.So
 		return nil, err
 	}
 	if s.owner.env.CodexRollouts != nil && !s.selection.set.Complete {
-		return nil, sourceFailure(agentapi.Unavailable, "historical candidate coverage incomplete")
+		return nil, coverageIncomplete("historical candidate coverage incomplete")
 	}
 	out := make([]agentapi.SourceRef, 0, archive.MaxHistorySpans)
 	seen := map[string]bool{}
@@ -1302,7 +1302,7 @@ func (s *ordinarySnapshot) RevisionCandidates(ctx context.Context) ([]agentapi.S
 		return nil, err
 	}
 	if s.owner.env.CodexRollouts != nil && !s.selection.set.Complete {
-		return nil, sourceFailure(agentapi.Unavailable, "historical candidate coverage incomplete")
+		return nil, coverageIncomplete("historical candidate coverage incomplete")
 	}
 	out := []agentapi.SourceRef{s.source.ref}
 	seen := map[string]bool{s.source.ref.Path: true}
