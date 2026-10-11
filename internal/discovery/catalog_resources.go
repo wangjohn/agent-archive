@@ -107,7 +107,22 @@ func (l *CodexRolloutLookup) releaseRestored() {
 	l.restoredCharge = 0
 }
 
+// writeCatalog writes c within maxCatalogBytes, the most the next read
+// accepts: a catalog written past it would be rejected, rebuilt and its
+// coverage restarted on every pass. Over the cap, the observation cache (hints
+// that only spare header reads) is dropped and the rest written. Still over,
+// nothing is written: the previous file, which the next read accepts, stays,
+// and errCatalogTooLarge says so.
 func (l *CodexRolloutLookup) writeCatalog(ctx context.Context, path string, c catalog) error {
+	err := l.writeCatalogWithin(ctx, path, c)
+	if !errors.Is(err, errCatalogTooLarge) || len(c.Cache) == 0 {
+		return err
+	}
+	c.Cache = nil
+	return l.writeCatalogWithin(ctx, path, c)
+}
+
+func (l *CodexRolloutLookup) writeCatalogWithin(ctx context.Context, path string, c catalog) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -116,11 +131,16 @@ func (l *CodexRolloutLookup) writeCatalog(ctx context.Context, path string, c ca
 		return errCatalogBudget
 	}
 	available := l.readBudget.Available()
-	n, err := jsonwire.Bound(ctx, c, available-1)
-	if errors.Is(err, jsonwire.ErrLimit) {
+	limit := min(available-1, maxCatalogBytes)
+	n, err := jsonwire.Bound(ctx, c, limit)
+	overCap := errors.Is(err, jsonwire.ErrLimit) && limit == maxCatalogBytes
+	if errors.Is(err, jsonwire.ErrLimit) && !overCap {
 		l.readBudget.Refuse(available + 1)
 	}
 	l.readBudget.Release(countScratch)
+	if overCap {
+		return errCatalogTooLarge
+	}
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return err
