@@ -89,7 +89,7 @@ var diagnosticDescriptions = map[DiagnosticDetail]diagnosticDescription{
 	"native_boundary_scratch_budget_exhausted":               {ActionAwaitSupport, "Native boundary scratch budget exhausted."},
 	"native_creation_evidence_unavailable":                   {ActionReviewSource, "Native creation evidence unavailable."},
 	"native_record_window_budget_exhausted":                  {ActionAwaitSupport, "Native record window budget exhausted."},
-	"ordinary_native_scanner_budget_exhausted":               {ActionAwaitSupport, "Ordinary native scanner budget exhausted."},
+	"ordinary_native_scratch_budget_exhausted":               {ActionAwaitSupport, "Ordinary native scratch budget exhausted."},
 	"original_fact_candidate_limit":                          {ActionAwaitSupport, "Original fact candidate limit."},
 	"related_admission_requires_confined_source_home":        {ActionReviewSource, "Related admission requires confined source home."},
 	"related_history_requires_admitted_confined_source_home": {ActionReviewSource, "Related history requires admitted confined source home."},
