@@ -43,7 +43,7 @@ and failure stop and reap both test process groups. CLI listing invokes TestMain
 before execution, and both shards have independent TestMain initialization and
 temporary state. Cold workers keep independent build/module caches; sharding
 improves latency only if measured scheduling benefits outweigh that extra work.
-For local coverage validation, run one worker at a time:
+For local coverage validation on Linux, run one worker at a time:
 
 ```sh
 python3 scripts/run_go_shard.py --shard 0 --output /tmp/go-shard-0

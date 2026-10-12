@@ -123,6 +123,7 @@ class GateTest(unittest.TestCase):
                 runner.reconcile(directory)
 
 
+@unittest.skipUnless(sys.platform == 'linux', 'Linux worker uses procfs and child subreaping')
 class RunPlanTest(unittest.TestCase):
     def test_complete_runner_executes_each_package_once_and_reconciles_both_bins(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -176,10 +177,13 @@ else:
             self.assertFalse((root/'0/ordinary.json').exists(), 'empty batch must not default to testing the module root')
 
 
+@unittest.skipUnless(sys.platform == 'linux', 'Linux process groups and child subreaping')
 class ProcessTest(unittest.TestCase):
-    def sleeper(self, directory):
+    def sleeper(self, directory, escaped=False):
         pidfile = Path(directory)/'pid'
         code = "import subprocess,time; from pathlib import Path; p=subprocess.Popen(['"+sys.executable+"','-c','import time;time.sleep(60)']); Path("+repr(str(pidfile))+").write_text(str(p.pid));time.sleep(60)"
+        if escaped:
+            code = code.replace(']); Path(', '], start_new_session=True); Path(')
         return [sys.executable, '-c', code], pidfile
 
     def assert_stopped(self, pidfile):
@@ -199,6 +203,25 @@ class ProcessTest(unittest.TestCase):
                     runner.supervise(commands, start + .4)
                 self.assertLess(time.monotonic()-start, 3)
                 self.assert_stopped(pidfile)
+
+    def test_cleanup_preserves_a_preexisting_unrelated_child(self):
+        unrelated = subprocess.Popen([sys.executable, '-c', 'import time;time.sleep(60)'], start_new_session=True)
+        try:
+            with tempfile.TemporaryDirectory() as d:
+                sleeper, pidfile = self.sleeper(d, escaped=True)
+                with self.assertRaises(runner.Failure):
+                    runner.supervise([(sleeper, Path(d)/'out', os.environ.copy())], time.monotonic()+.3)
+                self.assert_stopped(pidfile)
+                self.assertIsNone(unrelated.poll(), 'cleanup must not signal preexisting children')
+        finally:
+            unrelated.terminate();unrelated.wait(timeout=3)
+
+    def test_timeout_reaps_grandchild_that_created_another_session(self):
+        with tempfile.TemporaryDirectory() as d:
+            sleeper, pidfile = self.sleeper(d, escaped=True)
+            with self.assertRaises(runner.Failure):
+                runner.supervise([(sleeper, Path(d)/'out', os.environ.copy())], time.monotonic()+.3)
+            self.assert_stopped(pidfile)
 
     def test_live_json_failure_stops_commands_that_have_not_exited(self):
         with tempfile.TemporaryDirectory() as d:

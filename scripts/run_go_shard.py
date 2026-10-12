@@ -37,7 +37,29 @@ def json_stream(text):
     return items
 
 
-def stop_processes(processes):
+def child_pids():
+    # Some kernels omit the optional /proc/.../children file. Fall back to
+    # PPID metadata only; never read another process's command or environment.
+    own_pid = os.getpid()
+    if int(Path('/proc/self/stat').read_text().split(' ', 1)[0]) != own_pid:
+        raise Failure('procfs PID namespace does not match signal namespace')
+    children = Path(f'/proc/self/task/{own_pid}/children')
+    if children.exists():
+        return {int(pid) for pid in children.read_text().split()}
+    result = set()
+    for entry in Path('/proc').iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            fields = (entry/'stat').read_text().rsplit(')', 1)[1].split()
+            if int(fields[1]) == own_pid:
+                result.add(int(entry.name))
+        except (OSError, ValueError, IndexError):
+            continue  # exited or belongs to another inaccessible actor
+    return result
+
+
+def stop_processes(processes, previous_children):
     # As a Linux subreaper, this process owns orphaned test grandchildren too.
     handlers = {sig: signal.signal(sig, signal.SIG_IGN) for sig in (signal.SIGTERM, signal.SIGINT)}
     try:
@@ -57,19 +79,28 @@ def stop_processes(processes):
                 process.wait(timeout=max(.01, end-time.monotonic()))
             except subprocess.TimeoutExpired as error:
                 raise Failure('killed child did not exit within cleanup deadline') from error
-        # Direct children were reaped above; collect adopted members of each
-        # command's process group without consuming unrelated child statuses.
-        for process in processes:
-            while True:
+        # PTY harnesses create sessions/groups outside the Go command's
+        # group. Once their parent dies they are adopted by this subreaper;
+        # terminate and reap all newly adopted children, regardless of PGID.
+        grace = min(end, time.monotonic()+1)
+        signalled = set()
+        while True:
+            adopted = child_pids() - previous_children
+            if not adopted:
+                break
+            for pid in adopted:
                 try:
-                    pid, _ = os.waitpid(-process.pid, os.WNOHANG)
-                except ChildProcessError:
-                    break
-                if pid:
-                    continue
-                if time.monotonic() >= end:
-                    raise Failure('test descendant did not exit within cleanup deadline')
-                time.sleep(.02)
+                    reaped, _ = os.waitpid(pid, os.WNOHANG)
+                    if reaped:
+                        continue
+                    if pid not in signalled or time.monotonic() >= grace:
+                        os.kill(pid, signal.SIGKILL if time.monotonic() >= grace else signal.SIGTERM)
+                        signalled.add(pid)
+                except (ChildProcessError, ProcessLookupError):
+                    pass
+            if time.monotonic() >= end:
+                raise Failure('test descendant did not exit within cleanup deadline')
+            time.sleep(.02)
     finally:
         for sig, handler in handlers.items():
             signal.signal(sig, handler)
@@ -85,6 +116,7 @@ def supervise(commands, deadline):
     libc.prctl.argtypes = [ctypes.c_int] + [ctypes.c_ulong] * 4
     if libc.prctl(36, 1, 0, 0, 0) != 0:
         raise Failure('cannot enable Linux child-subreaper cleanup')
+    previous_children = child_pids()
     processes, files, started, durations, monitors, pending = [], [], [], [], [], []
     try:
         for command, output, env in commands:
@@ -132,9 +164,11 @@ def supervise(commands, deadline):
                 raise Failure('shared discovery/test deadline exceeded')
             time.sleep(.05)
     finally:
-        stop_processes(processes)
-        for handle in files + [m for m in monitors if m is not None]:
-            handle.close()
+        try:
+            stop_processes(processes, previous_children)
+        finally:
+            for handle in files + [m for m in monitors if m is not None]:
+                handle.close()
 
 
 def metadata(text):
