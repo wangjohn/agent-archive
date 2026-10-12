@@ -47,7 +47,7 @@ func filterImportSource(ctx context.Context, env Environment, w *work, started t
 	defer func() { err = errors.Join(err, snapshot.Close()) }()
 	admission, ok := snapshot.(agentapi.SourceAdmissionEvidence)
 	if !ok {
-		return out, release, agentapi.Wrap(agentapi.Unavailable, errors.New("native admission evidence unavailable"))
+		return out, release, agentapi.WithCause(agentapi.Wrap(agentapi.Unavailable, errors.New("native admission evidence unavailable")), "native_admission_evidence_unavailable")
 	}
 	evidence, err := admission.AdmissionEvidence(ctx, agentapi.SourceAdmission{NativeID: w.c.NativeSessionID, Cwd: w.t.cwd})
 	if err != nil {
@@ -56,7 +56,20 @@ func filterImportSource(ctx context.Context, env Environment, w *work, started t
 	// Children and supported forks require their first own native task.
 	// Ordinary historical and paginated imports retain their compatibility.
 	if evidence.Binding.RequiresOwnTask() && !evidence.Task.ValidNativeCreation(evidence.Binding.NativeCreatedAt) {
-		return out, release, agentapi.Wrap(agentapi.Unavailable, errors.New("native own task unavailable"))
+		cause := agentapi.SourceCause("own_task_missing")
+		if evidence.Task.Seen {
+			cause = "own_task_invalid"
+			if evidence.Task.Refusal != "" {
+				cause = evidence.Task.Refusal
+			}
+			if evidence.Task.Native && !evidence.Task.LocalExecution {
+				cause = "own_task_execution_unsupported"
+			}
+			if evidence.Task.Native && evidence.Task.LocalExecution && !evidence.Task.StartedAt.IsZero() && !evidence.Binding.NativeCreatedAt.IsZero() {
+				cause = "own_task_before_creation"
+			}
+		}
+		return out, release, agentapi.WithCause(agentapi.Wrap(agentapi.Unavailable, errors.New("native own task unavailable")), cause)
 	}
 	if leased, ok := filter.(agentapi.LeasedTranscriptFilter); ok && leased.LeasedFilterFor(filter) {
 		out, release, err = leased.FilterLeased(ctx, snapshot.Input(), agentapi.FilterContext{Filename: ref.Path, StartedAt: started, Limits: limits}, environment.ReadBudget)

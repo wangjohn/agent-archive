@@ -2,6 +2,8 @@ package backfill
 
 import (
 	"io"
+
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"sort"
 
 	"github.com/wangjohn/agent-archive/internal/sourcefacts"
@@ -62,6 +64,42 @@ type diagnosticDescription struct {
 
 // The finite vocabulary bounds rendering even when thousands of sources fail.
 var diagnosticDescriptions = map[DiagnosticDetail]diagnosticDescription{
+	"session_index_recovery":                                 {ActionRetry, "Local session identity bookkeeping is being recovered or needs repair. These sessions cannot be imported until the background collector completes recovery; retry backfill afterwards."},
+	"own_task_malformed":                                     {ActionAwaitSupport, "The first own task has malformed event or identity fields."},
+	"own_task_turn_id_invalid":                               {ActionAwaitSupport, "The first own task has no valid native turn UUID."},
+	"own_task_root_turn_invalid":                             {ActionAwaitSupport, "The first own task has an invalid root turn UUID."},
+	"own_task_started_at_missing":                            {ActionAwaitSupport, "The first own task has no started_at timestamp."},
+	"own_task_started_at_invalid":                            {ActionAwaitSupport, "The first own task has an invalid started_at timestamp."},
+	"own_task_execution_unsupported":                         {ActionAwaitSupport, "The own task's source is not a supported local execution format."},
+	"history_coverage":                                       {ActionRetry, "Codex history coverage is incomplete; retry after the native inventory settles."},
+	"native_admission_evidence_unavailable":                  {ActionAwaitSupport, "The source reader cannot supply native admission evidence."},
+	"own_task_missing":                                       {ActionReviewSource, "No first own task was found beyond the inherited history boundary."},
+	"own_task_invalid":                                       {ActionAwaitSupport, "The first own task lacks valid native identity, execution or timestamp evidence."},
+	"own_task_before_creation":                               {ActionAwaitSupport, "The first own task predates native session creation."},
+	"native_resource_limit":                                  {ActionAwaitSupport, "The source reader reached a resource limit without a more specific reason."},
+	"native_source_unavailable":                              {ActionReviewSource, "The source reader could not obtain required evidence; no more specific reason was supplied."},
+	"aggregate_history_byte_limit":                           {ActionAwaitSupport, "Aggregate history byte limit."},
+	"current_rollout_evidence_unavailable":                   {ActionReviewSource, "Current rollout evidence unavailable."},
+	"fork_ownership_boundary_unavailable":                    {ActionReviewSource, "Fork ownership boundary unavailable."},
+	"historical_candidate_limit":                             {ActionAwaitSupport, "Historical candidate limit."},
+	"history_dependency_unavailable":                         {ActionReviewSource, "History dependency unavailable."},
+	"history_ordinal_overflow":                               {ActionAwaitSupport, "History ordinal overflow."},
+	"history_record_limit":                                   {ActionAwaitSupport, "History record limit."},
+	"legacy_compatibility_requires_unbound_admission":        {ActionReviewSource, "Legacy compatibility requires unbound admission."},
+	"native_boundary_scratch_budget_exhausted":               {ActionAwaitSupport, "Native boundary scratch budget exhausted."},
+	"native_creation_evidence_unavailable":                   {ActionReviewSource, "Native creation evidence unavailable."},
+	"native_record_window_budget_exhausted":                  {ActionAwaitSupport, "Native record window budget exhausted."},
+	"ordinary_native_scanner_budget_exhausted":               {ActionAwaitSupport, "Ordinary native scanner budget exhausted."},
+	"original_fact_candidate_limit":                          {ActionAwaitSupport, "Original fact candidate limit."},
+	"related_admission_requires_confined_source_home":        {ActionReviewSource, "Related admission requires confined source home."},
+	"related_history_requires_admitted_confined_source_home": {ActionReviewSource, "Related history requires admitted confined source home."},
+	"rollout_candidate_limit":                                {ActionAwaitSupport, "Rollout candidate limit."},
+	"rollout_history_depth_limit":                            {ActionAwaitSupport, "Rollout history depth limit."},
+	"rollout_locator_limit":                                  {ActionAwaitSupport, "Rollout locator limit."},
+	"rollout_metadata_incomplete":                            {ActionReviewSource, "Rollout metadata incomplete."},
+	"shared_rollout_budget_exhausted":                        {ActionAwaitSupport, "Shared rollout budget exhausted."},
+	"shared_rollout_file_limit":                              {ActionAwaitSupport, "Shared rollout file limit."},
+	"source_and_lookup_require_the_same_charge_ledger":       {ActionReviewSource, "Source and lookup require the same charge ledger."},
 	// Most recovery limits are fixed (configured roots, dependency stamps,
 	// Cursor catalog rows), so the same plan reaches them again; retrying
 	// clears only a timeout. An exact mapping bypasses the shared inventory.
@@ -74,7 +112,7 @@ var diagnosticDescriptions = map[DiagnosticDetail]diagnosticDescription{
 	DetailSubtreeUnavailable:          {ActionReviewMapping, "Repository identity cannot prove the original subtree's ownership; review project scope."},
 	DetailRecoveryUnavailable:         {ActionReviewProject, "The original project evidence cannot be used safely; review the project."},
 	DetailWorktreeEvidenceUnavailable: {ActionReviewProject, "The worktree cannot be followed to its repository; review the checkout and project."},
-	DetailHistoryLookupPending:        {ActionAwaitSupport, "Related history remains pending; current selection and dependencies have not been inspected by backfill."},
+	DetailHistoryLookupPending:        {ActionAwaitSupport, "Native history remains pending; this refusal has no more specific diagnostic."},
 	DetailSourceChanged:               {ActionRetry, "The source changed during planning; retry after it settles."},
 	DetailSourceInspectionUnavailable: {ActionReviewSource, "The source could not be safely inspected or filtered; check source access and format support."},
 	DetailSourceSizeLimit:             {ActionAwaitSupport, "The source exceeds the supported size limit."},
@@ -117,6 +155,8 @@ func candidateDiagnostic(skip SkipReason, outcome sourcefacts.RecoveryOutcome, c
 		if detail == "" {
 			detail = DetailWorktreeEvidenceUnavailable
 		}
+	case SkipIndexRecovery:
+		detail = "session_index_recovery"
 	case SkipRelatedHistory:
 		detail = DetailHistoryLookupPending
 	case SkipSourceChanged:
@@ -240,7 +280,7 @@ func candidateDisposition(c Candidate) string {
 		if c.Diagnostic != nil && c.Diagnostic.Detail == DetailRecoveryExcluded {
 			return "excluded"
 		}
-	case SkipRegisteredNotAdmitted, SkipProjectUnknown, SkipIdentityMismatch,
+	case SkipRegisteredNotAdmitted, SkipProjectUnknown, SkipIndexRecovery, SkipIdentityMismatch,
 		SkipRelatedHistory, SkipSourceChanged, SkipEmpty, SkipUnsafeFormat,
 		SkipTooLarge, SkipStartUnknown, SkipStartInFuture:
 		return "unresolved"
@@ -248,4 +288,45 @@ func candidateDisposition(c Candidate) string {
 		return "unresolved"
 	}
 	return "unresolved"
+}
+
+// sourceRefusalDetail walks classified errors without rendering native error text.
+// Unknown causes fall back to a fixed kind-level reason.
+func sourceRefusalDetail(err error) DiagnosticDetail {
+	if err == nil {
+		return ""
+	}
+	if classified, ok := err.(agentapi.Classified); ok {
+		_, cause := classified.Classification()
+		detail := DiagnosticDetail(cause)
+		if _, known := diagnosticDescriptions[detail]; known && detail != "" {
+			return detail
+		}
+	}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		for _, child := range joined.Unwrap() {
+			if detail := specificRefusalDetail(child); detail != "" {
+				return detail
+			}
+		}
+	} else if wrapped, ok := err.(interface{ Unwrap() error }); ok {
+		if detail := specificRefusalDetail(wrapped.Unwrap()); detail != "" {
+			return detail
+		}
+	}
+	if agentapi.HasFailure(err, agentapi.Limit) {
+		return "native_resource_limit"
+	}
+	if agentapi.HasFailure(err, agentapi.Unavailable) {
+		return "native_source_unavailable"
+	}
+	return ""
+}
+
+func specificRefusalDetail(err error) DiagnosticDetail {
+	detail := sourceRefusalDetail(err)
+	if detail == "native_resource_limit" || detail == "native_source_unavailable" {
+		return ""
+	}
+	return detail
 }
