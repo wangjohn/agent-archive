@@ -229,13 +229,16 @@ func TestSharedPressureDefersThenEscalates(t *testing.T) {
 	}
 }
 
-// TestOverCeilingAfterTheReadIsANamedGap: work after a read that fits
-// (building, saving) needing more than the session's share records the same
-// named gap, at the state the read observed, also when a publication is
-// pending; shared pressure there is deferred instead.
-func TestOverCeilingAfterTheReadIsANamedGap(t *testing.T) {
+// A refusal during or after the source read records a named gap only when
+// no upload is pending. A superseded, unattempted upload remains owed and
+// defers the scan instead; shared pressure also defers.
+func TestOverCeilingReadAndBuildRespectPendingUpload(t *testing.T) {
 	t.Parallel()
-	for _, pending := range []bool{false, true} {
+	for _, c := range []struct {
+		pending bool
+		read    bool
+	}{{false, false}, {true, false}, {false, true}, {true, true}} {
+		pending := c.pending
 		local := newTestStore(t)
 		reg := registration(t, writeTranscript(t, t.TempDir(), "s.jsonl", codexTranscript))
 		remote := storagetest.NewMemoryStore()
@@ -250,7 +253,14 @@ func TestOverCeilingAfterTheReadIsANamedGap(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		scan := newSessionScan(t.Context(), local, remote, reg, state.Request{}, published, reg.RegisteredAt.Add(time.Hour), opts)
+		scan := newSessionScan(t.Context(), local, remote, reg, state.Request{Token: "new-request"}, published, reg.RegisteredAt.Add(time.Hour), opts)
+		if pending && c.read {
+			// The new hook request supersedes the unattempted publication,
+			// so resume lets the scan proceed to the source read.
+			if _, handled, err := scan.resume(); err != nil || handled {
+				t.Fatalf("superseding pending upload: handled=%v err=%v", handled, err)
+			}
+		}
 		reader, _ := newSourceReader(reg, opts)
 		observed, err := reader.Signature(t.Context())
 		if err != nil {
@@ -266,7 +276,13 @@ func TestOverCeilingAfterTheReadIsANamedGap(t *testing.T) {
 		if budget.Reserve(2 << 20) {
 			t.Fatal("over the ceiling was reserved")
 		}
-		outcome, err := scan.overCeiling(errRetainedBudget)
+		var outcome sessionOutcome
+		if c.read {
+			scan.lastRead = nil
+			outcome, err = scan.readFailed(sourceRead{adapter: adapter, observed: observed}, errRetainedBudget)
+		} else {
+			outcome, err = scan.overCeiling(errRetainedBudget)
+		}
 		end()
 		if pending {
 			// A gap would leave the upload owed and retried every pass.
@@ -275,6 +291,9 @@ func TestOverCeilingAfterTheReadIsANamedGap(t *testing.T) {
 			}
 			if _, blocked, _ := local.LoadBlocked(reg.ArchiveSessionID); blocked {
 				t.Fatal("pending upload recorded as a gap")
+			}
+			if owed, err := local.HasPending(reg.ArchiveSessionID); err != nil || !owed {
+				t.Fatalf("pending upload lost: owed=%v err=%v", owed, err)
 			}
 			continue
 		}

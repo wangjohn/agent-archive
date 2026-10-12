@@ -79,9 +79,9 @@ type sessionScan struct {
 	gap state.BlockedReason
 	// sizeLimit names the limit a size-limit gap stopped at, when known.
 	sizeLimit *state.SizeLimitGap
-	// lastRead is the source read this scan went on from, if any: a later
-	// step that needs more than the session's share of the pass records
-	// the gap at its state (see overCeiling).
+	// lastRead is the source read whose observation a ceiling refusal uses:
+	// either the read this scan went on from or the read that was refused.
+	// The gap is recorded at its state (see overCeiling).
 	lastRead *sourceRead
 	// subagentRunning reports that the scan ended waiting for a resumed
 	// subagent to stop again (see errSubagentRunning).
@@ -333,12 +333,11 @@ func (s *sessionScan) read() (read sourceRead, ok bool, err error) {
 // condition retrying cannot fix, otherwise the error.
 func (s *sessionScan) readFailed(read sourceRead, err error) (sessionOutcome, error) {
 	if s.overSessionCeiling(err) {
-		// The session alone needs more than its share of a pass, as it will
-		// on every pass: a size-limit gap, recorded once, rather than an
-		// error retried every pass. A refusal while others held the ledger
-		// stays an error, which the pass defers (deferralReason).
-		s.sizeLimit = sizeLimitOf(errSessionReadCeiling, read.observed, s.reg.Harness.Name, s.opts.maxTranscriptBytes())
-		return s.blockThenRemember(state.BlockedReasonTranscriptTooLarge, read)
+		// Use the same pending-upload guard as a refusal after the read:
+		// superseding an unattempted publication must not leave its upload
+		// owed behind a terminal gap. Keep this read's exact observation.
+		s.lastRead = &read
+		return s.overCeiling(err)
 	}
 	// A refusal under others' pressure ends the scan here; pass.scan defers
 	// it (sessionScan.overCeiling), as any refusal after the read.

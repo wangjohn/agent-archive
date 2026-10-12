@@ -59,15 +59,16 @@ func (l *CodexRolloutLookup) readCatalog(ctx context.Context, path string, c *ca
 	if !info.Mode().IsRegular() || n < 0 {
 		return errors.New("native catalog is not a regular file")
 	}
+	// A read replaces the catalog the lookup restored before, if any: the
+	// same file is never charged twice. Check the cap before reserving so
+	// even a catalog larger than the shared ledger is rebuilt.
+	if l.catalogCharge+n > maxCatalogBytes {
+		return errCatalogTooLarge
+	}
 	if !l.readBudget.Reserve(n) {
 		return errCatalogBudget
 	}
 	defer l.readBudget.Release(n)
-	// A read replaces the catalog the lookup restored before, if any: the
-	// same file is never charged twice.
-	if l.catalogCharge+n > maxCatalogBytes {
-		return errCatalogTooLarge
-	}
 	if !l.readBudget.ReserveUnscoped(n) {
 		return errCatalogBudget
 	}

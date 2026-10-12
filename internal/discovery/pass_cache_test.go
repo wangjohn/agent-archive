@@ -72,18 +72,29 @@ func TestCatalogChargeIsCapped(t *testing.T) {
 func TestOversizedCatalogIsRebuilt(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct {
-		name  string
-		size  int
-		reset bool
-	}{{"over the cap", maxCatalogBytes + 1<<20, false}, {"discarded by a reset", 20 << 20, true}} {
+		name   string
+		size   int
+		reset  bool
+		sparse bool
+	}{{"over the cap", maxCatalogBytes + 1<<20, false, false}, {"discarded by a reset", 20 << 20, true, false}, {"larger than the ledger", int(agentapi.PassReadBudget) + 1, false, true}} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			store, cfg, at, root := fixture(t)
 			writeRollout(t, root, cfg.Archive.Projects[0].Root, at.Add(time.Minute), 1, "sessions")
 			path := filepath.Join(store.Home(), "discovery-catalog.json")
-			old := catalog{Version: catalogVersion, Roots: []string{"/elsewhere"}, Health: Health{Errors: []string{strings.Repeat("x", c.size)}}}
+			padding := c.size
+			if c.sparse {
+				padding = 0
+			}
+			old := catalog{Version: catalogVersion, Roots: []string{"/elsewhere"}, Health: Health{Errors: []string{strings.Repeat("x", padding)}}}
 			if err := local.WriteCompact(path, old); err != nil {
 				t.Fatal(err)
+			}
+			if c.sparse {
+				// Exercise a file exceeding the ledger without allocating it.
+				if err := os.Truncate(path, int64(c.size)); err != nil {
+					t.Fatal(err)
+				}
 			}
 			lookup, err := NewCodexRolloutLookup(t.Context(), store, []string{root})
 			if err != nil {
