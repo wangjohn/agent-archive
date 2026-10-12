@@ -1,7 +1,9 @@
 """Conservatively omit unchanged workflow audits from a staged PR run."""
 import copy
-from pathlib import PurePosixPath
+import hashlib
+from pathlib import Path, PurePosixPath
 import re
+import stat
 import subprocess
 
 GO_CHECKS = ['lint', 'vet', 'modules', 'vulnerabilities']
@@ -60,6 +62,26 @@ def repository_path(raw):
     return value
 
 
+def working_input_matches(source, path, mode, oid):
+    """Inspect staged bytes directly; Git status can hide index-marked edits."""
+    source = Path(source).resolve()
+    item = source / path
+    for component in [item, *item.parents]:
+        if component == source:
+            break
+        if component.is_symlink():
+            return False
+    metadata = item.stat()
+    if not stat.S_ISREG(metadata.st_mode):
+        return False
+    executable = bool(metadata.st_mode & 0o111)
+    if executable != (mode == b'100755'):
+        return False
+    content = item.read_bytes()
+    blob = b'blob ' + str(len(content)).encode() + b'\0' + content
+    return hashlib.sha1(blob, usedforsecurity=False).hexdigest().encode() == oid
+
+
 def decision(source, config, event, tested):
     """Return a run and safe reason; any proof failure keeps full coverage."""
     base = head = ''
@@ -98,6 +120,8 @@ def decision(source, config, event, tested):
                     raise ValueError('malformed tree object')
                 if relevant(path) and (mode not in (b'100644', b'100755') or kind != b'blob'):
                     raise ValueError('relevant input is a symlink or unusual object')
+                if sha == tested and relevant(path) and not working_input_matches(source, path, mode, oid):
+                    raise ValueError('relevant working input differs from tested tree')
         for endpoint in (head, tested):
             changed = records(git(source, 'diff', '--no-ext-diff', '--no-textconv',
                                   '--no-renames', '--name-only', '-z', base, endpoint, '--'))

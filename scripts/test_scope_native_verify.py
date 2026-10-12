@@ -142,6 +142,32 @@ class ScopeTest(unittest.TestCase):
         self.merge()
         self.assertEqual(self.selected(), 'pre-merge')
 
+    def test_index_flags_cannot_hide_changed_workflow_bytes(self):
+        self.merge()
+        for flag in ('--assume-unchanged', '--skip-worktree'):
+            with self.subTest(flag=flag):
+                self.git('update-index', flag, '.github/workflows/a.yml')
+                self.write('.github/workflows/a.yml', 'hidden working change\n')
+                self.assertEqual(self.git('status', '--porcelain'), '')
+                self.assertEqual(self.selected(), 'pre-merge')
+                self.write('.github/workflows/a.yml', 'name: fixture\n')
+                self.git('update-index', '--no-assume-unchanged', '--no-skip-worktree', '.github/workflows/a.yml')
+
+    def test_filemode_setting_cannot_hide_changed_workflow_mode(self):
+        self.merge()
+        self.git('config', 'core.filemode', 'false')
+        (self.source / '.github/workflows/a.yml').chmod(0o755)
+        self.assertEqual(self.git('status', '--porcelain'), '')
+        self.assertEqual(self.selected(), 'pre-merge')
+
+    def test_index_flag_cannot_hide_working_symlink(self):
+        self.merge()
+        self.git('update-index', '--assume-unchanged', '.github/workflows/a.yml')
+        (self.source / '.github/workflows/a.yml').unlink()
+        (self.source / '.github/workflows/a.yml').symlink_to('../actionlint.yaml')
+        self.assertEqual(self.git('status', '--porcelain'), '')
+        self.assertEqual(self.selected(), 'pre-merge')
+
     def test_bad_missing_checkout_and_parent_identities_fall_back(self):
         self.merge()
         for sha in ('', 'not-a-sha', 'f' * 40, self.base, self.head):
