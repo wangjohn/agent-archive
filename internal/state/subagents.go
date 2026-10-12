@@ -1,6 +1,7 @@
 package state
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -37,7 +38,8 @@ type SubagentCandidate struct {
 	// through archive.SanitizeSubagentType, or empty when unknown. It is
 	// informational and local: status reports it, it is never uploaded, and
 	// it never decides anything.
-	AgentType string `json:"agent_type,omitempty"`
+	AgentType          string `json:"agent_type,omitempty"`
+	StagedImportSHA256 string `json:"staged_import_sha256,omitempty"`
 }
 
 var (
@@ -83,6 +85,12 @@ func (s *Store) SaveSubagentCandidate(candidate SubagentCandidate) error {
 			}
 			if prior.NativeSessionID != merged.NativeSessionID || prior.ParentArchiveSessionID != merged.ParentArchiveSessionID || prior.ParentNativeSessionID != merged.ParentNativeSessionID || prior.ProjectID != merged.ProjectID || prior.ProjectRoot != merged.ProjectRoot || archive.CanonicalHarness(prior.Harness.Name) != archive.CanonicalHarness(merged.Harness.Name) || prior.AgentID != merged.AgentID || prior.TranscriptPath != merged.TranscriptPath {
 				return nil, false, ErrSubagentCandidateConflict
+			}
+			if prior.StagedImportSHA256 != "" {
+				if merged.StagedImportSHA256 != "" && merged.StagedImportSHA256 != prior.StagedImportSHA256 {
+					return nil, false, ErrSubagentCandidateConflict
+				}
+				merged.StagedImportSHA256 = prior.StagedImportSHA256
 			}
 			if prior.ObservedAt.After(merged.ObservedAt) {
 				merged.ObservedAt = prior.ObservedAt
@@ -152,6 +160,13 @@ func subagentLockName(id string) string {
 
 // RemoveSubagentCandidate removes one subagent candidate, under its lock.
 func (s *Store) RemoveSubagentCandidate(id string) error {
+	return s.removeSubagentCandidateContext(context.Background(), id)
+}
+
+func (s *Store) removeSubagentCandidateContext(ctx context.Context, id string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	unlock, err := s.lockSubagentCandidate(id)
 	if err != nil {
 		return err
@@ -161,7 +176,7 @@ func (s *Store) RemoveSubagentCandidate(id string) error {
 	if err != nil {
 		return err
 	}
-	return s.pruneAcknowledgedPackedCandidate(id)
+	return s.pruneAcknowledgedPackedCandidateContext(ctx, id)
 }
 
 // AcknowledgeSubagentCandidate marks a candidate handled. A later stop may
@@ -196,6 +211,10 @@ func (s *Store) AcknowledgeSubagentCandidate(expected SubagentCandidate) error {
 }
 
 func (s *Store) pruneAcknowledgedPackedCandidate(id string) error {
+	return s.pruneAcknowledgedPackedCandidateContext(context.Background(), id)
+}
+
+func (s *Store) pruneAcknowledgedPackedCandidateContext(ctx context.Context, id string) error {
 	var marker sessionIndexMarker
 	err := readRecoveryJSON(filepath.Join(s.home, sessionIndexMarkerFile), &marker)
 	if errors.Is(err, os.ErrNotExist) || (err == nil && marker.Version != 2) {
@@ -207,7 +226,7 @@ func (s *Store) pruneAcknowledgedPackedCandidate(id string) error {
 	if exists(s.registrationPath(id)) {
 		return nil // Admitted children retain their exact packed ownership.
 	}
-	return s.removePackedIdentities(map[string]bool{id: true})
+	return s.removePackedIdentitiesContext(ctx, map[string]bool{id: true})
 }
 
 // removeSubagentCandidate removes a candidate and then its lock file, under

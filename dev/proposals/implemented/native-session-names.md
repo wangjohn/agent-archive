@@ -1,6 +1,6 @@
 # Native session names in Agent Archive
 
-Status: implementation split. Prepared October 6, 2026. PR A implements Claude typed generated/custom title capture, ownership and precedence, bounded-preview correctness, name-only activity isolation, and Codex open-page prompt cleanup. PR B (external Codex label provider, retained evidence and collector refresh) remains pending; the design below describes that remaining plan as well as the implemented contract.
+Status: Implemented for supported ordinary-session publication; history-source name refresh and broader native acceptance remain incomplete. Prepared October 6, 2026; status reconciled October 11, 2026. Claude generated/custom titles, Codex external label evidence and collector refresh, and injected-context cleanup are implemented. Codex defaults to verified settled file lookup; bounded native metadata lookup requires explicit `codex_name_lookup: "native"` opt-in because startup can write native state and desktop coexistence remains unverified. Real sidebar/picker comparisons remain pending in the linked acceptance record. The design below preserves the original plan; current code and user documentation own the shipped contract.
 
 Agent Archive should display the name a person recognizes from Codex or Claude Code, using a cleaned prompt preview only when a native name is unavailable. Capture names during collection, retain the filtered evidence, refresh them after renames, and publish them through the existing archive pipeline. Ordinary `list` must continue to work from archived metadata without launching an agent or reading local conversations.
 
@@ -121,7 +121,7 @@ Codex history publication now uses verified retained source sets, exact predeces
 
 Implement sequentially so the producer contract and reader support precede publication. Each phase should have a reviewable change with its relevant validation; no native daemon, framework or second scheduler is needed.
 
-The deferred real UI comparisons have a [manual protocol and pending evidence template](../maintainers/native-session-name-comparisons.md). This follow-up work package does not claim those comparisons have run.
+The deferred real UI comparisons have a [manual protocol and pending evidence template](../../maintainers/native-session-name-comparisons.md). This follow-up work package does not claim those comparisons have run.
 
 ## Tests and release acceptance
 
