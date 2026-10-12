@@ -57,6 +57,82 @@ const (
 	DetailSourceSizeLimit             DiagnosticDetail = "source_size_limit"
 )
 
+// Native refusal diagnostic details retain the public JSON codes.
+const (
+	// DetailAggregateHistoryByteLimit describes the aggregate history byte limit refusal.
+	DetailAggregateHistoryByteLimit DiagnosticDetail = DiagnosticDetail(agentapi.CauseAggregateHistoryByteLimit)
+	// DetailCurrentRolloutEvidenceUnavailable describes the current rollout evidence unavailable refusal.
+	DetailCurrentRolloutEvidenceUnavailable DiagnosticDetail = DiagnosticDetail(agentapi.CauseCurrentRolloutEvidenceUnavailable)
+	// DetailForkOwnershipBoundaryUnavailable describes the fork ownership boundary unavailable refusal.
+	DetailForkOwnershipBoundaryUnavailable DiagnosticDetail = DiagnosticDetail(agentapi.CauseForkOwnershipBoundaryUnavailable)
+	// DetailHistoricalCandidateLimit describes the historical candidate limit refusal.
+	DetailHistoricalCandidateLimit DiagnosticDetail = DiagnosticDetail(agentapi.CauseHistoricalCandidateLimit)
+	// DetailHistoryCoverage describes the history coverage refusal.
+	DetailHistoryCoverage DiagnosticDetail = DiagnosticDetail(agentapi.CauseHistoryCoverage)
+	// DetailHistoryDependencyUnavailable describes the history dependency unavailable refusal.
+	DetailHistoryDependencyUnavailable DiagnosticDetail = DiagnosticDetail(agentapi.CauseHistoryDependencyUnavailable)
+	// DetailHistoryOrdinalOverflow describes the history ordinal overflow refusal.
+	DetailHistoryOrdinalOverflow DiagnosticDetail = DiagnosticDetail(agentapi.CauseHistoryOrdinalOverflow)
+	// DetailHistoryRecordLimit describes the history record limit refusal.
+	DetailHistoryRecordLimit DiagnosticDetail = DiagnosticDetail(agentapi.CauseHistoryRecordLimit)
+	// DetailLegacyCompatibilityRequiresUnboundAdmission describes the legacy compatibility requires unbound admission refusal.
+	DetailLegacyCompatibilityRequiresUnboundAdmission DiagnosticDetail = DiagnosticDetail(agentapi.CauseLegacyCompatibilityRequiresUnboundAdmission)
+	// DetailNativeAdmissionEvidenceUnavailable describes the native admission evidence unavailable refusal.
+	DetailNativeAdmissionEvidenceUnavailable DiagnosticDetail = DiagnosticDetail(agentapi.CauseNativeAdmissionEvidenceUnavailable)
+	// DetailNativeBoundaryScratchBudgetExhausted describes the native boundary scratch budget exhausted refusal.
+	DetailNativeBoundaryScratchBudgetExhausted DiagnosticDetail = DiagnosticDetail(agentapi.CauseNativeBoundaryScratchBudgetExhausted)
+	// DetailNativeCreationEvidenceUnavailable describes the native creation evidence unavailable refusal.
+	DetailNativeCreationEvidenceUnavailable DiagnosticDetail = DiagnosticDetail(agentapi.CauseNativeCreationEvidenceUnavailable)
+	// DetailNativeRecordWindowBudgetExhausted describes the native record window budget exhausted refusal.
+	DetailNativeRecordWindowBudgetExhausted DiagnosticDetail = DiagnosticDetail(agentapi.CauseNativeRecordWindowBudgetExhausted)
+	// DetailNativeResourceLimit describes the native resource limit refusal.
+	DetailNativeResourceLimit DiagnosticDetail = "native_resource_limit"
+	// DetailNativeSourceUnavailable describes the native source unavailable refusal.
+	DetailNativeSourceUnavailable DiagnosticDetail = "native_source_unavailable"
+	// DetailOrdinaryNativeScratchBudgetExhausted describes the ordinary native scratch budget exhausted refusal.
+	DetailOrdinaryNativeScratchBudgetExhausted DiagnosticDetail = DiagnosticDetail(agentapi.CauseOrdinaryNativeScratchBudgetExhausted)
+	// DetailOriginalFactCandidateLimit describes the original fact candidate limit refusal.
+	DetailOriginalFactCandidateLimit DiagnosticDetail = DiagnosticDetail(agentapi.CauseOriginalFactCandidateLimit)
+	// DetailOwnTaskBeforeCreation describes the own task before creation refusal.
+	DetailOwnTaskBeforeCreation DiagnosticDetail = DiagnosticDetail(agentapi.CauseOwnTaskBeforeCreation)
+	// DetailOwnTaskExecutionUnsupported describes the own task execution unsupported refusal.
+	DetailOwnTaskExecutionUnsupported DiagnosticDetail = DiagnosticDetail(agentapi.CauseOwnTaskExecutionUnsupported)
+	// DetailOwnTaskInvalid describes the own task invalid refusal.
+	DetailOwnTaskInvalid DiagnosticDetail = DiagnosticDetail(agentapi.CauseOwnTaskInvalid)
+	// DetailOwnTaskMalformed describes the own task malformed refusal.
+	DetailOwnTaskMalformed DiagnosticDetail = "own_task_malformed"
+	// DetailOwnTaskMissing describes the own task missing refusal.
+	DetailOwnTaskMissing DiagnosticDetail = DiagnosticDetail(agentapi.CauseOwnTaskMissing)
+	// DetailOwnTaskRootTurnInvalid describes the own task root turn invalid refusal.
+	DetailOwnTaskRootTurnInvalid DiagnosticDetail = "own_task_root_turn_invalid"
+	// DetailOwnTaskStartedAtInvalid describes the own task started at invalid refusal.
+	DetailOwnTaskStartedAtInvalid DiagnosticDetail = "own_task_started_at_invalid"
+	// DetailOwnTaskStartedAtMissing describes the own task started at missing refusal.
+	DetailOwnTaskStartedAtMissing DiagnosticDetail = "own_task_started_at_missing"
+	// DetailOwnTaskTurnIDInvalid describes the own task turn id invalid refusal.
+	DetailOwnTaskTurnIDInvalid DiagnosticDetail = "own_task_turn_id_invalid"
+	// DetailRelatedAdmissionRequiresConfinedSourceHome describes the related admission requires confined source home refusal.
+	DetailRelatedAdmissionRequiresConfinedSourceHome DiagnosticDetail = DiagnosticDetail(agentapi.CauseRelatedAdmissionRequiresConfinedSourceHome)
+	// DetailRelatedHistoryRequiresAdmittedConfinedSourceHome describes the related history requires admitted confined source home refusal.
+	DetailRelatedHistoryRequiresAdmittedConfinedSourceHome DiagnosticDetail = DiagnosticDetail(agentapi.CauseRelatedHistoryRequiresAdmittedConfinedSourceHome)
+	// DetailRolloutCandidateLimit describes the rollout candidate limit refusal.
+	DetailRolloutCandidateLimit DiagnosticDetail = DiagnosticDetail(agentapi.CauseRolloutCandidateLimit)
+	// DetailRolloutHistoryDepthLimit describes the rollout history depth limit refusal.
+	DetailRolloutHistoryDepthLimit DiagnosticDetail = DiagnosticDetail(agentapi.CauseRolloutHistoryDepthLimit)
+	// DetailRolloutLocatorLimit describes the rollout locator limit refusal.
+	DetailRolloutLocatorLimit DiagnosticDetail = DiagnosticDetail(agentapi.CauseRolloutLocatorLimit)
+	// DetailRolloutMetadataIncomplete describes the rollout metadata incomplete refusal.
+	DetailRolloutMetadataIncomplete DiagnosticDetail = DiagnosticDetail(agentapi.CauseRolloutMetadataIncomplete)
+	// DetailSessionIndexRecovery describes the session index recovery refusal.
+	DetailSessionIndexRecovery DiagnosticDetail = "session_index_recovery"
+	// DetailSharedRolloutBudgetExhausted describes the shared rollout budget exhausted refusal.
+	DetailSharedRolloutBudgetExhausted DiagnosticDetail = "shared_rollout_budget_exhausted"
+	// DetailSharedRolloutFileLimit describes the shared rollout file limit refusal.
+	DetailSharedRolloutFileLimit DiagnosticDetail = DiagnosticDetail(agentapi.CauseSharedRolloutFileLimit)
+	// DetailSourceAndLookupRequireTheSameChargeLedger describes the source and lookup require the same charge ledger refusal.
+	DetailSourceAndLookupRequireTheSameChargeLedger DiagnosticDetail = DiagnosticDetail(agentapi.CauseSourceAndLookupRequireTheSameChargeLedger)
+)
+
 type diagnosticDescription struct {
 	action DiagnosticAction
 	text   string
@@ -64,42 +140,42 @@ type diagnosticDescription struct {
 
 // The finite vocabulary bounds rendering even when thousands of sources fail.
 var diagnosticDescriptions = map[DiagnosticDetail]diagnosticDescription{
-	"session_index_recovery":                                 {ActionRetry, "Local session identity bookkeeping is being recovered or needs repair. These sessions cannot be imported until the background collector completes recovery; retry backfill afterwards."},
-	"own_task_malformed":                                     {ActionAwaitSupport, "The first own task has malformed event or identity fields."},
-	"own_task_turn_id_invalid":                               {ActionAwaitSupport, "The first own task has no valid native turn UUID."},
-	"own_task_root_turn_invalid":                             {ActionAwaitSupport, "The first own task has an invalid root turn UUID."},
-	"own_task_started_at_missing":                            {ActionAwaitSupport, "The first own task has no started_at timestamp."},
-	"own_task_started_at_invalid":                            {ActionAwaitSupport, "The first own task has an invalid started_at timestamp."},
-	"own_task_execution_unsupported":                         {ActionAwaitSupport, "The own task's source is not a supported local execution format."},
-	"history_coverage":                                       {ActionRetry, "Codex history coverage is incomplete; retry after the native inventory settles."},
-	"native_admission_evidence_unavailable":                  {ActionAwaitSupport, "The source reader cannot supply native admission evidence."},
-	"own_task_missing":                                       {ActionReviewSource, "No first own task was found beyond the inherited history boundary."},
-	"own_task_invalid":                                       {ActionAwaitSupport, "The first own task lacks valid native identity, execution or timestamp evidence."},
-	"own_task_before_creation":                               {ActionAwaitSupport, "The first own task predates native session creation."},
-	"native_resource_limit":                                  {ActionAwaitSupport, "The source reader reached a resource limit without a more specific reason."},
-	"native_source_unavailable":                              {ActionReviewSource, "The source reader could not obtain required evidence; no more specific reason was supplied."},
-	"aggregate_history_byte_limit":                           {ActionAwaitSupport, "Aggregate history byte limit."},
-	"current_rollout_evidence_unavailable":                   {ActionReviewSource, "Current rollout evidence unavailable."},
-	"fork_ownership_boundary_unavailable":                    {ActionReviewSource, "Fork ownership boundary unavailable."},
-	"historical_candidate_limit":                             {ActionAwaitSupport, "Historical candidate limit."},
-	"history_dependency_unavailable":                         {ActionReviewSource, "History dependency unavailable."},
-	"history_ordinal_overflow":                               {ActionAwaitSupport, "History ordinal overflow."},
-	"history_record_limit":                                   {ActionAwaitSupport, "History record limit."},
-	"legacy_compatibility_requires_unbound_admission":        {ActionReviewSource, "Legacy compatibility requires unbound admission."},
-	"native_boundary_scratch_budget_exhausted":               {ActionAwaitSupport, "Native boundary scratch budget exhausted."},
-	"native_creation_evidence_unavailable":                   {ActionReviewSource, "Native creation evidence unavailable."},
-	"native_record_window_budget_exhausted":                  {ActionAwaitSupport, "Native record window budget exhausted."},
-	"ordinary_native_scratch_budget_exhausted":               {ActionAwaitSupport, "Ordinary native scratch budget exhausted."},
-	"original_fact_candidate_limit":                          {ActionAwaitSupport, "Original fact candidate limit."},
-	"related_admission_requires_confined_source_home":        {ActionReviewSource, "Related admission requires confined source home."},
-	"related_history_requires_admitted_confined_source_home": {ActionReviewSource, "Related history requires admitted confined source home."},
-	"rollout_candidate_limit":                                {ActionAwaitSupport, "Rollout candidate limit."},
-	"rollout_history_depth_limit":                            {ActionAwaitSupport, "Rollout history depth limit."},
-	"rollout_locator_limit":                                  {ActionAwaitSupport, "Rollout locator limit."},
-	"rollout_metadata_incomplete":                            {ActionReviewSource, "Rollout metadata incomplete."},
-	"shared_rollout_budget_exhausted":                        {ActionAwaitSupport, "Shared rollout budget exhausted."},
-	"shared_rollout_file_limit":                              {ActionAwaitSupport, "Shared rollout file limit."},
-	"source_and_lookup_require_the_same_charge_ledger":       {ActionReviewSource, "Source and lookup require the same charge ledger."},
+	DetailSessionIndexRecovery:                             {ActionRetry, "Local session identity bookkeeping is being recovered or needs repair. These sessions cannot be imported until the background collector completes recovery; retry backfill afterwards."},
+	DetailOwnTaskMalformed:                                 {ActionAwaitSupport, "The first own task has malformed event or identity fields."},
+	DetailOwnTaskTurnIDInvalid:                             {ActionAwaitSupport, "The first own task has no valid native turn UUID."},
+	DetailOwnTaskRootTurnInvalid:                           {ActionAwaitSupport, "The first own task has an invalid root turn UUID."},
+	DetailOwnTaskStartedAtMissing:                          {ActionAwaitSupport, "The first own task has no started_at timestamp."},
+	DetailOwnTaskStartedAtInvalid:                          {ActionAwaitSupport, "The first own task has an invalid started_at timestamp."},
+	DetailOwnTaskExecutionUnsupported:                      {ActionAwaitSupport, "The own task's source is not a supported local execution format."},
+	DetailHistoryCoverage:                                  {ActionRetry, "Codex history coverage is incomplete; retry after the native inventory settles."},
+	DetailNativeAdmissionEvidenceUnavailable:               {ActionAwaitSupport, "The source reader cannot supply native admission evidence."},
+	DetailOwnTaskMissing:                                   {ActionReviewSource, "No first own task was found beyond the inherited history boundary."},
+	DetailOwnTaskInvalid:                                   {ActionAwaitSupport, "The first own task lacks valid native identity, execution or timestamp evidence."},
+	DetailOwnTaskBeforeCreation:                            {ActionAwaitSupport, "The first own task predates native session creation."},
+	DetailNativeResourceLimit:                              {ActionAwaitSupport, "The source reader reached a resource limit without a more specific reason."},
+	DetailNativeSourceUnavailable:                          {ActionReviewSource, "The source reader could not obtain required evidence; no more specific reason was supplied."},
+	DetailAggregateHistoryByteLimit:                        {ActionAwaitSupport, "Aggregate history byte limit."},
+	DetailCurrentRolloutEvidenceUnavailable:                {ActionReviewSource, "Current rollout evidence unavailable."},
+	DetailForkOwnershipBoundaryUnavailable:                 {ActionReviewSource, "Fork ownership boundary unavailable."},
+	DetailHistoricalCandidateLimit:                         {ActionAwaitSupport, "Historical candidate limit."},
+	DetailHistoryDependencyUnavailable:                     {ActionReviewSource, "History dependency unavailable."},
+	DetailHistoryOrdinalOverflow:                           {ActionAwaitSupport, "History ordinal overflow."},
+	DetailHistoryRecordLimit:                               {ActionAwaitSupport, "History record limit."},
+	DetailLegacyCompatibilityRequiresUnboundAdmission:      {ActionReviewSource, "Legacy compatibility requires unbound admission."},
+	DetailNativeBoundaryScratchBudgetExhausted:             {ActionAwaitSupport, "Native boundary scratch budget exhausted."},
+	DetailNativeCreationEvidenceUnavailable:                {ActionReviewSource, "Native creation evidence unavailable."},
+	DetailNativeRecordWindowBudgetExhausted:                {ActionAwaitSupport, "Native record window budget exhausted."},
+	DetailOrdinaryNativeScratchBudgetExhausted:             {ActionAwaitSupport, "Ordinary native scratch budget exhausted."},
+	DetailOriginalFactCandidateLimit:                       {ActionAwaitSupport, "Original fact candidate limit."},
+	DetailRelatedAdmissionRequiresConfinedSourceHome:       {ActionReviewSource, "Related admission requires confined source home."},
+	DetailRelatedHistoryRequiresAdmittedConfinedSourceHome: {ActionReviewSource, "Related history requires admitted confined source home."},
+	DetailRolloutCandidateLimit:                            {ActionAwaitSupport, "Rollout candidate limit."},
+	DetailRolloutHistoryDepthLimit:                         {ActionAwaitSupport, "Rollout history depth limit."},
+	DetailRolloutLocatorLimit:                              {ActionAwaitSupport, "Rollout locator limit."},
+	DetailRolloutMetadataIncomplete:                        {ActionReviewSource, "Rollout metadata incomplete."},
+	DetailSharedRolloutBudgetExhausted:                     {ActionAwaitSupport, "Shared rollout budget exhausted."},
+	DetailSharedRolloutFileLimit:                           {ActionAwaitSupport, "Shared rollout file limit."},
+	DetailSourceAndLookupRequireTheSameChargeLedger:        {ActionReviewSource, "Source and lookup require the same charge ledger."},
 	// Most recovery limits are fixed (configured roots, dependency stamps,
 	// Cursor catalog rows), so the same plan reaches them again; retrying
 	// clears only a timeout. An exact mapping bypasses the shared inventory.
@@ -156,7 +232,7 @@ func candidateDiagnostic(skip SkipReason, outcome sourcefacts.RecoveryOutcome, c
 			detail = DetailWorktreeEvidenceUnavailable
 		}
 	case SkipIndexRecovery:
-		detail = "session_index_recovery"
+		detail = DetailSessionIndexRecovery
 	case SkipRelatedHistory:
 		detail = DetailHistoryLookupPending
 	case SkipSourceChanged:
@@ -315,17 +391,17 @@ func sourceRefusalDetail(err error) DiagnosticDetail {
 		}
 	}
 	if agentapi.HasFailure(err, agentapi.Limit) {
-		return "native_resource_limit"
+		return DetailNativeResourceLimit
 	}
 	if agentapi.HasFailure(err, agentapi.Unavailable) {
-		return "native_source_unavailable"
+		return DetailNativeSourceUnavailable
 	}
 	return ""
 }
 
 func specificRefusalDetail(err error) DiagnosticDetail {
 	detail := sourceRefusalDetail(err)
-	if detail == "native_resource_limit" || detail == "native_source_unavailable" {
+	if detail == DetailNativeResourceLimit || detail == DetailNativeSourceUnavailable {
 		return ""
 	}
 	return detail

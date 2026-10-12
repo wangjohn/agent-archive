@@ -226,17 +226,18 @@ func TestUnsafeDiagnosticDoesNotInventUnsupportedFormat(t *testing.T) {
 }
 
 func TestNativeRefusalDetailsPreserveJoinsPrivacyAndPrecedence(t *testing.T) {
+	const unknownSourceCause agentapi.SourceCause = "secret untrusted cause"
 	secret := errors.New("/private/transcript secret-native-id prompt contents")
 	cases := []struct {
 		name string
 		err  error
 		want DiagnosticDetail
 	}{
-		{"coverage", agentapi.WithCause(agentapi.Wrap(agentapi.Unavailable, secret), agentapi.CauseHistoryCoverage), "history_coverage"},
-		{"dependency", errors.Join(agentapi.WithCause(agentapi.Wrap(agentapi.Unavailable, secret), "history_dependency_unavailable"), archive.ErrRelatedHistory), "history_dependency_unavailable"},
-		{"wrapped limit", fmt.Errorf("private path: %w", agentapi.WithCause(agentapi.Wrap(agentapi.Limit, secret), "aggregate_history_byte_limit")), "aggregate_history_byte_limit"},
-		{"unknown cause", agentapi.WithCause(agentapi.Wrap(agentapi.Unavailable, secret), "secret untrusted cause"), "native_source_unavailable"},
-		{"unnamed limit", agentapi.Wrap(agentapi.Limit, secret), "native_resource_limit"},
+		{"coverage", agentapi.WithCause(agentapi.Wrap(agentapi.Unavailable, secret), agentapi.CauseHistoryCoverage), DetailHistoryCoverage},
+		{"dependency", errors.Join(agentapi.WithCause(agentapi.Wrap(agentapi.Unavailable, secret), agentapi.CauseHistoryDependencyUnavailable), archive.ErrRelatedHistory), DetailHistoryDependencyUnavailable},
+		{"wrapped limit", fmt.Errorf("private path: %w", agentapi.WithCause(agentapi.Wrap(agentapi.Limit, secret), agentapi.CauseAggregateHistoryByteLimit)), DetailAggregateHistoryByteLimit},
+		{"unknown cause", agentapi.WithCause(agentapi.Wrap(agentapi.Unavailable, secret), unknownSourceCause), DetailNativeSourceUnavailable},
+		{"unnamed limit", agentapi.Wrap(agentapi.Limit, secret), DetailNativeResourceLimit},
 		{"bare related", archive.ErrRelatedHistory, ""},
 	}
 	for _, tc := range cases {

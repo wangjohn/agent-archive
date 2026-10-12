@@ -33,7 +33,7 @@ func TestBackfillDryRunReportsPendingIndexWithoutChangingState(t *testing.T) {
 	}
 	found := false
 	for _, d := range plan.Diagnostics {
-		if d.Skip == backfill.SkipIndexRecovery && d.Detail == "session_index_recovery" && d.Action == backfill.ActionRetry && d.Count == 1 {
+		if d.Skip == backfill.SkipIndexRecovery && d.Detail == backfill.DetailSessionIndexRecovery && d.Action == backfill.ActionRetry && d.Count == 1 {
 			found = true
 		}
 	}

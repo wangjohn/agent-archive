@@ -60,18 +60,18 @@ func TestBackfillForkRejectsInheritedFirstOwnTask(t *testing.T) {
 				Diagnostics []backfill.DiagnosticSummary `json:"diagnostics"`
 			}
 			must(t, json.Unmarshal(preview.Bytes(), &plan))
-			want := backfill.DiagnosticDetail("own_task_turn_id_invalid")
+			want := backfill.DetailOwnTaskTurnIDInvalid
 			if first == forkTaskInvalidRoot {
-				want = "own_task_root_turn_invalid"
+				want = backfill.DetailOwnTaskRootTurnInvalid
 			}
 			if first == forkTaskMissingTime {
-				want = "own_task_started_at_missing"
+				want = backfill.DetailOwnTaskStartedAtMissing
 			}
 			if first == forkTaskMissingTask {
-				want = "own_task_missing"
+				want = backfill.DetailOwnTaskMissing
 			}
 			if first == forkTaskPredates {
-				want = "own_task_before_creation"
+				want = backfill.DetailOwnTaskBeforeCreation
 			}
 			if len(plan.Diagnostics) != 1 || plan.Diagnostics[0].Detail != want || plan.Diagnostics[0].Count != 1 {
 				t.Fatalf("missing own-task refusal detail: %s", preview.String())
