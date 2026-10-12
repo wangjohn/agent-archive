@@ -10,6 +10,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/state"
+	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
@@ -245,7 +246,9 @@ func TestOverCeilingReadAndBuildRespectPendingUpload(t *testing.T) {
 		opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "m"}
 		publishOnce(t, local, remote, reg, &opts)
 		if pending {
-			if err := local.SavePending(reg.ArchiveSessionID, state.PendingPublication{ReadyAt: reg.RegisteredAt, SourceKey: "source", MetadataKey: "metadata", SourceSHA256: "sha", SourceBytes: []byte("source"), MetadataBytes: []byte(`{}`)}); err != nil {
+			// resume validates protected pending bytes before superseding an
+			// unattempted upload, so the fixture needs their real checksum.
+			if err := local.SavePending(reg.ArchiveSessionID, state.PendingPublication{ReadyAt: reg.RegisteredAt, SourceKey: "source", MetadataKey: "metadata", SourceSHA256: storage.SHA256Hex([]byte("source")), SourceBytes: []byte("source"), MetadataBytes: []byte(`{}`)}); err != nil {
 				t.Fatal(err)
 			}
 		}
