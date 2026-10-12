@@ -25,9 +25,9 @@ func TestPlanningProgressCountsSelectedTranscripts(t *testing.T) {
 	var found, checked []PlanningProgress
 	for _, u := range updates {
 		switch u.Stage {
-		case "Discovering sessions":
+		case PlanningStageDiscoveringSessions:
 			found = append(found, u)
-		case "Checking sessions":
+		case PlanningStageCheckingSessions:
 			checked = append(checked, u)
 		}
 	}
@@ -48,7 +48,7 @@ func TestPlanningCounterSerializesWorkerUpdates(t *testing.T) {
 	var updates []PlanningProgress
 	env := Environment{Progress: func(p PlanningProgress) { updates = append(updates, p) }}
 	const total = 100
-	completed := env.planningCounter("Checking sessions", total)
+	completed := env.planningCounter(PlanningStageCheckingSessions, total)
 	var wg sync.WaitGroup
 	for range total {
 		wg.Go(completed)
