@@ -276,6 +276,10 @@ const (
 // through collector.FilterTranscriptFile, the collector's own filter, which
 // reads transcripts from the real file system whatever is injected here.
 type Environment struct {
+	// Progress receives serialized planning updates, including from workers.
+	// It must return promptly and must not change planning inputs.
+	Progress func(PlanningProgress)
+
 	RepositoryIdentity        sourcefacts.RepositoryLookup
 	RepositoryIdentityCurrent func(sourcefacts.RepositoryIdentity) bool
 	Discovery                 agentapi.DiscoveryLookup

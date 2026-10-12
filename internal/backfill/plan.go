@@ -204,6 +204,7 @@ func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg con
 		return Plan{}, err
 	}
 
+	env.planningProgress("Checking native history", 0, 0)
 	if env.PrepareCodexProof != nil {
 		var ids []string
 		for _, w := range items {
@@ -233,6 +234,7 @@ func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg con
 			w.res = resolution{skip: SkipWorktreeUnresolved}
 		}
 	}
+	env.planningProgress("Finding subagent sessions", 0, 0)
 	if err := finalizePlanWork(ctx, env, items, &unread, since, until, now, workers); err != nil {
 		return Plan{}, err
 	}
@@ -268,9 +270,11 @@ func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg con
 		RecoveryEvidenceGaps: summarizeRecoveryGaps(r.recoveryGaps, items),
 	}
 
+	env.planningProgress("Checking database sessions", 0, 0)
 	if err := planCursorDatabase(ctx, env, state, r, projectFilter, since, until, workers, &plan); err != nil {
 		return Plan{}, err
 	}
+	env.planningProgress("Finishing plan", 0, 0)
 	if err := planNested(ctx, r, &plan); err != nil {
 		return Plan{}, err
 	}
@@ -304,11 +308,13 @@ func preparePlanWork(ctx context.Context, env Environment, cfg config.Config, fi
 	var items []*work
 	var err error
 	inventory := newRecoverySourceInventory(env)
+	env.planningProgress("Discovering sessions", 0, 0)
 	unread, err = enumerateDiscovery(ctx, inventory.environment(), agentapi.DiscoveryImport, func(c agentapi.DiscoveryCandidate) error {
 		t := &transcript{harness: harness(c.Session.Agent), path: c.Source.Path, size: c.Bytes, nativeID: c.Session.NativeID, cwd: c.Header.Directory, repoKey: c.Header.RepoKey, metaStart: c.Header.StartedAt, identityMismatch: c.Header.IdentityMismatch, capturePending: c.Header.CapturePending != "" && env.CodexRollouts == nil, cursorSlug: c.WorkspaceKey, sourcePriority: c.SourcePriority, sourceInfo: c.SourceInfo}
 		w := &work{t: t, c: importNativeCandidate(c, t), unsafe: c.IdentityError != nil}
 		w.checkSource(env)
 		items = append(items, w)
+		env.planningProgress("Discovering sessions", len(items), 0)
 		return nil
 	})
 	if err != nil {
@@ -329,7 +335,8 @@ func preparePlanWork(ctx context.Context, env Environment, cfg config.Config, fi
 	for _, p := range cfg.Archive.Projects {
 		cursorCandidates = append(cursorCandidates, p.Root)
 	}
-	for _, w := range items {
+	for i, w := range items {
+		env.planningProgress("Resolving projects", i, len(items))
 		if w.t.cursorSlug != "" || w.vanished {
 			continue
 		}
@@ -356,6 +363,8 @@ func preparePlanWork(ctx context.Context, env Environment, cfg config.Config, fi
 			cursorCandidates = append(cursorCandidates, w.res.root)
 		}
 	}
+	env.planningProgress("Resolving projects", len(items), len(items))
+	env.planningProgress("Checking project history", 0, 0)
 	if err := resolveWorkspaceWitnesses(ctx, env, r, items, cursorCandidates); err != nil {
 		return nil, nil, unread, workers, err
 	}
@@ -429,6 +438,7 @@ func resolveWorkspaceWitnesses(ctx context.Context, env Environment, r *resolver
 // classifyPlanWork asks the archive about native IDs, then reads full
 // transcripts only where the decision requires their contents or start time.
 func classifyPlanWork(ctx context.Context, env Environment, state ArchiveState, filters Filters, items []*work, projectFilter []string, since, until time.Time, workers int) error {
+	env.planningProgress("Checking archive", 0, 0)
 	sessions := map[agentmeta.SessionKey][]*work{}
 	for _, w := range items {
 		if w.vanished {
@@ -468,7 +478,9 @@ func classifyPlanWork(ctx context.Context, env Environment, state ArchiveState, 
 	// needs its start or a duplicate needs its identity checked.
 	toFilter := selectAdapterWork(items, since, until)
 	budget := newByteBudget(maxBytesInFlight)
+	completed := env.planningCounter("Checking sessions", len(toFilter))
 	if err := forEach(ctx, workers, toFilter, func(w *work) {
+		defer completed()
 		n := budget.acquire(w.t.size)
 		defer budget.release(n)
 		runAdapter(ctx, env, w)
@@ -541,7 +553,9 @@ func finalizePlanWork(ctx context.Context, env Environment, items []*work, unrea
 			subagents = append(subagents, &subagentWork{parent: w, sub: sub})
 		}
 	}
+	completed := env.planningCounter("Checking subagent sessions", len(subagents))
 	if err := forEach(ctx, workers, subagents, func(s *subagentWork) {
+		defer completed()
 		if s.sub.Bytes > collector.DefaultMaxRawTranscriptBytes {
 			s.skipped = true
 			return

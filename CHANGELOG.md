@@ -6,6 +6,9 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Show planning progress during backfill and setup's recent-session import:
+  a running count of sessions found, then completed/total counts and a percentage
+  while checking sessions. Each step is named on live terminals.
 - Capture Codex threads the Codex app opens for a task another thread's agent
   handed off (`thread_source: "agent_created_thread"`). They are top-level
   threads, named and listed by Codex like your own, and were failing on every
