@@ -81,19 +81,7 @@ func filterImportSource(ctx context.Context, env Environment, w *work, started t
 	// Children and supported forks require their first own native task.
 	// Ordinary historical and paginated imports retain their compatibility.
 	if evidence.Binding.RequiresOwnTask() && !evidence.Task.ValidNativeCreation(evidence.Binding.NativeCreatedAt) {
-		cause := agentapi.CauseOwnTaskMissing
-		if evidence.Task.Seen {
-			cause = agentapi.CauseOwnTaskInvalid
-			if evidence.Task.Refusal != "" {
-				cause = evidence.Task.Refusal
-			}
-			if evidence.Task.Native && !evidence.Task.LocalExecution {
-				cause = agentapi.CauseOwnTaskExecutionUnsupported
-			}
-			if evidence.Task.Native && evidence.Task.LocalExecution && !evidence.Task.StartedAt.IsZero() && !evidence.Binding.NativeCreatedAt.IsZero() {
-				cause = agentapi.CauseOwnTaskBeforeCreation
-			}
-		}
+		cause := ownTaskRefusalCause(evidence.Task, evidence.Binding.NativeCreatedAt)
 		return out, release, agentapi.WithCause(agentapi.Wrap(agentapi.Unavailable, errors.New("native own task unavailable")), cause)
 	}
 	if leased, ok := filter.(agentapi.LeasedTranscriptFilter); ok && leased.LeasedFilterFor(filter) {
@@ -113,4 +101,22 @@ func filterImportSource(ctx context.Context, env Environment, w *work, started t
 	w.c.NativeHome = binding.Home
 	w.t.metaStart = binding.NativeCreatedAt
 	return out, release, nil
+}
+
+// ownTaskRefusalCause classifies an already rejected first own task.
+func ownTaskRefusalCause(task agentapi.OwnTaskFacts, createdAt time.Time) agentapi.SourceCause {
+	cause := agentapi.CauseOwnTaskMissing
+	if task.Seen {
+		cause = agentapi.CauseOwnTaskInvalid
+		if task.Refusal != "" {
+			cause = task.Refusal
+		}
+		if task.Native && !task.LocalExecution {
+			cause = agentapi.CauseOwnTaskExecutionUnsupported
+		}
+		if task.Native && task.LocalExecution && !task.StartedAt.IsZero() && !createdAt.IsZero() {
+			cause = agentapi.CauseOwnTaskBeforeCreation
+		}
+	}
+	return cause
 }
