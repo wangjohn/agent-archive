@@ -26,7 +26,8 @@ func TestPlanningProgressCountsSelectedTranscripts(t *testing.T) {
 	for _, u := range updates {
 		if u.Stage == PlanningStageDiscoveringSessions {
 			found = append(found, u)
-		} else if u.Stage == PlanningStageCheckingSessions {
+		}
+		if u.Stage == PlanningStageCheckingSessions {
 			checked = append(checked, u)
 		}
 	}
