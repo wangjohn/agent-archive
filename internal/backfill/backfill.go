@@ -55,6 +55,8 @@ const (
 	SkipFilteredOut SkipReason = "filtered_out"
 	// SkipExcludedProject means the session's project is excluded in setup.
 	SkipExcludedProject SkipReason = "excluded_project"
+	// SkipExcludedHistory means a complete history requires an excluded dependency.
+	SkipExcludedHistory SkipReason = "excluded_history"
 	// SkipHomeDirectory means the session ran from the home folder itself.
 	// --include-home imports it.
 	SkipHomeDirectory SkipReason = "home_directory"
@@ -99,7 +101,7 @@ const (
 // skipOrder is the spec's precedence: the first applicable reason wins.
 var skipOrder = []SkipReason{
 	SkipAlreadyArchived, SkipDuplicateSession, SkipRegisteredNotAdmitted, SkipRemovedByUndo, SkipRemovedByRetention,
-	SkipFilteredOut, SkipExcludedProject, SkipHomeDirectory, SkipAboveHome, SkipTemporaryDirectory,
+	SkipFilteredOut, SkipExcludedProject, SkipExcludedHistory, SkipHomeDirectory, SkipAboveHome, SkipTemporaryDirectory,
 	SkipProjectUnknown, SkipWorktreeUnresolved, SkipIndexRecovery, SkipIdentityMismatch, SkipRelatedHistory, SkipSourceChanged,
 	SkipEmpty, SkipUnsafeFormat, SkipTooLarge, SkipStartUnknown, SkipStartInFuture,
 }
@@ -130,6 +132,8 @@ const (
 	ProjectKindHome ProjectKind = "home"
 	// ProjectKindDirectory is any other folder.
 	ProjectKindDirectory ProjectKind = "directory"
+	// ProjectKindHistorical never includes a live filesystem root.
+	ProjectKindHistorical ProjectKind = "historical"
 )
 
 // Candidate is one session found on disk and what the plan decided for it.
@@ -155,6 +159,7 @@ type Candidate struct {
 	// registered under: a configured project's own spelling, or the resolved
 	// path. It is set for a skip that has a would-be root (home, temporary,
 	// excluded) and empty when no project could be determined.
+	HistoricalProject        *archive.HistoricalProjectProof
 	ProjectRoot              string
 	ProjectResolution        *archive.ProjectResolution
 	projectResolutionCurrent func() bool
@@ -190,9 +195,13 @@ type Subagent struct {
 
 // Filters narrows a backfill run.
 type Filters struct {
-	Harnesses       []string
-	Projects        []string
-	ProjectMappings map[string]string
+	Harnesses          []string
+	Projects           []string
+	ProjectMappings    map[string]string
+	HistoricalMappings map[string]string
+	HistoricalProjects []HistoricalProjectDefinition
+	BulkMappings       bool
+	MappingFile        string
 	// Since and Until are local dates, YYYY-MM-DD, compared inclusively with
 	// the session's start.
 	Since string
@@ -279,6 +288,7 @@ const (
 // through collector.FilterTranscriptFile, the collector's own filter, which
 // reads transcripts from the real file system whatever is injected here.
 type Environment struct {
+	HistoricalSourceAllowed   func(string) bool
 	RepositoryIdentity        sourcefacts.RepositoryLookup
 	RepositoryIdentityCurrent func(sourcefacts.RepositoryIdentity) bool
 	Discovery                 agentapi.DiscoveryLookup
@@ -516,4 +526,12 @@ func historicalChoices(names []string) string {
 	default:
 		return strings.Join(names[:len(names)-1], ", ") + ", or " + names[len(names)-1]
 	}
+}
+
+// ProjectIdentity returns immutable ownership independently of a live root.
+func (c Candidate) ProjectIdentity() string {
+	if c.HistoricalProject != nil {
+		return c.HistoricalProject.ProjectID
+	}
+	return archive.ProjectID(c.ProjectRoot)
 }

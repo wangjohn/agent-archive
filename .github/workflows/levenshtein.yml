@@ -1,11 +1,12 @@
 name: Levenshtein
 # Shared lint and security checks from wangjohn/levenshtein, run in its pinned
-# Linux container. levenshtein.json selects the checks for each run. Run the
+# Linux worker. PRs use native tools over staged declared inputs; other runs
+# keep the pinned container. levenshtein.json selects the checks. Run the
 # same thing locally from a sibling checkout of Levenshtein:
 #
 #   ../levenshtein/verify pre-merge --source .
 #
-# The container lints with Linux build tags, so the darwin-only files (the
+# Both paths lint with Linux build tags, so the darwin-only files (the
 # Keychain and launchd code) are covered by the macOS golangci-lint job in
 # test.yml instead.
 on:
@@ -33,6 +34,8 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: app
+          # Put the truthy depth first: a PR's zero must not fall back to one.
+          fetch-depth: ${{ github.event_name != 'pull_request' && 1 || 0 }}
           persist-credentials: false
       # Pinned to a reviewed Levenshtein commit. Adopt new shared checks by
       # updating this SHA, never a moving branch.
@@ -43,18 +46,44 @@ jobs:
           ref: 6f799f72befb925d10f2ef01a7c9a46725fa714d
           path: levenshtein
           persist-credentials: false
-      - name: Set up Go for the Levenshtein launcher
+      - name: Set up pinned Go for Levenshtein
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: levenshtein/.go-version
           cache: false
+      - name: Stage PR inputs and select checks
+        if: github.event_name == 'pull_request'
+        id: stage
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+          NO_COLOR: '1'
+          XDG_CACHE_HOME: ${{ runner.temp }}/native-xdg
+          GOCACHE: ${{ runner.temp }}/native-go-build
+          GOMODCACHE: ${{ runner.temp }}/native-go-mod
+        run: |
+          python3 -B ./app/scripts/stage_native_verify.py --source ./app \
+            --destination "$RUNNER_TEMP/native-source" --shared ./levenshtein \
+            --run pre-merge --pr-scope
       - name: Verify
         env:
           EVENT: ${{ github.event_name }}
           NO_COLOR: '1'
+          PR_RUN: ${{ steps.stage.outputs.run }}
         run: |
           run=pre-merge
           if [[ "$EVENT" == schedule ]]; then
             run=main
           fi
-          ./levenshtein/verify "$run" --source ./app
+          source=./app
+          if [[ "$EVENT" == pull_request ]]; then
+            # Native inputs fingerprint source but do not restrict discovery.
+            # Stage the tracked configured inputs to match the container scope.
+            # No candidate or PR Go build state is restored from another run.
+            export GOCACHE="$RUNNER_TEMP/native-go-build"
+            export GOMODCACHE="$RUNNER_TEMP/native-go-mod"
+            export XDG_CACHE_HOME="$RUNNER_TEMP/native-xdg"
+            source="$RUNNER_TEMP/native-source"
+            run="$PR_RUN"
+          fi
+          ./levenshtein/verify "$run" --source "$source" --jobs 4 \
+            --cache-dir "$RUNNER_TEMP/verification"

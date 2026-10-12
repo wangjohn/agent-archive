@@ -283,7 +283,7 @@ func (p ImportStage) Validate(ctx context.Context, reg archive.SessionRegistrati
 }
 
 func (p ImportStage) validateOwner(reg archive.SessionRegistration) error {
-	if reg.StagedImportSHA256 != "" && reg.StagedImportSHA256 != p.SHA256 || p.Registration.ArchiveSessionID != reg.ArchiveSessionID || p.Registration.NativeSessionID != reg.NativeSessionID || p.Registration.Harness.Name != reg.Harness.Name || p.Registration.ProjectID != reg.ProjectID || p.Registration.ProjectRoot != reg.ProjectRoot || !sameImportParentProof(p.Registration, reg) || p.Registration.DestinationID != reg.DestinationID || !p.Registration.InBatch(reg.ImportBatch.Recorded()) || p.Bundle.ArchiveSessionID != reg.ArchiveSessionID || p.Bundle.NativeSessionID != reg.NativeSessionID || p.Bundle.ProjectID != reg.ProjectID || p.Bundle.Capture.Harness.Name != reg.Harness.Name {
+	if reg.StagedImportSHA256 != "" && reg.StagedImportSHA256 != p.SHA256 || p.Registration.ArchiveSessionID != reg.ArchiveSessionID || p.Registration.NativeSessionID != reg.NativeSessionID || p.Registration.Harness.Name != reg.Harness.Name || p.Registration.ProjectID != reg.ProjectID || p.Registration.ProjectRoot != reg.ProjectRoot || !sameHistoricalProjectProof(p.Registration, reg) || !sameImportParentProof(p.Registration, reg) || p.Registration.DestinationID != reg.DestinationID || !p.Registration.InBatch(reg.ImportBatch.Recorded()) || p.Bundle.ArchiveSessionID != reg.ArchiveSessionID || p.Bundle.NativeSessionID != reg.NativeSessionID || p.Bundle.ProjectID != reg.ProjectID || p.Bundle.Capture.Harness.Name != reg.Harness.Name {
 		return ErrDurableStorageRecovery
 	}
 	if len(p.Preserved) > archive.MaxHistorySpans {
@@ -351,7 +351,12 @@ func (s *Store) SaveImportSourceSet(ctx context.Context, reg archive.SessionRegi
 // decode reservation, then reserves three largest-record owners and two output
 // owners while applying current privacy rules.
 func validateImportStageCapacity(ctx context.Context, stage ImportStage) error {
-	n, err := jsonwire.Bound(ctx, stage, MaxImportStageBytes)
+	return validateImportStageCapacityWithin(ctx, stage, MaxImportStageBytes, 128<<20)
+}
+
+// Explicit bounds keep capacity arithmetic testable without changing shared limits.
+func validateImportStageCapacityWithin(ctx context.Context, stage ImportStage, maxBytes, allowance int64) error {
+	n, err := jsonwire.Bound(ctx, stage, maxBytes)
 	if err != nil {
 		return errors.Join(ErrDurableStorageCapacity, err)
 	}
@@ -359,7 +364,7 @@ func validateImportStageCapacity(ctx context.Context, stage ImportStage) error {
 	for _, bundle := range append([]archive.SourceBundle{stage.Bundle}, stage.Preserved...) {
 		retained += int64(bundle.Capture.Boundary.RetainedBytes)
 		for _, row := range bundle.NativeRecords {
-			size, err := jsonwire.Bound(ctx, row, MaxImportStageBytes)
+			size, err := jsonwire.Bound(ctx, row, maxBytes)
 			if err != nil {
 				return errors.Join(ErrDurableStorageCapacity, err)
 			}
@@ -373,7 +378,7 @@ func validateImportStageCapacity(ctx context.Context, stage ImportStage) error {
 	for scanner < largest+1 {
 		scanner *= 2
 	}
-	remaining := (128 << 20) - n - 3*largest - scanner
+	remaining := allowance - n - 3*largest - scanner
 	if retained > remaining/2 || remaining <= 0 {
 		return errors.Join(ErrDurableStorageCapacity, errors.New("selected import evidence exceeds the durable recovery memory allowance"))
 	}
@@ -724,4 +729,11 @@ func sameImportParentProof(staged, current archive.SessionRegistration) bool {
 		staged.ParentNativeSessionID == current.ParentNativeSessionID &&
 		staged.NativeRootSessionID == current.NativeRootSessionID &&
 		current.CodexBinding != nil && current.CodexBinding.PreservesFacts(staged.CodexBinding)
+}
+
+func sameHistoricalProjectProof(a, b archive.SessionRegistration) bool {
+	if a.HistoricalProject == nil || b.HistoricalProject == nil {
+		return a.HistoricalProject == nil && b.HistoricalProject == nil
+	}
+	return a.HistoricalProject.Equal(b.HistoricalProject)
 }
