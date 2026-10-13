@@ -82,8 +82,10 @@ python3 -B scripts/generate_go_shard_hints.py \
 ```
 
 The generator rejects source/settings/catalog mixtures, failed or incomplete
-streams, reused samples and mismatched manifest body evidence. The request may
-provide fresh `packages`/`cli` discovery lists to drop stale names or give newly
+streams, reused samples and mismatched manifest body evidence. Reconciliation
+checks the request's pinned artifact source independently of the regenerating
+workflow's `GITHUB_SHA`. The request may provide fresh `packages`/`cli` discovery
+lists to drop stale names or give newly
 discovered names the positive 1000 ms fallback; omission uses actual sample
 discovery. Discovery in the live runner always remains authoritative. Artifact
 IDs and runtime-source equivalence require independent API/source verification;

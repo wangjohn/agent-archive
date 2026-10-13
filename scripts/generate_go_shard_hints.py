@@ -5,6 +5,7 @@ from datetime import datetime
 from decimal import Decimal, ROUND_HALF_UP
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 from statistics import median
@@ -31,14 +32,20 @@ def json_stream(text):
 
 
 @contextlib.contextmanager
-def contract_parser():
-    """Use equivalent linear parsing while calling current helper contracts."""
+def contract_parser(source):
+    """Reconcile imported artifacts against their requested source, not CI's SHA."""
     original = runner.json_stream
+    event_source = os.environ.get('GITHUB_SHA')
     runner.json_stream = json_stream
+    os.environ['GITHUB_SHA'] = source
     try:
         yield
     finally:
         runner.json_stream = original
+        if event_source is None:
+            os.environ.pop('GITHUB_SHA', None)
+        else:
+            os.environ['GITHUB_SHA'] = event_source
 
 
 def positive_ms(seconds):
@@ -155,7 +162,7 @@ def _read_sample(directory, source, expected_settings):
 
 
 def read_sample(directory, source, expected_settings):
-    with contract_parser():
+    with contract_parser(source):
         try:
             runner.reconcile(directory)
             return _read_sample(directory, source, expected_settings)

@@ -1,8 +1,10 @@
 import copy
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
 import generate_go_shard_hints as hints
 import run_ci_tier
@@ -152,6 +154,19 @@ class GeneratorTests(unittest.TestCase):
         self.mutate(lambda m: m.update(success=False))
         with self.assertRaises(hints.runner.Failure): self.generate()
         self.assertIs(hints.runner.json_stream, original)
+
+    def test_imported_source_uses_request_and_restores_ci_event_source(self):
+        for event_source in (None, 'current-ci-merge-source'):
+            with mock.patch.dict(os.environ):
+                if event_source is None:
+                    os.environ.pop('GITHUB_SHA', None)
+                else:
+                    os.environ['GITHUB_SHA'] = event_source
+                self.assertEqual(self.generate()['provenance']['source'], 'accepted-source')
+                self.assertEqual(os.environ.get('GITHUB_SHA'), event_source)
+                with self.assertRaises(hints.runner.Failure):
+                    hints.generate(self.samples, 'wrong-request-source', SETTINGS, PKGS, NAMES)
+                self.assertEqual(os.environ.get('GITHUB_SHA'), event_source)
 
     def test_parent_elapsed_larger_than_envelope_and_missing_start(self):
         rows = [{'Test': 'TestAlpha', 'Action': 'run', 'Time': '2026-01-01T00:00:00Z'},

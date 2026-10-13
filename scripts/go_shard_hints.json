@@ -2465,7 +2465,7 @@
       },
       "verification": "Root API/source/runtime freeze and independent raw audits accepted both paired current-runtime samples, including 38 strict new ordinary run/pass lifecycles each. Artifact attribution is externally verified, not self-attested by raw JSON."
     },
-    "generator_sha256": "6c55cd193bed7951923bbc16d49bc63d05c31d685211a9960463539f0e26b9be",
+    "generator_sha256": "db2343bfed019ec5ccb7063757a5f292f642b75a98f61fc6a14f7ab54270b5e3",
     "policy": "median seconds then half-up integer ms, minimum 1; package terminal elapsed; CLI max(parent elapsed, active subtree envelope); unknown discovered units 1000ms; auxiliary phases excluded",
     "runner_contract_sha256": "b214035aec595cdf0e583e5641486f8ed94e25c9b74d411445a809e165313255",
     "samples": [
