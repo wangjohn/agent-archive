@@ -170,6 +170,9 @@ else:
                 for index in (0, 1):runner.run(index, root/str(index), 30)
                 runner.reconcile(root)
             calls = [json.loads(line) for line in command_log.read_text().splitlines()]
+            listings = [call for call in calls if '-list' in call['args']]
+            self.assertEqual(len(listings),2)
+            self.assertTrue(all('-count=1' in call['args'] and '-race' in call['args'] and '-short' in call['args'] for call in listings))
             executed = [call for call in calls if call['args'][0]=='test' and '-list' not in call['args']]
             for package in (runner.GIT_IDENTITY, 'ordinary/a', 'ordinary/b'):
                 self.assertEqual(sum(package in call['args'] for call in executed), 1)

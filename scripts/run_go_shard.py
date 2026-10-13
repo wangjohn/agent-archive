@@ -351,7 +351,7 @@ def run(index, out, seconds):
     phases = {}
     phases['package_discovery_seconds'] = supervise([(['go', 'list', '-json', './...'], out / 'packages.json', env)], deadline)[0]
     packages = metadata((out / 'packages.json').read_text())
-    phases['cli_listing_race_build_testmain_seconds'] = supervise([(['go', 'test', '-race', '-short', '-json', '-list', '^(Test|Fuzz|Example)', CLI], out / 'listing.json', env)], deadline)[0]
+    phases['cli_listing_race_build_testmain_seconds'] = supervise([(['go', 'test', '-race', '-short', '-count=1', '-json', '-list', '^(Test|Fuzz|Example)', CLI], out / 'listing.json', env)], deadline)[0]
     names = listed_names((out / 'listing.json').read_text())
     hints = json.loads((ROOT / 'scripts/go_shard_hints.json').read_text())
     ordinary = sorted(set(packages) - {CLI})

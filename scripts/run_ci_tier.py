@@ -68,6 +68,9 @@ def extra_for_paths(paths):
     for path in paths:
         if path in {'CHANGELOG.md','CONTRIBUTING.md','CODE_OF_CONDUCT.md','LICENSE'}:
             continue  # ordinary doc/link and script gates cover these reviewed prose inputs
+        if path.startswith('internal/archive/'):
+            # Shared metadata/history/limits feed every product family.
+            return dict(result, packages=['./...'], native=True, systemd=True, fuzz=True, purge=True)
         if path.startswith('internal/'):
             components = path.split('/')
             if len(components) < 3 or components[1] == 'testutil':
@@ -204,9 +207,9 @@ def checked(command, output, deadline, env=None):
             signal.signal(sig, handler)
 
 
-def discover(packages, out, deadline):
+def discover(packages, out, deadline, race=False):
     """Exact selected-name/fuzz discovery; ordinary unrestricted runs need no listing."""
-    text = checked(['go', 'test', '-json', '-list', '^(Test|Fuzz|Example)', *packages], out, deadline)
+    text = checked(['go', 'test', *(['-race'] if race else []), '-count=1', '-json', '-list', '^(Test|Fuzz|Example)', *packages], out, deadline, dict(os.environ, AGENT_ARCHIVE_REAL_SYSTEMD='0'))
     names, ended = {}, set()
     for line in text.splitlines():
         item = json.loads(line)
@@ -252,6 +255,8 @@ def run_suite(tier, suite, out, extras=None, seconds=2400):
     path.write_text(json.dumps(report, indent=2)+'\n')
     deadline = time.monotonic()+seconds
     def execute(command, name, short=False, selected=None, children=None, env=None):
+        if env is None:
+            env = dict(os.environ, AGENT_ARCHIVE_REAL_SYSTEMD='0')
         text = checked(command, out/(name+'.jsonl'), deadline, env)
         if command[0] == 'bash':
             text = '\n'.join(line for line in text.splitlines() if line.startswith('{'))
@@ -259,7 +264,8 @@ def run_suite(tier, suite, out, extras=None, seconds=2400):
         if selected:
             verify_selected(proof['actual'], selected, children)
         report['invocations'].append({'command': command, 'log': name+'.jsonl', 'evidence': proof,
-                                      'performance_enabled': (env or {}).get('AGENT_ARCHIVE_PERF') == '1'})
+                                      'performance_enabled': env.get('AGENT_ARCHIVE_PERF') == '1',
+                                      'real_systemd_enabled': env.get('AGENT_ARCHIVE_REAL_SYSTEMD') == '1'})
         path.write_text(json.dumps(report, indent=2)+'\n')
     common = ['go', 'test', '-race', '-count=1', '-json', '-timeout', '20m']
     if suite == 'macos' and tier == 'daily':
@@ -289,14 +295,14 @@ def run_suite(tier, suite, out, extras=None, seconds=2400):
                 pkg = MODULE+entry['package']
                 by_pkg.setdefault(pkg, []).append(entry['test'])
                 children[(pkg, entry['test'])] = entry.get('full_children', [])
-            listing = discover(['./'+p[len(MODULE):] for p in by_pkg], out/'medium-list.jsonl', deadline)
+            listing = discover(['./'+p[len(MODULE):] for p in by_pkg], out/'medium-list.jsonl', deadline, race=True)
             for pkg, names in by_pkg.items():
                 if not set(names) <= set(listing.get(pkg, [])):
                     raise Failure('daily restoration absent from discovery')
                 pattern = '^('+'|'.join(re.escape(n) for n in names)+')$'
                 execute(common+['-run', pattern, './'+pkg[len(MODULE):]], 'medium-'+pkg.rsplit('/',1)[1], selected={pkg:names}, children=children)
         if tier == 'full' and packages:
-            execute(['go', 'test', '-v', '-json', '-p', '1', '-count=1', '-run', 'StayFast|FiveMegabyte|TestCursorOverlappingHooksRegisterOnce', './internal/collector', './internal/archive', './internal/agents/nativecodec', './internal/capture'], 'performance', env=dict(os.environ, AGENT_ARCHIVE_PERF='1'))
+            execute(['go', 'test', '-v', '-json', '-p', '1', '-count=1', '-run', 'StayFast|FiveMegabyte|TestCursorOverlappingHooksRegisterOnce', './internal/collector', './internal/archive', './internal/agents/nativecodec', './internal/capture'], 'performance', env=dict(os.environ, AGENT_ARCHIVE_PERF='1', AGENT_ARCHIVE_REAL_SYSTEMD='0'))
     if suite == 'macos':
         execute(['bash','scripts/test_published_writer.sh'],'published-writer', selected={MODULE+'internal/config':['TestPublishedWriterRefusesProtectedConfiguration']})
     if suite == 'fuzz' or suite == 'extra' and extras['fuzz']:
@@ -308,7 +314,7 @@ def run_suite(tier, suite, out, extras=None, seconds=2400):
         report['fuzz_completed'] = []
         duration = '5s' if tier == 'daily' else '30s'
         for index,(pkg,name) in enumerate(targets):
-            text = checked(['go','test','-count=1','-json',pkg,'-run','^$','-fuzz','^'+re.escape(name)+'$','-fuzztime',duration,'-fuzzminimizetime','2s'],out/f'fuzz-{index}.jsonl',deadline)
+            text = checked(['go','test','-count=1','-json',pkg,'-run','^$','-fuzz','^'+re.escape(name)+'$','-fuzztime',duration,'-fuzzminimizetime','2s'],out/f'fuzz-{index}.jsonl',deadline,dict(os.environ,AGENT_ARCHIVE_REAL_SYSTEMD='0'))
             # A successful package terminal and successful mutation process are required.
             if not any(json.loads(l).get('Action') == 'pass' and not json.loads(l).get('Test') for l in text.splitlines() if l) or 'fuzz: elapsed:' not in text:
                 raise Failure('fuzz campaign lacks successful package terminal')
@@ -326,7 +332,7 @@ def run_suite(tier, suite, out, extras=None, seconds=2400):
             selected = {p:[n for n in names if re.search(pattern,n)] for p,names in listing.items()}
             if not any(selected.values()):
                 raise Failure('real systemd selection empty')
-            execute(['go','test','-count=1','-json','-timeout','8m','-run',pattern,relative], 'systemd-'+pkg, selected=selected)
+            execute(['go','test','-count=1','-json','-timeout','8m','-run',pattern,relative], 'systemd-'+pkg, selected=selected, env=dict(os.environ,AGENT_ARCHIVE_REAL_SYSTEMD='1'))
     report['success'] = True
     path.write_text(json.dumps(report,indent=2)+'\n')
 
@@ -398,6 +404,7 @@ def main():
             verify_full(args.output, json.loads(args.extra_plan.read_text()))
             return 0
         if args.plan:
+            tier = resolved or tier  # event-owned planning cannot be downgraded by a flag
             catalog()
             source = git('rev-parse','HEAD')
             if source != os.environ.get('GITHUB_SHA',source):

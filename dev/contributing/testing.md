@@ -42,7 +42,8 @@ changes. Its proof compares the event base, actual head and tested merge, checks
 tracked bytes/types/modes, and includes both paths of renames and deletions.
 Catalog/recovery/archive/presentation/platform/purge families have explicit
 backstops; unmapped inputs, shared helpers, configuration or unavailable history
-select all full backstops. Required native and real-systemd coverage runs when
+select all full backstops. Shared archive metadata/history/limits also select
+all backstops. Required native and real-systemd coverage runs when
 selected; the real manager is started only on a disposable GitHub-hosted runner.
 The stable `linux-full` job now succeeds on PRs with actual full extra bodies or
 an explicit empty selection, whose evidence says no full bodies ran. The stable

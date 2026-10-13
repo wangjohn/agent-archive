@@ -44,7 +44,9 @@ class PolicyTest(unittest.TestCase):
     def test_dependency_map_and_unknown_changes_are_conservative(self):
         self.assertTrue(tier.extra_for_paths(['internal/scheduler/systemd/manage.go'])['systemd'])
         self.assertTrue(tier.extra_for_paths(['internal/config/consent.go'])['native'])
-        self.assertTrue(tier.extra_for_paths(['internal/archive/redact.go'])['fuzz'])
+        archive=tier.extra_for_paths(['internal/archive/redact.go'])
+        self.assertEqual(archive['packages'],['./...'])
+        self.assertTrue(all(archive[k] for k in ('native','systemd','fuzz','purge')))
         self.assertTrue(tier.extra_for_paths(['docs/security/archive-cleanup.md'])['purge'])
         for path in ('internal/newfamily/x.go','internal/testutil/helper.go','go.mod','scripts/run_ci_tier.py','.github/workflows/test.yml','unknown.md'):
             result=tier.extra_for_paths([path]);self.assertEqual(result['packages'],['./...']);self.assertTrue(all(result[k] for k in ('native','systemd','fuzz','purge')))
@@ -128,6 +130,7 @@ class ExecutionPlanTest(unittest.TestCase):
             for pkg in sorted({tier.MODULE+e['package'] for e in entries}):
                 selected=[e for e in entries if tier.MODULE+e['package']==pkg]
                 if '-list' in args:
+                    self.assertIn('-count=1',args);self.assertIn('-race',args)
                     lines += [{'Action':'output','Package':pkg,'Output':e['test']+'\n'} for e in selected]
                     lines.append({'Action':'pass','Package':pkg});continue
                 pattern=args[args.index('-run')+1] if '-run' in args else None
@@ -148,6 +151,29 @@ class ExecutionPlanTest(unittest.TestCase):
             restored={r['test'] for i in report['invocations'][1:] for r in i['evidence']['actual'] if '/' not in r['test']}
             self.assertEqual(restored,{e['test'] for e in entries})
 
+    def test_real_manager_is_enabled_only_for_dedicated_bodies_not_race_perf_listing(self):
+        calls=[]
+        def checked(command,output,deadline,env=None):
+            calls.append((command,env['AGENT_ARCHIVE_REAL_SYSTEMD']))
+            package=tier.MODULE+'internal/scheduler/systemd'
+            name='TestRealScheduler'
+            if './internal/cli' in command:
+                package=tier.MODULE+'internal/cli';name='TestRealSystemdSetup'
+            if '-list' in command:
+                text=events({'Action':'output','Package':package,'Output':name+'\n'},{'Action':'pass','Package':package})
+            else:
+                if '-race' in command or command[-1]=='./internal/capture':name='TestOrdinary'
+                text=events({'Action':'pass','Package':package,'Test':name},{'Action':'pass','Package':package})
+            output.write_text(text);return text
+        extra={'packages':['./internal/scheduler/...'],'native':False,'systemd':True,'fuzz':False,'purge':False}
+        with tempfile.TemporaryDirectory() as d,mock.patch.object(tier,'git',return_value='a'*40),mock.patch.object(tier,'checked',side_effect=checked),mock.patch.dict(os.environ,{'GITHUB_SHA':'a'*40,'AGENT_ARCHIVE_REAL_SYSTEMD':'1'}):
+            tier.run_suite('full','extra',Path(d),extra)
+            proof=json.loads((Path(d)/'tier.json').read_text());self.assertTrue(proof['success'])
+        for command,enabled in calls:
+            dedicated='-run' in command and command[command.index('-run')+1] in ('^TestReal','^TestRealSystemd')
+            self.assertEqual(enabled,'1' if dedicated else '0')
+        self.assertEqual(sum(enabled=='1' for _,enabled in calls),2)
+
     def test_full_verdict_rejects_missing_artifact_source_and_incomplete_empty_extra(self):
         with tempfile.TemporaryDirectory() as d,mock.patch.dict(os.environ,{'GITHUB_SHA':'a'*40}):
             directory=Path(d);plan={'source':'a'*40,'packages':[],'native':False,'systemd':False,'fuzz':False,'purge':False}
@@ -157,6 +183,30 @@ class ExecutionPlanTest(unittest.TestCase):
             for key,value in [('source','b'*40),('success',False),('tier','daily')]:
                 bad=dict(proof,**{key:value});(directory/'tier.json').write_text(json.dumps(bad))
                 with self.assertRaises(tier.Failure):tier.verify_full(directory,plan)
+
+    def test_every_fuzz_campaign_uses_cadence_duration_and_failure_cannot_complete(self):
+        package=tier.MODULE+'internal/archive'
+        names=['FuzzCase'+str(i) for i in range(24)]
+        for cadence,duration in [('daily','5s'),('full','30s')]:
+            calls=[]
+            def checked(command,output,deadline,env=None):
+                self.assertEqual(env['AGENT_ARCHIVE_REAL_SYSTEMD'],'0')
+                if '-list' in command:
+                    self.assertIn('-count=1',command)
+                    text=events(*[{'Action':'output','Package':package,'Output':name+'\n'} for name in names],{'Action':'pass','Package':package})
+                else:
+                    calls.append(command)
+                    text=events({'Action':'output','Package':package,'Output':'fuzz: elapsed: campaign completed\n'},{'Action':'pass','Package':package})
+                output.write_text(text);return text
+            with tempfile.TemporaryDirectory() as d,mock.patch.object(tier,'git',return_value='a'*40),mock.patch.object(tier,'checked',side_effect=checked),mock.patch.dict(os.environ,{'GITHUB_SHA':'a'*40,'AGENT_ARCHIVE_REAL_SYSTEMD':'1'}):
+                tier.run_suite(cadence,'fuzz',Path(d))
+                proof=json.loads((Path(d)/'tier.json').read_text())
+                self.assertTrue(proof['success']);self.assertEqual(proof['fuzz_discovered'],proof['fuzz_completed'])
+            self.assertEqual(len(calls),24)
+            self.assertTrue(all(c[c.index('-fuzztime')+1]==duration and '-count=1' in c for c in calls))
+        with tempfile.TemporaryDirectory() as d,mock.patch.object(tier,'git',return_value='a'*40),mock.patch.object(tier,'discover',return_value={package:names}),mock.patch.object(tier,'checked',side_effect=tier.Failure('campaign cancelled')),mock.patch.dict(os.environ,{'GITHUB_SHA':'a'*40}):
+            with self.assertRaises(tier.Failure):tier.run_suite('full','fuzz',Path(d))
+            self.assertFalse(json.loads((Path(d)/'tier.json').read_text())['success'])
 
     def test_candidate_and_manual_all_cannot_be_downgraded_by_explicit_flag(self):
         for event,ref in [('push','refs/heads/release-candidate/final'),('workflow_dispatch','refs/heads/main')]:
