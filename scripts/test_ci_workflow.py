@@ -104,6 +104,34 @@ class RealSystemdJobTest(unittest.TestCase):
         runs_on = job_key(self.job(), 'runs-on')
         self.assertIn(f'`{runs_on}`', TESTING_MD.read_text(), f'dev/contributing/testing.md should name {runs_on}')
 
+    def test_pr_real_manager_uses_the_validated_backstop_image(self):
+        pr = jobs((ROOT / '.github/workflows/test.yml').read_text())['linux-full']
+        self.assertIn('bash scripts/start_ci_systemd.sh', pr)
+        self.assertEqual(job_key(pr, 'runs-on'), job_key(self.job(), 'runs-on'))
+
+
+class PurgePrerequisiteTest(unittest.TestCase):
+    def test_every_purge_job_provisions_tools_before_running_bodies(self):
+        workflows = [(ROOT / '.github/workflows/test.yml', 'script-tests'),
+                     (EXTENDED_YML, 'linux-race'), (EXTENDED_YML, 'macos-full')]
+        for path, name in workflows:
+            with self.subTest(workflow=path.name, job=name):
+                job = jobs(path.read_text())[name]
+                job_steps = steps(job)
+                purge_index = next(i for i, step in enumerate(job_steps)
+                                   if 'python3 scripts/test_purge_recipe.py ' in step)
+                install_index = next(i for i, step in enumerate(job_steps)
+                                     if 'name: Install purge prerequisites' in step)
+                self.assertLess(install_index, purge_index)
+                install = job_steps[install_index]
+                self.assertIsNone(step_key(install, 'if'))
+                if job_key(job, 'runs-on').startswith('ubuntu-'):
+                    self.assertIn('sudo apt-get update', install)
+                    self.assertIn('sudo apt-get install --yes jq zsh', install)
+                else:
+                    self.assertIn('for tool in jq zsh;', install)
+                    self.assertIn('brew install "$tool"', install)
+
 
 class PublishedWriterJobTest(unittest.TestCase):
     def test_published_writer_runs_only_on_native_macos(self):

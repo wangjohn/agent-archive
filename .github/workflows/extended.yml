@@ -50,6 +50,10 @@ jobs:
       - run: python3 scripts/test_release_candidate.py
       - run: python3 scripts/test_install.py
       - run: python3 scripts/test_install_from_source.py
+      - name: Install purge prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes jq zsh
       - name: Tiered purge matrix
         env:
           PYTHONDONTWRITEBYTECODE: '1'
@@ -98,6 +102,11 @@ jobs:
       - run: python3 scripts/test_release_candidate.py
       - run: python3 scripts/test_install.py
       - run: python3 scripts/test_install_from_source.py
+      - name: Install purge prerequisites
+        run: |
+          for tool in jq zsh; do
+            if ! command -v "$tool" >/dev/null; then brew install "$tool"; fi
+          done
       - name: Tiered purge matrix
         env:
           PYTHONDONTWRITEBYTECODE: '1'

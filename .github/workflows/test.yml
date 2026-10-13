@@ -74,7 +74,8 @@ jobs:
   linux-full:
     # PR extras are distinct from the exhaustive representative shards.
     needs: [tier-plan]
-    runs-on: ubuntu-latest
+    # This job also exercises the real manager for sensitive PRs.
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -127,6 +128,10 @@ jobs:
       - run: python3 scripts/test_release_candidate.py
       - run: python3 scripts/test_install.py
       - run: python3 scripts/test_install_from_source.py
+      - name: Install purge prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes jq zsh
       - name: Representative purge or required full purge extras
         env:
           EVENT: ${{ github.event_name }}
