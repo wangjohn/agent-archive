@@ -229,13 +229,30 @@ def discover(packages, out, deadline, race=False):
     return {p: sorted(n) for p, n in names.items()}
 
 
-def verify_selected(actual, selected, children=None):
+def expected_real_manager_skip(record):
+    """One fake-manager case is unrepresentable on the actual user manager."""
+    name = 'TestRealUserManagerConformance/UnreadableAndAbsentDefinitions'
+    if (record['package'] != MODULE+'internal/scheduler/systemd'
+            or record['test'] != name or record['status'] != 'skip'):
+        return False
+    # Preserve the raw reason in evidence, but exclude only Go's own frames
+    # when checking the exact diagnostic. Extra/changed diagnostics fail closed.
+    lines = [line for line in record.get('reason', '').splitlines()
+             if line != '=== RUN   '+name
+             and not re.fullmatch(r'--- SKIP: '+re.escape(name)+r' \([0-9.]+s\)', line)]
+    return len(lines) == 1 and re.fullmatch(
+        r'\s*conformance\.go:\d+: a real manager cannot be put in a loaded state over damaged unit files',
+        lines[0]) is not None
+
+
+def verify_selected(actual, selected, children=None, real_manager=False):
     passed = {(r['package'], r['test']) for r in actual if r['status'] == 'pass'}
     for pkg, names in selected.items():
         for name in names:
             if (pkg, name) not in passed:
                 raise Failure('selected full body did not pass: '+pkg+'/'+name)
-            if any(r['status'] != 'pass' for r in actual if r['package'] == pkg and (r['test'] == name or r['test'].startswith(name+'/'))):
+            if any(r['status'] != 'pass' and not (real_manager and expected_real_manager_skip(r))
+                   for r in actual if r['package'] == pkg and (r['test'] == name or r['test'].startswith(name+'/'))):
                 raise Failure('selected full body skipped a child')
             for child in (children or {}).get((pkg, name), []):
                 if (pkg, name+'/'+child) not in passed:
@@ -254,7 +271,7 @@ def run_suite(tier, suite, out, extras=None, seconds=2400):
     path = out / 'tier.json'
     path.write_text(json.dumps(report, indent=2)+'\n')
     deadline = time.monotonic()+seconds
-    def execute(command, name, short=False, selected=None, children=None, env=None):
+    def execute(command, name, short=False, selected=None, children=None, env=None, real_manager=False):
         if env is None:
             env = dict(os.environ, AGENT_ARCHIVE_REAL_SYSTEMD='0')
         text = checked(command, out/(name+'.jsonl'), deadline, env)
@@ -262,7 +279,7 @@ def run_suite(tier, suite, out, extras=None, seconds=2400):
             text = '\n'.join(line for line in text.splitlines() if line.startswith('{'))
         proof = body_evidence(text, short)
         if selected:
-            verify_selected(proof['actual'], selected, children)
+            verify_selected(proof['actual'], selected, children, real_manager=real_manager)
         report['invocations'].append({'command': command, 'log': name+'.jsonl', 'evidence': proof,
                                       'performance_enabled': env.get('AGENT_ARCHIVE_PERF') == '1',
                                       'real_systemd_enabled': env.get('AGENT_ARCHIVE_REAL_SYSTEMD') == '1'})
@@ -332,7 +349,7 @@ def run_suite(tier, suite, out, extras=None, seconds=2400):
             selected = {p:[n for n in names if re.search(pattern,n)] for p,names in listing.items()}
             if not any(selected.values()):
                 raise Failure('real systemd selection empty')
-            execute(['go','test','-count=1','-json','-timeout','8m','-run',pattern,relative], 'systemd-'+pkg, selected=selected, env=dict(os.environ,AGENT_ARCHIVE_REAL_SYSTEMD='1'))
+            execute(['go','test','-count=1','-json','-timeout','8m','-run',pattern,relative], 'systemd-'+pkg, selected=selected, env=dict(os.environ,AGENT_ARCHIVE_REAL_SYSTEMD='1'), real_manager=True)
     report['success'] = True
     path.write_text(json.dumps(report,indent=2)+'\n')
 

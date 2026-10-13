@@ -66,6 +66,38 @@ class PolicyTest(unittest.TestCase):
 
 
 class EvidenceTest(unittest.TestCase):
+    def test_dedicated_manager_allows_only_exact_unrepresentable_child_and_retains_skip(self):
+        package=tier.MODULE+'internal/scheduler/systemd'
+        parent='TestRealUserManagerConformance'
+        child=parent+'/UnreadableAndAbsentDefinitions'
+        reason='a real manager cannot be put in a loaded state over damaged unit files'
+        text=events({'Action':'run','Package':package,'Test':child},
+                    {'Action':'output','Package':package,'Test':child,'Output':'=== RUN   '+child+'\n'},
+                    {'Action':'output','Package':package,'Test':child,'Output':'    conformance.go:119: '+reason+'\n'},
+                    {'Action':'output','Package':package,'Test':child,'Output':'--- SKIP: '+child+' (0.00s)\n'},
+                    {'Action':'skip','Package':package,'Test':child},
+                    {'Action':'pass','Package':package,'Test':parent+'/Installed'},
+                    {'Action':'pass','Package':package,'Test':parent})
+        actual=tier.body_evidence(text,False)['actual']
+        selected={package:[parent]}
+        tier.verify_selected(actual,selected,real_manager=True)
+        skipped=next(r for r in actual if r['test']==child)
+        self.assertEqual(skipped['status'],'skip');self.assertIn(reason,skipped['reason'])
+        with self.assertRaises(tier.Failure):tier.verify_selected(actual,selected)
+        for changed in (dict(skipped,reason=skipped['reason'].replace(reason,'changed reason')),
+                        dict(skipped,test=parent+'/Unexpected'),
+                        dict(skipped,package=tier.MODULE+'internal/cli')):
+            with self.subTest(change=changed),self.assertRaises(tier.Failure):
+                tier.verify_selected([dict(r,**changed) if r['test']==child else r for r in actual],
+                                     {changed['package']:[parent]} if changed['package']!=package else selected,
+                                     real_manager=True)
+        for broken in ([r for r in actual if r['test']!=parent],
+                       [dict(r,status='skip') if r['test']==parent else r for r in actual],
+                       actual+[{'package':package,'test':parent+'/NewSkip','status':'skip','reason':reason}]):
+            with self.assertRaises(tier.Failure):tier.verify_selected(broken,selected,real_manager=True)
+        with self.assertRaises(tier.Failure):
+            tier.verify_selected(actual,selected,{(package,parent):['Missing']},real_manager=True)
+
     def test_nested_skip_and_scaled_pass_are_distinct_from_full_body(self):
         pkg=tier.MODULE+'internal/cli';name='TestRealCLICatalogDefaultList50Bounded'
         text=events({'Action':'run','Package':pkg,'Test':name},{'Action':'pass','Package':pkg,'Test':name+'/128'},{'Action':'pass','Package':pkg,'Test':name},{'Action':'skip','Package':pkg,'Test':'TestOther/child'})
@@ -156,19 +188,26 @@ class ExecutionPlanTest(unittest.TestCase):
         def checked(command,output,deadline,env=None):
             calls.append((command,env['AGENT_ARCHIVE_REAL_SYSTEMD']))
             package=tier.MODULE+'internal/scheduler/systemd'
-            name='TestRealScheduler'
+            name='TestRealUserManagerConformance'
             if './internal/cli' in command:
                 package=tier.MODULE+'internal/cli';name='TestRealSystemdSetup'
             if '-list' in command:
                 text=events({'Action':'output','Package':package,'Output':name+'\n'},{'Action':'pass','Package':package})
             else:
                 if '-race' in command or command[-1]=='./internal/capture':name='TestOrdinary'
-                text=events({'Action':'pass','Package':package,'Test':name},{'Action':'pass','Package':package})
+                records=[{'Action':'pass','Package':package,'Test':name},{'Action':'pass','Package':package}]
+                if name=='TestRealUserManagerConformance':
+                    child=name+'/UnreadableAndAbsentDefinitions'
+                    records.extend([{'Action':'output','Package':package,'Test':child,'Output':'    conformance.go:119: a real manager cannot be put in a loaded state over damaged unit files\n'},
+                                    {'Action':'skip','Package':package,'Test':child}])
+                text=events(*records)
             output.write_text(text);return text
         extra={'packages':['./internal/scheduler/...'],'native':False,'systemd':True,'fuzz':False,'purge':False}
         with tempfile.TemporaryDirectory() as d,mock.patch.object(tier,'git',return_value='a'*40),mock.patch.object(tier,'checked',side_effect=checked),mock.patch.dict(os.environ,{'GITHUB_SHA':'a'*40,'AGENT_ARCHIVE_REAL_SYSTEMD':'1'}):
             tier.run_suite('full','extra',Path(d),extra)
             proof=json.loads((Path(d)/'tier.json').read_text());self.assertTrue(proof['success'])
+            actual=next(i for i in proof['invocations'] if i['log']=='systemd-systemd.jsonl')['evidence']['actual']
+            self.assertEqual(next(r for r in actual if r['test'].endswith('/UnreadableAndAbsentDefinitions'))['status'],'skip')
         for command,enabled in calls:
             dedicated='-run' in command and command[command.index('-run')+1] in ('^TestReal','^TestRealSystemd')
             self.assertEqual(enabled,'1' if dedicated else '0')

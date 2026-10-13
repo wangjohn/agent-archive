@@ -100,6 +100,11 @@ exist in dynamic discovery, pass without skipped children, and include required
 /512 or /1100 descendants. Ordinary unrestricted package execution uses actual
 terminals without another cold all-package listing. A previous scheduled or PR
 merge-ref run cannot replace validation of the final release candidate SHA.
+Dedicated real-manager verification permits only the existing
+`TestRealUserManagerConformance/UnreadableAndAbsentDefinitions` skip with its
+exact reason: a real manager cannot be put in a loaded state over damaged unit
+files. The fake-manager conformance suite covers that case. Artifacts retain
+the actual SKIP and reason; other skips and missing selected manager bodies fail.
 
 The Git identity compatibility job separately runs isolated native Git tests on
 pinned upstream Git 2.30.2 and 2.39.2, and the runner's current Git. It logs exact
