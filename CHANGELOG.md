@@ -6,6 +6,12 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- `handoff --to muse` starts a new Muse conversation using the existing private,
+  filtered context artifact and normal permissions. Muse transcripts can also
+  hand off to Claude Code, Codex and Cursor. Ordinary handoffs clear a calling
+  replay marker so the new conversation is not mistaken for a replay. Native
+  Muse replay forwarding remains unqualified.
+
 - Prepare guarded capture of newly started Muse sessions, with explicit home,
   project and capture-window checks before ownership. Public setup remains
   disabled pending native acceptance; existing Muse local reading is unchanged.
