@@ -171,12 +171,44 @@ are filter-derived text stored in the bucket, not a separate redaction pass.
   | Claude Code | `~/.claude/skills` | `<project>/.claude/skills` |
   | Codex | `~/.agents/skills`, `~/.codex/skills` | `<project>/.agents/skills` |
   | Cursor | `~/.cursor/skills` | `<project>/.cursor/skills` |
+  | Muse | `.agents/skills`, `.claude/skills` under home; exact Muse config, Codex and bundled skill roots | `.agents/skills`, `.codex/skills`, `.claude/skills` under project |
+
+  Muse config inventory uses the injected `$XDG_CONFIG_HOME/muse/skills`, or
+  `~/.config/muse/skills` only when that variable is known unset. Codex foreign
+  inventory uses injected `$CODEX_HOME/skills`, or `~/.codex/skills` only when
+  known unset. Unknown, empty or invalid configured paths are not guessed.
+  Builtin inventory uses only the caller-qualified effective data home plus
+  `muse/skills/bundled/muse-core/skills`. The data home is fixed once per Muse
+  observation pass, using the existing injected XDG data-location policy; no
+  provider guesses another location. Native-local plugin inventory reads the exact
+  `muse/plugins/installed.json` version-1 registry under that same data home,
+  derives its local cache location, checks the manifest's raw hash, and reads
+  only its finite declared skill files. Other registry versions, provenance
+  families and ambiguous declarations remain incomplete. Inventory proves installation only;
+  project trust, native activation, eligibility and invocation/read use remain
+  unknown. Skill presence cannot activate Muse capture.
 
   Only each folder's immediate `<skill>/SKILL.md` files are read (up to 256
   per folder), never other files in them. In a user-level folder a
   symlinked skill is followed only when its resolved `SKILL.md` stays inside
   that selected skill root. A project's `SKILL.md` that resolves outside the
-  project is skipped. Sessions imported with `backfill` carry no skill evidence.
+  project is skipped. The shared observer also supports finite caller-qualified
+  manifest file declarations: only the declared regular files inside that exact
+  package can be read, with no recursive search or undeclared neighbors. This
+  requires installed registry provenance for native plugins; a scratch manifest
+  alone supplies no installed authority. Registry and manifest reads are each
+  limited to 256 KB and together to 1 MB, included in the existing allowance;
+  no more than 256 packages and 256 declared files are admitted. Only private,
+  current-user-owned regular files under the exact installed boundary are read;
+  unsupported ownership platforms remain unavailable. Raw package/manifest
+  digests, source paths, settings and non-skill capabilities are not uploaded.
+  User roots share
+  one 4 MB allowance and physical-file cache per observation; each project's roots
+  have a separate 4 MB allowance and cache. One file is limited to 1 MB and an
+  archived body to 16 KB. Sessions imported with `backfill`
+  carry no skill evidence. Muse metadata can retain bounded logical installed
+  declaration IDs/scopes for skills sharing the same name and content hash; they
+  contain no package paths and do not establish eligibility or use.
 
   Change the mode in setup. The change limits subsequent uploads, including
   pending work rebuilt under the new mode, but does not remove copies already

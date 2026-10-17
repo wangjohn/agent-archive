@@ -578,27 +578,55 @@ func configuredArchiveStore(format destination.ArchiveFormat, remote storage.Obj
 func skillObserver(env Env, mode config.SkillEvidence) func(archive.SessionRegistration, time.Time) ([]archive.SupplementalEvidence, error) {
 	userCache := map[string][]archive.SupplementalEvidence{}
 	projectCache := map[string][]archive.SupplementalEvidence{}
+	var museEnvironment *agentapi.RuntimeEnvironment
+	var museDataHome string
+	var museDataHomeSet bool
 	return func(reg archive.SessionRegistration, at time.Time) ([]archive.SupplementalEvidence, error) {
 		if reg.Imported() || mode == config.SkillEvidenceNone {
 			return nil, nil
 		}
-		userScope, ok := userCache[reg.Harness.Name]
+		harness := reg.Harness.Name
+		if archive.CanonicalHarness(harness) == "muse" {
+			harness = "muse"
+			if museEnvironment == nil {
+				museEnvironment = skillRootEnvironment(env)
+			}
+		}
+		userScope, ok := userCache[harness]
 		if !ok {
 			userHome, err := env.userHomeDir()
 			if err != nil {
 				return nil, err
 			}
-			userScope, err = evidence.ObserveSkills(evidence.SkillOptions{Harness: reg.Harness.Name, UserHome: userHome, ObservedAt: at, Mode: mode, Locations: skillEvidenceRoots(env, reg.Harness.Name, agentapi.SkillLocations{UserHome: userHome})})
+			dataHome := ""
+			if harness == "muse" {
+				if !museDataHomeSet {
+					museDataHome = env.nativeDataHome(userHome)
+					museDataHomeSet = true
+				}
+				dataHome = museDataHome
+			}
+			locations := agentapi.SkillLocations{UserHome: userHome, DataHome: dataHome, Environment: museEnvironment}
+			options := evidence.SkillOptions{Harness: harness, UserHome: userHome, ObservedAt: at, Mode: mode, Locations: skillEvidenceRoots(env, harness, locations)}
+			if provider, found := env.agentRegistry().LookupSkills(harness); found {
+				if interpreter, implemented := provider.(agentapi.SkillInventoryInterpreter); implemented {
+					if input, available := interpreter.InventoryInput(locations); available {
+						options.Inventory = interpreter
+						options.InventoryInput = input
+					}
+				}
+			}
+			userScope, err = evidence.ObserveSkills(options)
 			if err != nil {
 				return nil, err
 			}
-			userCache[reg.Harness.Name] = userScope
+			userCache[harness] = userScope
 		}
-		projectKey := reg.Harness.Name + "\x00" + reg.ProjectRoot
+		projectKey := harness + "\x00" + reg.ProjectRoot
 		projectScope, ok := projectCache[projectKey]
 		if !ok {
 			var err error
-			projectScope, err = evidence.ObserveSkills(evidence.SkillOptions{Harness: reg.Harness.Name, ProjectRoot: reg.ProjectRoot, ObservedAt: at, Mode: mode, Locations: skillEvidenceRoots(env, reg.Harness.Name, agentapi.SkillLocations{ProjectRoot: reg.ProjectRoot})})
+			projectScope, err = evidence.ObserveSkills(evidence.SkillOptions{Harness: harness, ProjectRoot: reg.ProjectRoot, ObservedAt: at, Mode: mode, Locations: skillEvidenceRoots(env, harness, agentapi.SkillLocations{ProjectRoot: reg.ProjectRoot, Environment: museEnvironment})})
 			if err != nil {
 				return nil, err
 			}
@@ -606,6 +634,36 @@ func skillObserver(env Env, mode config.SkillEvidence) func(archive.SessionRegis
 		}
 		return append(append([]archive.SupplementalEvidence(nil), userScope...), projectScope...), nil
 	}
+}
+
+type skillEnvironmentKey string
+
+const (
+	skillXDGConfigHome skillEnvironmentKey = "XDG_CONFIG_HOME"
+	skillCodexHome     skillEnvironmentKey = "CODEX_HOME"
+)
+
+// skillRootEnvironment snapshots only the two configurable skill-root variables.
+// Invalid/oversized observations remain set-but-unavailable; they never become
+// known-unset fallbacks. The snapshot is shared across the complete pass.
+func skillRootEnvironment(env Env) *agentapi.RuntimeEnvironment {
+	xdg, xdgSet := env.lookupEnv(string(skillXDGConfigHome))
+	codex, codexSet := env.lookupEnv(string(skillCodexHome))
+	if len(xdg) > 4096 {
+		xdg = ""
+	}
+	if len(codex) > 4096 {
+		codex = ""
+	}
+	return &agentapi.RuntimeEnvironment{LookupEnv: func(key string) (string, bool) {
+		switch skillEnvironmentKey(key) {
+		case skillXDGConfigHome:
+			return xdg, xdgSet
+		case skillCodexHome:
+			return codex, codexSet
+		}
+		return "", false
+	}}
 }
 
 func skillEvidenceRoots(env Env, name string, l agentapi.SkillLocations) []agentapi.SkillRoot {

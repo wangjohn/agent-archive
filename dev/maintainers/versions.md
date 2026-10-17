@@ -8,8 +8,8 @@ affects.
 | Version | Where | Recorded in | Current | Changes when |
 | --- | --- | --- | --- | --- |
 | Release | `cli.Version` (set at build time) | `--version` | Build-dependent (`dev-<commit>` from source) | A tag is cut. |
-| Filter | `archive.FilterVersion` | source header `capture.filter_version`, metadata `filter_version` | 30 | What the privacy filter keeps, drops, or redacts changes: any change to filtered output. |
-| Adapter | `adapterVersion` in `internal/agents/nativecodec/adapters.go` | `capture.adapter_version` | 0.30.0 | An adapter's output changes (bumped with the filter in practice). |
+| Filter | `archive.FilterVersion` | source header `capture.filter_version`, metadata `filter_version` | 31 | What the privacy filter keeps, drops, or redacts changes: any change to filtered output. |
+| Adapter | `adapterVersion` in `internal/agents/nativecodec/adapters.go` | `capture.adapter_version` | 0.31.0 | An adapter's output changes (bumped with the filter in practice). |
 | Parser | per-agent `Parser.Version()` / `archive.DefaultParserVersion` | metadata `parser.version` | 0.21.0 | How metadata is derived from a source changes: counts, turns, models, skills, gaps, titles, session names, branch, linked pull requests, tools used, end time, tokens (per model too), tool errors, MCP calls, git activity, the repository key (derived from the project's git origin, not the source). |
 | Source schema | `archive.SourceSchemaVersion` / `HistorySourceSchemaVersion` | source header `schema_version` | 2 | The source bundle's line format changes. Readers refuse other versions. |
 | Metadata schema | `archive.MetadataSchemaVersion` / `HistoryMetadataSchemaVersion` | metadata `schema_version` | 1 | The metadata sidecar changes incompatibly. Optional fields don't bump it. |
@@ -402,6 +402,27 @@ closed startup validation lane, shared by headers, raw startup facts, filtering,
 retained parsing and refiltering. Existing accepted inputs retain identical bytes
 and metadata; field projection and metadata derivation are unchanged. No filter,
 adapter, parser, published schema or private writer version changes.
+
+Muse supplemental skill inventories/snapshots allocate filter31 and global/Muse
+adapter0.31.0. Existing shared bounds, secret redaction, mode selection and
+installed-only interpretation apply. Native transcript invocation/eligibility
+semantics stay unchanged. Muse parser0.7.0 separately preserves optional installed declaration
+identities; default0.21.0 and other parsers/configuration/source/
+metadata schemas remain unchanged. Installation deduplicates the shared root.
+The same unreleased31 allocation includes exact qualified DataHome builtin
+inventory and bounded declared-file infrastructure for original PR10 installed
+plugin scope, including the qualified version1 native-local installed registry,
+raw manifest-hash join and finite package-confined declarations. Unknown wire
+versions/provenance remain incomplete; raw locator digests stay local.
+Each user observation and each project observation retains its separate4MiB
+allowance/cache, with no extra native process path and existing Body/Metadata/None
+policy. No derived eligibility or use is introduced. Muse-only installed declaration
+provenance adds optional installed_identities to each metadata skill content group:
+sorted unique bounded logical scope/id pairs, omitted on overflow with a fixed gap.
+Source2/Metadata1/history2 remain additive-compatible: old typed readers ignore the
+optional collection and keep one existing content row; old strict skill schemas
+refuse the new field. No private writer/configuration version changes.
+Installed application version inspection is local and creates no capture proof.
 
 Muse guarded root admission adds the closed `muse-root-admission` capability to
 native writer16's existing structural fence and journal fence1. The matching
