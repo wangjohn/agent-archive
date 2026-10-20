@@ -17,6 +17,10 @@ follow [Semantic Versioning](https://semver.org/).
   generation and then stops at the successor's first pending publication; a
   successor that cannot be published there, such as one with retained history
   alternatives, is refused before anything changes.
+- Narrowing and then widening the skill evidence mode before pending work is
+  uploaded now restores the skill evidence its oldest unuploaded capture was
+  allowed, instead of keeping the narrower copy. A narrower upload that already
+  completed is not undone. Filter 32 and adapter 0.32.0 record this.
 
 ## [0.2.2]
 
