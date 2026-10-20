@@ -49,8 +49,9 @@ func compositionGenerationFixture(t *testing.T) (*Store, archive.SessionRegistra
 }
 
 // selectableGenerationBuilder renders what the collector builder renders on a
-// protected home: the given skill policy and adapter facts in the metadata.
-func selectableGenerationBuilder(at time.Time, skill config.SkillEvidence, clearStage bool) func(archive.SessionRegistration, string) (archive.SessionRegistration, PendingPublication, error) {
+// protected home: the fixtures' default skill policy and adapter facts in the
+// metadata.
+func selectableGenerationBuilder(at time.Time, clearStage bool) func(archive.SessionRegistration, string) (archive.SessionRegistration, PendingPublication, error) {
 	build := generationBuilder(at)
 	return func(reg archive.SessionRegistration, id string) (archive.SessionRegistration, PendingPublication, error) {
 		if clearStage {
@@ -66,7 +67,7 @@ func selectableGenerationBuilder(at time.Time, skill config.SkillEvidence, clear
 		}
 		metadata.Adapter = archive.AdapterInfo{Name: pending.Bundle.Capture.AdapterName, Version: pending.Bundle.Capture.AdapterVersion}
 		pending.MetadataBytes, err = json.Marshal(metadata)
-		pending.SkillEvidence = string(skill)
+		pending.SkillEvidence = string(config.SkillEvidenceBody)
 		return reg, pending, err
 	}
 }
@@ -103,7 +104,7 @@ func assertSelectedSuccessor(t *testing.T, s *Store, original archive.SessionReg
 func TestGenerationRecoverySelectsSuccessorOnCompositionHome(t *testing.T) {
 	t.Parallel()
 	s, reg, at := compositionGenerationFixture(t)
-	if _, err := s.BeginGenerationRecovery(reg.ArchiveSessionID, at, selectableGenerationBuilder(at, config.SkillEvidenceBody, false)); err != nil {
+	if _, err := s.BeginGenerationRecovery(reg.ArchiveSessionID, at, selectableGenerationBuilder(at, false)); err != nil {
 		t.Fatal(err)
 	}
 	pending := assertSelectedSuccessor(t, s, reg)
@@ -141,7 +142,7 @@ func TestGenerationRecoverySuccessorSelectionReplaysIdentically(t *testing.T) {
 				}
 				return nil
 			}
-			if _, err := s.BeginGenerationRecovery(reg.ArchiveSessionID, at, selectableGenerationBuilder(at, config.SkillEvidenceBody, false)); !errors.Is(err, interrupted) {
+			if _, err := s.BeginGenerationRecovery(reg.ArchiveSessionID, at, selectableGenerationBuilder(at, false)); !errors.Is(err, interrupted) {
 				t.Fatalf("did not interrupt %s: %v", step, err)
 			}
 			if err := s.ResumeGenerationRecoveries(t.Context()); err != nil {
@@ -183,7 +184,7 @@ func TestGenerationRecoveryReplayRefusesUnselectableSuccessorBeforeFreeze(t *tes
 		}
 		return nil
 	}
-	if _, err := s.BeginGenerationRecovery(reg.ArchiveSessionID, at, selectableGenerationBuilder(at, config.SkillEvidenceBody, false)); !errors.Is(err, interrupted) {
+	if _, err := s.BeginGenerationRecovery(reg.ArchiveSessionID, at, selectableGenerationBuilder(at, false)); !errors.Is(err, interrupted) {
 		t.Fatalf("did not interrupt at the journal: %v", err)
 	}
 	s.onIndexStep = nil
@@ -220,7 +221,7 @@ func TestGenerationRecoveryReplayRefusesUnselectableSuccessorBeforeFreeze(t *tes
 func TestGenerationSuccessorWithHistoryHasNoOrdinarySelection(t *testing.T) {
 	t.Parallel()
 	s, reg, at := compositionGenerationFixture(t)
-	successor, pending, err := selectableGenerationBuilder(at, config.SkillEvidenceBody, false)(reg, "synthetic-successor")
+	successor, pending, err := selectableGenerationBuilder(at, false)(reg, "synthetic-successor")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -242,7 +243,7 @@ func TestGenerationSuccessorWithHistoryHasNoOrdinarySelection(t *testing.T) {
 func TestGenerationRecoveryCompletesOnStagedHome(t *testing.T) {
 	t.Parallel()
 	s, reg, at := settledStageGenerationFixture(t)
-	if _, err := s.BeginGenerationRecovery(reg.ArchiveSessionID, at, selectableGenerationBuilder(at, config.SkillEvidenceBody, true)); err != nil {
+	if _, err := s.BeginGenerationRecovery(reg.ArchiveSessionID, at, selectableGenerationBuilder(at, true)); err != nil {
 		t.Fatal(err)
 	}
 	pending := assertSelectedSuccessor(t, s, reg)
