@@ -170,6 +170,13 @@ committed typed staged selection names that stage and its release progress is
 stage link refuses before a journal. Journals that kept the link replay
 unchanged, so the journal format and version do not change; earlier binaries
 refuse to replay a successor without the link.
+On a home with `publication_composition_protection`, replay saves the
+successor pending with an ordinary ready selection (predecessor `absent`, since
+its metadata key belongs to the new ID). The selection is derived from the
+journaled registration and publication on every replay and is not stored in the
+journal, so neither format changes. A successor that cannot take that selection,
+including one with retained history alternatives, refuses before a journal is
+written, and replay refuses before the predecessor is frozen.
 
 Recovery adds optional `previous_generation_id` provenance to source headers
 and metadata and a persistent `recovered_generation` coverage gap to successor

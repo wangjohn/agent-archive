@@ -12,6 +12,11 @@ follow [Semantic Versioning](https://semver.org/).
   starts its new generation without that stage link, which stays with the frozen
   original. Recovery refuses until an unreleased, mismatched or redirected stage
   settles; run `agent-archive sync` first.
+- Transcript recovery completes on archive homes with publication composition
+  protection, including staged-import homes. It no longer freezes the original
+  generation and then stops at the successor's first pending publication; a
+  successor that cannot be published there, such as one with retained history
+  alternatives, is refused before anything changes.
 
 ## [0.2.2]
 

@@ -171,6 +171,9 @@ func (s *Store) beginGenerationRecoveryGuard(g config.DurableStorageGuard, id st
 	}
 	request := Request{ArchiveSessionID: next, Token: token, Reasons: []string{"generation-recovery"}, RequestedAt: at}
 	pending.RequestToken = token
+	if _, err := s.generationSuccessorPending(s.generationReadContext(), reg, pending); err != nil {
+		return "", err
+	}
 	wirePending := publicationWire(pending)
 	priorMetadata, priorSources, err := s.generationCommittedAuthority(s.generationReadContext(), old)
 	if err != nil {
@@ -407,6 +410,11 @@ func (s *Store) resumeGenerationRecovery(g config.DurableStorageGuard, ctx conte
 	if err := s.validateGenerationRecoveryReplay(ctx, id, r); err != nil {
 		return err
 	}
+	pending, err := s.generationSuccessorPending(ctx, *r.Registration, *r.Pending)
+	if err != nil {
+		return err
+	}
+	r.Pending = &pending
 	if err := s.freezeGenerationRecovery(r); err != nil {
 		return fmt.Errorf("freeze recovery predecessor: %w", err)
 	}
@@ -417,6 +425,32 @@ func (s *Store) resumeGenerationRecovery(g config.DurableStorageGuard, ctx conte
 		return fmt.Errorf("activate recovery successor: %w", err)
 	}
 	return nil
+}
+
+// generationSuccessorPending returns the successor publication this home
+// accepts. A composition-protected home admits a new pending only with exact
+// selecting authority, so the successor gets an ordinary ready selection. It is
+// derived from the journaled registration and publication, never stored in the
+// journal, so every replay saves identical bytes. Its metadata key belongs to a
+// newly allocated ID; publication still rechecks that predecessor absence
+// before any source effect. Retained history alternatives have no ordinary
+// selection on such a home and are refused before the predecessor is frozen.
+func (s *Store) generationSuccessorPending(ctx context.Context, reg archive.SessionRegistration, pending PendingPublication) (PendingPublication, error) {
+	cfg, err := s.inspectDurableReadRoots(ctx)
+	if err != nil {
+		return pending, err
+	}
+	if !cfg.PublicationCompositionProtection {
+		return pending, nil
+	}
+	if pending.JournalVersion == 5 || pending.History != nil || pending.Bundle.History != nil {
+		return pending, errors.Join(ErrReadySelectionFrozen, errors.New("recovery cannot publish a session with retained history alternatives on this archive home; its current publication stays as it is"))
+	}
+	selected, err := s.freezeReadySelection(ctx, reg.ArchiveSessionID, &reg, pending, ReadyPredecessorAbsent, nil)
+	if err != nil {
+		return pending, fmt.Errorf("select recovery successor publication: %w", err)
+	}
+	return selected, nil
 }
 
 func (s *Store) freezeGenerationRecovery(r generationRecovery) error {
