@@ -176,9 +176,11 @@ successor pending with an ordinary ready selection (predecessor `absent`, since
 its metadata key belongs to the new ID). Until that pending is saved, each
 replay derives the selection from the journaled registration and publication
 under the current configuration; it is not stored in the journal, so neither
-format changes. Once saved, later replays reuse that exact pending. A successor
-that cannot take a selection, including one with retained history alternatives,
-refuses before a journal is written. If the configuration changes after the
+format changes. Derivation also applies `require_skill_use`, which the
+selection does not bind. Once saved, later replays reuse that exact pending
+after checking every configuration-independent proof field against the
+journaled successor. A successor that cannot take a selection, including one
+with retained history alternatives, refuses before a journal is written. If the configuration changes after the
 journal but before the pending is saved, replay refuses and the recovery stays
 owed until that configuration is restored; when the predecessor was already
 frozen, it stays frozen and hooks stay gated until then.

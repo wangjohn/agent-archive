@@ -11,6 +11,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/local"
 )
 
 // compositionGenerationFixture is generationFixture on a home that requires
@@ -294,5 +295,102 @@ func TestGenerationRecoveryCompletesOnStagedHome(t *testing.T) {
 	}
 	if err := published.SaveReadyPublication(pending, at); err != nil {
 		t.Fatalf("successor publication: %v", err)
+	}
+}
+
+// require_skill_use is not bound by the selection, so enabling it after the
+// journal keeps a successor without skill use from being saved.
+func TestGenerationRecoveryRechecksSkillUseBeforeSavingSuccessor(t *testing.T) {
+	t.Parallel()
+	s, reg, at := compositionGenerationFixture(t)
+	setRequireSkillUse := func(on bool) {
+		t.Helper()
+		cfg, _, err := config.Load(s.Home())
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg.RequireSkillUse = on
+		if err := config.Save(s.Home(), cfg); err != nil {
+			t.Fatal(err)
+		}
+	}
+	setRequireSkillUse(true)
+	if _, err := s.BeginGenerationRecovery(reg.ArchiveSessionID, at, selectableGenerationBuilder(at, false)); !errors.Is(err, ErrGenerationSuccessorUnselectable) {
+		t.Fatalf("successor without skill use began: %v", err)
+	}
+	setRequireSkillUse(false)
+	interrupted := errors.New("interrupted")
+	s.onIndexStep = func(current string) error {
+		if current == "generation-journal" {
+			return interrupted
+		}
+		return nil
+	}
+	if _, err := s.BeginGenerationRecovery(reg.ArchiveSessionID, at, selectableGenerationBuilder(at, false)); !errors.Is(err, interrupted) {
+		t.Fatalf("did not interrupt at the journal: %v", err)
+	}
+	s.onIndexStep = nil
+	setRequireSkillUse(true)
+	if err := s.ResumeGenerationRecoveries(t.Context()); !errors.Is(err, ErrGenerationRecoveryConfigChanged) {
+		t.Fatalf("replay saved a successor without skill use: %v", err)
+	}
+	next, _, err := s.GenerationSuccessor(reg.ArchiveSessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := s.LoadPending(next); err != nil || found {
+		t.Fatalf("refused replay saved a successor pending: %v %v", found, err)
+	}
+	setRequireSkillUse(false)
+	if err := s.ResumeGenerationRecoveries(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	assertSelectedSuccessor(t, s, reg)
+}
+
+// A saved successor proof is reused only when every configuration-independent
+// field still binds the journaled successor; a self-consistent rewrite is not.
+func TestGenerationRecoveryRefusesRewrittenSavedSuccessorProof(t *testing.T) {
+	t.Parallel()
+	s, reg, at := compositionGenerationFixture(t)
+	interrupted := errors.New("interrupted")
+	s.onIndexStep = func(current string) error {
+		if current == "generation-pending" {
+			return interrupted
+		}
+		return nil
+	}
+	if _, err := s.BeginGenerationRecovery(reg.ArchiveSessionID, at, selectableGenerationBuilder(at, false)); !errors.Is(err, interrupted) {
+		t.Fatalf("did not interrupt after saving the pending: %v", err)
+	}
+	s.onIndexStep = nil
+	next, _, err := s.GenerationSuccessor(reg.ArchiveSessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending, found, err := s.LoadPending(next)
+	if err != nil || !found || pending.Selection == nil {
+		t.Fatalf("saved pending: %v %v", found, err)
+	}
+	pending.Selection.Predecessor = ReadyPredecessorUnknown
+	proof := *pending.Selection
+	proof.SHA256 = ""
+	raw, err := json.Marshal(proof)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending.Selection.SHA256 = readySHA(raw)
+	if err := pending.Selection.validateProofDigest(); err != nil {
+		t.Fatalf("rewrite is not self-consistent: %v", err)
+	}
+	if err := local.Write(s.pendingPath(next), pending); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ResumeGenerationRecoveries(t.Context()); !errors.Is(err, ErrDurableStorageRecovery) {
+		t.Fatalf("rewritten proof replayed: %v", err)
+	}
+	key := agentmeta.SessionKey{Agent: agentmeta.Codex, NativeID: reg.NativeSessionID}
+	if active, _, err := s.ArchiveSessionID(key); err == nil && active == next {
+		t.Fatal("rewritten proof activated the successor")
 	}
 }
