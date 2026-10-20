@@ -522,3 +522,16 @@ func TestRecoverUnsettledImportStagePrintsSyncCommand(t *testing.T) {
 		t.Fatalf("unsettled stage started recovery: %v %v", found, err)
 	}
 }
+
+func TestRecoverSuccessorRefusalsSayWhatToDo(t *testing.T) {
+	t.Parallel()
+	for err, want := range map[error]string{
+		fmt.Errorf("generation recovery %q remains pending: %w", "session", state.ErrGenerationRecoveryConfigChanged): "agent-archive: recover: the archive configuration changed during an interrupted recovery. Restore the skill evidence, destination and capture settings it started with, then run:\n  agent-archive sync\n",
+		state.ErrGenerationHistorySuccessor:      "agent-archive: recover: sessions with retained history alternatives cannot be recovered on this archive home; the session keeps its current publication.\n",
+		state.ErrGenerationSuccessorUnselectable: "agent-archive: recover: the recovered transcript cannot be published under the current archive configuration; the session keeps its current publication.\n",
+	} {
+		if got := recoverFailure(err); got != want {
+			t.Fatalf("%v:\n%q\n%q", err, got, want)
+		}
+	}
+}

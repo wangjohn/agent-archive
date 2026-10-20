@@ -172,11 +172,15 @@ unchanged, so the journal format and version do not change; earlier binaries
 refuse to replay a successor without the link.
 On a home with `publication_composition_protection`, replay saves the
 successor pending with an ordinary ready selection (predecessor `absent`, since
-its metadata key belongs to the new ID). The selection is derived from the
-journaled registration and publication on every replay and is not stored in the
-journal, so neither format changes. A successor that cannot take that selection,
-including one with retained history alternatives, refuses before a journal is
-written, and replay refuses before the predecessor is frozen.
+its metadata key belongs to the new ID). Until that pending is saved, each
+replay derives the selection from the journaled registration and publication
+under the current configuration; it is not stored in the journal, so neither
+format changes. Once saved, later replays reuse that exact pending. A successor
+that cannot take a selection, including one with retained history alternatives,
+refuses before a journal is written. If the configuration changes after the
+journal but before the pending is saved, replay refuses and the recovery stays
+owed until that configuration is restored; when the predecessor was already
+frozen, it stays frozen and hooks stay gated until then.
 
 Recovery adds optional `previous_generation_id` provenance to source headers
 and metadata and a persistent `recovered_generation` coverage gap to successor

@@ -410,15 +410,24 @@ func (s *Store) resumeGenerationRecovery(g config.DurableStorageGuard, ctx conte
 	if err := s.validateGenerationRecoveryReplay(ctx, id, r); err != nil {
 		return err
 	}
-	pending, err := s.generationSuccessorPending(ctx, *r.Registration, *r.Pending)
+	pending, saved, err := s.generationSavedPending(ctx, r)
 	if err != nil {
 		return err
+	}
+	if !saved {
+		pending, err = s.generationSuccessorPending(ctx, *r.Registration, *r.Pending)
+		if errors.Is(err, ErrGenerationSuccessorUnselectable) {
+			return ErrGenerationRecoveryConfigChanged
+		}
+		if err != nil {
+			return err
+		}
 	}
 	r.Pending = &pending
 	if err := s.freezeGenerationRecovery(r); err != nil {
 		return fmt.Errorf("freeze recovery predecessor: %w", err)
 	}
-	if err := s.registerGenerationRecovery(ctx, g, r); err != nil {
+	if err := s.registerGenerationRecovery(ctx, g, r, saved); err != nil {
 		return fmt.Errorf("register recovery successor: %w", err)
 	}
 	if err := s.activateGenerationRecovery(ctx, g, r); err != nil {
@@ -427,14 +436,26 @@ func (s *Store) resumeGenerationRecovery(g config.DurableStorageGuard, ctx conte
 	return nil
 }
 
+// ErrGenerationSuccessorUnselectable refuses, before any journal, a recovery
+// whose successor this archive home could not publish.
+var ErrGenerationSuccessorUnselectable = fmt.Errorf("the recovered transcript cannot be published under the current archive configuration: %w", ErrReadySelectionFrozen)
+
+// ErrGenerationHistorySuccessor refuses a successor with retained history
+// alternatives, which has no ordinary selection on a composition-protected home.
+var ErrGenerationHistorySuccessor = fmt.Errorf("a session with retained history alternatives cannot be recovered on this archive home: %w", ErrReadySelectionFrozen)
+
+// ErrGenerationRecoveryConfigChanged keeps a journaled recovery owed when the
+// configuration changed before its successor's publication was saved.
+var ErrGenerationRecoveryConfigChanged = fmt.Errorf("the archive configuration changed during an interrupted transcript recovery: %w", ErrReadySelectionFrozen)
+
 // generationSuccessorPending returns the successor publication this home
 // accepts. A composition-protected home admits a new pending only with exact
 // selecting authority, so the successor gets an ordinary ready selection. It is
 // derived from the journaled registration and publication, never stored in the
-// journal, so every replay saves identical bytes. Its metadata key belongs to a
-// newly allocated ID; publication still rechecks that predecessor absence
-// before any source effect. Retained history alternatives have no ordinary
-// selection on such a home and are refused before the predecessor is frozen.
+// journal, so replays under one configuration save identical bytes. Its
+// metadata key belongs to a newly allocated ID; publication still rechecks that
+// predecessor absence before any source effect. Retained history alternatives
+// have no ordinary selection on such a home.
 func (s *Store) generationSuccessorPending(ctx context.Context, reg archive.SessionRegistration, pending PendingPublication) (PendingPublication, error) {
 	cfg, err := s.inspectDurableReadRoots(ctx)
 	if err != nil {
@@ -444,13 +465,43 @@ func (s *Store) generationSuccessorPending(ctx context.Context, reg archive.Sess
 		return pending, nil
 	}
 	if pending.JournalVersion == 5 || pending.History != nil || pending.Bundle.History != nil {
-		return pending, errors.Join(ErrReadySelectionFrozen, errors.New("recovery cannot publish a session with retained history alternatives on this archive home; its current publication stays as it is"))
+		return pending, ErrGenerationHistorySuccessor
 	}
 	selected, err := s.freezeReadySelection(ctx, reg.ArchiveSessionID, &reg, pending, ReadyPredecessorAbsent, nil)
+	if errors.Is(err, ErrReadySelectionFrozen) {
+		return pending, ErrGenerationSuccessorUnselectable
+	}
 	if err != nil {
 		return pending, fmt.Errorf("select recovery successor publication: %w", err)
 	}
 	return selected, nil
+}
+
+// generationSavedPending returns the successor pending an earlier replay saved
+// for this journal. Once saved, it is the successor's publication: the
+// transition completes from it, and ordinary publication owns any refusal
+// under a later configuration, as it does for every other selected pending.
+// The exact file is read without current-policy validation, which would
+// refuse it under that later configuration; it must bind the journaled bytes.
+func (s *Store) generationSavedPending(ctx context.Context, r generationRecovery) (PendingPublication, bool, error) {
+	read, closeRead := s.WithReadBudget(ctx, s.resourceBudget)
+	defer closeRead()
+	saved, found, err := read.catalogPendingForFence(r.Next)
+	if err != nil || !found || saved.Selection == nil {
+		return PendingPublication{}, false, err
+	}
+	if err := saved.Selection.validateProofDigest(); err != nil {
+		return PendingPublication{}, false, err
+	}
+	before, err := read.readyBinding(ctx, *r.Pending)
+	if err != nil {
+		return PendingPublication{}, false, err
+	}
+	after, err := read.readyBinding(ctx, saved)
+	if err != nil || before != after {
+		return PendingPublication{}, false, err
+	}
+	return saved, true, nil
 }
 
 func (s *Store) freezeGenerationRecovery(r generationRecovery) error {
@@ -503,7 +554,7 @@ func (s *Store) freezeGenerationRecovery(r generationRecovery) error {
 	return nil
 }
 
-func (s *Store) registerGenerationRecovery(ctx context.Context, g config.DurableStorageGuard, r generationRecovery) error {
+func (s *Store) registerGenerationRecovery(ctx context.Context, g config.DurableStorageGuard, r generationRecovery, pendingSaved bool) error {
 	s, ctx, closeContext := s.withDurableContext(ctx)
 	defer closeContext()
 	reg := *r.Registration
@@ -522,8 +573,10 @@ func (s *Store) registerGenerationRecovery(ctx context.Context, g config.Durable
 	if err := s.indexStep("generation-registration"); err != nil {
 		return err
 	}
-	if err := s.savePendingGuard(ctx, g, r.Next, *r.Pending); err != nil {
-		return err
+	if !pendingSaved {
+		if err := s.savePendingGuard(ctx, g, r.Next, *r.Pending); err != nil {
+			return err
+		}
 	}
 	if err := s.indexStep("generation-pending"); err != nil {
 		return err

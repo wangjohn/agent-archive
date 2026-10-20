@@ -44,6 +44,11 @@ while collection is paused. Restore the appropriate capture permission or
 destination before previewing again.
 If the current file identifies a different native session, recovery refuses it;
 restore the registered session's transcript or begin a fresh native session.
+On an archive with publication composition protection, recovery also refuses a
+session with retained history alternatives; that session keeps its current
+publication. If the skill evidence, destination or capture settings change
+while a confirmed recovery is interrupted, it stays pending until you restore
+them and run `agent-archive sync`.
 
 Direct subagent recovery is not supported in this first version. Start a
 fresh parent session to capture new subagent activity. Existing subagents and

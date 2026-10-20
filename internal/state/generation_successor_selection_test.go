@@ -164,7 +164,7 @@ func TestGenerationRecoveryRefusesUnselectableSuccessorBeforeJournal(t *testing.
 	s, reg, at := compositionGenerationFixture(t)
 	before := stagedGenerationInventory(t, s.Home())
 	// generationBuilder carries no current skill policy, so no ready selection binds it.
-	if _, err := s.BeginGenerationRecovery(reg.ArchiveSessionID, at, generationBuilder(at)); !errors.Is(err, ErrReadySelectionFrozen) {
+	if _, err := s.BeginGenerationRecovery(reg.ArchiveSessionID, at, generationBuilder(at)); !errors.Is(err, ErrGenerationSuccessorUnselectable) {
 		t.Fatalf("unselectable successor: %v", err)
 	}
 	if after := stagedGenerationInventory(t, s.Home()); !reflect.DeepEqual(after, before) {
@@ -172,50 +172,87 @@ func TestGenerationRecoveryRefusesUnselectableSuccessorBeforeJournal(t *testing.
 	}
 }
 
-// Configuration that changes after the journal refuses replay before fencing;
-// restoring it lets the same journal complete.
-func TestGenerationRecoveryReplayRefusesUnselectableSuccessorBeforeFreeze(t *testing.T) {
-	t.Parallel()
-	s, reg, at := compositionGenerationFixture(t)
-	interrupted := errors.New("interrupted")
-	s.onIndexStep = func(current string) error {
-		if current == "generation-journal" {
-			return interrupted
-		}
-		return nil
-	}
-	if _, err := s.BeginGenerationRecovery(reg.ArchiveSessionID, at, selectableGenerationBuilder(at, false)); !errors.Is(err, interrupted) {
-		t.Fatalf("did not interrupt at the journal: %v", err)
-	}
-	s.onIndexStep = nil
-	setSkillEvidence := func(mode config.SkillEvidence) {
-		t.Helper()
-		cfg, _, err := config.Load(s.Home())
-		if err != nil {
-			t.Fatal(err)
-		}
-		cfg.SkillEvidence = mode
-		if err := config.Save(s.Home(), cfg); err != nil {
-			t.Fatal(err)
-		}
-	}
-	setSkillEvidence(config.SkillEvidenceMetadata)
-	if err := s.ResumeGenerationRecoveries(t.Context()); !errors.Is(err, ErrReadySelectionFrozen) {
-		t.Fatalf("replay with changed skill policy: %v", err)
-	}
-	old, found, err := s.LoadRegistration(reg.ArchiveSessionID)
-	if err != nil || !found || old.CaptureFrozen {
-		t.Fatalf("refused replay froze the predecessor: %v %v", found, err)
-	}
-	key := agentmeta.SessionKey{Agent: agentmeta.Codex, NativeID: reg.NativeSessionID}
-	if h, present, err := s.loadGenerationHead(key); err != nil || present {
-		t.Fatalf("refused replay fenced routing: %#v %v", h, err)
-	}
-	setSkillEvidence(config.SkillEvidenceBody)
-	if err := s.ResumeGenerationRecoveries(t.Context()); err != nil {
+func setGenerationSkillEvidence(t *testing.T, s *Store, mode config.SkillEvidence) {
+	t.Helper()
+	cfg, _, err := config.Load(s.Home())
+	if err != nil {
 		t.Fatal(err)
 	}
-	assertSelectedSuccessor(t, s, reg)
+	cfg.SkillEvidence = mode
+	if err := config.Save(s.Home(), cfg); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A configuration change after the journal keeps recovery owed until its
+// successor's publication is saved; from then on the saved pending completes
+// the transition and ordinary publication owns the changed policy.
+func TestGenerationRecoveryReplayAfterConfigurationChange(t *testing.T) {
+	t.Parallel()
+	for step, saved := range map[string]bool{"generation-journal": false, "generation-frozen": false, "generation-registration": false, "generation-pending": true, "generation-request": true, "generation-index": true} {
+		t.Run(step, func(t *testing.T) {
+			t.Parallel()
+			s, reg, at := compositionGenerationFixture(t)
+			interrupted := errors.New("interrupted")
+			s.onIndexStep = func(current string) error {
+				if current == step {
+					return interrupted
+				}
+				return nil
+			}
+			if _, err := s.BeginGenerationRecovery(reg.ArchiveSessionID, at, selectableGenerationBuilder(at, false)); !errors.Is(err, interrupted) {
+				t.Fatalf("did not interrupt %s: %v", step, err)
+			}
+			s.onIndexStep = nil
+			next, _, err := s.GenerationSuccessor(reg.ArchiveSessionID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			before, _ := os.ReadFile(s.pendingPath(next))
+			setGenerationSkillEvidence(t, s, config.SkillEvidenceMetadata)
+			err = s.ResumeGenerationRecoveries(t.Context())
+			if saved {
+				if err != nil {
+					t.Fatalf("saved successor did not complete: %v", err)
+				}
+				if active, found, err := s.ArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.Codex, NativeID: reg.NativeSessionID}); err != nil || !found || active != next {
+					t.Fatalf("saved successor not routed: %s %v %v", active, found, err)
+				}
+				// Ordinary publication holds the selected pending until its policy returns.
+				if _, _, err := s.LoadPending(next); !errors.Is(err, ErrReadySelectionFrozen) {
+					t.Fatalf("selected pending accepted under changed policy: %v", err)
+				}
+				setGenerationSkillEvidence(t, s, config.SkillEvidenceBody)
+				pending := assertSelectedSuccessor(t, s, reg)
+				after, err := os.ReadFile(s.pendingPath(pending.Bundle.ArchiveSessionID))
+				if err != nil || len(before) == 0 || string(after) != string(before) {
+					t.Fatalf("replay rewrote the saved successor pending: %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, ErrGenerationRecoveryConfigChanged) || !errors.Is(err, ErrReadySelectionFrozen) {
+				t.Fatalf("replay with changed skill policy: %v", err)
+			}
+			if _, found, err := s.LoadPending(next); err != nil || found {
+				t.Fatalf("refused replay saved a successor pending: %v %v", found, err)
+			}
+			if step == "generation-journal" {
+				old, found, err := s.LoadRegistration(reg.ArchiveSessionID)
+				if err != nil || !found || old.CaptureFrozen {
+					t.Fatalf("refused replay froze the predecessor: %v %v", found, err)
+				}
+				key := agentmeta.SessionKey{Agent: agentmeta.Codex, NativeID: reg.NativeSessionID}
+				if h, present, err := s.loadGenerationHead(key); err != nil || present {
+					t.Fatalf("refused replay fenced routing: %#v %v", h, err)
+				}
+			}
+			setGenerationSkillEvidence(t, s, config.SkillEvidenceBody)
+			if err := s.ResumeGenerationRecoveries(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			assertSelectedSuccessor(t, s, reg)
+		})
+	}
 }
 
 func TestGenerationSuccessorWithHistoryHasNoOrdinarySelection(t *testing.T) {
@@ -232,7 +269,7 @@ func TestGenerationSuccessorWithHistoryHasNoOrdinarySelection(t *testing.T) {
 	} {
 		candidate := pending
 		mutate(&candidate)
-		if _, err := s.generationSuccessorPending(t.Context(), successor, candidate); !errors.Is(err, ErrReadySelectionFrozen) {
+		if _, err := s.generationSuccessorPending(t.Context(), successor, candidate); !errors.Is(err, ErrGenerationHistorySuccessor) {
 			t.Fatalf("%s successor selected: %v", name, err)
 		}
 	}

@@ -14,9 +14,11 @@ follow [Semantic Versioning](https://semver.org/).
   settles; run `agent-archive sync` first.
 - Transcript recovery completes on archive homes with publication composition
   protection, including staged-import homes. It no longer freezes the original
-  generation and then stops at the successor's first pending publication; a
-  successor that cannot be published there, such as one with retained history
-  alternatives, is refused before anything changes.
+  generation and then stops at the successor's first pending publication. A
+  session that cannot be published there, such as one with retained history
+  alternatives, is refused before anything changes. If the skill evidence,
+  destination or capture settings change while a recovery is interrupted,
+  `recover` says to restore them and run `agent-archive sync`.
 - Narrowing and then widening the skill evidence mode before pending work is
   uploaded now restores the skill evidence its oldest unuploaded capture was
   allowed, instead of keeping the narrower copy. A narrower upload that already

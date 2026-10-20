@@ -212,10 +212,18 @@ func confirmGenerationRecovery(home string, reg archive.SessionRegistration, cfg
 	return next, nil
 }
 
-// recoverFailure puts the command that settles an import stage on its own line.
+// recoverFailure puts the command that settles an import stage or a changed
+// configuration on its own line.
 func recoverFailure(err error) string {
-	if errors.Is(err, state.ErrGenerationStageUnsettled) {
+	switch {
+	case errors.Is(err, state.ErrGenerationStageUnsettled):
 		return "agent-archive: recover: the session's import stage has not settled. Run:\n  agent-archive sync\n"
+	case errors.Is(err, state.ErrGenerationRecoveryConfigChanged):
+		return "agent-archive: recover: the archive configuration changed during an interrupted recovery. Restore the skill evidence, destination and capture settings it started with, then run:\n  agent-archive sync\n"
+	case errors.Is(err, state.ErrGenerationHistorySuccessor):
+		return "agent-archive: recover: sessions with retained history alternatives cannot be recovered on this archive home; the session keeps its current publication.\n"
+	case errors.Is(err, state.ErrGenerationSuccessorUnselectable):
+		return "agent-archive: recover: the recovered transcript cannot be published under the current archive configuration; the session keeps its current publication.\n"
 	}
 	return fmt.Sprintf("agent-archive: recover: %v\n", err)
 }
