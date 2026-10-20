@@ -39,8 +39,8 @@ records may be counted twice.
 The command supports active, locally registered, top-level append-only
 transcript files with published history and a rewrite gap. It refuses a
 pending predecessor publication; settle that work with `sync` first. It also
-refuses an excluded session, a changed storage destination, or a new recovery
-while collection is paused. Restore the appropriate capture permission or
+refuses an excluded session, a changed storage destination, or starting or
+resuming a recovery while collection is paused. Restore the appropriate capture permission or
 destination before previewing again.
 If the current file identifies a different native session, recovery refuses it;
 restore the registered session's transcript or begin a fresh native session.

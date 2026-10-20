@@ -394,3 +394,61 @@ func TestGenerationRecoveryRefusesRewrittenSavedSuccessorProof(t *testing.T) {
 		t.Fatal("rewritten proof activated the successor")
 	}
 }
+
+// A legacy owner records no destination, so the saved proof's destination is
+// bound to the configured one before it is reused.
+func TestGenerationRecoveryBindsLegacySavedProofToConfiguredDestination(t *testing.T) {
+	t.Parallel()
+	s, reg, at := compositionGenerationFixture(t)
+	reg.DestinationID = ""
+	if err := local.Write(s.registrationPath(reg.ArchiveSessionID), reg); err != nil {
+		t.Fatal(err)
+	}
+	interrupted := errors.New("interrupted")
+	s.onIndexStep = func(current string) error {
+		if current == "generation-pending" {
+			return interrupted
+		}
+		return nil
+	}
+	if _, err := s.BeginGenerationRecovery(reg.ArchiveSessionID, at, selectableGenerationBuilder(at, false)); !errors.Is(err, interrupted) {
+		t.Fatalf("did not interrupt after saving the pending: %v", err)
+	}
+	s.onIndexStep = nil
+	next, _, err := s.GenerationSuccessor(reg.ArchiveSessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending, found, err := s.LoadPending(next)
+	if err != nil || !found || pending.Selection == nil {
+		t.Fatalf("saved pending: %v %v", found, err)
+	}
+	original := pending
+	rewritten := *pending.Selection
+	pending.Selection = &rewritten
+	pending.Selection.DestinationID = "another-destination"
+	proof := *pending.Selection
+	proof.SHA256 = ""
+	raw, err := json.Marshal(proof)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending.Selection.SHA256 = readySHA(raw)
+	if err := local.Write(s.pendingPath(next), pending); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ResumeGenerationRecoveries(t.Context()); !errors.Is(err, ErrGenerationRecoveryConfigChanged) {
+		t.Fatalf("legacy proof for another destination replayed: %v", err)
+	}
+	key := agentmeta.SessionKey{Agent: agentmeta.Codex, NativeID: reg.NativeSessionID}
+	if active, _, err := s.ArchiveSessionID(key); err == nil && active == next {
+		t.Fatal("legacy proof for another destination activated the successor")
+	}
+	if err := local.Write(s.pendingPath(next), original); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ResumeGenerationRecoveries(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	assertSelectedSuccessor(t, s, reg)
+}

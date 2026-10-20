@@ -51,6 +51,17 @@ func runRecoverCommand(args []string, stdout, stderr io.Writer, env Env) (code i
 				return fail(err)
 			}
 			defer unlock()
+			// Collection passes do not resume a recovery while paused; neither does this.
+			current, found, err := config.Load(home)
+			if err == nil && !found {
+				err = errNotSetUp
+			}
+			if err == nil && current.Paused {
+				err = errPaused
+			}
+			if err != nil {
+				return fail(err)
+			}
 			store, err = state.Open(home)
 			if err != nil {
 				return fail(err)

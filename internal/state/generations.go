@@ -529,7 +529,8 @@ func (s *Store) generationSavedPending(ctx context.Context, r generationRecovery
 
 // validateSavedGenerationSelection checks every configuration-independent
 // field of a saved successor proof against the journaled successor: the
-// recovery-required absent predecessor, its admission and destination, and
+// recovery-required absent predecessor, its admission and destination (the
+// configured one for a legacy owner that records none), and
 // the bundle, metadata, binding and source set it selects. Only the current
 // configuration's policy checks are left to ordinary publication.
 func (s *Store) validateSavedGenerationSelection(ctx context.Context, reg archive.SessionRegistration, saved PendingPublication) error {
@@ -539,6 +540,16 @@ func (s *Store) validateSavedGenerationSelection(ctx context.Context, reg archiv
 	}
 	if q.Predecessor != ReadyPredecessorAbsent || reg.DestinationID != "" && q.DestinationID != reg.DestinationID || !readySelectionOwnerMatches(reg, saved.Bundle) {
 		return ErrDurableStorageRecovery
+	}
+	if reg.DestinationID == "" {
+		// A legacy owner records no destination; the configured one selected it.
+		cfg, err := s.inspectDurableReadRoots(ctx)
+		if err != nil {
+			return err
+		}
+		if q.DestinationID != cfg.DestinationID() {
+			return ErrGenerationRecoveryConfigChanged
+		}
 	}
 	if err := validateNativeImportSelectionAuthority(reg, *q); err != nil {
 		return err

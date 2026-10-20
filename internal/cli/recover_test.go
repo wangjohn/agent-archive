@@ -554,3 +554,21 @@ func TestRecoverSuccessorRefusalsSayWhatToDo(t *testing.T) {
 		}
 	}
 }
+
+func TestRecoverDoesNotResumeRecordedRecoveryWhilePaused(t *testing.T) {
+	t.Parallel()
+	env, home, _, id := recoverFixture(t)
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"recover", id, "--confirm"}, nil, &out, &errOut, env); code != 0 {
+		t.Fatalf("recover: %d %s", code, errOut.String())
+	}
+	cfg, _, err := config.Load(home)
+	must(t, err)
+	cfg.Paused = true
+	must(t, config.Save(home, cfg))
+	out.Reset()
+	errOut.Reset()
+	if code := Run([]string{"recover", id, "--confirm"}, nil, &out, &errOut, env); code != 1 || !strings.Contains(errOut.String(), "collection is paused") {
+		t.Fatalf("paused resume: %d %q %q", code, out.String(), errOut.String())
+	}
+}
