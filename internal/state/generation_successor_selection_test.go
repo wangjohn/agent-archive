@@ -49,13 +49,8 @@ func compositionGenerationFixture(t *testing.T) (*Store, archive.SessionRegistra
 }
 
 // selectableGenerationBuilder renders what the collector builder renders on a
-// protected home: current skill policy and adapter facts in the metadata.
-func selectableGenerationBuilder(t *testing.T, s *Store, at time.Time, clearStage bool) func(archive.SessionRegistration, string) (archive.SessionRegistration, PendingPublication, error) {
-	t.Helper()
-	cfg, _, err := config.Load(s.Home())
-	if err != nil {
-		t.Fatal(err)
-	}
+// protected home: the given skill policy and adapter facts in the metadata.
+func selectableGenerationBuilder(at time.Time, skill config.SkillEvidence, clearStage bool) func(archive.SessionRegistration, string) (archive.SessionRegistration, PendingPublication, error) {
 	build := generationBuilder(at)
 	return func(reg archive.SessionRegistration, id string) (archive.SessionRegistration, PendingPublication, error) {
 		if clearStage {
@@ -71,7 +66,7 @@ func selectableGenerationBuilder(t *testing.T, s *Store, at time.Time, clearStag
 		}
 		metadata.Adapter = archive.AdapterInfo{Name: pending.Bundle.Capture.AdapterName, Version: pending.Bundle.Capture.AdapterVersion}
 		pending.MetadataBytes, err = json.Marshal(metadata)
-		pending.SkillEvidence = string(cfg.EffectiveSkillEvidence())
+		pending.SkillEvidence = string(skill)
 		return reg, pending, err
 	}
 }
@@ -108,7 +103,7 @@ func assertSelectedSuccessor(t *testing.T, s *Store, original archive.SessionReg
 func TestGenerationRecoverySelectsSuccessorOnCompositionHome(t *testing.T) {
 	t.Parallel()
 	s, reg, at := compositionGenerationFixture(t)
-	if _, err := s.BeginGenerationRecovery(reg.ArchiveSessionID, at, selectableGenerationBuilder(t, s, at, false)); err != nil {
+	if _, err := s.BeginGenerationRecovery(reg.ArchiveSessionID, at, selectableGenerationBuilder(at, config.SkillEvidenceBody, false)); err != nil {
 		t.Fatal(err)
 	}
 	pending := assertSelectedSuccessor(t, s, reg)
@@ -146,7 +141,7 @@ func TestGenerationRecoverySuccessorSelectionReplaysIdentically(t *testing.T) {
 				}
 				return nil
 			}
-			if _, err := s.BeginGenerationRecovery(reg.ArchiveSessionID, at, selectableGenerationBuilder(t, s, at, false)); !errors.Is(err, interrupted) {
+			if _, err := s.BeginGenerationRecovery(reg.ArchiveSessionID, at, selectableGenerationBuilder(at, config.SkillEvidenceBody, false)); !errors.Is(err, interrupted) {
 				t.Fatalf("did not interrupt %s: %v", step, err)
 			}
 			if err := s.ResumeGenerationRecoveries(t.Context()); err != nil {
@@ -188,7 +183,7 @@ func TestGenerationRecoveryReplayRefusesUnselectableSuccessorBeforeFreeze(t *tes
 		}
 		return nil
 	}
-	if _, err := s.BeginGenerationRecovery(reg.ArchiveSessionID, at, selectableGenerationBuilder(t, s, at, false)); !errors.Is(err, interrupted) {
+	if _, err := s.BeginGenerationRecovery(reg.ArchiveSessionID, at, selectableGenerationBuilder(at, config.SkillEvidenceBody, false)); !errors.Is(err, interrupted) {
 		t.Fatalf("did not interrupt at the journal: %v", err)
 	}
 	s.onIndexStep = nil
@@ -225,7 +220,7 @@ func TestGenerationRecoveryReplayRefusesUnselectableSuccessorBeforeFreeze(t *tes
 func TestGenerationSuccessorWithHistoryHasNoOrdinarySelection(t *testing.T) {
 	t.Parallel()
 	s, reg, at := compositionGenerationFixture(t)
-	successor, pending, err := selectableGenerationBuilder(t, s, at, false)(reg, "synthetic-successor")
+	successor, pending, err := selectableGenerationBuilder(at, config.SkillEvidenceBody, false)(reg, "synthetic-successor")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,7 +242,7 @@ func TestGenerationSuccessorWithHistoryHasNoOrdinarySelection(t *testing.T) {
 func TestGenerationRecoveryCompletesOnStagedHome(t *testing.T) {
 	t.Parallel()
 	s, reg, at := settledStageGenerationFixture(t)
-	if _, err := s.BeginGenerationRecovery(reg.ArchiveSessionID, at, selectableGenerationBuilder(t, s, at, true)); err != nil {
+	if _, err := s.BeginGenerationRecovery(reg.ArchiveSessionID, at, selectableGenerationBuilder(at, config.SkillEvidenceBody, true)); err != nil {
 		t.Fatal(err)
 	}
 	pending := assertSelectedSuccessor(t, s, reg)
