@@ -26,7 +26,7 @@ func runRecoverCommand(args []string, stdout, stderr io.Writer, env Env) (code i
 	if id == "" {
 		return fs.usageError("a full local SESSION_ID is required")
 	}
-	fail := func(err error) int { terminal.Printf(stderr, "agent-archive: recover: %v\n", err); return 1 }
+	fail := func(err error) int { terminal.Print(stderr, recoverFailure(err)); return 1 }
 	home, err := env.readHome()
 	if err != nil {
 		return fail(err)
@@ -151,6 +151,12 @@ func loadGenerationPreview(store *state.Store, cfg config.Config, id string, env
 	if err != nil {
 		return generationPreview{}, err
 	}
+	// Source-shape refusals come first; a supported session then reports an
+	// unsettled import stage before confirmation.
+	if err := state.OpenReadOnly(store.Home()).CheckGenerationStage(context.Background(), reg); err != nil {
+		closeData()
+		return generationPreview{}, err
+	}
 	keep = true
 	return generationPreview{reg: reg, at: at, build: builder, budget: lookup.NativeReadBudget(), close: func() error { closeData(); return lookup.CloseReadOnly() }}, nil
 }
@@ -204,4 +210,12 @@ func confirmGenerationRecovery(home string, reg archive.SessionRegistration, cfg
 		return "", err
 	}
 	return next, nil
+}
+
+// recoverFailure puts the command that settles an import stage on its own line.
+func recoverFailure(err error) string {
+	if errors.Is(err, state.ErrGenerationStageUnsettled) {
+		return "agent-archive: recover: the session's import stage has not settled. Run:\n  agent-archive sync\n"
+	}
+	return fmt.Sprintf("agent-archive: recover: %v\n", err)
 }
