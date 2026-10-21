@@ -268,7 +268,7 @@ func TestSearchDetailsWrapLongUnicodeLinesForScrolling(t *testing.T) {
 	env.TerminalSize = fixedTerminal{36, 20}.terminalSize
 	b := &sessionBrowser{env: env, stdout: io.Discard, prompt: newPrompter(strings.NewReader(""), io.Discard), search: &contentSearchBrowser{}}
 	lines := []string{strings.Repeat("界", 2000) + "TAILMARK"}
-	screen := b.drawSearchDetails(lines, 0, "")
+	screen := b.drawSearchDetails(lines, 0, -1, "")
 	if !screen.cut || screen.bottom == 0 || len(screen.lines) < 100 {
 		t.Fatalf("long line cannot scroll: %+v", screen)
 	}

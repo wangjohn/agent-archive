@@ -40,7 +40,7 @@ type contentSearchBrowser struct {
 	// labels are the configured project labels, read once for hitProject.
 	labels map[string]string
 	// afterRead is an action typed while the passage loaded that applies to
-	// it once read: i or t.
+	// it once read: i, t or m.
 	afterRead contentSearchAction
 	// style and now are the screen's color and clock, for the rows, the
 	// heading and the detail strip.
@@ -557,16 +557,18 @@ func (b *sessionBrowser) readSearchSelection(ctx context.Context, ref search.Ref
 		}
 		answer, err := b.searchReadAction()
 		if err != nil {
+			// Esc cancels what was typed for the passage with its read.
+			s.afterRead = searchActionNone
 			return search.Surrounding{}, err
 		}
 		switch answer {
 		case searchActionQuit:
 			b.list.operationQuit = true
 			return search.Surrounding{}, context.Canceled
-		case searchActionNext, searchActionPrevious, searchActionMore, searchActionBack, searchActionHandoff, searchActionRerun:
+		case searchActionNext, searchActionPrevious, searchActionBack, searchActionHandoff, searchActionRerun:
 			s.pendingAction = answer
 			return search.Surrounding{}, context.Canceled
-		case searchActionDetails, searchActionTranscript:
+		case searchActionDetails, searchActionTranscript, searchActionMore:
 			// Applied once the passage is read, which they do not replace.
 			s.afterRead = answer
 		case searchActionNone, searchActionPageDown, searchActionPageUp, searchActionDown, searchActionUp, searchActionHome, searchActionEnd:

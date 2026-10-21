@@ -45,6 +45,15 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- In a search result's passage, `m` reads a matching message longer than
+  8 KiB to its end instead of stopping at 8 KiB with "Nothing more of these
+  messages to show". `search --read` likewise returns a `next_offset` until
+  the whole message is read. An `m` typed while a passage loads applies once
+  it is read instead of cancelling it, and Esc or a 30-second timeout says
+  "Not loaded · m loads it · b goes back" instead of "context canceled". A
+  match far down a long message opens scrolled to it, the footer lists
+  `m more`, tabs line up at tab stops, and `i` labels the reference's record
+  and text bytes.
 - The `handoff` picker appears sooner when sessions are not uploaded yet. To
   title each, it filters and parses only the first and last 256 KiB of its
   transcript instead of the whole transcript, which took seconds for a large
