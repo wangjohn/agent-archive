@@ -554,8 +554,12 @@ func (b *sessionBrowser) readSearchSelection(ctx context.Context, ref search.Ref
 			if r.panicValue != nil {
 				panic(r.panicValue)
 			}
-			if r.generation != s.generation || ctx.Err() != nil {
+			if r.generation != s.generation {
 				return search.Surrounding{}, context.Canceled
+			}
+			if err := ctx.Err(); err != nil {
+				// Out of time, even when the read ended with the deadline.
+				return search.Surrounding{}, err
 			}
 			return r.context, r.err
 		case <-ctx.Done():

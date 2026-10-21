@@ -243,6 +243,10 @@ func (p *openPassage) read(ctx context.Context, offset int) {
 	}
 	out, err := p.b.readSearchSelection(ctx, *p.state.ref, offset, p.lines != nil)
 	p.unread = false
+	if err != nil && s.afterRead == searchActionMore {
+		// An m typed while it loaded is for a passage that was read.
+		s.afterRead = searchActionNone
+	}
 	switch {
 	case err == nil:
 		p.out = out
@@ -253,9 +257,6 @@ func (p *openPassage) read(ctx context.Context, offset int) {
 		return
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 		p.unread, p.retry = true, offset
-		if s.afterRead == searchActionMore {
-			s.afterRead = searchActionNone
-		}
 		p.notice = "Not loaded · m loads it · b goes back"
 		if errors.Is(err, context.DeadlineExceeded) {
 			p.notice = "Not loaded in 30s · m tries again · b goes back"

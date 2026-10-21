@@ -3,9 +3,11 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -373,12 +375,21 @@ func TestHighlightedLinesExpandTabsToTabStops(t *testing.T) {
 	}
 }
 
-func TestSearchPassageMReadsALongMessageToItsEnd(t *testing.T) {
-	// 20 KB: three overlapping indexed passages of one message.
-	long := "zebrafish notes. " + strings.Repeat("filler words go here ", 1000) + "TAILMARK"
-	env := searchProjectsFixtureOf(t, `{"type":"turn_context","model":"gpt-test"}
+// searchLongMessage is a 20 KB reply, three overlapping indexed passages,
+// that zebrafish matches at its start and that ends in TAILMARK.
+var searchLongMessage = "zebrafish notes. " + strings.Repeat("filler words go here ", 1000) + "TAILMARK"
+
+// longMessageFixture is searchProjectsFixture with a prompt and
+// searchLongMessage as its reply.
+func longMessageFixture(t *testing.T) Env {
+	t.Helper()
+	return searchProjectsFixtureOf(t, `{"type":"turn_context","model":"gpt-test"}
 {"type":"response_item","id":"m1","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Write it all down."}]}}
-{"type":"response_item","id":"m2","payload":{"type":"message","role":"assistant","content":"`+long+`"}}`)
+{"type":"response_item","id":"m2","payload":{"type":"message","role":"assistant","content":"`+searchLongMessage+`"}}`)
+}
+
+func TestSearchPassageMReadsALongMessageToItsEnd(t *testing.T) {
+	env := longMessageFixture(t)
 	keys := []string{"\x1b[B", "\r"}
 	for range 7 {
 		keys = append(keys, "m")
@@ -391,6 +402,115 @@ func TestSearchPassageMReadsALongMessageToItsEnd(t *testing.T) {
 	for _, screen := range screens {
 		if strings.Contains(screen, "Nothing more of these messages to show.") && !strings.Contains(screen, "TAILMARK") {
 			t.Fatalf("m stopped before the message's end:\n%s", screen)
+		}
+	}
+}
+
+func TestSearchReadFollowsNextOffsetToTheMessagesEnd(t *testing.T) {
+	env := longMessageFixture(t)
+	code, page, diag := searchJSONRun(t, env, "zebrafish")
+	if code != 0 || len(page.Results) == 0 || page.Results[0].Reference == nil {
+		t.Fatalf("%d %s %+v", code, diag, page)
+	}
+	ref := *page.Results[0].Reference
+	var read strings.Builder
+	args := []string{"--read", ref, "--max-bytes", "4096"}
+	for reads := 0; ; reads++ {
+		code, doc, diag := searchJSONRun(t, env, args...)
+		if code != 0 || doc.Context == nil {
+			t.Fatalf("read %v: %d %s", args, code, diag)
+		}
+		read.WriteString(doc.Context.Selected.Text)
+		next := doc.Context.Selected.Next
+		if next == nil || reads > 10 {
+			break
+		}
+		args = []string{"--read", ref, "--offset", strconv.Itoa(*next), "--max-bytes", "4096"}
+	}
+	if read.String() != searchLongMessage {
+		t.Fatalf("read %d of %d bytes", read.Len(), len(searchLongMessage))
+	}
+}
+
+// readFails is a store whose reads fail with err once the terminal has only
+// left keys to read.
+type readFails struct {
+	storage.ObjectStore
+	keys *fakeKeys
+	left int
+	err  error
+}
+
+func (s readFails) GetLimited(ctx context.Context, key string, limit int64) ([]byte, error) {
+	for {
+		s.keys.mu.Lock()
+		waiting := len(s.keys.chunks) > s.left
+		s.keys.mu.Unlock()
+		if !waiting {
+			return nil, s.err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(time.Millisecond):
+		}
+	}
+}
+
+func TestSearchPassageMTypedWhileAReadFailsKeepsTheFailure(t *testing.T) {
+	env := searchProjectsFixture(t)
+	keys := newFakeKeys("\x1b[B", "\r", later(time.Millisecond, "m"), later(time.Hour, "b"), later(time.Hour, "q"))
+	open := env.OpenStore
+	env.OpenStore = func(cfg config.Config) (storage.ObjectStore, error) {
+		objects, err := open(cfg)
+		return readFails{ObjectStore: objects, keys: keys, left: 2, err: errors.New("synthetic outage")}, err
+	}
+	screens := searchScreens(t, env, keys, "", "read performance")
+	lastScreenWith(t, screens, "synthetic outage")
+	for _, screen := range screens {
+		if strings.Contains(screen, "Nothing more of these messages to show.") {
+			t.Fatalf("m typed while the read failed replaced its failure:\n%s", screen)
+		}
+	}
+}
+
+// deadlineStore fails every read with its context's error.
+type deadlineStore struct{ storage.ObjectStore }
+
+func (s deadlineStore) GetLimited(ctx context.Context, _ string, _ int64) ([]byte, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func (s deadlineStore) Get(ctx context.Context, _ string) ([]byte, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func TestSearchSelectedReadReportsItsDeadline(t *testing.T) {
+	env, objects, _ := prepareSearchBrowser(t)
+	home, _ := env.readHome()
+	cfg, _, _ := config.Load(home)
+	namespace, dir := contentSearchLocation(home, cfg)
+	index, err := search.OpenRead(t.Context(), dir, namespace)
+	must(t, err)
+	defer func() { _ = index.Close() }()
+	page, err := index.Search(t.Context(), search.Query{Text: "visible"})
+	if err != nil || len(page.Hits) != 1 || page.Hits[0].Reference == nil {
+		t.Fatalf("page: %+v %v", page, err)
+	}
+	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return deadlineStore{objects}, nil }
+	keys := startKeys(newFakeKeys())
+	defer keys.close()
+	b := &sessionBrowser{search: &contentSearchBrowser{env: env, cfg: cfg, namespace: namespace}, keys: keys, prompt: newPrompter(strings.NewReader(""), io.Discard), stdout: io.Discard, list: &sessionPicker{keys: keys}}
+	// The read ends with the deadline, so its result and the deadline are
+	// ready together; either way the deadline is what is reported.
+	for range 20 {
+		ctx, cancel := context.WithDeadline(t.Context(), time.Now().Add(-time.Second))
+		_, err := b.readSearchSelection(ctx, *page.Hits[0].Reference, page.Hits[0].Reference.Start, false)
+		cancel()
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("read out of time: %v", err)
 		}
 	}
 }
