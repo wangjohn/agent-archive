@@ -474,6 +474,18 @@ func TestSearchPassageMTypedWhileAReadFailsKeepsTheFailure(t *testing.T) {
 	}
 }
 
+// waitingKeys is a terminal no key is typed on that waits as a real one
+// does.
+type waitingKeys struct{ *fakeKeys }
+
+func (k waitingKeys) read(_ []byte, wait time.Duration) (int, error) {
+	if wait < 0 {
+		return 0, io.EOF
+	}
+	time.Sleep(wait)
+	return 0, nil
+}
+
 // deadlineStore fails every read with its context's error.
 type deadlineStore struct{ storage.ObjectStore }
 
@@ -500,13 +512,14 @@ func TestSearchSelectedReadReportsItsDeadline(t *testing.T) {
 		t.Fatalf("page: %+v %v", page, err)
 	}
 	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return deadlineStore{objects}, nil }
-	keys := startKeys(newFakeKeys())
+	keys := startKeys(waitingKeys{newFakeKeys()})
 	defer keys.close()
 	b := &sessionBrowser{search: &contentSearchBrowser{env: env, cfg: cfg, namespace: namespace}, keys: keys, prompt: newPrompter(strings.NewReader(""), io.Discard), stdout: io.Discard, list: &sessionPicker{keys: keys}}
-	// The read ends with the deadline, so its result and the deadline are
-	// ready together; either way the deadline is what is reported.
+	// The deadline passes while a key is waited for, and the read ends with
+	// it, so its result and the deadline are ready together; either way the
+	// deadline is what is reported.
 	for range 20 {
-		ctx, cancel := context.WithDeadline(t.Context(), time.Now().Add(-time.Second))
+		ctx, cancel := context.WithTimeout(t.Context(), time.Millisecond)
 		_, err := b.readSearchSelection(ctx, *page.Hits[0].Reference, page.Hits[0].Reference.Start, false)
 		cancel()
 		if !errors.Is(err, context.DeadlineExceeded) {
