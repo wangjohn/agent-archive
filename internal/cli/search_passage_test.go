@@ -372,3 +372,25 @@ func TestHighlightedLinesExpandTabsToTabStops(t *testing.T) {
 		t.Fatalf("lines %q, want %q", lines, want)
 	}
 }
+
+func TestSearchPassageMReadsALongMessageToItsEnd(t *testing.T) {
+	// 20 KB: three overlapping indexed passages of one message.
+	long := "zebrafish notes. " + strings.Repeat("filler words go here ", 1000) + "TAILMARK"
+	env := searchProjectsFixtureOf(t, `{"type":"turn_context","model":"gpt-test"}
+{"type":"response_item","id":"m1","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Write it all down."}]}}
+{"type":"response_item","id":"m2","payload":{"type":"message","role":"assistant","content":"`+long+`"}}`)
+	keys := []string{"\x1b[B", "\r"}
+	for range 7 {
+		keys = append(keys, "m")
+	}
+	screens := searchScreens(t, env, newFakeKeys(append(keys, "\x1b[F", "b", "q")...), "", "zebrafish")
+	tail := lastScreenWith(t, screens, "TAILMARK")
+	if !strings.Contains(tail, searchMatchFooter) || strings.Contains(tail, "message continues") {
+		t.Fatalf("the message's end:\n%s", tail)
+	}
+	for _, screen := range screens {
+		if strings.Contains(screen, "Nothing more of these messages to show.") && !strings.Contains(screen, "TAILMARK") {
+			t.Fatalf("m stopped before the message's end:\n%s", screen)
+		}
+	}
+}

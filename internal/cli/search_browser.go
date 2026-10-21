@@ -502,9 +502,14 @@ type searchContextResult struct {
 	panicValue any
 }
 
+// searchLoadingNotice says a passage is loading and how to stop it.
+const searchLoadingNotice = "Loading selected passage… Esc cancels"
+
 // readSearchSelection services cancellation while the finite selected-source
-// read runs. The deferred join precedes every return and store/browser cleanup.
-func (b *sessionBrowser) readSearchSelection(ctx context.Context, ref search.Reference, offset int) (search.Surrounding, error) {
+// read runs, saying so on a line of its own unless shown says the caller
+// showed it. The deferred join precedes every return and store/browser
+// cleanup.
+func (b *sessionBrowser) readSearchSelection(ctx context.Context, ref search.Reference, offset int, shown bool) (search.Surrounding, error) {
 	s := b.search
 	s.generation++
 	generation := s.generation
@@ -539,7 +544,9 @@ func (b *sessionBrowser) readSearchSelection(ctx context.Context, ref search.Ref
 			join()
 		}
 	}()
-	terminal.Println(b.stdout, "Loading selected passage… Esc cancels")
+	if !shown {
+		terminal.Println(b.stdout, searchLoadingNotice)
+	}
 	for {
 		select {
 		case r := <-done:

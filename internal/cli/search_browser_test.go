@@ -185,7 +185,7 @@ func TestSearchSelectedReadCancelsAndJoinsBeforeReturning(t *testing.T) {
 			keys := startKeys(fake)
 			defer keys.close()
 			b := &sessionBrowser{search: &contentSearchBrowser{env: env, cfg: cfg, namespace: namespace}, keys: keys, prompt: newPrompter(strings.NewReader(""), io.Discard), stdout: io.Discard, list: &sessionPicker{keys: keys}}
-			_, err = b.readSearchSelection(t.Context(), *page.Hits[0].Reference, page.Hits[0].Reference.Start)
+			_, err = b.readSearchSelection(t.Context(), *page.Hits[0].Reference, page.Hits[0].Reference.Start, false)
 			if !errors.Is(err, context.Canceled) {
 				t.Fatalf("read: %v", err)
 			}
@@ -430,7 +430,7 @@ func TestSearchBufferedActionsCancelAndJoinSelectedRead(t *testing.T) {
 				b := &sessionBrowser{search: &contentSearchBrowser{env: env, cfg: cfg, namespace: namespace}, keys: keys, prompt: prompt, stdout: io.Discard, list: &sessionPicker{keys: keys}}
 				ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 				defer cancel()
-				_, err = b.readSearchSelection(ctx, *page.Hits[0].Reference, page.Hits[0].Reference.Start)
+				_, err = b.readSearchSelection(ctx, *page.Hits[0].Reference, page.Hits[0].Reference.Start, false)
 				if !errors.Is(err, context.Canceled) || action == "q" && !b.list.operationQuit || action != "q" && b.search.pendingAction != contentSearchAction(action) {
 					t.Fatalf("buffered action was not applied before read deadline: err=%v quit=%v pending=%q", err, b.list.operationQuit, b.search.pendingAction)
 				}

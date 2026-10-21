@@ -222,6 +222,8 @@ type openPassage struct {
 	// seek scrolls the next drawing to the match's first highlighted line,
 	// as a match opens.
 	seek bool
+	// lines are the passage last drawn, nil until it is.
+	lines []string
 }
 
 // read reads the shown match's exact source from offset; a title match has
@@ -233,7 +235,13 @@ func (p *openPassage) read(ctx context.Context, offset int) {
 		return
 	}
 	s := p.b.search
-	out, err := p.b.readSearchSelection(ctx, *p.state.ref, offset)
+	// A passage on screen says it is loading in its notice row, which keeps
+	// the screen to the terminal's height.
+	if p.lines != nil {
+		p.b.screen.clear()
+		p.b.drawSearchDetails(p.lines, p.top, -1, searchLoadingNotice)
+	}
+	out, err := p.b.readSearchSelection(ctx, *p.state.ref, offset, p.lines != nil)
 	p.unread = false
 	switch {
 	case err == nil:
@@ -289,7 +297,7 @@ func (b *sessionBrowser) searchDetails(ctx context.Context, row listRow) (browse
 			match = -1
 		}
 		screen := b.drawSearchDetails(lines, p.top, match, p.notice)
-		p.top, p.seek = screen.top, false
+		p.top, p.seek, p.lines = screen.top, false, lines
 		p.notice = ""
 		answer := s.pendingAction
 		s.pendingAction = searchActionNone
