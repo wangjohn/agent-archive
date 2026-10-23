@@ -6,6 +6,14 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Explicit `backfill --harness muse` previews bounded historical ordinary roots,
+  confirms their exact dates/projects/source checkpoints, and stages them before
+  registration for the normal collector. Preview and cancellation write no state
+  and open no storage. Exact batch undo detaches only its memberships. Child
+  coverage and missing-worktree/mapping overrides remain unavailable.
+
 ### Changed
 
 - Confirmed backfill registers bounded active groups through one ordered batch,
