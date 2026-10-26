@@ -194,7 +194,7 @@ func decodeNativeRows(raw []byte, line int64, joins *nativeBodyJoins) ([]logical
 	}
 	r, dropped, e := envelopeDropping(raw, position{Line: line})
 	p := object(m["payload"])
-	if errors.Is(e, errFormat) && r.ID != "" && r.Type != payloadToolBatchStarted && omittable(r, p) || e == nil && joins.omitted.covers(r, p) {
+	if errors.Is(e, errFormat) && r.ID != "" && omittable(r, p) && !joins.approvedEffect(r, p) || e == nil && joins.omitted.covers(r, p) {
 		// A well-formed record the adapter cannot qualify and that bears no
 		// authority is left out, with the records that join it; its private
 		// body joins nothing.

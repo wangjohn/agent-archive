@@ -126,6 +126,12 @@ func TestCommittedBroadReadRawRefusals(t *testing.T) {
 				mutate(c, e)
 				return rows
 			})
+			if strings.HasPrefix(name, "profile-") && name != "profile-file-read" || name == "raw-marker" {
+				// A start the adapter cannot qualify is omitted with its
+				// dependents, so no read join is claimed.
+				assertKeptOutAt(t, raw, physicalLineOf(t, raw, "tool_batch.effect.started"))
+				return
+			}
 			out, err := filterBytes(t, raw, agentapi.ReadLimits{})
 			if err == nil || len(out.Records) != 0 {
 				t.Fatal("unqualified broad-read admitted")

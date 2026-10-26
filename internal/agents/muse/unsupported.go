@@ -115,16 +115,24 @@ func (o *omittedEffects) covers(r retained, p map[string]any) bool {
 	return false
 }
 
-// unsupportedTool reports a tool effect start that joins a committed call
-// consistently but for a tool the adapter does not support: not a read, with no
-// approval for its task or call. An effect that contradicts its call, its task
-// or an approval is not reported and still refuses the session.
+// unsupportedTool reports a well-formed tool effect start that joins a
+// committed call consistently but for a tool the adapter does not support: not
+// a read, with no approval for its task or call. A well-formed effect that
+// contradicts its call, its task or an approval still refuses the session.
 func (s *nativeBodyJoins) unsupportedTool(r retained, p map[string]any) bool {
-	if r.Type != payloadToolBatchStarted || !omittable(r, p) {
+	if r.Type != payloadToolBatchStarted || !omittable(r, p) || s.approvedEffect(r, p) {
 		return false
 	}
 	rec := object(p["record"])
 	run, task, call, name := str(p["run_id"]), str(rec["task_id"]), str(rec["call_id"]), str(rec["tool_name"])
 	ref, exists := s.tools.calls[toolCallIdentity{r.Stream.ID, run, call}]
-	return exists && ref.record < int(r.Sequence-1) && !ref.nativeRead && !ref.nativeBroadRead && s.taskIDs[taskKey{run, task}] && !s.pendingIndex.overlaps(run, task, call) && name != "" && name != "read_file" && name != "read_skill"
+	return exists && ref.record < int(r.Sequence-1) && !ref.nativeRead && !ref.nativeBroadRead && s.taskIDs[taskKey{run, task}] && name != "" && name != "read_file" && name != "read_skill"
+}
+
+// approvedEffect reports a tool effect start whose task or call has an
+// approval request. Approval joins are permission authority, so such a start
+// is never omitted.
+func (s *nativeBodyJoins) approvedEffect(r retained, p map[string]any) bool {
+	rec := object(p["record"])
+	return r.Type == payloadToolBatchStarted && s.pendingIndex.overlaps(str(p["run_id"]), str(rec["task_id"]), str(rec["call_id"]))
 }

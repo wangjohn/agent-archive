@@ -17,8 +17,9 @@ filtering are unchanged; the Muse omission schema gains one classification.
   included, is uploaded. The session records `muse_unsupported_records_omitted`.
 - Records that would join an omitted record are omitted with it: a tool-batch
   terminal of an omitted start and a task output body without a retained start.
-  A tool-batch start is omitted only for a consistent, approval-free effect of a
-  committed tool the adapter does not support.
+  A tool-batch start is omitted only when no approval names its task or call,
+  and, when well-formed, only for a consistent effect of a committed tool the
+  adapter does not support.
 - Authority-bearing records still refuse the whole file: the supported families
   that establish identity, start, workspace or permissions, and unknown records
   whose schema names carry a permission, approval, identity, lineage or proof

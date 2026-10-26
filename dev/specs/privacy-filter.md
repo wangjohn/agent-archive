@@ -547,10 +547,12 @@ A record is authority-bearing, and still refuses the whole file, when:
 Omission never makes a retained claim false: no retained record depends on an
 omitted one. A record that would have to join an omitted record is omitted
 with it: a tool-batch terminal of an omitted start, and a task output body
-whose task has no retained start. A tool-batch start is omitted only when it
-joins an earlier committed call consistently, for a tool that is not a read,
-with no approval for its task or call; an effect that contradicts its call,
-task or an approval still refuses. Records linking this session to other
+whose task has no retained start. A tool-batch start is never omitted when an
+approval request names its task or call. Otherwise a start the adapter cannot
+qualify is omitted, and a well-formed start whose join fails is omitted only
+when it joins an earlier committed call and task consistently, for a tool that
+is not a read; a well-formed effect that contradicts its call or task still
+refuses. Records linking this session to other
 sessions (memory-reminder or workflow children) are lineage, not authority:
 child coverage is already reported unavailable, and they are omitted.
 
