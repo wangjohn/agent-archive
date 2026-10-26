@@ -5,6 +5,31 @@ rules, as a whole, are in the [filter specification](privacy-filter.md);
 version numbers and bump rules are in [versions](../maintainers/versions.md). Each archived session
 records the filter version that produced it (`filter_version`).
 
+## Source filter version 34
+
+Global and Muse adapter 0.34.0 accompany this change. Parsers and other agents'
+filtering are unchanged; the Muse omission schema gains one classification.
+
+- A well-formed Muse record the adapter cannot qualify and that bears no
+  authority is omitted instead of refusing the whole file. It is replaced by a
+  content-free omission row (`unsupported_record_omitted`) that keeps only its
+  stream, native ID and sequence; nothing of the record, its family name
+  included, is uploaded. The session records `muse_unsupported_records_omitted`.
+- Records that would join an omitted record are omitted with it: a tool-batch
+  terminal of an omitted start and a task output body without a retained start.
+  A tool-batch start is omitted only for a consistent, approval-free effect of a
+  committed tool the adapter does not support.
+- Authority-bearing records still refuse the whole file: the supported families
+  that establish identity, start, workspace or permissions, and unknown records
+  whose schema names carry a permission, approval, identity, lineage or proof
+  word. The list is in the [filter specification](privacy-filter.md).
+- Unsupported records interposed in startup are not members of the startup
+  structure, which must still qualify from the supported records.
+- Unknown members of the descriptive members of startup metadata, intake
+  metadata, the session opening, resumption and intent acceptance are dropped
+  and reported with the existing `unknown_field_omitted` gap. Older strict
+  readers refuse the new omission rows.
+
 ## Source filter version 33
 
 Global and Muse adapter 0.33.0 accompany this change. Parsers, source and

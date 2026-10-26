@@ -4,11 +4,11 @@ import "strings"
 
 // project is an exact type/schema/kind dispatch. Known optional content has an
 // explicit empty projection; unknown discriminators never become optional.
-func project(r retained, p map[string]any) (map[string]any, error) {
+func project(r retained, p map[string]any, dropped *bool) (map[string]any, error) {
 	if nativeNewFamily(r, p) {
 		return projectNewFamily(r, p)
 	}
-	if p == nil || !authorityShape(r, p) {
+	if p == nil || !authorityShape(r, p, dropped) {
 		return nil, errFormat
 	}
 	switch r.Type {

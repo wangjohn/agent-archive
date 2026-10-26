@@ -207,7 +207,7 @@ func (s *sourceSnapshot) startupFacts(ctx context.Context) (archive.NativeSource
 	defer func() { reservation.Release(held) }()
 	reader := bufio.NewReaderSize(io.NewSectionReader(s.file, 0, min(s.file.Length(), startupHeaderBytes)), 4096)
 	_, limit := boundedNativeLimits(s.limits)
-	rows := make([]retained, 0, 8)
+	rows := make([]logicalRow, 0, 8)
 	joins := nativeBodyJoins{}
 	for line := int64(1); line <= 7; line++ {
 		raw, charge, err := physicalLine(ctx, reader, limit, reservation)
@@ -228,35 +228,24 @@ func (s *sourceSnapshot) startupFacts(ctx context.Context) (archive.NativeSource
 		if err != nil {
 			return empty, refusal(raw[:len(raw)-1], line, err)
 		}
-		for _, row := range decoded {
-			if row.ordinary == nil {
-				return empty, errFormat
-			}
-			rows = append(rows, *row.ordinary)
-		}
-		needed := 4
-		if len(rows) >= 3 && rows[2].Type == payloadRuntimeSessionCaptureSelection {
-			needed = 8
-		}
-		if len(rows) >= 4 && rows[2].Type == payloadRuntimeSessionMetadata && (rows[3].Type == payloadRuntimeSessionMetadata || rows[3].Type == payloadRuntimeSessionRouteFacts) {
-			needed = 5
-		}
-		if len(rows) < needed {
+		rows = append(rows, decoded...)
+		supported := supportedRows(rows)
+		if len(supported) < startupRows(supported) {
 			continue
 		}
-		if err := validateRootRows(rows); err != nil {
+		if err := validateRoot(rows); err != nil {
 			if errors.Is(err, errFormat) {
-				err = agentapi.NewNativeRefusalError(agentapi.RefusalUnsupportedStartup, string(rows[len(rows)-1].Type), line, err)
+				err = agentapi.NewNativeRefusalError(agentapi.RefusalUnsupportedStartup, string(supported[len(supported)-1].Type), line, err)
 			}
 			return empty, err
 		}
 		cwd := ""
-		for _, r := range rows {
+		for _, r := range supported {
 			if r.Type == payloadRuntimeSessionMetadata {
 				cwd = str(r.Fields["workspace_root"])
 			}
 		}
-		return archive.NativeSourceBinding{Agent: "muse", Version: 2, NativeID: rows[0].Stream.ID, NativeCreatedAt: time.UnixMicro(rows[0].Timestamp).UTC(), Cwd: cwd, StreamID: rows[0].Stream.ID, Path: s.ref.Path}, nil
+		return archive.NativeSourceBinding{Agent: "muse", Version: 2, NativeID: supported[0].Stream.ID, NativeCreatedAt: time.UnixMicro(supported[0].Timestamp).UTC(), Cwd: cwd, StreamID: supported[0].Stream.ID, Path: s.ref.Path}, nil
 	}
 	return empty, errFormat
 }

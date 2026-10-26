@@ -191,6 +191,9 @@ type nativeBodyJoins struct {
 	tools         toolObservations
 	readEffects   effectJoinIndex
 	pendingIndex  effectJoinIndex
+	// omitted holds the tool effects and tasks of omitted effect starts, whose
+	// later records cannot join and are omitted with them.
+	omitted omittedEffects
 }
 
 func (s *nativeBodyJoins) observe(r retained, p map[string]any) error {
