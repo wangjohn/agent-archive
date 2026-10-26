@@ -900,7 +900,9 @@ func (l *NativeInventory) Locate(ctx context.Context, request agentapi.LocatorRe
 	}
 	ref, stamp, n, err := l.candidate(ctx, request.NativeID)
 	if l.refusesCandidate(ctx, err) {
-		return agentapi.LocatorResult{Status: agentapi.LocatorRefused}, nil
+		refused := agentapi.LocatorResult{Status: agentapi.LocatorRefused}
+		errors.As(err, &refused.Refusal)
+		return refused, nil
 	}
 	if err != nil {
 		l.stopped = true

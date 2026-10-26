@@ -20,7 +20,7 @@ func (cmd undoCommand) runNativeImportUndo() int {
 	defer plan.Close()
 	sessions := plan.Sessions()
 	absent, independent := plan.Unowned()
-	terminal.Printf(cmd.stdout, "Import %s: detach %d exact historical registration memberships.\n", cmd.batch.ID, len(sessions))
+	terminal.Printf(cmd.stdout, "Import %s: detach %s.\n", cmd.batch.ID, plural(len(sessions), "exact historical registration membership"))
 	for _, session := range sessions {
 		status := "attached"
 		if session.Detached {
@@ -28,7 +28,7 @@ func (cmd undoCommand) runNativeImportUndo() int {
 		}
 		terminal.Printf(cmd.stdout, "  %s  project %s  %s\n", archive.DisplayLine(session.ArchiveID), archive.DisplayLine(session.ProjectID), status)
 	}
-	terminal.Printf(cmd.stdout, "%d selected entries have no admitted owner; %d independent owners are preserved.\n", absent, independent)
+	terminal.Printf(cmd.stdout, "%s without an admitted owner; %s preserved.\n", plural(absent, "selected session"), plural(independent, "independent owner"))
 	terminal.Println(cmd.stdout, "This stops further registration by this batch. Stored sources, published objects, native files, later requests and configuration are preserved.")
 	if !cmd.yes && !cmd.env.interactive(cmd.stdin) {
 		terminal.Println(cmd.stderr, "agent-archive: backfill undo: confirming an undo needs a terminal. Nothing was changed. Run again with --yes to undo without asking.")
@@ -51,9 +51,9 @@ func (cmd undoCommand) runNativeImportUndo() int {
 	}
 	count, err := plan.Apply(context.Background(), cmd.env.now())
 	if err != nil {
-		terminal.Printf(cmd.stderr, "agent-archive: backfill undo: detached %d memberships before stopping: %v. Run undo again to resume.\n", count, err)
+		terminal.Printf(cmd.stderr, "agent-archive: backfill undo: detached %s before stopping: %v. Run undo again to resume.\n", plural(count, "membership"), err)
 		return 1
 	}
-	terminal.Printf(cmd.stdout, "Detached %d import memberships. Import %s is stopped.\n", count, cmd.batch.ID)
+	terminal.Printf(cmd.stdout, "Detached %s. Import %s is stopped.\n", plural(count, "import membership"), cmd.batch.ID)
 	return 0
 }

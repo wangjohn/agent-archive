@@ -19,8 +19,8 @@ func TestBackfillNativeImportUnsupportedSourceDoesNotStarveLaterSources(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A permission profile without a minimal runtime set is not a supported
-	// startup shape, so this root's startup validation fails.
+	// A permission profile without a minimal runtime set is supported only in
+	// the unrestricted mode, so this root's startup validation fails.
 	unsupported := bytes.Replace(raw, []byte(`minimal_runtime_set_version\":1,`), []byte(`minimal_runtime_set_version\":null,`), 1)
 	if bytes.Equal(unsupported, raw) {
 		t.Fatal("fixture no longer carries a minimal runtime set version")
