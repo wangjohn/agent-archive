@@ -447,8 +447,9 @@ exec/MSP roots in the qualified grammar. The [inner record union](../../schemas/
 uses unchanged v1 ordinary rows plus closed timestamp-free v2 omissions. Ordinary rows retain: original envelope identity, physical line and nullable child
 index, exact safe integers, discriminator/schema, causal identity and only the
 fixed per-type safe fields. Initial permission profiles are validated locally
-and reduced to format/schema/epoch/cause; raw child strings and native checksums
-are never retained. Complete startup binds the logical reserved start and own
+and reduced to format/schema/epoch/cause, plus a fixed `filesystem_mode:
+unrestricted` when the native unrestricted mode has no minimal runtime set; raw
+child strings and native checksums are never retained. Complete startup binds the logical reserved start and own
 workspace. Integrity is unkeyed and grants no producer or capture consent.
 
 Own conversation requires accepted main/chat intent, matching materialization,
@@ -474,7 +475,10 @@ nil causation; the route cwd must equal the metadata workspace. The permission
 frame remains the sole native birth authority. Header corroboration and raw
 startup facts use the same fixed prefix within their existing bounds; complete
 source validation remains mandatory. This changes validation only, with no new
-retained fields or metadata interpretation.
+retained fields or metadata interpretation. Only the route cwd is retained:
+filter 33 accepts and drops every other route-fact member, including the local
+runtime socket path, process ID and terminal identity, and members newer Muse
+builds add.
 
 Muse startup metadata may omit the optional model label. The local projection
 retains it only when present as a string, never infers a provider default, and

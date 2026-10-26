@@ -37,13 +37,18 @@
       "fields": [
         "schema_version",
         "permission_epoch",
-        "cause"
+        "cause",
+        "filesystem_mode"
       ],
       "fixed_fields": {
         "schema_version": 1,
         "permission_epoch": 1,
-        "cause": "new_session_default"
-      }
+        "cause": "new_session_default",
+        "filesystem_mode": "unrestricted"
+      },
+      "optional_fields": [
+        "filesystem_mode"
+      ]
     },
     {
       "type": "runtime.session.metadata",
