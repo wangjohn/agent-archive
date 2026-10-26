@@ -932,6 +932,7 @@ func (l *NativeInventory) Locate(ctx context.Context, request agentapi.LocatorRe
 type nativeCandidateError struct{ err error }
 
 func (e *nativeCandidateError) Error() string { return e.err.Error() }
+
 func (e *nativeCandidateError) Unwrap() error { return e.err }
 
 // refusesCandidate reports whether a historical preview refuses one source
