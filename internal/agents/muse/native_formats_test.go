@@ -167,3 +167,15 @@ func TestPermissionFrameAloneIsAnIncompleteStart(t *testing.T) {
 		t.Fatalf("frame-only startup refusal: %v", err)
 	}
 }
+
+func TestUnqualifiedStartupOrderIsNamed(t *testing.T) {
+	t.Parallel()
+	// Each record decodes, but route facts naming another directory leave the
+	// startup prefix unqualified.
+	raw := bytes.Replace(readSynthetic(t, "synthetic-route-startup.jsonl"), []byte(`"record":{"cwd":"/work/synthetic-muse"}`), []byte(`"record":{"cwd":"/work/elsewhere"}`), 1)
+	for name, err := range map[string]error{"startup": func() error { _, err := routeStartupFacts(t, raw); return err }(), "header": func() error { _, err := inspectSynthetic(t, raw); return err }()} {
+		if refused := refusalOf(t, err); refused.Reason != agentapi.RefusalUnsupportedStartup || refused.Family == "" || refused.Line < 2 {
+			t.Fatalf("%s refusal: %+v", name, refused)
+		}
+	}
+}

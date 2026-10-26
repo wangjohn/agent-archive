@@ -23,7 +23,8 @@ metadata schemas, and other agents' filtering are unchanged.
 - Whole-file refusals name the first refused native record family (a schema
   identifier, kept only when it has the plain identifier shape and shared
   credential redaction leaves it unchanged) and its line. They also separate a
-  side log with no session start, and a file ending before its startup records.
+  side log with no session start, a file ending before its startup records, and
+  supported startup records in an unqualified order.
   Refusals stay local: nothing new is uploaded.
 
 ## Source filter version 32

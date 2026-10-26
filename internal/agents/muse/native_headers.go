@@ -62,6 +62,9 @@ func (NativeHeaders) InspectHeader(req agentapi.NativeHeaderRequest) (agentapi.N
 			return true
 		}
 		decodeErr = validateRootRows(rows)
+		if errors.Is(decodeErr, errFormat) {
+			decodeErr = agentapi.NewNativeRefusalError(agentapi.RefusalUnsupportedStartup, string(rows[len(rows)-1].Type), line, decodeErr)
+		}
 		complete = decodeErr == nil
 		return false
 	})

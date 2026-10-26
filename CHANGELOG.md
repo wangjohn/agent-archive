@@ -74,7 +74,8 @@ follow [Semantic Versioning](https://semver.org/).
   no longer refused; the archive records that mode. Muse route facts newer
   builds write (terminal identity, a local runtime socket path) no longer
   refuse the session and are not kept. A refused Muse file now says why: the
-  record type and line it stopped at, that the file is a side log with no
+  record type and line it stopped at, that its startup records come in an
+  order this version does not support, that the file is a side log with no
   session start, or that it ends before its startup records (filter 33).
 
 - Durable quota and recovery checks traverse complete supported state inventories

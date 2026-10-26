@@ -245,6 +245,9 @@ func (s *sourceSnapshot) startupFacts(ctx context.Context) (archive.NativeSource
 			continue
 		}
 		if err := validateRootRows(rows); err != nil {
+			if errors.Is(err, errFormat) {
+				err = agentapi.NewNativeRefusalError(agentapi.RefusalUnsupportedStartup, string(rows[len(rows)-1].Type), line, err)
+			}
 			return empty, err
 		}
 		cwd := ""

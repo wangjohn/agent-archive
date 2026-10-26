@@ -21,6 +21,9 @@ const (
 	// RefusalIncompleteStart reports a session file that ends before its
 	// startup records, such as one holding only the permission frame.
 	RefusalIncompleteStart NativeRefusalReason = "incomplete_start"
+	// RefusalUnsupportedStartup reports startup records that are each
+	// supported but arrive in an order the adapter has not qualified.
+	RefusalUnsupportedStartup NativeRefusalReason = "unsupported_startup"
 )
 
 // nativeFamily is the native schema identifier shape: lowercase words joined
@@ -60,6 +63,8 @@ func (e *NativeRefusalError) Error() string {
 		return fmt.Sprintf("not a session: first record is %s, not a session start", family)
 	case RefusalIncompleteStart:
 		return fmt.Sprintf("incomplete session: the file ends at line %d, before its startup records", e.Line)
+	case RefusalUnsupportedStartup:
+		return fmt.Sprintf("unsupported startup order: %s at line %d", family, e.Line)
 	case RefusalUnsupportedRecord:
 	}
 	return fmt.Sprintf("unsupported %s record at line %d", family, e.Line)
