@@ -110,9 +110,11 @@ func shapeSessionResumed(p map[string]any) bool {
 
 }
 
+// Route facts carry no authority beyond cwd, the only retained member. Other
+// local facts (pid, terminal identity, runtime socket paths) are dropped,
+// including members newer Muse builds add.
 func shapeRuntimeSessionRouteFacts(p map[string]any) bool {
-	rec := object(p["record"])
-	return keys(p, "kind", "record") && only(rec, "cwd", "pid", "terminal_title_identity")
+	return keys(p, "kind", "record") && object(p["record"]) != nil
 
 }
 

@@ -162,6 +162,9 @@
             },
             "cause": {
               "const": "new_session_default"
+            },
+            "filesystem_mode": {
+              "const": "unrestricted"
             }
           }
         }

@@ -5,6 +5,27 @@ rules, as a whole, are in the [filter specification](privacy-filter.md);
 version numbers and bump rules are in [versions](../maintainers/versions.md). Each archived session
 records the filter version that produced it (`filter_version`).
 
+## Source filter version 33
+
+Global and Muse adapter 0.33.0 accompany this change. Parsers, source and
+metadata schemas, and other agents' filtering are unchanged.
+
+- Muse permission profiles whose filesystem mode is `unrestricted` with a null
+  `minimal_runtime_set_version` are accepted. The retained profile row gains one
+  optional fixed field, `filesystem_mode: unrestricted`; restricted profiles
+  (minimal runtime set 1) keep the earlier row unchanged. A null set with any
+  other mode, and any other set version, still refuse. Older strict Muse
+  readers refuse the new optional field.
+- Muse route facts accept members beyond cwd and drop them: the local runtime
+  command socket path, process ID, terminal kind, bundle ID and title identity,
+  and any member a newer build adds. Only cwd is retained, as before, and it
+  still must equal the startup workspace.
+- Whole-file refusals name the first refused native record family (a schema
+  identifier, kept only when it has the plain identifier shape and shared
+  credential redaction leaves it unchanged) and its line. They also separate a
+  side log with no session start, and a file ending before its startup records.
+  Refusals stay local: nothing new is uploaded.
+
 ## Source filter version 32
 
 Global and Muse adapter 0.32.0 accompany this change. Parsers, source and

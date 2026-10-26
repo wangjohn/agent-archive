@@ -86,7 +86,15 @@ const (
 	fieldSourceRunRecordSequence fieldName = "source_run_record_sequence"
 	fieldObservedAtSequence      fieldName = "observed_at_sequence"
 	fieldResume                  fieldName = "resume"
+	fieldFilesystemMode          fieldName = "filesystem_mode"
 )
+
+// filesystemMode is the retained permission-profile filesystem mode. It is
+// present only for the unrestricted mode; absence keeps the earlier meaning,
+// the minimal runtime set version 1.
+type filesystemMode string
+
+const filesystemUnrestricted filesystemMode = "unrestricted"
 
 type streamKind string
 

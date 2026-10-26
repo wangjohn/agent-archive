@@ -27,7 +27,9 @@ func (NativeHeaders) InspectHeader(req agentapi.NativeHeaderRequest) (agentapi.N
 	var decodeErr error
 	nativeJoins := nativeBodyJoins{}
 	complete := false
+	line := int64(0)
 	scanErr := req.Scan(func(raw []byte) bool {
+		line++
 		if len(rows) == 0 {
 			rows, decodeErr = frame(raw, 1)
 		} else {
@@ -46,6 +48,7 @@ func (NativeHeaders) InspectHeader(req agentapi.NativeHeaderRequest) (agentapi.N
 			}
 		}
 		if decodeErr != nil {
+			decodeErr = refusal(raw, line, decodeErr)
 			return false
 		}
 		needed := 4

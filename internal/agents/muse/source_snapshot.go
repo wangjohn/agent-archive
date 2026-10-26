@@ -212,6 +212,9 @@ func (s *sourceSnapshot) startupFacts(ctx context.Context) (archive.NativeSource
 	for line := int64(1); line <= 7; line++ {
 		raw, charge, err := physicalLine(ctx, reader, limit, reservation)
 		held += charge
+		if errors.Is(err, io.EOF) && line > 1 {
+			return empty, agentapi.NewNativeRefusalError(agentapi.RefusalIncompleteStart, "", line-1, err)
+		}
 		if err != nil {
 			return empty, err
 		}
@@ -223,7 +226,7 @@ func (s *sourceSnapshot) startupFacts(ctx context.Context) (archive.NativeSource
 		held += private
 		decoded, _, err := decodeNativeRows(raw[:len(raw)-1], line, &joins)
 		if err != nil {
-			return empty, err
+			return empty, refusal(raw[:len(raw)-1], line, err)
 		}
 		for _, row := range decoded {
 			if row.ordinary == nil {
