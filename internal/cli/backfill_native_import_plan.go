@@ -239,7 +239,7 @@ func selectNativeImportRow(ctx context.Context, env Env, store *state.Store, cfg
 		return row, err
 	}
 	row.selection = archive.NativeImportBatchSelection{Kind: archive.NativeImportOrdinaryRoot, NativeID: id, OriginalTUTC: row.OriginalT.UTC().Format(time.RFC3339Nano), ProjectID: row.ProjectID, RootFingerprint: fingerprint, RootRevision: root.Revision, BindingSHA256: digest, Source: *binding.Checkpoint}
-	row.candidate = state.NativeImportCandidate{NativeID: id, Root: root, ProjectRoot: row.Project, ProjectID: row.ProjectID, RemovedWorktree: removed}
+	row.candidate = state.NativeImportCandidate{NativeID: id, Root: root, ProjectRoot: row.Project, ProjectID: row.ProjectID}
 	if err := p.inventory.Check(ctx, id, row.token); err != nil {
 		return refuseNativeImportRow(row, nativeImportReadReason(err))
 	}

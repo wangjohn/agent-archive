@@ -112,8 +112,8 @@ func (p *PreparedNativeImport) allocateImportIdentity(ctx context.Context) error
 	at := time.Now().UTC()
 	c := p.confirmation.control.NativeImport
 	p.reg = archive.SessionRegistration{ArchiveSessionID: id, NativeSessionID: p.candidate.NativeID, Harness: archive.Harness{Name: "muse"}, ProjectRoot: p.candidate.ProjectRoot, ProjectID: p.candidate.ProjectID, TranscriptPath: p.binding.Path, DestinationID: c.Scope.DestinationID, SessionStartedAt: p.binding.NativeCreatedAt, RegisteredAt: at, AdmittedAt: at, Origin: archive.SessionOriginImport, ImportBatch: archive.NewImportBatch(c.Scope.BatchID), StartedAtSource: archive.StartedAtSourceTranscript, NativeBinding: &p.binding, NativeImport: &archive.NativeImport{Contract: "muse-historical-import-v1", Confirmation: archive.NativeImportConfirmation{BatchID: c.Scope.BatchID, BatchInstance: c.Instance, ScopeSHA256: c.ScopeSHA256, DestinationID: c.Scope.DestinationID, ProjectID: p.candidate.ProjectID, RootFingerprint: p.selected.RootFingerprint, SelectedBindingSHA256: p.selected.BindingSHA256, SelectedSource: p.selected.Source}, Membership: archive.NativeImportMembership{ReceiptID: receipt, State: archive.NativeImportAttached, Effects: []string{"registration"}}}}
-	if p.candidate.RemovedWorktree != nil {
-		proof := *p.candidate.RemovedWorktree
+	if p.removedWorktree != nil {
+		proof := *p.removedWorktree
 		p.reg.ProjectResolution = &proof
 	}
 	if err := p.reg.Validate(); err != nil {
