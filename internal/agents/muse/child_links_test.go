@@ -110,6 +110,8 @@ func withLogPath(owner string) map[string]any {
 func TestVerifiedChildLinkRetainsOnlyTheChildID(t *testing.T) {
 	t.Parallel()
 	raw := withChildLinks(t, nil, childLinkEvent)
+	// The native input is also a fuzz seed.
+	golden.Check(t, filepath.Join("testdata", "synthetic-child-link.jsonl"), raw)
 	out, err := filterBytes(t, raw, agentapi.ReadLimits{})
 	if err != nil {
 		t.Fatal(err)
