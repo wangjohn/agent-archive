@@ -80,8 +80,7 @@ func (Filter) filterLeased(ctx context.Context, in agentapi.NativeInput, c agent
 		held += 512
 		contentJoin = &skillContentJoin{reservation: reservation, held: &held, limits: c.Limits}
 	}
-	childLogs, _ := in.File.(childLogChecker)
-	nativeJoins := nativeBodyJoins{skillContent: contentJoin, childLogs: childLogs, checkChildLogs: true}
+	nativeJoins := filterJoins(contentJoin, in)
 	// End private ownership before the earlier error-release defer runs too.
 	defer func() { nativeJoins = nativeBodyJoins{} }()
 	for {

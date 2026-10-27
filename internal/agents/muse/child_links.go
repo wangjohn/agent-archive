@@ -1,5 +1,7 @@
 package muse
 
+import "github.com/wangjohn/agent-archive/internal/agentapi"
+
 // childLinkFieldNames are the retained members of a verified link from this
 // session to a child session: the run that made the link and the child's ID.
 var childLinkFieldNames = []string{"kind", "event_kind", "run_id", "source_run_record_id", "source_run_record_sequence", "child_session_id"}
@@ -46,6 +48,24 @@ func childLinkFields(r retained) bool {
 	f := r.Fields
 	child := str(f["child_session_id"])
 	return r.PayloadSchema == 1 && r.Causation == nil && keys(f, childLinkFieldNames...) && str(f["kind"]) == "run" && str(f["event_kind"]) == string(eventChildSessionLinked) && conversationSourceShape(f) && identifier(child) && child != r.Stream.ID
+}
+
+// filterJoins starts a filter pass's private joins. A filter pass checks each
+// named child log, through its input when the input can.
+func filterJoins(content *skillContentJoin, in agentapi.NativeInput) nativeBodyJoins {
+	childLogs, _ := in.File.(childLogChecker)
+	return nativeBodyJoins{skillContent: content, childLogs: childLogs, checkChildLogs: true}
+}
+
+// observeChildLink accepts a retained child link: each child is linked once,
+// from a run of this session's own conversation.
+func observeChildLink(r retained, children, joined map[string]bool, last map[string]int64, seen map[runIdentity]bool) error {
+	child := str(r.Fields["child_session_id"])
+	if !childLinkFields(r) || children[child] || observeConversationSource(r.Fields, str(r.Fields["run_id"]), joined, last, seen) != nil {
+		return errFormat
+	}
+	children[child] = true
+	return nil
 }
 
 // childLink joins a native child link to this session's own records: its task

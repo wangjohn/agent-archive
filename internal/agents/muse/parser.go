@@ -134,18 +134,10 @@ func conversationObserved(rows []retained) (archive.NormalizedView, *archive.Tok
 				if observeCompletion(r, joined, lastSequence, sourceRecords, &observations) != nil {
 					return view, nil, errFormat
 				}
-			case eventSkillReadObserved:
-				if observeSkillRead(r, joined, lastSequence, sourceRecords, &view) != nil {
+			case eventSkillReadObserved, eventChildSessionLinked:
+				if observeRunEvidence(r, children, joined, lastSequence, sourceRecords, &view) != nil {
 					return view, nil, errFormat
 				}
-			case eventChildSessionLinked:
-				// A child is linked once, from a run of this session's own
-				// conversation.
-				child := str(f["child_session_id"])
-				if !childLinkFields(r) || children[child] || observeConversationSource(f, run, joined, lastSequence, sourceRecords) != nil {
-					return view, nil, errFormat
-				}
-				children[child] = true
 			case eventAssistantToolCallsCommitted, eventToolResultBatchCommitted:
 				if observeCommittedTools(r, i, joined, lastSequence, sourceRecords, &tools, &view) != nil {
 					return view, nil, errFormat
@@ -221,6 +213,15 @@ func materializedTurn(r retained, rows []retained, accepted map[string]retained,
 type runIdentity struct {
 	run    string
 	record string
+}
+
+// observeRunEvidence accepts a run's own native reports that create no
+// conversation turn: skill reads and child links.
+func observeRunEvidence(r retained, children, joined map[string]bool, last map[string]int64, seen map[runIdentity]bool, view *archive.NormalizedView) error {
+	if str(r.Fields["event_kind"]) == string(eventChildSessionLinked) {
+		return observeChildLink(r, children, joined, last, seen)
+	}
+	return observeSkillRead(r, joined, last, seen, view)
 }
 
 func observeConversationSource(f map[string]any, run string, joined map[string]bool, last map[string]int64, seen map[runIdentity]bool) error {
