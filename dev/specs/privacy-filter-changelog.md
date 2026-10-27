@@ -5,6 +5,23 @@ rules, as a whole, are in the [filter specification](privacy-filter.md);
 version numbers and bump rules are in [versions](../maintainers/versions.md). Each archived session
 records the filter version that produced it (`filter_version`).
 
+## Source filter version 35
+
+Global and Muse adapter 0.35.0 accompany this change. Parsers and other agents'
+filtering are unchanged; the Muse retained schema gains one variant.
+
+- A Muse `memory_reminder_child_session_linked` run event is retained when it
+  verifies within the parent session: it names this session as parent and its
+  own run, a task this session started in that run, and a child other than this
+  session, each child linked once, from a materialized run. A link that names a
+  child log must name the child's own `subagent/<child>/session.jsonl` beside
+  this session, and that file must exist as a regular file.
+- Only the run identity and the child session ID are retained. The task,
+  generation, reminder agent and log path are dropped. The link grants no child
+  transcript, capture or coverage; `child_coverage_unavailable` still applies.
+- A link that does not verify still refuses the whole file. Other links to
+  other sessions remain lineage and refuse.
+
 ## Source filter version 34
 
 Global and Muse adapter 0.34.0 accompany this change. Parsers and other agents'

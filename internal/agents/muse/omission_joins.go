@@ -194,6 +194,12 @@ type nativeBodyJoins struct {
 	// omitted holds the tool effects and tasks of omitted effect starts, whose
 	// later records cannot join and are omitted with them.
 	omitted omittedEffects
+	// children holds the child sessions this session has linked. A filter pass
+	// sets checkChildLogs, and childLogs when its input can check a named
+	// child log; startup and header reads do not check child logs.
+	children       map[string]bool
+	childLogs      childLogChecker
+	checkChildLogs bool
 }
 
 func (s *nativeBodyJoins) observe(r retained, p map[string]any) error {
@@ -203,6 +209,7 @@ func (s *nativeBodyJoins) observe(r retained, p map[string]any) error {
 		s.taskIDs = map[taskKey]bool{}
 		s.sources = map[runIdentity]bool{}
 		s.lastSource = map[string]int64{}
+		s.children = map[string]bool{}
 	}
 	if r.Sequence == 3 && r.Type == payloadRuntimeSessionMetadata {
 		s.firstMetadata = p
@@ -220,6 +227,9 @@ func (s *nativeBodyJoins) observe(r retained, p map[string]any) error {
 	}
 	if err := s.observeCalls(r, p); err != nil {
 		return err
+	}
+	if r.Type == payloadRuntimeSession && kind == "run" && runtimeEvent(ek) == eventChildSessionLinked {
+		return s.childLink(p)
 	}
 	if !nativeNewFamily(r, p) {
 		return nil

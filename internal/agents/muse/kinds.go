@@ -39,6 +39,7 @@ const (
 	eventAccepted                         runtimeEvent = "accepted"
 	eventAssistantMessageCommitted        runtimeEvent = "assistant_message_committed"
 	eventAssistantToolCallsCommitted      runtimeEvent = "assistant_tool_calls_committed"
+	eventChildSessionLinked               runtimeEvent = "memory_reminder_child_session_linked"
 	eventCancelled                        runtimeEvent = "cancelled"
 	eventCompleted                        runtimeEvent = "completed"
 	eventContextBlockDiagnostic           runtimeEvent = "context_block_diagnostic"

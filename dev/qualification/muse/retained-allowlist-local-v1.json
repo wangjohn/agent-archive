@@ -979,6 +979,23 @@
         "hash_evidence": "marker_free_skill_content_v1"
       },
       "cross_record_policy": "Same own native read report plus a trusted producer safe-content join: actual observer full RedactText fixed point with no literal replacement marker, comparing native private hash only to existing safe SHA. Exact prior-event proof restores before activity without I/O. Native original digest erased; content only, no installed-name alias, origin or eligibility. Retained producer-evidence trust, not authenticated/coherent-forgery protection."
+    },
+    {
+      "type": "runtime.session",
+      "payload_schema": 1,
+      "fields": [
+        "kind",
+        "event_kind",
+        "run_id",
+        "source_run_record_id",
+        "source_run_record_sequence",
+        "child_session_id"
+      ],
+      "fixed_fields": {
+        "kind": "run",
+        "event_kind": "memory_reminder_child_session_linked"
+      },
+      "cross_record_policy": "Link to a child session verified within the parent alone: names this session as parent and its own run, a task this session started in that run, and a child other than this session, each linked once, from a materialized run with a unique increasing source record. A named child log must be the child's own subagent/<child>/session.jsonl beside this session and exist as a regular file. Only the child ID is retained; task, generation, reminder agent and log path are dropped. Grants no child transcript, capture or coverage."
     }
   ],
   "privacy": "Shared policy applies to every retained string/key; changed authority refuses; no raw record_json, permission bodies, native checksums, provider/context or native binding paths",

@@ -524,6 +524,9 @@ func fieldsRuntimeSession(r retained) (int64, []string, bool) {
 	if kind == roleRun && ek == eventSkillReadObserved {
 		return schema, skillReadNames(f), skillReadFields(r)
 	}
+	if kind == roleRun && ek == eventChildSessionLinked {
+		return schema, childLinkFieldNames, childLinkFields(r)
+	}
 	if kind == roleRun && enrichedTools(f) {
 		if ek == eventAssistantToolCallsCommitted {
 			return schema, []string{"kind", "event_kind", "run_id", "source_run_record_id", "source_run_record_sequence", "message_id", "tool_calls"}, toolFields(r)

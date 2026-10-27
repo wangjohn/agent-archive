@@ -89,6 +89,7 @@ func conversationObserved(rows []retained) (archive.NormalizedView, *archive.Tok
 	lastSequence := map[string]int64{}
 	materialized := map[string]bool{}
 	consumed := map[string]bool{}
+	children := map[string]bool{}
 	for i, r := range rows {
 		if r.Version == 0 {
 			continue
@@ -137,6 +138,14 @@ func conversationObserved(rows []retained) (archive.NormalizedView, *archive.Tok
 				if observeSkillRead(r, joined, lastSequence, sourceRecords, &view) != nil {
 					return view, nil, errFormat
 				}
+			case eventChildSessionLinked:
+				// A child is linked once, from a run of this session's own
+				// conversation.
+				child := str(f["child_session_id"])
+				if !childLinkFields(r) || children[child] || observeConversationSource(f, run, joined, lastSequence, sourceRecords) != nil {
+					return view, nil, errFormat
+				}
+				children[child] = true
 			case eventAssistantToolCallsCommitted, eventToolResultBatchCommitted:
 				if observeCommittedTools(r, i, joined, lastSequence, sourceRecords, &tools, &view) != nil {
 					return view, nil, errFormat
