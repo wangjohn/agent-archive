@@ -185,7 +185,11 @@ func (p *PreparedNativeImport) buildImportStage(ctx context.Context) error {
 		return errStateBudget
 	}
 	*p.read.resourceReleases = append(*p.read.resourceReleases, func() { reservation.Release(bundleBytes) })
-	bundle, err := archive.NewSourceBundle(p.reg, p.adapter, p.filtered, p.reg.AdmittedAt, nil)
+	links, err := p.store.nativeChildLinks(p.reg, p.filtered)
+	if err != nil {
+		return err
+	}
+	bundle, err := archive.NewSourceBundle(p.reg, p.adapter, p.filtered, p.reg.AdmittedAt, links)
 	if err != nil {
 		return err
 	}

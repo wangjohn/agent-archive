@@ -26,6 +26,8 @@ follow [Semantic Versioning](https://semver.org/).
 - Muse sessions that link memory-reminder child sessions are no longer refused
   when each link checks out against the session itself. Only the child's
   session ID is kept; links that do not check out still refuse the session.
+  Imported and captured Muse sessions list those children as linked sessions,
+  shown as unavailable because their transcripts are not archived.
 
 - Confirmed backfill registers bounded active groups through one ordered batch,
   sharing native/state memory charges and retaining unfinished parents across

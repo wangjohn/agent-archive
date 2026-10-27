@@ -578,6 +578,17 @@ Only exact fresh concrete preparation may reuse a pending reservation. Supported
 cleanup requires a complete matching durable Muse owner/proof/binding; missing,
 mismatched and unsupported pending authority is preserved/refused.
 
+Muse child-session links reserve child keys with the existing plain
+qualified-index `reservation`, never a `native_reservation` marker, so a child
+reservation cannot stand in for root admission or import, which refuse such an
+entry. Only a parent's own prepared admission, prepared import, or native
+validation commit reserves them, and only for the child IDs its own filter pass
+verified; a key a root owns or reserves is refused. The parent records each
+link as existing `linked_session` evidence (status unavailable, observed at the
+parent's session start), carried in the import stage bundle or the live
+request. Index version 1, the stage format and the filter, adapter and parser
+versions are unchanged.
+
 Local-origin-chain recovery changes private repository classification and renewed
 ownership evidence only. Its `local-origin-chain-v1` observer-scope discriminator
 invalidates earlier disposable cached observations, including positive identities
