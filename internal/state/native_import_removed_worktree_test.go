@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 )
@@ -42,12 +41,6 @@ func TestNativeImportFilesARemovedWorktreeUnderItsProvedProject(t *testing.T) {
 	if !proved {
 		t.Fatal("synthetic removed worktree not proved")
 	}
-	// Without the proof, the confirmed project is not this source's.
-	if p, err := f.prepare(t.Context()); err == nil {
-		_ = p.Close() // Already failed the assertion; the close result adds nothing.
-		t.Fatal("removed worktree imported without proof")
-	}
-	f.candidate.RemovedWorktree = &proof
 	p, err := f.prepare(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -66,42 +59,31 @@ func TestNativeImportFilesARemovedWorktreeUnderItsProvedProject(t *testing.T) {
 	}
 }
 
-func TestNativeImportRefusesARemovedWorktreeProofThatNoLongerHolds(t *testing.T) {
+func TestNativeImportRefusesARemovedWorktreeOutsideItsConfirmedProject(t *testing.T) {
 	t.Parallel()
-	native, removed := withRemovedWorktreeSource(t, newNativeAdmissionFixture(t))
+	native, _ := withRemovedWorktreeSource(t, newNativeAdmissionFixture(t))
 	f := nativeImportPrepareFixtureFromNative(t, native, "", 8<<20)
+	other := f.candidate
+	other.ProjectRoot = filepath.Join(filepath.Dir(f.candidate.ProjectRoot), "elsewhere")
+	g := f
+	g.candidate = other
+	if p, err := g.prepare(t.Context()); err == nil {
+		_ = p.Close() // Already failed the assertion; the close result adds nothing.
+		t.Fatal("removed worktree imported under another project")
+	}
+	// A project no longer included proves nothing.
 	cfg, _, err := config.Load(f.native.store.home)
 	if err != nil {
 		t.Fatal(err)
 	}
-	proof, proved := sourcefacts.RemovedWorktreeProject(cfg.Archive.Projects, removed)
-	if !proved {
-		t.Fatal("synthetic removed worktree not proved")
+	for i := range cfg.Archive.Projects {
+		cfg.Archive.Projects[i].Included = false
 	}
-	// In order: the last case restores the worktree for good.
-	for _, c := range []struct {
-		name   string
-		change func() archive.ProjectResolution
-	}{
-		{"another root", func() archive.ProjectResolution { forged := proof; forged.Root = "/elsewhere"; return forged }},
-		{"another cwd", func() archive.ProjectResolution {
-			forged := proof
-			forged.OriginalCwd = filepath.Join(filepath.Dir(removed), "other-task")
-			return forged
-		}},
-		{"the worktree came back", func() archive.ProjectResolution {
-			if err := os.Mkdir(removed, 0o700); err != nil {
-				t.Fatal(err)
-			}
-			return proof
-		}},
-	} {
-		name := c.name
-		forged := c.change()
-		f.candidate.RemovedWorktree = &forged
-		if p, err := f.prepare(t.Context()); err == nil {
-			_ = p.Close() // Already failed the assertion; the close result adds nothing.
-			t.Errorf("%s: stale removed-worktree proof accepted", name)
-		}
+	if err := config.Save(f.native.store.home, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if p, err := f.prepare(t.Context()); err == nil {
+		_ = p.Close() // Already failed the assertion; the close result adds nothing.
+		t.Fatal("removed worktree imported under an excluded project")
 	}
 }

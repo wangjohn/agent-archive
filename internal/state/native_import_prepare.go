@@ -19,9 +19,6 @@ type NativeImportCandidate struct {
 	Root        archive.NativeRoot
 	ProjectRoot string
 	ProjectID   string
-	// RemovedWorktree is the proof that the source's removed worktree belongs
-	// to ProjectRoot; nil when the source's directory still resolves there.
-	RemovedWorktree *archive.ProjectResolution
 }
 
 // PreparedNativeImport holds one concrete Filter and its independently checked
@@ -36,23 +33,25 @@ type PreparedNativeImport struct {
 	candidate           NativeImportCandidate
 	selected            archive.NativeImportBatchSelection
 	binding             archive.NativeSourceBinding
-	snapshot            agentapi.SourceSnapshot
-	input               agentapi.NativeInput
-	content             agentapi.VerifiedContentSnapshot
-	lookup              agentapi.NativeLocatorLookup
-	selection           string
-	filtered            archive.FilteredTranscript
-	releaseOutput       func()
-	closePass           func() error
-	closed              bool
-	err                 error
-	reg                 archive.SessionRegistration
-	filteredDigest      string
-	adapter             preparedImportAdapter
-	index               qualifiedSessionIndexEntry
-	indexFound          bool
-	stage               ImportStage
-	committed           bool
+	// removedWorktree proves a removed worktree's project; nil otherwise.
+	removedWorktree *archive.ProjectResolution
+	snapshot        agentapi.SourceSnapshot
+	input           agentapi.NativeInput
+	content         agentapi.VerifiedContentSnapshot
+	lookup          agentapi.NativeLocatorLookup
+	selection       string
+	filtered        archive.FilteredTranscript
+	releaseOutput   func()
+	closePass       func() error
+	closed          bool
+	err             error
+	reg             archive.SessionRegistration
+	filteredDigest  string
+	adapter         preparedImportAdapter
+	index           qualifiedSessionIndexEntry
+	indexFound      bool
+	stage           ImportStage
+	committed       bool
 }
 
 // PrepareNativeImport filters exactly one proven selected ordinary source. It
@@ -88,7 +87,8 @@ func (s *Store) PrepareNativeImport(ctx context.Context, confirmation *Confirmed
 	if facts.Binding.Codex != nil || !nativeImportSelectedBinding(candidate, selected, binding) {
 		return nil, agentapi.ErrInvalidSourceBinding
 	}
-	if !nativeImportProjectCurrent(confirmation, candidate, binding.Cwd) {
+	removed, belongs := nativeImportProject(confirmation, candidate, binding.Cwd)
+	if !belongs {
 		return nil, errors.New("native import source does not belong to confirmed physical project")
 	}
 	copied := *binding
@@ -110,6 +110,7 @@ func (s *Store) PrepareNativeImport(ctx context.Context, confirmation *Confirmed
 		selection:           selection,
 		closePass:           closePass,
 		read:                read,
+		removedWorktree:     removed,
 		closeRead:           func() { closeRead(); closeContext() },
 	}
 	defer func() {
@@ -317,20 +318,21 @@ func (p *PreparedNativeImport) filterDigest(ctx context.Context) (string, error)
 	}{p.filtered, p.filtered.Records, p.filtered.Text, p.filtered.Ordinals, p.filtered.ObservedHarness})
 }
 
-// nativeImportProjectCurrent rechecks that the source still belongs to the
-// candidate's project: its directory resolves there physically, or the same
-// removed-worktree proof still holds under the current project configuration.
-func nativeImportProjectCurrent(confirmation *ConfirmedNativeImportBatch, candidate NativeImportCandidate, cwd string) bool {
+// nativeImportProject checks that the source belongs to the candidate's
+// confirmed project now: its directory resolves there physically, or it is a
+// removed worktree proved, under the current project configuration, to belong
+// there. It returns that proof for a removed worktree.
+func nativeImportProject(confirmation *ConfirmedNativeImportBatch, candidate NativeImportCandidate, cwd string) (*archive.ProjectResolution, bool) {
 	if physical, known := sourcefacts.PhysicalProject(cwd); known {
-		return candidate.RemovedWorktree == nil && physical.Root == candidate.ProjectRoot
-	}
-	if candidate.RemovedWorktree == nil {
-		return false
+		return nil, physical.Root == candidate.ProjectRoot
 	}
 	cfg, found, err := confirmation.read.loadConfig()
 	if err != nil || !found {
-		return false
+		return nil, false
 	}
 	proof, proved := sourcefacts.RemovedWorktreeProject(cfg.Archive.Projects, cwd)
-	return proved && proof == *candidate.RemovedWorktree && proof.Root == candidate.ProjectRoot
+	if !proved || proof.Root != candidate.ProjectRoot {
+		return nil, false
+	}
+	return &proof, true
 }
