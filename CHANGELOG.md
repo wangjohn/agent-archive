@@ -15,6 +15,10 @@ follow [Semantic Versioning](https://semver.org/).
   approvals, links to other sessions, or proofs still refuse the session. Unknown members of startup
   and opening records are dropped with an `unknown_field_omitted` gap.
 
+- Muse sessions that record a completed login are no longer refused. Only the
+  fact that this session logged in is kept, never the login method or account
+  details.
+
 - Muse sessions from newer builds that write their startup metadata before the
   session-start command are no longer refused as an unsupported startup order.
 

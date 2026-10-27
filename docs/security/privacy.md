@@ -831,7 +831,9 @@ permission, approval, identity, lineage or proof concept, such as
 refuse, except a memory-reminder child link that checks out against the
 parent session itself (its parent, run and task are this session's, and a
 named child log really exists). For such a link only the child session's ID
-is uploaded, never the child's transcript or log path. The full list is in the
+is uploaded, never the child's transcript or log path. A Muse login
+completion is kept only as the fact that this session logged in; its login
+method, trigger, subscription and duration are never uploaded. The full list is in the
 [filter specification](../../dev/specs/privacy-filter.md#muse-explicit-local-evidence).
 
 Muse's closed own `model_completed` branch validates a nonempty model string,

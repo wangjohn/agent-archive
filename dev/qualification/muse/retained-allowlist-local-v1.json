@@ -160,6 +160,18 @@
       }
     },
     {
+      "type": "session.login.completed",
+      "payload_schema": 1,
+      "fields": [
+        "kind",
+        "session_id"
+      ],
+      "fixed_fields": {
+        "kind": "login_completed"
+      },
+      "cross_record_policy": "Exact closed record; session_id must be this session. Method, trigger, subscription and duration are validated and dropped: account facts are never retained."
+    },
+    {
       "type": "session.end",
       "payload_schema": 1,
       "fields": [

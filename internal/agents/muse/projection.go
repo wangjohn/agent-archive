@@ -32,6 +32,8 @@ func project(r retained, p map[string]any, dropped *bool) (map[string]any, error
 		return projectSessionStarted(r, p)
 	case payloadSessionResumed:
 		return projectSessionResumed(r, p)
+	case payloadSessionLoginCompleted:
+		return projectSessionLoginCompleted(r, p)
 	case payloadRuntimeSessionRouteFacts:
 		return projectRuntimeSessionRouteFacts(r, p)
 	case payloadRuntimeUserIntentAccepted:
@@ -216,6 +218,15 @@ func projectSessionResumed(r retained, p map[string]any) (map[string]any, error)
 	}
 
 	return f, nil
+}
+
+// projectSessionLoginCompleted keeps only the session the login completed in.
+func projectSessionLoginCompleted(r retained, p map[string]any) (map[string]any, error) {
+	rec := object(p["record"])
+	if r.PayloadSchema != 1 || str(p["kind"]) != "login_completed" || num(rec["schema_version"]) != 1 || !integer(rec["duration_ms"], 0) || !boolean(rec["subscribed"]) || !stringFields(rec, "method", "trigger") || str(rec["method"]) == "" || str(rec["trigger"]) == "" || !identifier(rec["session_id"]) {
+		return nil, errFormat
+	}
+	return map[string]any{"kind": "login_completed", "session_id": rec["session_id"]}, nil
 }
 
 func projectRuntimeSessionRouteFacts(r retained, p map[string]any) (map[string]any, error) {
