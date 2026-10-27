@@ -194,7 +194,7 @@ func selectNativeImportRow(ctx context.Context, env Env, store *state.Store, cfg
 		return row, nil
 	}
 	// A removed worktree is filed under its project only on proof.
-	projectRoot := ""
+	var projectRoot string
 	var removed *archive.ProjectResolution
 	if physical, known := resolver.Resolve(binding.Cwd); known {
 		projectRoot = physical.Root
