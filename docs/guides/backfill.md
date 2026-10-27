@@ -36,8 +36,13 @@ agent-archive backfill --harness muse --project /existing/configured/project --s
 
 This route requires an existing setup with a configured Muse native root and
 included physical project. It imports qualified ordinary root conversations;
-child/descendant coverage is **unavailable**, never inferred from paths. Mixed
-harnesses, project mappings, missing worktrees and `--include-*` overrides refuse
+child/descendant coverage is **unavailable**, never inferred from paths. A
+session from a worktree that has since been removed is filed under its project
+only on proof: its recorded directory no longer exists, and the nearest
+repository above it is the configured, included project's own repository, with
+no other configured project in between. The preview says so for that session,
+and the archive keeps the original directory with the proof. Mixed harnesses,
+project mappings, other missing worktrees and `--include-*` overrides refuse
 explicitly. Projects outside current configured inclusion remain refused. Unknown
 native formats, duplicate sources, incomplete namespaces and exhausted bounds
 remain visible as refusals or unavailable observations.

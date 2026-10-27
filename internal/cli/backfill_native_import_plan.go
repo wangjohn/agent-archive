@@ -193,13 +193,19 @@ func selectNativeImportRow(ctx context.Context, env Env, store *state.Store, cfg
 		row.Status, row.Reason = nativeImportFiltered, "outside exact original-start date bounds"
 		return row, nil
 	}
-	physical, known := resolver.Resolve(binding.Cwd)
-	if !known {
+	// A removed worktree is filed under its project only on proof.
+	projectRoot := ""
+	var removed *archive.ProjectResolution
+	if physical, known := resolver.Resolve(binding.Cwd); known {
+		projectRoot = physical.Root
+	} else if proof, proved := sourcefacts.RemovedWorktreeProject(cfg.Archive.Projects, binding.Cwd); proved {
+		projectRoot, removed = proof.Root, &proof
+	} else {
 		row.Reason = "physical project/worktree unavailable; mapping overrides are unsupported"
 		return row, nil
 	}
 	for _, project := range cfg.Archive.Projects {
-		if project.Included && project.Root == physical.Root {
+		if project.Included && project.Root == projectRoot {
 			row.Project, row.ProjectID = project.Root, project.ProjectID
 			break
 		}
@@ -233,11 +239,14 @@ func selectNativeImportRow(ctx context.Context, env Env, store *state.Store, cfg
 		return row, err
 	}
 	row.selection = archive.NativeImportBatchSelection{Kind: archive.NativeImportOrdinaryRoot, NativeID: id, OriginalTUTC: row.OriginalT.UTC().Format(time.RFC3339Nano), ProjectID: row.ProjectID, RootFingerprint: fingerprint, RootRevision: root.Revision, BindingSHA256: digest, Source: *binding.Checkpoint}
-	row.candidate = state.NativeImportCandidate{NativeID: id, Root: root, ProjectRoot: row.Project, ProjectID: row.ProjectID}
+	row.candidate = state.NativeImportCandidate{NativeID: id, Root: root, ProjectRoot: row.Project, ProjectID: row.ProjectID, RemovedWorktree: removed}
 	if err := p.inventory.Check(ctx, id, row.token); err != nil {
 		return refuseNativeImportRow(row, nativeImportReadReason(err))
 	}
 	row.Status, row.Reason = nativeImportSelected, "ordinary root; child coverage unavailable"
+	if removed != nil {
+		row.Reason = "ordinary root from a removed worktree of this project; child coverage unavailable"
+	}
 	return row, nil
 }
 

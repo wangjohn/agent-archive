@@ -19,6 +19,9 @@ type NativeImportCandidate struct {
 	Root        archive.NativeRoot
 	ProjectRoot string
 	ProjectID   string
+	// RemovedWorktree is the proof that the source's removed worktree belongs
+	// to ProjectRoot; nil when the source's directory still resolves there.
+	RemovedWorktree *archive.ProjectResolution
 }
 
 // PreparedNativeImport holds one concrete Filter and its independently checked
@@ -85,8 +88,7 @@ func (s *Store) PrepareNativeImport(ctx context.Context, confirmation *Confirmed
 	if facts.Binding.Codex != nil || !nativeImportSelectedBinding(candidate, selected, binding) {
 		return nil, agentapi.ErrInvalidSourceBinding
 	}
-	physical, known := sourcefacts.PhysicalProject(binding.Cwd)
-	if !known || physical.Root != candidate.ProjectRoot {
+	if !nativeImportProjectCurrent(confirmation, candidate, binding.Cwd) {
 		return nil, errors.New("native import source does not belong to confirmed physical project")
 	}
 	copied := *binding
@@ -313,4 +315,22 @@ func (p *PreparedNativeImport) filterDigest(ctx context.Context) (string, error)
 		Ordinals        []uint64                   `json:"ordinals"`
 		ObservedHarness archive.Harness            `json:"observed_harness"`
 	}{p.filtered, p.filtered.Records, p.filtered.Text, p.filtered.Ordinals, p.filtered.ObservedHarness})
+}
+
+// nativeImportProjectCurrent rechecks that the source still belongs to the
+// candidate's project: its directory resolves there physically, or the same
+// removed-worktree proof still holds under the current project configuration.
+func nativeImportProjectCurrent(confirmation *ConfirmedNativeImportBatch, candidate NativeImportCandidate, cwd string) bool {
+	if physical, known := sourcefacts.PhysicalProject(cwd); known {
+		return candidate.RemovedWorktree == nil && physical.Root == candidate.ProjectRoot
+	}
+	if candidate.RemovedWorktree == nil {
+		return false
+	}
+	cfg, found, err := confirmation.read.loadConfig()
+	if err != nil || !found {
+		return false
+	}
+	proof, proved := sourcefacts.RemovedWorktreeProject(cfg.Archive.Projects, cwd)
+	return proved && proof == *candidate.RemovedWorktree && proof.Root == candidate.ProjectRoot
 }
