@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"maps"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -25,10 +26,7 @@ func withRecordBeforeEnd(t *testing.T, payloadType string, payload map[string]an
 	if json.Unmarshal(lines[len(lines)-1], &end) != nil || str(end["payload_type"]) != string(payloadSessionEnd) {
 		t.Fatal("synthetic session end changed")
 	}
-	extra := map[string]any{}
-	for k, v := range end {
-		extra[k] = v
-	}
+	extra := maps.Clone(end)
 	extra["id"] = "00000000-0000-4000-8000-0000000000e1"
 	extra["causation_id"] = nil
 	extra["payload_type"], extra["payload_schema_version"], extra["payload"] = payloadType, 1, payload
