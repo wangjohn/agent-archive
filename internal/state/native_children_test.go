@@ -53,7 +53,11 @@ func TestNativeImportRecordsVerifiedChildLinks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer p.Close()
+	defer func() {
+		if err := p.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	owner, err := f.native.store.CommitNativeImport(t.Context(), p)
 	if err != nil {
 		t.Fatal(err)
@@ -81,7 +85,11 @@ func TestNativeAdmissionLinksVerifiedChildrenOnlyAfterCommit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer p.Close()
+	defer func() {
+		if err := p.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	if err := f.store.LinkNativeChildren(p); !errors.Is(err, errNativeChildLinks) {
 		t.Fatalf("uncommitted admission linked children: %v", err)
 	}
@@ -130,7 +138,11 @@ func TestForgedChildLinksGetNoReservation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer p.Close()
+	defer func() {
+		if err := p.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	owner, err := f.store.CommitNativeAdmission(t.Context(), p)
 	if err != nil {
 		t.Fatal(err)
