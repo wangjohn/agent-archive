@@ -855,8 +855,10 @@ removed worktree is filed under its project only when the configured project's
 own repository is the nearest one above it; project mappings, other missing
 worktrees and --include-* overrides are refused.
 Confirmation freezes exact original dates, projects, destination and source
-checkpoints; later source changes require a new preview. Its undo detaches only
-this batch's memberships, preserving stored/native files and later requests.
+checkpoints; later source changes require a new preview. A confirmed session
+whose full read finds records this version cannot import is skipped and named
+with its reason; the rest still import. Its undo detaches only this batch's
+memberships, preserving stored/native files and later requests.
   --harness NAME        Only claude, codex, cursor (repeatable), or muse alone
   --project DIR         Only this project; it need not still exist (repeatable)
   --mapping-file FILE          Bounded JSON project assignments

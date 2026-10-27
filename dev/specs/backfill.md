@@ -1304,7 +1304,10 @@ Other properties:
   sessions registered, each with a request, so the collector uploads those and
   a rerun registers the rest. A crash during step 6 loses nothing.
 - **Plan freeze.** The import is exactly the confirmed plan, keyed by native
-  ID. Sessions that appear after the plan are not included.
+  ID. Sessions that appear after the plan are not included. A historical Muse
+  entry whose full read refuses its own content (a refusal no retry can change)
+  is skipped with its reason, writing nothing, and the batch continues; a
+  changed or unreadable source still stops the batch for resumption.
 - **Scale.** An unchanged session costs one stat per pass. Retention calls the
   bucket only when something can be deleted. Thousands of imports therefore
   add only local work to the 60-second pass, though a parser upgrade re-reads
