@@ -5,6 +5,18 @@ rules, as a whole, are in the [filter specification](privacy-filter.md);
 version numbers and bump rules are in [versions](../maintainers/versions.md). Each archived session
 records the filter version that produced it (`filter_version`).
 
+## Source filter version 36
+
+Global and Muse adapter 0.36.0 accompany this change. Parsers, other agents'
+filtering and the retained schemas are unchanged.
+
+- Muse sessions from newer builds that write their startup metadata before the
+  session-start command (frame, metadata, command intake, start intake,
+  session started, original opening) qualify instead of refusing with
+  "unsupported Muse startup order". The command block keeps its existing joins,
+  and the metadata and opening require nil causation and the original opening.
+  No new members are retained.
+
 ## Source filter version 35
 
 Global and Muse adapter 0.35.0 accompany this change. Parsers and other agents'
