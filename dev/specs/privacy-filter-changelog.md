@@ -23,7 +23,7 @@ filtering are unchanged; the Muse omission schema gains one classification.
 - Authority-bearing records still refuse the whole file: the supported families
   that establish identity, start, workspace or permissions, and unknown records
   whose schema names carry a permission, approval, identity, lineage or proof
-  word. The list is in the [filter specification](privacy-filter.md).
+  word. Links to other sessions are lineage and refuse. The list is in the [filter specification](privacy-filter.md).
 - Unsupported records interposed in startup are not members of the startup
   structure, which must still qualify from the supported records.
 - Unknown members of the descriptive members of startup metadata, intake

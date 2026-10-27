@@ -826,8 +826,9 @@ establishes the session's identity, start, workspace or permissions
 (the permission frame, startup and intake records, approvals and approval
 waits, route facts, intents), and any unknown record whose type names a
 permission, approval, identity, lineage or proof concept, such as
-`permission`, `approval`, `owner`, `subagent`, `spawn`, `login`, `hash` or
-`digest`. The full list is in the
+`permission`, `approval`, `owner`, `subagent`, `child`, `linked`, `spawn`,
+`login`, `hash` or `digest`. Links to other sessions (such as Muse's
+memory-reminder child sessions) count as lineage and refuse. The full list is in the
 [filter specification](../../dev/specs/privacy-filter.md#muse-explicit-local-evidence).
 
 Muse's closed own `model_completed` branch validates a nonempty model string,

@@ -40,12 +40,12 @@ var authorityFamilies = []payloadType{
 }
 
 // authorityWords mark a record family, kind or event as authority-bearing when
-// the adapter does not know it: permission and approval, identity and lineage
-// of this session, and checksums or proofs. Matching is by whole word of the
+// the adapter does not know it: permission and approval, identity of this
+// session and its lineage to other sessions, and checksums or proofs. Matching is by whole word of the
 // native schema names, never of record content.
 var authorityWords = []string{
 	"permission", "permissions", "approval", "approvals", "policy", "sandbox", "scope", "grant", "denied",
-	"identity", "owner", "subagent", "attested", "attest", "bound", "spawn", "spawned", "parent", "login", "auth", "credential", "credentials",
+	"identity", "owner", "subagent", "child", "children", "lineage", "linked", "attested", "attest", "bound", "spawn", "spawned", "parent", "login", "auth", "credential", "credentials",
 	"checksum", "digest", "hash", "proof", "fingerprint", "signature", "signed",
 }
 

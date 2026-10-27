@@ -75,10 +75,13 @@ func TestUnknownAuthorityRecordStillRefusesTheSession(t *testing.T) {
 			t.Fatalf("%s: authority-bearing record was not refused: %v", family, err)
 		}
 	}
-	// A run event naming an approval is authority-bearing too.
-	raw, _ := withRecordBeforeEnd(t, string(payloadRuntimeSession), map[string]any{"kind": "run", "run_id": "00000000-0000-4000-8000-0000000000e2", "event": map[string]any{"kind": "approval_invented"}})
-	if _, err := filterBytes(t, raw, agentapi.ReadLimits{}); !errors.Is(err, errFormat) {
-		t.Fatalf("unknown approval event was not refused: %v", err)
+	// Run events naming an approval or a link to another session are
+	// authority-bearing too: lineage is never omitted.
+	for _, event := range []string{"approval_invented", "memory_reminder_child_session_linked", "workflow_child_lifecycle"} {
+		raw, _ := withRecordBeforeEnd(t, string(payloadRuntimeSession), map[string]any{"kind": "run", "run_id": "00000000-0000-4000-8000-0000000000e2", "event": map[string]any{"kind": event}})
+		if _, err := filterBytes(t, raw, agentapi.ReadLimits{}); !errors.Is(err, errFormat) {
+			t.Fatalf("unknown %s event was not refused: %v", event, err)
+		}
 	}
 }
 

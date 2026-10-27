@@ -539,10 +539,11 @@ A record is authority-bearing, and still refuses the whole file, when:
   runtime record of a schema other than 1;
 - or its payload type, payload kind, event kind or record kind contains, as a
   whole word, one of: permission(s), approval(s), policy, sandbox, scope,
-  grant, denied, identity, owner, subagent, attest(ed), bound, spawn(ed),
-  parent, login, auth, credential(s), checksum, digest, hash, proof,
-  fingerprint, signature, signed. This covers unknown permission, approval,
-  identity, lineage and proof families of newer Muse builds.
+  grant, denied, identity, owner, subagent, child, children, lineage, linked,
+  attest(ed), bound, spawn(ed), parent, login, auth, credential(s), checksum,
+  digest, hash, proof, fingerprint, signature, signed. This covers unknown
+  permission, approval, identity, lineage and proof families of newer Muse
+  builds.
 
 Omission never makes a retained claim false: no retained record depends on an
 omitted one. A record that would have to join an omitted record is omitted
@@ -553,8 +554,8 @@ qualify is omitted, and a well-formed start whose join fails is omitted only
 when it joins an earlier committed call and task consistently, for a tool that
 is not a read; a well-formed effect that contradicts its call or task still
 refuses. Records linking this session to other
-sessions (memory-reminder or workflow children) are lineage, not authority:
-child coverage is already reported unavailable, and they are omitted.
+sessions (memory-reminder or workflow children) are lineage and bear
+authority: they refuse until the adapter verifies and records them.
 
 The startup structure qualifies from supported records alone. Omission rows
 keep their sequence slot but are not members of a startup block, so an
