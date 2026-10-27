@@ -92,12 +92,20 @@ func filterInStore(t *testing.T, raw []byte, childLogs ...string) (archive.Filte
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer pass.Close()
+	defer func() {
+		if err := pass.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	snap, err := pass.Read(t.Context(), agentapi.SourceRef{Path: path}, agentapi.ReadLimits{})
 	if err != nil {
 		return archive.FilteredTranscript{}, err
 	}
-	defer snap.Close()
+	defer func() {
+		if err := snap.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	return (Filter{}).Filter(t.Context(), snap.Input(), agentapi.FilterContext{StartedAt: time.Now()})
 }
 
