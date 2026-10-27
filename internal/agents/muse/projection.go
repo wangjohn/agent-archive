@@ -4,11 +4,11 @@ import "strings"
 
 // project is an exact type/schema/kind dispatch. Known optional content has an
 // explicit empty projection; unknown discriminators never become optional.
-func project(r retained, p map[string]any) (map[string]any, error) {
+func project(r retained, p map[string]any, dropped *bool) (map[string]any, error) {
 	if nativeNewFamily(r, p) {
 		return projectNewFamily(r, p)
 	}
-	if p == nil || !authorityShape(r, p) {
+	if p == nil || !authorityShape(r, p, dropped) {
 		return nil, errFormat
 	}
 	switch r.Type {
@@ -75,6 +75,9 @@ func projectRuntimeSessionPermissionProfileCommitted(r retained, p map[string]an
 		return nil, errFormat
 	}
 	copyFields(f, p, "schema_version", "permission_epoch", "cause")
+	if unrestrictedFilesystem(object(object(p["resolved_snapshot"])["filesystem"])) {
+		f[string(fieldFilesystemMode)] = string(filesystemUnrestricted)
+	}
 
 	return f, nil
 }
@@ -334,6 +337,9 @@ func projectRuntimeSession(r retained, p map[string]any) (map[string]any, error)
 	if kind == roleRun && ek == eventSkillReadObserved {
 		return projectSkillRead(r, p, event)
 	}
+	if kind == roleRun && ek == eventChildSessionLinked {
+		return projectChildLink(r, p, event)
+	}
 	if kind == roleRun && (ek == eventAssistantToolCallsCommitted || ek == eventToolResultBatchCommitted) {
 		return projectTools(r, p, event)
 	}
@@ -426,7 +432,7 @@ func optionalRuntime(kind runtimeRole, event runtimeEvent) bool {
 			return false
 		case eventProposed, eventAccepted, eventScheduled, eventSideEffectIntent, eventStarted, eventStatus, eventCompleted, eventFailed, eventCancelled:
 			return true
-		case eventSkillReadObserved, eventAssistantMessageCommitted, eventAssistantToolCallsCommitted, eventContextBlockDiagnostic, eventContextBlockUpdated, eventGoalUsageAttribution, eventHookRunStarted, eventHookRunTerminal, eventModelCompleted, eventModelInputTraceRecorded, eventModelRequestConfigured, eventModelResponseCreated, eventProviderRequestOptionsConfigured, eventResourceUsageSampled, eventTaskStreamLinked, eventTerminal, eventToolResultBatchCommitted:
+		case eventSkillReadObserved, eventChildSessionLinked, eventAssistantMessageCommitted, eventAssistantToolCallsCommitted, eventContextBlockDiagnostic, eventContextBlockUpdated, eventGoalUsageAttribution, eventHookRunStarted, eventHookRunTerminal, eventModelCompleted, eventModelInputTraceRecorded, eventModelRequestConfigured, eventModelResponseCreated, eventProviderRequestOptionsConfigured, eventResourceUsageSampled, eventTaskStreamLinked, eventTerminal, eventToolResultBatchCommitted:
 			return false
 		}
 		return false
@@ -439,7 +445,7 @@ func optionalRuntime(kind runtimeRole, event runtimeEvent) bool {
 		return false
 	case eventHookRunStarted, eventHookRunTerminal, eventContextBlockDiagnostic, eventModelRequestConfigured, eventContextBlockUpdated, eventProviderRequestOptionsConfigured, eventModelInputTraceRecorded, eventTaskStreamLinked, eventModelResponseCreated, eventGoalUsageAttribution, eventModelCompleted, eventResourceUsageSampled, eventTerminal, eventAssistantToolCallsCommitted, eventToolResultBatchCommitted, eventSideEffectIntent, eventCompleted, eventFailed:
 		return true
-	case eventSkillReadObserved, eventAccepted, eventAssistantMessageCommitted, eventCancelled, eventProposed, eventScheduled, eventStarted, eventStatus:
+	case eventSkillReadObserved, eventChildSessionLinked, eventAccepted, eventAssistantMessageCommitted, eventCancelled, eventProposed, eventScheduled, eventStarted, eventStatus:
 		return false
 	}
 	return false
@@ -487,7 +493,7 @@ func validSnapshot(value any) bool {
 	snapshot := object(value)
 	fs := object(snapshot["filesystem"])
 	network := object(snapshot["local_command_network"])
-	if !keys(snapshot, "schema_version", "filesystem", "local_command_network", "approval", "reviewer") || num(snapshot["schema_version"]) != 1 || !stringFields(snapshot, "approval", "reviewer") || !keys(fs, "mode", "minimal_runtime_set_version", "workspace_roots", "rules", "protected_metadata") || !stringFields(fs, "mode") || num(fs["minimal_runtime_set_version"]) != 1 || !emptyArray(fs["workspace_roots"]) {
+	if !keys(snapshot, "schema_version", "filesystem", "local_command_network", "approval", "reviewer") || num(snapshot["schema_version"]) != 1 || !stringFields(snapshot, "approval", "reviewer") || !keys(fs, "mode", "minimal_runtime_set_version", "workspace_roots", "rules", "protected_metadata") || !stringFields(fs, "mode") || !minimalRuntimeSet(fs) || !emptyArray(fs["workspace_roots"]) {
 		return false
 	}
 	if _, ok := fs["protected_metadata"].(bool); !ok {
@@ -508,6 +514,19 @@ func validSnapshot(value any) bool {
 		return false
 	}
 	return true
+}
+
+// minimalRuntimeSet accepts version 1, or no set for the native unrestricted
+// filesystem mode, which writes null rather than omitting the member.
+func minimalRuntimeSet(fs map[string]any) bool {
+	if fs["minimal_runtime_set_version"] == nil {
+		return unrestrictedFilesystem(fs)
+	}
+	return num(fs["minimal_runtime_set_version"]) == 1
+}
+
+func unrestrictedFilesystem(fs map[string]any) bool {
+	return str(fs["mode"]) == "unrestricted" && fs["minimal_runtime_set_version"] == nil
 }
 
 func validManaged(value any) bool {

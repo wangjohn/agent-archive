@@ -6,25 +6,67 @@ import (
 	"slices"
 )
 
-// validateRows also runs after native loss. Only the minimal safe authority
+// validateRoot also runs after native loss. Only the minimal safe authority
 // projection is needed to revalidate owner, start, workspace and causal joins.
-func validateRootRows(rows []retained) error {
-	if len(rows) < 4 || !initialAuthority(rows) {
+// The startup structure qualifies from supported records alone: a record the
+// adapter omitted keeps its sequence and identity slot but is never a member of
+// the startup structure.
+func validateRoot(rows []logicalRow) error {
+	slots := ordinarySlots(rows)
+	if len(rows) < 4 || !initialAuthority(slots) {
 		return errFormat
 	}
-	state := rootState{owner: rows[0].Stream.ID, start: rows[0].Timestamp, ids: map[string]bool{}}
+	supported := supportedRows(rows)
+	s := rootState{owner: slots[0].Stream.ID, start: slots[0].Timestamp, ids: map[string]bool{}}
+	n := 0
 	for i, r := range rows {
-		if !state.envelope(r, i) || !validFields(r) {
+		if !r.valid() {
 			return errFormat
 		}
-		if err := state.authority(rows, i); err != nil {
-			return err
+		if r.ordinary != nil {
+			if !s.envelope(*r.ordinary, i) || !validFields(*r.ordinary) {
+				return errFormat
+			}
+			if err := s.authority(supported, n); err != nil {
+				return err
+			}
+			n++
+			continue
 		}
+		st, id, seq, pos := r.identity()
+		if !r.omission.valid() || st.ID != s.owner || seq != int64(i+1) || pos.Line != int64(i) || s.ids[id] {
+			return errFormat
+		}
+		s.ids[id] = true
 	}
-	if state.original != 1 || state.workspace == "" || !startupPrefix(rows) {
+	if s.original != 1 || s.workspace == "" || len(supported) < 4 || !startupPrefix(supported) {
 		return errFormat
 	}
 	return nil
+}
+
+// supportedRows lists the ordinary rows in order, without omission rows.
+func supportedRows(rows []logicalRow) []retained {
+	out := make([]retained, 0, len(rows))
+	for _, r := range rows {
+		if r.ordinary != nil {
+			out = append(out, *r.ordinary)
+		}
+	}
+	return out
+}
+
+// startupRows is how many supported rows a startup prefix needs before it can
+// be qualified.
+func startupRows(rows []retained) int {
+	needed := 4
+	if len(rows) >= 3 && rows[2].Type == payloadRuntimeSessionCaptureSelection {
+		needed = 8
+	}
+	if len(rows) >= 4 && rows[2].Type == payloadRuntimeSessionMetadata && (rows[3].Type == payloadRuntimeSessionMetadata || rows[3].Type == payloadRuntimeSessionRouteFacts) {
+		needed = 5
+	}
+	return needed
 }
 
 type rootState struct {
@@ -256,7 +298,7 @@ func validFields(r retained) bool {
 			}
 		case fieldResume:
 		case fieldPreviousName:
-		case fieldPrompt, fieldText, fieldNewName, fieldKind, fieldEventKind, fieldSourceRunRecordID, fieldObservedModel, fieldSkillContentSHA, fieldSkillContentEvidence:
+		case fieldPrompt, fieldText, fieldNewName, fieldKind, fieldEventKind, fieldSourceRunRecordID, fieldObservedModel, fieldSkillContentSHA, fieldSkillContentEvidence, fieldFilesystemMode:
 			fallthrough
 		default:
 			if _, ok := v.(string); !ok {
@@ -284,6 +326,12 @@ func fieldsRuntimeSessionPermissionProfileCommitted(r retained) (int64, []string
 	var names []string
 	schema := int64(1)
 	names = []string{"schema_version", string(fieldPermissionEpoch), "cause"}
+	if mode, present := f[string(fieldFilesystemMode)]; present {
+		if filesystemMode(str(mode)) != filesystemUnrestricted {
+			return 0, nil, false
+		}
+		names = append(names, string(fieldFilesystemMode))
+	}
 	if num(f["schema_version"]) != 1 || num(f["permission_epoch"]) != 1 || str(f["cause"]) != "new_session_default" {
 		return 0, nil, false
 	}
@@ -475,6 +523,9 @@ func fieldsRuntimeSession(r retained) (int64, []string, bool) {
 	names = []string{"kind", "event_kind"}
 	if kind == roleRun && ek == eventSkillReadObserved {
 		return schema, skillReadNames(f), skillReadFields(r)
+	}
+	if kind == roleRun && ek == eventChildSessionLinked {
+		return schema, childLinkFieldNames, childLinkFields(r)
 	}
 	if kind == roleRun && enrichedTools(f) {
 		if ek == eventAssistantToolCallsCommitted {
