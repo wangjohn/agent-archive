@@ -108,7 +108,6 @@ func registerNativeImportRow(ctx context.Context, env Env, store *state.Store, h
 		// spend it. Nothing was written: renew the pass, as a resumed run
 		// would, and locate this row again. Preparation still checks the
 		// source against its confirmed checkpoint.
-		row.token = ""
 		if err = renewNativeImportInventory(ctx, cfg, p); err == nil {
 			reg, refused, err = locateAndCommitNativeImport(ctx, env, store, handle, cfg, p, row)
 		}
@@ -256,9 +255,13 @@ func prepareResumedNativeImportInventory(ctx context.Context, cfg config.Config,
 
 // renewNativeImportInventory replaces a spent inventory pass with a new one on
 // the same budget, closing the old pass first so its charges return there.
+// Locator tokens belong to their pass, so every row locates again.
 func renewNativeImportInventory(ctx context.Context, cfg config.Config, p *nativeImportPreview) error {
 	old := p.inventory
 	p.inventory = nil
+	for i := range p.Rows {
+		p.Rows[i].token = ""
+	}
 	if old != nil {
 		if err := old.Close(); err != nil {
 			return err

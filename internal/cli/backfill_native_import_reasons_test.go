@@ -231,15 +231,17 @@ func TestBackfillNativeImportRenewsASpentInventoryPassMidBatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	second := "00000000-0000-7000-8000-0000000000e2"
-	path := filepath.Join(f.native, "2026", "10", "15", second, "session.jsonl")
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		t.Fatal(err)
+	for _, id := range []string{"00000000-0000-7000-8000-0000000000e2", "00000000-0000-7000-8000-0000000000e3"} {
+		path := filepath.Join(f.native, "2026", "10", "15", id, "session.jsonl")
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, musefixture.Rewrite(t, raw, id, f.project), 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if err := os.WriteFile(path, musefixture.Rewrite(t, raw, second, f.project), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	// The second row finds the preview's inventory pass spent, once.
+	// The second row finds the preview's inventory pass spent, once; the
+	// third must then locate through the renewed pass.
 	rows, spent := 0, false
 	f.env.backfillCheckpoint = func(step string) error {
 		if step != "native import row" {
@@ -253,11 +255,11 @@ func TestBackfillNativeImportRenewsASpentInventoryPassMidBatch(t *testing.T) {
 		return nil
 	}
 	out, stderr, code := f.run(nil, "--harness", "muse", "--yes", "--background")
-	if code != 0 || !spent || !strings.Contains(out, "2 historical Muse sessions registered.") {
+	if code != 0 || !spent || !strings.Contains(out, "3 historical Muse sessions registered.") {
 		t.Fatal("confirmed import", code, spent, out, stderr)
 	}
 	batches, err := backfill.LoadBatches(f.home)
-	if err != nil || len(batches) != 1 || batches[0].CompletedAt == nil || len(batches[0].Sessions) != 2 {
+	if err != nil || len(batches) != 1 || batches[0].CompletedAt == nil || len(batches[0].Sessions) != 3 {
 		t.Fatal("batch did not complete after renewing its inventory", batches, err)
 	}
 }
