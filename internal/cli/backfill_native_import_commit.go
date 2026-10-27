@@ -114,7 +114,13 @@ func registerNativeImportRow(ctx context.Context, env Env, store *state.Store, h
 		}
 		row.ref, row.token = located.Candidates[0], located.Revision
 	}
-	reg, err := prepareAndCommitNativeImport(ctx, env, store, handle, *row, p)
+	reg, refused, err := prepareAndCommitNativeImport(ctx, env, store, handle, *row, p)
+	if refused != nil {
+		// The session's own content refuses it, and no retry can change that:
+		// skip it, nothing of it written, and carry on with the batch.
+		row.Status, row.Reason, row.skipped = nativeImportRefused, nativeImportRefusalReason(refused), true
+		return nil
+	}
 	if err != nil {
 		return fmt.Errorf("import %s stopped at entry %d; its frozen scope is preserved, run sync and retry the same explicit filters", batch.ID, row.Ordinal)
 	}
@@ -122,24 +128,32 @@ func registerNativeImportRow(ctx context.Context, env Env, store *state.Store, h
 	return nil
 }
 
-func prepareAndCommitNativeImport(ctx context.Context, env Env, store *state.Store, handle *state.ConfirmedNativeImportBatch, row nativeImportRow, p *nativeImportPreview) (reg archive.SessionRegistration, err error) {
+// prepareAndCommitNativeImport commits one confirmed row. refused is set only
+// when preparation, before anything is written, finds the session's own
+// content unsupported; every other failure is err.
+func prepareAndCommitNativeImport(ctx context.Context, env Env, store *state.Store, handle *state.ConfirmedNativeImportBatch, row nativeImportRow, p *nativeImportPreview) (reg archive.SessionRegistration, refused *agentapi.NativeRefusalError, err error) {
 	if err := p.inventory.Check(ctx, row.NativeID, row.token); err != nil {
-		return reg, err
+		return reg, nil, err
 	}
 	pass, snapshot, err := openNativeImportSource(ctx, env, row.candidate.Root, row.ref, p.inventory, p.budget)
 	if err != nil {
-		return reg, err
+		return reg, nil, err
 	}
 	_, filter, ok := env.agentRegistry().LookupSources("muse")
 	if !ok {
-		return reg, errors.Join(agentapi.ErrInvalidSourceBinding, snapshot.Close(), pass.Close())
+		return reg, nil, errors.Join(agentapi.ErrInvalidSourceBinding, snapshot.Close(), pass.Close())
 	}
 	prepared, err := store.PrepareNativeImport(ctx, handle, row.candidate, snapshot, snapshot.Input(), filter, agentapi.FilterContext{Filename: row.ref.Path, Limits: agentapi.ReadLimits{RawBytes: collector.MaxRawTranscriptBytes("muse"), RecordBytes: archive.MaxRecordBytes, FilteredBytes: collector.DefaultMaxTranscriptBytes, ReadBudget: p.budget}}, p.inventory, row.token, p.budget, pass.Close)
 	if err != nil {
-		return reg, errors.Join(err, snapshot.Close(), pass.Close())
+		err = errors.Join(err, snapshot.Close(), pass.Close())
+		if errors.As(err, &refused) && !agentapi.HasFailure(err, agentapi.Cleanup) {
+			return reg, refused, nil
+		}
+		return reg, nil, err
 	}
 	defer func() { err = errors.Join(err, prepared.Close()) }()
-	return store.CommitNativeImport(ctx, prepared)
+	reg, err = store.CommitNativeImport(ctx, prepared)
+	return reg, nil, err
 }
 
 func confirmNativeImportPreview(ctx context.Context, env Env, store *state.Store, original config.Config, opts backfillCommandOptions, p *nativeImportPreview) (batch backfill.Batch, err error) {
