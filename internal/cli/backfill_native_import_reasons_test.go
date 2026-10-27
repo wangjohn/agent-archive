@@ -10,8 +10,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/backfill"
+	"github.com/wangjohn/agent-archive/internal/discovery"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/testutil/musefixture"
 )
@@ -219,5 +221,43 @@ func TestBackfillNativeImportSkipsAnEntryItsFinalReadRefuses(t *testing.T) {
 	}
 	if _, found, err := store.ArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.Muse, NativeID: refused}); err != nil || found {
 		t.Fatal("skipped entry left an owner or reservation", found, err)
+	}
+}
+
+func TestBackfillNativeImportRenewsASpentInventoryPassMidBatch(t *testing.T) {
+	t.Parallel()
+	f := newPublicNativeImportFixture(t)
+	raw, err := os.ReadFile(filepath.Join("..", "agents", "muse", "testdata", "synthetic-exec-conversation.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := "00000000-0000-7000-8000-0000000000e2"
+	path := filepath.Join(f.native, "2026", "10", "15", second, "session.jsonl")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, musefixture.Rewrite(t, raw, second, f.project), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// The second row finds the preview's inventory pass spent, once.
+	rows, spent := 0, false
+	f.env.backfillCheckpoint = func(step string) error {
+		if step != "native import row" {
+			return nil
+		}
+		rows++
+		if rows == 2 && !spent {
+			spent = true
+			return agentapi.Wrap(agentapi.Unavailable, discovery.ErrNativeInventorySpent)
+		}
+		return nil
+	}
+	out, stderr, code := f.run(nil, "--harness", "muse", "--yes", "--background")
+	if code != 0 || !spent || !strings.Contains(out, "2 historical Muse sessions registered.") {
+		t.Fatal("confirmed import", code, spent, out, stderr)
+	}
+	batches, err := backfill.LoadBatches(f.home)
+	if err != nil || len(batches) != 1 || batches[0].CompletedAt == nil || len(batches[0].Sessions) != 2 {
+		t.Fatal("batch did not complete after renewing its inventory", batches, err)
 	}
 }

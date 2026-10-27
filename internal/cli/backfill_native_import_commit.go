@@ -102,19 +102,17 @@ func registerNativeImportRow(ctx context.Context, env Env, store *state.Store, h
 		batch.AddSessions([]string{id}, nil)
 		return nil
 	}
-	if p.inventory == nil {
-		if err := prepareResumedNativeImportInventory(ctx, cfg, p); err != nil {
-			return err
+	reg, refused, err := locateAndCommitNativeImport(ctx, env, store, handle, cfg, p, row)
+	if errors.Is(err, discovery.ErrNativeInventorySpent) {
+		// One inventory pass bounds its own metadata work; a long batch can
+		// spend it. Nothing was written: renew the pass, as a resumed run
+		// would, and locate this row again. Preparation still checks the
+		// source against its confirmed checkpoint.
+		row.token = ""
+		if err = renewNativeImportInventory(ctx, cfg, p); err == nil {
+			reg, refused, err = locateAndCommitNativeImport(ctx, env, store, handle, cfg, p, row)
 		}
 	}
-	if row.token == "" {
-		located, err := p.inventory.Locate(ctx, agentapi.LocatorRequest{Purpose: agentapi.LocatorHistoricalImport, Root: row.candidate.Root, NativeID: row.NativeID})
-		if err != nil || located.Status != agentapi.LocatorFound || len(located.Candidates) != 1 {
-			return errors.Join(errors.New("confirmed source unavailable; preserved batch can resume when exact source returns"), err)
-		}
-		row.ref, row.token = located.Candidates[0], located.Revision
-	}
-	reg, refused, err := prepareAndCommitNativeImport(ctx, env, store, handle, *row, p)
 	if refused != nil {
 		// The session's own content refuses it, and no retry can change that:
 		// skip it, nothing of it written, and carry on with the batch.
@@ -126,6 +124,30 @@ func registerNativeImportRow(ctx context.Context, env Env, store *state.Store, h
 	}
 	batch.AddSessions([]string{reg.ArchiveSessionID}, nil)
 	return nil
+}
+
+// locateAndCommitNativeImport commits one confirmed row, first opening an
+// inventory pass and locating the row's source when none is current.
+func locateAndCommitNativeImport(ctx context.Context, env Env, store *state.Store, handle *state.ConfirmedNativeImportBatch, cfg config.Config, p *nativeImportPreview, row *nativeImportRow) (archive.SessionRegistration, *agentapi.NativeRefusalError, error) {
+	if p.inventory == nil {
+		if err := prepareResumedNativeImportInventory(ctx, cfg, p); err != nil {
+			return archive.SessionRegistration{}, nil, err
+		}
+	}
+	if err := env.checkpoint("native import row"); err != nil {
+		return archive.SessionRegistration{}, nil, err
+	}
+	if row.token == "" {
+		located, err := p.inventory.Locate(ctx, agentapi.LocatorRequest{Purpose: agentapi.LocatorHistoricalImport, Root: row.candidate.Root, NativeID: row.NativeID})
+		if errors.Is(err, discovery.ErrNativeInventorySpent) {
+			return archive.SessionRegistration{}, nil, err
+		}
+		if err != nil || located.Status != agentapi.LocatorFound || len(located.Candidates) != 1 {
+			return archive.SessionRegistration{}, nil, errors.Join(errors.New("confirmed source unavailable; preserved batch can resume when exact source returns"), err)
+		}
+		row.ref, row.token = located.Candidates[0], located.Revision
+	}
+	return prepareAndCommitNativeImport(ctx, env, store, handle, *row, p)
 }
 
 // prepareAndCommitNativeImport commits one confirmed row. refused is set only
@@ -229,6 +251,24 @@ func confirmNativeImportPreview(ctx context.Context, env Env, store *state.Store
 
 func prepareResumedNativeImportInventory(ctx context.Context, cfg config.Config, p *nativeImportPreview) error {
 	p.budget = agentapi.NewNativeReadBudget(agentapi.PassReadBudget)
+	return openNativeImportInventory(ctx, cfg, p)
+}
+
+// renewNativeImportInventory replaces a spent inventory pass with a new one on
+// the same budget, closing the old pass first so its charges return there.
+func renewNativeImportInventory(ctx context.Context, cfg config.Config, p *nativeImportPreview) error {
+	old := p.inventory
+	p.inventory = nil
+	if old != nil {
+		if err := old.Close(); err != nil {
+			return err
+		}
+	}
+	return openNativeImportInventory(ctx, cfg, p)
+}
+
+// openNativeImportInventory opens a complete inventory pass on p's budget.
+func openNativeImportInventory(ctx context.Context, cfg config.Config, p *nativeImportPreview) error {
 	inventory, err := discovery.NewNativeImportInventory(ctx, cfg.NativeRoots, p.budget, builtin.ValidateNativeLocator)
 	if err != nil {
 		return err

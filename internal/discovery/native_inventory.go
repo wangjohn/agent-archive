@@ -430,6 +430,15 @@ func validNativeDirectory(d nativeDirectory, index int, seen, edges map[string]b
 	return true
 }
 
+// ErrNativeInventorySpent reports that one inventory pass has spent its time
+// or metadata allowance. Nothing about the source is known from it: a new pass
+// has a fresh allowance.
+var ErrNativeInventorySpent = errors.New("native inventory allowance spent")
+
+// errNativeInventoryMetadataSpent is ErrNativeInventorySpent for the per-pass
+// metadata operation bound.
+var errNativeInventoryMetadataSpent = fmt.Errorf("native inventory metadata allowance spent: %w", ErrNativeInventorySpent)
+
 func (l *NativeInventory) allowed(ctx context.Context) error {
 	if l.closed {
 		return agentapi.ErrClosed
@@ -441,7 +450,7 @@ func (l *NativeInventory) allowed(ctx context.Context) error {
 		return err
 	}
 	if l.remaining <= Budget/4 || !l.deadline.IsZero() && time.Now().After(l.deadline) {
-		return agentapi.Wrap(agentapi.Unavailable, errors.New("native inventory allowance spent"))
+		return agentapi.Wrap(agentapi.Unavailable, ErrNativeInventorySpent)
 	}
 	return nil
 }
@@ -459,7 +468,7 @@ func (l *NativeInventory) metadata() error {
 	}
 	// Existing directory cap bounds retained evidence; also bound per-pass checks.
 	if l.counts.Stats+l.counts.Opens+32 > int64(maxDirectories*16) {
-		return agentapi.Wrap(agentapi.Unavailable, errors.New("native inventory metadata allowance spent"))
+		return agentapi.Wrap(agentapi.Unavailable, errNativeInventoryMetadataSpent)
 	}
 	return nil
 }
@@ -722,7 +731,7 @@ func (l *NativeInventory) recordablePage(names int) error {
 	}
 	if time.Now().After(l.deadline.Add(Budget / 4)) {
 		l.counts.UncommittedNames += int64(names)
-		return agentapi.Wrap(agentapi.Unavailable, errors.New("native inventory allowance spent"))
+		return agentapi.Wrap(agentapi.Unavailable, ErrNativeInventorySpent)
 	}
 	return nil
 }
