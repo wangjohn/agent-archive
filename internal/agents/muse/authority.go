@@ -50,6 +50,8 @@ func authorityShape(r retained, p map[string]any, dropped *bool) bool {
 		return shapeSessionStarted(p)
 	case payloadSessionResumed:
 		return shapeSessionResumed(p, dropped)
+	case payloadSessionLoginCompleted:
+		return shapeSessionLoginCompleted(p)
 	case payloadRuntimeSessionRouteFacts:
 		return shapeRuntimeSessionRouteFacts(p)
 	case payloadRuntimeUserIntentAccepted:
@@ -123,6 +125,13 @@ func shapeSessionResumed(p map[string]any, dropped *bool) bool {
 	rec := object(p["record"])
 	return keys(p, "kind", "record") && known(rec, dropped, "schema_version", "session_id", "prior_turn_count", "resumed_from_sequence", "resumed_from_record_id")
 
+}
+
+// A login completion names this session; its account facts (method,
+// subscription, trigger, duration) are validated and dropped. Its shape is
+// closed, like every record that bears identity.
+func shapeSessionLoginCompleted(p map[string]any) bool {
+	return keys(p, "kind", "record") && keys(object(p["record"]), "duration_ms", "method", "schema_version", "session_id", "subscribed", "trigger")
 }
 
 // Route facts carry no authority beyond cwd, the only retained member. Other

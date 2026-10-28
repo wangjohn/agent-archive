@@ -28,6 +28,7 @@ var authorityFamilies = []payloadType{
 	payloadRuntimeSessionStartIntakeV3,
 	payloadSessionStarted,
 	payloadSessionResumed,
+	payloadSessionLoginCompleted,
 	payloadSessionEnd,
 	payloadSessionNameChanged,
 	payloadRuntimeSessionRouteFacts,

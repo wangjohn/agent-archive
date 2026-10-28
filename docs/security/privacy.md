@@ -836,6 +836,15 @@ metadata then lists each such child as a linked session, by a random archive
 session ID and marked unavailable. The full list is in the
 [filter specification](../../dev/specs/privacy-filter.md#muse-explicit-local-evidence).
 
+A Muse login completion is kept only as the fact that this session logged in;
+its login method, trigger, subscription and duration are never uploaded.
+
+A Muse run started by an inbox delivery keeps its replies but not the delivered
+text, which is not a user turn. Muse workflow-engine facts are left out with
+nothing of them uploaded (`muse_workflow_facts_omitted`). They are not treated
+as authority: their owner IDs, hashes and prompts belong to the workflow
+engine, not to this session's identity, permissions or proofs.
+
 Muse's closed own `model_completed` branch validates a nonempty model string,
 nonnegative exact `duration_ms`, and all six input/output/cache/reasoning counters
 between zero and 2^53−1. Only the model, input/output and typed run/source identity
