@@ -818,6 +818,48 @@
             "event_kind",
             "run_id",
             "source_run_record_id",
+            "source_run_record_sequence"
+          ],
+          "properties": {
+            "kind": {
+              "const": "run"
+            },
+            "event_kind": {
+              "const": "started"
+            },
+            "run_id": {
+              "type": "string",
+              "maxLength": 1048576
+            },
+            "source_run_record_id": {
+              "type": "string",
+              "maxLength": 1048576
+            },
+            "source_run_record_sequence": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.session"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "event_kind",
+            "run_id",
+            "source_run_record_id",
             "source_run_record_sequence",
             "message_id",
             "response_id",
@@ -1776,6 +1818,37 @@
           "properties": {
             "kind": {
               "const": "retained_runtime_fact"
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.retained_fact"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "origin_kind",
+            "run_id"
+          ],
+          "properties": {
+            "kind": {
+              "const": "retained_runtime_fact"
+            },
+            "origin_kind": {
+              "const": "inbox_delivery"
+            },
+            "run_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
             }
           }
         }

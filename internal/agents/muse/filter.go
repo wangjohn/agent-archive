@@ -25,7 +25,7 @@ type Filter struct{}
 func (Filter) Name() string { return "muse" }
 
 // Version identifies the current privacy projection.
-func (Filter) Version() string { return "0.37.0" }
+func (Filter) Version() string { return "0.38.0" }
 
 // LeasedFilterFor refuses decorators which may change filtering semantics.
 func (Filter) LeasedFilterFor(a archive.Adapter) bool { _, ok := a.(Filter); return ok }
@@ -418,7 +418,7 @@ var _ agentapi.TranscriptParser = Parser{}
 var retainedKeys = func() map[string]bool {
 	keys := strings.Fields("v pos line child id stream kind seq ts_us schema type payload_schema record_type durability causation_id fields schema_version format permission_epoch filesystem_mode cause workspace_root provider_id model_id tool_surface_version session_id resume selection publication_id command_id command_kind activation_source cwd intent_id source_session_id surface semantic_kind envelope_record_id envelope_sequence run_id run_started_session_record_id run_started_source_record_id outcome_kind new_name previous_name source operation_id root_agent_id root_session_id event_kind source_run_record_id source_run_record_sequence prompt message_id response_id text position sequence marker omitted_record payload_type payload_schema_version payload_kind omission_class pending_action_id task_id tool_call_id review_id effect_id model_call_index model input_tokens output_tokens tool_calls call_id batch_id results tool_call_index effect_join")
 	out := map[string]bool{}
-	for _, key := range []string{"skill_id", "evidence_kind", "observed_at_sequence", "hash_evidence", "sha256", "child_session_id"} {
+	for _, key := range []string{"skill_id", "evidence_kind", "observed_at_sequence", "hash_evidence", "sha256", "child_session_id", "origin_kind"} {
 		out[key] = true
 	}
 	for _, key := range keys {
@@ -566,9 +566,11 @@ func privacyMarker(raw []byte, record int, add func(string, int, string)) ([]byt
 }
 
 func omissionGaps(rows []logicalRow) []archive.CaptureGap {
-	marker, unsupported, body := false, false, false
+	marker, unsupported, body, workflow := false, false, false, false
 	for _, r := range rows {
-		if r.omission != nil && r.omission.Marker == unsupportedMarker {
+		if r.omission != nil && r.omission.Omitted == workflowFactRecord {
+			workflow = true
+		} else if r.omission != nil && r.omission.Marker == unsupportedMarker {
 			unsupported = true
 		} else if r.omission != nil {
 			marker = true
@@ -586,6 +588,9 @@ func omissionGaps(rows []logicalRow) []archive.CaptureGap {
 	}
 	if unsupported {
 		out = append(out, archive.CaptureGap{Code: "muse_unsupported_records_omitted", Detail: "Records this adapter version does not support were left out"})
+	}
+	if workflow {
+		out = append(out, archive.CaptureGap{Code: "muse_workflow_facts_omitted", Detail: "Workflow engine facts were left out"})
 	}
 	return out
 }

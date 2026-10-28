@@ -560,8 +560,11 @@ func fieldsRuntimeSession(r retained) (int64, []string, bool) {
 		if num(f["source_run_record_sequence"]) < 1 {
 			return 0, nil, false
 		}
-		if ek == eventStarted {
+		if _, prompted := f["prompt"]; ek == eventStarted && prompted {
 			names = append(names, "prompt")
+		} else if ek == eventStarted {
+			// An inbox-started run keeps no prompt; the parser requires its
+			// origin fact.
 		} else {
 			names = append(names, "message_id", "response_id", "text")
 		}
@@ -591,6 +594,9 @@ func fieldsRuntimeRetainedFact(r retained) (int64, []string, bool) {
 	names = []string{"kind"}
 	if str(f["kind"]) != "retained_runtime_fact" {
 		return 0, nil, false
+	}
+	if _, present := f["origin_kind"]; present {
+		return schema, []string{"kind", "origin_kind", "run_id"}, inboxOrigin(r)
 	}
 
 	return schema, names, true

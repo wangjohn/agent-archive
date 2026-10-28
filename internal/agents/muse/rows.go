@@ -92,7 +92,7 @@ func marker(raw []byte, pos position) (logicalRow, error) {
 func (o nativeOmission) valid() bool {
 	_, a := uuid(o.Stream.ID)
 	_, b := uuid(o.Native.ID)
-	class := o.Marker == "omitted_live_only" && o.Omitted == taskDelta || o.Marker == unsupportedMarker && o.Omitted == unsupportedRecord
+	class := o.Marker == "omitted_live_only" && o.Omitted == taskDelta || o.Marker == unsupportedMarker && (o.Omitted == unsupportedRecord || o.Omitted == workflowFactRecord)
 	return o.Version == 2 && o.Kind == nativeOmissionKind && o.Schema == 1 && class && o.Stream.Kind == streamSession && a && b && o.Native.Sequence > 2 && o.Native.Sequence <= exactMax && o.Position.Child == nil && o.Position.Line > 1
 }
 
@@ -194,6 +194,9 @@ func decodeNativeRows(raw []byte, line int64, joins *nativeBodyJoins) ([]logical
 	}
 	r, dropped, e := envelopeDropping(raw, position{Line: line})
 	p := object(m["payload"])
+	if errors.Is(e, errFormat) && r.ID != "" && workflowFact(r, p) {
+		return []logicalRow{workflowRow(r)}, 0, nil
+	}
 	if errors.Is(e, errFormat) && r.ID != "" && omittable(r, p) && !joins.approvedEffect(r, p) || e == nil && joins.omitted.covers(r, p) {
 		// A well-formed record the adapter cannot qualify and that bears no
 		// authority is left out, with the records that join it; its private
@@ -219,6 +222,7 @@ func decodeNativeRows(raw []byte, line int64, joins *nativeBodyJoins) ([]logical
 		return nil, 0, e
 	}
 	joins.omitted.add(r, p, false)
+	joins.inboxStart(&r)
 	charge := int64(0)
 	if enrichedTools(r.Fields) && str(r.Fields["event_kind"]) == string(eventAssistantToolCallsCommitted) {
 		// Bounded private IDs, map entries, refs and batch slots outlive physical decoding.

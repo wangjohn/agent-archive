@@ -127,7 +127,7 @@
       }
     },
     {
-      "description": "A record this adapter version does not support, omitted with nothing of it kept.",
+      "description": "A record this adapter version does not support, or a workflow-engine fact, omitted with nothing of it kept.",
       "properties": {
         "marker": {
           "const": "unsupported_record_omitted"
@@ -160,7 +160,10 @@
               "const": ""
             },
             "omission_class": {
-              "const": "unsupported_record_v1"
+              "enum": [
+                "unsupported_record_v1",
+                "workflow_fact_v1"
+              ]
             }
           }
         }
