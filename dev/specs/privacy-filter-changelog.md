@@ -5,6 +5,24 @@ rules, as a whole, are in the [filter specification](privacy-filter.md);
 version numbers and bump rules are in [versions](../maintainers/versions.md). Each archived session
 records the filter version that produced it (`filter_version`).
 
+## Source filter version 38
+
+Global and Muse adapter 0.38.0 accompany this change. Parsers and other agents'
+filtering are unchanged; the Muse retained schema gains two variants and the
+omission schema one classification.
+
+- A Muse `inbox_delivery.run_origin` retained fact is supported: an exact
+  `{client_id}` body, the client dropped, keeping only the run it started. That
+  run's start keeps no prompt, because a delivery is not a user turn; it needs
+  its earlier origin, starts without a user intent, and its own replies stay
+  visible.
+- Muse `workflow.*` retained facts are omitted with nothing of them kept, as a
+  content-free omission row of class `workflow_fact_v1`, and the session
+  records `muse_workflow_facts_omitted`. Their workflow owner IDs, binding,
+  script and argument hashes and prompts describe the workflow engine, not this
+  session's identity, permissions or proofs, so they are not authority.
+- Other retained facts still refuse the whole file.
+
 ## Source filter version 37
 
 Global and Muse adapter 0.37.0 accompany this change. Parsers and other agents'

@@ -469,6 +469,19 @@ Registered capture, backfill and Muse launch stay unavailable. Explicit files an
 
 The [production local v1 field policy](../qualification/muse/retained-allowlist-local-v1.json) is the exact current retained projection. The original `retained-allowlist.json` and derived corpus remain byte-frozen historical Q0 evidence; their broader metrics ceiling is not a production promise.
 
+Filter 38 supports two more Muse retained runtime facts. An
+`inbox_delivery.run_origin` fact (exact `{client_id}` body; the client is
+dropped) keeps `origin_kind` and the `run_id` it started. That run's start is
+retained without its prompt, must follow its origin, starts without a user
+intent and is joined so its own replies stay visible; a prompt on such a start,
+or a prompt-free start without an origin, refuses. `workflow.*` facts are
+omitted content-free (class `workflow_fact_v1`, gap
+`muse_workflow_facts_omitted`). They are not authority under this policy:
+their workflow owner IDs, binding, script and argument hashes and prompts
+describe the workflow engine's own state, not this session's identity,
+permissions, approvals or proofs, and no retained record depends on them.
+Workflow child lifecycle links remain lineage and refuse.
+
 Filter 37 retains a Muse `session.login.completed` record as identity:
 its closed record must name this session, and only `kind` and `session_id`
 are kept. The login method, trigger, subscription and duration are validated

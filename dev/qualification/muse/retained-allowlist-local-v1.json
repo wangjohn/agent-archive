@@ -283,6 +283,22 @@
         "event_kind",
         "run_id",
         "source_run_record_id",
+        "source_run_record_sequence"
+      ],
+      "fixed_fields": {
+        "kind": "run",
+        "event_kind": "started"
+      },
+      "cross_record_policy": "Start of a run an inbox delivery started: prompt validated and dropped, requires the run's earlier inbox origin, joined without a user turn."
+    },
+    {
+      "type": "runtime.session",
+      "payload_schema": 1,
+      "fields": [
+        "kind",
+        "event_kind",
+        "run_id",
+        "source_run_record_id",
         "source_run_record_sequence",
         "message_id",
         "response_id",
@@ -718,6 +734,20 @@
       }
     },
     {
+      "type": "runtime.retained_fact",
+      "payload_schema": 1,
+      "fields": [
+        "kind",
+        "origin_kind",
+        "run_id"
+      ],
+      "fixed_fields": {
+        "kind": "retained_runtime_fact",
+        "origin_kind": "inbox_delivery"
+      },
+      "cross_record_policy": "Inbox-delivery run origin: exact {client_id} body, client dropped; must precede its run's start, once per run."
+    },
+    {
       "type": "runtime.command_intake.session_name.received",
       "payload_schema": 1,
       "fields": [
@@ -1026,7 +1056,8 @@
     "schema": "schemas/muse-retained-marker-v2.schema.json",
     "classifications": [
       "task_tool_delta_v1",
-      "unsupported_record_v1"
+      "unsupported_record_v1",
+      "workflow_fact_v1"
     ]
   }
 }

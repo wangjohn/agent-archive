@@ -200,6 +200,8 @@ type nativeBodyJoins struct {
 	children       map[string]bool
 	childLogs      childLogChecker
 	checkChildLogs bool
+	// inboxRuns are runs an inbox delivery started, from their origin facts.
+	inboxRuns map[string]bool
 }
 
 func (s *nativeBodyJoins) observe(r retained, p map[string]any) error {
