@@ -6,25 +6,70 @@ import (
 	"slices"
 )
 
-// validateRows also runs after native loss. Only the minimal safe authority
+// validateRoot also runs after native loss. Only the minimal safe authority
 // projection is needed to revalidate owner, start, workspace and causal joins.
-func validateRootRows(rows []retained) error {
-	if len(rows) < 4 || !initialAuthority(rows) {
+// The startup structure qualifies from supported records alone: a record the
+// adapter omitted keeps its sequence and identity slot but is never a member of
+// the startup structure.
+func validateRoot(rows []logicalRow) error {
+	slots := ordinarySlots(rows)
+	if len(rows) < 4 || !initialAuthority(slots) {
 		return errFormat
 	}
-	state := rootState{owner: rows[0].Stream.ID, start: rows[0].Timestamp, ids: map[string]bool{}}
+	supported := supportedRows(rows)
+	s := rootState{owner: slots[0].Stream.ID, start: slots[0].Timestamp, ids: map[string]bool{}}
+	n := 0
 	for i, r := range rows {
-		if !state.envelope(r, i) || !validFields(r) {
+		if !r.valid() {
 			return errFormat
 		}
-		if err := state.authority(rows, i); err != nil {
-			return err
+		if r.ordinary != nil {
+			if !s.envelope(*r.ordinary, i) || !validFields(*r.ordinary) {
+				return errFormat
+			}
+			if err := s.authority(supported, n); err != nil {
+				return err
+			}
+			n++
+			continue
 		}
+		st, id, seq, pos := r.identity()
+		if !r.omission.valid() || st.ID != s.owner || seq != int64(i+1) || pos.Line != int64(i) || s.ids[id] {
+			return errFormat
+		}
+		s.ids[id] = true
 	}
-	if state.original != 1 || state.workspace == "" || !startupPrefix(rows) {
+	if s.original != 1 || s.workspace == "" || len(supported) < 4 || !startupPrefix(supported) {
 		return errFormat
 	}
 	return nil
+}
+
+// supportedRows lists the ordinary rows in order, without omission rows.
+func supportedRows(rows []logicalRow) []retained {
+	out := make([]retained, 0, len(rows))
+	for _, r := range rows {
+		if r.ordinary != nil {
+			out = append(out, *r.ordinary)
+		}
+	}
+	return out
+}
+
+// startupRows is how many supported rows a startup prefix needs before it can
+// be qualified.
+func startupRows(rows []retained) int {
+	needed := 4
+	if len(rows) >= 3 && rows[2].Type == payloadRuntimeSessionCaptureSelection {
+		needed = 8
+	}
+	if len(rows) >= 4 && rows[2].Type == payloadRuntimeSessionMetadata && (rows[3].Type == payloadRuntimeSessionMetadata || rows[3].Type == payloadRuntimeSessionRouteFacts) {
+		needed = 5
+	}
+	if len(rows) >= 4 && rows[2].Type == payloadRuntimeSessionMetadata && rows[3].Type == payloadRuntimeCommandIntakeReceived {
+		needed = 7
+	}
+	return needed
 }
 
 type rootState struct {
@@ -89,7 +134,7 @@ func (s *rootState) authority(rows []retained, i int) error {
 		if str(f["kind"]) == "agent_tree_initialized" && (str(f["root_agent_id"]) != s.owner || str(f["root_session_id"]) != s.owner) {
 			return errFormat
 		}
-	case payloadSessionResumed, payloadSessionEnd, payloadSessionNameChanged:
+	case payloadSessionResumed, payloadSessionEnd, payloadSessionNameChanged, payloadSessionLoginCompleted:
 		if str(f["session_id"]) != s.owner {
 			return errFormat
 		}
@@ -130,7 +175,7 @@ func startupRecord(rows []retained, i int) error {
 		if i < 2 || rows[i-1].Type != payloadRuntimeSessionStartIntakeV3 {
 			return errFormat
 		}
-	case payloadRunModelConfigured, payloadRuntimeCommandIntakeSessionNameReceived, payloadRuntimeCommandIntakeSettled, payloadRuntimeRetainedFact, payloadRuntimeSession, payloadRuntimeSessionCaptureSelection, payloadRuntimeSessionMetadata, payloadRuntimeSessionPermissionFormatDeclared, payloadRuntimeSessionPermissionProfileCommitted, payloadRuntimeSessionRouteFacts, payloadRuntimeSessionTask, payloadRuntimeUserIntentAccepted, payloadRuntimeUserIntentMaterialized, payloadSessionEnd, payloadSessionNameChanged, payloadSessionOpenedObserved, payloadSessionResumed:
+	case payloadRunModelConfigured, payloadRuntimeCommandIntakeSessionNameReceived, payloadRuntimeCommandIntakeSettled, payloadRuntimeRetainedFact, payloadRuntimeSession, payloadRuntimeSessionCaptureSelection, payloadRuntimeSessionMetadata, payloadRuntimeSessionPermissionFormatDeclared, payloadRuntimeSessionPermissionProfileCommitted, payloadRuntimeSessionRouteFacts, payloadRuntimeSessionTask, payloadRuntimeUserIntentAccepted, payloadRuntimeUserIntentMaterialized, payloadSessionEnd, payloadSessionNameChanged, payloadSessionOpenedObserved, payloadSessionResumed, payloadSessionLoginCompleted:
 		// These records do not open an MSP startup block.
 
 	}
@@ -144,6 +189,10 @@ func startupCommand(rows []retained, i int) error {
 	r := rows[i]
 	f := r.Fields
 	a, b, c := rows[i+1], rows[i+2], rows[i+3]
+	if metadataFirst(rows, i) {
+		// The metadata-first lane writes its metadata before the command.
+		c = rows[2]
+	}
 	command := str(f["command_id"])
 	if command == "" || r.Causation == nil || *r.Causation != command || a.Type != payloadRuntimeSessionStartIntakeV3 || b.Type != payloadSessionStarted || c.Type != payloadRuntimeSessionMetadata || str(a.Fields["command_id"]) != command || str(b.Fields["command_id"]) != command || a.Causation == nil || *a.Causation != command || b.Causation == nil || *b.Causation != command {
 		return errFormat
@@ -165,7 +214,17 @@ func startupCommand(rows []retained, i int) error {
 	return nil
 }
 
+// metadataFirst reports the startup lane whose metadata precedes the session
+// start command at its fixed position: frame, metadata, command, start intake,
+// session started, then the original opening.
+func metadataFirst(rows []retained, i int) bool {
+	return i == 3 && rows[2].Type == payloadRuntimeSessionMetadata && len(rows) > 6 && rows[6].Type == payloadSessionOpenedObserved
+}
+
 func startupPrefix(rows []retained) bool {
+	if rows[2].Type == payloadRuntimeSessionMetadata && rows[3].Type == payloadRuntimeCommandIntakeReceived {
+		return metadataFirstPrefix(rows)
+	}
 	if rows[2].Type == payloadRuntimeSessionMetadata {
 		if rows[3].Type == payloadRuntimeSessionMetadata {
 			return twoMetadataPrefix(rows)
@@ -204,6 +263,8 @@ func fieldShape(r retained) (int64, []string, bool) {
 		return fieldsSessionStarted(r)
 	case payloadSessionResumed:
 		return fieldsSessionResumed(r)
+	case payloadSessionLoginCompleted:
+		return 1, []string{"kind", "session_id"}, str(r.Fields["kind"]) == "login_completed" && identifier(r.Fields["session_id"])
 	case payloadRuntimeSessionRouteFacts:
 		return fieldsRuntimeSessionRouteFacts(r)
 	case payloadRuntimeUserIntentAccepted:
@@ -256,7 +317,7 @@ func validFields(r retained) bool {
 			}
 		case fieldResume:
 		case fieldPreviousName:
-		case fieldPrompt, fieldText, fieldNewName, fieldKind, fieldEventKind, fieldSourceRunRecordID, fieldObservedModel, fieldSkillContentSHA, fieldSkillContentEvidence:
+		case fieldPrompt, fieldText, fieldNewName, fieldKind, fieldEventKind, fieldSourceRunRecordID, fieldObservedModel, fieldSkillContentSHA, fieldSkillContentEvidence, fieldFilesystemMode:
 			fallthrough
 		default:
 			if _, ok := v.(string); !ok {
@@ -284,6 +345,12 @@ func fieldsRuntimeSessionPermissionProfileCommitted(r retained) (int64, []string
 	var names []string
 	schema := int64(1)
 	names = []string{"schema_version", string(fieldPermissionEpoch), "cause"}
+	if mode, present := f[string(fieldFilesystemMode)]; present {
+		if filesystemMode(str(mode)) != filesystemUnrestricted {
+			return 0, nil, false
+		}
+		names = append(names, string(fieldFilesystemMode))
+	}
 	if num(f["schema_version"]) != 1 || num(f["permission_epoch"]) != 1 || str(f["cause"]) != "new_session_default" {
 		return 0, nil, false
 	}
@@ -476,6 +543,9 @@ func fieldsRuntimeSession(r retained) (int64, []string, bool) {
 	if kind == roleRun && ek == eventSkillReadObserved {
 		return schema, skillReadNames(f), skillReadFields(r)
 	}
+	if kind == roleRun && ek == eventChildSessionLinked {
+		return schema, childLinkFieldNames, childLinkFields(r)
+	}
 	if kind == roleRun && enrichedTools(f) {
 		if ek == eventAssistantToolCallsCommitted {
 			return schema, []string{"kind", "event_kind", "run_id", "source_run_record_id", "source_run_record_sequence", "message_id", "tool_calls"}, toolFields(r)
@@ -490,8 +560,11 @@ func fieldsRuntimeSession(r retained) (int64, []string, bool) {
 		if num(f["source_run_record_sequence"]) < 1 {
 			return 0, nil, false
 		}
-		if ek == eventStarted {
+		if _, prompted := f["prompt"]; ek == eventStarted && prompted {
 			names = append(names, "prompt")
+		} else if ek == eventStarted {
+			// An inbox-started run keeps no prompt; the parser requires its
+			// origin fact.
 		} else {
 			names = append(names, "message_id", "response_id", "text")
 		}
@@ -522,6 +595,9 @@ func fieldsRuntimeRetainedFact(r retained) (int64, []string, bool) {
 	if str(f["kind"]) != "retained_runtime_fact" {
 		return 0, nil, false
 	}
+	if _, present := f["origin_kind"]; present {
+		return schema, []string{"kind", "origin_kind", "run_id"}, inboxOrigin(r)
+	}
 
 	return schema, names, true
 }
@@ -547,6 +623,18 @@ func fieldsRuntimeCommandIntakeSettled(r retained) (int64, []string, bool) {
 		return 0, nil, false
 	}
 	return schema, names, true
+}
+
+// metadataFirstPrefix qualifies the metadata-first startup lane. The command
+// block's own joins (causation, command ID, matching metadata, startup
+// activation) are checked by startupCommand; this fixes the order and the
+// timeline, and requires the opening to be the original one.
+func metadataFirstPrefix(rows []retained) bool {
+	if len(rows) < 7 {
+		return false
+	}
+	m, cmd, start, started, o := rows[2], rows[3], rows[4], rows[5], rows[6]
+	return str(cmd.Fields["command_kind"]) == "session_start" && start.Type == payloadRuntimeSessionStartIntakeV3 && started.Type == payloadSessionStarted && o.Type == payloadSessionOpenedObserved && o.Fields["resume"] == false && m.Causation == nil && o.Causation == nil && m.Timestamp > rows[0].Timestamp && cmd.Timestamp >= m.Timestamp && start.Timestamp >= cmd.Timestamp && started.Timestamp >= start.Timestamp && o.Timestamp >= started.Timestamp
 }
 
 // twoMetadataPrefix is the one observed model-resolution startup lane. The
