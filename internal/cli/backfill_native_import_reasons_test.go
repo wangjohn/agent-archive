@@ -4,12 +4,17 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/backfill"
+	"github.com/wangjohn/agent-archive/internal/discovery"
+	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/testutil/musefixture"
 )
 
@@ -152,5 +157,110 @@ func TestBackfillNativeImportFilesARemovedWorktreeUnderItsProject(t *testing.T) 
 	}
 	if removedRows != 1 || refusedRows != 1 {
 		t.Fatalf("preview rows: %s", out)
+	}
+}
+
+// withAuthorityRecordBeforeEnd inserts an authority-bearing record the
+// startup preview cannot see, before the session end.
+func withAuthorityRecordBeforeEnd(t *testing.T, raw []byte) []byte {
+	t.Helper()
+	lines := bytes.Split(bytes.TrimSuffix(raw, []byte("\n")), []byte("\n"))
+	var end map[string]any
+	if err := json.Unmarshal(lines[len(lines)-1], &end); err != nil || end["payload_type"] != "session.end" {
+		t.Fatal("synthetic session end changed", err)
+	}
+	extra := maps.Clone(end)
+	extra["id"] = "00000000-0000-4000-8000-0000000000e9"
+	extra["causation_id"] = nil
+	extra["payload_type"], extra["payload_schema_version"] = "session.permission_grant.recorded", 1
+	extra["payload"] = map[string]any{"kind": "permission_grant"}
+	end["sequence"], end["recorded_at"] = end["sequence"].(float64)+1, end["recorded_at"].(float64)+1
+	a, err := json.Marshal(extra)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := json.Marshal(end)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines = append(lines[:len(lines)-1], a, b)
+	return append(bytes.Join(lines, []byte("\n")), '\n')
+}
+
+func TestBackfillNativeImportSkipsAnEntryItsFinalReadRefuses(t *testing.T) {
+	t.Parallel()
+	f := newPublicNativeImportFixture(t)
+	raw, err := os.ReadFile(filepath.Join("..", "agents", "muse", "testdata", "synthetic-exec-conversation.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	refused := "00000000-0000-7000-8000-0000000000e1"
+	path := filepath.Join(f.native, "2026", "10", "15", refused, "session.jsonl")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, withAuthorityRecordBeforeEnd(t, musefixture.Rewrite(t, raw, refused, f.project)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// The startup preview selects both sessions; it cannot see the record,
+	// whose permission word keeps it authority-bearing.
+	preview, stderr, code := f.run(nil, "--harness", "muse", "--dry-run", "--json")
+	if code != 0 || strings.Count(preview, `"status":"selected"`) != 2 {
+		t.Fatal("preview", code, preview, stderr)
+	}
+	out, stderr, code := f.run(nil, "--harness", "muse", "--yes", "--background")
+	if code != 0 || !strings.Contains(out, "1 historical Muse session registered, 1 skipped.") || !strings.Contains(out, "skipped: unsupported Muse record session.permission_grant.recorded") {
+		t.Fatal("confirmed import", code, out, stderr)
+	}
+	batches, err := backfill.LoadBatches(f.home)
+	if err != nil || len(batches) != 1 || batches[0].CompletedAt == nil || len(batches[0].Sessions) != 1 {
+		t.Fatal("batch did not complete past the refused entry", batches, err)
+	}
+	store, err := state.Open(f.home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := store.ArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.Muse, NativeID: refused}); err != nil || found {
+		t.Fatal("skipped entry left an owner or reservation", found, err)
+	}
+}
+
+func TestBackfillNativeImportRenewsASpentInventoryPassMidBatch(t *testing.T) {
+	t.Parallel()
+	f := newPublicNativeImportFixture(t)
+	raw, err := os.ReadFile(filepath.Join("..", "agents", "muse", "testdata", "synthetic-exec-conversation.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"00000000-0000-7000-8000-0000000000e2", "00000000-0000-7000-8000-0000000000e3"} {
+		path := filepath.Join(f.native, "2026", "10", "15", id, "session.jsonl")
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, musefixture.Rewrite(t, raw, id, f.project), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The second row finds the preview's inventory pass spent, once; the
+	// third must then locate through the renewed pass.
+	rows, spent := 0, false
+	f.env.backfillCheckpoint = func(step string) error {
+		if step != "native import row" {
+			return nil
+		}
+		rows++
+		if rows == 2 && !spent {
+			spent = true
+			return agentapi.Wrap(agentapi.Unavailable, discovery.ErrNativeInventorySpent)
+		}
+		return nil
+	}
+	out, stderr, code := f.run(nil, "--harness", "muse", "--yes", "--background")
+	if code != 0 || !spent || !strings.Contains(out, "3 historical Muse sessions registered.") {
+		t.Fatal("confirmed import", code, spent, out, stderr)
+	}
+	batches, err := backfill.LoadBatches(f.home)
+	if err != nil || len(batches) != 1 || batches[0].CompletedAt == nil || len(batches[0].Sessions) != 3 {
+		t.Fatal("batch did not complete after renewing its inventory", batches, err)
 	}
 }

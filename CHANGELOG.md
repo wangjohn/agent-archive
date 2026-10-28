@@ -108,6 +108,12 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- A confirmed `backfill --harness muse` no longer stops at the first session
+  whose full read finds records this version cannot import. That session is
+  skipped and named with its reason, and the rest of the batch imports. A long
+  batch also no longer stops partway when its native inventory pass runs out
+  of its metadata allowance; it renews the pass and continues.
+
 - Muse sessions started with the unrestricted filesystem permission mode are
   no longer refused; the archive records that mode. Muse route facts newer
   builds write (terminal identity, a local runtime socket path) no longer

@@ -71,6 +71,8 @@ type nativeImportRow struct {
 	candidate state.NativeImportCandidate
 	ref       agentapi.SourceRef
 	token     string
+	// skipped marks a confirmed entry its final read refused; Reason says why.
+	skipped bool
 }
 
 type nativeImportPreview struct {
@@ -190,7 +192,22 @@ func runNativeImportCommand(stdin io.Reader, stdout, stderr io.Writer, env Env, 
 	if err != nil {
 		return fail(err)
 	}
-	terminal.Printf(stdout, "Import %s: %s registered.\n", batch.ID, plural(len(batch.Sessions), "historical Muse session"))
+	skipped := 0
+	for _, row := range preview.Rows {
+		if row.skipped {
+			skipped++
+		}
+	}
+	if skipped == 0 {
+		terminal.Printf(stdout, "Import %s: %s registered.\n", batch.ID, plural(len(batch.Sessions), "historical Muse session"))
+	} else {
+		terminal.Printf(stdout, "Import %s: %s registered, %d skipped.\n", batch.ID, plural(len(batch.Sessions), "historical Muse session"), skipped)
+	}
+	for _, row := range preview.Rows {
+		if row.skipped {
+			terminal.Printf(stdout, "  entry %d skipped: %s\n", row.Ordinal, archive.DisplayLine(row.Reason))
+		}
+	}
 	terminal.Printf(stdout, "Exact undo: agent-archive backfill undo %s\n", batch.ID)
 	if opts.background {
 		terminal.Println(stdout, "The normal collector publishes the frozen stages and verifies readback. Child coverage remains unavailable.")
