@@ -106,3 +106,51 @@ func TestBackfillNativeImportPreviewSaysWhyEachSourceIsRefused(t *testing.T) {
 		t.Fatalf("preview reasons: %+v", result.Sessions)
 	}
 }
+
+func TestBackfillNativeImportFilesARemovedWorktreeUnderItsProject(t *testing.T) {
+	t.Parallel()
+	f := newPublicNativeImportFixture(t)
+	raw, err := os.ReadFile(filepath.Join("..", "agents", "muse", "testdata", "synthetic-exec-conversation.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(f.project, ".claude", "worktrees"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	removed := "00000000-0000-7000-8000-00000000000c"
+	elsewhere := "00000000-0000-7000-8000-00000000000d"
+	for id, cwd := range map[string]string{
+		removed:   filepath.Join(f.project, ".claude", "worktrees", "removed-task"),
+		elsewhere: filepath.Join(t.TempDir(), "gone", "removed-task"),
+	} {
+		path := filepath.Join(f.native, "2026", "10", "15", id, "session.jsonl")
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, musefixture.Rewrite(t, raw, id, cwd), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out, stderr, code := f.run(nil, "--harness", "muse", "--dry-run", "--json", "--project", f.project)
+	var result struct {
+		Sessions []nativeImportRow `json:"sessions"`
+	}
+	if err := json.Unmarshal([]byte(out), &result); code != 0 || err != nil {
+		t.Fatal(code, err, out, stderr)
+	}
+	removedRows, refusedRows := 0, 0
+	for _, row := range result.Sessions {
+		switch {
+		case row.Status == nativeImportSelected && strings.Contains(row.Reason, "removed worktree"):
+			if row.Project != f.project {
+				t.Fatalf("removed worktree filed under %q", row.Project)
+			}
+			removedRows++
+		case row.Status == nativeImportRefused && strings.Contains(row.Reason, "physical project/worktree unavailable"):
+			refusedRows++
+		}
+	}
+	if removedRows != 1 || refusedRows != 1 {
+		t.Fatalf("preview rows: %s", out)
+	}
+}

@@ -33,8 +33,14 @@ uses the exact stage/control/index authority without native rereads. Public
 history and normal collector publication reuse the existing paths. Purpose-specific
 undo stops the batch and CAS-detaches only its exact membership; acknowledged and
 independent effects survive. There is no live-window/startup-intent substitution.
-Missing worktrees/mappings and child admission remain unavailable until their
-independent source authority is qualified.
+A missing worktree is filed under its project only on proof from the directory
+the session recorded: it no longer exists, the nearest existing repository above
+it is a repository's own root (a `.git` directory), and that repository is
+exactly the configured, included project that owns the directory, with no other
+configured project in between. Preparation re-derives the proof before commit
+and the owner keeps it as a private `removed_worktree` project resolution.
+Other missing worktrees, project mappings and child admission remain unavailable
+until their independent source authority is qualified.
 
 ## Problem
 

@@ -850,8 +850,10 @@ finish after native files disappear. Staging shares a 1 GiB quota with pending
 publication. History reports admitted and remotely verified uploads separately.
 Muse requires explicit --harness muse alone. It imports qualified ordinary roots
 only from configured included physical projects. Its dry run/cancel writes no
-local cache or state and opens no storage. Child coverage is unavailable;
-project mappings, missing worktrees and --include-* overrides are refused.
+local cache or state and opens no storage. Child coverage is unavailable. A
+removed worktree is filed under its project only when the configured project's
+own repository is the nearest one above it; project mappings, other missing
+worktrees and --include-* overrides are refused.
 Confirmation freezes exact original dates, projects, destination and source
 checkpoints; later source changes require a new preview. Its undo detaches only
 this batch's memberships, preserving stored/native files and later requests.

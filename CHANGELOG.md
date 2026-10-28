@@ -8,6 +8,11 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `backfill --harness muse` imports sessions from removed worktrees under
+  their project when the configured project's own repository is provably the
+  one they ran in; the preview names them. Other missing worktrees still
+  refuse.
+
 - Explicit `backfill --harness muse` previews bounded historical ordinary roots,
   confirms their exact dates/projects/source checkpoints, and stages them before
   registration for the normal collector. Each refused session says why: the

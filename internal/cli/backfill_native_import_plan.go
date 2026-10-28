@@ -193,13 +193,19 @@ func selectNativeImportRow(ctx context.Context, env Env, store *state.Store, cfg
 		row.Status, row.Reason = nativeImportFiltered, "outside exact original-start date bounds"
 		return row, nil
 	}
-	physical, known := resolver.Resolve(binding.Cwd)
-	if !known {
+	// A removed worktree is filed under its project only on proof.
+	var projectRoot string
+	var removed *archive.ProjectResolution
+	if physical, known := resolver.Resolve(binding.Cwd); known {
+		projectRoot = physical.Root
+	} else if proof, proved := sourcefacts.RemovedWorktreeProject(cfg.Archive.Projects, binding.Cwd); proved {
+		projectRoot, removed = proof.Root, &proof
+	} else {
 		row.Reason = "physical project/worktree unavailable; mapping overrides are unsupported"
 		return row, nil
 	}
 	for _, project := range cfg.Archive.Projects {
-		if project.Included && project.Root == physical.Root {
+		if project.Included && project.Root == projectRoot {
 			row.Project, row.ProjectID = project.Root, project.ProjectID
 			break
 		}
@@ -238,6 +244,9 @@ func selectNativeImportRow(ctx context.Context, env Env, store *state.Store, cfg
 		return refuseNativeImportRow(row, nativeImportReadReason(err))
 	}
 	row.Status, row.Reason = nativeImportSelected, "ordinary root; child coverage unavailable"
+	if removed != nil {
+		row.Reason = "ordinary root from a removed worktree of this project; child coverage unavailable"
+	}
 	return row, nil
 }
 

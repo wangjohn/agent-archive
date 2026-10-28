@@ -33,23 +33,25 @@ type PreparedNativeImport struct {
 	candidate           NativeImportCandidate
 	selected            archive.NativeImportBatchSelection
 	binding             archive.NativeSourceBinding
-	snapshot            agentapi.SourceSnapshot
-	input               agentapi.NativeInput
-	content             agentapi.VerifiedContentSnapshot
-	lookup              agentapi.NativeLocatorLookup
-	selection           string
-	filtered            archive.FilteredTranscript
-	releaseOutput       func()
-	closePass           func() error
-	closed              bool
-	err                 error
-	reg                 archive.SessionRegistration
-	filteredDigest      string
-	adapter             preparedImportAdapter
-	index               qualifiedSessionIndexEntry
-	indexFound          bool
-	stage               ImportStage
-	committed           bool
+	// removedWorktree proves a removed worktree's project; nil otherwise.
+	removedWorktree *archive.ProjectResolution
+	snapshot        agentapi.SourceSnapshot
+	input           agentapi.NativeInput
+	content         agentapi.VerifiedContentSnapshot
+	lookup          agentapi.NativeLocatorLookup
+	selection       string
+	filtered        archive.FilteredTranscript
+	releaseOutput   func()
+	closePass       func() error
+	closed          bool
+	err             error
+	reg             archive.SessionRegistration
+	filteredDigest  string
+	adapter         preparedImportAdapter
+	index           qualifiedSessionIndexEntry
+	indexFound      bool
+	stage           ImportStage
+	committed       bool
 }
 
 // PrepareNativeImport filters exactly one proven selected ordinary source. It
@@ -85,8 +87,8 @@ func (s *Store) PrepareNativeImport(ctx context.Context, confirmation *Confirmed
 	if facts.Binding.Codex != nil || !nativeImportSelectedBinding(candidate, selected, binding) {
 		return nil, agentapi.ErrInvalidSourceBinding
 	}
-	physical, known := sourcefacts.PhysicalProject(binding.Cwd)
-	if !known || physical.Root != candidate.ProjectRoot {
+	removed, belongs := nativeImportProject(confirmation, candidate, binding.Cwd)
+	if !belongs {
 		return nil, errors.New("native import source does not belong to confirmed physical project")
 	}
 	copied := *binding
@@ -108,6 +110,7 @@ func (s *Store) PrepareNativeImport(ctx context.Context, confirmation *Confirmed
 		selection:           selection,
 		closePass:           closePass,
 		read:                read,
+		removedWorktree:     removed,
 		closeRead:           func() { closeRead(); closeContext() },
 	}
 	defer func() {
@@ -313,4 +316,23 @@ func (p *PreparedNativeImport) filterDigest(ctx context.Context) (string, error)
 		Ordinals        []uint64                   `json:"ordinals"`
 		ObservedHarness archive.Harness            `json:"observed_harness"`
 	}{p.filtered, p.filtered.Records, p.filtered.Text, p.filtered.Ordinals, p.filtered.ObservedHarness})
+}
+
+// nativeImportProject checks that the source belongs to the candidate's
+// confirmed project now: its directory resolves there physically, or it is a
+// removed worktree proved, under the current project configuration, to belong
+// there. It returns that proof for a removed worktree.
+func nativeImportProject(confirmation *ConfirmedNativeImportBatch, candidate NativeImportCandidate, cwd string) (*archive.ProjectResolution, bool) {
+	if physical, known := sourcefacts.PhysicalProject(cwd); known {
+		return nil, physical.Root == candidate.ProjectRoot
+	}
+	cfg, found, err := confirmation.read.loadConfig()
+	if err != nil || !found {
+		return nil, false
+	}
+	proof, proved := sourcefacts.RemovedWorktreeProject(cfg.Archive.Projects, cwd)
+	if !proved || proof.Root != candidate.ProjectRoot {
+		return nil, false
+	}
+	return &proof, true
 }

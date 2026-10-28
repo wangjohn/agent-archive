@@ -373,6 +373,11 @@ remain intact. The distinct reservation prefix is `muse-import-reservation-v1:`.
 These strings grant only confirmed historical staging and retained maintenance;
 they establish no live capture window. No numeric version, filter, adapter,
 parser or uploaded schema allocation accompanies this private contract.
+A historical import from a removed worktree also carries the existing private
+`project_resolution` with method `removed_worktree`, the original directory and
+the current recovery policy digest. Preparation re-derives the same proof from
+the filesystem and configuration before committing; nothing about it is
+uploaded, and no version changes with it.
 
 Native replay classification protection is independently opt-in through sticky
 `native_replay_protection`. It requires admission protection and the exact
