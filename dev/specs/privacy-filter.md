@@ -469,6 +469,11 @@ Registered capture, backfill and Muse launch stay unavailable. Explicit files an
 
 The [production local v1 field policy](../qualification/muse/retained-allowlist-local-v1.json) is the exact current retained projection. The original `retained-allowlist.json` and derived corpus remain byte-frozen historical Q0 evidence; their broader metrics ceiling is not a production promise.
 
+Filter 37 retains a Muse `session.login.completed` record as identity:
+its closed record must name this session, and only `kind` and `session_id`
+are kept. The login method, trigger, subscription and duration are validated
+and dropped, so no account facts are uploaded.
+
 Filter 36 also qualifies the metadata-first startup lane of newer Muse
 builds: the permission frame, own metadata, the session-start command intake,
 the version-3 start intake with activation `startup`, `session.started`, then
@@ -544,7 +549,7 @@ A record is authority-bearing, and still refuses the whole file, when:
 - it is of a supported family that establishes this session's identity,
   start, workspace or permissions: the permission frame and profile, startup
   metadata, opening, capture selection, command intake and settlement, start
-  intake, session started, resumed, end and name records, route facts, user
+  intake, session started, resumed, login completion, end and name records, route facts, user
   intent acceptance and materialization, run model configuration, retained
   runtime facts, and approval waits; or the runtime agent-tree root or any
   runtime record of a schema other than 1;

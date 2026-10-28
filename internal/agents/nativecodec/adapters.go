@@ -733,7 +733,7 @@ func recordCarriesConversation(record map[string]any) bool {
 	return conversationRecordTypes[strings.ToLower(strings.TrimSpace(kind))]
 }
 
-const adapterVersion = "0.36.0"
+const adapterVersion = "0.37.0"
 
 var maxRecordBytes = archive.MaxRecordBytes
 

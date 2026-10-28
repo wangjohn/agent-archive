@@ -5,6 +5,16 @@ rules, as a whole, are in the [filter specification](privacy-filter.md);
 version numbers and bump rules are in [versions](../maintainers/versions.md). Each archived session
 records the filter version that produced it (`filter_version`).
 
+## Source filter version 37
+
+Global and Muse adapter 0.37.0 accompany this change. Parsers and other agents'
+filtering are unchanged; the Muse retained schema gains one variant.
+
+- A Muse `session.login.completed` record is retained instead of refusing the
+  whole file. It bears identity, so its shape is closed and its `session_id`
+  must be this session. Only `kind` and `session_id` are retained; the login
+  method, trigger, subscription and duration are validated and dropped.
+
 ## Source filter version 36
 
 Global and Muse adapter 0.36.0 accompany this change. Parsers, other agents'

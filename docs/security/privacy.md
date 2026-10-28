@@ -834,6 +834,9 @@ named child log really exists). For such a link only the child session's ID
 is uploaded, never the child's transcript or log path. The full list is in the
 [filter specification](../../dev/specs/privacy-filter.md#muse-explicit-local-evidence).
 
+A Muse login completion is kept only as the fact that this session logged in;
+its login method, trigger, subscription and duration are never uploaded.
+
 Muse's closed own `model_completed` branch validates a nonempty model string,
 nonnegative exact `duration_ms`, and all six input/output/cache/reasoning counters
 between zero and 2^53−1. Only the model, input/output and typed run/source identity

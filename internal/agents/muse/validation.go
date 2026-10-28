@@ -134,7 +134,7 @@ func (s *rootState) authority(rows []retained, i int) error {
 		if str(f["kind"]) == "agent_tree_initialized" && (str(f["root_agent_id"]) != s.owner || str(f["root_session_id"]) != s.owner) {
 			return errFormat
 		}
-	case payloadSessionResumed, payloadSessionEnd, payloadSessionNameChanged:
+	case payloadSessionResumed, payloadSessionEnd, payloadSessionNameChanged, payloadSessionLoginCompleted:
 		if str(f["session_id"]) != s.owner {
 			return errFormat
 		}
@@ -175,7 +175,7 @@ func startupRecord(rows []retained, i int) error {
 		if i < 2 || rows[i-1].Type != payloadRuntimeSessionStartIntakeV3 {
 			return errFormat
 		}
-	case payloadRunModelConfigured, payloadRuntimeCommandIntakeSessionNameReceived, payloadRuntimeCommandIntakeSettled, payloadRuntimeRetainedFact, payloadRuntimeSession, payloadRuntimeSessionCaptureSelection, payloadRuntimeSessionMetadata, payloadRuntimeSessionPermissionFormatDeclared, payloadRuntimeSessionPermissionProfileCommitted, payloadRuntimeSessionRouteFacts, payloadRuntimeSessionTask, payloadRuntimeUserIntentAccepted, payloadRuntimeUserIntentMaterialized, payloadSessionEnd, payloadSessionNameChanged, payloadSessionOpenedObserved, payloadSessionResumed:
+	case payloadRunModelConfigured, payloadRuntimeCommandIntakeSessionNameReceived, payloadRuntimeCommandIntakeSettled, payloadRuntimeRetainedFact, payloadRuntimeSession, payloadRuntimeSessionCaptureSelection, payloadRuntimeSessionMetadata, payloadRuntimeSessionPermissionFormatDeclared, payloadRuntimeSessionPermissionProfileCommitted, payloadRuntimeSessionRouteFacts, payloadRuntimeSessionTask, payloadRuntimeUserIntentAccepted, payloadRuntimeUserIntentMaterialized, payloadSessionEnd, payloadSessionNameChanged, payloadSessionOpenedObserved, payloadSessionResumed, payloadSessionLoginCompleted:
 		// These records do not open an MSP startup block.
 
 	}
@@ -263,6 +263,8 @@ func fieldShape(r retained) (int64, []string, bool) {
 		return fieldsSessionStarted(r)
 	case payloadSessionResumed:
 		return fieldsSessionResumed(r)
+	case payloadSessionLoginCompleted:
+		return 1, []string{"kind", "session_id"}, str(r.Fields["kind"]) == "login_completed" && identifier(r.Fields["session_id"])
 	case payloadRuntimeSessionRouteFacts:
 		return fieldsRuntimeSessionRouteFacts(r)
 	case payloadRuntimeUserIntentAccepted:

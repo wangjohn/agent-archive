@@ -22,6 +22,7 @@ const (
 	payloadSessionNameChanged                       payloadType = "session.name.changed"
 	payloadSessionOpenedObserved                    payloadType = "session.opened.observed"
 	payloadSessionResumed                           payloadType = "session.resumed"
+	payloadSessionLoginCompleted                    payloadType = "session.login.completed"
 	payloadSessionStarted                           payloadType = "session.started"
 )
 

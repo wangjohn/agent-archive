@@ -473,6 +473,33 @@
     {
       "properties": {
         "type": {
+          "const": "session.login.completed"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "session_id"
+          ],
+          "properties": {
+            "kind": {
+              "const": "login_completed"
+            },
+            "session_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
           "const": "session.end"
         },
         "payload_schema": {
