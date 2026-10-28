@@ -777,7 +777,12 @@ SQLite companions and search logs while holding the search lifecycle fence.
 The qualified startup may place exactly one route-facts record between metadata
 and the original session opening. All three require no causation, and the route
 workspace must match. The same ownership, permission-frame and complete-file
-checks apply; the accepted sequence adds no retained fields.
+checks apply; the accepted sequence adds no retained fields. Only the route
+working directory is kept; the local runtime socket path, process ID, terminal
+identity and any other route-fact member are dropped.
+
+A session started with Muse's unrestricted filesystem mode keeps only the fixed
+fact `filesystem_mode: unrestricted` from its permission profile.
 
 Startup model availability uses the complete validated startup prefix, including
 the resolved model in a qualified second metadata record. Missing or empty model

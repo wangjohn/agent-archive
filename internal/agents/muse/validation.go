@@ -256,7 +256,7 @@ func validFields(r retained) bool {
 			}
 		case fieldResume:
 		case fieldPreviousName:
-		case fieldPrompt, fieldText, fieldNewName, fieldKind, fieldEventKind, fieldSourceRunRecordID, fieldObservedModel, fieldSkillContentSHA, fieldSkillContentEvidence:
+		case fieldPrompt, fieldText, fieldNewName, fieldKind, fieldEventKind, fieldSourceRunRecordID, fieldObservedModel, fieldSkillContentSHA, fieldSkillContentEvidence, fieldFilesystemMode:
 			fallthrough
 		default:
 			if _, ok := v.(string); !ok {
@@ -284,6 +284,12 @@ func fieldsRuntimeSessionPermissionProfileCommitted(r retained) (int64, []string
 	var names []string
 	schema := int64(1)
 	names = []string{"schema_version", string(fieldPermissionEpoch), "cause"}
+	if mode, present := f[string(fieldFilesystemMode)]; present {
+		if filesystemMode(str(mode)) != filesystemUnrestricted {
+			return 0, nil, false
+		}
+		names = append(names, string(fieldFilesystemMode))
+	}
 	if num(f["schema_version"]) != 1 || num(f["permission_epoch"]) != 1 || str(f["cause"]) != "new_session_default" {
 		return 0, nil, false
 	}

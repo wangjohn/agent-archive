@@ -75,6 +75,9 @@ func projectRuntimeSessionPermissionProfileCommitted(r retained, p map[string]an
 		return nil, errFormat
 	}
 	copyFields(f, p, "schema_version", "permission_epoch", "cause")
+	if unrestrictedFilesystem(object(object(p["resolved_snapshot"])["filesystem"])) {
+		f[string(fieldFilesystemMode)] = string(filesystemUnrestricted)
+	}
 
 	return f, nil
 }
@@ -487,7 +490,7 @@ func validSnapshot(value any) bool {
 	snapshot := object(value)
 	fs := object(snapshot["filesystem"])
 	network := object(snapshot["local_command_network"])
-	if !keys(snapshot, "schema_version", "filesystem", "local_command_network", "approval", "reviewer") || num(snapshot["schema_version"]) != 1 || !stringFields(snapshot, "approval", "reviewer") || !keys(fs, "mode", "minimal_runtime_set_version", "workspace_roots", "rules", "protected_metadata") || !stringFields(fs, "mode") || num(fs["minimal_runtime_set_version"]) != 1 || !emptyArray(fs["workspace_roots"]) {
+	if !keys(snapshot, "schema_version", "filesystem", "local_command_network", "approval", "reviewer") || num(snapshot["schema_version"]) != 1 || !stringFields(snapshot, "approval", "reviewer") || !keys(fs, "mode", "minimal_runtime_set_version", "workspace_roots", "rules", "protected_metadata") || !stringFields(fs, "mode") || !minimalRuntimeSet(fs) || !emptyArray(fs["workspace_roots"]) {
 		return false
 	}
 	if _, ok := fs["protected_metadata"].(bool); !ok {
@@ -508,6 +511,19 @@ func validSnapshot(value any) bool {
 		return false
 	}
 	return true
+}
+
+// minimalRuntimeSet accepts version 1, or no set for the native unrestricted
+// filesystem mode, which writes null rather than omitting the member.
+func minimalRuntimeSet(fs map[string]any) bool {
+	if fs["minimal_runtime_set_version"] == nil {
+		return unrestrictedFilesystem(fs)
+	}
+	return num(fs["minimal_runtime_set_version"]) == 1
+}
+
+func unrestrictedFilesystem(fs map[string]any) bool {
+	return str(fs["mode"]) == "unrestricted" && fs["minimal_runtime_set_version"] == nil
 }
 
 func validManaged(value any) bool {
