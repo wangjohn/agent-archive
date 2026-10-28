@@ -1,0 +1,108 @@
+package cli
+
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/wangjohn/agent-archive/internal/backfill"
+	"github.com/wangjohn/agent-archive/internal/testutil/musefixture"
+)
+
+func TestBackfillNativeImportReportsOneSessionInTheSingular(t *testing.T) {
+	f := newPublicNativeImportFixture(t)
+	out, stderr, code := f.run(nil, "--harness", "muse", "--yes", "--background")
+	if code != 0 || !strings.Contains(out, ": 1 historical Muse session registered.") {
+		t.Fatal(code, out, stderr)
+	}
+	batches, err := backfill.LoadBatches(f.home)
+	if err != nil || len(batches) != 1 {
+		t.Fatal(batches, err)
+	}
+	out, stderr, code = f.run(nil, "undo", batches[0].ID, "--yes")
+	if code != 0 || !strings.Contains(out, ": detach 1 exact historical registration membership.") || !strings.Contains(out, "Detached 1 import membership.") {
+		t.Fatal(code, out, stderr)
+	}
+}
+
+func TestBackfillHistoryCountsSessionsRegisteredBeforeAnInterruptedSave(t *testing.T) {
+	f := newPublicNativeImportFixture(t)
+	f.env.backfillCheckpoint = func(step string) error {
+		if step == "native import registered" {
+			return errors.New("synthetic interrupted batch progress")
+		}
+		return nil
+	}
+	if _, _, code := f.run(nil, "--harness", "muse", "--yes", "--background"); code != 1 {
+		t.Fatal("interruption not reached", code)
+	}
+	// The registration is durable before the batch records it; an interruption
+	// between the two leaves the batch one session behind.
+	batches, err := backfill.LoadBatches(f.home)
+	if err != nil || len(batches) != 1 || len(batches[0].Sessions) != 1 {
+		t.Fatal(batches, err)
+	}
+	batches[0].Sessions = nil
+	if err := backfill.SaveBatch(f.home, batches[0]); err != nil {
+		t.Fatal(err)
+	}
+	out, stderr, code := f.run(nil, "history")
+	if code != 0 {
+		t.Fatal(code, out, stderr)
+	}
+	for line := range strings.SplitSeq(out, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) > 3 && fields[0] == batches[0].ID {
+			if fields[3] != "1" || !strings.Contains(line, "1 registered") {
+				t.Fatalf("history row disagrees with registrations: %q", line)
+			}
+			return
+		}
+	}
+	t.Fatalf("history has no row for the import: %s", out)
+}
+
+func TestBackfillNativeImportPreviewSaysWhyEachSourceIsRefused(t *testing.T) {
+	t.Parallel()
+	f := newPublicNativeImportFixture(t)
+	raw, err := os.ReadFile(filepath.Join("..", "agents", "muse", "testdata", "synthetic-exec-conversation.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := bytes.Split(bytes.TrimSuffix(raw, []byte("\n")), []byte("\n"))
+	sideLog := "00000000-0000-7000-8000-00000000000a"
+	frameOnly := "00000000-0000-7000-8000-00000000000b"
+	for id, content := range map[string][]byte{
+		// A side log starts directly with ordinary records.
+		sideLog: bytes.ReplaceAll(append(bytes.Join(lines[1:3], []byte("\n")), '\n'), []byte(publicNativeImportID), []byte(sideLog)),
+		// Only the permission frame was written.
+		frameOnly: musefixture.Rewrite(t, append(bytes.Clone(lines[0]), '\n'), frameOnly, f.project),
+	} {
+		path := filepath.Join(f.native, "2026", "10", "15", id, "session.jsonl")
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, content, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out, stderr, code := f.run(nil, "--harness", "muse", "--dry-run", "--json", "--project", f.project)
+	var result struct {
+		Sessions []nativeImportRow `json:"sessions"`
+	}
+	if err := json.Unmarshal([]byte(out), &result); code != 0 || err != nil {
+		t.Fatal(code, err, out, stderr)
+	}
+	reasons := map[nativeImportStatus][]string{}
+	for _, row := range result.Sessions {
+		reasons[row.Status] = append(reasons[row.Status], row.Reason)
+	}
+	refused := strings.Join(reasons[nativeImportRefused], "\n")
+	if len(reasons[nativeImportSelected]) != 1 || len(reasons[nativeImportRefused]) != 2 || !strings.Contains(refused, "not a session: a Muse side log with no session start; nothing to import") || !strings.Contains(refused, "incomplete: the file ends before its startup records; nothing to import") {
+		t.Fatalf("preview reasons: %+v", result.Sessions)
+	}
+}

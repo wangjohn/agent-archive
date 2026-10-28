@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"slices"
 	"time"
@@ -147,10 +148,10 @@ func inspectNativeImportRow(ctx context.Context, env Env, store *state.Store, cf
 	}
 	located, err := p.inventory.Locate(ctx, agentapi.LocatorRequest{Purpose: agentapi.LocatorHistoricalImport, NativeID: id, Root: root})
 	if err != nil {
-		return refuseNativeImportRow(nativeImportRow{NativeID: id}, "current native source/proof unavailable; retry this bounded preview")
+		return refuseNativeImportRow(nativeImportRow{NativeID: id}, nativeImportReadReason(err))
 	}
 	if located.Status != agentapi.LocatorFound || len(located.Candidates) != 1 {
-		return nativeImportRow{NativeID: id, Status: nativeImportRefused, Reason: "native locator " + string(located.Status)}, nil
+		return nativeImportRow{NativeID: id, Status: nativeImportRefused, Reason: nativeImportLocatorReason(located)}, nil
 	}
 	row := nativeImportRow{NativeID: id, Status: nativeImportRefused, ref: located.Candidates[0], token: located.Revision}
 	return inspectLocatedNativeImportRow(ctx, env, store, cfg, opts, p, resolver, root, row)
@@ -161,7 +162,7 @@ func inspectLocatedNativeImportRow(ctx context.Context, env Env, store *state.St
 	id := row.NativeID
 	pass, snapshot, err := openNativeImportSource(ctx, env, root, row.ref, p.inventory, p.budget)
 	if err != nil {
-		row.Reason = "current native source/proof unavailable; retry this bounded preview"
+		row.Reason = nativeImportReadReason(err)
 		return row, nil
 	}
 	defer func() { err = errors.Join(err, snapshot.Close(), pass.Close()) }()
@@ -171,7 +172,7 @@ func inspectLocatedNativeImportRow(ctx context.Context, env Env, store *state.St
 	}
 	facts, err := evidence.AdmissionEvidence(ctx, agentapi.SourceAdmission{NativeID: id})
 	if err != nil {
-		row.Reason = "current native source/proof unavailable; retry this bounded preview"
+		row.Reason = nativeImportReadReason(err)
 		return row, nil
 	}
 	binding := facts.Binding.Native
@@ -234,10 +235,54 @@ func selectNativeImportRow(ctx context.Context, env Env, store *state.Store, cfg
 	row.selection = archive.NativeImportBatchSelection{Kind: archive.NativeImportOrdinaryRoot, NativeID: id, OriginalTUTC: row.OriginalT.UTC().Format(time.RFC3339Nano), ProjectID: row.ProjectID, RootFingerprint: fingerprint, RootRevision: root.Revision, BindingSHA256: digest, Source: *binding.Checkpoint}
 	row.candidate = state.NativeImportCandidate{NativeID: id, Root: root, ProjectRoot: row.Project, ProjectID: row.ProjectID}
 	if err := p.inventory.Check(ctx, id, row.token); err != nil {
-		return refuseNativeImportRow(row, "current native source/proof unavailable; retry this bounded preview")
+		return refuseNativeImportRow(row, nativeImportReadReason(err))
 	}
 	row.Status, row.Reason = nativeImportSelected, "ordinary root; child coverage unavailable"
 	return row, nil
+}
+
+// nativeImportRefusalReason words a native adapter's whole-file refusal and
+// what follows from it. It carries only the bounded record family and line.
+func nativeImportRefusalReason(refused *agentapi.NativeRefusalError) string {
+	switch refused.Reason {
+	case agentapi.RefusalNoSessionStart:
+		return "not a session: a Muse side log with no session start; nothing to import"
+	case agentapi.RefusalIncompleteStart:
+		return "incomplete: the file ends before its startup records; nothing to import"
+	case agentapi.RefusalUnsupportedStartup:
+		return fmt.Sprintf("unsupported Muse startup order at line %d; this agent-archive version cannot import it", refused.Line)
+	case agentapi.RefusalUnsupportedRecord:
+	}
+	family := refused.Family
+	if family == "" {
+		family = "unrecognized"
+	}
+	return fmt.Sprintf("unsupported Muse record %s at line %d; this agent-archive version cannot import it", family, refused.Line)
+}
+
+// nativeImportReadReason words a failure to read one source during preview.
+func nativeImportReadReason(err error) string {
+	var refused *agentapi.NativeRefusalError
+	if errors.As(err, &refused) {
+		return nativeImportRefusalReason(refused)
+	}
+	if agentapi.Failure(err) == agentapi.Changed {
+		return "source changed during this preview; run the preview again"
+	}
+	return "source could not be read during this preview; run the preview again"
+}
+
+// nativeImportLocatorReason words a locator result that names no single source.
+func nativeImportLocatorReason(located agentapi.LocatorResult) string {
+	switch {
+	case located.Refusal != nil:
+		return nativeImportRefusalReason(located.Refusal)
+	case located.Status == agentapi.LocatorPending:
+		return "not read: this preview's read allowance ran out; narrow it with --since and --until"
+	case located.Status == agentapi.LocatorAmbiguous:
+		return "more than one Muse file has this session ID; nothing to import"
+	}
+	return "not a supported Muse session root; nothing to import"
 }
 
 // refuseNativeImportRow reports a bounded per-row refusal. The underlying

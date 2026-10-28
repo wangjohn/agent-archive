@@ -61,6 +61,8 @@ type LocatorResult struct {
 	Current    *SourceRef
 	Candidates []SourceRef
 	Revision   string
+	// Refusal, for a refused candidate, names why its source was refused.
+	Refusal *NativeRefusalError
 }
 
 // SourceBinding is a lossless in-memory tagged union. Exactly one member is

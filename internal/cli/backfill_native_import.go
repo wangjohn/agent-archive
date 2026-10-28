@@ -173,7 +173,11 @@ func runNativeImportCommand(stdin io.Reader, stdout, stderr io.Writer, env Env, 
 	if !opts.yes {
 		p := newPrompter(stdin, stdout)
 		defer p.close()
-		answer, err := p.guidedChoice(promptModel{Question: fmt.Sprintf("Import these %d historical Muse sessions?", selected), Default: "no", Primary: []option{{"yes", "Confirm exactly these sessions"}, {"no", "Cancel"}}})
+		question := fmt.Sprintf("Import these %d historical Muse sessions?", selected)
+		if selected == 1 {
+			question = "Import this historical Muse session?"
+		}
+		answer, err := p.guidedChoice(promptModel{Question: question, Default: "no", Primary: []option{{"yes", "Confirm exactly these sessions"}, {"no", "Cancel"}}})
 		if err != nil {
 			return fail(err)
 		}
@@ -186,7 +190,7 @@ func runNativeImportCommand(stdin io.Reader, stdout, stderr io.Writer, env Env, 
 	if err != nil {
 		return fail(err)
 	}
-	terminal.Printf(stdout, "Import %s: %d historical Muse sessions registered.\n", batch.ID, len(batch.Sessions))
+	terminal.Printf(stdout, "Import %s: %s registered.\n", batch.ID, plural(len(batch.Sessions), "historical Muse session"))
 	terminal.Printf(stdout, "Exact undo: agent-archive backfill undo %s\n", batch.ID)
 	if opts.background {
 		terminal.Println(stdout, "The normal collector publishes the frozen stages and verifies readback. Child coverage remains unavailable.")
