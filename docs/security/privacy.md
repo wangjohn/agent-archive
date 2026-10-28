@@ -831,7 +831,9 @@ permission, approval, identity, lineage or proof concept, such as
 refuse, except a memory-reminder child link that checks out against the
 parent session itself (its parent, run and task are this session's, and a
 named child log really exists). For such a link only the child session's ID
-is uploaded, never the child's transcript or log path. The full list is in the
+is uploaded, never the child's transcript or log path. The session's
+metadata then lists each such child as a linked session, by a random archive
+session ID and marked unavailable. The full list is in the
 [filter specification](../../dev/specs/privacy-filter.md#muse-explicit-local-evidence).
 
 A Muse login completion is kept only as the fact that this session logged in;

@@ -6,6 +6,21 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `backfill --harness muse` imports sessions from removed worktrees under
+  their project when the configured project's own repository is provably the
+  one they ran in; the preview names them. Other missing worktrees still
+  refuse.
+
+- Explicit `backfill --harness muse` previews bounded historical ordinary roots,
+  confirms their exact dates/projects/source checkpoints, and stages them before
+  registration for the normal collector. Each refused session says why: the
+  unsupported record and line, a side log with no session start, an incomplete
+  file, or a read to retry. Preview and cancellation write no state
+  and open no storage. Exact batch undo detaches only its memberships. Child
+  coverage and missing-worktree/mapping overrides remain unavailable.
+
 ### Changed
 
 - Muse sessions from newer Muse builds are no longer refused for records this
@@ -30,6 +45,8 @@ follow [Semantic Versioning](https://semver.org/).
 - Muse sessions that link memory-reminder child sessions are no longer refused
   when each link checks out against the session itself. Only the child's
   session ID is kept; links that do not check out still refuse the session.
+  Imported and captured Muse sessions list those children as linked sessions,
+  shown as unavailable because their transcripts are not archived.
 
 - Confirmed backfill registers bounded active groups through one ordered batch,
   sharing native/state memory charges and retaining unfinished parents across
@@ -92,6 +109,12 @@ follow [Semantic Versioning](https://semver.org/).
   sync` still prints it. `status --json` adds `collector.session_issue_reasons`.
 
 ### Fixed
+
+- A confirmed `backfill --harness muse` no longer stops at the first session
+  whose full read finds records this version cannot import. That session is
+  skipped and named with its reason, and the rest of the batch imports. A long
+  batch also no longer stops partway when its native inventory pass runs out
+  of its metadata allowance; it renews the pass and continues.
 
 - Muse sessions started with the unrestricted filesystem permission mode are
   no longer refused; the archive records that mode. Muse route facts newer
