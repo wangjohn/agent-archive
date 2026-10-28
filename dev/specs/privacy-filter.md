@@ -554,8 +554,25 @@ qualify is omitted, and a well-formed start whose join fails is omitted only
 when it joins an earlier committed call and task consistently, for a tool that
 is not a read; a well-formed effect that contradicts its call or task still
 refuses. Records linking this session to other
-sessions (memory-reminder or workflow children) are lineage and bear
-authority: they refuse until the adapter verifies and records them.
+sessions are lineage and bear authority: they refuse unless the adapter
+verifies them.
+
+Filter 35 verifies memory-reminder child links
+(`memory_reminder_child_session_linked`) within the parent session alone. The
+link must have no causation, name this session as `parent_session_id` and the
+run carrying it as `parent_run_id`, name a task this session started in that
+run with a matching task stream, and name a child session ID other than this
+session's; each child is linked once, and the run must be one of this
+session's materialized runs with a unique, increasing source record. A link
+that names `child_session_log_path` must name exactly
+`subagent/<child>/session.jsonl` beside this session, and that path must open
+as a regular file under the same confinement as the session; input that
+cannot check it refuses such a link. The retained row keeps `kind`,
+`event_kind`, the run identity and `child_session_id`; the task, generation,
+reminder agent and log path are dropped. The adapter exposes the verified
+child IDs to capture, which records lineage; the link grants no child
+transcript, capture or coverage. Workflow children and other links still
+refuse.
 
 The startup structure qualifies from supported records alone. Omission rows
 keep their sequence slot but are not members of a startup block, so an

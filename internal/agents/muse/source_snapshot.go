@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"io/fs"
 	"path/filepath"
 	"time"
 
@@ -190,6 +191,23 @@ func (f snapshotInput) Records(ctx context.Context, tail bool, window, record in
 		return transcriptio.RecordWindow{}, agentapi.ErrClosed
 	}
 	return f.snapshot.file.Records(ctx, tail, window, record, visit)
+}
+
+// childLogPresent opens a child session's log beside this session under the
+// same confinement as the session itself, without reading it.
+func (f snapshotInput) childLogPresent(rel string) (bool, error) {
+	s := f.snapshot
+	if s.closed || s.owner.closed {
+		return false, agentapi.ErrClosed
+	}
+	file, err := transcriptio.Open(s.owner.env.Files, filepath.Join(filepath.Dir(s.ref.Path), filepath.FromSlash(rel)), s.owner.env.Policy)
+	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, transcriptio.ErrNotRegularFile) {
+		return false, nil
+	}
+	if err != nil {
+		return false, sourceio.Classify(err)
+	}
+	return true, agentapi.Wrap(agentapi.Cleanup, file.Close())
 }
 
 // startupFacts reads the physical prefix using the same strict grammar and root

@@ -15,6 +15,10 @@ follow [Semantic Versioning](https://semver.org/).
   approvals, links to other sessions, or proofs still refuse the session. Unknown members of startup
   and opening records are dropped with an `unknown_field_omitted` gap.
 
+- Muse sessions that link memory-reminder child sessions are no longer refused
+  when each link checks out against the session itself. Only the child's
+  session ID is kept; links that do not check out still refuse the session.
+
 - Confirmed backfill registers bounded active groups through one ordered batch,
   sharing native/state memory charges and retaining unfinished parents across
   short hook holds. Registration totals no longer retain a second full ID list.
