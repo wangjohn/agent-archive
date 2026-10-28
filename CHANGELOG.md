@@ -18,6 +18,29 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Muse sessions from newer Muse builds are no longer refused for records this
+  version does not support. Those records are left out (nothing of them is
+  uploaded) and the session shows a `muse_unsupported_records_omitted` gap;
+  records about the session's identity, start, workspace, permissions,
+  approvals, links to other sessions, or proofs still refuse the session. Unknown members of startup
+  and opening records are dropped with an `unknown_field_omitted` gap.
+
+- Muse sessions with runs started by an inbox delivery, or with workflow-engine
+  facts, are no longer refused for them. Inbox-started runs keep their replies
+  but not the delivered text; workflow facts are left out and the session shows
+  a `muse_workflow_facts_omitted` gap.
+
+- Muse sessions that record a completed login are no longer refused. Only the
+  fact that this session logged in is kept, never the login method or account
+  details.
+
+- Muse sessions from newer builds that write their startup metadata before the
+  session-start command are no longer refused as an unsupported startup order.
+
+- Muse sessions that link memory-reminder child sessions are no longer refused
+  when each link checks out against the session itself. Only the child's
+  session ID is kept; links that do not check out still refuse the session.
+
 - Confirmed backfill registers bounded active groups through one ordered batch,
   sharing native/state memory charges and retaining unfinished parents across
   short hook holds. Registration totals no longer retain a second full ID list.

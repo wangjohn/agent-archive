@@ -4,11 +4,11 @@ import "strings"
 
 // project is an exact type/schema/kind dispatch. Known optional content has an
 // explicit empty projection; unknown discriminators never become optional.
-func project(r retained, p map[string]any) (map[string]any, error) {
+func project(r retained, p map[string]any, dropped *bool) (map[string]any, error) {
 	if nativeNewFamily(r, p) {
 		return projectNewFamily(r, p)
 	}
-	if p == nil || !authorityShape(r, p) {
+	if p == nil || !authorityShape(r, p, dropped) {
 		return nil, errFormat
 	}
 	switch r.Type {
@@ -32,6 +32,8 @@ func project(r retained, p map[string]any) (map[string]any, error) {
 		return projectSessionStarted(r, p)
 	case payloadSessionResumed:
 		return projectSessionResumed(r, p)
+	case payloadSessionLoginCompleted:
+		return projectSessionLoginCompleted(r, p)
 	case payloadRuntimeSessionRouteFacts:
 		return projectRuntimeSessionRouteFacts(r, p)
 	case payloadRuntimeUserIntentAccepted:
@@ -218,6 +220,15 @@ func projectSessionResumed(r retained, p map[string]any) (map[string]any, error)
 	return f, nil
 }
 
+// projectSessionLoginCompleted keeps only the session the login completed in.
+func projectSessionLoginCompleted(r retained, p map[string]any) (map[string]any, error) {
+	rec := object(p["record"])
+	if r.PayloadSchema != 1 || str(p["kind"]) != "login_completed" || num(rec["schema_version"]) != 1 || !integer(rec["duration_ms"], 0) || !boolean(rec["subscribed"]) || !stringFields(rec, "method", "trigger") || str(rec["method"]) == "" || str(rec["trigger"]) == "" || !identifier(rec["session_id"]) {
+		return nil, errFormat
+	}
+	return map[string]any{"kind": "login_completed", "session_id": rec["session_id"]}, nil
+}
+
 func projectRuntimeSessionRouteFacts(r retained, p map[string]any) (map[string]any, error) {
 	f := map[string]any{}
 	kind := str(p["kind"])
@@ -337,6 +348,9 @@ func projectRuntimeSession(r retained, p map[string]any) (map[string]any, error)
 	if kind == roleRun && ek == eventSkillReadObserved {
 		return projectSkillRead(r, p, event)
 	}
+	if kind == roleRun && ek == eventChildSessionLinked {
+		return projectChildLink(r, p, event)
+	}
 	if kind == roleRun && (ek == eventAssistantToolCallsCommitted || ek == eventToolResultBatchCommitted) {
 		return projectTools(r, p, event)
 	}
@@ -387,10 +401,26 @@ func projectRuntimeRetainedFact(r retained, p map[string]any) (map[string]any, e
 		f["kind"] = kind
 	}
 	rec := object(p["record"])
-	if r.PayloadSchema != 1 || kind != "retained_runtime_fact" || str(rec["payload_type"]) != "top_level_turn.run_origin" || num(rec["payload_schema_version"]) != 1 || !keys(object(rec["payload"])) {
+	if r.PayloadSchema != 1 || kind != "retained_runtime_fact" || num(rec["payload_schema_version"]) != 1 {
 		return nil, errFormat
 	}
-
+	body := object(rec["payload"])
+	switch str(rec["payload_type"]) {
+	case "top_level_turn.run_origin":
+		if !keys(body) {
+			return nil, errFormat
+		}
+	case "inbox_delivery.run_origin":
+		// A run an inbox delivery started, not a user turn. The delivering
+		// client is dropped; the run is kept so its start can be told apart.
+		if !keys(body, "client_id") || !stringFields(body, "client_id") || !identifier(p["run_id"]) {
+			return nil, errFormat
+		}
+		f["origin_kind"] = string(originInboxDelivery)
+		f["run_id"] = p["run_id"]
+	default:
+		return nil, errFormat
+	}
 	return f, nil
 }
 
@@ -429,7 +459,7 @@ func optionalRuntime(kind runtimeRole, event runtimeEvent) bool {
 			return false
 		case eventProposed, eventAccepted, eventScheduled, eventSideEffectIntent, eventStarted, eventStatus, eventCompleted, eventFailed, eventCancelled:
 			return true
-		case eventSkillReadObserved, eventAssistantMessageCommitted, eventAssistantToolCallsCommitted, eventContextBlockDiagnostic, eventContextBlockUpdated, eventGoalUsageAttribution, eventHookRunStarted, eventHookRunTerminal, eventModelCompleted, eventModelInputTraceRecorded, eventModelRequestConfigured, eventModelResponseCreated, eventProviderRequestOptionsConfigured, eventResourceUsageSampled, eventTaskStreamLinked, eventTerminal, eventToolResultBatchCommitted:
+		case eventSkillReadObserved, eventChildSessionLinked, eventAssistantMessageCommitted, eventAssistantToolCallsCommitted, eventContextBlockDiagnostic, eventContextBlockUpdated, eventGoalUsageAttribution, eventHookRunStarted, eventHookRunTerminal, eventModelCompleted, eventModelInputTraceRecorded, eventModelRequestConfigured, eventModelResponseCreated, eventProviderRequestOptionsConfigured, eventResourceUsageSampled, eventTaskStreamLinked, eventTerminal, eventToolResultBatchCommitted:
 			return false
 		}
 		return false
@@ -442,7 +472,7 @@ func optionalRuntime(kind runtimeRole, event runtimeEvent) bool {
 		return false
 	case eventHookRunStarted, eventHookRunTerminal, eventContextBlockDiagnostic, eventModelRequestConfigured, eventContextBlockUpdated, eventProviderRequestOptionsConfigured, eventModelInputTraceRecorded, eventTaskStreamLinked, eventModelResponseCreated, eventGoalUsageAttribution, eventModelCompleted, eventResourceUsageSampled, eventTerminal, eventAssistantToolCallsCommitted, eventToolResultBatchCommitted, eventSideEffectIntent, eventCompleted, eventFailed:
 		return true
-	case eventSkillReadObserved, eventAccepted, eventAssistantMessageCommitted, eventCancelled, eventProposed, eventScheduled, eventStarted, eventStatus:
+	case eventSkillReadObserved, eventChildSessionLinked, eventAccepted, eventAssistantMessageCommitted, eventCancelled, eventProposed, eventScheduled, eventStarted, eventStatus:
 		return false
 	}
 	return false

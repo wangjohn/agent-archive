@@ -22,6 +22,7 @@ const (
 	payloadSessionNameChanged                       payloadType = "session.name.changed"
 	payloadSessionOpenedObserved                    payloadType = "session.opened.observed"
 	payloadSessionResumed                           payloadType = "session.resumed"
+	payloadSessionLoginCompleted                    payloadType = "session.login.completed"
 	payloadSessionStarted                           payloadType = "session.started"
 )
 
@@ -39,6 +40,7 @@ const (
 	eventAccepted                         runtimeEvent = "accepted"
 	eventAssistantMessageCommitted        runtimeEvent = "assistant_message_committed"
 	eventAssistantToolCallsCommitted      runtimeEvent = "assistant_tool_calls_committed"
+	eventChildSessionLinked               runtimeEvent = "memory_reminder_child_session_linked"
 	eventCancelled                        runtimeEvent = "cancelled"
 	eventCompleted                        runtimeEvent = "completed"
 	eventContextBlockDiagnostic           runtimeEvent = "context_block_diagnostic"
