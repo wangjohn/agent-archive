@@ -995,6 +995,9 @@
     "v": 2,
     "kind": "native_omission",
     "schema": "schemas/muse-retained-marker-v2.schema.json",
-    "classification": "task_tool_delta_v1"
+    "classifications": [
+      "task_tool_delta_v1",
+      "unsupported_record_v1"
+    ]
   }
 }

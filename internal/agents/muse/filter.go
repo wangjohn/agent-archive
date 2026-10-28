@@ -25,7 +25,7 @@ type Filter struct{}
 func (Filter) Name() string { return "muse" }
 
 // Version identifies the current privacy projection.
-func (Filter) Version() string { return "0.33.0" }
+func (Filter) Version() string { return "0.34.0" }
 
 // LeasedFilterFor refuses decorators which may change filtering semantics.
 func (Filter) LeasedFilterFor(a archive.Adapter) bool { _, ok := a.(Filter); return ok }
@@ -561,9 +561,11 @@ func privacyMarker(raw []byte, record int, add func(string, int, string)) ([]byt
 }
 
 func omissionGaps(rows []logicalRow) []archive.CaptureGap {
-	marker, body := false, false
+	marker, unsupported, body := false, false, false
 	for _, r := range rows {
-		if r.omission != nil {
+		if r.omission != nil && r.omission.Marker == unsupportedMarker {
+			unsupported = true
+		} else if r.omission != nil {
 			marker = true
 		}
 		if r.ordinary != nil && newFamily(*r.ordinary) {
@@ -576,6 +578,9 @@ func omissionGaps(rows []logicalRow) []archive.CaptureGap {
 	}
 	if body {
 		out = append(out, archive.CaptureGap{Code: "muse_private_native_bodies_omitted"})
+	}
+	if unsupported {
+		out = append(out, archive.CaptureGap{Code: "muse_unsupported_records_omitted", Detail: "Records this adapter version does not support were left out"})
 	}
 	return out
 }

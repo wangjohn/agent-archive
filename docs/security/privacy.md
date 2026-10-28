@@ -811,6 +811,26 @@ classification, with no invented timestamp or task identity. Fixed
 survive privacy refresh. Direct parsing refuses evidence whose required omission
 gaps were removed or altered; retained-only refilter reconstructs them.
 
+Records a newer Muse build writes that this version does not support are left
+out instead of refusing the session, unless they bear authority. An omitted
+record is never uploaded, not even its record type: the archive keeps only its
+position and native ID, and the session reports
+`muse_unsupported_records_omitted`. Records that would join an omitted record
+(a tool effect's end, a task's output) are left out with it. Unknown members of
+startup metadata, the session opening and similar descriptive records are
+dropped and reported as `unknown_field_omitted`. The cost is an incomplete
+transcript.
+
+Authority-bearing records still refuse the whole session: anything that
+establishes the session's identity, start, workspace or permissions
+(the permission frame, startup and intake records, approvals and approval
+waits, route facts, intents), and any unknown record whose type names a
+permission, approval, identity, lineage or proof concept, such as
+`permission`, `approval`, `owner`, `subagent`, `child`, `linked`, `spawn`,
+`login`, `hash` or `digest`. Links to other sessions (such as Muse's
+memory-reminder child sessions) count as lineage and refuse. The full list is in the
+[filter specification](../../dev/specs/privacy-filter.md#muse-explicit-local-evidence).
+
 Muse's closed own `model_completed` branch validates a nonempty model string,
 nonnegative exact `duration_ms`, and all six input/output/cache/reasoning counters
 between zero and 2^53−1. Only the model, input/output and typed run/source identity
