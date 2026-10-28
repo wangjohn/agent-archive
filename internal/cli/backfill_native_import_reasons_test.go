@@ -172,8 +172,8 @@ func withAuthorityRecordBeforeEnd(t *testing.T, raw []byte) []byte {
 	extra := maps.Clone(end)
 	extra["id"] = "00000000-0000-4000-8000-0000000000e9"
 	extra["causation_id"] = nil
-	extra["payload_type"], extra["payload_schema_version"] = "session.login.completed", 1
-	extra["payload"] = map[string]any{"kind": "login_completed"}
+	extra["payload_type"], extra["payload_schema_version"] = "session.permission_grant.recorded", 1
+	extra["payload"] = map[string]any{"kind": "permission_grant"}
 	end["sequence"], end["recorded_at"] = end["sequence"].(float64)+1, end["recorded_at"].(float64)+1
 	a, err := json.Marshal(extra)
 	if err != nil {
@@ -202,13 +202,14 @@ func TestBackfillNativeImportSkipsAnEntryItsFinalReadRefuses(t *testing.T) {
 	if err := os.WriteFile(path, withAuthorityRecordBeforeEnd(t, musefixture.Rewrite(t, raw, refused, f.project)), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	// The startup preview selects both sessions; it cannot see the record.
+	// The startup preview selects both sessions; it cannot see the record,
+	// whose permission word keeps it authority-bearing.
 	preview, stderr, code := f.run(nil, "--harness", "muse", "--dry-run", "--json")
 	if code != 0 || strings.Count(preview, `"status":"selected"`) != 2 {
 		t.Fatal("preview", code, preview, stderr)
 	}
 	out, stderr, code := f.run(nil, "--harness", "muse", "--yes", "--background")
-	if code != 0 || !strings.Contains(out, "1 historical Muse session registered, 1 skipped.") || !strings.Contains(out, "skipped: unsupported Muse record session.login.completed") {
+	if code != 0 || !strings.Contains(out, "1 historical Muse session registered, 1 skipped.") || !strings.Contains(out, "skipped: unsupported Muse record session.permission_grant.recorded") {
 		t.Fatal("confirmed import", code, out, stderr)
 	}
 	batches, err := backfill.LoadBatches(f.home)
