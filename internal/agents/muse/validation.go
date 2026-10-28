@@ -66,6 +66,9 @@ func startupRows(rows []retained) int {
 	if len(rows) >= 4 && rows[2].Type == payloadRuntimeSessionMetadata && (rows[3].Type == payloadRuntimeSessionMetadata || rows[3].Type == payloadRuntimeSessionRouteFacts) {
 		needed = 5
 	}
+	if len(rows) >= 4 && rows[2].Type == payloadRuntimeSessionMetadata && rows[3].Type == payloadRuntimeCommandIntakeReceived {
+		needed = 7
+	}
 	return needed
 }
 
@@ -186,6 +189,10 @@ func startupCommand(rows []retained, i int) error {
 	r := rows[i]
 	f := r.Fields
 	a, b, c := rows[i+1], rows[i+2], rows[i+3]
+	if metadataFirst(rows, i) {
+		// The metadata-first lane writes its metadata before the command.
+		c = rows[2]
+	}
 	command := str(f["command_id"])
 	if command == "" || r.Causation == nil || *r.Causation != command || a.Type != payloadRuntimeSessionStartIntakeV3 || b.Type != payloadSessionStarted || c.Type != payloadRuntimeSessionMetadata || str(a.Fields["command_id"]) != command || str(b.Fields["command_id"]) != command || a.Causation == nil || *a.Causation != command || b.Causation == nil || *b.Causation != command {
 		return errFormat
@@ -207,7 +214,17 @@ func startupCommand(rows []retained, i int) error {
 	return nil
 }
 
+// metadataFirst reports the startup lane whose metadata precedes the session
+// start command at its fixed position: frame, metadata, command, start intake,
+// session started, then the original opening.
+func metadataFirst(rows []retained, i int) bool {
+	return i == 3 && rows[2].Type == payloadRuntimeSessionMetadata && len(rows) > 6 && rows[6].Type == payloadSessionOpenedObserved
+}
+
 func startupPrefix(rows []retained) bool {
+	if rows[2].Type == payloadRuntimeSessionMetadata && rows[3].Type == payloadRuntimeCommandIntakeReceived {
+		return metadataFirstPrefix(rows)
+	}
 	if rows[2].Type == payloadRuntimeSessionMetadata {
 		if rows[3].Type == payloadRuntimeSessionMetadata {
 			return twoMetadataPrefix(rows)
@@ -598,6 +615,18 @@ func fieldsRuntimeCommandIntakeSettled(r retained) (int64, []string, bool) {
 		return 0, nil, false
 	}
 	return schema, names, true
+}
+
+// metadataFirstPrefix qualifies the metadata-first startup lane. The command
+// block's own joins (causation, command ID, matching metadata, startup
+// activation) are checked by startupCommand; this fixes the order and the
+// timeline, and requires the opening to be the original one.
+func metadataFirstPrefix(rows []retained) bool {
+	if len(rows) < 7 {
+		return false
+	}
+	m, cmd, start, started, o := rows[2], rows[3], rows[4], rows[5], rows[6]
+	return str(cmd.Fields["command_kind"]) == "session_start" && start.Type == payloadRuntimeSessionStartIntakeV3 && started.Type == payloadSessionStarted && o.Type == payloadSessionOpenedObserved && o.Fields["resume"] == false && m.Causation == nil && o.Causation == nil && m.Timestamp > rows[0].Timestamp && cmd.Timestamp >= m.Timestamp && start.Timestamp >= cmd.Timestamp && started.Timestamp >= start.Timestamp && o.Timestamp >= started.Timestamp
 }
 
 // twoMetadataPrefix is the one observed model-resolution startup lane. The
