@@ -409,8 +409,8 @@ func TestFilterVersionAndName(t *testing.T) {
 	if got := f.Name(); got != "agy" {
 		t.Fatalf("Filter.Name() = %q, want %q", got, "agy")
 	}
-	if got := f.Version(); got != "0.33.0" {
-		t.Fatalf("Filter.Version() = %q, want %q", got, "0.33.0")
+	if got := f.Version(); got != "0.41.0" {
+		t.Fatalf("Filter.Version() = %q, want %q", got, "0.41.0")
 	}
 }
 
