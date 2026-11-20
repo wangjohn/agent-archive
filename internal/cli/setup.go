@@ -1127,6 +1127,7 @@ var hookNextStep = map[string]string{
 	"codex":  "Codex: run `/hooks` and approve the archive hooks; they capture sessions that start after that (or after `/clear`).",
 	"claude": "Claude Code: nothing to approve; hooks capture sessions that start from now on (or after `/clear`).",
 	"cursor": "Cursor: nothing to approve; hooks capture Agent chats that start from now on.",
+	"agy":    "Antigravity CLI: nothing to approve; hooks capture sessions that start from now on.",
 }
 
 // printNextSteps ends a committed setup with one line per app on what to do

@@ -134,12 +134,16 @@ func (Parser) Parse(ctx context.Context, bundle archive.SourceBundle) (archive.A
 	view.ToolCalls = archive.FinalizeToolCalls(candidates, view.ToolResults)
 	structured := archive.Availability{State: archive.AvailabilityAvailable}
 	tools := archive.Availability{State: archive.AvailabilityUnavailable, Reason: archive.AvailabilityReasonNotRecorded}
+	filesTouchedAvail := archive.Availability{State: archive.AvailabilityUnavailable, Reason: archive.AvailabilityReasonNotRecorded}
 	if len(view.ToolCalls) > 0 {
 		tools = structured
+		filesTouchedAvail = structured
 	}
 	toolResultsAvail := archive.Availability{State: archive.AvailabilityUnavailable, Reason: archive.AvailabilityReasonNotRecorded}
+	toolErrorsAvail := archive.Availability{State: archive.AvailabilityUnavailable, Reason: archive.AvailabilityReasonNotRecorded}
 	if len(view.ToolResults) > 0 {
 		toolResultsAvail = structured
+		toolErrorsAvail = structured
 	}
 	return archive.Analysis{
 		View: view,
@@ -150,10 +154,10 @@ func (Parser) Parse(ctx context.Context, bundle archive.SourceBundle) (archive.A
 		Observability: archive.Observability{
 			StructuredCounts: structured,
 			ToolCalls:        tools,
-			FilesTouched:     archive.Availability{State: archive.AvailabilityUnavailable, Reason: archive.AvailabilityReasonNotRecorded},
+			FilesTouched:     filesTouchedAvail,
 			GitActivity:      archive.Availability{State: archive.AvailabilityUnavailable, Reason: archive.AvailabilityReasonNotRecorded},
 			Compactions:      archive.Availability{State: archive.AvailabilityUnavailable, Reason: archive.AvailabilityReasonNotRecorded},
-			ToolErrors:       archive.Availability{State: archive.AvailabilityUnavailable, Reason: archive.AvailabilityReasonNotRecorded},
+			ToolErrors:       toolErrorsAvail,
 			ToolResults:      toolResultsAvail,
 		},
 	}, nil

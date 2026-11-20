@@ -36,7 +36,7 @@ does not itself validate a newer app version.
 | Claude Code | 2.1.x | Adapter built and checked against transcripts from this version. |
 | Codex CLI | 0.155 | Adapter built and checked against transcripts from this version. |
 | Cursor (desktop) | 3.21.13 | Hook payloads observed live; on 2026-09-23 (main `2a7a8fb`) a new chat registered at its first prompt, was published and read back, and `status` reported `verified_by_capture` for 3.21.13. A resumed chat was declined. |
-| Antigravity CLI | 0.33.x | Adapter built and checked against synthetic transcripts and dated versions (FilterVersion 33, adapterVersion 0.33.0). |
+| Antigravity CLI | 1.5.13 | Observed live on 2026-11-20; hook registration, collection, and handoff verified with Antigravity CLI 1.5.13. |
 
 These observations were made on macOS. On Linux the real Cursor app and
 `cursor-agent` have not been run against agent-archive, so Cursor capture

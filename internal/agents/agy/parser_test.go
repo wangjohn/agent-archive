@@ -177,6 +177,12 @@ func TestParserPopulatesToolDetailsAndLinksResults(t *testing.T) {
 	if analysis.Observability.ToolResults.State != archive.AvailabilityAvailable {
 		t.Fatalf("expected ToolResults Available when results exist, got %v", analysis.Observability.ToolResults.State)
 	}
+	if analysis.Observability.ToolErrors.State != archive.AvailabilityAvailable {
+		t.Fatalf("expected ToolErrors Available when results exist, got %v", analysis.Observability.ToolErrors.State)
+	}
+	if analysis.Observability.FilesTouched.State != archive.AvailabilityAvailable {
+		t.Fatalf("expected FilesTouched Available when calls exist, got %v", analysis.Observability.FilesTouched.State)
+	}
 
 	h, err := archive.BuildHandoffWithAnalysis(bundle, analysis, nil, archive.HandoffOptions{Source: "local"})
 	if err != nil {
@@ -213,6 +219,12 @@ func TestParserToolResultAvailabilityUnavailableWhenNoResultsRecorded(t *testing
 	}
 	if analysis.Observability.ToolResults.State != archive.AvailabilityUnavailable {
 		t.Fatalf("expected ToolResults Unavailable when no results recorded, got %v", analysis.Observability.ToolResults.State)
+	}
+	if analysis.Observability.ToolErrors.State != archive.AvailabilityUnavailable {
+		t.Fatalf("expected ToolErrors Unavailable when no results recorded, got %v", analysis.Observability.ToolErrors.State)
+	}
+	if analysis.Observability.FilesTouched.State != archive.AvailabilityAvailable {
+		t.Fatalf("expected FilesTouched Available when calls exist, got %v", analysis.Observability.FilesTouched.State)
 	}
 }
 

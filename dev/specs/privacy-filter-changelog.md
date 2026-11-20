@@ -12,7 +12,7 @@ are unchanged.
 
 - Retain safe Antigravity trajectory keys (`modelName`, `model_name`, `step_id`,
   `conversationId`, `conversation_id`, `prompt`, `toolCall`, and `args`).
-- Include `args` and `toolcall` in `toolArgumentKeys` so Antigravity command line
+- Include `args` in `toolArgumentKeys` so Antigravity command line
   arguments and non-sensitive tool parameters are preserved while secrets and
   credentials continue to be redacted.
 - Recognize `conversationId` and `conversation_id` in native and safe identity

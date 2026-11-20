@@ -118,6 +118,38 @@ func isResumedSession(payload map[string]any) bool {
 	return false
 }
 
+func isExplicitFreshStart(payload map[string]any) bool {
+	if payload == nil {
+		return false
+	}
+	if b, ok := payload["isResume"].(bool); ok && !b {
+		return true
+	}
+	if s, ok := payload["source"].(string); ok && strings.EqualFold(strings.TrimSpace(s), "startup") {
+		return true
+	}
+	switch v := payload["invocationNum"].(type) {
+	case float64:
+		return v == 0
+	case float32:
+		return v == 0
+	case int:
+		return v == 0
+	case int64:
+		return v == 0
+	case int32:
+		return v == 0
+	case json.Number:
+		if n, err := v.Int64(); err == nil {
+			return n == 0
+		}
+		if f, err := v.Float64(); err == nil {
+			return f == 0
+		}
+	}
+	return false
+}
+
 // DiagnosticProject interprets project root facts independently of event decoding.
 func (HookDecoder) DiagnosticProject(input agentapi.HookInput) string {
 	return projectRoot(input.Payload)
@@ -207,6 +239,17 @@ func (d HookDecoder) Decode(ctx context.Context, input agentapi.HookInput) ([]ag
 			event.Start = agentapi.StartEvidence{
 				Kind:   agentapi.FreshContinuation,
 				Reason: agentapi.FreshnessContinuation,
+			}
+		} else if isExplicitFreshStart(payload) {
+			event.Start = agentapi.StartEvidence{
+				Kind:   agentapi.FreshExplicit,
+				Reason: agentapi.FreshnessExplicitStart,
+			}
+		} else if transcriptPath != "" {
+			event.Start = agentapi.StartEvidence{
+				Kind:   agentapi.FreshStat,
+				Reason: agentapi.FreshnessInspectPath,
+				Path:   transcriptPath,
 			}
 		} else {
 			event.Start = agentapi.StartEvidence{

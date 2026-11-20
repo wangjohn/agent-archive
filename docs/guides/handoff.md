@@ -214,7 +214,7 @@ Conflicting prompt flags such as `--prompt` or `-p` in passthrough arguments (`-
 
 `handoff` asks where to continue only on a terminal, and not with `--to`,
 `--output`, `--format json`, or `--no-preamble`. Inside Claude Code, Codex,
-Cursor, or Antigravity CLI (`CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`, `CURSOR_AGENT`, or `ANTIGRAVITY_AGENT` is
+Cursor, or Antigravity CLI (`CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`, `CURSOR_AGENT`, or `ANTIGRAVITY_SESSION_ID` is
 set), inside Muse (`MUSE_THREAD_ID` or `MUSE_SESSION_ID` is nonblank), or with `AGENT_ARCHIVE_NONINTERACTIVE=1`, it never asks anything, even
 on a terminal; `AGENT_ARCHIVE_NONINTERACTIVE=0` turns asking back on. See
 [scripting and other outputs](#scripting-and-other-outputs) and

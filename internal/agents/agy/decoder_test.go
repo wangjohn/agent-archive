@@ -161,6 +161,56 @@ func TestDecoderDistinguishesResumedSession(t *testing.T) {
 	if events[0].Start.Kind != agentapi.FreshExplicit || events[0].Start.Reason != agentapi.FreshnessExplicitStart {
 		t.Fatalf("expected FreshExplicit for source=startup, got %#v", events[0].Start)
 	}
+
+	// isResume == false -> FreshExplicit
+	payloadNotResume := map[string]any{
+		"hook_event_name": "SessionStart",
+		"conversationId":  "12345678-1234-4234-8234-123456789abc",
+		"transcriptPath":  "/path/to/transcript.jsonl",
+		"workspacePaths":  []any{"/work"},
+		"isResume":        false,
+	}
+	events, err = d.Decode(context.Background(), agentapi.HookInput{Payload: payloadNotResume, ObservedAt: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) == 0 || events[0].Start.Kind != agentapi.FreshExplicit {
+		t.Fatalf("expected FreshExplicit for isResume=false, got %#v", events)
+	}
+
+	// invocationNum == 0 -> FreshExplicit
+	payloadZero := map[string]any{
+		"hook_event_name": "SessionStart",
+		"conversationId":  "12345678-1234-4234-8234-123456789abc",
+		"transcriptPath":  "/path/to/transcript.jsonl",
+		"workspacePaths":  []any{"/work"},
+		"invocationNum":   0,
+	}
+	events, err = d.Decode(context.Background(), agentapi.HookInput{Payload: payloadZero, ObservedAt: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) == 0 || events[0].Start.Kind != agentapi.FreshExplicit {
+		t.Fatalf("expected FreshExplicit for invocationNum=0, got %#v", events)
+	}
+
+	// no fields present and transcriptPath != "" -> FreshStat
+	payloadNoFields := map[string]any{
+		"hook_event_name": "SessionStart",
+		"conversationId":  "12345678-1234-4234-8234-123456789abc",
+		"transcriptPath":  "/path/to/transcript.jsonl",
+		"workspacePaths":  []any{"/work"},
+	}
+	events, err = d.Decode(context.Background(), agentapi.HookInput{Payload: payloadNoFields, ObservedAt: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) == 0 {
+		t.Fatal("expected at least 1 event")
+	}
+	if events[0].Start.Kind != agentapi.FreshStat || events[0].Start.Reason != agentapi.FreshnessInspectPath || events[0].Start.Path != "/path/to/transcript.jsonl" {
+		t.Fatalf("expected FreshStat fallback for absent fields, got %#v", events[0].Start)
+	}
 }
 
 func TestDecoderPreInvocation(t *testing.T) {
