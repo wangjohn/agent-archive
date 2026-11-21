@@ -30,17 +30,17 @@ func TestAppSelectionSuggestionsAndManualFallback(t *testing.T) {
 	}{
 		{"accept detected", []string{"claude", "codex", "codex"}, nil, "\n", []string{"codex", "claude"}, "Include Codex and Claude Code?", false},
 		{"single app", []string{"cursor"}, nil, "y\n", []string{"cursor"}, "Include Cursor?", false},
-		{"choose another app", []string{"codex", "claude"}, nil, "n\nn\nn\ny\n", []string{"cursor"}, "Include Codex and Claude Code?", true},
-		{"nothing detected", nil, nil, "n\ny\nn\n", []string{"claude"}, "No apps found automatically.", true},
+		{"choose another app", []string{"codex", "claude"}, nil, "n\nn\nn\ny\nn\n", []string{"cursor"}, "Include Codex and Claude Code?", true},
+		{"nothing detected", nil, nil, "n\ny\nn\nn\n", []string{"claude"}, "No apps found automatically.", true},
 		{"keep prior selection", []string{"claude"}, []string{"claude"}, "\n", []string{"claude"}, "Change which apps are included?", false},
-		{"add newly found apps", []string{"codex", "claude", "cursor"}, []string{"cursor"}, "\n", []string{"codex", "claude", "cursor"}, "Add them?", false},
-		{"decline newly found apps", []string{"codex", "claude", "cursor"}, []string{"cursor"}, "n\n\n", []string{"cursor"}, "Change which apps are included?", false},
-		{"decline found apps then pick a subset", []string{"codex", "claude", "cursor"}, []string{"cursor"}, "n\ny\nn\ny\ny\n", []string{"claude", "cursor"}, "Change which apps are included?", true},
+		{"add newly found apps", []string{"codex", "claude", "cursor", "agy"}, []string{"cursor"}, "\n", []string{"codex", "claude", "cursor", "agy"}, "Add them?", false},
+		{"decline newly found apps", []string{"codex", "claude", "cursor", "agy"}, []string{"cursor"}, "n\n\n", []string{"cursor"}, "Change which apps are included?", false},
+		{"decline found apps then pick a subset", []string{"codex", "claude", "cursor", "agy"}, []string{"cursor"}, "n\ny\nn\ny\ny\nn\n", []string{"claude", "cursor"}, "Change which apps are included?", true},
 		{"add one newly found app", []string{"claude"}, []string{"cursor"}, "y\n", []string{"claude", "cursor"}, "Add it?", false},
-		{"add to prior selection", nil, []string{"cursor"}, "y\ny\ny\n\n", []string{"codex", "claude", "cursor"}, "Change which apps are included?", true},
-		{"keep full prior selection", nil, []string{"cursor", "claude", "codex"}, "\n", []string{"codex", "claude", "cursor"}, "Keep Codex, Claude Code, and Cursor?", false},
-		{"trim full prior selection", nil, []string{"cursor", "claude", "codex"}, "n\nn\n\n\n", []string{"claude", "cursor"}, "Choose which apps to include:", true},
-		{"retry empty selection", nil, nil, "n\nn\nn\ny\nn\nn\n", []string{"codex"}, "Choose at least one app to continue.", true},
+		{"add to prior selection", nil, []string{"cursor"}, "y\ny\ny\n\ny\n", []string{"codex", "claude", "cursor", "agy"}, "Change which apps are included?", true},
+		{"keep full prior selection", nil, []string{"cursor", "claude", "codex", "agy"}, "\n", []string{"codex", "claude", "cursor", "agy"}, "Keep Codex, Claude Code, Cursor, and Antigravity CLI?", false},
+		{"trim full prior selection", nil, []string{"cursor", "claude", "codex", "agy"}, "n\nn\n\n\n\n", []string{"claude", "cursor", "agy"}, "Choose which apps to include:", true},
+		{"retry empty selection", nil, nil, "n\nn\nn\nn\ny\nn\nn\nn\n", []string{"codex"}, "Choose at least one app to continue.", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -261,12 +261,12 @@ func TestSetupRemembersDeclinedApps(t *testing.T) {
 	}
 
 	output = setupRun(t, env, "capture\n\ny\n\ny\n", 0)
-	if setupContainsText(output, "Also found") || !setupContainsText(output, "Included: Cursor. Not included: Codex and Claude Code.") {
+	if setupContainsText(output, "Also found") || !setupContainsText(output, "Included: Cursor. Not included: Codex, Claude Code, and Antigravity CLI.") {
 		t.Fatalf("declined apps offered again:\n%s", output)
 	}
 
 	// Include Claude Code by hand: it is no longer declined; Codex still is.
-	setupRun(t, env, "capture\ny\nn\ny\ny\ny\n\ny\n", 0)
+	setupRun(t, env, "capture\ny\nn\ny\ny\nn\ny\n\ny\n", 0)
 	cfg, _, _ = config.Load(home)
 	if !reflect.DeepEqual(cfg.Harnesses, []string{"claude", "cursor"}) || !reflect.DeepEqual(cfg.DeclinedHarnesses, []string{"codex"}) {
 		t.Fatalf("harnesses %v declined %v", cfg.Harnesses, cfg.DeclinedHarnesses)
@@ -279,7 +279,7 @@ func TestReviewEditNeverOffersFoundApps(t *testing.T) {
 	t.Parallel()
 	draft := setupDraft{Config: config.Config{Harnesses: []string{"cursor"}, DeclinedHarnesses: []string{"codex", "claude"}}}
 	var out bytes.Buffer
-	p := newPrompter(strings.NewReader("apps\ny\nn\ny\ny\n"), &out)
+	p := newPrompter(strings.NewReader("apps\ny\nn\ny\ny\nn\n"), &out)
 	if err := editSetupReview(allHarnesses, p, &draft, t.TempDir(), nil, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -302,14 +302,14 @@ func TestSetupRemembersAppRemovedByHand(t *testing.T) {
 
 	// Apps and projects; change apps: Codex no, Claude Code yes, Cursor no;
 	// keep the project; add none; start archiving.
-	setupRun(t, env, "capture\ny\nn\ny\nn\ny\n\ny\n", 0)
+	setupRun(t, env, "capture\ny\nn\ny\nn\nn\ny\n\ny\n", 0)
 	cfg, _, _ := config.Load(home)
 	if !reflect.DeepEqual(cfg.Harnesses, []string{"claude"}) || !reflect.DeepEqual(cfg.DeclinedHarnesses, []string{"codex"}) {
 		t.Fatalf("harnesses %v declined %v", cfg.Harnesses, cfg.DeclinedHarnesses)
 	}
 
 	output := setupRun(t, env, "capture\n\ny\n\nn\n", 0)
-	if setupContainsText(output, "Also found") || !setupContainsText(output, "Included: Claude Code. Not included: Codex and Cursor.") {
+	if setupContainsText(output, "Also found") || !setupContainsText(output, "Included: Claude Code. Not included: Codex, Cursor, and Antigravity CLI.") {
 		t.Fatalf("removed app offered again:\n%s", output)
 	}
 }
@@ -319,7 +319,7 @@ func TestSetupRemembersAppRemovedByHand(t *testing.T) {
 func TestReviewEditRemovalIsNotOfferedAgain(t *testing.T) {
 	t.Parallel()
 	draft := setupDraft{Config: config.Config{Harnesses: []string{"codex", "claude"}}}
-	p := newPrompter(strings.NewReader("apps\ny\nn\ny\nn\n"), &bytes.Buffer{})
+	p := newPrompter(strings.NewReader("apps\ny\nn\ny\nn\nn\n"), &bytes.Buffer{})
 	if err := editSetupReview(allHarnesses, p, &draft, t.TempDir(), nil, nil); err != nil {
 		t.Fatal(err)
 	}

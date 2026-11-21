@@ -96,6 +96,28 @@ func (CursorAdapter) Name() string { return "cursor" }
 // Version returns the adapter version shared by every adapter.
 func (CursorAdapter) Version() string { return adapterVersion }
 
+// AgyAdapter supports the plaintext Antigravity CLI trajectory JSONL format.
+// It deliberately accepts only documented lifecycle and tool record types;
+// unknown records remain privacy gaps rather than pass-through content.
+type AgyAdapter struct{}
+
+// Name returns the canonical harness name, "agy".
+func (AgyAdapter) Name() string { return "agy" }
+
+// Version returns the AGY adapter policy version.
+func (AgyAdapter) Version() string { return adapterVersion }
+
+// FilterJSONL keeps documented Antigravity trajectory records through the
+// shared privacy filter.
+func (AgyAdapter) FilterJSONL(r io.Reader) (archive.FilteredTranscript, error) {
+	return filterJSONL(r, "agy-jsonl", map[string]bool{
+		"USER_INPUT": true, "PLANNER_RESPONSE": true, "RUN_COMMAND": true,
+		"TOOL_CALL": true, "TOOL_RESULT": true, "GENERIC": true,
+		"ERROR": true, "TASK_STARTED": true, "TASK_COMPLETED": true,
+		"SUBAGENT_STARTED": true, "SUBAGENT_COMPLETED": true,
+	}, nil)
+}
+
 // FilterJSONL keeps only the Cursor record types this adapter recognizes,
 // through the shared privacy filter, and labels the result cursor-jsonl.
 func (CursorAdapter) FilterJSONL(r io.Reader) (archive.FilteredTranscript, error) {
@@ -733,7 +755,7 @@ func recordCarriesConversation(record map[string]any) bool {
 	return conversationRecordTypes[strings.ToLower(strings.TrimSpace(kind))]
 }
 
-const adapterVersion = "0.40.0"
+const adapterVersion = "0.41.0"
 
 var maxRecordBytes = archive.MaxRecordBytes
 
@@ -760,7 +782,7 @@ func noteNativeIdentity(result *archive.FilteredTranscript, raw map[string]any) 
 		return
 	}
 	noteRecordTime(result, raw)
-	result.SessionIDs = appendUniqueString(result.SessionIDs, firstString(raw, "session_id", "sessionId"))
+	result.SessionIDs = appendUniqueString(result.SessionIDs, firstString(raw, "session_id", "sessionId", "conversationId", "conversation_id"))
 	result.AgentIDs = appendUniqueString(result.AgentIDs, firstString(raw, "agent_id", "agentId"))
 }
 
@@ -774,7 +796,7 @@ func noteSafeIdentity(result *archive.FilteredTranscript, safe map[string]any) {
 			result.LocalIdentity.ID = firstString(payload, "id")
 		}
 	}
-	for _, key := range []string{"session_id", "sessionId"} {
+	for _, key := range []string{"session_id", "sessionId", "conversationId", "conversation_id"} {
 		result.LocalIdentity.Candidates = appendUniqueString(result.LocalIdentity.Candidates, firstString(safe, key))
 	}
 }

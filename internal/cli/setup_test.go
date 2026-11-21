@@ -109,7 +109,7 @@ func s3SetupInput(bucket, region, profile string, codex, claude, cursor bool, pr
 		}
 		return "n"
 	}
-	answers := []string{yn(codex), yn(claude), yn(cursor)}
+	answers := []string{yn(codex), yn(claude), yn(cursor), "n"}
 	if codex {
 		answers = append(answers, "included-projects")
 	}
@@ -118,7 +118,7 @@ func s3SetupInput(bucket, region, profile string, codex, claude, cursor bool, pr
 }
 
 func r2SetupInput(project, secret string) string {
-	return strings.Join([]string{"y", "n", "n", "included-projects", project, "", "r2-existing", "0123456789abcdef0123456789abcdef", "test-bucket", "ACCESS", secret, "y"}, "\n") + "\n"
+	return strings.Join([]string{"y", "n", "n", "n", "included-projects", project, "", "r2-existing", "0123456789abcdef0123456789abcdef", "test-bucket", "ACCESS", secret, "y"}, "\n") + "\n"
 }
 
 func setupRun(t *testing.T, env Env, input string, want int) string {
@@ -270,7 +270,7 @@ func TestSetupReconfigurePreservesPauseIdentityActivationAndRemovesHooks(t *test
 		t.Fatal(err)
 	}
 	env.Now = func() time.Time { return time.Now().Add(time.Hour) }
-	setupRun(t, env, "capture\ny\ny\nn\nn\ny\n\ny\n", 0)
+	setupRun(t, env, "capture\ny\ny\nn\nn\nn\ny\n\ny\n", 0)
 	next, _, _ := config.Load(home)
 	if !next.Paused || next.PauseGeneration != old.PauseGeneration || next.MachineID != old.MachineID || !next.Archive.Projects[0].ActivatedAt.Equal(old.Archive.Projects[0].ActivatedAt) {
 		t.Fatal("reconfigure reset stable state")

@@ -21,12 +21,23 @@ type Spec struct {
 	Name                   string
 	Events                 []string
 	Flat                   bool
-	Version                bool
-	Owner                  string
-	PrototypeOwner         string
-	RootEnvironment        string
-	DefaultDirectory       string
-	Filename               string
+	// Direct writes lifecycle handlers directly under each event. Antigravity
+	// uses this shape for PreInvocation, PostInvocation, and Stop.
+	Direct bool
+	// Rootless stores a named hook definition directly on the document root.
+	// Antigravity hooks.json uses this form instead of a top-level "hooks" key.
+	Rootless         bool
+	Definition       string
+	Version          bool
+	Owner            string
+	PrototypeOwner   string
+	RootEnvironment  string
+	DefaultDirectory string
+	Filename         string
+	// EventInCommand encodes the lifecycle event name directly in the command
+	// string using --event <event>. Used by harnesses like Antigravity whose
+	// lifecycle hooks payload does not include hook_event_name.
+	EventInCommand bool
 }
 
 // Configurator edits injected JSON values using the byte preserving editor.
@@ -63,12 +74,28 @@ func (h Hook) command(spec Spec) (string, error) {
 	return "AGENT_ARCHIVE_HOME=" + quote(h.DataHome) + " " + command, nil
 }
 
+func (h Hook) commandForEvent(spec Spec, event string) (string, error) {
+	if !spec.EventInCommand || event == "" {
+		return h.command(spec)
+	}
+	if !filepath.IsAbs(h.Executable) || strings.ContainsAny(h.Executable, "\x00\r\n") {
+		return "", errors.New("executable must be an absolute path")
+	}
+	command := quote(h.Executable) + " _hook --harness " + spec.Name + " --event " + event + " # " + spec.Owner
+	if h.DataHome == "" {
+		return command, nil
+	}
+	if !filepath.IsAbs(h.DataHome) || strings.ContainsAny(h.DataHome, "\x00\r\n") {
+		return "", errors.New("data directory must be an absolute path")
+	}
+	return "AGENT_ARCHIVE_HOME=" + quote(h.DataHome) + " " + command, nil
+}
+
 // Merge preserves unrelated handlers and top-level settings: only the
 // "hooks" member (and Cursor's "version") is rewritten, and everything else
 // in the file keeps its bytes (see document).
 func merge(existing []byte, spec Spec, hook Hook) ([]byte, error) {
-	command, err := hook.command(spec)
-	if err != nil {
+	if _, err := hook.command(spec); err != nil {
 		return nil, err
 	}
 	names := spec.Events
@@ -103,7 +130,7 @@ func merge(existing []byte, spec Spec, hook Hook) ([]byte, error) {
 			}
 		}
 	}
-	hs, err := hooksObject(doc.Root)
+	hs, err := configuredObject(doc.Root, app)
 	if err != nil {
 		return nil, err
 	}
@@ -122,6 +149,10 @@ func merge(existing []byte, spec Spec, hook Hook) ([]byte, error) {
 		}
 	}
 	for _, event := range names {
+		command, err := hook.commandForEvent(spec, event)
+		if err != nil {
+			return nil, err
+		}
 		// Keys in the order earlier releases wrote them (sorted), so rerunning
 		// setup over an existing installation changes nothing.
 		handler := &object{Members: []member{{Key: "command", Value: command}, {Key: "timeout", Value: json.Number("2")}}}
@@ -132,12 +163,18 @@ func merge(existing []byte, spec Spec, hook Hook) ([]byte, error) {
 				handler.Remove("statusMessage", 0)
 			}
 			entry = &object{Members: []member{{Key: "hooks", Value: []any{handler}}}}
+		} else if app.Direct {
+			handler.Set("type", "command")
 		}
 		list, _ := getList(hs, event)
 		hs.Set(event, append(list, entry))
 	}
 	restoreForeignHookNodes(hs, preserved)
-	if err = doc.Set("hooks", hs); err != nil {
+	if app.Rootless {
+		if err = doc.Set(app.Definition, hs); err != nil {
+			return nil, err
+		}
+	} else if err = doc.Set("hooks", hs); err != nil {
 		return nil, err
 	}
 	return doc.Bytes(), nil
@@ -160,7 +197,7 @@ func remove(existing []byte, spec Spec, hook Hook) ([]byte, bool, error) {
 	if err != nil {
 		return nil, false, err
 	}
-	hs, err := hooksObject(doc.Root)
+	hs, err := configuredObject(doc.Root, spec)
 	if err != nil {
 		return nil, false, err
 	}
@@ -180,7 +217,12 @@ func remove(existing []byte, spec Spec, hook Hook) ([]byte, bool, error) {
 			hs.Remove(event, 0)
 		}
 	}
-	if len(hs.Members) == 0 {
+	onlyEnabled := len(hs.Members) == 1 && hs.Members[0].Key == "enabled"
+	if len(hs.Members) == 0 || onlyEnabled {
+		if spec.Rootless {
+			doc.Remove(spec.Definition)
+			return doc.Bytes(), true, nil
+		}
 		doc.Remove("hooks")
 		// Setup adds Cursor's "version" beside the hooks it installs; with
 		// no hooks left and nothing else in the file, it goes too, and the
@@ -190,7 +232,12 @@ func remove(existing []byte, spec Spec, hook Hook) ([]byte, bool, error) {
 		}
 	} else {
 		restoreForeignHookNodes(hs, preserved)
-		if err = doc.Set("hooks", hs); err != nil {
+		if spec.Rootless {
+			err = doc.Set(spec.Definition, hs)
+		} else {
+			err = doc.Set("hooks", hs)
+		}
+		if err != nil {
 			return nil, false, err
 		}
 	}
@@ -226,6 +273,24 @@ func hooksObject(root *object) (*object, error) {
 		return nil, fmt.Errorf("%w: %s has more than one %q key; remove the duplicate", errInvalidConfiguration, where, key)
 	}
 	return hs, nil
+}
+
+func configuredObject(root *object, spec Spec) (*object, error) {
+	if !spec.Rootless {
+		return hooksObject(root)
+	}
+	if spec.Definition == "" {
+		return nil, errors.New("rootless hook configuration requires a definition name")
+	}
+	raw, ok := root.Get(spec.Definition)
+	if !ok || raw == nil {
+		return nil, nil
+	}
+	configured, ok := raw.(*object)
+	if !ok {
+		return nil, fmt.Errorf("invalid hook definition %s", spec.Definition)
+	}
+	return configured, nil
 }
 
 // duplicateKey finds an object anywhere in value that names one key twice,
@@ -298,7 +363,7 @@ func classify(handler *object, app Spec, hook Hook) (kind handlerKind, dataHome,
 	if app.CommandMarkerOwnership && !exactMarkerCommand(text, app) {
 		return kindUnrelated, "", ""
 	}
-	if app.Flat || app.CommandMarkerOwnership {
+	if app.Flat || app.Direct || app.CommandMarkerOwnership {
 		if !strings.HasSuffix(text, " # "+app.Owner) {
 			return kindUnrelated, "", ""
 		}
@@ -386,7 +451,7 @@ func handlerList(groups []any, app Spec) ([]*object, error) {
 		if !ok {
 			return nil, errors.New("invalid hook entry")
 		}
-		if app.Flat {
+		if app.Flat || app.Direct {
 			out = append(out, g)
 			continue
 		}
@@ -423,6 +488,12 @@ func (h Hook) replaces(kind handlerKind) bool {
 func stripOwned(hs *object, app Spec, hook Hook) (map[string]bool, error) {
 	changed := map[string]bool{}
 	for i, m := range hs.Members {
+		if app.Definition != "" && m.Key == "enabled" {
+			if _, ok := m.Value.(bool); !ok {
+				return nil, fmt.Errorf("invalid boolean for %s", m.Key)
+			}
+			continue
+		}
 		groups, ok := m.Value.([]any)
 		if !ok {
 			return nil, fmt.Errorf("invalid hook list for %s", m.Key)
@@ -436,7 +507,7 @@ func stripOwned(hs *object, app Spec, hook Hook) (map[string]bool, error) {
 		removed := false
 		for _, item := range groups {
 			g, _ := item.(*object)
-			if app.Flat {
+			if app.Flat || app.Direct {
 				if kind, _, _ := classify(g, app, hook); hook.replaces(kind) {
 					removed = true
 					continue

@@ -25,6 +25,8 @@ func TestAgentLabel(t *testing.T) {
 		{"Claude", "Claude"},
 		{"codex", "Codex"},
 		{"cursor", "Cursor"},
+		{"agy", "Antigravity"},
+		{"antigravity", "Antigravity"},
 		{"gemini", "Gemini"},
 		{"ölwechsel", "Ölwechsel"},
 		{"two\nlines", "Two lines"},
@@ -43,7 +45,7 @@ func TestAgentColor(t *testing.T) {
 		t.Fatalf("plain style colored the dot: %q", got)
 	}
 	seen := map[string]string{}
-	for _, h := range []string{"claude", "codex", "cursor", "gemini"} {
+	for _, h := range []string{"claude", "codex", "cursor", "agy", "gemini"} {
 		got := color.agent(h, agentDot)
 		if got == agentDot {
 			t.Fatalf("%s dot has no color", h)
@@ -54,6 +56,9 @@ func TestAgentColor(t *testing.T) {
 		seen[got] = h
 	}
 	if got, want := color.agent("claude-code", agentDot), color.agent("claude", agentDot); got != want {
+		t.Fatalf("alias colored %q, want %q", got, want)
+	}
+	if got, want := color.agent("antigravity", agentDot), color.agent("agy", agentDot); got != want {
 		t.Fatalf("alias colored %q, want %q", got, want)
 	}
 	if got, want := color.agent("gemini", agentDot), color.dim(agentDot); got != want {

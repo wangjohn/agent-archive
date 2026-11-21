@@ -19,7 +19,7 @@ import (
 const agentDot = "●"
 
 // agentLabel is the dot and short name that stand for a harness in a
-// session line: "Claude", "Codex" or "Cursor" for the agents
+// session line: "Claude", "Codex", "Cursor" or "Antigravity" for the agents
 // agent-archive captures, aliases included. Any other harness keeps its
 // own name, made safe for one line with its first letter upper-cased, and
 // an empty one is "Unknown". Color it with textStyle.agent.
@@ -33,6 +33,8 @@ func agentLabel(harness string) (dot, name string) {
 		return agentDot, "Codex"
 	case agentmeta.Cursor:
 		return agentDot, "Cursor"
+	case agentmeta.Agy:
+		return agentDot, "Antigravity"
 	case agentmeta.Muse:
 		// Runtime-only identities retain the ordinary safe display fallback.
 	}
@@ -54,7 +56,7 @@ func knownAgent(harness string) agentmeta.ID {
 }
 
 // agent paints text, usually an agentLabel dot, in harness's color: one
-// color each for Claude, Codex and Cursor, and dim for any other harness.
+// color each for Claude, Codex, Cursor and Antigravity, and dim for any other harness.
 // Without color it returns text as it is.
 func (s textStyle) agent(harness, text string) string {
 	switch knownAgent(harness) {
@@ -64,6 +66,8 @@ func (s textStyle) agent(harness, text string) string {
 		return s.paint("38;5;39", text) // blue
 	case agentmeta.Cursor:
 		return s.paint("38;5;141", text) // violet
+	case agentmeta.Agy:
+		return s.paint("38;5;45", text) // teal
 	case agentmeta.Muse:
 		return s.dim(text)
 	}

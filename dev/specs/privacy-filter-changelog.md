@@ -5,6 +5,19 @@ rules, as a whole, are in the [filter specification](privacy-filter.md);
 version numbers and bump rules are in [versions](../maintainers/versions.md). Each archived session
 records the filter version that produced it (`filter_version`).
 
+## Source filter version 41
+
+Global and Agy adapter 0.41.0 accompany this change. Source and metadata schemas
+are unchanged.
+
+- Retain safe Antigravity trajectory keys (`modelName`, `model_name`, `step_id`,
+  `conversationId`, `conversation_id`, `prompt`, `toolCall`, and `args`).
+- Include `args` in `toolArgumentKeys` so Antigravity command line
+  arguments and non-sensitive tool parameters are preserved while secrets and
+  credentials continue to be redacted.
+- Recognize `conversationId` and `conversation_id` in native and safe identity
+  helpers (`noteNativeIdentity` and `noteSafeIdentity`).
+
 ## Source filter version 40
 
 Global and Muse adapter 0.40.0 accompany this change. Parsers and other agents'
@@ -144,6 +157,7 @@ metadata schemas, and other agents' filtering are unchanged.
   side log with no session start, a file ending before its startup records, and
   supported startup records in an unqualified order.
   Refusals stay local: nothing new is uploaded.
+>>>>>>> origin/main
 
 ## Source filter version 32
 

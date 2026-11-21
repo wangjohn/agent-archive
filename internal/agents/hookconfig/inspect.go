@@ -8,8 +8,7 @@ import (
 )
 
 func installed(data []byte, spec Spec, hook Hook) (bool, error) {
-	command, err := hook.command(spec)
-	if err != nil {
+	if _, err := hook.command(spec); err != nil {
 		return false, err
 	}
 	doc, err := parseDocument(data)
@@ -28,9 +27,16 @@ func installed(data []byte, spec Spec, hook Hook) (bool, error) {
 			return false, nil
 		}
 	}
-	hs, err := hooksObject(doc.Root)
+	hs, err := configuredObject(doc.Root, app)
 	if err != nil || hs == nil {
 		return false, err
+	}
+	if spec.Definition != "" {
+		if val, ok := hs.Get("enabled"); ok {
+			if _, ok := val.(bool); !ok {
+				return false, fmt.Errorf("invalid boolean for enabled")
+			}
+		}
 	}
 	names := spec.Events
 	for _, event := range names {
@@ -39,6 +45,9 @@ func installed(data []byte, spec Spec, hook Hook) (bool, error) {
 		}
 	}
 	for _, m := range hs.Members {
+		if spec.Definition != "" && m.Key == "enabled" {
+			continue
+		}
 		groups, ok := m.Value.([]any)
 		if !ok {
 			return false, fmt.Errorf("invalid hook list for %s", m.Key)
@@ -48,6 +57,10 @@ func installed(data []byte, spec Spec, hook Hook) (bool, error) {
 			return false, err
 		}
 		ours := 0
+		expectedCommand, err := hook.commandForEvent(app, m.Key)
+		if err != nil {
+			return false, err
+		}
 		for _, handler := range handlers {
 			if kind, _, _ := classify(handler, app, hook); !hook.replaces(kind) {
 				continue
@@ -56,7 +69,7 @@ func installed(data []byte, spec Spec, hook Hook) (bool, error) {
 			kind, _ := handler.Get("type")
 			timeout, timeoutOK := handler.Get("timeout")
 			timeoutNumber, numberOK := timeout.(json.Number)
-			if got != command || (!app.Flat && kind != "command") || app.CommandMarkerOwnership && (!timeoutOK || !numberOK || timeoutNumber != "2") {
+			if got != expectedCommand || (!app.Flat && !app.Direct && kind != "command") || app.CommandMarkerOwnership && (!timeoutOK || !numberOK || timeoutNumber != "2") {
 				return false, nil
 			}
 			ours++
@@ -77,14 +90,20 @@ func otherInstallations(data []byte, spec Spec, hook Hook) ([]agentapi.HookOther
 	if err != nil {
 		return nil, nil, err
 	}
-	hs, err := hooksObject(doc.Root)
+	app := spec
+	hs, err := configuredObject(doc.Root, app)
 	if err != nil || hs == nil {
 		return nil, nil, err
 	}
-	app := spec
 	var others []agentapi.HookOtherOwner
 	var locations []string
 	for _, m := range hs.Members {
+		if spec.Definition != "" && m.Key == "enabled" {
+			if _, ok := m.Value.(bool); !ok {
+				return nil, nil, fmt.Errorf("invalid boolean for %s", m.Key)
+			}
+			continue
+		}
 		groups, ok := m.Value.([]any)
 		if !ok {
 			return nil, nil, fmt.Errorf("invalid hook list for %s", m.Key)
